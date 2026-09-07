@@ -1325,6 +1325,506 @@ printf '%s' '{"hook_event_name":"Stop"}' \
 printf '%s' '{"hook_event_name":"Stop"}' \
   | GANG_TEST_TICK_MODE=manual TMUX_PANE="$tick_mode_pane" "$GANG" hook >/dev/null
 
+# Codex 0.151.0 draws the provider wait chooser over its composer while the
+# turn itself remains live. This stand-in speaks the same terminal contract:
+# bracketed paste, a Codex-shaped composer, the narrow hard-wrapped chooser,
+# and the bare numeric shortcut its non-search selection view accepts. The
+# pane-side key ledger distinguishes choosing option 2 from merely waiting for
+# Codex to close the menu itself, while the delivery marker is written only
+# after the fake TUI consumes the submitted envelope.
+codex_queue_evidence_probe="$RUN_ROOT/codex-queue-evidence-probe.sh"
+codex_queue_evidence_file="$RUN_ROOT/codex-queue-evidence"
+codex_queue_evidence_prefix='[gang:self-declared:tester#0123456789abcdef'
+codex_queue_evidence_body="$codex_queue_evidence_prefix reply-to=0000000000000000,1111111111111111,2222222222222222,3333333333333333,4444444444444444] BODY [/gang:self-declared:tester#0123456789abcdef]"
+awk '
+  /^queued_envelope_confirmed\(\)/ { keep=1 }
+  keep { print }
+  keep && /^}/ { exit }
+' "$GANG" > "$codex_queue_evidence_probe"
+cat >> "$codex_queue_evidence_probe" <<'SH'
+collar_queued() { printf '%s' "$2" > "$CODEX_QUEUE_EVIDENCE_FILE"; }
+queued_envelope_confirmed '%1' "$CODEX_QUEUE_EVIDENCE_BODY"
+SH
+CODEX_QUEUE_EVIDENCE_FILE="$codex_queue_evidence_file" \
+  CODEX_QUEUE_EVIDENCE_BODY="$codex_queue_evidence_body" \
+  bash "$codex_queue_evidence_probe"
+equal "queue confirmation excludes a five-nonce reply-to suffix from its wrap-safe evidence" \
+  "$codex_queue_evidence_prefix" "$(<"$codex_queue_evidence_file")"
+
+codex_menu_channel="gang-codex-menu-${tick_caller_pane#%}"
+codex_menu_dismissed="${codex_menu_channel}-dismissed"
+codex_menu_keys="$RUN_ROOT/codex-menu.keys"
+codex_menu_delivered="$RUN_ROOT/codex-menu.delivered"
+cat > "$RUN_ROOT/codex-menu-fixture.py" <<'PY'
+#!/usr/bin/env python3
+import os
+import subprocess
+import sys
+import termios
+import textwrap
+import tty
+
+channel, dismissed_channel, key_log, delivered = sys.argv[1:]
+fd = sys.stdin.fileno()
+saved = termios.tcgetattr(fd)
+tty.setraw(fd)
+buffer = ""
+transcript = []
+menu = None
+busy = False
+queued_body = None
+ordinary_next = False
+replace_next_queue = False
+paste = False
+escape = b""
+
+
+def render():
+    out = ["\x1b[2J\x1b[H", "\x1b[?2004h"]
+    out.extend(line + "\r\n" for line in transcript[-3:])
+    if menu == "provider":
+        out.extend(
+            line + "\r\n"
+            for line in (
+                "esc to interrupt",
+                "Our systems are thinking a bit more about",
+                "this request before responding.",
+                "Hang tight or retry with a faster model for a",
+                "quicker response, though it may be less capable",
+                "of handling complex requests.",
+                "› 1. Retry with a faster model",
+                "  2. Dismiss and keep",
+                "     waiting",
+                "  3. Learn more",
+                "No action is required. Codex will keep waiting,",
+                "and this menu will close when the response is",
+                "ready.",
+            )
+        )
+    elif menu == "other_history":
+        out.extend(
+            line + "\r\n"
+            for line in (
+                "Our systems are thinking a bit more about this request before responding.",
+                "› 1. Retry with a faster model",
+                "  2. Dismiss and keep waiting",
+                "  3. Learn more",
+                "No action is required. Codex will keep waiting, and this menu will close when the response is ready.",
+                "Unrelated numbered chooser",
+                "› 1. Keep the current setting",
+                "  2. Change the current setting",
+                "  3. Learn more",
+            )
+        )
+    elif menu == "no_retry":
+        out.extend(
+            line + "\r\n"
+            for line in (
+                "esc to interrupt",
+                "Our systems are thinking a bit more about",
+                "this request before responding.",
+                "› 1. Dismiss and keep waiting",
+                "  2. Learn more",
+                "No action is required. Codex will keep waiting,",
+                "and this menu will close when the response is ready.",
+            )
+        )
+    elif menu == "unmarked_history":
+        out.extend(
+            line + "\r\n"
+            for line in (
+                "Our systems are thinking a bit more about this request before responding.",
+                "› 1. Retry with a faster model",
+                "  2. Dismiss and keep waiting",
+                "  3. Learn more",
+                "No action is required. Codex will keep waiting, and this menu will close when the response is ready.",
+                "Tell us more about what happened",
+                "Press Enter to submit feedback or Esc to cancel",
+            )
+        )
+    else:
+        if queued_body is not None:
+            queued_lines = []
+            width = max(1, os.get_terminal_size(fd).columns - 4)
+            for line in queued_body.splitlines() or [""]:
+                queued_lines.extend(
+                    textwrap.wrap(
+                        line,
+                        width=width,
+                        break_long_words=True,
+                        break_on_hyphens=True,
+                        replace_whitespace=False,
+                    )
+                    or [""]
+                )
+            out.append("• Queued follow-up inputs\r\n")
+            if queued_lines:
+                out.append("  ↳ " + queued_lines[0] + "\r\n")
+                out.extend("    " + line + "\r\n" for line in queued_lines[1:3])
+                if len(queued_lines) > 3:
+                    out.append("    …\r\n")
+            out.append("shift + ← edit last queued message\r\n")
+        if busy:
+            out.append("esc to interrupt\r\n")
+        lines = buffer.split("\n")
+        out.append("›" + (" " + lines[0] if lines[0] else "") + "\r\n")
+        out.extend("  " + line + "\r\n" for line in lines[1:])
+    sys.stdout.write("".join(out))
+    sys.stdout.flush()
+
+
+def signal_ready():
+    subprocess.run(["tmux", "wait-for", "-S", channel], check=True)
+
+
+def signal_dismissed():
+    subprocess.run(["tmux", "wait-for", "-S", dismissed_channel], check=True)
+
+
+def submit():
+    global buffer, menu, busy, queued_body, ordinary_next, replace_next_queue
+    body = buffer
+    buffer = ""
+    if body == "SHOW_PROVIDER_MENU":
+        menu = "provider"
+        busy = True
+        render()
+        signal_ready()
+        return
+    if body == "SHOW_PROVIDER_END_MENU":
+        menu = "provider"
+        busy = True
+        ordinary_next = True
+        render()
+        signal_ready()
+        return
+    if body == "SHOW_PROVIDER_RACE_MENU":
+        menu = "provider"
+        busy = True
+        replace_next_queue = True
+        render()
+        signal_ready()
+        return
+    if body == "SHOW_OTHER_MENU":
+        menu = "other_history"
+        busy = False
+        render()
+        signal_ready()
+        return
+    if body == "SHOW_NO_RETRY_MENU":
+        menu = "no_retry"
+        busy = True
+        render()
+        signal_ready()
+        return
+    if body == "SHOW_UNMARKED_MENU":
+        menu = "unmarked_history"
+        busy = True
+        render()
+        signal_ready()
+        return
+    if body == "CLEAR_BUSY":
+        busy = False
+        queued_body = None
+        render()
+        signal_ready()
+        return
+    if body == "DRAIN_QUEUE":
+        busy = False
+        queued_body = None
+        render()
+        signal_ready()
+        return
+    transcript.append("accepted input")
+    if "DELIVERY" in body:
+        if replace_next_queue:
+            replace_next_queue = False
+            queued_body = "[gang:tester#1111111111111111] an earlier queued message [/gang:tester#1111111111111111]"
+        else:
+            with open(delivered, "w", encoding="utf-8") as stream:
+                stream.write(body)
+            if ordinary_next:
+                ordinary_next = False
+                busy = False
+                queued_body = None
+            elif busy:
+                queued_body = body
+            else:
+                busy = False
+    render()
+
+
+try:
+    render()
+    while True:
+        char = os.read(fd, 1)
+        if not char:
+            break
+        if menu is not None:
+            if char.isdigit():
+                with open(key_log, "ab") as stream:
+                    stream.write(char)
+                if (menu == "no_retry" and char == b"1") or (
+                    menu != "no_retry" and char == b"2"
+                ):
+                    menu = None
+                    render()
+                    signal_dismissed()
+            continue
+        if paste:
+            escape = (escape + char)[-6:]
+            if escape.endswith(b"\x1b[201~"):
+                paste = False
+                buffer = buffer[:-5]
+                escape = b""
+                render()
+            else:
+                buffer += char.decode("utf-8", "replace")
+            continue
+        escape = (escape + char)[-6:]
+        if escape.endswith(b"\x1b[200~"):
+            paste = True
+            buffer = buffer[:-5]
+            escape = b""
+        elif char in (b"\r", b"\n"):
+            escape = b""
+            submit()
+        elif char in (b"\x7f", b"\x08"):
+            escape = b""
+            buffer = buffer[:-1]
+            render()
+        elif char >= b" ":
+            buffer += char.decode("utf-8", "replace")
+            render()
+finally:
+    termios.tcsetattr(fd, termios.TCSADRAIN, saved)
+PY
+chmod +x "$RUN_ROOT/codex-menu-fixture.py"
+: > "$codex_menu_keys"
+cat > "$RUN_ROOT/collars/tick-codex-menu.sh" <<SH
+# shellcheck shell=bash
+# shellcheck disable=SC2034
+. "$ROOT/collars/codex.sh"
+GANG_LAUNCH="'$RUN_ROOT/codex-menu-fixture.py' '$codex_menu_channel' '$codex_menu_dismissed' '$codex_menu_keys' '$codex_menu_delivered'"
+GANG_RESUME_LAUNCH=
+GANG_STOP_HOOK=1
+GANG_SELF_COMPACT=
+GANG_SELF_COMPACT_WITNESS=
+SH
+"$HITCH" codex-menu -c tick-codex-menu -d "$RUN_ROOT" >/dev/null
+codex_menu_id="$(window_id codex-menu)"
+codex_menu_pane="$(tmux list-panes -t "$codex_menu_id" -F '#{pane_id}')"
+# This collar advertises the real Codex Stop hook, so its fake drives the same
+# turn bracket around each simulated provider turn. Close the hitch contract's
+# submitted turn first, then open the turn whose wait menu is under test.
+printf '%s' '{"hook_event_name":"Stop"}' \
+  | GANG_TEST_TICK_MODE=manual TMUX_PANE="$codex_menu_pane" "$GANG" hook >/dev/null
+printf '%s' '{"hook_event_name":"UserPromptSubmit"}' \
+  | GANG_TEST_TICK_MODE=manual TMUX_PANE="$codex_menu_pane" "$GANG" hook >/dev/null
+
+tmux wait-for "$codex_menu_channel" &
+codex_menu_waiter=$!
+tmux send-keys -l -t "$codex_menu_id" SHOW_PROVIDER_MENU
+tmux send-keys -t "$codex_menu_id" Enter
+wait "$codex_menu_waiter"
+printf '%s' 'CODEX_MENU_DELIVERY is an ordinary peer message long enough to cross Codex 0.151.0 queue preview limit after wrapping. Its trailing prose must be absent from the three retained rows while the unique Gangline attribution prefix at the head remains visible and proves which single pasted bundle entered the follow-up queue.' \
+  | "$GANG" send --to codex-menu --from tester --stdin >/dev/null
+equal "the provider wait menu holds delivery before the cooperative tick" 1 \
+  "$("$GANG" roster --porcelain | awk -F '\t' '$1 == "codex-menu" { print $4 }')"
+equal "no chooser key is spent while the delivery is only parked" "" \
+  "$(<"$codex_menu_keys")"
+codex_menu_turn_before="$(tmux show-options -wqv -t "$codex_menu_id" @gl_turn)"
+tmux wait-for "$codex_menu_dismissed" &
+codex_menu_dismissed_waiter=$!
+"$GANG" tick >/dev/null
+wait "$codex_menu_dismissed_waiter"
+equal "the cooperative tick chooses only the provider menu's keep-waiting option" 2 \
+  "$(<"$codex_menu_keys")"
+equal "the truncated provider-menu delivery reaches the fake Codex TUI after dismissal" present \
+  "$([ -e "$codex_menu_delivered" ] && printf present || printf absent)"
+equal "the delivered provider-menu message leaves no Gangline spool entry" 0 \
+  "$("$GANG" roster --porcelain | awk -F '\t' '$1 == "codex-menu" { print $4 }')"
+codex_menu_queue_pane="$("$GANG" capture codex-menu)"
+# source-guard: producer@5362c5e07d45: the fake Codex fixture is the only process painting this dedicated pane, and the overflow glyph is emitted only after its three-row queue-preview truncation
+contains "the fake Codex queue applies its three-row overflow marker" \
+  "$codex_menu_queue_pane" "…"
+excludes "the truncated queue does not render the whole body used for confirmation" \
+  "$codex_menu_queue_pane" "proves which single pasted bundle"
+equal "the queued mid-turn delivery does not invent a new turn edge" \
+  "$codex_menu_turn_before" \
+  "$(tmux show-options -wqv -t "$codex_menu_id" @gl_turn)"
+contains "explain records the cooperative tick's provider-menu action" \
+  "$("$GANG" explain codex-menu)" \
+  "tick action: dismissed Codex's provider wait menu with option 2"
+
+# The real Codex mid-turn Enter lands in its native follow-up queue. Retire the
+# fake queue after the assertions so later negative menus start from a clean
+# composer; the successful delivery above has already proved the queue body.
+tmux wait-for "$codex_menu_channel" &
+codex_menu_waiter=$!
+tmux send-keys -l -t "$codex_menu_id" DRAIN_QUEUE
+tmux send-keys -t "$codex_menu_id" Enter
+wait "$codex_menu_waiter"
+printf '%s' '{"hook_event_name":"Stop"}' \
+  | GANG_TEST_TICK_MODE=manual TMUX_PANE="$codex_menu_pane" "$GANG" hook >/dev/null
+
+# Keep the remainder of the fails-first run observable even on the unfixed
+# tree: after the assertions above have recorded the held delivery, answer the
+# fixture by hand and let the next tick retire it.
+if [ "$("$GANG" roster --porcelain | awk -F '\t' '$1 == "codex-menu" { print $4 }')" -ne 0 ]; then
+  tmux wait-for "$codex_menu_dismissed" &
+  codex_menu_dismissed_waiter=$!
+  tmux send-keys -t "$codex_menu_id" 2
+  wait "$codex_menu_dismissed_waiter"
+  tmux wait-for "$codex_menu_channel" &
+  codex_menu_waiter=$!
+  tmux send-keys -l -t "$codex_menu_id" CLEAR_BUSY
+  tmux send-keys -t "$codex_menu_id" Enter
+  wait "$codex_menu_waiter"
+  "$GANG" tick >/dev/null
+fi
+
+# The provider turn can end after the dismissal reading but before Gangline's
+# Enter. That is an ordinary new submission, not a native-queue landing: its
+# verified no-queue fall-through must acquire the turn edge that was deferred
+# while the post-Enter surface was still unknown.
+: > "$codex_menu_keys"
+: > "$codex_menu_delivered"
+printf '%s' '{"hook_event_name":"UserPromptSubmit"}' \
+  | GANG_TEST_TICK_MODE=manual TMUX_PANE="$codex_menu_pane" "$GANG" hook >/dev/null
+tmux wait-for "$codex_menu_channel" &
+codex_menu_waiter=$!
+tmux send-keys -l -t "$codex_menu_id" SHOW_PROVIDER_END_MENU
+tmux send-keys -t "$codex_menu_id" Enter
+wait "$codex_menu_waiter"
+printf '%s' 'TURN_EDGE_DELIVERY whose provider turn ends after dismissal and before Enter' \
+  | "$GANG" send --to codex-menu --from tester --stdin >/dev/null
+codex_menu_turn_before="$(tmux show-options -wqv -t "$codex_menu_id" @gl_turn)"
+tmux wait-for "$codex_menu_dismissed" &
+codex_menu_dismissed_waiter=$!
+"$GANG" tick >/dev/null
+wait "$codex_menu_dismissed_waiter"
+equal "the ending provider turn still spends only option 2" 2 \
+  "$(<"$codex_menu_keys")"
+contains "the post-dismissal ordinary delivery reaches Codex" \
+  "$(<"$codex_menu_delivered")" "TURN_EDGE_DELIVERY"
+if [ "$codex_menu_turn_before" != "$(tmux show-options -wqv -t "$codex_menu_id" @gl_turn)" ]; then
+  pass "the verified no-queue landing records its real turn edge"
+else
+  fail "the verified no-queue landing records its real turn edge" \
+    "the turn record stayed [$codex_menu_turn_before]"
+fi
+printf '%s' '{"hook_event_name":"Stop"}' \
+  | GANG_TEST_TICK_MODE=manual TMUX_PANE="$codex_menu_pane" "$GANG" hook >/dev/null
+
+: > "$codex_menu_keys"
+printf '%s' '{"hook_event_name":"UserPromptSubmit"}' \
+  | GANG_TEST_TICK_MODE=manual TMUX_PANE="$codex_menu_pane" "$GANG" hook >/dev/null
+tmux wait-for "$codex_menu_channel" &
+codex_menu_waiter=$!
+tmux send-keys -l -t "$codex_menu_id" SHOW_OTHER_MENU
+tmux send-keys -t "$codex_menu_id" Enter
+wait "$codex_menu_waiter"
+printf OTHER_NUMBERED_DELIVERY \
+  | "$GANG" send --to codex-menu --from tester --stdin >/dev/null
+"$GANG" tick >/dev/null
+equal "provider text in scrollback cannot answer the unrelated live menu" "" \
+  "$(<"$codex_menu_keys")"
+equal "the unrelated live menu keeps its delivery parked" 1 \
+  "$("$GANG" roster --porcelain | awk -F '\t' '$1 == "codex-menu" { print $4 }')"
+tmux wait-for "$codex_menu_dismissed" &
+codex_menu_dismissed_waiter=$!
+tmux send-keys -t "$codex_menu_id" 2
+wait "$codex_menu_dismissed_waiter"
+printf '%s' '{"hook_event_name":"Stop"}' \
+  | GANG_TEST_TICK_MODE=manual TMUX_PANE="$codex_menu_pane" "$GANG" hook >/dev/null
+"$GANG" tick >/dev/null
+printf '%s' '{"hook_event_name":"Stop"}' \
+  | GANG_TEST_TICK_MODE=manual TMUX_PANE="$codex_menu_pane" "$GANG" hook >/dev/null
+
+: > "$codex_menu_keys"
+printf '%s' '{"hook_event_name":"UserPromptSubmit"}' \
+  | GANG_TEST_TICK_MODE=manual TMUX_PANE="$codex_menu_pane" "$GANG" hook >/dev/null
+tmux wait-for "$codex_menu_channel" &
+codex_menu_waiter=$!
+tmux send-keys -l -t "$codex_menu_id" SHOW_UNMARKED_MENU
+tmux send-keys -t "$codex_menu_id" Enter
+wait "$codex_menu_waiter"
+printf UNMARKED_MENU_DELIVERY \
+  | "$GANG" send --to codex-menu --from tester --stdin >/dev/null
+"$GANG" tick >/dev/null
+equal "provider text above an unmarked live view cannot spend a key" "" \
+  "$(<"$codex_menu_keys")"
+equal "the unmarked live view keeps its delivery parked" 1 \
+  "$("$GANG" roster --porcelain | awk -F '\t' '$1 == "codex-menu" { print $4 }')"
+tmux wait-for "$codex_menu_dismissed" &
+codex_menu_dismissed_waiter=$!
+tmux send-keys -t "$codex_menu_id" 2
+wait "$codex_menu_dismissed_waiter"
+printf '%s' '{"hook_event_name":"Stop"}' \
+  | GANG_TEST_TICK_MODE=manual TMUX_PANE="$codex_menu_pane" "$GANG" hook >/dev/null
+"$GANG" tick >/dev/null
+printf '%s' '{"hook_event_name":"Stop"}' \
+  | GANG_TEST_TICK_MODE=manual TMUX_PANE="$codex_menu_pane" "$GANG" hook >/dev/null
+
+: > "$codex_menu_keys"
+printf '%s' '{"hook_event_name":"UserPromptSubmit"}' \
+  | GANG_TEST_TICK_MODE=manual TMUX_PANE="$codex_menu_pane" "$GANG" hook >/dev/null
+tmux wait-for "$codex_menu_channel" &
+codex_menu_waiter=$!
+tmux send-keys -l -t "$codex_menu_id" SHOW_NO_RETRY_MENU
+tmux send-keys -t "$codex_menu_id" Enter
+wait "$codex_menu_waiter"
+printf NO_RETRY_MENU_DELIVERY \
+  | "$GANG" send --to codex-menu --from tester --stdin >/dev/null
+"$GANG" tick >/dev/null
+equal "the no-retry provider menu never spends its Learn-more option 2" "" \
+  "$(<"$codex_menu_keys")"
+equal "the no-retry provider menu keeps its delivery parked" 1 \
+  "$("$GANG" roster --porcelain | awk -F '\t' '$1 == "codex-menu" { print $4 }')"
+tmux wait-for "$codex_menu_dismissed" &
+codex_menu_dismissed_waiter=$!
+tmux send-keys -t "$codex_menu_id" 1
+wait "$codex_menu_dismissed_waiter"
+tmux wait-for "$codex_menu_channel" &
+codex_menu_waiter=$!
+tmux send-keys -l -t "$codex_menu_id" CLEAR_BUSY
+tmux send-keys -t "$codex_menu_id" Enter
+wait "$codex_menu_waiter"
+printf '%s' '{"hook_event_name":"Stop"}' \
+  | GANG_TEST_TICK_MODE=manual TMUX_PANE="$codex_menu_pane" "$GANG" hook >/dev/null
+"$GANG" tick >/dev/null
+
+# A different queued envelope can win the narrow interval between inject's
+# empty preflight and its post-Enter queue reading. Its unique attribution tag
+# must not confirm this claim. Replacing tag confirmation with the old
+# park_record shortcut makes this fixture falsely retire the spool.
+: > "$codex_menu_keys"
+: > "$codex_menu_delivered"
+printf '%s' '{"hook_event_name":"UserPromptSubmit"}' \
+  | GANG_TEST_TICK_MODE=manual TMUX_PANE="$codex_menu_pane" "$GANG" hook >/dev/null
+tmux wait-for "$codex_menu_channel" &
+codex_menu_waiter=$!
+tmux send-keys -l -t "$codex_menu_id" SHOW_PROVIDER_RACE_MENU
+tmux send-keys -t "$codex_menu_id" Enter
+wait "$codex_menu_waiter"
+printf '%s' 'QUEUE_RACE_DELIVERY must not be credited when an older envelope occupies the native queue instead' \
+  | "$GANG" send --to codex-menu --from tester --stdin >/dev/null
+tmux wait-for "$codex_menu_dismissed" &
+codex_menu_dismissed_waiter=$!
+codex_menu_race_rc=0
+codex_menu_race_out="$("$GANG" tick 2>&1)" || codex_menu_race_rc=$?
+wait "$codex_menu_dismissed_waiter"
+equal "a mismatched queued attribution makes the cooperative tick fail closed" 1 \
+  "$codex_menu_race_rc"
+contains "the mismatched queue reports an unknown submission outcome" \
+  "$codex_menu_race_out" "submission outcome unknown"
+contains "status retains the queue-race failure for the operator" \
+  "$("$GANG" status codex-menu)" "spool drain NOT verified"
+equal "the raced delivery was not accepted by the fake Codex TUI" absent \
+  "$([ ! -s "$codex_menu_delivered" ] && printf absent || printf present)"
+"$GANG" drop codex-menu >/dev/null
+
 # A WINDOW GLYPH IS NOT TMUX MODE STATE. The issue arrived with ?name? on the
 # window while tmux itself reported pane_in_mode=0. Reproduce the consequential
 # race deterministically: a PATH-local tmux returns one stale 1 for the first

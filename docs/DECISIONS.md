@@ -1934,9 +1934,13 @@ reported to its sender as submitted. A collar may therefore declare
 `collar_queued` and answer from wherever its own harness draws the queue. Its
 unknown is carried into the delivery outcome rather than flattened, because
 "gang could not tell" reaching a sender as "submitted" is the failure this
-exists to remove. Asked with the body gang composed, the same function settles
-what the hint alone cannot — a queue drawn after Enter can describe the message
-just typed or a turn that raced it — and only a positive answer is taken.
+exists to remove. Asked with exact evidence from the body gang composed, the
+same function settles what the hint alone cannot — a queue drawn after Enter
+can describe the message just typed or a turn that raced it — and only a
+positive answer is taken. Core normally asks with the whole body. When the
+harness truncates previews, the unique leading Gangline attribution prefix
+through its nonce is enough: it survives in the first row even when a long
+reply-to clause wraps, and a pre-existing message has a different nonce.
 
 ## An advisory dialog is reported, never dismissed
 
@@ -2497,3 +2501,21 @@ claim marker before returning. If the watcher cannot remove the root, the root
 survives by definition, so the watcher also leaves its removal diagnostic in
 `.suite-reaper-watch-error` rather than making the user-manager journal its
 only audience.
+
+## Cooperative ticks dismiss Codex's retry-capable provider wait menu
+
+When Codex says a live request is taking longer and offers Retry with a faster
+model, Dismiss and keep waiting, and Learn more, a cooperative tick chooses
+Dismiss and keep waiting before draining attributed mail. The collar authorizes
+that key from the active selected row and the complete ordered action/footer
+text beneath it, with the footer required to be the pane's final nonblank
+content, rather than from the numbered-list shape or matching text in
+scrollback. Core first proves the menu owns the composer and then waits for the
+composer to return empty and stable; only that same locked tick pass may land
+the delivery in the still-running Codex turn's attributed native queue.
+`gang explain` retains the successful tick action for the life of the hitch.
+
+The provider-wait variant without Retry remains untouched because Dismiss is
+option 1 there, and the approaching-rate-limit menu remains untouched because
+its choices alter model policy. Other numbered menus retain their existing
+occupied behavior.

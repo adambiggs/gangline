@@ -404,7 +404,7 @@ codex_queue_read() { # $@ = extra collar_queued arguments -> "rc<TAB>output"
 }
 equal "an empty pane carries no Codex queue" "1	" "$(codex_queue_read)"
 equal "and a body cannot be confirmed parked in a queue that is not there" \
-  "2	the Codex follow-up queue is not on screen, so gang cannot confirm the body it composed is parked" \
+  "2	the Codex follow-up queue is not on screen, so gang cannot confirm its delivery evidence is parked" \
   "$(codex_queue_read "$codex_queue_body")"
 for codex_queue_frame in codex-queue-frame codex-queue-frame-wrapped; do
   codex_queue_channel="gang-test-codex-queue-$codex_queue_frame-$$"
@@ -417,7 +417,7 @@ for codex_queue_frame in codex-queue-frame codex-queue-frame-wrapped; do
   equal "and the body in that frame is confirmed as the parked one" "0	" \
     "$(codex_queue_read "$codex_queue_body")"
   equal "while another body is unconfirmed rather than declared submitted" \
-    "2	the Codex follow-up queue is on screen but does not read back as the body gang composed" \
+    "2	the Codex follow-up queue is on screen but does not contain the exact delivery evidence supplied by gang" \
     "$(codex_queue_read 'a body that was never parked here')"
 done
 tmux kill-window -t "$codex_queue_id"
