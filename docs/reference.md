@@ -1147,6 +1147,11 @@ The command writes no diagnostic option or file; ordinary state observation may
 still refresh the window glyph and the transient evidence that `status` itself
 maintains.
 
+When a cooperative tick has successfully dismissed a collar-recognized
+advisory, explain also prints `tick action:` with that action. The record is a
+window option owned by the current hitch: a later successful action replaces
+it, a resume clears it, and dropping the window removes it.
+
 ### `gang status [name]`
 
 Prints one current state:
@@ -1749,8 +1754,9 @@ there, never in a harness-name branch in the core script.
 | `collar_waiting target payload` | optional bounded Stop-time probe for native background resources; print the held-resource witness and return 0 waiting, return 1 with no output when none is held, or print a cause and return 2 when the native sources are unreadable. The result is cached only until later recognized hook traffic; intent without a held resource stays idle. The probe repeats its own bounded reads until two agree rather than reporting a race |
 | `collar_last_action target` | optional; print `at <epoch>` for the newest tool call the harness recorded, or `before <epoch>` when a scan bound was reached first and the newest call is older than that time. Return 0 having printed one of those, 1 with no output when the source holds no tool call at all, or print a reason and return 2 when no reading could be taken. A collar that does not declare it leaves the reading unknown, which is a distinct answer from an agent that has run nothing |
 | `GANG_QUEUED_REGEX` | input-box evidence that the harness parked input in a native queue instead of submitting |
-| `collar_queued target [body]` | optional; answers for a harness whose parked queue is not drawn in the input box, and outranks `GANG_QUEUED_REGEX` where both are declared. With no body: return 0 when the harness holds parked input, 1 with no output when it does not, or print a cause and return 2 when the screen cannot settle it — an unknown here is carried into the delivery outcome, never flattened to submitted. With a body: return 0 only when that exact body is the parked one, or print a cause and return 2. The body form must never return 1; a body the collar cannot find is a reading it could not take, not proof the message entered the session |
-| `collar_advisory target` | optional; return 0 and print what the surface is when the UI owning the input box says it needs no answer and will close by itself, or return 1 with no output. It changes only the words `status`, `explain` and a delivery refusal use — the window stays `!occupied!`, gang types nothing at the surface, and no key is sent to dismiss it |
+| `collar_queued target [evidence]` | optional; answers for a harness whose parked queue is not drawn in the input box, and outranks `GANG_QUEUED_REGEX` where both are declared. With no evidence: return 0 when the harness holds parked input, 1 with no output when it does not, or print a cause and return 2 when the screen cannot settle it — an unknown here is carried into the delivery outcome, never flattened to submitted. With evidence: return 0 only when that exact text is in the parked preview, or print a cause and return 2. The evidence form must never return 1; text the collar cannot find is a reading it could not take, not proof the message entered the session. Core normally supplies the whole composed body; when a harness truncates previews, it may supply the body's unique leading attribution prefix through its nonce instead |
+| `collar_advisory target` | optional; return 0 and print what the surface is when the UI owning the input box says it needs no answer and will close by itself, or return 1 with no output. It labels the window `!occupied!` and supplies the words used by `status`, `explain`, and delivery refusals |
+| `collar_dismiss_advisory target` | optional, tick-only companion to `collar_advisory`; recognize a named advisory by its full text, send only that surface's dismissal shortcut, then return 0 and print the action. Return 1 with no output for every other surface, or 2 with a cause when the recognized action cannot be sent. Core verifies occupancy before calling it and waits for an empty settled composer before delivery |
 | `GANG_QUEUE_RECALL_KEY` | tmux key name that loads the parked message back into the composer, used by `flush` |
 | `GANG_INTERRUPT_KEY` | tmux key name that stops an active turn, used by `interrupt` |
 | `GANG_STOP_HOOK=1` | the launch command installs a native Stop hook reaching `gang hook`, so this harness supplies an immediate native turn boundary; cooperative ticks retry spools independently. Such a collar cannot be adopted because an existing pane does not prove the launch-installed hook |

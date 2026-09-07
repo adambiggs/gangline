@@ -245,6 +245,23 @@ print(*levels, sep=\"\\n\")
 GANG_BUSY_REGEX="esc to interrupt"
 GANG_QUIET_AT_REST=1
 GANG_OCCUPIED_REGEX='^› [0-9]+\. '
+# SELF-CLOSING ADVISORIES IN CODEX 0.151.0, enumerated from the TUI sources:
+#
+# - safety_buffering's retry form offers Retry with a faster model, Dismiss and
+#   keep waiting, and Learn more. A cooperative tick chooses option 2 below:
+#   it preserves the requested model, and this is the exact form Gangline dismisses.
+# - safety_buffering without a faster retry offers Dismiss and keep waiting as
+#   option 1 and Learn more as option 2. It remains advisory and closes when
+#   the response arrives, but gang spends neither key: this is not the
+#   retry-capable form, and the shared numbered shape is not authority to infer it.
+# - rate_limits' approaching-limit prompt can close when workspace credits
+#   become usable. Its choices switch model policy or keep the current choice,
+#   so gang leaves it occupied and sends no key.
+#
+# Connector loading, request_user_input, and app-link views also disappear on
+# external state changes, but they are functional work surfaces rather than
+# advisory menus. The occupancy regex remains broad enough to protect all
+# numbered surfaces; only the full text match below authorizes a keystroke.
 # THIS IS IN-SESSION TYPOGRAPHY. Every menu codex draws inside a session uses
 # U+203A (bytes 342 200 272). Its pre-session screens are drawn by another code
 # path that does not share the alphabet: the first-run sign-in menu observed on
@@ -410,8 +427,8 @@ GANG_QUEUE_RECALL_KEY="S-Left"
 # is what gets matched rather than any particular menu's wording above it.
 #
 # A MISS COSTS NOTHING. Where this does not match, gang reports the occupancy
-# it always reported; nothing here decides whether to type, and no key is ever
-# sent at the menu.
+# it always reported. The separate dismissal reader below recognizes only the
+# retry-capable three-choice form.
 collar_advisory() { # $1 = tmux target; 0 + what it is, 1 = not an advisory surface
   local flat
   # READ IT ACROSS THE WRAP. Codex breaks its own prose to the pane width, and
@@ -427,17 +444,61 @@ collar_advisory() { # $1 = tmux target; 0 + what it is, 1 = not an advisory surf
   printf 'Codex is waiting on its provider and says the menu closes by itself when the response is ready'
 }
 
+# TEXT ON THE ACTIVE SELECTED ROW AUTHORIZES THE KEY, NOT TEXT ELSEWHERE IN THE
+# PANE. Start at the last row beginning with Codex's selected-menu marker,
+# normalize its hard-wrapped continuation, and require every action label plus
+# the self-closing footer. The footer must also be the pane's final nonblank
+# content. That bottom anchor remains valid when the current view has no
+# numbered marker at all, and excludes matching menu text in scrollback.
+#
+# The non-search selection view accepts a bare digit as an immediate shortcut,
+# so option 2 needs no Enter and cannot accidentally submit a second action.
+# Anchoring option 1 also excludes the no-retry variant where Dismiss is first.
+collar_dismiss_advisory() { # $1 target; 0 + action, 1 no match, 2 failure + cause
+  local pane
+  pane="$(tmux capture-pane -pJ -t "$1" 2>/dev/null)" || return 1
+  printf '%s\n' "$pane" | python3 -c '
+import re
+import sys
+
+lines = sys.stdin.read().splitlines()
+selected = [index for index, line in enumerate(lines) if re.match(r"^› [0-9]+\. ", line)]
+if not selected:
+    raise SystemExit(1)
+surface = " ".join(" ".join(lines[selected[-1] :]).split())
+parts = (
+    "› 1. Retry with a faster model",
+    "2. Dismiss and keep waiting",
+    "3. Learn more",
+    "No action is required. Codex will keep waiting, and this menu will close when the response is ready.",
+)
+if not surface.endswith(parts[-1]):
+    raise SystemExit(1)
+offset = 0
+for index, part in enumerate(parts):
+    found = surface.find(part, offset)
+    if found < 0 or (index == 0 and found != 0):
+        raise SystemExit(1)
+    offset = found + len(part)
+' || return 1
+  tmux send-keys -t "$1" 2 || {
+    printf 'Codex provider wait menu matched, but option 2 could not be sent'
+    return 2
+  }
+  printf "dismissed Codex's provider wait menu with option 2"
+}
+
 # READ THE PANE PLAIN, NEVER THE DIM-STRIPPED READING. Codex draws both the
 # queue header and the recall advertisement inside ANSI dim runs, and the awk
 # in collar_input deletes a dim run wholesale — so the reading that serves the
 # composer would drop the advertisement entirely and leave this function
 # unable to tell a recognized queue from a rendering it no longer understands.
 # The capture below is therefore plain `-pJ`, with no `-e` and no stripping.
-collar_queued() { # $1 tmux target, $2 the body gang composed (optional).
+collar_queued() { # $1 tmux target, $2 exact body evidence (optional).
                   # Without a body: 0 the harness holds parked input, 1 it
                   # does not, 2 unknown with a cause.
-                  # With a body: 0 that exact body is parked, 2 not confirmed.
-                  # The body form never returns 1: a body gang cannot find in
+                  # With evidence: 0 that exact text is parked, 2 not confirmed.
+                  # The evidence form never returns 1: text gang cannot find in
                   # the queue block is a reading this collar could not make,
                   # not proof the message entered the session.
   local pane
@@ -447,7 +508,7 @@ collar_queued() { # $1 tmux target, $2 the body gang composed (optional).
   }
   printf '%s\n' "$pane" | grep -qE '^• Queued follow-up inputs' || {
     [ $# -lt 2 ] || {
-      printf 'the Codex follow-up queue is not on screen, so gang cannot confirm the body it composed is parked'
+      printf 'the Codex follow-up queue is not on screen, so gang cannot confirm its delivery evidence is parked'
       return 2
     }
     return 1
@@ -472,7 +533,7 @@ if not want or not opened or not closed or closed[-1] <= opened[0]:
 block = " ".join(lines[opened[0] + 1 : closed[-1]]).replace("\u21b3", " ")
 raise SystemExit(0 if want in " ".join(block.split()) else 1)
 ' "$2" && return 0
-    printf 'the Codex follow-up queue is on screen but does not read back as the body gang composed'
+    printf 'the Codex follow-up queue is on screen but does not contain the exact delivery evidence supplied by gang'
     return 2
   }
   printf 'the Codex follow-up queue is on screen but no longer advertises the shift+Left recall this collar sends'

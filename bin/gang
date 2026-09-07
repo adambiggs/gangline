@@ -1615,7 +1615,7 @@ load_collar() { # $1 = collar name; sets the GANG_* strategy surface
   # A name missing here is one a previously loaded collar keeps answering for
   # the next, and `declare -F` is how each of them is asked whether it exists.
   unset -f collar_context collar_context_lights collar_input collar_overlay \
-    collar_session_id collar_live_session_id collar_harness_identity collar_models collar_model_check collar_bricked collar_blocked collar_waiting collar_queued collar_advisory \
+    collar_session_id collar_live_session_id collar_harness_identity collar_models collar_model_check collar_bricked collar_blocked collar_waiting collar_queued collar_advisory collar_dismiss_advisory \
     collar_last_action collar_usage_limits collar_usage_limits_error \
     collar_auto_resume_record collar_submitted_prompt collar_native_idle 2>/dev/null || true
   # shellcheck source=/dev/null
@@ -3473,10 +3473,9 @@ overlay_title() { # $1 = window id, collar loaded; print an overlay dialog's
 # for a human decision that does not exist, while every delivery behind it
 # waits with nothing in the report to say the wait needs no one.
 #
-# THE STATE DOES NOT CHANGE, ONLY THE EXPLANATION. Dismissing the menu would
-# mean sending a bare digit at a surface that clears itself: if it goes between
-# the reading and the keystroke, that digit lands in the composer as message
-# text. Gang reports what is there and leaves the key unspent.
+# LABELING ALONE CHANGES NO STATE. A separate collar action may dismiss the
+# provider-wait form described below during a locked tick; every other advisory
+# keeps this reporting-only behavior.
 OCCUPIED_ADVISORY=""
 occupied_advisory() { # $1 = window id, collar loaded; 0 = self-clearing surface
   local output="" rc=0
@@ -3496,9 +3495,53 @@ occupied_advisory() { # $1 = window id, collar loaded; 0 = self-clearing surface
   esac
 }
 
+# ONE ADVISORY HAS A DEFINED AUTOMATIC ACTION. The collar recognises the exact
+# surface and spends its exact shortcut; this wrapper supplies the two guards
+# that make the action a delivery primitive rather than a generic menu bot:
+# the screen must currently own the composer, and the composer must return
+# empty and stable before a waiting body can be claimed. The collar binds its
+# text to that active surface; this core guard binds the surface to delivery.
+# A key that lands after the menu disappears leaves the spool untouched rather
+# than pasting over that input.
+TICK_ADVISORY_ERROR=""
+tick_dismiss_advisory() { # $1 window id; 0 dismissed and composer free,
+                          # 1 no actionable advisory, 2 action did not settle
+  local output="" rc=0 attempt=0
+  TICK_ADVISORY_ERROR=""
+  [ "${TICK_PASS:-0}" = 1 ] || return 1
+  declare -F collar_dismiss_advisory >/dev/null || return 1
+  occupied "$1" || return 1
+  occupied_advisory "$1" || return 1
+  output="$(collar_dismiss_advisory "$1")" || rc=$?
+  output="$(printf '%s' "$output" | config_sanitize)"
+  case "$rc" in
+    0) [ -n "$output" ] \
+         || die "collar_dismiss_advisory in $GANG_COLLAR_FILE spent a key without describing its action" ;;
+    1) [ -z "$output" ] \
+         || die "collar_dismiss_advisory in $GANG_COLLAR_FILE described an action while reporting none"
+       return 1 ;;
+    2) TICK_ADVISORY_ERROR="${output:-the collar could not dismiss the advisory surface}"
+       return 2 ;;
+    *) die "collar_dismiss_advisory in $GANG_COLLAR_FILE returned unknown verdict $rc" ;;
+  esac
+  while [ "$attempt" -lt 5 ]; do
+    attempt=$((attempt + 1))
+    sleep 0.2
+    if ! occupied "$1" && composer_settled "$1" && input_clear "$1"; then
+      tmux set-option -w -t "$1" @gl_tick_action "$output" || {
+        TICK_ADVISORY_ERROR="the menu closed, but gang could not record the tick action"
+        return 2
+      }
+      return 0
+    fi
+  done
+  TICK_ADVISORY_ERROR="the collar spent its advisory shortcut, but an empty settled composer did not return"
+  return 2
+}
+
 occupancy_note() { # $1 = window id, collar loaded -> the clause a sender needs
   if occupied_advisory "$1"; then
-    printf " That surface is advisory: %s. Nobody has to answer it and gang will not, because a menu that clears itself between the reading and the keystroke takes that key as message text instead; delivery resumes on its own when it closes." \
+    printf " That surface is advisory: %s. Nobody has to answer it. This label authorizes no key: a cooperative tick requires a separate bottom-anchored collar match that selects an answer; otherwise delivery resumes on its own when the surface closes." \
       "$OCCUPIED_ADVISORY"
     return 0
   fi
@@ -4111,6 +4154,32 @@ queued_body_confirmed() { # $1 window id, $2 the body gang composed
   declare -F collar_queued >/dev/null || return 1
   [ -n "$2" ] || return 1
   collar_queued "$1" "$2" >/dev/null 2>&1
+}
+
+# CODEX TRUNCATES FOLLOW-UP PREVIEWS AFTER THREE WRAPPED ROWS. The whole body
+# therefore cannot be the witness for the expected mid-turn landing. Every
+# peer body begins with gang's attributed opening prefix through a 16-hex nonce
+# unique to that message. Its position at byte zero keeps it in Codex's retained
+# first row; unlike the optional reply-to clause after it, the prefix is shorter
+# than an ordinary queue row. A pre-existing queue has a different nonce, while
+# every message bundled behind the first prefix was part of the same single
+# paste and Enter.
+queued_envelope_confirmed() { # $1 window id, $2 attributed body gang composed
+  local tag
+  declare -F collar_queued >/dev/null || return 1
+  [ -n "$2" ] || return 1
+  tag="$(printf '%s' "$2" | python3 -c '
+import re
+import sys
+
+body = sys.stdin.read()
+match = re.match(r"^\[gang:[^#\]\x00-\x1f\x7f]+#[0-9a-f]{16}", body)
+if match is None:
+    raise SystemExit(1)
+sys.stdout.write(match.group(0))
+')" || return 1
+  [ -n "$tag" ] || return 1
+  collar_queued "$1" "$tag" >/dev/null 2>&1
 }
 
 LOCK_PATH=""
@@ -7589,6 +7658,7 @@ EOF
 
 spool_drain() { # $1 window id; whole queue oldest-first; optional $2 = locked
   local e claim rc err failed unver busy_rc=0 compaction_rc=0 witness="" keep_lock=0 mismatch=""
+  local advisory_rc=1 advisory_dismissed=0
   local bundle="" frags="" claims="" n=0 nl=$'\n'
   spool_existing "$1" || return 4
   [ -d "$SPOOL_DIR" ] || return 4
@@ -7623,12 +7693,31 @@ spool_drain() { # $1 window id; whole queue oldest-first; optional $2 = locked
   # An open compaction has its own attributed continuation path. Peer steering
   # must wait for PostCompact: accepting arbitrary mail into that native queue
   # would widen the one compaction exception beyond the message that owns it.
+  advisory_rc=0
+  tick_dismiss_advisory "$1" || advisory_rc=$?
+  case "$advisory_rc" in
+    0) advisory_dismissed=1 ;;
+    1) ;;
+    2) printf 'spool drain stopped after the advisory action: %s; the spool remains waiting\n' \
+         "$TICK_ADVISORY_ERROR" >&2
+       [ "$keep_lock" -eq 1 ] || lock_release
+       return 3 ;;
+    *) die "internal: tick_dismiss_advisory returned unknown verdict $advisory_rc" ;;
+  esac
   compaction_witness "$1" || compaction_rc=$?
   busy "$1" || busy_rc=$?
   case "$busy_rc" in
     1) ;;
     0|2)
-       if [ "${GANG_MIDTURN_INPUT:-}" = steer ] \
+       if [ "$advisory_dismissed" -eq 1 ] \
+          && [ "${GANG_MIDTURN_INPUT:-}" = 1 ] \
+          && [ "$compaction_rc" -eq 1 ] \
+          && ! occupied "$1" && composer_settled "$1" && input_clear "$1"; then
+         # The collar just removed a UI that swallowed this already-attributed
+         # body. Codex accepts ordinary mid-turn input here; the exception is
+         # scoped to the same locked tick pass that spent the menu shortcut.
+         witness=park_confirm
+       elif [ "${GANG_MIDTURN_INPUT:-}" = steer ] \
           && [ "$compaction_rc" -eq 1 ] \
           && ! occupied "$1" && composer_settled "$1" && input_clear "$1"; then
          # The collar declares that Enter against this free mid-turn composer
@@ -8416,7 +8505,8 @@ stage_clear() { # $1 = window id; drop a recorded paste once it is provably ours
 }
 
 inject() { # $1 window, $2 text, $3 head, $4 locked,
-           # $5 witness: queued for compaction, steer for attributed mid-turn input
+           # $5 witness: queued for compaction, steer for attributed mid-turn
+           # input, park_confirm for attributed input that must match its queue
   local buf="gang-$$" frag before before_rc=0 after after_rc=0 paste_looks=0
   local tname keep_lock=0 mismatch=""
   frag="${2%%$'\n'*}"
@@ -8542,6 +8632,11 @@ inject() { # $1 window, $2 text, $3 head, $4 locked,
     # The collar declares that Enter during a turn is accepted as native
     # steering, whether the next box frame is empty or shows its queue hint.
     steer) submit_verify "$1" "$after" "$frag" paste park_record "$2" ;;
+    # Codex accepts this already-attributed body into its native follow-up
+    # queue. Defer the turn stamp until the post-Enter reading distinguishes a
+    # parked landing from an ordinary submission, and retain the collar's
+    # stronger proof that the queue preview names this envelope's unique prefix.
+    park_confirm) submit_verify "$1" "$after" "$frag" paste park_confirm "$2" ;;
     # Ordinary delivery accepts only a verified submission. A harness queue is
     # recovery state, not a landing: busy `park` collars spool before reaching
     # this function, so a queued reading here is unexpected and fails closed.
@@ -8562,9 +8657,10 @@ inject() { # $1 window, $2 text, $3 head, $4 locked,
 # harness's queue is the harness's, and clearing it would delete the very
 # message being recovered.
 submit_verify() { # $1 window id, $2 the box the Enter goes against, $3 fragment,
-                  # $4 paste|recall, $5 park_ok|park_record accepted landing,
+                  # $4 paste|recall, $5 park_ok|park_record|park_confirm landing,
                   # $6 the body gang composed, recorded if the harness parks it
   local tname verb noun stuck mayclear unchanged=0 looks=0 posted
+  local deferred_turn=0 turn_before="" turn_after=""
   tname="$(agent_name_of "$1")"
   case "$4" in
     paste)  verb="pasted" noun="paste" stuck=", and would not clear" mayclear=1 ;;
@@ -8580,7 +8676,17 @@ submit_verify() { # $1 window id, $2 the box the Enter goes against, $3 fragment
   # a native UserPromptSubmit/Stop pair can overwrite it even when a tiny turn
   # opens and closes before submission verification returns. A collar without
   # Stop cannot close the bracket, and a compaction continuation is meant to
-  # remain queued, so neither acquires this event fact.
+  # remain queued, so neither acquires this event fact. The advisory path must
+  # first distinguish a parked mid-turn landing from an ordinary submission;
+  # preserve its old record here and stamp only the latter below.
+  if [ "${TICK_PASS:-0}" = 1 ] && [ "${GANG_STOP_HOOK:-}" = 1 ] \
+     && [ "${5:-}" = park_confirm ]; then
+    deferred_turn=1
+    turn_before="$(window_option "$1" @gl_turn)" || {
+      stage_record "$1" "'$3' is staged unsent in this box — its turn record could not be read before Enter" "$2"
+      die "submit NOT performed: '$3' was $verb into the input box of $tname, but gang could not read the turn record needed to distinguish a parked follow-up from a new turn. Enter was NOT sent; the $noun is staged there now"
+    }
+  fi
   [ "${TICK_PASS:-0}" != 1 ] || [ "${GANG_STOP_HOOK:-}" != 1 ] || [ -n "${5:-}" ] \
     || turn_state_write "$1" open
   tmux send-keys -t "$1" Enter
@@ -8634,6 +8740,15 @@ submit_verify() { # $1 window id, $2 the box the Enter goes against, $3 fragment
             stage_forget "$1"
             parked_record "$1" "$2" "${6:-}"
             return 0 ;;
+          park_confirm) if queued_envelope_confirmed "$1" "${6:-}"; then
+                # Codex retained this delivery's unique attribution prefix in
+                # the truncated preview, so the native queue owns the whole
+                # single-paste bundle even when its tail is not rendered.
+                stage_forget "$1"
+                parked_record "$1" "$2" "${6:-}"
+                return 0
+              fi
+              submit_parked "$1" "$3" "$4" "$2" "${6:-}" ;;
           '') if queued_body_confirmed "$1" "${6:-}"; then
                 # Parked, and provably THIS body. It enters the session at the
                 # next native boundary with nothing for the sender to do, so
@@ -8666,6 +8781,13 @@ submit_verify() { # $1 window id, $2 the box the Enter goes against, $3 fragment
   # retained record beside a delivery that then verified. The clearing
   # evidence is the gone obstruction this verified path just walked through,
   # never retroactive proof the RECORDED body was delivered.
+  if [ "$deferred_turn" -eq 1 ]; then
+    turn_after="$(window_option "$1" @gl_turn)" || turn_after="$turn_before"
+    # Native hooks win every race they observed, including a tiny turn that
+    # opened and closed while the queue checks ran. Only an unchanged record
+    # means this verified ordinary submission still needs Gangline's edge.
+    [ "$turn_after" != "$turn_before" ] || turn_state_write "$1" open
+  fi
   stage_forget "$1"
 }
 
@@ -10330,6 +10452,9 @@ cmd_hitch() {
   hitch_register "$id" "$name" @gl_dir "$dir"
   hitch_register "$id" "$name" @gl_task "$task"
   hitch_register "$id" "$name" @gl_hitched_at "$(date +%s)"
+  # An explain action belongs to one native process. A resumed window retains
+  # its options, so every hitch explicitly retires the prior launch's record.
+  hitch_register "$id" "$name" @gl_tick_action ""
   stamp_binary_id "$id" "$name"
   spool_mint "$id"
   # AFTER THIS SESSION HAS A SPOOL OF ITS OWN, and only for the hitch that
@@ -12426,7 +12551,7 @@ explain_blocked_report() {
 }
 
 cmd_explain() {
-  local name="${1:-}" pane scope_unit="" harness_identity="" harness_lost="" harness_unreadable=""
+  local name="${1:-}" pane scope_unit="" harness_identity="" harness_lost="" harness_unreadable="" tick_action=""
   [ $# -le 1 ] || die "explain: unexpected argument '$2'"
   case "$name" in ''|-*) cmd_help explain; exit 1 ;; esac
   resolve "$name"
@@ -12486,6 +12611,10 @@ cmd_explain() {
   explain_blocked_report
   explain_rule_report GANG_BUSY_REGEX \
     "$EXPLAIN_BUSY_RESULT" "$EXPLAIN_BUSY_FRAGMENT"
+  tick_action="$(tmux show-options -wqv -t "$AGENT_ID" @gl_tick_action 2>/dev/null)" \
+    || tick_action=""
+  tick_action="$(printf '%s' "$tick_action" | config_sanitize)"
+  [ -z "$tick_action" ] || printf 'tick action: %s\n' "$tick_action"
 }
 
 # A WAIT IS A TEMPORARY TMUX BARRIER, NOT TEAM STATE. Each caller owns one
