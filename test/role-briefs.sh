@@ -98,7 +98,31 @@ window_id() {
   return 1
 }
 window_names() { tmux -S "$TMUX_SOCKET" list-windows -t "=$GANG_SESSION" -F '#W' 2>/dev/null || true; }
-pane_all() { tmux -S "$TMUX_SOCKET" capture-pane -pJ -S - -t "$(window_id "$1")"; }
+# A PANE CAPTURE IS A RENDERING, AND A RENDERING IS BOUNDED BY THE GRID. A
+# startup contract is pasted into a line editor, which redraws a buffer taller
+# than its screen over itself: whatever scrolled away is not on the pane
+# afterwards, while the delivery it came from is still byte-exact. A `contains`
+# then names a missing sentence rather than the pane that lost it, and an
+# `excludes` passes for having lost the line it was looking for -- so neither
+# reading may be trusted from a pane too small to have held the delivery.
+#
+# The precondition is taken at each read rather than once at startup, because
+# a body pasted here can outgrow a grid that is exactly what was asked for: a
+# correct grid and a grown body cost the capture the same way. A read that
+# fails it is recorded and asserted at the end of the run, because an
+# `excludes` reading a fragment reports nothing at all.
+PANE_GRID=200x100
+CAPTURE_FAULTS="$TEST_ROOT/capture-faults"
+: > "$CAPTURE_FAULTS"
+pane_all() {
+  local id state
+  id="$(window_id "$1")"
+  state="$(tmux -S "$TMUX_SOCKET" display-message -p -t "$id" \
+    '#{pane_width}x#{pane_height} scrolled=#{history_size}')"
+  [ "$state" = "$PANE_GRID scrolled=0" ] \
+    || printf '%s %s\n' "$1" "$state" >> "$CAPTURE_FAULTS"
+  tmux -S "$TMUX_SOCKET" capture-pane -pJ -S - -t "$id"
+}
 drop_agent() { "$GANG" drop "$1" >/dev/null; }
 # Mirrors config_path: gang reports operator-facing paths with HOME collapsed,
 # so an expectation built from an absolute path has to collapse it the same way
@@ -115,8 +139,17 @@ selected() { [ -z "${ROLE_ACS:-}" ] || case " $ROLE_ACS " in *" $1 "*) return 0 
 run_ac() { if selected "$1"; then "$1"; fi; }
 
 tmux -S "$TMUX_SOCKET" new-session -d -s role-grid-fixture -n grid "PS1='❯ ' bash --norc"
-tmux -S "$TMUX_SOCKET" set-option -g default-size 200x100
-tmux -S "$TMUX_SOCKET" resize-window -t '=role-grid-fixture:grid' -x 200 -y 100
+# `window-size latest` sizes the first window of a detached `new-session` from
+# the terminal of the transient client that ran the command -- 80x23 where that
+# terminal is 80x24 and a status line is taken -- while `new-window` ignores its
+# command client and falls back to default-size. gang opens whichever of the two
+# the roster calls for, so on a tmux that reads the command client the grid below
+# reaches some agents and not others. `manual` is the documented branch that
+# answers every window from default-size, whichever build is running.
+tmux -S "$TMUX_SOCKET" set-option -g window-size manual
+tmux -S "$TMUX_SOCKET" set-option -g default-size "$PANE_GRID"
+tmux -S "$TMUX_SOCKET" resize-window -t '=role-grid-fixture:grid' \
+  -x "${PANE_GRID%x*}" -y "${PANE_GRID#*x}"
 
 ac1() {
   local prefix="$TEST_ROOT/ac1-argv" value
@@ -945,6 +978,12 @@ for ac_name in ac1 ac2 ac3 ac4 ac5 ac6 ac7 ac8 ac9 ac10 ac11 ac12 ac13 ac14 ac15
   run_ac "$ac_name"
 done
 
+if [ -s "$CAPTURE_FAULTS" ]; then
+  fail "every pane read held the whole delivery" \
+    "wanted $PANE_GRID scrolled=0, read [$(tr '\n' ';' < "$CAPTURE_FAULTS")]"
+else
+  pass "every pane read held the whole delivery"
+fi
 printf '%s role-brief checks\n' "$checks"
 if [ "$fails" -ne 0 ]; then
   printf '%s role-brief checks failed\n' "$fails" >&2
