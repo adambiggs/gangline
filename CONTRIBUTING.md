@@ -119,12 +119,17 @@ The following rules are mandatory:
 - Preserve existing assertions as required by `AGENTS.md`.
 
 The gate watchdog fixture is the sole timeout-behaviour exception. It scales
-the quiet budget to 1 second, gives the fixture a 3-second outer budget, and
-records those numbers beside the production and measured healthy budgets. Its
-pulsing control emits every 0.3 seconds for six renewals, 1.8 times the total
-quiet budget, to prove activity renews the budget. Changing the production
+the quiet budget to 1 second and joins the nested gate's own verdict event. An
+independent 120-second fixture ceiling turns a missing event into a named
+failure and performs ownership-checked cleanup; it is not evidence that a child
+finished. `GANG_TEST_GATE_EVENT_CEILING` may lower that ceiling only for a red
+fixture that deliberately removes the event. The fixture records those values
+beside the 300-second production budget and 104-second measured healthy output
+gap. Its pulsing control emits every 0.3 seconds for six renewals, 1.8 times the
+total quiet budget, to prove activity renews the budget. Changing the production
 value requires a fresh healthy output-gap measurement; changing the scaled
-values requires remeasuring the fixture snapshot and updating its margin.
+values or fixture ceiling requires remeasuring the fixture snapshot and updating
+its margin.
 
 `test/lint.sh` enforces the shell timing ban across `test/` and executable CI
 helpers. `.github/workflows/shell.yml` enforces the suite ceiling.
