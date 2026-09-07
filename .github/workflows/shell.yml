@@ -80,6 +80,18 @@ jobs:
           set -eu
           command -v tmux >/dev/null || sudo apt-get install -y tmux
 
+      - name: User service manager
+        run: |
+          set -eu
+          runner_uid="$(id -u)"
+          sudo loginctl enable-linger "$USER"
+          sudo systemctl start "user@$runner_uid.service"
+          export XDG_RUNTIME_DIR="/run/user/$runner_uid"
+          export DBUS_SESSION_BUS_ADDRESS="unix:path=/run/user/$runner_uid/bus"
+          systemd-run --user --wait --pipe --collect --service-type=exec /bin/true
+          echo "XDG_RUNTIME_DIR=$XDG_RUNTIME_DIR" >> "$GITHUB_ENV"
+          echo "DBUS_SESSION_BUS_ADDRESS=$DBUS_SESSION_BUS_ADDRESS" >> "$GITHUB_ENV"
+
       - name: Integration test
         # Measured 3m45s for integration.sh and 4m09s for the capped complete
         # gate on 2026-08-14. Fifteen minutes leaves at least 3x that observed
@@ -125,6 +137,18 @@ jobs:
           set -eu
           sudo apt-get update
           sudo apt-get install -y libevent-dev libncurses-dev bison pkg-config
+
+      - name: User service manager
+        run: |
+          set -eu
+          runner_uid="$(id -u)"
+          sudo loginctl enable-linger "$USER"
+          sudo systemctl start "user@$runner_uid.service"
+          export XDG_RUNTIME_DIR="/run/user/$runner_uid"
+          export DBUS_SESSION_BUS_ADDRESS="unix:path=/run/user/$runner_uid/bus"
+          systemd-run --user --wait --pipe --collect --service-type=exec /bin/true
+          echo "XDG_RUNTIME_DIR=$XDG_RUNTIME_DIR" >> "$GITHUB_ENV"
+          echo "DBUS_SESSION_BUS_ADDRESS=$DBUS_SESSION_BUS_ADDRESS" >> "$GITHUB_ENV"
 
       - name: Build tmux ${{ env.TMUX_RAW_VERSION }}
         if: steps.tmux-raw.outputs.cache-hit != 'true'

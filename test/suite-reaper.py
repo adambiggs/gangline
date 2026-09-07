@@ -39,6 +39,7 @@ import secrets
 import select
 import shutil
 import signal
+import socket
 import subprocess
 import sys
 
@@ -58,6 +59,12 @@ FORBIDDEN_IN_PATH = "\n"
 
 GONE = "gone"
 UNSUPPORTED = "unsupported"
+PARENT = ".suite-reaper-parent"
+WATCH_ERROR = ".suite-reaper-watch-error"
+
+
+def removal_error(root):
+    return "%s could not be removed and is still there to read; nothing else removes it" % root
 
 
 def bound_paths():
@@ -311,10 +318,7 @@ def sweep(root, token=""):
     # said, and where to look has to be said with it.
     shutil.rmtree(root, ignore_errors=True)
     if os.path.exists(root):
-        sys.stderr.write(
-            "suite-reaper: %s could not be removed and is still there to read;"
-            " nothing else removes it\n" % root
-        )
+        sys.stderr.write("suite-reaper: %s\n" % removal_error(root))
     return reaped
 
 
@@ -323,6 +327,103 @@ def start_time(pid):
     with open("/proc/%d/stat" % pid, encoding="utf-8", errors="replace") as stream:
         data = stream.read()
     return data[data.rindex(")") + 1:].split()[19]
+
+
+def parent_holder(root):
+    """The one host process holding this run's parent identity open."""
+    try:
+        wanted = os.stat(os.path.join(root, PARENT))
+    except OSError:
+        return None
+    matches = []
+    for entry in os.listdir("/proc"):
+        if not entry.isdigit():
+            continue
+        fd_dir = "/proc/%s/fd" % entry
+        try:
+            descriptors = os.listdir(fd_dir)
+        except OSError:
+            continue
+        for descriptor in descriptors:
+            try:
+                held = os.stat(os.path.join(fd_dir, descriptor))
+            except OSError:
+                continue
+            if (held.st_dev, held.st_ino) == (wanted.st_dev, wanted.st_ino):
+                matches.append(int(entry))
+                break
+    return matches[0] if len(matches) == 1 else None
+
+
+def cgroup(pid):
+    """The unified cgroup path holding `pid`, or "" when unreadable."""
+    try:
+        with open("/proc/%d/cgroup" % pid, encoding="utf-8") as stream:
+            for line in stream:
+                hierarchy, controllers, path = line.rstrip("\n").split(":", 2)
+                if hierarchy == "0" and not controllers:
+                    return path
+    except (OSError, ValueError):
+        pass
+    return ""
+
+
+def within_cgroup(candidate, boundary):
+    """Whether `candidate` is `boundary` or one of its descendants."""
+    return candidate == boundary or candidate.startswith(boundary.rstrip("/") + "/")
+
+
+def pid_namespace(pid):
+    """The PID namespace inode visible for `pid`, or ""."""
+    try:
+        return os.readlink("/proc/%d/ns/pid" % pid)
+    except OSError:
+        return ""
+
+
+def nested_pid_namespace(pid):
+    """Whether the host sees `pid` below its own PID namespace."""
+    try:
+        with open("/proc/%d/status" % pid, encoding="utf-8") as stream:
+            for line in stream:
+                if line.startswith("NSpid:"):
+                    return len(line.split()) > 2
+    except OSError:
+        pass
+    return False
+
+
+def watch_error(root, message):
+    """Leave a watcher-start refusal where its waiting parent can read it."""
+    try:
+        with open(os.path.join(root, WATCH_ERROR), "w", encoding="utf-8") as stream:
+            stream.write("suite-reaper: %s\n" % message)
+    except OSError:
+        pass
+
+
+def notify_ready():
+    """Tell a Type=notify transient service that the pidfd is armed."""
+    address = os.environ.get("NOTIFY_SOCKET", "")
+    if not address:
+        raise OSError("the watcher service supplied no readiness socket")
+    if address.startswith("@"):
+        address = "\0" + address[1:]
+    with socket.socket(socket.AF_UNIX, socket.SOCK_DGRAM) as channel:
+        channel.connect(address)
+        channel.sendall(b"READY=1")
+
+
+def log_event(line):
+    """Append one diagnostic event when this run asked for a watcher log."""
+    path = os.environ.get("SUITE_REAPER_LOG", "")
+    if not path:
+        return
+    try:
+        with open(path, "a", encoding="utf-8") as stream:
+            stream.write(line + "\n")
+    except OSError:
+        pass
 
 
 def latch(pid, expected):
@@ -394,19 +495,71 @@ def announce(root, reaped):
             pass
 
 
-def watch(root, pid, expected, token):
+def watch(root, token):
+    pid = parent_holder(root)
+    if pid is None:
+        watch_error(root, "the run's parent identity has no single holder")
+        return 3
+    try:
+        expected = start_time(pid)
+    except (OSError, ValueError, IndexError):
+        watch_error(root, "the run's parent ended before its watcher was armed")
+        return 3
     handle = latch(pid, expected)
     if handle == UNSUPPORTED:
-        sys.stderr.write(
-            "suite-reaper: no pidfd for %s, so %s is not watched\n" % (pid, root)
-        )
+        watch_error(root, "no pidfd for %s, so %s is not watched" % (pid, root))
         return 3
-    if handle != GONE:
-        try:
-            select.select([handle], [], [], None)
-        finally:
-            os.close(handle)
-    announce(root, sweep(root, token) or [])
+    if handle == GONE:
+        watch_error(root, "the run's parent ended before its watcher was armed")
+        return 3
+    # parent_holder() and start_time() are separate /proc reads. The pidfd pins
+    # the process latched between them; confirming that process still holds the
+    # identity inode keeps a reused number from binding the watch to a stranger.
+    if parent_holder(root) != pid:
+        os.close(handle)
+        watch_error(root, "the run's parent identity changed while its watcher was armed")
+        return 3
+    own_cgroup = cgroup(os.getpid())
+    parent_cgroup = cgroup(pid)
+    if not own_cgroup or not parent_cgroup or within_cgroup(own_cgroup, parent_cgroup):
+        os.close(handle)
+        watch_error(root, "the watcher did not leave the run's cgroup")
+        return 3
+    if nested_pid_namespace(pid) and pid_namespace(pid) == pid_namespace(os.getpid()):
+        os.close(handle)
+        watch_error(root, "the watcher did not leave the run's PID namespace")
+        return 3
+    log_event(
+        "%s\tarmed\tparent=%s\tparent-cgroup=%s\twatcher-cgroup=%s"
+        "\tparent-pidns=%s\twatcher-pidns=%s"
+        % (
+            root,
+            pid,
+            parent_cgroup,
+            own_cgroup,
+            pid_namespace(pid),
+            pid_namespace(os.getpid()),
+        )
+    )
+    try:
+        notify_ready()
+    except OSError as error:
+        os.close(handle)
+        watch_error(root, str(error))
+        return 3
+    try:
+        select.select([handle], [], [], None)
+    finally:
+        os.close(handle)
+    reaped = sweep(root, token) or []
+    if os.path.exists(root):
+        # A detached service's stderr belongs to the journal, not the suite
+        # process that armed it. The root is the one artifact guaranteed to
+        # survive this failure, so leave the same diagnostic there as well.
+        watch_error(root, removal_error(root))
+        announce(root, reaped)
+        return 4
+    announce(root, reaped)
     return 0
 
 
@@ -438,11 +591,11 @@ def main(argv):
             sys.stderr.write("suite-reaper: %s\n" % reason)
             return 3
         return 0
-    if len(argv) >= 6 and argv[1] == "--watch":
-        return watch(argv[2], int(argv[3]), argv[4], argv[5])
+    if len(argv) >= 4 and argv[1] == "--watch":
+        return watch(argv[2], argv[3])
     sys.stderr.write(
         "suite-reaper: --claim ROOT | --sweep ROOT [TOKEN]"
-        " | --start-time PID | --watchable | --watch ROOT PID START TOKEN\n"
+        " | --start-time PID | --watchable | --watch ROOT TOKEN\n"
     )
     return 2
 

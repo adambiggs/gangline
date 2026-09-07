@@ -1774,6 +1774,32 @@ reaper_live_servers() { # $1 run root, $2 socket outside it -> one server pid pe
   done | sort -u
 }
 
+reaper_wait_host_identity() { # $1 host pid, $2 start time -> return when it is gone
+  "$(suite_reaper_python)" - "$1" "$2" <<'PY'
+import errno
+import os
+import select
+import sys
+
+pid = int(sys.argv[1])
+expected = sys.argv[2]
+try:
+    handle = os.pidfd_open(pid)
+except OSError as error:
+    if error.errno == errno.ESRCH:
+        sys.exit(0)
+    raise
+try:
+    with open("/proc/%d/stat" % pid, encoding="utf-8", errors="replace") as stream:
+        stat = stream.read()
+    if stat[stat.rindex(")") + 1:].split()[19] != expected:
+        sys.exit(0)
+    select.select([handle], [], [], None)
+finally:
+    os.close(handle)
+PY
+}
+
 reaper_fix="$RUN_ROOT/suite-reaper"
 mkdir -p "$reaper_fix"
 reaper_label="gangline-reaper-outside-$$"
@@ -1867,6 +1893,183 @@ for reaper_case in early term kill; do
     pass "$reaper_ending leaves no fixture root behind"
   fi
 done
+
+# A NEW SESSION IS STILL IN THE CGroup THAT STARTED IT. The gate gives each
+# mandatory step a killable execution boundary, and the harness that invoked
+# the gate may give the whole run one too. A watcher left in that boundary is
+# killed beside an abruptly ended parent, before it can sweep a server started
+# outside the boundary. This fixture gives the stand-in run a transient unit,
+# leaves its adopted server beside that unit, and waits for the exact watcher
+# process to be gone before reading the server. That makes the result an
+# ordering fact, not a race with the sweep.
+reaper_unit_nonce="${SUITE_REAPER_TOKEN:0:16}"
+reaper_cgroup_probe="gangline-reaper-probe-$reaper_unit_nonce"
+reaper_cgroup_available=0
+systemd-run --user --quiet --wait --pipe --collect --service-type=exec \
+  --unit="$reaper_cgroup_probe" /bin/true >/dev/null 2>&1 \
+  && reaper_cgroup_available=1
+if [ "$reaper_cgroup_available" -eq 1 ]; then
+  reaper_cgroup_root="$reaper_fix/cgroup-parent"
+  reaper_cgroup_label="gangline-reaper-cgroup-$reaper_unit_nonce"
+  reaper_cgroup_socket="/tmp/tmux-$(id -u)/$reaper_cgroup_label"
+  reaper_cgroup_unit="gangline-reaper-parent-$reaper_unit_nonce"
+  suite_reaper_track "$reaper_cgroup_socket"
+  env -u TMUX_TMPDIR tmux -L "$reaper_cgroup_label" new-session -d \
+    -s reaper-cgroup -n seed "PS1='> ' bash --norc"
+  equal "the cgroup fixture starts its adopted server outside the parent boundary" \
+    "1" "$(reaper_live_servers "$reaper_cgroup_root" "$reaper_cgroup_socket" | wc -l | tr -d ' ')"
+  cat > "$reaper_fix/cgroup-parent.sh" <<SH
+#!/usr/bin/env bash
+# SPDX-License-Identifier: Apache-2.0
+set -euo pipefail
+. "$ROOT/test/suite-python.sh"
+. "$ROOT/test/suite-reaper.sh"
+suite_reaper_start "$reaper_cgroup_root"
+suite_reaper_track "$reaper_cgroup_socket"
+"$(suite_reaper_python)" - "$reaper_cgroup_root" \
+  > "$reaper_fix/cgroup-watcher" <<'PY'
+import os
+import sys
+
+root = os.fsencode(sys.argv[1])
+matches = []
+for entry in os.listdir("/proc"):
+    if not entry.isdigit():
+        continue
+    try:
+        with open("/proc/%s/cmdline" % entry, "rb") as stream:
+            argv = stream.read().split(b"\0")
+        if b"--watch" not in argv or root not in argv:
+            continue
+        with open("/proc/%s/stat" % entry, encoding="utf-8", errors="replace") as stream:
+            stat = stream.read()
+        started = stat[stat.rindex(")") + 1:].split()[19]
+        matches.append((int(entry), started))
+    except (OSError, ValueError, IndexError):
+        continue
+if len(matches) != 1:
+    sys.stderr.write("expected one watcher for %r, found %r\n" % (sys.argv[1], matches))
+    sys.exit(1)
+sys.stdout.write("%s %s\n" % matches[0])
+PY
+tmux -S "$reaper_barrier_socket" wait-for -S reaper-cgroup-up
+tmux -S "$reaper_barrier_socket" wait-for reaper-cgroup-hold
+kill -KILL "\$\$"
+SH
+  chmod +x "$reaper_fix/cgroup-parent.sh"
+  systemd-run --user --quiet --wait --pipe --collect --service-type=exec \
+    --unit="$reaper_cgroup_unit" "$reaper_fix/cgroup-parent.sh" &
+  reaper_cgroup_client=$!
+  tmux -S "$reaper_barrier_socket" wait-for reaper-cgroup-up
+  read -r reaper_cgroup_watcher reaper_cgroup_started \
+    < "$reaper_fix/cgroup-watcher"
+  tmux -S "$reaper_barrier_socket" wait-for -S reaper-cgroup-hold
+  reaper_cgroup_rc=0
+  wait "$reaper_cgroup_client" || reaper_cgroup_rc=$?
+  equal "the cgroup fixture's parent really was killed outright" \
+    "255" "$reaper_cgroup_rc"
+  reaper_cgroup_wait_rc=0
+  reaper_wait_host_identity "$reaper_cgroup_watcher" "$reaper_cgroup_started" \
+    || reaper_cgroup_wait_rc=$?
+  equal "the cgroup fixture observes the exact watcher process exit" \
+    "0" "$reaper_cgroup_wait_rc"
+  equal "a parent execution boundary killed outright leaves no adopted tmux server behind" \
+    "" "$(reaper_live_servers "$reaper_cgroup_root" "$reaper_cgroup_socket")"
+  if [ -e "$reaper_cgroup_root" ]; then
+    fail "and its watcher removes the fixture root" "$reaper_cgroup_root is still there"
+  else
+    pass "and its watcher removes the fixture root"
+  fi
+else
+  unknown "a watcher survives the cgroup that ends its parent" \
+    "this host has no reachable systemd user manager for an isolated fixture"
+fi
+
+# A CHILD PID NAMESPACE DIES WITH ITS INIT. Starting the watcher inside that
+# namespace therefore gives it the same fate as the parent even after setsid.
+# The adopted server below starts outside the child namespace, as a server a
+# host-side fixture or an already-running tmux server does. The readiness log
+# records both namespace and cgroup identities before the parent is released;
+# the done barrier then proves that this exact watcher survived PID 1's death
+# long enough to sweep.
+reaper_namespace_probe="gangline-reaper-namespace-probe-$reaper_unit_nonce"
+reaper_namespace_available=0
+systemd-run --user --quiet --wait --pipe --collect --service-type=exec \
+  --unit="$reaper_namespace_probe" /usr/bin/unshare -Urpf --mount-proc \
+  /bin/true >/dev/null 2>&1 && reaper_namespace_available=1
+if [ "$reaper_namespace_available" -eq 1 ]; then
+  reaper_namespace_root="$reaper_fix/namespaced-parent"
+  reaper_namespace_label="gangline-reaper-namespace-$reaper_unit_nonce"
+  reaper_namespace_socket="/tmp/tmux-$(id -u)/$reaper_namespace_label"
+  reaper_namespace_unit="gangline-reaper-namespace-parent-$reaper_unit_nonce"
+  reaper_namespace_log="$reaper_fix/namespace-watch.log"
+  suite_reaper_track "$reaper_namespace_socket"
+  env -u TMUX_TMPDIR tmux -L "$reaper_namespace_label" new-session -d \
+    -s reaper-namespace -n seed "PS1='> ' bash --norc"
+  cat > "$reaper_fix/namespace-parent.sh" <<SH
+#!/usr/bin/env bash
+# SPDX-License-Identifier: Apache-2.0
+set -euo pipefail
+. "$ROOT/test/suite-python.sh"
+. "$ROOT/test/suite-reaper.sh"
+export SUITE_REAPER_DONE_SOCKET="$reaper_barrier_socket"
+export SUITE_REAPER_DONE_CHANNEL=reaper-namespace-done
+export SUITE_REAPER_TMUX="$REAL_TMUX"
+export SUITE_REAPER_LOG="$reaper_namespace_log"
+suite_reaper_start "$reaper_namespace_root"
+suite_reaper_track "$reaper_namespace_socket"
+tmux -S "$reaper_barrier_socket" wait-for -S reaper-namespace-up
+tmux -S "$reaper_barrier_socket" wait-for reaper-namespace-hold
+kill -KILL "\$\$"
+SH
+  chmod +x "$reaper_fix/namespace-parent.sh"
+  systemd-run --user --quiet --wait --pipe --collect --service-type=exec \
+    --unit="$reaper_namespace_unit" /usr/bin/unshare -Urpf --mount-proc \
+    "$reaper_fix/namespace-parent.sh" &
+  reaper_namespace_client=$!
+  tmux -S "$reaper_barrier_socket" wait-for reaper-namespace-up
+  reaper_namespace_armed="$(awk -F '\t' '$2 == "armed" { print; exit }' \
+    "$reaper_namespace_log")"
+  reaper_parent_cgroup="$(sed -n 's/.*\tparent-cgroup=\([^\t]*\).*/\1/p' \
+    <<<"$reaper_namespace_armed")"
+  reaper_watcher_cgroup="$(sed -n 's/.*\twatcher-cgroup=\([^\t]*\).*/\1/p' \
+    <<<"$reaper_namespace_armed")"
+  reaper_parent_pidns="$(sed -n 's/.*\tparent-pidns=\([^\t]*\).*/\1/p' \
+    <<<"$reaper_namespace_armed")"
+  reaper_watcher_pidns="$(sed -n 's/.*\twatcher-pidns=\([^\t]*\).*/\1/p' \
+    <<<"$reaper_namespace_armed")"
+  # source-guard: whole-surface@3388e2a61e37: the armed watcher is the log's only writer before release
+  equal "the namespaced parent's watcher is armed from another cgroup" \
+    "different" \
+    "$([ -n "$reaper_parent_cgroup" ] && [ "$reaper_parent_cgroup" != "$reaper_watcher_cgroup" ] && printf different || printf same)"
+  # source-guard: whole-surface@a6710c760af6: the armed watcher is the log's only writer before release
+  equal "and from outside the child PID namespace" "different" \
+    "$([ -n "$reaper_parent_pidns" ] && [ "$reaper_parent_pidns" != "$reaper_watcher_pidns" ] && printf different || printf same)"
+  tmux -S "$reaper_barrier_socket" wait-for -S reaper-namespace-hold
+  reaper_namespace_rc=0
+  wait "$reaper_namespace_client" || reaper_namespace_rc=$?
+  case "$reaper_namespace_rc" in
+    0 | 255)
+      pass "the namespace fixture reports its forcibly ended init"
+      ;;
+    *)
+      fail "the namespace fixture reports its forcibly ended init" \
+        "systemd-run exited $reaper_namespace_rc, expected 0 or 255"
+      ;;
+  esac
+  tmux -S "$reaper_barrier_socket" wait-for reaper-namespace-done
+  equal "a child PID namespace ending leaves no adopted tmux server behind" \
+    "" "$(reaper_live_servers "$reaper_namespace_root" "$reaper_namespace_socket")"
+  if [ -e "$reaper_namespace_root" ]; then
+    fail "and its outside watcher removes the fixture root" \
+      "$reaper_namespace_root is still there"
+  else
+    pass "and its outside watcher removes the fixture root"
+  fi
+else
+  unknown "a watcher survives the PID namespace that ends its parent" \
+    "this host cannot create the isolated user and PID namespace fixture"
+fi
 
 # WHAT A RUN OWNS IS WHAT IT WROTE DOWN. Selection is a prefix of the socket's
 # bound path, so a directory argument alone would let one unset variable reach
@@ -2090,7 +2293,7 @@ equal "an adopted socket path keeps its trailing space" \
   "$(sed -n '1s/$//p' "$reaper_extra_root/.suite-reaper-extra")"
 
 # THE WATCH IS EITHER PROVIDED OR REFUSED. It rests on Linux pidfds, a readable
-# socket table, and setsid; on a host without one of them a watcher would report
+# socket table, and a systemd user manager; on a host without one a watcher would report
 # a protection it cannot give, and the run it was meant to cover would leak in
 # exactly the way this file exists to stop.
 equal "this host can be watched" "0" \
@@ -2108,22 +2311,65 @@ if [ -e "$reaper_fix/unwatchable/.suite-reaper" ]; then
 else
   pass "a refused start claims nothing"
 fi
-reaper_nosetsid_rc=0
-reaper_nosetsid_said="$(
-  # Emptying the search path is how a host without setsid is presented here;
+reaper_nosystemd_rc=0
+reaper_nosystemd_said="$(
+  # Emptying the search path is how a host without systemd-run is presented here;
   # it is confined to this subshell, which does nothing else.
   # shellcheck disable=SC2123
   PATH="$reaper_fix/empty-path"
-  suite_reaper_start "$reaper_fix/ungrouped" 2>&1)" || reaper_nosetsid_rc=$?
-equal "a host without setsid refuses too, rather than sharing the run's group" \
-  "1" "$reaper_nosetsid_rc"
-contains "and says so" "$reaper_nosetsid_said" "no setsid"
+  suite_reaper_start "$reaper_fix/ungrouped" 2>&1)" || reaper_nosystemd_rc=$?
+equal "a host without systemd-run refuses too, rather than sharing the run's boundary" \
+  "1" "$reaper_nosystemd_rc"
+contains "and says so" "$reaper_nosystemd_said" "no systemd-run"
 
 # A ROOT THAT WOULD NOT GO IS NAMED. Removal is best-effort — a teardown carries
 # on either way — but a directory that survives one is a fixture the next run
 # inherits, and a removal that failed silently reads exactly like one that
 # worked. Declining a directory this caller does not own is not that, and says
 # nothing.
+reaper_watch_stuck_root="$reaper_fix/watcher-will-not-go"
+cat > "$reaper_fix/stuck-parent.sh" <<SH
+#!/usr/bin/env bash
+# SPDX-License-Identifier: Apache-2.0
+set -euo pipefail
+. "$ROOT/test/suite-python.sh"
+. "$ROOT/test/suite-reaper.sh"
+export SUITE_REAPER_DONE_SOCKET="$reaper_barrier_socket"
+export SUITE_REAPER_DONE_CHANNEL=reaper-stuck-done
+export SUITE_REAPER_TMUX="$REAL_TMUX"
+suite_reaper_start "$reaper_watch_stuck_root"
+mkdir -p "$reaper_watch_stuck_root/held"
+: > "$reaper_watch_stuck_root/held/file"
+chmod 500 "$reaper_watch_stuck_root/held"
+tmux -S "$reaper_barrier_socket" wait-for -S reaper-stuck-up
+tmux -S "$reaper_barrier_socket" wait-for reaper-stuck-hold
+SH
+chmod +x "$reaper_fix/stuck-parent.sh"
+"$reaper_fix/stuck-parent.sh" &
+reaper_stuck_parent=$!
+tmux -S "$reaper_barrier_socket" wait-for reaper-stuck-up
+tmux -S "$reaper_barrier_socket" wait-for -S reaper-stuck-hold
+wait "$reaper_stuck_parent"
+tmux -S "$reaper_barrier_socket" wait-for reaper-stuck-done
+if [ -d "$reaper_watch_stuck_root" ]; then
+  pass "a root the detached watcher could not remove survives for inspection"
+else
+  fail "a root the detached watcher could not remove survives for inspection" \
+    "$reaper_watch_stuck_root is gone"
+fi
+reaper_watch_stuck_said=""
+if reaper_watch_stuck_line="$(sed -n '1p' \
+    "$reaper_watch_stuck_root/.suite-reaper-watch-error" 2>&1)"; then
+  reaper_watch_stuck_said="$reaper_watch_stuck_line"
+fi
+contains "the detached watcher leaves its removal diagnostic in that root" \
+  "$reaper_watch_stuck_said" \
+  "$reaper_watch_stuck_root could not be removed and is still there to read"
+chmod 700 "$reaper_watch_stuck_root/held"
+suite_reaper_claim "$reaper_watch_stuck_root" > /dev/null
+equal "the watcher-stuck fixture is removable after its permission is restored" \
+  "" "$(suite_reaper_sweep "$reaper_watch_stuck_root" 2>&1)"
+
 reaper_stuck_root="$reaper_fix/will-not-go"
 mkdir -p "$reaper_stuck_root/held"
 : > "$reaper_stuck_root/held/file"

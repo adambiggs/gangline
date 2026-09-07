@@ -5,6 +5,13 @@ rules are binding.
 
 ## Setup
 
+The Linux integration suite requires a reachable systemd user manager. Its
+detached reaper runs as a transient user service so it remains outside the
+execution cgroup and any child PID namespace that can end the suite process.
+`systemd-run --user --wait --pipe --collect --service-type=exec /bin/true`
+is the readiness probe; a failure means the suite cannot promise cleanup after
+an abrupt end and refuses to start.
+
 Enable the repository hooks:
 
 ```sh
