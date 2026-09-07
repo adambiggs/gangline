@@ -24,7 +24,10 @@ TREE_AT_START="$("$ROOT/test/gate.sh" --assert-owned)"
 # TMPDIR unusable before a test could state its result.
 RUN_ROOT="$(mktemp -d "${TMPDIR:-/tmp}/gl.XXXXXX")"
 # shellcheck disable=SC2034  # read by test/integration-readiness.sh
-TMUX_SOCKET="$RUN_ROOT/tmux-$(id -u)/default"
+TMUX_SOCKET="$RUN_ROOT/tmux-$(id -u)/gangline"
+# An explicit -S path does not create its parent. Keep the directory private,
+# as tmux requires, before the shared client wrapper routes the first fixture.
+mkdir -m 700 "$RUN_ROOT/tmux-$(id -u)"
 
 export GIT_CONFIG_GLOBAL="$RUN_ROOT/gitconfig"
 export GIT_CONFIG_SYSTEM=/dev/null
@@ -199,9 +202,34 @@ cat > "$RUN_ROOT/waitbin/tmux" <<SH
 : "\${GANG_TEST_WAIT_LEDGER:=$RUN_ROOT/wedged-barriers}"
 GANG_TEST_WAIT_STATE='$RUN_ROOT/wait-expiry'
 real='$REAL_TMUX'
+main_root='$RUN_ROOT'
+main_socket='$TMUX_SOCKET'
 SH
 cat >> "$RUN_ROOT/waitbin/tmux" <<'SH'
 set -u
+
+# THE TEST DRIVER'S BARE CLIENTS FOLLOW THE TEAM'S NAMED SOCKET, INCLUDING THE
+# CHILD SHELLS THAT READ CONFIGURATION AND COMPOSERS. This wrapper is their
+# shared executable boundary. A private-server fixture changes TMUX_TMPDIR, an
+# attached client already carries TMUX, and a global -S/-L always wins. Stop at
+# the command so capture-pane's own `-S -` start-line option is not mistaken for
+# a socket selector.
+explicit=0
+route_skip=0
+for route_word in "$@"; do
+  if [ "$route_skip" -eq 1 ]; then route_skip=0; continue; fi
+  case "$route_word" in
+    -S|-L) explicit=1; break ;;
+    -S?*|-L?*) explicit=1; break ;;
+    -[cfT]) route_skip=1 ;;
+    -*) ;;
+    *) break ;;
+  esac
+done
+if [ "$explicit" -eq 0 ] && [ -z "${TMUX:-}" ] \
+   && [ "${TMUX_TMPDIR:-}" = "$main_root" ]; then
+  set -- -S "$main_socket" "$@"
+fi
 
 # THE VERB IS NOT ALWAYS THE FIRST WORD. tmux takes its own options ahead of
 # the command, so `tmux -S <socket> wait-for <channel>` is the same blocking
@@ -420,6 +448,10 @@ cleanup() {
   [ -z "${guard_ordinary_label:-}" ] \
     || env -u TMUX -u TMUX_PANE -u TMUX_TMPDIR \
       "$REAL_TMUX" -L "$guard_ordinary_label" kill-server 2>/dev/null || true
+  [ -z "${guardpath_bypass_socket:-}" ] \
+    || "$REAL_TMUX" -S "$guardpath_bypass_socket" kill-server 2>/dev/null || true
+  [ -z "${guardpath_visible_socket:-}" ] \
+    || "$REAL_TMUX" -S "$guardpath_visible_socket" kill-server 2>/dev/null || true
   suite_reaper_sweep "$RUN_ROOT"
 }
 # A SIGNAL ENDS THE RUN; IT DOES NOT ANNOTATE IT. One handler for the exit and

@@ -1397,12 +1397,22 @@ if [ "${GANG_INTEGRATION_REQUIRE_ALL_PROBE:-0}" != 1 ]; then
   excludes "a focused required run never attests every part ran" \
     "$require_all_probe_out" "integration: every declared part ran"
 
+  # THE ONE PROBE HERE THAT ENDED THE WHOLE SUITE INSTEAD OF REPORTING. A bare
+  # assignment leaves the child's status to `set -e`, which kills this subshell
+  # before it writes its counts; the parent then has a status and nothing to
+  # read, and a run of thousands of checks ends early with a verdict on none of
+  # them. The status is a check of its own now, and the child's own output is
+  # what the failure carries, so a nested run that dies says why here.
   focused_probe_rc=0
   focused_probe_out="$(env -u GANG_INTEGRATION_REQUIRE_ALL GANG_INTEGRATION_PARTS=cli \
     GANG_INTEGRATION_REQUIRE_ALL_PROBE=1 "$ROOT/test/integration.sh" 2>&1)" \
     || focused_probe_rc=$?
-  equal "the nested focused integration probe completes successfully" \
-    "0" "$focused_probe_rc"
+  if [ "$focused_probe_rc" -ne 0 ]; then
+    fail "a green focused run ends on a green status" \
+      "status $focused_probe_rc; its last lines were [$(printf '%s\n' "$focused_probe_out" | tail -n 5)]"
+  else
+    pass "a green focused run ends on a green status"
+  fi
   contains "a focused run carries its scope in the terminal summary" \
     "$(printf '%s\n' "$focused_probe_out" | tail -n 1)" \
     "focused parts cli (full suite: cli substrate hitch compose spool readiness hooks notify usage tick)"
@@ -1985,6 +1995,71 @@ equal "a server under a root holding a space is there to be found" \
 suite_reaper_sweep "$reaper_space_root"
 equal "and the teardown reaches it" \
   "" "$(reaper_live_servers "$reaper_space_root" "")"
+
+# A NEIGHBOUR'S NAME IS NOT THIS RUN'S TO ENCODE. Finding the servers a root
+# holds means reading a name for every process on the host, and those names
+# belong to whoever started them. This suite builds fixtures out of raw bytes
+# and several runs share a box, so a process whose name is not valid UTF-8 is
+# an ordinary neighbour, not a fault. It must not decide whether this run may
+# start: claim reads the same names, and the suites exit on a claim that fails.
+#
+# THE NEIGHBOUR CANNOT OUTLIVE THIS RUN. A process holding a name like that
+# refuses every other run on the host until it goes, so it is arranged to die
+# of this shell's death rather than of this shell's teardown. The write end is
+# opened read-write before the copy starts, which never blocks and means the
+# copy's own open cannot block either: from then on the only thing keeping it
+# alive is a descriptor that closes when this process does, however it goes.
+# Every process started while it is open is started with it closed instead.
+# Inherited, it is a writer on the copy's own stdin, so the close below would
+# leave the copy reading a pipe nothing can ever end; a tmux server inherits
+# it the same way and outlives the run holding it.
+reaper_neighbour="$reaper_fix/$(printf 'nm\377x')"
+reaper_neighbour_in="$reaper_fix/neighbour-in"
+reaper_neighbour_out="$reaper_fix/neighbour-out"
+cp "$(command -v cat)" "$reaper_neighbour"
+mkfifo "$reaper_neighbour_in" "$reaper_neighbour_out"
+exec 7<> "$reaper_neighbour_in"
+"$reaper_neighbour" < "$reaper_neighbour_in" > "$reaper_neighbour_out" 7>&- &
+reaper_neighbour_pid=$!
+printf 'up\n' >&7
+# The copy cannot answer before it has been exec'd, and its name is set by the
+# exec, so this line returning is the name being there. Nothing is waited on.
+IFS= read -r reaper_neighbour_ack < "$reaper_neighbour_out"
+equal "the neighbour answers from under a name of its own" \
+  "up" "$reaper_neighbour_ack"
+reaper_neighbour_named=no
+LC_ALL=C grep -q "$(printf '\377')" "/proc/$reaper_neighbour_pid/comm" \
+  && reaper_neighbour_named=yes
+equal "and that name really is not UTF-8" "yes" "$reaper_neighbour_named"
+reaper_neighbour_root="$reaper_fix/beside-a-neighbour"
+mkdir -p "$reaper_neighbour_root"
+reaper_neighbour_rc=0
+reaper_neighbour_token="$(suite_reaper_claim "$reaper_neighbour_root" 2>&1)" \
+  || reaper_neighbour_rc=$?
+equal "a claim beside a name that is not UTF-8 is not refused" \
+  "0" "$reaper_neighbour_rc"
+case "$reaper_neighbour_token" in
+  '' | *[!0-9a-f]*)
+    fail "and what it returns is a token rather than a traceback" \
+      "got [$reaper_neighbour_token]" ;;
+  *) pass "and what it returns is a token rather than a traceback" ;;
+esac
+TMUX_TMPDIR="$reaper_neighbour_root" tmux new-session -d -s reaper-neighbour \
+  -n seed "PS1='> ' bash --norc" 7>&-
+equal "a server under that root is still there to be found" \
+  "1" "$(reaper_live_servers "$reaper_neighbour_root" "" | wc -l | tr -d ' ')"
+suite_reaper_sweep "$reaper_neighbour_root"
+equal "and the sweep beside that neighbour still ends it" \
+  "" "$(reaper_live_servers "$reaper_neighbour_root" "")"
+exec 7>&-
+wait "$reaper_neighbour_pid" 2>/dev/null || true
+if kill -0 "$reaper_neighbour_pid" 2>/dev/null; then
+  kill -KILL "$reaper_neighbour_pid" 2>/dev/null || true
+  fail "the neighbour goes when this run stops holding it open" \
+    "pid $reaper_neighbour_pid outlived the descriptor"
+else
+  pass "the neighbour goes when this run stops holding it open"
+fi
 
 # A NEWLINE HAS NO REPRESENTATION in the marker, the adopted-socket list, or the
 # kernel's own table, so a run root or socket holding one is refused where it

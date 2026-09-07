@@ -63,7 +63,24 @@ IFS=$saved_ifs
   exit 127
 }
 
-run_real() { exec "$real_tmux" "$@"; }
+guard_wait_socket=""
+run_real() {
+  if [ -n "$guard_wait_socket" ]; then
+    exec "$real_tmux" -S "$guard_wait_socket" "$@"
+  fi
+  exec "$real_tmux" "$@"
+}
+
+# STDERR CAN BE THROWN AWAY BY THE COMMAND BEING REFUSED. Duplicate each
+# guard-owned refusal onto stdout whenever stderr is not a terminal. Agent
+# harnesses capture both streams into ordinary files, so requiring stdout itself
+# to be a tty would reproduce the silent refusal that this surface prevents.
+guard_say() { # $1 complete diagnostic line
+  printf '%s\n' "$1" >&2
+  if [ ! -t 2 ]; then
+    printf '%s\n' "$1"
+  fi
+}
 
 # THE LOG ROOT IS FIXED AT HITCH TIME. A test may redirect its ordinary state
 # root, but its teardown verdict must still outlive that redirection. Gang
@@ -106,26 +123,50 @@ socket_specified=0
 label=""
 seen_command=""
 prev=""
+unknown_global=""
 for word in "$@"; do
   if [ -n "$prev" ]; then
     case "$prev" in
       -S) socket=$word ;;
       -L) label=$word ;;
-      -f|-c) : ;;
+      -f|-c|-T) : ;;
     esac
     prev=""
     continue
   fi
+  # Socket selectors belong to tmux's global option prefix. Once the command
+  # begins, a word such as wait-for's `-S` is that command's own flag.
+  [ -z "$seen_command" ] || continue
   case "$word" in
     -S) socket_specified=1; prev=-S ;;
     -L) prev=-L ;;
-    -f|-c) prev=$word ;;
+    -f|-c|-T) prev=$word ;;
+    -f?*|-c?*|-T?*) : ;;
     -S*) socket_specified=1; socket=${word#-S} ;;
     -L*) label=${word#-L} ;;
-    -*) : ;;
+    --) : ;;
+    -*) flags=${word#-}
+        while [ -n "$flags" ]; do
+          flag=${flags%"${flags#?}"}
+          case "$flag" in 2|C|D|l|N|u|v|V) ;; *) unknown_global=$word; break ;; esac
+          flags=${flags#?}
+        done ;;
     *) [ -n "$seen_command" ] || seen_command=$word ;;
   esac
 done
+
+# WAIT-FOR IS THE ONE NONDESTRUCTIVE TMUX PRIMITIVE AN AGENT LAUNCH NEEDS.
+# Test collars and user shells use it as an event barrier. Since TMUX itself is
+# withheld, route only this verb through the launch-time socket. Every teardown
+# and mutation still reaches tmux's unoccupied default unless it is explicitly
+# aimed, where the ordinary guard classification below applies.
+if [ "$socket_specified" -eq 0 ] && [ -z "$label" ] \
+   && [ -z "${TMUX:-}" ] && [ "$seen_command" = wait-for ] \
+   && [ "${GANG_TMUX_GUARD_AGENT:-}" = 1 ]; then
+  case "${GANG_TMUX_SOCKET:-}" in
+    /*) socket=$GANG_TMUX_SOCKET; guard_wait_socket=$GANG_TMUX_SOCKET ;;
+  esac
+fi
 
 # `tmux -S "$scratch_socket"` is only explicit when the variable has a value.
 # An empty value is tmux's default-server spelling in practice, which turns a
@@ -134,7 +175,7 @@ done
 # was never an intentional request to use the default socket.
 guard_refuse_empty_socket() {
   note refused-empty-socket "$@"
-  printf "gang tmux guard: REFUSED — -S needs a nonempty socket path. An empty scratch-socket variable may fall back to tmux's default server; create and pass the private socket explicitly.\n" >&2
+  guard_say "gang tmux guard: REFUSED — -S needs a nonempty socket path. An empty scratch-socket variable may fall back to tmux's default server; create and pass the private socket explicitly."
   exit 3
 }
 [ "$socket_specified" -eq 0 ] || [ -n "$socket" ] || guard_refuse_empty_socket "$@"
@@ -153,10 +194,20 @@ guard_agent_context() {
   [ -n "$guard_pane_agent" ]
 }
 
+# AN UNKNOWN GLOBAL FLAG MAY TAKE A VALUE. Treating that value as the command
+# lets a later destructive verb pass unclassified when tmux learns a new global
+# option before this guard does. Agent launches fail closed until the parser is
+# taught the option; detached operator clients retain tmux's native handling.
+if [ -n "$unknown_global" ] && guard_agent_context; then
+  note refused-unclassified-global-option "$@"
+  guard_say "gang tmux guard: REFUSED — tmux global option '$unknown_global' is not classified by this guard, so an agent invocation cannot safely determine which later word is the command. Update Gangline before using that option from an agent pane."
+  exit 3
+fi
+
 if [ "${GANG_TMUX_GUARD:-on}" = off ]; then
   if guard_agent_context; then
     note refused-agent-override "$@"
-    printf 'gang tmux guard: REFUSED — GANG_TMUX_GUARD=off is not honoured from a Gangline agent pane. Run an intentional whole-team teardown from a detached operator shell; an agent must use a nonempty private -S socket.\n' >&2
+    guard_say 'gang tmux guard: REFUSED — GANG_TMUX_GUARD=off is not honoured from a Gangline agent pane. Run an intentional whole-team teardown from a detached operator shell; an agent must use a nonempty private -S socket.'
     exit 3
   fi
   note override "$@"
@@ -177,19 +228,19 @@ fi
 guard_refuse_missing_tmpdir() {
   note refused-missing-tmux-tmpdir "$@"
   if [ -n "$socket" ]; then
-    printf 'gang tmux guard: REFUSED — TMUX_TMPDIR names a directory that does not exist: %s. tmux resolved this invocation to %s instead. Create the directory before using it, or aim the command with a nonempty -S socket. A detached operator context may use an explicit override; an agent pane cannot.\n' \
-      "$missing_tmpdir" "$socket" >&2
+    guard_say "$(printf 'gang tmux guard: REFUSED — TMUX_TMPDIR names a directory that does not exist: %s. tmux resolved this invocation to %s instead. Create the directory before using it, or aim the command with a nonempty -S socket. A detached operator context may use an explicit override; an agent pane cannot.' \
+      "$missing_tmpdir" "$socket")"
   else
-    printf 'gang tmux guard: REFUSED — TMUX_TMPDIR names a directory that does not exist: %s. tmux may silently use its default socket instead. Create the directory before using it, or aim the command with a nonempty -S socket. A detached operator context may use an explicit override; an agent pane cannot.\n' \
-      "$missing_tmpdir" >&2
+    guard_say "$(printf 'gang tmux guard: REFUSED — TMUX_TMPDIR names a directory that does not exist: %s. tmux may silently use its default socket instead. Create the directory before using it, or aim the command with a nonempty -S socket. A detached operator context may use an explicit override; an agent pane cannot.' \
+      "$missing_tmpdir")"
   fi
   exit 3
 }
 
 guard_refuse_unreadable_server() {
   note refused-unreadable-server "$@"
-  printf 'gang tmux guard: REFUSED — Gangline could not read the window registrations on %s, so it will not tear down a server whose team state it cannot determine. Inspect the socket; a detached operator context may use an explicit override, but an agent pane cannot.\n' \
-    "$socket" >&2
+  guard_say "$(printf 'gang tmux guard: REFUSED — Gangline could not read the window registrations on %s, so it will not tear down a server whose team state it cannot determine. Inspect the socket; a detached operator context may use an explicit override, but an agent pane cannot.' \
+    "$socket")"
   exit 3
 }
 
@@ -327,21 +378,19 @@ esac
 # protected_session set, 1 if no Gangline window is there, or 2 if the reading
 # itself failed. The latter is not permission to tear down an unknown server.
 protected_session=""
-guard_tab="$(printf '\t')"
-guard_format="#{session_name}${guard_tab}#{@gl_agent}"
 guard_agent_on_socket() { # $1 socket, optional $2 session target
   guard_socket=$1
   guard_target=${2:-}
   if [ -n "$guard_target" ]; then
     guard_rows="$("$real_tmux" -S "$guard_socket" list-windows -t "$guard_target" \
-      -F "$guard_format" 2>/dev/null)" || return 2
+      -f '#{!=:#{@gl_agent},}' -F '#{session_name}' 2>/dev/null)" || return 2
   else
     guard_rows="$("$real_tmux" -S "$guard_socket" list-windows -a \
-      -F "$guard_format" 2>/dev/null)" || return 2
+      -f '#{!=:#{@gl_agent},}' -F '#{session_name}' 2>/dev/null)" || return 2
   fi
   protected_session=""
-  while IFS="$guard_tab" read -r guard_session guard_agent; do
-    [ -n "$guard_agent" ] || continue
+  while IFS= read -r guard_session; do
+    [ -n "$guard_session" ] || continue
     protected_session="$guard_session"
     return 0
   done <<EOF
@@ -373,12 +422,12 @@ if [ "$seen_command" = kill-server ]; then
   esac
   team="$(guard_team_name)"
   note refused "$@"
-  printf 'gang tmux guard: REFUSED — this kill-server would end %s, the tmux server holding team '\''%s'\'' and every agent in it.\n' \
-    "$socket" "$team" >&2
-  printf 'Inside a pane $TMUX names this server and outranks TMUX_TMPDIR, so a sandbox-looking command still lands here.\n' >&2
-  printf 'Aim it: naming this socket changes nothing — kill-server is refused for any socket carrying an agent window. It opens once none does, so end them first (gang drop <name> per agent window) and the same command passes. To end the whole team on purpose, run gang down %s from a shell without this guard on its PATH.\n' \
-    "$team" >&2
-  printf 'A detached operator context may use GANG_TMUX_GUARD=off; an agent pane cannot.\n' >&2
+  guard_say "$(printf 'gang tmux guard: REFUSED — this kill-server would end %s, the tmux server holding team '\''%s'\'' and every agent in it.' \
+    "$socket" "$team")"
+  guard_say 'Inside a pane $TMUX names this server and outranks TMUX_TMPDIR, so a sandbox-looking command still lands here.'
+  guard_say "$(printf 'Aim it: naming this socket changes nothing — kill-server is refused for any socket carrying an agent window. It opens once none does, so end them first (gang drop <name> per agent window) and the same command passes. To end the whole team on purpose, run gang down %s from a shell without this guard on its PATH.' \
+    "$team")"
+  guard_say 'A detached operator context may use GANG_TMUX_GUARD=off; an agent pane cannot.'
   exit 3
 fi
 
@@ -409,11 +458,11 @@ if [ -z "$target" ]; then
   esac
   team="$(guard_team_name)"
   note refused "$@"
-  printf 'gang tmux guard: REFUSED — this kill-session names no target, so it ends the session this pane is in: team '\''%s'\'' on %s.\n' \
-    "$team" "$socket" >&2
-  printf 'Aim it: kill-session opens on a target session that carries no agent window; naming this one changes nothing while it does. End its agents first (gang drop <name> per agent window), or run gang down %s from a shell without this guard on its PATH to end the whole team on purpose.\n' \
-    "$team" >&2
-  printf 'A detached operator context may use GANG_TMUX_GUARD=off; an agent pane cannot.\n' >&2
+  guard_say "$(printf 'gang tmux guard: REFUSED — this kill-session names no target, so it ends the session this pane is in: team '\''%s'\'' on %s.' \
+    "$team" "$socket")"
+  guard_say "$(printf 'Aim it: kill-session opens on a target session that carries no agent window; naming this one changes nothing while it does. End its agents first (gang drop <name> per agent window), or run gang down %s from a shell without this guard on its PATH to end the whole team on purpose.' \
+    "$team")"
+  guard_say 'A detached operator context may use GANG_TMUX_GUARD=off; an agent pane cannot.'
   exit 3
 fi
 
@@ -422,11 +471,11 @@ guard_agent_on_socket "$socket" "$target" || guard_rc=$?
 case "$guard_rc" in
   0) team="$(guard_team_name)"
      note refused "$@"
-     printf 'gang tmux guard: REFUSED — this kill-session targets team '\''%s'\'' itself, on %s.\n' \
-       "$team" "$socket" >&2
-     printf 'Aim it: kill-session opens on a target session that carries no agent window; naming this one changes nothing while it does. End its agents first (gang drop <name> per agent window), or run gang down %s from a shell without this guard on its PATH to end the whole team on purpose.\n' \
-       "$team" >&2
-     printf 'A detached operator context may use GANG_TMUX_GUARD=off; an agent pane cannot.\n' >&2
+     guard_say "$(printf 'gang tmux guard: REFUSED — this kill-session targets team '\''%s'\'' itself, on %s.' \
+       "$team" "$socket")"
+     guard_say "$(printf 'Aim it: kill-session opens on a target session that carries no agent window; naming this one changes nothing while it does. End its agents first (gang drop <name> per agent window), or run gang down %s from a shell without this guard on its PATH to end the whole team on purpose.' \
+       "$team")"
+     guard_say 'A detached operator context may use GANG_TMUX_GUARD=off; an agent pane cannot.'
      exit 3 ;;
   2) guard_unreadable_server "$@" ;;
 esac

@@ -2394,7 +2394,7 @@ if [ "\${1:-}" = list-windows ]; then
     exit 1
   elif grep -Fqx "\$socket" "$guard_servers"; then
     case "\$target" in
-      ''|guardteam|=guardteam) cat "$guard_agent_rows" ;;
+      ''|guardteam|=guardteam) awk -F '\t' '\$2 != "" { print \$1 }' "$guard_agent_rows" ;;
     esac
   fi
   exit 0
@@ -2486,6 +2486,37 @@ contains "the unavailable-server lookup names the record it could not read" \
 contains "the unavailable-server lookup is recorded separately" \
   "$(cat "$guard_state/tmux-guard.log" 2>/dev/null)" \
   "unavailable-window-option-server"
+
+# GLOBAL OPTIONS THAT TAKE VALUES CANNOT HIDE THE VERB. tmux 3.2a's -T used to
+# leave its value classified as the command, so an aimed kill-server passed the
+# guard without a log entry. A future unknown option is refused in an agent
+# context because the guard cannot know whether the following word is its value.
+guard_out="$(guard_run "$guard_team_socket,1,0" - - \
+  -T 256 -S "$guard_team_socket" kill-server)"
+equal "a -T feature value cannot hide a destructive verb" \
+  3 "$(printf '%s' "$guard_out" | head -1)"
+if guard_reached_tmux; then
+  fail "the -T-hidden teardown never reaches tmux" "the real tmux ran"
+else
+  pass "the -T-hidden teardown never reaches tmux"
+fi
+
+rm -f -- "$guard_ran"
+guard_rc=0
+guard_out="$(env -u TMUX -u TMUX_PANE \
+  PATH="$ROOT/libexec/gang-tmux-guard:$guard_bin:/usr/bin:/bin" \
+  GANG_SESSION="$guard_session" GANG_LOCK_DIR="$guard_state" \
+  GANG_TMUX_GUARD_AGENT=1 "$guard_shim" \
+  -X value kill-server 2>&1 >/dev/null)" || guard_rc=$?
+equal "an unclassified global option fails closed in an agent launch" 3 "$guard_rc"
+contains "the unclassified-option refusal names the unsafe parse" \
+  "$guard_out" "cannot safely determine which later word is the command"
+if guard_reached_tmux; then
+  fail "an unclassified global option never reaches tmux from an agent" \
+    "the real tmux ran"
+else
+  pass "an unclassified global option never reaches tmux from an agent"
+fi
 
 # THE 2026-08-17 COMMAND, verbatim in shape: a sandbox TMUX_TMPDIR set, and
 # $TMUX quietly deciding otherwise. This is the assertion the guard exists for.
@@ -2590,6 +2621,47 @@ if "$REAL_TMUX" -S "$guard_live_socket" has-session -t "=$guard_live_session" >/
   pass "a refused real-server teardown leaves its disposable server alive"
 else
   fail "a refused real-server teardown leaves its disposable server alive" \
+    "the guard allowed kill-server to end $guard_live_session"
+fi
+
+# TMUX SANITIZES CONTROL SEPARATORS FOR A NON-UTF-8 CLIENT. Registration
+# discovery therefore filters on the option and returns only session names;
+# it does not parse a tab that the client can rewrite to an underscore.
+guard_rc=0
+guard_out="$(env -u LANG -u LC_ALL -u LC_CTYPE \
+  PATH="$ROOT/libexec/gang-tmux-guard:$guard_real_bin:$(dirname "$REAL_TMUX"):/usr/bin:/bin" \
+  GANG_SESSION=probe GANG_LOCK_DIR="$guard_real_state" \
+  GANG_TMUX_GUARD_LOG_DIR="$guard_team_log" GANG_TMUX_GUARD_AGENT=1 \
+  "$guard_shim" -S "$guard_live_socket" kill-server 2>&1 >/dev/null)" \
+  || guard_rc=$?
+equal "a locale-free client still sees a registered agent window" 3 "$guard_rc"
+contains "the locale-free teardown receives the ordinary refusal" \
+  "$guard_out" "gang tmux guard: REFUSED"
+if "$REAL_TMUX" -S "$guard_live_socket" has-session -t "=$guard_live_session" >/dev/null 2>&1; then
+  pass "the locale-free teardown leaves its disposable server alive"
+else
+  fail "the locale-free teardown leaves its disposable server alive" \
+    "the guard allowed kill-server to end $guard_live_session"
+fi
+
+# A NONEMPTY TMUX OPTION MAY STILL BE FALSE AS A CONDITION. Agent names accept
+# the literal `0`, so the filter compares against empty instead of interpreting
+# the name's truthiness.
+"$REAL_TMUX" -S "$guard_live_socket" set-option -w \
+  -t "=$guard_live_session:agent" @gl_agent 0
+guard_rc=0
+guard_out="$(PATH="$ROOT/libexec/gang-tmux-guard:$guard_real_bin:$(dirname "$REAL_TMUX"):/usr/bin:/bin" \
+  GANG_SESSION=probe GANG_LOCK_DIR="$guard_real_state" \
+  GANG_TMUX_GUARD_LOG_DIR="$guard_team_log" GANG_TMUX_GUARD_AGENT=1 \
+  "$guard_shim" -S "$guard_live_socket" kill-server 2>&1 >/dev/null)" \
+  || guard_rc=$?
+equal "a valid zero-named agent remains a protected registration" 3 "$guard_rc"
+contains "the zero-named agent teardown receives the ordinary refusal" \
+  "$guard_out" "gang tmux guard: REFUSED"
+if "$REAL_TMUX" -S "$guard_live_socket" has-session -t "=$guard_live_session" >/dev/null 2>&1; then
+  pass "the zero-named agent teardown leaves its disposable server alive"
+else
+  fail "the zero-named agent teardown leaves its disposable server alive" \
     "the guard allowed kill-server to end $guard_live_session"
 fi
 "$REAL_TMUX" -S "$guard_live_socket" kill-server >/dev/null 2>&1 || true
@@ -2880,6 +2952,190 @@ guard_out="$(PATH="$ROOT/libexec/gang-tmux-guard:$guard_bare" GANG_SESSION=guard
 equal "a PATH with no real tmux refuses rather than reporting success" 127 "$guard_rc"
 contains "and says which shim was the only tmux it found" \
   "$guard_out" "no tmux on PATH beyond this shim"
+
+# A PATH SHIM CANNOT GOVERN AN ABSOLUTE BINARY. The boundary is therefore the
+# socket: a registered pane does not inherit its team's address, and the team
+# does not occupy tmux's default socket. Each command below is entered into a
+# real Gangline pane on a separately rooted scratch server. A sentinel window
+# makes destructive reach observable without ending the fixture; the final
+# kill-server proves the server itself remains out of reach.
+guardpath_bypass_root="$guard_home/absolute-path"
+guardpath_bypass_tmux="$guardpath_bypass_root/tmux"
+guardpath_bypass_session="guardpath-bypass-$$"
+mkdir -p "$guardpath_bypass_tmux" "$guardpath_bypass_root/config" \
+  "$guardpath_bypass_root/lock" "$guardpath_bypass_root/archive"
+guardpath_bypass_env=(
+  env -u TMUX -u TMUX_PANE
+  TMUX_TMPDIR="$guardpath_bypass_tmux"
+  GANG_CONFIG_DIR="$guardpath_bypass_root/config"
+  GANG_LOCK_DIR="$guardpath_bypass_root/lock"
+  GANG_ARCHIVE_DIR="$guardpath_bypass_root/archive"
+  GANG_SESSION="$guardpath_bypass_session"
+  GANG_TEST_COLLARS=1 GANG_TEST_TICK_MODE=manual GANG_SCOPE=off
+)
+guardpath_hitch_rc=0
+"${guardpath_bypass_env[@]}" "$GANG" hitch probe -c bash \
+  -d "$guardpath_bypass_root" >/dev/null 2>&1 || guardpath_hitch_rc=$?
+equal "the absolute-path fixture hitches on its scratch server" 0 "$guardpath_hitch_rc"
+guardpath_bypass_socket=""
+if [ -f "$guardpath_bypass_root/lock/teams/$guardpath_bypass_session" ]; then
+  IFS= read -r guardpath_bypass_socket \
+    < "$guardpath_bypass_root/lock/teams/$guardpath_bypass_session"
+fi
+if [ -n "$guardpath_bypass_socket" ] \
+  && "$REAL_TMUX" -S "$guardpath_bypass_socket" has-session \
+    -t "=$guardpath_bypass_session" >/dev/null 2>&1; then
+  pass "the absolute-path fixture proves its scratch server is live"
+else
+  fail "the absolute-path fixture proves its scratch server is live" \
+    "no live session was recorded at [$guardpath_bypass_socket]"
+fi
+guardpath_bypass_pane=""
+[ -z "$guardpath_bypass_socket" ] \
+  || guardpath_bypass_pane="$("$REAL_TMUX" -S "$guardpath_bypass_socket" \
+       display-message -p -t "=$guardpath_bypass_session:probe" '#{pane_id}' 2>/dev/null)"
+
+# THE ROUTE IS THE SOCKET TMUX ACTUALLY OPENED, not a reconstruction of its path
+# rules. The signal form's -S belongs to wait-for itself and must not be parsed
+# as tmux's global socket selector.
+guardpath_route_file="$guardpath_bypass_root/launch-socket"
+guardpath_route_channel="guardpath-route-$$"
+if [ -n "$guardpath_bypass_socket" ] && [ -n "$guardpath_bypass_pane" ]; then
+  "$REAL_TMUX" -S "$guardpath_bypass_socket" send-keys \
+    -t "$guardpath_bypass_pane" -l -- \
+    "printf '%s' \"\$GANG_TMUX_SOCKET\" > '$guardpath_route_file'; tmux wait-for -S '$guardpath_route_channel'"
+  "$REAL_TMUX" -S "$guardpath_bypass_socket" send-keys \
+    -t "$guardpath_bypass_pane" Enter
+  tmux -S "$guardpath_bypass_socket" wait-for \
+    "$guardpath_route_channel" >/dev/null 2>&1 || true
+fi
+equal "the launch carries tmux's resolved team socket" \
+  "$guardpath_bypass_socket" "$(cat "$guardpath_route_file" 2>/dev/null || true)"
+
+# shellcheck disable=SC2154  # checks is the shared counter from integration.sh
+guardpath_destructive_attempt() { # $1 label, $2 command entered in the agent pane
+  local label="$1" body="$2" sentinel="sentinel-$checks" channel="guardpath-$checks" rc=0
+  if [ -z "$guardpath_bypass_socket" ] || [ -z "$guardpath_bypass_pane" ] \
+    || ! "$REAL_TMUX" -S "$guardpath_bypass_socket" has-session \
+      -t "=$guardpath_bypass_session" >/dev/null 2>&1; then
+    fail "$label" "the scratch team was already unavailable"
+    return
+  fi
+  "$REAL_TMUX" -S "$guardpath_bypass_socket" new-window -d \
+    -t "=$guardpath_bypass_session" -n "$sentinel" 'exec cat'
+  "$REAL_TMUX" -S "$guardpath_bypass_socket" send-keys \
+    -t "$guardpath_bypass_pane" -l -- \
+    "$body; tmux wait-for -S '$channel'"
+  "$REAL_TMUX" -S "$guardpath_bypass_socket" send-keys \
+    -t "$guardpath_bypass_pane" Enter
+  tmux -S "$guardpath_bypass_socket" wait-for "$channel" >/dev/null 2>&1 \
+    || rc=$?
+  if [ "$rc" -eq 0 ] && "$REAL_TMUX" -S "$guardpath_bypass_socket" \
+    has-session -t "=$guardpath_bypass_session:$sentinel" >/dev/null 2>&1; then
+    pass "$label"
+  else
+    fail "$label" "the command reached and removed the sentinel window"
+  fi
+  "$REAL_TMUX" -S "$guardpath_bypass_socket" kill-window \
+    -t "=$guardpath_bypass_session:$sentinel" >/dev/null 2>&1 || true
+}
+
+guardpath_destructive_attempt \
+  "an absolute tmux path cannot reach the team destructively" \
+  "'$REAL_TMUX' kill-window -t '=$guardpath_bypass_session:sentinel-$checks'"
+guardpath_destructive_attempt \
+  "a tmux path copied into a shell variable cannot reach the team destructively" \
+  "tmux_copy='$REAL_TMUX'; \"\$tmux_copy\" kill-window -t '=$guardpath_bypass_session:sentinel-$checks'"
+guardpath_destructive_attempt \
+  "an absolute tmux path in a subshell cannot reach the team destructively" \
+  "( '$REAL_TMUX' kill-window -t '=$guardpath_bypass_session:sentinel-$checks' )"
+guardpath_destructive_attempt \
+  "an env -i absolute tmux path cannot reach the team destructively" \
+  "env -i TMUX=\"\${TMUX-}\" PATH=/usr/bin:/bin '$REAL_TMUX' kill-window -t '=$guardpath_bypass_session:sentinel-$checks'"
+guardpath_destructive_attempt \
+  "bare tmux cannot reach the team destructively" \
+  "tmux kill-window -t '=$guardpath_bypass_session:sentinel-$checks'"
+
+guardpath_kill_channel="guardpath-kill-server-$$"
+if [ -n "$guardpath_bypass_socket" ] && [ -n "$guardpath_bypass_pane" ] \
+  && "$REAL_TMUX" -S "$guardpath_bypass_socket" has-session \
+    -t "=$guardpath_bypass_session" >/dev/null 2>&1; then
+  "$REAL_TMUX" -S "$guardpath_bypass_socket" send-keys \
+    -t "$guardpath_bypass_pane" -l -- \
+    "'$REAL_TMUX' kill-server; tmux wait-for -S '$guardpath_kill_channel'"
+  "$REAL_TMUX" -S "$guardpath_bypass_socket" send-keys \
+    -t "$guardpath_bypass_pane" Enter
+  tmux -S "$guardpath_bypass_socket" wait-for \
+    "$guardpath_kill_channel" >/dev/null 2>&1 || true
+fi
+if [ -n "$guardpath_bypass_socket" ] \
+  && "$REAL_TMUX" -S "$guardpath_bypass_socket" has-session \
+    -t "=$guardpath_bypass_session" >/dev/null 2>&1; then
+  pass "an absolute kill-server cannot end the scratch team"
+else
+  fail "an absolute kill-server cannot end the scratch team" \
+    "the scratch server was ended"
+fi
+
+# STDERR IS NOT THE REFUSAL'S ONLY SURFACE. Run the 2026-08-31 missing-root
+# shape in a second registered scratch pane with fd 1 captured and fd 2
+# discarded. Both descriptors are non-tty, matching an agent harness tool call.
+guardpath_visible_root="$guard_home/visible-refusal"
+guardpath_visible_tmux="$guardpath_visible_root/tmux"
+guardpath_visible_session="guardpath-visible-$$"
+mkdir -p "$guardpath_visible_tmux" "$guardpath_visible_root/config" \
+  "$guardpath_visible_root/lock" "$guardpath_visible_root/archive"
+guardpath_visible_env=(
+  env -u TMUX -u TMUX_PANE
+  TMUX_TMPDIR="$guardpath_visible_tmux"
+  GANG_CONFIG_DIR="$guardpath_visible_root/config"
+  GANG_LOCK_DIR="$guardpath_visible_root/lock"
+  GANG_ARCHIVE_DIR="$guardpath_visible_root/archive"
+  GANG_SESSION="$guardpath_visible_session"
+  GANG_TEST_COLLARS=1 GANG_TEST_TICK_MODE=manual GANG_SCOPE=off
+)
+guardpath_hitch_rc=0
+"${guardpath_visible_env[@]}" "$GANG" hitch probe -c bash \
+  -d "$guardpath_visible_root" >/dev/null 2>&1 || guardpath_hitch_rc=$?
+equal "the refusal-visibility fixture hitches on its scratch server" 0 "$guardpath_hitch_rc"
+guardpath_visible_socket=""
+if [ -f "$guardpath_visible_root/lock/teams/$guardpath_visible_session" ]; then
+  IFS= read -r guardpath_visible_socket \
+    < "$guardpath_visible_root/lock/teams/$guardpath_visible_session"
+fi
+guardpath_visible_pane=""
+[ -z "$guardpath_visible_socket" ] \
+  || guardpath_visible_pane="$("$REAL_TMUX" -S "$guardpath_visible_socket" \
+       display-message -p -t "=$guardpath_visible_session:probe" '#{pane_id}' 2>/dev/null)"
+guardpath_visible_channel="guardpath-visible-$$"
+guardpath_visible_stdout="$guardpath_visible_root/refusal.stdout"
+if [ -n "$guardpath_visible_socket" ] && [ -n "$guardpath_visible_pane" ]; then
+  "$REAL_TMUX" -S "$guardpath_visible_socket" send-keys \
+    -t "$guardpath_visible_pane" -l -- \
+    "unset TMUX; TMUX_TMPDIR='$guardpath_visible_root/missing' tmux kill-server > '$guardpath_visible_stdout' 2>/dev/null; unset TMUX_TMPDIR; tmux wait-for -S '$guardpath_visible_channel'"
+  "$REAL_TMUX" -S "$guardpath_visible_socket" send-keys \
+    -t "$guardpath_visible_pane" Enter
+  tmux -S "$guardpath_visible_socket" wait-for \
+    "$guardpath_visible_channel" >/dev/null 2>&1 || true
+fi
+contains "a guard refusal survives discarded stderr with captured stdout" \
+  "$(cat "$guardpath_visible_stdout" 2>/dev/null || true)" \
+  "gang tmux guard: REFUSED"
+if [ -n "$guardpath_visible_socket" ] \
+  && "$REAL_TMUX" -S "$guardpath_visible_socket" has-session \
+    -t "=$guardpath_visible_session" >/dev/null 2>&1; then
+  pass "the stderr-discarded refusal leaves its scratch server alive"
+else
+  fail "the stderr-discarded refusal leaves its scratch server alive" \
+    "the scratch server was ended"
+fi
+
+[ -z "$guardpath_bypass_socket" ] \
+  || "$REAL_TMUX" -S "$guardpath_bypass_socket" kill-server >/dev/null 2>&1 || true
+[ -z "$guardpath_visible_socket" ] \
+  || "$REAL_TMUX" -S "$guardpath_visible_socket" kill-server >/dev/null 2>&1 || true
+guardpath_bypass_socket=""
+guardpath_visible_socket=""
 
 # TWO GUARD DIRECTORIES ON PATH USED TO SELECT EACH OTHER FOREVER. An installed
 # guard and a checkout guard both ahead of tmux left each shim excluding only

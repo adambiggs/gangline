@@ -116,7 +116,17 @@ def servers(wanted):
             continue
         pid = int(entry)
         try:
-            with open("/proc/%d/comm" % pid, encoding="utf-8") as stream:
+            # A NAME ON THIS HOST IS NOT THIS PROGRAM'S TO ENCODE. Every
+            # process on the box is read here, and a process name is whatever
+            # bytes its owner gave it. A strict decode makes one such
+            # neighbour raise out of this walk; claim() reads it too, and the
+            # suites exit on a claim that fails, so an unrelated process would
+            # decide whether this run may start at all. The socket table and
+            # /proc/PID/stat are already read the tolerant way, and the name
+            # is only ever compared against a literal.
+            with open(
+                "/proc/%d/comm" % pid, encoding="utf-8", errors="replace"
+            ) as stream:
                 comm = stream.read().strip()
         except OSError:
             continue
@@ -156,7 +166,13 @@ def marker_token(root):
     if not usable_root(root):
         return ""
     try:
-        with open(os.path.join(root, MARKER), encoding="utf-8") as stream:
+        # A marker holding bytes no run wrote is not this run's marker, which
+        # is an answer this function already has. Raising instead would end
+        # the caller over a file it is reading precisely because it does not
+        # trust what is in it.
+        with open(
+            os.path.join(root, MARKER), encoding="utf-8", errors="replace"
+        ) as stream:
             return stream.read().strip()
     except OSError:
         return ""
@@ -214,7 +230,13 @@ def extra_sockets(root):
     and trimming it here would record one path and look for another.
     """
     try:
-        with open(os.path.join(root, EXTRA), encoding="utf-8") as stream:
+        # These are socket paths, written as bytes by a shell. The kernel's
+        # own table is read with the same substitution, so reading this file
+        # any other way would spell one path here and another there and match
+        # neither.
+        with open(
+            os.path.join(root, EXTRA), encoding="utf-8", errors="replace"
+        ) as stream:
             return {line.rstrip("\n") for line in stream if line.rstrip("\n")}
     except OSError:
         return set()

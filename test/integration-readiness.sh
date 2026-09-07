@@ -1901,7 +1901,7 @@ SH
 {
   printf '#!/usr/bin/env bash\n'
   printf 'REAL=%q\n' "$(command -v ln)"
-  printf 'TMUX=%q\n' "$(command -v tmux)"
+  printf 'TMUX_CMD=%q\n' "$(command -v tmux)"
   printf 'CLAIMS=%q\n' "$compact_race_claims"
   printf 'CHANNEL=%q\n' "$compact_race_channel"
   printf 'RELEASE=%q\n' "$compact_race_release"
@@ -1915,16 +1915,16 @@ case "$last" in
     printf '%s\n' "$rc" >> "$CLAIMS"
     if [ -e "$RELEASE" ]; then
       if [ "$rc" -eq 0 ]; then
-        [ -e "$CONFIRM" ] || "$TMUX" wait-for "$CHANNEL-claim"
+        [ -e "$CONFIRM" ] || "$TMUX_CMD" wait-for "$CHANNEL-claim"
       else
-        "$TMUX" wait-for -S "$CHANNEL-claim"
-        "$TMUX" wait-for "$CHANNEL-winner-released"
+        "$TMUX_CMD" wait-for -S "$CHANNEL-claim"
+        "$TMUX_CMD" wait-for "$CHANNEL-winner-released"
         rm -f -- "$DRAFT"
         touch "$CONFIRM"
       fi
     else
       if [ "$rc" -eq 0 ]; then
-        "$TMUX" wait-for "$CHANNEL-claim"
+        "$TMUX_CMD" wait-for "$CHANNEL-claim"
       fi
     fi
     exit "$rc" ;;
@@ -1935,7 +1935,7 @@ SH
 {
   printf '#!/usr/bin/env bash\n'
   printf 'REAL=%q\n' "$(command -v rm)"
-  printf 'TMUX=%q\n' "$(command -v tmux)"
+  printf 'TMUX_CMD=%q\n' "$(command -v tmux)"
   printf 'RELEASE=%q\n' "$compact_race_release"
   printf 'CONFIRM=%q\n' "$compact_race_confirm"
   printf 'CHANNEL=%q\n' "$compact_race_channel"
@@ -1946,9 +1946,9 @@ case "$last" in
     "$REAL" "$@"; rc=$?
     if [ -e "$RELEASE" ]; then
       if [ -e "$CONFIRM" ]; then
-        "$TMUX" wait-for -S "$CHANNEL-loser-done"
+        "$TMUX_CMD" wait-for -S "$CHANNEL-loser-done"
       else
-        "$TMUX" wait-for -S "$CHANNEL-winner-released"
+        "$TMUX_CMD" wait-for -S "$CHANNEL-winner-released"
       fi
     fi
     exit "$rc" ;;
@@ -1959,7 +1959,7 @@ SH
 {
   printf '#!/usr/bin/env bash\n'
   printf 'REAL=%q\n' "$(command -v readlink)"
-  printf 'TMUX=%q\n' "$(command -v tmux)"
+  printf 'TMUX_CMD=%q\n' "$(command -v tmux)"
   printf 'RELEASE=%q\n' "$compact_race_release"
   printf 'CHANNEL=%q\n' "$compact_race_channel"
   printf 'HOLDER=%q\n' "$compact_race_holder"
@@ -1972,8 +1972,8 @@ case "$last" in
       # Keep the liveness observation true after releasing the winner. The
       # disposable fixture's tmux server outlives every worker in this test.
       printf '%s\n' "$HOLDER"
-      "$TMUX" wait-for -S "$CHANNEL-loser-observed"
-      "$TMUX" wait-for -S "$CHANNEL-claim"
+      "$TMUX_CMD" wait-for -S "$CHANNEL-loser-observed"
+      "$TMUX_CMD" wait-for -S "$CHANNEL-claim"
       exit 0
     fi
     printf '%s\n' "$out"

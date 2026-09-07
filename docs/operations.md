@@ -829,10 +829,12 @@ that name refuses and prints the unit to stop.
 
 ### A live team cannot be found after a disconnect
 
-Ask before rebuilding. tmux clients discover the default socket, so a team
-started under a private `TMUX_TMPDIR` is invisible to a shell that no longer
-carries it — `tmux ls` finds nothing and the team is still running. Starting a
-second team over the top of the first is the failure this prevents.
+Ask before rebuilding. New Gangline teams use tmux's named `gangline` socket,
+not its default socket, and agents do not inherit the address. A bare `tmux ls`
+therefore finds nothing even while the team is healthy. Teams created by older
+builds may also live under a private `TMUX_TMPDIR` a later shell no longer
+carries. Starting a second team over either is the failure the team record
+prevents.
 
 ```sh
 gang teams
@@ -939,11 +941,17 @@ For experimental tmux work, use an explicit private socket (`tmux -L NAME ...` o
 `tmux -S PATH ...`). Never run an unaimed `tmux kill-server` or `kill-session` on
 a shared server.
 
-Inside a pane `$TMUX` names the current server and silently outranks
-`TMUX_TMPDIR`, so `env TMUX_TMPDIR=<sandbox> tmux kill-server` still addresses
-the live server. Every sandbox-aimed tmux command must therefore carry
-`tmux -S <socket>` / `tmux -L <name>`, or unset `$TMUX` first
-(`env -u TMUX tmux ...`, or `unset TMUX TMUX_PANE` at the top of a script).
+Outside Gangline, a tmux pane normally inherits `$TMUX`, which names the current
+server and silently outranks `TMUX_TMPDIR`. Gangline removes that address from
+agent launches while retaining `TMUX_PANE`; new teams also use tmux's named
+`gangline` socket instead of its default. A bare or absolute tmux client in an
+agent pane therefore has no implicit route to the team. The PATH guard preserves bare
+`tmux wait-for` as the one non-destructive exception, routing that event
+primitive through an internal launch value. Use `gang` for team operations,
+and keep experimental tmux commands explicitly aimed with `tmux -S <socket>`
+or `tmux -L <name>`. Because agents run under the operator's uid, an absolute
+client explicitly aimed with the internal socket value can still reach that
+server; the socket isolation is not a privilege boundary.
 
 With `GANG_TMUX_GUARD=on`, the default, `hitch` puts a `tmux` shim at the front
 of every agent's `PATH`. For teardown it asks tmux for `#{socket_path}`, then
@@ -956,7 +964,8 @@ displayed name, but is not protective authority: a Gangline test may
 legitimately replace `GANG_SESSION` and `GANG_LOCK_DIR` with a fresh sandbox.
 An aimed private session with no registration runs, loudly when it shares a
 server with one. An unreachable explicit private socket reaches real tmux for
-its ordinary error.
+its ordinary error. A refusal whose stderr is not a terminal is repeated on
+stdout, including when both streams are captured by an agent harness.
 
 tmux 3.2a silently ignores a `TMUX_TMPDIR` whose directory is absent and uses
 its normal socket root instead. The guard therefore refuses every command that

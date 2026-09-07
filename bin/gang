@@ -309,6 +309,14 @@ if [ "${GANG_TICK_INTERNAL:-}" != 1 ] \
 fi
 export GANGLINE_PROCESS_UID
 
+# NEW TEAMS LIVE OFF TMUX'S DEFAULT SOCKET. A process inside an agent pane can
+# invoke the real tmux binary by absolute path, beyond the PATH guard. Keeping
+# the team on a named socket means that client still has no route to the team
+# once the agent launch below removes TMUX. Gang itself recovers the address
+# from the team record before it runs any command that needs the server.
+GANGLINE_TEAM_LABEL=gangline
+GANGLINE_TEAM_ROUTE=new
+
 GANGLINE_CLOCK_HELPER="$ROOT/libexec/gang-clock"
 GANGLINE_USAGE_HELPER="$ROOT/libexec/gang-usage"
 if [ "${GANG_TEST_COLLARS:-}" = 1 ] && [ -n "${GANG_TEST_CLOCK:-}" ]; then
@@ -1304,14 +1312,13 @@ gang teams
 
   gang teams
 
-  Takes no arguments. tmux clients find the
-  default socket; a private TMUX_TMPDIR moves
-  it, so a live team can be unreachable from
-  a shell that lost that environment. Hitch
-  records the socket of every team it opens,
-  and this reads those records back, asking
-  each server whether the session is still
-  there rather than trusting the file.
+  Takes no arguments. New teams use tmux's
+  named gangline socket, not its discoverable
+  default. Hitch records the resolved socket
+  of every team it opens, and this reads those
+  records back, asking each server whether the
+  session is still there rather than trusting
+  the file.
 
   gang attach uses the same records: when the
   team is not on this shell's socket it
@@ -4264,6 +4271,39 @@ team_socket_read() { # $1 = session -> the socket recorded for it; 1 = no record
   printf '%s' "$socket"
 }
 
+team_route_resolve() { # point this gang process at the selected live team
+  local recorded="" current="" recorded_live=1 current_live=1
+  recorded="$(team_socket_read "$SESSION")" || recorded=""
+  if [ -n "$recorded" ]; then
+    team_live_on "$recorded" "$SESSION" >/dev/null 2>&1 \
+      && recorded_live=0
+  fi
+  if [ "$recorded_live" -eq 0 ]; then
+    if [ -n "${TMUX:-}" ] && [ "${TMUX%%,*}" = "$recorded" ]; then
+      GANGLINE_TEAM_ROUTE=current
+    else
+      TMUX="$recorded,0,0"
+      export TMUX
+      GANGLINE_TEAM_ROUTE=recorded
+    fi
+    return 0
+  fi
+  command tmux has-session -t "=$SESSION" >/dev/null 2>&1 \
+    && current_live=0
+  if [ "$current_live" -eq 0 ]; then
+    current="$(command tmux display-message -p -t "=$SESSION" \
+      '#{socket_path}' 2>/dev/null)" || current=""
+    if [ -n "$current" ]; then
+      TMUX="$current,0,0"
+      export TMUX
+    fi
+    GANGLINE_TEAM_ROUTE=current
+    return 0
+  fi
+  unset TMUX
+  GANGLINE_TEAM_ROUTE=new
+}
+
 team_live_on() { # $1 socket, $2 session; 0 live, 1 not there, 2 no server answers
   tmux -S "$1" list-sessions -F '#{session_name}' >/dev/null 2>&1 || return 2
   tmux -S "$1" has-session -t "=$2" 2>/dev/null || return 1
@@ -4734,12 +4774,12 @@ alert_status_remove() { # remove only the segment recorded as Gangline-owned
 }
 
 alert_binding_release() { # called under claim: unbind only our exact last-team key
-  local name="" command="" actual="" owned=""
-  while IFS=$'\t' read -r name command; do
+  local name="" actual="" owned=""
+  while IFS= read -r name; do
     [ "$name" = "$SESSION" ] && continue
-    [ -z "$command" ] || return 0
+    [ -z "$name" ] || return 0
   done <<<"$(tmux list-sessions \
-    -F $'#{session_name}\t#{@gl_alert_command}' 2>/dev/null || :)"
+    -f '#{!=:#{@gl_alert_command},}' -F '#{session_name}' 2>/dev/null || :)"
   if [ "${GANG_TEST_COLLARS:-}" = 1 ] \
      && [ -n "${GANG_TEST_ALERT_BINDING_READY_FIFO:-}" ] \
      && [ -n "${GANG_TEST_ALERT_BINDING_RELEASE_FIFO:-}" ]; then
@@ -7925,6 +7965,12 @@ state_note_failed_write() { # $1 raising window, $2 reason
   tmux set-option -w -t "$1" @gl_state_note_failed "$2" 2>/dev/null || true
 }
 
+state_note_commit() { # $1 window, $2 state word; completion marker is last
+  tmux set-option -uw -t "$1" @gl_state_note_pending \; \
+    set-option -uw -t "$1" @gl_state_note_failed \; \
+    set-option -w -t "$1" @gl_state_note_noted "$2" 2>/dev/null
+}
+
 state_note_clear() { # a new native turn makes a later unusable transition distinct
   tmux set-option -uw -t "$1" @gl_state_note_noted 2>/dev/null || true
   tmux set-option -uw -t "$1" @gl_state_note_pending 2>/dev/null || true
@@ -7976,8 +8022,7 @@ state_note_attempt() { # $1 window, $2 state word, $3 origin; 0 accepted
       # stands now: a query that stops answering is what #195 looked like.
       body="stop alert ($3): $agent went idle after its reply query timed out; nothing readable stands now, and the next delivery raises whatever does; inspect with gang explain $agent"
     else
-      tmux set-option -w -t "$1" @gl_state_note_noted "$2" 2>/dev/null || return 1
-      tmux set-option -uw -t "$1" @gl_state_note_pending 2>/dev/null || true
+      state_note_commit "$1" "$2" || return 1
       return 0
     fi
   else
@@ -7985,9 +8030,7 @@ state_note_attempt() { # $1 window, $2 state word, $3 origin; 0 accepted
   fi
   err="$(stall_deliver "$target" "$notify" "$agent" "$body" 2>&1)" || deliver_rc=$?
   if [ "$deliver_rc" -eq 0 ]; then
-    tmux set-option -w -t "$1" @gl_state_note_noted "$2" 2>/dev/null || return 1
-    tmux set-option -uw -t "$1" @gl_state_note_pending 2>/dev/null || true
-    tmux set-option -uw -t "$1" @gl_state_note_failed 2>/dev/null || true
+    state_note_commit "$1" "$2" || return 1
     return 0
   fi
   state_note_failed_write "$1" "state note NOT accepted: ${err##*$'\n'}"
@@ -9615,7 +9658,7 @@ effort_levels() { # print the levels the collar says this harness takes
 hitch_up_attach() { # $1 = startup-gated window; let `up` expose its prompt
   local channel notify attach_rc=0
   [ "$HITCH_UP_MODE" -eq 1 ] || return 0
-  if [ -n "${TMUX:-}" ]; then
+  if [ "$GANGLINE_CALLER_ATTACHED" -eq 1 ]; then
     tmux switch-client -t "=$SESSION" \; select-window -t "$1" \
       || die "up: could not switch to the startup prompt"
     HITCH_SWITCHED=1
@@ -9972,7 +10015,11 @@ server_running() { # 0 = a tmux server is already answering on this socket
   # A tmux server with no sessions exits by itself, so "list-sessions answers"
   # is the same question as "is there a server" — asked without reading its
   # refusal text, which is prose that changes between tmux versions.
-  tmux list-sessions >/dev/null 2>&1
+  if [ -n "${TMUX:-}" ]; then
+    tmux list-sessions >/dev/null 2>&1
+  else
+    tmux -L "$GANGLINE_TEAM_LABEL" list-sessions >/dev/null 2>&1
+  fi
 }
 
 # THE SERVER THAT HOLDS THE TEAM IS THE ONE PROCESS WHOSE DEATH ENDS ALL OF IT,
@@ -10203,7 +10250,12 @@ cmd_hitch() {
     || launch_env="$launch_env GANG_COLLARS=$(shell_quote "$GANG_COLLARS")"
   [ -z "${GANG_LOCK_DIR:-}" ] \
     || launch_env="$launch_env GANG_LOCK_DIR=$(shell_quote "$GANG_LOCK_DIR")"
-  GANG_LAUNCH="env $launch_env $GANG_LAUNCH"
+  # TMUX IS THE TEAM SERVER'S IMPLICIT ADDRESS. tmux itself supplies the exact
+  # socket to the pane shell, including host-specific path resolution. Preserve
+  # that value only for the guard's wait-for route, then remove TMUX before the
+  # harness starts. Bare and absolute clients consequently have no implicit
+  # route, while gang resolves the team through its validated record.
+  GANG_LAUNCH="env -u TMUX GANG_TMUX_SOCKET=\"\${TMUX%%,*}\" $launch_env $GANG_LAUNCH"
   # Every hitch publishes a spool identity after launch. A bad operator root
   # is already fully knowable here; discovering it only in spool_mint reports
   # failure after leaving a registered, running agent behind.
@@ -10223,8 +10275,18 @@ cmd_hitch() {
     # inherits this scope's cgroup and keeps it after the client returns.
     scope_server_wrap
     id="$(${SCOPE_ARGV[@]+"${SCOPE_ARGV[@]}"} \
-          tmux new-session -d -P -F '#{window_id}' -s "$SESSION" -n "$name" -c "$dir" "$GANG_LAUNCH")" \
+          tmux -L "$GANGLINE_TEAM_LABEL" new-session -d -P -F '#{window_id}' \
+            -s "$SESSION" -n "$name" -c "$dir" "$GANG_LAUNCH")" \
       || die "could not start session '$SESSION' for '$name'"
+    local opened_socket
+    opened_socket="$(tmux -L "$GANGLINE_TEAM_LABEL" display-message -p \
+      -t "=$SESSION" '#{socket_path}' 2>/dev/null)" \
+      || die "could not read the socket opened for session '$SESSION'"
+    [ -n "$opened_socket" ] \
+      || die "tmux reported no socket for the session '$SESSION' it just opened"
+    TMUX="$opened_socket,0,0"
+    export TMUX
+    GANGLINE_TEAM_ROUTE=current
     opened_session=1
   elif [ -n "$id" ]; then
     pane_dead="$(tmux display-message -p -t "$id" '#{pane_dead}' 2>/dev/null)" || pane_dead=""
@@ -10526,7 +10588,7 @@ cmd_up() { # bare `gang up` is the whole setup: one agent, and you in it
   fi
   [ "$HITCH_SWITCHED" -eq 0 ] || return 0
   id="$(win_id "$name")" || { rc=$?; win_id_missing "$rc" "up: '$name' vanished between hitch and attach"; }
-  if [ -n "${TMUX:-}" ]; then
+  if [ "$GANGLINE_CALLER_ATTACHED" -eq 1 ]; then
     tick_launch || true
     exec tmux switch-client -t "=$SESSION" \; select-window -t "$id"
   fi
@@ -11668,14 +11730,23 @@ usage_agent_stream() { # $1 window id, $2 team creation epoch -> one NUL-separat
   printf '\0'
 }
 
+# THE STAGING BUFFER IS THE CALLER'S, NOT THIS WORKER'S. It holds the only copy
+# of a prepared event until something else does, and this worker cannot tell the
+# caller that it removed it: its report is published after the work, so a report
+# that never arrives leaves the caller unable to say whether the copy it is
+# about to name still exists. So the copy outlives the append and the caller
+# discards it once it has read a report saying where the event ended up. What
+# this returns is that answer, and it distinguishes the record from a recovery
+# file because those are different things to tell an operator.
 usage_events_append_worker() { # $1 tmux buffer, $2 events, $3 fallback root
+                               # -> 0 the event is in the record,
+                               #    2 it is in a recovery file,
+                               #    1 the staging buffer holds the only copy
   local buffer="$1" events="$2" fallback_root="$3" out rc=0
   local fallback_dir fallback
   out="$(tmux save-buffer -b "$buffer" - \
     | "$GANGLINE_USAGE_HELPER" append --events "$events" 2>&1)" || rc=$?
   if [ "$rc" -eq 0 ]; then
-    tmux delete-buffer -b "$buffer" \
-      || printf 'gang: usage event was recorded, but its staging buffer %s could not be removed\n' "$buffer" >&2
     [ -z "$out" ] || printf '%s\n' "$(colour "$C_DIM" "$out")"
     return 0
   fi
@@ -11683,9 +11754,9 @@ usage_events_append_worker() { # $1 tmux buffer, $2 events, $3 fallback root
   printf 'gang: usage record not written (helper status %s): %s\n' "$rc" "$out" >&2
   fallback_dir="$fallback_root/usage-unrecorded"
   if ! mkdir -p "$fallback_dir"; then
-    printf 'gang: usage event not written: its destination was %s, fallback directory %s could not be created, and the prepared JSON remains in tmux buffer %s until that server exits\n' \
-      "$events" "$fallback_dir" "$buffer" >&2
-    return 0
+    printf 'gang: usage event not written: its destination was %s and fallback directory %s could not be created\n' \
+      "$events" "$fallback_dir" >&2
+    return 1
   fi
   fallback="$fallback_dir/usage-$(date +%Y%m%dT%H%M%S)-$(mint_nonce).jsonl"
   while [ -e "$fallback" ]; do
@@ -11694,18 +11765,17 @@ usage_events_append_worker() { # $1 tmux buffer, $2 events, $3 fallback root
   # A save-buffer filename is itself format-expanded by tmux. Stream bytes to
   # stdout and let this host-side shell open the literal recovery path.
   if tmux save-buffer -b "$buffer" - > "$fallback"; then
-    tmux delete-buffer -b "$buffer" \
-      || printf 'gang: usage event was preserved, but its staging buffer %s could not be removed\n' "$buffer" >&2
     printf 'gang: usage event preserved at %s; append it to %s after repairing that destination, then remove the fallback file\n' \
       "$fallback" "$events" >&2
-  else
-    printf 'gang: usage event not written: its destination was %s, fallback %s also failed, and the prepared JSON remains in tmux buffer %s until that server exits\n' \
-      "$events" "$fallback" "$buffer" >&2
+    return 2
   fi
+  printf 'gang: usage event not written: its destination was %s and fallback %s also failed\n' \
+    "$events" "$fallback" >&2
+  return 1
 }
 
 usage_events_record() { # $1 drop|down, rest = window ids; never refuses a teardown
-  local how="$1" id events fallback_root created prepared buffer command out rc=0; shift
+  local how="$1" id events fallback_root created prepared buffer report token command out head rc=0; shift
   events="$(usage_events_path)"
   fallback_root="$(archive_root)"
   # READ CCUSAGE IN THE CALLER'S ENVIRONMENT, where its PATH and transcript
@@ -11723,12 +11793,34 @@ usage_events_record() { # $1 drop|down, rest = window ids; never refuses a teard
       "$rc" "$prepared" "$events" >&2
     return 0
   fi
-  buffer="gang-usage-$(mint_nonce)"
+  # ONE CALL IDENTITY, CARRIED BY BOTH BUFFERS. Buffer names are global to the
+  # server and outlive the call that made them, so a name is only as good as the
+  # chance that no other teardown mints it: two callers sharing a staging name
+  # would overwrite one prepared event with another, and each would then delete
+  # what it did not stage. 128 bits, minted once, names the staged event and its
+  # report, and is the first word of that report so a report can be answered to
+  # the call that asked for it rather than to whatever holds its name.
+  token="$(mint_message_nonce)$(mint_message_nonce)"
+  buffer="gang-usage-$token"
+  report="gang-usage-report-$token"
   if ! printf '%s\n' "$prepared" | tmux load-buffer -b "$buffer" -; then
     printf 'gang: usage event LOST before append: tmux could not stage its prepared JSON; destination was %s\n' \
       "$events" >&2
     return 0
   fi
+  # NOTHING THIS CHILD SAYS MAY REACH TMUX. A run-shell child's output does not
+  # come back to the caller: tmux prints every line of it, and a line of its own
+  # for a nonzero exit, into a pane it picks itself -- the caller's pane where
+  # there is one, and otherwise whichever pane cmd_find_from_nothing lands on,
+  # which belongs to some other agent. Printing there forces that pane into
+  # view-mode, and a pane in view-mode does not take a paste at its shell, so
+  # the next message delivered to that agent is silently lost. The teardown
+  # append prints on success as well as on failure, so this fires on every drop.
+  # The guard belongs inside the command for the same reason it does in
+  # collars/codex.sh: redirecting the client call cannot reach a child whose
+  # output tmux never routed there. What the append has to say comes back in a
+  # second buffer instead.
+  #
   # run-shell expands tmux formats before invoking the shell. Rebuild every
   # caller-supplied byte through a word containing neither '#' nor '$', just as
   # popup commands do, so paths and settings cannot become tmux syntax.
@@ -11736,26 +11828,91 @@ usage_events_record() { # $1 drop|down, rest = window ids; never refuses a teard
   command+=" GANG_CONFIG_DIR=$(option_shell_quote "$CONFIG_DIR")"
   command+=" PATH=$(option_shell_quote "$PATH") HOME=$(option_shell_quote "${HOME:-}") TMUX_PANE="
   command+=" \"$(option_shell_quote "$ROOT/bin/gang")\" __usage-record-worker"
-  command+=" \"$(option_shell_quote "$buffer")\" \"$(option_shell_quote "$events")\" \"$(option_shell_quote "$fallback_root")\" 2>&1"
-  out="$(tmux run-shell "$command" 2>&1)" || rc=$?
-  if [ "$rc" -eq 0 ]; then
-    if [[ "$out" == *"gang: usage record not written"* ]] \
-       || [[ "$out" == *"gang: usage event "* ]]; then
-      [ -z "$out" ] || printf '%s\n' "$out" >&2
-    else
-      [ -z "$out" ] || printf '%s\n' "$out"
-    fi
+  command+=" \"$(option_shell_quote "$buffer")\" \"$(option_shell_quote "$events")\" \"$(option_shell_quote "$fallback_root")\""
+  command+=" \"$(option_shell_quote "$report")\" \"$(option_shell_quote "$token")\" >/dev/null 2>&1 || :"
+  if ! tmux run-shell "$command" >/dev/null; then
+    printf 'gang: usage event not written: tmux could not run its host-side append; destination was %s, and the prepared JSON remains in tmux buffer %s until that server exits\n' \
+      "$events" "$buffer" >&2
+    return 0
+  fi
+  # THE BRANCHES BELOW ONLY RUN WHEN SOMETHING ELSE IS ALREADY BROKEN, so the
+  # suite breaks the report between its publication and this read. This switch
+  # damages a report and does nothing else: it cannot relax what the branches
+  # then have to say, and every one of them is read back as an assertion. It is
+  # inside the suite's own switch because an environment variable is inherited,
+  # and a teardown that inherited this one from anywhere else would throw away a
+  # report gang had just been handed.
+  if [ "${GANG_TEST_COLLARS:-}" = 1 ]; then
+    case "${GANG_TEST_USAGE_REPORT_FAULT:-}" in
+      '') ;;
+      missing) tmux delete-buffer -b "$report" ;;
+      foreign) printf 'gang-usage-report %s recorded\na result nobody here asked for\n' \
+        "$(mint_message_nonce)$(mint_message_nonce)" | tmux load-buffer -b "$report" - ;;
+      *) die "GANG_TEST_USAGE_REPORT_FAULT is 'missing' or 'foreign', not '$GANG_TEST_USAGE_REPORT_FAULT'" ;;
+    esac
+  fi
+  # A MISSING REPORT PROVES NOTHING ABOUT THE APPEND. The report is published
+  # after the work, and the guard inside the command hides the worker's own
+  # status, so a report that is not there is a worker that never ran, one that
+  # died mid-append, and a server that has since exited, with nothing here to
+  # tell them apart. Say so rather than pick one. The prepared JSON is still
+  # named because this caller is the only thing that deletes it, and only after
+  # a report says it is safe to -- but a server that exited took it too.
+  if ! out="$(tmux save-buffer -b "$report" -)"; then
+    printf 'gang: usage record left no report: tmux buffer %s is not there, so whether %s was appended to, and whether a recovery file was written, are both unknown; if that tmux server is still running the prepared JSON is in buffer %s, and it dies with the server\n' \
+      "$report" "$events" "$buffer" >&2
+    return 0
+  fi
+  head="${out%%$'\n'*}"
+  case "$head" in
+    "gang-usage-report $token recorded"|"gang-usage-report $token preserved"\
+      |"gang-usage-report $token kept") ;;
+    *)
+      printf 'gang: usage record report rejected: tmux buffer %s does not carry this call'"'"'s token, so it belongs to another teardown or is what is left of one; whether %s was appended to is unknown, that buffer was left where it is and dies when that tmux server exits, and the prepared JSON remains in tmux buffer %s until then\n' \
+        "$report" "$events" "$buffer" >&2
+      return 0 ;;
+  esac
+  [ "$out" = "$head" ] && out="" || out="${out#*$'\n'}"
+  tmux delete-buffer -b "$report" \
+    || printf 'gang: the usage append reported back, but its report buffer %s could not be removed; it carries no event and dies when that tmux server exits\n' "$report" >&2
+  case "$head" in
+    *' kept')
+      printf 'gang: the prepared JSON remains in tmux buffer %s until that server exits\n' "$buffer" >&2 ;;
+    *)
+      # Recorded and preserved are both accounted for, and they are not the same
+      # thing to be told: one is in the record, the other is in a file someone
+      # still has to append by hand.
+      tmux delete-buffer -b "$buffer" \
+        || printf 'gang: the usage event is %s, but its staging buffer %s could not be removed; it carries a copy of an event already accounted for and dies when that tmux server exits\n' \
+             "${head##* }" "$buffer" >&2 ;;
+  esac
+  if [[ "$out" == *"gang: usage record not written"* ]] \
+     || [[ "$out" == *"gang: usage event "* ]]; then
+    [ -z "$out" ] || printf '%s\n' "$out" >&2
   else
-    printf 'gang: usage event not written: tmux could not run its host-side append (status %s): %s; destination was %s, and the prepared JSON remains in tmux buffer %s until that server exits\n' \
-      "$rc" "$out" "$events" "$buffer" >&2
+    [ -z "$out" ] || printf '%s\n' "$out"
   fi
 }
 
 cmd_usage_record_worker() { # internal host-side append reached only through tmux run-shell
+  local report token out disposition where=0
   [ "${GANG_USAGE_RECORD_INTERNAL:-}" = 1 ] \
     || die "__usage-record-worker is internal; run gang usage"
-  [ $# -eq 3 ] || die "internal usage record worker needs a tmux buffer, event path, and fallback root"
-  usage_events_append_worker "$@"
+  [ $# -eq 5 ] \
+    || die "internal usage record worker needs a tmux buffer, event path, fallback root, report buffer, and report token"
+  report="$4" token="$5"
+  # Held, not printed: this process's stdout and stderr are tmux's, and tmux
+  # puts what it is handed on an agent's screen. The first line is the caller's
+  # token and what it is to do with the staging buffer, so the report is
+  # answerable and is at least one line long whatever the append had to say.
+  out="$(usage_events_append_worker "$1" "$2" "$3" 2>&1)" || where=$?
+  case "$where" in
+    0) disposition=recorded ;;
+    2) disposition=preserved ;;
+    *) disposition=kept ;;
+  esac
+  printf 'gang-usage-report %s %s\n%s\n' "$token" "$disposition" "$out" \
+    | tmux load-buffer -b "$report" -
 }
 
 cmd_usage() { # token consumption per agent, joined from ccusage by native session id
@@ -13825,8 +13982,8 @@ cmd_down() { # inverse of up: end the whole team's session
   if self="$(self_window)"; then
     refuse "down: this pane is agent '$(agent_name_of "$self")' inside '$SESSION' — a window cannot end the session it is running in, and Gangline offers no override for it. Detach (prefix-d, or run this from a shell outside tmux) and end the team from there"
   fi
-  if [ -z "${TMUX_PANE:-}" ] && [ -n "${TMUX:-}" ] \
-     && [ "${TMUX%%,*}" = "$(tmux display-message -p '#{socket_path}' 2>/dev/null)" ]; then
+  if [ -z "${TMUX_PANE:-}" ] && [ "$GANGLINE_CALLER_ATTACHED" -eq 1 ] \
+     && [ "$GANGLINE_CALLER_SOCKET" = "${TMUX%%,*}" ]; then
     refuse "down: this shell is inside the tmux server that holds '$SESSION' and does not name a pane, so Gangline cannot tell whether it is running inside the team it would end. Run it from a shell outside tmux"
   fi
   while read -r raw special; do
@@ -13915,6 +14072,9 @@ cmd_attach() {
   # written-down socket matter, and that is the disconnect this exists for: the
   # server is alive on a private TMUX_TMPDIR that this shell no longer carries.
   if session_live; then
+    if [ "$GANGLINE_TEAM_ROUTE" = recorded ]; then
+      printf '%s\n' "$(colour "$C_DIM" "'$SESSION' is not on this shell's tmux socket; attaching on the one gang recorded for it: ${TMUX%%,*}")" >&2
+    fi
     tick_launch || true
     exec tmux attach -t "=$SESSION"
   fi
@@ -14117,6 +14277,13 @@ cmd_upgrade() {
 }
 
 cmd="${1:-}"
+GANGLINE_CALLER_ATTACHED=0
+GANGLINE_CALLER_SOCKET=""
+if [ -n "${TMUX:-}" ]; then
+  GANGLINE_CALLER_ATTACHED=1
+  GANGLINE_CALLER_SOCKET=${TMUX%%,*}
+fi
+team_route_resolve
 trap 'on_exit' EXIT
 if [ -z "${GANG_TICK_INTERNAL:-}" ] && [ "$cmd" != alerts ]; then
   # Establish the invariant in this shell before tick_health_warn reads through

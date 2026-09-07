@@ -35,7 +35,7 @@ alert_ui_session="quote'\`# \$(touch $alert_ui_injected)'"
 alert_ui_survivor="gang-alert-ui-survivor-$$"
 alert_ui_observer="gang-alert-ui-observer-$$"
 mkdir -p "$alert_ui_root"
-alert_ui_tmux() { TMUX_TMPDIR="$alert_ui_root" tmux "$@"; }
+alert_ui_tmux() { env -u TMUX TMUX_TMPDIR="$alert_ui_root" tmux "$@"; }
 alert_ui_gang_for() {
   local session="$1"
   shift
@@ -621,19 +621,19 @@ while True:
 PY
 alert_ui_tmux set-hook -g client-attached \
   "wait-for -S $alert_ui_client_attached"
-TMUX_TMPDIR="$alert_ui_root" tmux wait-for "$alert_ui_client_attached" &
+env -u TMUX TMUX_TMPDIR="$alert_ui_root" tmux wait-for "$alert_ui_client_attached" &
 alert_ui_client_attached_waiter=$!
 (
   alert_ui_client_rc=0
   TERM=xterm PATH="$alert_ui_client_path" script -qefc \
-    "stty rows 24 cols 80; TMUX_TMPDIR='$alert_ui_root' tmux attach-session -t $alert_ui_client_target" \
+    "stty rows 24 cols 80; unset TMUX; TMUX_TMPDIR='$alert_ui_root' tmux attach-session -t $alert_ui_client_target" \
     /dev/null < "$alert_ui_client_input" 2>&1 \
     | TMUX_TMPDIR="$alert_ui_root" python3 "$alert_ui_client_reader" \
         "$alert_ui_popup_marker_first" "$alert_ui_popup_marker_second" \
         > "$alert_ui_client_output" \
     || alert_ui_client_rc=$?
   printf '%s\n' "$alert_ui_client_rc" > "$alert_ui_client_status"
-  TMUX_TMPDIR="$alert_ui_root" tmux wait-for -S "$alert_ui_client_exited"
+  env -u TMUX TMUX_TMPDIR="$alert_ui_root" tmux wait-for -S "$alert_ui_client_exited"
   exit "$alert_ui_client_rc"
 ) &
 alert_ui_client_pid=$!
@@ -653,11 +653,11 @@ alert_ui_tmux set-option -t "=$alert_ui_observer:" @gl_alert_command \
   "printf wrong-session > '$alert_ui_wrong_session_ledger'; tmux wait-for -S $alert_ui_popup_ready; tmux wait-for $alert_ui_popup_release; tmux wait-for -S $alert_ui_client_done"
 alert_ui_tmux set-option -t "=$alert_ui_session:" @gl_alert_command \
   "tmux wait-for -S $alert_ui_popup_ready; tmux wait-for $alert_ui_popup_release; GANG_TEST_ALERT_RENDER_READY_EVENT='$alert_ui_popup_render_ready' $alert_ui_installed_command; tmux wait-for -S $alert_ui_client_done"
-TMUX_TMPDIR="$alert_ui_root" tmux wait-for "$alert_ui_popup_ready" &
+env -u TMUX TMUX_TMPDIR="$alert_ui_root" tmux wait-for "$alert_ui_popup_ready" &
 alert_ui_popup_ready_waiter=$!
-TMUX_TMPDIR="$alert_ui_root" tmux wait-for "$alert_ui_client_done" &
+env -u TMUX TMUX_TMPDIR="$alert_ui_root" tmux wait-for "$alert_ui_client_done" &
 alert_ui_client_done_waiter=$!
-TMUX_TMPDIR="$alert_ui_root" tmux wait-for "$alert_ui_popup_render_ready" &
+env -u TMUX TMUX_TMPDIR="$alert_ui_root" tmux wait-for "$alert_ui_popup_render_ready" &
 alert_ui_popup_render_ready_waiter=$!
 printf '\002A' >&8
 alert_ui_popup_ready_rc=0
@@ -746,7 +746,7 @@ equal "the attached popup does not resolve another session's command" absent \
 equal "Prefix+A on the attached client marks the active alert seen" '1 0' \
   "$(alert_ui_tmux show-options -qv -t "=$alert_ui_session:" @gl_alert_active) $(alert_ui_tmux show-options -qv -t "=$alert_ui_session:" @gl_alert_unseen)"
 
-TMUX_TMPDIR="$alert_ui_root" tmux wait-for "$alert_ui_client_exited" &
+env -u TMUX TMUX_TMPDIR="$alert_ui_root" tmux wait-for "$alert_ui_client_exited" &
 alert_ui_client_exited_waiter=$!
 printf '\002d' >&8
 wait "$alert_ui_client_exited_waiter"
@@ -841,17 +841,17 @@ mkfifo "$alert_ui_unrelated_input"
 exec 9<>"$alert_ui_unrelated_input"
 alert_ui_tmux set-hook -g client-attached \
   "wait-for -S $alert_ui_unrelated_attached"
-TMUX_TMPDIR="$alert_ui_root" tmux wait-for "$alert_ui_unrelated_attached" &
+env -u TMUX TMUX_TMPDIR="$alert_ui_root" tmux wait-for "$alert_ui_unrelated_attached" &
 alert_ui_unrelated_attached_waiter=$!
 (
   alert_ui_unrelated_rc=0
   TERM=xterm PATH="$alert_ui_client_path" script -qefc \
-    "stty rows 24 cols 80; TMUX_TMPDIR='$alert_ui_root' tmux attach-session -t $alert_ui_unrelated_target" \
+    "stty rows 24 cols 80; unset TMUX; TMUX_TMPDIR='$alert_ui_root' tmux attach-session -t $alert_ui_unrelated_target" \
     /dev/null < "$alert_ui_unrelated_input" \
     > "$alert_ui_unrelated_output" 2>&1 \
     || alert_ui_unrelated_rc=$?
   printf '%s\n' "$alert_ui_unrelated_rc" > "$alert_ui_unrelated_status"
-  TMUX_TMPDIR="$alert_ui_root" tmux wait-for -S "$alert_ui_unrelated_exited"
+  env -u TMUX TMUX_TMPDIR="$alert_ui_root" tmux wait-for -S "$alert_ui_unrelated_exited"
   exit "$alert_ui_unrelated_rc"
 ) &
 alert_ui_unrelated_pid=$!
@@ -873,7 +873,7 @@ alert_ui_popup_bind "$alert_ui_popup_shell"
 equal "the fixture's popup shell is the installed product binding" \
   "$alert_ui_binding" "$(alert_ui_tmux list-keys -T prefix A)"
 alert_ui_popup_bind "$alert_ui_popup_shell; tmux wait-for -S $alert_ui_unrelated_done"
-TMUX_TMPDIR="$alert_ui_root" tmux wait-for "$alert_ui_unrelated_done" &
+env -u TMUX TMUX_TMPDIR="$alert_ui_root" tmux wait-for "$alert_ui_unrelated_done" &
 alert_ui_unrelated_done_waiter=$!
 printf '\002A' >&9
 wait "$alert_ui_unrelated_done_waiter"
@@ -881,7 +881,7 @@ alert_ui_popup_bind "$alert_ui_popup_shell"
 alert_ui_restored_binding="$(alert_ui_tmux list-keys -T prefix A)"
 equal "temporary popup instrumentation restores the exact owned binding" \
   "$alert_ui_binding" "$alert_ui_restored_binding"
-TMUX_TMPDIR="$alert_ui_root" tmux wait-for "$alert_ui_unrelated_exited" &
+env -u TMUX TMUX_TMPDIR="$alert_ui_root" tmux wait-for "$alert_ui_unrelated_exited" &
 alert_ui_unrelated_exited_waiter=$!
 printf '\002d' >&9
 wait "$alert_ui_unrelated_exited_waiter"
@@ -1245,7 +1245,8 @@ cat > "$RUN_ROOT/tick-bashrc" <<SH
 PS1='❯ '
 tick_prompt() {
   [ -e "$tick_prompt_enable" ] || return 0
-  tmux set-option -w -t "\$TMUX_PANE" @gl_turn "closed \$(date +%s)"
+  tmux -S "\$GANG_TMUX_SOCKET" set-option -w -t "\$TMUX_PANE" \
+    @gl_turn "closed \$(date +%s)"
   tmux wait-for -S "gang-tick-prompt-\${TMUX_PANE#%}"
   if [ -e "$tick_prompt_arm" ]; then
     rm -f -- "$tick_prompt_arm"

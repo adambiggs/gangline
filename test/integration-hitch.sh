@@ -2179,12 +2179,12 @@ rmdir -- "$scope_prune_recent_dir" 2>/dev/null || true
 scope_down_session="scopedown-$$"
 scope_down_root="$RUN_ROOT/scope-down-run"
 mkdir -p "$scope_down_root"
-scope_down_socket="$scope_down_root/tmux-$(id -u)/default"
 env PATH="$RUN_ROOT/scope-orphan-bin:$PATH" GANG_SCOPE=on \
     TMUX_TMPDIR="$scope_down_root" GANG_SESSION="$scope_down_session" \
     GANG_LOCK_DIR="$scope_down_root/locks" \
     GANG_ARCHIVE_DIR="$scope_down_root/archive" \
     "$GANG" hitch downobserver -c bash -d /tmp >/dev/null
+scope_down_socket="$(<"$scope_down_root/locks/teams/$scope_down_session")"
 env PATH="$RUN_ROOT/scope-orphan-bin:$PATH" GANG_SCOPE=on \
     TMUX_TMPDIR="$scope_down_root" GANG_SESSION="$scope_down_session" \
     GANG_LOCK_DIR="$scope_down_root/locks" \
@@ -2194,7 +2194,7 @@ env PATH="$RUN_ROOT/scope-orphan-bin:$PATH" GANG_SCOPE=on \
 # issued nonce record. If that stale record names a unit already collected
 # when the window disappears, teardown remains successful and silent instead
 # of turning an upgrade into a false cleanup failure.
-TMUX_TMPDIR="$scope_down_root" tmux new-window -d \
+tmux -S "$scope_down_socket" new-window -d \
   -t "=$scope_down_session" -n downlegacy -c /tmp bash
 env PATH="$RUN_ROOT/scope-orphan-bin:$PATH" \
     TMUX_TMPDIR="$scope_down_root" GANG_SESSION="$scope_down_session" \
@@ -2204,16 +2204,16 @@ env PATH="$RUN_ROOT/scope-orphan-bin:$PATH" \
 scope_legacy_unit="gangline-$scope_down_session-legacy.scope"
 : > "$RUN_ROOT/scope-orphan-active/$scope_legacy_unit"
 : > "$RUN_ROOT/scope-orphan-autocollect/$scope_legacy_unit"
-TMUX_TMPDIR="$scope_down_root" tmux set-option -w \
-  -t "$(TMUX_TMPDIR="$scope_down_root" tmux list-windows \
+tmux -S "$scope_down_socket" set-option -w \
+  -t "$(tmux -S "$scope_down_socket" list-windows \
     -t "=$scope_down_session" -F '#{window_id} #{@gl_agent}' \
     | awk '$2 == "downlegacy" { print $1 }')" @gl_scope "$scope_legacy_unit"
-scope_down_orphan="$(TMUX_TMPDIR="$scope_down_root" tmux show-options -wqv \
-  -t "$(TMUX_TMPDIR="$scope_down_root" tmux list-windows \
+scope_down_orphan="$(tmux -S "$scope_down_socket" show-options -wqv \
+  -t "$(tmux -S "$scope_down_socket" list-windows \
     -t "=$scope_down_session" -F '#{window_id} #{@gl_agent}' \
     | awk '$2 == "downorphan" { print $1 }')" @gl_scope)"
-TMUX_TMPDIR="$scope_down_root" tmux kill-window \
-  -t "$(TMUX_TMPDIR="$scope_down_root" tmux list-windows \
+tmux -S "$scope_down_socket" kill-window \
+  -t "$(tmux -S "$scope_down_socket" list-windows \
     -t "=$scope_down_session" -F '#{window_id} #{@gl_agent}' \
     | awk '$2 == "downorphan" { print $1 }')"
 : > "$RUN_ROOT/scope-orphan.ops"
@@ -2466,6 +2466,43 @@ refuses "a per-hitch identity collision says to retry, not stop its owner" \
     "$GANG" hitch scopeheld -c bash -d /tmp
 equal "a refused scope name leaves no window behind" "" "$(window_id scopeheld)"
 
+# AN EXISTING PRE-MIGRATION TEAM STAYS ON THE SOCKET THAT ALREADY HOLDS IT.
+# Before team records and the named Gangline socket existed, a team lived on
+# TMUX_TMPDIR's default socket. Route discovery must join that live session;
+# treating "new teams use -L gangline" as "all hitches use -L gangline" would
+# silently fork a second server and duplicate the team name during rollout.
+legacy_root="$RUN_ROOT/legacy-default-server"
+legacy_session="legacyteam-$$"
+legacy_default_socket="$legacy_root/tmux-$(id -u)/default"
+legacy_named_socket="$legacy_root/tmux-$(id -u)/gangline"
+mkdir -p "$legacy_root"
+env -u TMUX TMUX_TMPDIR="$legacy_root" tmux new-session -d \
+  -s "$legacy_session" -n keeper 'exec bash --noprofile --norc'
+legacy_hitch_rc=0
+env -u TMUX TMUX_TMPDIR="$legacy_root" GANG_SESSION="$legacy_session" \
+    GANG_LOCK_DIR="$legacy_root/locks" GANG_ARCHIVE_DIR="$legacy_root/archive" \
+    "$GANG" hitch legacyagent -c bash -d /tmp >/dev/null 2>&1 \
+  || legacy_hitch_rc=$?
+equal "a hitch joins a live team on the legacy default socket" \
+  "0" "$legacy_hitch_rc"
+legacy_agents="$(tmux -S "$legacy_default_socket" list-windows \
+  -t "=$legacy_session" -F '#{@gl_agent}')"
+contains "and the joined agent is registered on that original server" \
+  "$legacy_agents" "legacyagent"
+legacy_named_live=no
+if tmux -S "$legacy_named_socket" has-session -t "=$legacy_session" \
+    >/dev/null 2>&1; then
+  legacy_named_live=yes
+fi
+equal "and rollout does not duplicate the team on the named socket" \
+  "no" "$legacy_named_live"
+legacy_down_rc=0
+env -u TMUX TMUX_TMPDIR="$legacy_root" GANG_SESSION="$legacy_session" \
+    GANG_LOCK_DIR="$legacy_root/locks" GANG_ARCHIVE_DIR="$legacy_root/archive" \
+    "$GANG" down "$legacy_session" >/dev/null 2>&1 || legacy_down_rc=$?
+equal "the legacy-socket rollout fixture tears down through gang" \
+  "0" "$legacy_down_rc"
+
 # THE SERVER THAT HOLDS THE TEAM IS THE ONE PROCESS WHOSE DEATH ENDS ALL OF IT.
 # Every agent gets a unit; the server used to inherit whatever cgroup ran
 # `gang up`, so a whole team could vanish and leave nothing but a login scope
@@ -2495,7 +2532,7 @@ chmod +x "$RUN_ROOT/scope-server-bin/systemd-run" "$RUN_ROOT/scope-server-bin/sy
 scope_server_session="srvteam-$$"
 scope_server_root="$RUN_ROOT/scope-server-run"
 mkdir -p "$scope_server_root"
-scope_server_socket="$scope_server_root/tmux-$(id -u)/default"
+scope_server_socket="$scope_server_root/tmux-$(id -u)/gangline"
 rm -f "$RUN_ROOT/scope-server.argv"
 scope_server_rc=0
 env PATH="$RUN_ROOT/scope-server-bin:$PATH" GANG_SCOPE=on \
@@ -2507,8 +2544,8 @@ equal "a hitch that forks its own tmux server completes" "0" "$scope_server_rc"
 scope_server_argv="$(<"$RUN_ROOT/scope-server.argv")"
 contains "the tmux server is started inside a unit named after its session" \
   "$scope_server_argv" "--unit=gangline-$scope_server_session.scope"
-contains "and that unit wraps the new-session that forks it" \
-  "$scope_server_argv" "tmux new-session"
+contains "and that unit wraps the named-socket new-session that forks it" \
+  "$scope_server_argv" "tmux -L gangline new-session"
 contains "memory accounting is stated for the server too" \
   "$scope_server_argv" "--unit=gangline-$scope_server_session.scope -p MemoryAccounting=yes"
 case "$scope_server_argv" in

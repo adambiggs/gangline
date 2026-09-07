@@ -1602,14 +1602,14 @@ COLLAR
 vanish_world() { # $1 = agent name, $2 = collar; a private server and a keeper
   rm -rf -- "$vanish_root"
   mkdir -p "$vanish_root"
-  TMUX_TMPDIR="$vanish_root" tmux new-session -d \
+  env -u TMUX TMUX_TMPDIR="$vanish_root" tmux new-session -d \
     -s "$vanish_session" -n keeper 'exec bash --noprofile --norc'
-  TMUX_TMPDIR="$vanish_root" tmux new-window -d \
+  env -u TMUX TMUX_TMPDIR="$vanish_root" tmux new-window -d \
     -t "=$vanish_session" -n "$1" 'exec bash --noprofile --norc'
-  vanish_id="$(TMUX_TMPDIR="$vanish_root" tmux display-message -p \
+  vanish_id="$(env -u TMUX TMUX_TMPDIR="$vanish_root" tmux display-message -p \
     -t "=$vanish_session:$1" '#{window_id}')"
-  TMUX_TMPDIR="$vanish_root" tmux set-option -w -t "$vanish_id" @gl_agent "$1"
-  TMUX_TMPDIR="$vanish_root" tmux set-option -w -t "$vanish_id" @gl_collar "$2"
+  env -u TMUX TMUX_TMPDIR="$vanish_root" tmux set-option -w -t "$vanish_id" @gl_agent "$1"
+  env -u TMUX TMUX_TMPDIR="$vanish_root" tmux set-option -w -t "$vanish_id" @gl_collar "$2"
 }
 
 vanish_down() { # the private server must be gone BEFORE its root is removed,
@@ -1646,8 +1646,8 @@ excludes "and it is not the pane-activity refusal answering instead" \
   "$vanish_status" "activity-only bound"
 
 vanish_world flushing vanishnow
-TMUX_TMPDIR="$vanish_root" tmux set-option -w -t "$vanish_id" @gl_parked 'a body'
-TMUX_TMPDIR="$vanish_root" tmux set-option -w -t "$vanish_id" @gl_parked_body 'a body'
+env -u TMUX TMUX_TMPDIR="$vanish_root" tmux set-option -w -t "$vanish_id" @gl_parked 'a body'
+env -u TMUX TMUX_TMPDIR="$vanish_root" tmux set-option -w -t "$vanish_id" @gl_parked_body 'a body'
 vanish_flush="$(vanish_run flush flushing)"
 vanish_down
 excludes "a flush whose window vanishes before the recall does not exit clean" \
@@ -1668,11 +1668,11 @@ contains "and flush says the recall key was not pressed" \
 # are really set below before the window really goes, so every omission the row
 # must not make is an omission of something that was there.
 vanish_world rostering vanishroster
-TMUX_TMPDIR="$vanish_root" tmux set-option -w -t "$vanish_id" @gl_staged \
+env -u TMUX TMUX_TMPDIR="$vanish_root" tmux set-option -w -t "$vanish_id" @gl_staged \
   'a body gang recorded and never delivered'
-TMUX_TMPDIR="$vanish_root" tmux set-option -w -t "$vanish_id" @gl_parked \
+env -u TMUX TMUX_TMPDIR="$vanish_root" tmux set-option -w -t "$vanish_id" @gl_parked \
   'a body the harness parked'
-TMUX_TMPDIR="$vanish_root" tmux set-option -w -t "$vanish_id" @gl_self_compact_failed \
+env -u TMUX TMUX_TMPDIR="$vanish_root" tmux set-option -w -t "$vanish_id" @gl_self_compact_failed \
   'self-compaction was not submitted'
 vanish_roster="$(vanish_run roster)"
 vanish_down
