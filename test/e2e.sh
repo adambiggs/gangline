@@ -407,7 +407,7 @@ PY
   printf '%s\n' '{"theme":"dark","includeCoAuthoredBy":false}' \
     > "$RUN_ROOT/claude/settings.json"
 
-  TMUX_SOCKET="$RUN_ROOT/tmux-$(id -u)/default"
+  TMUX_SOCKET="$RUN_ROOT/tmux-$(id -u)/gangline"
   export TMUX_TMPDIR="$RUN_ROOT"
   export GANG_CONFIG_DIR="$RUN_ROOT/config"
   export GANG_LOCK_DIR="$RUN_ROOT/locks"

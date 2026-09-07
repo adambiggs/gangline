@@ -7,6 +7,7 @@ set -euo pipefail
 unset TMUX TMUX_PANE
 
 TEST_ROOT="$(mktemp -d "${TMPDIR:-/tmp}/gangline-role-test.XXXXXX")"
+TMUX_SOCKET="$TEST_ROOT/tmux-$(id -u)/gangline"
 SCRIPT_ROOT="$(cd -P "$(dirname "$0")/.." && pwd)"
 GANG="${GANG_UNDER_TEST:-$SCRIPT_ROOT/bin/gang}"
 PRODUCT_ROOT="$(cd -P "$(dirname "$GANG")/.." && pwd)"
@@ -41,6 +42,7 @@ trap 'on_signal 2' INT
 trap 'on_signal 15' TERM
 
 mkdir -p "$TEST_ROOT/bin" "$TEST_ROOT/config" "$TEST_ROOT/collars"
+mkdir -m 700 "$TEST_ROOT/tmux-$(id -u)"
 cat > "$TEST_ROOT/bin/sleep" <<'SH'
 #!/bin/sh
 # SPDX-License-Identifier: Apache-2.0
@@ -91,11 +93,12 @@ window_id() {
       case "$first" in -|'~'|'!'|'?') [ "$first" = "$last" ] && bare="${bare:1:${#bare}-2}" ;; esac
     fi
     [ "$bare" = "$1" ] && { printf '%s' "$id"; return; }
-  done < <(tmux list-windows -t "=$GANG_SESSION" -F '#{window_id} #{window_name}')
+  done < <(tmux -S "$TMUX_SOCKET" list-windows -t "=$GANG_SESSION" \
+    -F '#{window_id} #{window_name}')
   return 1
 }
-window_names() { tmux list-windows -t "=$GANG_SESSION" -F '#W' 2>/dev/null || true; }
-pane_all() { tmux capture-pane -pJ -S - -t "$(window_id "$1")"; }
+window_names() { tmux -S "$TMUX_SOCKET" list-windows -t "=$GANG_SESSION" -F '#W' 2>/dev/null || true; }
+pane_all() { tmux -S "$TMUX_SOCKET" capture-pane -pJ -S - -t "$(window_id "$1")"; }
 drop_agent() { "$GANG" drop "$1" >/dev/null; }
 # Mirrors config_path: gang reports operator-facing paths with HOME collapsed,
 # so an expectation built from an absolute path has to collapse it the same way
@@ -111,9 +114,9 @@ display_path() {
 selected() { [ -z "${ROLE_ACS:-}" ] || case " $ROLE_ACS " in *" $1 "*) return 0 ;; *) return 1 ;; esac; }
 run_ac() { if selected "$1"; then "$1"; fi; }
 
-tmux new-session -d -s role-grid-fixture -n grid "PS1='❯ ' bash --norc"
-tmux set-option -g default-size 200x100
-tmux resize-window -t '=role-grid-fixture:grid' -x 200 -y 100
+tmux -S "$TMUX_SOCKET" new-session -d -s role-grid-fixture -n grid "PS1='❯ ' bash --norc"
+tmux -S "$TMUX_SOCKET" set-option -g default-size 200x100
+tmux -S "$TMUX_SOCKET" resize-window -t '=role-grid-fixture:grid' -x 200 -y 100
 
 ac1() {
   local prefix="$TEST_ROOT/ac1-argv" value
@@ -252,7 +255,7 @@ ac8() {
   cat > "$TEST_ROOT/ac8-receiver.py" <<'PY'
 #!/usr/bin/env python3
 # SPDX-License-Identifier: Apache-2.0
-import pathlib, re, subprocess, sys
+import os, pathlib, re, subprocess, sys
 receipt, event = sys.argv[1:]
 body = b""
 while True:
@@ -262,7 +265,10 @@ while True:
     body += line
     if re.search(rb"\[/gang:hitch#[0-9a-f]+\]\n$", body):
         pathlib.Path(receipt).write_bytes(body[:-1])
-        subprocess.run(["tmux", "wait-for", "-S", event], check=True)
+        subprocess.run(
+            ["tmux", "-S", os.environ["GANG_TMUX_SOCKET"], "wait-for", "-S", event],
+            check=True,
+        )
         body = b""
 PY
   chmod +x "$TEST_ROOT/ac8-receiver.py"
@@ -290,7 +296,7 @@ exec /usr/bin/tmux "\$@"
 SH
   chmod +x "$TEST_ROOT/bin/tmux"
   GANG_CONFIG_DIR="$config" "$GANG" hitch role-ac8 -c ac8 -d /tmp --role trailing >/dev/null
-  tmux wait-for "$event"
+  tmux -S "$TMUX_SOCKET" wait-for "$event"
   if python3 - "$receipt" "$config/roles/trailing.md" <<'PY'
 import pathlib, re, sys
 wire = pathlib.Path(sys.argv[1]).read_bytes()
@@ -439,7 +445,7 @@ GANG_ROLE_PROMPT_OPT="--append-system-prompt"
 SH
   for variant in plain role; do
     mkdir -p "$root/$variant"
-    socket="$root/$variant/tmux-$(id -u)/default"
+    socket="$root/$variant/tmux-$(id -u)/gangline"
     if [ "$variant" = role ]; then
       TMUX_TMPDIR="$root/$variant" GANG_SESSION="$session" GANG_CONFIG_DIR="$root/config" \
         GANG_COLLARS="$root/collars" GANG_LOCK_DIR="$root/$variant/locks" PATH="$root/bin:$PATH" \
@@ -449,17 +455,20 @@ SH
         GANG_COLLARS="$root/collars" GANG_LOCK_DIR="$root/$variant/locks" PATH="$root/bin:$PATH" \
         "$GANG" hitch same-agent -c state -d /tmp >/dev/null
     fi
-    id="$(TMUX_TMPDIR="$root/$variant" tmux list-windows -t "=$session" -F '#{window_id}')"
+    id="$(tmux -S "$socket" list-windows -t "=$session" -F '#{window_id}')"
     map="$root/$variant.map"
     # @gl_hitched_at is the wall clock of the hitch. The two hitches here are
     # made one after the other, so its value differs whenever they straddle a
     # second, and it says nothing about what a role changes. The option itself
     # still must be present and well formed under both hitches, so only a
     # whole-number value is replaced; a missing or malformed one still differs.
-    TMUX_TMPDIR="$root/$variant" tmux show-options -w -t "$id" \
+    tmux -S "$socket" show-options -w -t "$id" \
       | sed -E 's/^@gl_hitched_at [0-9]+$/@gl_hitched_at <epoch>/' > "$map"
-    TMUX_TMPDIR="$root/$variant" tmux show-options -t "$id" >> "$map"
-    tmux -S "$socket" kill-server
+    tmux -S "$socket" show-options -t "$id" >> "$map"
+    tmux -S "$socket" kill-window -t "$id"
+    if tmux -S "$socket" list-sessions >/dev/null 2>&1; then
+      tmux -S "$socket" kill-server
+    fi
     rm -f -- "$socket"
   done
   cmp -s "$root/plain.map" "$root/role.map" \
@@ -725,7 +734,7 @@ ac21() {
 ac22() {
   local config="$TEST_ROOT/ac22-config" private_tmux prefix value
   mkdir -p "$config/roles"
-  private_tmux="$(tmux display-message -p -t "=$GANG_SESSION" \
+  private_tmux="$(tmux -S "$TMUX_SOCKET" display-message -p -t "=$GANG_SESSION" \
     '#{socket_path},#{pid},0')"
 
   prefix="$TEST_ROOT/ac22-default-argv"

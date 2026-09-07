@@ -1211,15 +1211,15 @@ wait_server_root="$RUN_ROOT/wait-server-vanish"
 wait_server_session="gangtest-wait-server-vanish-$$"
 wait_server_socket="$wait_server_root/tmux-$(id -u)/default"
 mkdir -p "$wait_server_root"
-TMUX_TMPDIR="$wait_server_root" tmux new-session -d \
+env -u TMUX TMUX_TMPDIR="$wait_server_root" tmux new-session -d \
   -s "$wait_server_session" -n wait-server 'exec bash --noprofile --norc'
-wait_server_id="$(TMUX_TMPDIR="$wait_server_root" tmux display-message -p \
+wait_server_id="$(env -u TMUX TMUX_TMPDIR="$wait_server_root" tmux display-message -p \
   -t "=$wait_server_session:wait-server" '#{window_id}')"
-TMUX_TMPDIR="$wait_server_root" tmux set-option -w -t "$wait_server_id" \
+env -u TMUX TMUX_TMPDIR="$wait_server_root" tmux set-option -w -t "$wait_server_id" \
   @gl_agent wait-server
-TMUX_TMPDIR="$wait_server_root" tmux set-option -w -t "$wait_server_id" \
+env -u TMUX TMUX_TMPDIR="$wait_server_root" tmux set-option -w -t "$wait_server_id" \
   @gl_collar waitable
-TMUX_TMPDIR="$wait_server_root" tmux set-option -w -t "$wait_server_id" \
+env -u TMUX TMUX_TMPDIR="$wait_server_root" tmux set-option -w -t "$wait_server_id" \
   @gl_turn "open $(date +%s)"
 wait_server_arm="gang-test-wait-arm-$$-server-vanish"
 BASH_ENV="$RUN_ROOT/wait-arm-env" GANG_TEST_WAIT_ARM="$wait_server_arm" \
@@ -1228,7 +1228,7 @@ BASH_ENV="$RUN_ROOT/wait-arm-env" GANG_TEST_WAIT_ARM="$wait_server_arm" \
   "$GANG" wait wait-server --until "done" --timeout 5 \
   >"$RUN_ROOT/wait-server.out" 2>"$RUN_ROOT/wait-server.err" &
 wait_server_pid=$!
-TMUX_TMPDIR="$wait_server_root" tmux wait-for "$wait_server_arm"
+env -u TMUX TMUX_TMPDIR="$wait_server_root" tmux wait-for "$wait_server_arm"
 tmux -S "$wait_server_socket" kill-server
 if wait "$wait_server_pid"; then
   fail "a vanished tmux server fails its blocked waiter loudly" \

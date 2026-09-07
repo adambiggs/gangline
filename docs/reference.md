@@ -375,12 +375,10 @@ from either name.
 
 ### `gang attach`
 
-Attaches to `GANG_SESSION` on this shell's own tmux socket.
-
-When the team is not on that socket, `attach` reads the socket `hitch` recorded
-for it, says on stderr which socket it is crossing to, and attaches there. A
-team with no record, or one whose recorded socket no longer answers, is refused
-with which of those two it was.
+Attaches to `GANG_SESSION`. Gangline first validates the socket recorded for the
+team and uses it when the session is not on this shell's current tmux socket,
+saying on stderr which socket it crosses to. A team with no usable record and
+no session on the current or default socket is refused.
 
 ### `gang teams`
 
@@ -389,14 +387,20 @@ on, newest state first asked of the server rather than read off the file: `live`
 or `gone` distinguishing a socket nothing answers on from a server that answers
 without that session.
 
-`hitch` records `GANG_SESSION` and its socket under `GANG_LOCK_DIR/teams/` on
-every hitch; `down` removes the record for the team it ends. A session name that
-is not usable as a filename is not recorded, and `hitch` says so — the team runs
+`hitch` starts new teams on tmux's named `gangline` socket and records
+`GANG_SESSION` and the resolved socket under `GANG_LOCK_DIR/teams/` on every
+hitch; `down` removes the record for the team it ends. A session name that is
+not usable as a filename is not recorded, and `hitch` says so — the team runs
 either way, only discovery is unavailable for it.
 
-This exists because tmux clients discover the default socket while a private
-`TMUX_TMPDIR` moves it, so a live team can be unreachable from a shell that lost
-that environment and look exactly like a team that has gone.
+Hitch removes `TMUX` from the agent launch while preserving `TMUX_PANE`.
+Consequently a tmux client started directly by the agent cannot implicitly
+address the team; `gang` validates the recorded socket and carries it only for
+the lifetime of its own invocation. The guard separately routes bare
+`tmux wait-for` through the team socket so agent-side event barriers keep their
+native meaning; no other unaimed tmux command uses that route. Live teams
+created by older Gangline builds remain reachable on the caller's current or
+default socket during rollout.
 
 ### `gang tick`
 
@@ -1660,18 +1664,26 @@ sourcing the selected collar; put those values in a custom collar and point
 variables are refused. Any malformed file refuses every command, including
 native hooks; recovery is in `docs/operations.md`.
 
-`hitch` also exports `GANG_TMUX_GUARD_LOG_DIR` into guarded agent launches. It
-is the launch-time team log root, retained when a test redirects
-`GANG_LOCK_DIR` so each teardown verdict remains attributable. It is internal
-provenance, not a settable configuration key.
+`hitch` also exports `GANG_TMUX_GUARD_LOG_DIR` and `GANG_TMUX_SOCKET` into
+guarded agent launches. The first is the launch-time team log root, retained
+when a test redirects `GANG_LOCK_DIR` so each teardown verdict remains
+attributable. The second lets the shim route only a bare `tmux wait-for` after
+`TMUX` has been removed. Both are internal launch values, not settable
+configuration keys.
 
 Every hitched agent receives the tmux shim, including when its launch
 environment has `GANG_TMUX_GUARD=off`. The shim records and honours that
 override only outside a Gangline agent context, for example a detached operator
 shell. A pane registered with `@gl_agent` (and the brief launch interval before
-that registration) refuses it. Fixture and test teardown must use a nonempty
-explicit `tmux -S` socket; an empty socket is refused rather than allowed to
-fall back to tmux's default server.
+that registration) refuses it. If stderr is not a terminal, the shim also
+prints its refusal on stdout, including when an agent harness captures both
+streams. `GANG_TMUX_SOCKET` is not a privilege boundary: a same-uid process can
+explicitly aim an unguarded client at it, while unaimed clients receive no team
+route. A tmux global option the shim does not recognize is refused from an agent
+context, because its following value could otherwise hide a destructive verb.
+Fixture and test teardown must use a nonempty explicit `tmux -S` socket; an
+empty socket is refused rather than allowed to fall back to tmux's default
+server.
 
 Doctrine is never written by Gangline. It must be a readable regular file with
 no NUL, no controls other than tab and newline, and valid UTF-8. Byte count does
