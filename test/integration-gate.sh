@@ -1525,3 +1525,346 @@ for tail_suite in integration.sh e2e.sh; do
       "it does not both source test/suite-tail.sh and end on suite_tail"
   fi
 done
+
+# THE SERVERS A RUN STARTS DO NOT OUTLIVE IT. A tmux server daemonises, so the
+# only thing that ends one is something that goes looking for it. A teardown
+# written as an EXIT trap over a list of sockets does neither when the run is
+# killed outright, and covers only the sockets on that list when it does run.
+# Both gaps leave a server holding a pty for as long as the host is up, and
+# neither is visible from a green run: the run passes, and the survivors are
+# found days later in a process list.
+#
+# The stand-in below is a run of that shape — a private root, a server on the
+# root's own socket, a second under a nested root the named teardown never
+# mentions, and a third on a `-L` label outside the root entirely. It is ended
+# three ways: an early exit, a signal its trap can answer, and a SIGKILL no
+# trap can. Each ending is asked the same question.
+#
+# WHAT COUNTS AS GONE IS READ FROM THE KERNEL, not from the socket file. A run
+# that removed its root while a server was still bound inside it leaves a
+# server whose socket path no longer exists, and that answers every `tmux -S`
+# probe exactly as a server that is not running does.
+reaper_live_servers() { # $1 run root, $2 socket outside it -> one server pid per line
+  local root="$1" outside="${2:-}" proc comm link inode path
+  local -A bound=()
+  # The bound path is the last field and may hold a space, so what is read here
+  # is the remainder of the line rather than one word of it. Reading it either
+  # way would make this instrument agree with a reaper that has the same fault.
+  while read -r inode path; do bound["$inode"]="$path"; done \
+    < <(awk 'FNR > 1 && NF >= 8 {
+          inode = $7
+          for (i = 1; i <= 7; i++) { sub(/^[^ \t]+[ \t]+/, "") }
+          print inode, $0
+        }' /proc/net/unix)
+  for proc in /proc/[0-9]*; do
+    { read -r comm < "$proc/comm"; } 2>/dev/null || continue
+    [ "$comm" = "tmux: server" ] || continue
+    while IFS= read -r link; do
+      inode="${link#socket:[}"
+      path="${bound[${inode%]}]:-}"
+      [ -n "$path" ] || continue
+      if [ "$path" != "${path#"$root"/}" ] \
+        || { [ -n "$outside" ] && [ "$path" = "$outside" ]; }; then
+        printf '%s\n' "${proc#/proc/}"
+        break
+      fi
+    done < <(find "$proc/fd" -maxdepth 1 -type l -printf '%l\n' 2>/dev/null \
+      | grep '^socket:\[')
+  done | sort -u
+}
+
+reaper_fix="$RUN_ROOT/suite-reaper"
+mkdir -p "$reaper_fix"
+reaper_label="gangline-reaper-outside-$$"
+reaper_label_socket="/tmp/tmux-$(id -u)/$reaper_label"
+# That label resolves under the host's own tmux directory rather than any run
+# root, so this run adopts it as well: if the stand-in's reaper never fires,
+# this run's does, and the label server does not become the leak under test.
+suite_reaper_track "$reaper_label_socket"
+# THIS FRAGMENT RUNS BESIDE THE SUITE, NOT AFTER IT, so the run's own tmux
+# server may not exist yet when the barriers below are first used: the part that
+# creates it is running in another process at the same time. A barrier on a
+# server this fragment starts itself is up before it is waited on. It goes under
+# the run root like everything else here, so the run's teardown reaps it.
+reaper_barrier_root="$reaper_fix/barrier"
+mkdir -p "$reaper_barrier_root"
+reaper_barrier_socket="$reaper_barrier_root/tmux-$(id -u)/default"
+TMUX_TMPDIR="$reaper_barrier_root" tmux new-session -d -s reaper-barrier -n idle \
+  "PS1='> ' bash --norc"
+equal "the reaper fixtures have a barrier server of their own" \
+  "reaper-barrier" \
+  "$(tmux -S "$reaper_barrier_socket" list-sessions -F '#{session_name}')"
+cat > "$reaper_fix/run.sh" <<SH
+#!/usr/bin/env bash
+# SPDX-License-Identifier: Apache-2.0
+set -euo pipefail
+unset TMUX TMUX_PANE
+. "$ROOT/test/suite-python.sh"
+. "$ROOT/test/suite-reaper.sh"
+reaper_root="\$1"
+reaper_mode="\$2"
+mkdir -p "\$reaper_root/nested"
+suite_reaper_start "\$reaper_root"
+suite_reaper_track "$reaper_label_socket"
+# The teardown a run of this shape writes by hand: the one socket it knows the
+# name of, and the sweep that covers the rest of what it started.
+cleanup() {
+  tmux -S "\$reaper_root/tmux-\$(id -u)/default" kill-server 2>/dev/null || true
+  suite_reaper_sweep "\$reaper_root"
+}
+on_signal() { trap - HUP INT TERM; exit "\$((128 + \$1))"; }
+trap cleanup EXIT
+trap 'on_signal 1' HUP
+trap 'on_signal 2' INT
+trap 'on_signal 15' TERM
+TMUX_TMPDIR="\$reaper_root" tmux new-session -d -s reaper-primary -n seed \\
+  "PS1='> ' bash --norc"
+TMUX_TMPDIR="\$reaper_root/nested" tmux new-session -d -s reaper-nested -n seed \\
+  "PS1='> ' bash --norc"
+env -u TMUX_TMPDIR tmux -L "$reaper_label" new-session -d -s reaper-outside \\
+  -n seed "PS1='> ' bash --norc"
+mkfifo "\$reaper_root/hold"
+tmux -S "$reaper_barrier_socket" wait-for -S "\$reaper_mode-reaper-up"
+# The fifo is how this run is held still while its servers are counted; the
+# caller either releases it or kills this process while it waits.
+read -r _ < "\$reaper_root/hold" || true
+# An early exit is a run that stops in the middle of its own work, which is
+# what a failed check under set -e does.
+[ "\$reaper_mode" = early ] && false
+exit 0
+SH
+chmod +x "$reaper_fix/run.sh"
+
+for reaper_case in early term kill; do
+  reaper_root="$reaper_fix/$reaper_case"
+  SUITE_REAPER_DONE_SOCKET="$reaper_barrier_socket" \
+    SUITE_REAPER_DONE_CHANNEL="$reaper_case-reaper-done" \
+    SUITE_REAPER_TMUX="$REAL_TMUX" \
+    "$reaper_fix/run.sh" "$reaper_root" "$reaper_case" &
+  reaper_pid=$!
+  tmux -S "$reaper_barrier_socket" wait-for "$reaper_case-reaper-up"
+  reaper_before="$(reaper_live_servers "$reaper_root" "$reaper_label_socket" | wc -l | tr -d ' ')"
+  equal "the stand-in run starts three servers on three sockets to lose" \
+    "3" "$reaper_before"
+  case "$reaper_case" in
+    early) : > "$reaper_root/hold" ;;
+    term) kill -TERM "$reaper_pid" 2>/dev/null || true ;;
+    kill) kill -KILL "$reaper_pid" 2>/dev/null || true ;;
+  esac
+  wait "$reaper_pid" 2>/dev/null || true
+  tmux -S "$reaper_barrier_socket" wait-for "$reaper_case-reaper-done"
+  reaper_after="$(reaper_live_servers "$reaper_root" "$reaper_label_socket")"
+  case "$reaper_case" in
+    early) reaper_ending="a run that stops in the middle of its own work" ;;
+    term) reaper_ending="a run stopped by a signal its trap can answer" ;;
+    kill) reaper_ending="a run killed outright, where no trap runs at all" ;;
+  esac
+  equal "$reaper_ending leaves no tmux server behind" "" "$reaper_after"
+  if [ -e "$reaper_root" ]; then
+    fail "$reaper_ending leaves no fixture root behind" "$reaper_root is still there"
+  else
+    pass "$reaper_ending leaves no fixture root behind"
+  fi
+done
+
+# WHAT A RUN OWNS IS WHAT IT WROTE DOWN. Selection is a prefix of the socket's
+# bound path, so a directory argument alone would let one unset variable reach
+# the team's own socket. A directory is swept only while it carries the marker a
+# run wrote into it.
+reaper_unclaimed_root="$reaper_fix/unclaimed"
+mkdir -p "$reaper_unclaimed_root"
+TMUX_TMPDIR="$reaper_unclaimed_root" tmux new-session -d -s reaper-unclaimed \
+  -n seed "PS1='> ' bash --norc"
+equal "a server stands in a directory no run has claimed" \
+  "1" "$(reaper_live_servers "$reaper_unclaimed_root" "" | wc -l | tr -d ' ')"
+suite_reaper_sweep "$reaper_unclaimed_root"
+equal "sweeping an unclaimed directory leaves its server standing" \
+  "1" "$(reaper_live_servers "$reaper_unclaimed_root" "" | wc -l | tr -d ' ')"
+if [ -e "$reaper_unclaimed_root/.suite-reaper" ]; then
+  fail "and writes nothing into it" "a marker appeared"
+else
+  pass "and writes nothing into it"
+fi
+tmux -S "$reaper_unclaimed_root/tmux-$(id -u)/default" kill-server 2>/dev/null || true
+
+reaper_claimed_root="$reaper_fix/claimed"
+mkdir -p "$reaper_claimed_root"
+suite_reaper_claim "$reaper_claimed_root" > /dev/null
+TMUX_TMPDIR="$reaper_claimed_root" tmux new-session -d -s reaper-claimed \
+  -n seed "PS1='> ' bash --norc"
+equal "the same sweep ends a server under a directory the run did claim" \
+  "" "$(suite_reaper_sweep "$reaper_claimed_root"
+        reaper_live_servers "$reaper_claimed_root" "")"
+
+# A CLAIM IS A PROMISE THAT THE DIRECTORY HOLDS NOTHING BUT THIS RUN'S WORK,
+# because a sweep ends what is bound inside it and then removes it. A directory
+# that already holds someone else's tmux server says otherwise, and so does one
+# that contains the directory tmux puts this user's sockets in by default —
+# which is where the team's own server lives, and which an unset TMPDIR would
+# hand straight to a run root. The protected directory is a fixture here, so
+# this drives the refusal without writing into the live one; the live one is
+# only read.
+if [ -e "/tmp/tmux-$(id -u)/.suite-reaper" ]; then
+  fail "the host's own tmux directory carries no run's marker" \
+    "/tmp/tmux-$(id -u)/.suite-reaper exists"
+else
+  pass "the host's own tmux directory carries no run's marker"
+fi
+reaper_stand_in_host="$reaper_fix/stand-in-host/tmux-$(id -u)"
+mkdir -p "$reaper_stand_in_host"
+ln -s "$reaper_stand_in_host" "$reaper_fix/stand-in-link"
+for reaper_shared in \
+  "protects|$reaper_stand_in_host" \
+  "protects|${reaper_stand_in_host%/*}" \
+  "spelling|$reaper_stand_in_host/." \
+  "spelling|$reaper_stand_in_host//" \
+  "spelling|${reaper_stand_in_host%/*}/./tmux-$(id -u)" \
+  "spelling|$reaper_fix/stand-in-link"
+do
+  reaper_shared_why="${reaper_shared%%|*}"
+  reaper_shared_path="${reaper_shared#*|}"
+  reaper_shared_rc=0
+  reaper_shared_said="$(
+    export SUITE_REAPER_HOST_TMUX="$reaper_stand_in_host"
+    suite_reaper_claim "$reaper_shared_path" 2>&1)" || reaper_shared_rc=$?
+  equal "claiming [$reaper_shared_path] is refused" "2" "$reaper_shared_rc"
+  case "$reaper_shared_why" in
+    protects) reaper_shared_needle="holds this host's own tmux sockets" ;;
+    *) reaper_shared_needle="does not name a run root" ;;
+  esac
+  contains "and [$reaper_shared_path] is refused by name" \
+    "$reaper_shared_said" "$reaper_shared_needle"
+  if [ -e "$reaper_stand_in_host/.suite-reaper" ]; then
+    fail "and [$reaper_shared_path] writes no marker into the protected directory" \
+      "a marker appeared"
+    rm -f "$reaper_stand_in_host/.suite-reaper"
+  else
+    pass "and [$reaper_shared_path] writes no marker into the protected directory"
+  fi
+done
+reaper_occupied_root="$reaper_fix/occupied"
+mkdir -p "$reaper_occupied_root"
+TMUX_TMPDIR="$reaper_occupied_root" tmux new-session -d -s reaper-occupied \
+  -n seed "PS1='> ' bash --norc"
+reaper_occupied_rc=0
+reaper_occupied_said="$(suite_reaper_claim "$reaper_occupied_root" 2>&1)" \
+  || reaper_occupied_rc=$?
+equal "claiming a directory that already holds a server is refused" \
+  "2" "$reaper_occupied_rc"
+contains "and the refusal says a server is bound under it" \
+  "$reaper_occupied_said" "already bound under it"
+equal "so that server is still standing" \
+  "1" "$(reaper_live_servers "$reaper_occupied_root" "" | wc -l | tr -d ' ')"
+tmux -S "$reaper_occupied_root/tmux-$(id -u)/default" kill-server 2>/dev/null || true
+
+# A PATH IS NOT AN IDENTITY: a directory can be removed and remade at the same
+# path by a later run. A watcher carries the token it wrote, so it declines the
+# successor rather than reaping a run it was never armed for.
+reaper_gen_root="$reaper_fix/generation"
+mkdir -p "$reaper_gen_root"
+reaper_gen_first="$(suite_reaper_claim "$reaper_gen_root")"
+reaper_gen_second="$(suite_reaper_claim "$reaper_gen_root")"
+if [ -n "$reaper_gen_first" ] && [ "$reaper_gen_first" != "$reaper_gen_second" ]; then
+  pass "each claim of the same directory writes a different token"
+else
+  fail "each claim of the same directory writes a different token" \
+    "got [$reaper_gen_first] then [$reaper_gen_second]"
+fi
+TMUX_TMPDIR="$reaper_gen_root" tmux new-session -d -s reaper-generation \
+  -n seed "PS1='> ' bash --norc"
+"$(suite_reaper_python)" "$(suite_reaper_program)" \
+  --sweep "$reaper_gen_root" "$reaper_gen_first"
+equal "a sweep holding the earlier run's token leaves the later run standing" \
+  "1" "$(reaper_live_servers "$reaper_gen_root" "" | wc -l | tr -d ' ')"
+"$(suite_reaper_python)" "$(suite_reaper_program)" \
+  --sweep "$reaper_gen_root" "$reaper_gen_second"
+equal "the token the directory actually carries ends it" \
+  "" "$(reaper_live_servers "$reaper_gen_root" "")"
+
+# TMPDIR IS THE CALLER'S TO CHOOSE, so a run root can hold a space. The kernel
+# writes the bound path as the last field of its socket table and a plain split
+# would cut it at that space, losing the server rather than ending it.
+reaper_space_root="$reaper_fix/holds a space"
+mkdir -p "$reaper_space_root"
+suite_reaper_claim "$reaper_space_root" > /dev/null
+TMUX_TMPDIR="$reaper_space_root" tmux new-session -d -s reaper-space \
+  -n seed "PS1='> ' bash --norc"
+equal "a server under a root holding a space is there to be found" \
+  "1" "$(reaper_live_servers "$reaper_space_root" "" | wc -l | tr -d ' ')"
+suite_reaper_sweep "$reaper_space_root"
+equal "and the teardown reaches it" \
+  "" "$(reaper_live_servers "$reaper_space_root" "")"
+
+# A NEWLINE HAS NO REPRESENTATION in the marker, the adopted-socket list, or the
+# kernel's own table, so a run root or socket holding one is refused where it
+# enters rather than going quietly missing at teardown.
+reaper_newline_root="$(printf '%s/holds a\nnewline' "$reaper_fix")"
+reaper_newline_rc=0
+reaper_newline_said="$(suite_reaper_start "$reaper_newline_root" 2>&1)" \
+  || reaper_newline_rc=$?
+equal "a run root holding a newline is refused" "1" "$reaper_newline_rc"
+contains "and the refusal names it as unreadable" \
+  "$reaper_newline_said" "cannot be a run root"
+reaper_newline_rc=0
+reaper_newline_said="$(suite_reaper_track "$reaper_newline_root/sock" 2>&1)" \
+  || reaper_newline_rc=$?
+equal "an adopted socket holding a newline is refused too" "1" "$reaper_newline_rc"
+
+# A SOCKET PATH MAY LEGALLY END IN A SPACE. Recording one and trimming it on the
+# way back out records one path and looks for another, so the adopted list keeps
+# every byte but the separator.
+reaper_extra_root="$reaper_fix/adopted"
+mkdir -p "$reaper_extra_root"
+suite_reaper_claim "$reaper_extra_root" > /dev/null
+reaper_extra_socket="$reaper_fix/outside sock "
+( export SUITE_REAPER_ROOT="$reaper_extra_root"
+  suite_reaper_track "$reaper_extra_socket" )
+equal "an adopted socket path keeps its trailing space" \
+  "$reaper_extra_socket" \
+  "$(sed -n '1s/$//p' "$reaper_extra_root/.suite-reaper-extra")"
+
+# THE WATCH IS EITHER PROVIDED OR REFUSED. It rests on Linux pidfds, a readable
+# socket table, and setsid; on a host without one of them a watcher would report
+# a protection it cannot give, and the run it was meant to cover would leak in
+# exactly the way this file exists to stop.
+equal "this host can be watched" "0" \
+  "$("$(suite_reaper_python)" "$(suite_reaper_program)" --watchable >/dev/null 2>&1; echo $?)"
+reaper_nosockets_rc=0
+reaper_nosockets_said="$(
+  export SUITE_REAPER_UNIX_SOCKETS="$reaper_fix/absent-table"
+  suite_reaper_start "$reaper_fix/unwatchable" 2>&1)" || reaper_nosockets_rc=$?
+equal "a host whose socket table cannot be read refuses to start a watch" \
+  "1" "$reaper_nosockets_rc"
+contains "and says which piece is missing" \
+  "$reaper_nosockets_said" "cannot be read"
+if [ -e "$reaper_fix/unwatchable/.suite-reaper" ]; then
+  fail "a refused start claims nothing" "it wrote a marker anyway"
+else
+  pass "a refused start claims nothing"
+fi
+reaper_nosetsid_rc=0
+reaper_nosetsid_said="$(
+  # Emptying the search path is how a host without setsid is presented here;
+  # it is confined to this subshell, which does nothing else.
+  # shellcheck disable=SC2123
+  PATH="$reaper_fix/empty-path"
+  suite_reaper_start "$reaper_fix/ungrouped" 2>&1)" || reaper_nosetsid_rc=$?
+equal "a host without setsid refuses too, rather than sharing the run's group" \
+  "1" "$reaper_nosetsid_rc"
+contains "and says so" "$reaper_nosetsid_said" "no setsid"
+
+# A TEARDOWN TRAPPED DIRECTLY ON A SIGNAL RUNS AND THEN RETURNS to the flow it
+# interrupted, so the run carries on with its fixtures deleted and its claim on
+# its own directory gone — and every server it starts after that point belongs
+# to no run and is swept by nobody. Both suites answer a signal with a handler
+# that exits, whatever order the dispositions are written in.
+for reaper_trapped in test/integration.sh test/role-briefs.sh; do
+  equal "$reaper_trapped binds its teardown to no signal" "" \
+    "$(grep -E '^trap .*cleanup.*(HUP|INT|TERM|QUIT)' "$ROOT/$reaper_trapped")"
+  for reaper_signal in HUP INT TERM; do
+    contains "$reaper_trapped answers $reaper_signal with a handler that exits" \
+      "$(grep -E "^trap .*$reaper_signal\$" "$ROOT/$reaper_trapped")" "on_signal"
+  done
+  contains "$reaper_trapped's handler exits on the signal it was given" \
+    "$(sed -n '/^on_signal()/,/^}/p' "$ROOT/$reaper_trapped")" 'exit "$((128 + $1))"'
+done

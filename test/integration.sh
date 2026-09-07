@@ -23,6 +23,7 @@ TREE_AT_START="$("$ROOT/test/gate.sh" --assert-owned)"
 # contribute seven digits, so the descriptive former prefix made a valid private
 # TMPDIR unusable before a test could state its result.
 RUN_ROOT="$(mktemp -d "${TMPDIR:-/tmp}/gl.XXXXXX")"
+# shellcheck disable=SC2034  # read by test/integration-readiness.sh
 TMUX_SOCKET="$RUN_ROOT/tmux-$(id -u)/default"
 
 export GIT_CONFIG_GLOBAL="$RUN_ROOT/gitconfig"
@@ -35,6 +36,14 @@ export GIT_CONFIG_SYSTEM=/dev/null
 # before it existed, are in the file itself.
 . "$ROOT/test/suite-python.sh"
 suite_python3_pin "$RUN_ROOT/pybin" || exit 1
+
+# A TMUX SERVER OUTLIVES WHATEVER FORKED IT, so this run's teardown cannot be
+# left to a trap: a trap does not run when the run is killed outright, and it
+# reaches only the sockets its author listed. The reaper ends every server
+# bound inside this run's root, from the teardown below and again from a
+# detached watcher that fires when this process is gone by any means.
+. "$ROOT/test/suite-reaper.sh"
+suite_reaper_start "$RUN_ROOT" || exit 1
 
 # The Bash fixture establishes every transition synchronously except one: a pane
 # answers its terminal asynchronously. Production waits are inputs here, not
@@ -411,8 +420,7 @@ cleanup() {
   [ -z "${guard_ordinary_label:-}" ] \
     || env -u TMUX -u TMUX_PANE -u TMUX_TMPDIR \
       "$REAL_TMUX" -L "$guard_ordinary_label" kill-server 2>/dev/null || true
-  tmux -S "$TMUX_SOCKET" kill-server 2>/dev/null || true
-  rm -rf -- "$RUN_ROOT"
+  suite_reaper_sweep "$RUN_ROOT"
 }
 # A SIGNAL ENDS THE RUN; IT DOES NOT ANNOTATE IT. One handler for the exit and
 # for the signals reads as if a signalled run stops here, and it does not: a

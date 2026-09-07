@@ -2689,6 +2689,10 @@ equal "real tmux answers with a socket outside the missing TMUX_TMPDIR" \
   "$(env -u TMUX -u TMUX_PANE -u TMUX_TMPDIR \
     "$REAL_TMUX" -L "$guard_fallback_label" display-message -p '#{socket_path}')" \
   "$guard_fallback_socket"
+# That socket is outside this run's root by construction — the point of the
+# fixture — so the run adopts it by name, and the teardown reaches it whichever
+# way the run ends.
+suite_reaper_track "$guard_fallback_socket"
 guard_rc=0
 guard_out="$(env -u TMUX -u TMUX_PANE \
   PATH="$ROOT/libexec/gang-tmux-guard:$(dirname "$REAL_TMUX"):/usr/bin:/bin" \

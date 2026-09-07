@@ -7,16 +7,38 @@ set -euo pipefail
 unset TMUX TMUX_PANE
 
 TEST_ROOT="$(mktemp -d "${TMPDIR:-/tmp}/gangline-role-test.XXXXXX")"
-TMUX_SOCKET="$TEST_ROOT/tmux-$(id -u)/default"
 SCRIPT_ROOT="$(cd -P "$(dirname "$0")/.." && pwd)"
 GANG="${GANG_UNDER_TEST:-$SCRIPT_ROOT/bin/gang}"
 PRODUCT_ROOT="$(cd -P "$(dirname "$GANG")/.." && pwd)"
 
+# A TMUX SERVER OUTLIVES WHATEVER FORKED IT. This instrument starts servers
+# under nested roots of its own as well as on the socket named above, and a
+# trap reaches neither of them when the run is killed outright. The reaper ends
+# every server bound inside this run's root, from the teardown here and again
+# from a detached watcher that fires when this process is gone by any means.
+. "$SCRIPT_ROOT/test/suite-python.sh"
+. "$SCRIPT_ROOT/test/suite-reaper.sh"
+suite_reaper_start "$TEST_ROOT" || exit 1
+
 cleanup() {
-  tmux -S "$TMUX_SOCKET" kill-server 2>/dev/null || true
-  rm -rf -- "$TEST_ROOT"
+  suite_reaper_sweep "$TEST_ROOT"
 }
-trap cleanup EXIT HUP INT TERM
+# A SIGNAL ENDS THE RUN; IT DOES NOT ANNOTATE IT. A bash signal handler returns
+# to the interrupted flow, so one handler shared by the exit and the signals
+# tears this run down at the signal and then carries on running against nothing:
+# the fixtures are gone, the run's claim on its own directory went with them,
+# and the servers it starts after that point belong to no run and are swept by
+# nobody. Exiting from the signal handler is what stops that flow. The
+# disposition is cleared first so a second signal arriving during the exit
+# cannot start a second teardown over the first.
+on_signal() { # $1 = signal number, for the conventional 128 + signo status
+  trap - HUP INT TERM
+  exit "$((128 + $1))"
+}
+trap cleanup EXIT
+trap 'on_signal 1' HUP
+trap 'on_signal 2' INT
+trap 'on_signal 15' TERM
 
 mkdir -p "$TEST_ROOT/bin" "$TEST_ROOT/config" "$TEST_ROOT/collars"
 cat > "$TEST_ROOT/bin/sleep" <<'SH'
