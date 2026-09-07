@@ -270,14 +270,16 @@ def gone(pid, seconds):
 def sweep(root, token=""):
     """End every server this run owns, then remove the run's own directory.
 
-    The marker is the authority. A directory carrying none was never claimed by
-    a run, so nothing in it is selected; a caller holding a token must match the
-    marker exactly, so a watcher armed for one run declines a later run that
-    remade the same path.
+    Returns what it ended, or None when it declined. The marker is the
+    authority: a directory carrying none was never claimed by a run, so nothing
+    in it is selected, and a caller holding a token must match the marker
+    exactly, so a watcher armed for one run declines a later run that remade the
+    same path. Declining is not a failure — it is the answer to a directory this
+    caller does not own.
     """
     found = marker_token(root)
     if not found or (token and found != token):
-        return []
+        return None
     wanted = wanted_for(root)
     reaped = []
     for pid, socket_path in servers(wanted):
@@ -303,7 +305,16 @@ def sweep(root, token=""):
                 os.unlink(path)
             except OSError:
                 pass
+    # A ROOT THAT WOULD NOT GO IS NAMED, NOT SWALLOWED. Removal is best-effort
+    # because a teardown carries on regardless, but a directory that survives it
+    # is a fixture the next run inherits and a reading nobody took: it has to be
+    # said, and where to look has to be said with it.
     shutil.rmtree(root, ignore_errors=True)
+    if os.path.exists(root):
+        sys.stderr.write(
+            "suite-reaper: %s could not be removed and is still there to read;"
+            " nothing else removes it\n" % root
+        )
     return reaped
 
 
@@ -395,7 +406,7 @@ def watch(root, pid, expected, token):
             select.select([handle], [], [], None)
         finally:
             os.close(handle)
-    announce(root, sweep(root, token))
+    announce(root, sweep(root, token) or [])
     return 0
 
 
@@ -415,8 +426,9 @@ def main(argv):
         sys.stdout.write(token)
         return 0
     if len(argv) >= 3 and argv[1] == "--sweep":
-        sweep(argv[2], argv[3] if len(argv) >= 4 else "")
-        return 0
+        if sweep(argv[2], argv[3] if len(argv) >= 4 else "") is None:
+            return 0
+        return 4 if os.path.exists(argv[2]) else 0
     if len(argv) >= 3 and argv[1] == "--start-time":
         sys.stdout.write(start_time(int(argv[2])))
         return 0
