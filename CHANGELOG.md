@@ -1,5 +1,13 @@
 # Changelog
 
+## [2.11.1](https://github.com/adambiggs/gangline/compare/gangline-v2.11.0...gangline-v2.11.1) (2026-09-07)
+
+
+### Bug Fixes
+
+* dismiss Codex provider wait menu before delivery ([0838950](https://github.com/adambiggs/gangline/commit/0838950b0133240e638c64aaa848da65ddb9dbce))
+* **test:** keep suite reaper outside run boundaries ([7a86f6b](https://github.com/adambiggs/gangline/commit/7a86f6b055f05ccd02adde4af1ff1257b7c8e5d1))
+
 ## [2.11.0](https://github.com/adambiggs/gangline/compare/gangline-v2.10.1...gangline-v2.11.0) (2026-09-07)
 
 
