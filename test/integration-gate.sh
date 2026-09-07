@@ -22,6 +22,85 @@ fi
 # and state under RUN_ROOT; they need the nested-gate disposition, not a slot in
 # the host-wide mandatory queue.
 export _GANGLINE_GATE_LOCKED=1
+GATE_FIXTURE_EVENT_CEILING="${GANG_TEST_GATE_EVENT_CEILING:-120}"
+case "$GATE_FIXTURE_EVENT_CEILING" in
+  0*|*[!0-9]*)
+    fail "the gate fixture event ceiling is a positive whole number" \
+      "GANG_TEST_GATE_EVENT_CEILING=[$GATE_FIXTURE_EVENT_CEILING]"
+    GATE_FIXTURE_EVENT_CEILING=120
+    ;;
+esac
+
+# CHILD OUTPUT IS THE EVENT; THIS CLOCK ONLY MAKES A MISSING EVENT LOUD. The
+# gate fixtures below used short timed reads as if the timeout meant the child
+# had finished. Under load that confused a slow child with a dead one, then a
+# later liveness probe raced the rescue command. A blocking reader now owns the
+# event, while this independent guard gives a broken fixture enough time to
+# print a named failure inside CI instead of wedging the whole integration job.
+# The sleeper has private stdio. `wait -n` leaves the losing child unreaped, so
+# its PID cannot be reused before this function stops and joins it.
+gate_fixture_event() { # $1 fd, $2 outcome variable, $3 value variable, $4 path prefix
+  local fd="$1" outcome="$2" destination="$3" prefix="$4"
+  local state="$prefix.state" eof="$prefix.eof"
+  local reader ceiling finished value
+  rm -f -- "$state" "$eof"
+  (
+    value=""
+    if IFS= read -r -u "$fd" value; then
+      printf '%s\n' "$value" > "$state"
+    else
+      : > "$eof"
+    fi
+  ) &
+  reader=$!
+  /bin/sleep "$GATE_FIXTURE_EVENT_CEILING" >/dev/null 2>&1 &
+  ceiling=$!
+  finished=""
+  wait -n -p finished "$reader" "$ceiling" 2>/dev/null || true
+  if [ "$finished" = "$reader" ]; then
+    kill -KILL "$ceiling" 2>/dev/null || true
+    wait "$ceiling" 2>/dev/null || true
+    if [ -e "$state" ]; then
+      printf -v "$outcome" '%s' event
+      printf -v "$destination" '%s' "$(<"$state")"
+    else
+      printf -v "$outcome" '%s' eof
+      printf -v "$destination" '%s' ""
+    fi
+  elif [ -e "$state" ]; then
+    kill -KILL "$ceiling" 2>/dev/null || true
+    wait "$ceiling" 2>/dev/null || true
+    wait "$reader" 2>/dev/null || true
+    printf -v "$outcome" '%s' event
+    printf -v "$destination" '%s' "$(<"$state")"
+  else
+    kill -KILL "$reader" 2>/dev/null || true
+    wait "$reader" 2>/dev/null || true
+    printf -v "$outcome" '%s' deadline
+    printf -v "$destination" '%s' ""
+  fi
+  rm -f -- "$state" "$eof"
+}
+
+# A DEADLINE ACTS ON ONE SESSION IT CREATED, WITHOUT A PRIOR LIVENESS PROBE.
+# A process that finished before the identity read needs no rescue. Anything
+# still present must have both the recorded parent and its own session id before
+# the wrapper receives TERM and performs its child join.
+gate_fixture_stop_session() { # $1 pid, $2 description
+  local pid="$1" description="$2" actual_parent sid
+  actual_parent="$(ps -o ppid= -p "$pid" 2>/dev/null | tr -d ' ' || true)"
+  sid="$(ps -o sid= -p "$pid" 2>/dev/null | tr -d ' ' || true)"
+  if [ -z "$actual_parent" ] && [ -z "$sid" ]; then
+    return 0
+  fi
+  if [ "$actual_parent" = "$BASHPID" ] && [ "$sid" = "$pid" ]; then
+    kill -TERM "$pid" 2>/dev/null || true
+    return 0
+  fi
+  fail "$description remains scoped to its disposable session" \
+    "pid=$pid ppid=${actual_parent:-unknown} sid=${sid:-unknown}"
+  return 1
+}
 
 # THE GATE OWNS THE TREE IT JUDGES. Two failures wrote test/gate.sh: a mandatory
 # assertion that could not pass while bin/gang was uncommitted, so the complete
@@ -846,7 +925,12 @@ git -C "$gate_wait" -c user.name=fixture -c user.email=fixture@example.invalid \
   exec env -u _GANGLINE_GATE_LOCKED ./test/gate.sh 7>&7 8>&8
 ) > /dev/null 2>&1 &
 gate_wait_holder=$!
-IFS= read -r -u 7 gate_wait_state
+gate_wait_ready_outcome=""
+gate_wait_state=""
+gate_fixture_event 7 gate_wait_ready_outcome gate_wait_state \
+  "$RUN_ROOT/gate-wait-ready-event"
+equal "the private holder publishes its readiness event" \
+  "event" "$gate_wait_ready_outcome"
 equal "the private holder acquired its lock before the waiter starts" \
   "ready" "$gate_wait_state"
 gate_wait_record="$(<"$gate_wait_lock")"
@@ -866,10 +950,18 @@ env -u _GANGLINE_GATE_LOCKED "$gate_wait/test/gate.sh" > "$gate_wait_stream" 2>&
 gate_wait_pid=$!
 exec 9< "$gate_wait_stream"
 gate_wait_line=""
-IFS= read -r -t 1 -u 9 gate_wait_line || true
+gate_wait_line_outcome=""
+gate_fixture_event 9 gate_wait_line_outcome gate_wait_line \
+  "$RUN_ROOT/gate-wait-event"
+equal "the queued gate publishes its holder report event" \
+  "event" "$gate_wait_line_outcome"
 printf 'release\n' >&8
-wait "$gate_wait_holder"
-wait "$gate_wait_pid"
+gate_wait_holder_rc=0
+wait "$gate_wait_holder" || gate_wait_holder_rc=$?
+gate_wait_pid_rc=0
+wait "$gate_wait_pid" || gate_wait_pid_rc=$?
+equal "the private lock holder exits after release" "0" "$gate_wait_holder_rc"
+equal "the queued gate exits after acquiring the released lock" "0" "$gate_wait_pid_rc"
 contains "a queued gate immediately names the lock holder" \
   "$gate_wait_line" "pid=$gate_wait_record_pid"
 contains "the lock report names the holder's working directory" \
@@ -899,7 +991,12 @@ printf 'pid=999999\tstarted=1\tcwd=/dead/predecessor\tlease=stale\n' > "$gate_wa
   IFS= read -r -u 8
 ) &
 gate_stale_holder=$!
-IFS= read -r -u 7 gate_stale_state
+gate_stale_ready_outcome=""
+gate_stale_state=""
+gate_fixture_event 7 gate_stale_ready_outcome gate_stale_state \
+  "$RUN_ROOT/gate-stale-ready-event"
+equal "the legacy holder publishes its readiness event" \
+  "event" "$gate_stale_ready_outcome"
 equal "the legacy holder acquired the primary lock before its waiter" \
   "ready" "$gate_stale_state"
 env -u _GANGLINE_GATE_LOCKED "$gate_wait/test/gate.sh" > "$gate_stale_stream" 2>&1 &
@@ -907,11 +1004,25 @@ gate_stale_waiter=$!
 exec 9< "$gate_stale_stream"
 gate_stale_line=""
 gate_stale_hint=""
-IFS= read -r -t 1 -u 9 gate_stale_line || true
-IFS= read -r -t 1 -u 9 gate_stale_hint || true
+gate_stale_line_outcome=""
+gate_stale_hint_outcome=""
+gate_fixture_event 9 gate_stale_line_outcome gate_stale_line \
+  "$RUN_ROOT/gate-stale-line-event"
+if [ "$gate_stale_line_outcome" = event ]; then
+  gate_fixture_event 9 gate_stale_hint_outcome gate_stale_hint \
+    "$RUN_ROOT/gate-stale-hint-event"
+fi
+equal "the stale-lock waiter publishes its holder report event" \
+  "event" "$gate_stale_line_outcome"
+equal "the stale-lock waiter publishes its recovery hint event" \
+  "event" "$gate_stale_hint_outcome"
 printf 'release\n' >&8
-wait "$gate_stale_holder"
-wait "$gate_stale_waiter"
+gate_stale_holder_rc=0
+wait "$gate_stale_holder" || gate_stale_holder_rc=$?
+gate_stale_waiter_rc=0
+wait "$gate_stale_waiter" || gate_stale_waiter_rc=$?
+equal "the legacy lock holder exits after release" "0" "$gate_stale_holder_rc"
+equal "the stale-lock waiter exits after acquiring the lock" "0" "$gate_stale_waiter_rc"
 contains "an uncorroborated predecessor is reported as unknown" \
   "$gate_stale_line" "pid=unknown cwd=unknown held_for=unknowns"
 contains "an unknown holder report gives a local recovery hint" \
@@ -940,7 +1051,12 @@ chmod +x "$e2e_owner_bin/claude"
 GANG_E2E_LOCK="$e2e_owner_lock" PATH="$e2e_owner_bin:$PATH" \
   "$ROOT/test/e2e.sh" no-such-scenario >/dev/null 2>&1 &
 e2e_owner_pid=$!
-IFS= read -r -u 7 e2e_owner_state
+e2e_owner_ready_outcome=""
+e2e_owner_state=""
+gate_fixture_event 7 e2e_owner_ready_outcome e2e_owner_state \
+  "$RUN_ROOT/e2e-owner-ready-event"
+equal "the end-to-end lane publishes its readiness event" \
+  "event" "$e2e_owner_ready_outcome"
 equal "the end-to-end lane reached setup beneath its private lock" \
   "ready" "$e2e_owner_state"
 e2e_owner_record="$(<"$e2e_owner_lock")"
@@ -960,9 +1076,12 @@ else
 fi
 exec 7>&- 8>&-
 
-# THE TIMEOUT EXCEPTION IS SCALED, NOT STOPPED. The healthy CI measurement is
-# 104s, the production budget is 300s, the fixture quiet budget is 1s, and
-# this outer read gives the fixture 3s to turn the same state into a verdict.
+# THE TIMEOUT EXCEPTION IS SCALED, NOT STOPPED. The healthy output-gap
+# measurement is 104s, the production quiet budget is 300s, and the fixture
+# quiet budget is 1s. The nested gate's exit is the event that ends this
+# fixture. A separate 120s test-harness ceiling does not claim the gate is late;
+# it makes a missing event a named failure and leaves time for cleanup inside
+# the integration job's 900s ceiling.
 # The blocked step writes two lines and its PID first; both are independent
 # witnesses that it ran before the watchdog acts. The fake flock owns a marker
 # for exactly as long as the nested ordinary gate, so its disappearance proves
@@ -975,7 +1094,13 @@ gate_stall_stream="$RUN_ROOT/gate-stall-stream"
 gate_stall_pidfile="$RUN_ROOT/gate-stall-child.pid"
 gate_stall_lock="$RUN_ROOT/gate-stall.lock"
 gate_stall_lint_block="$RUN_ROOT/gate-stall-lint-block"
-mkfifo "$gate_stall_block" "$gate_stall_lint_block" "$gate_stall_stream"
+gate_stall_event="$RUN_ROOT/gate-stall-event"
+gate_stall_release="$RUN_ROOT/gate-stall-release"
+gate_stall_wrapper="$RUN_ROOT/gate-stall-wrapper"
+mkfifo "$gate_stall_block" "$gate_stall_lint_block" \
+  "$gate_stall_event" "$gate_stall_release"
+exec 9<> "$gate_stall_event"
+exec 10<> "$gate_stall_release"
 cat > "$gate_stall/test/lint.sh" <<SH
 #!/usr/bin/env bash
 # SPDX-License-Identifier: Apache-2.0
@@ -1005,46 +1130,73 @@ chmod +x "$gate_stall/test/gate.sh"
 git -C "$gate_stall" add test/gate.sh
 git -C "$gate_stall" -c user.name=fixture -c user.email=fixture@example.invalid \
   commit -qm 'test: isolate the stalled gate lock'
+cat > "$gate_stall_wrapper" <<SH
+#!/usr/bin/env bash
+# SPDX-License-Identifier: Apache-2.0
+set +e
+gate_pid=""
+stop_gate() {
+  trap - TERM
+  if [ -n "\$gate_pid" ]; then
+    kill -TERM "\$gate_pid" 2>/dev/null || true
+    wait "\$gate_pid" 2>/dev/null || true
+  fi
+  exit 124
+}
+trap stop_gate TERM
+"$gate_stall/test/gate.sh" &
+gate_pid=\$!
+wait "\$gate_pid"
+rc=\$?
+gate_pid=""
+printf 'complete\\n' >&9
+IFS= read -r -u 10 || true
+exit "\$rc"
+SH
+chmod +x "$gate_stall_wrapper"
 env -u _GANGLINE_GATE_LOCKED GANG_GATE_QUIET_SECONDS=1 \
-  setsid "$gate_stall/test/gate.sh" \
+  setsid "$gate_stall_wrapper" \
   > "$gate_stall_stream" 2>&1 &
 gate_stall_gate_pid=$!
-exec 9< "$gate_stall_stream"
-gate_stall_out=""
-while IFS= read -r -t 3 -u 9 gate_stall_line; do
-  gate_stall_out="${gate_stall_out}${gate_stall_out:+
-}${gate_stall_line}"
-done
+gate_stall_outcome=""
+gate_stall_state=""
+gate_fixture_event 9 gate_stall_outcome gate_stall_state \
+  "$RUN_ROOT/gate-stall-completion"
+case "$gate_stall_outcome:$gate_stall_state" in
+  event:complete)
+    pass "a quiet integration step fails within the scaled watchdog budget"
+    printf 'release\n' >&10
+    ;;
+  deadline:*)
+    fail "a quiet integration step fails within the scaled watchdog budget" \
+      "the nested gate emitted no completion event within the ${GATE_FIXTURE_EVENT_CEILING}s fixture ceiling"
+    gate_fixture_stop_session "$gate_stall_gate_pid" "the stalled fixture" || true
+    ;;
+  *)
+    fail "a quiet integration step fails within the scaled watchdog budget" \
+      "the nested gate's completion channel closed without an event"
+    gate_fixture_stop_session "$gate_stall_gate_pid" "the stalled fixture" || true
+    ;;
+esac
+gate_stall_rc=0
+wait "$gate_stall_gate_pid" 2>/dev/null || gate_stall_rc=$?
+if [ "$gate_stall_outcome" != event ]; then
+  gate_stall_rc="$gate_stall_outcome"
+fi
+gate_stall_out="$(<"$gate_stall_stream")"
+exec 9>&- 10>&-
 if [ -s "$gate_stall_pidfile" ]; then
   gate_stall_child_pid="$(cat "$gate_stall_pidfile")"
 else
   gate_stall_child_pid=""
 fi
-gate_stall_child_alive_before_rescue=0
+gate_stall_child_alive_after_gate=0
 if [ -n "$gate_stall_child_pid" ] && \
     kill -0 "$gate_stall_child_pid" 2>/dev/null; then
-  gate_stall_child_alive_before_rescue=1
+  gate_stall_child_alive_after_gate=1
 fi
-gate_stall_lock_rc_before_rescue=0
-flock -n "$gate_stall_lock" true || gate_stall_lock_rc_before_rescue=$?
-if kill -0 "$gate_stall_gate_pid" 2>/dev/null; then
-  fail "a quiet integration step fails within the scaled watchdog budget" \
-    "the fixture gate was still alive after the 1s test budget"
-  gate_stall_ppid="$(ps -o ppid= -p "$gate_stall_gate_pid" | tr -d ' ')"
-  gate_stall_sid="$(ps -o sid= -p "$gate_stall_gate_pid" | tr -d ' ')"
-  if [ "$gate_stall_ppid" = "$BASHPID" ] && \
-      [ "$gate_stall_sid" = "$gate_stall_gate_pid" ]; then
-    kill -TERM -- "-$gate_stall_gate_pid"
-  else
-    fail "the stalled fixture remains scoped to its disposable process group" \
-      "pid=$gate_stall_gate_pid ppid=$gate_stall_ppid sid=$gate_stall_sid"
-  fi
-else
-  pass "a quiet integration step fails within the scaled watchdog budget"
-fi
-gate_stall_rc=0
-wait "$gate_stall_gate_pid" || gate_stall_rc=$?
-exec 9>&-
+gate_stall_lock_rc_after_gate=0
+flock -n "$gate_stall_lock" true || gate_stall_lock_rc_after_gate=$?
 equal "a stalled integration is the gate's quiet-expiry status" "124" "$gate_stall_rc"
 contains "the stall names the step and quiet budget" \
   "$gate_stall_out" "STALLED: integration produced no output for 1s"
@@ -1054,17 +1206,17 @@ contains "the stall keeps the first trailing line" \
 contains "the stall keeps the last trailing line" \
   "$gate_stall_out" "integration last line two"
 if [ -n "$gate_stall_child_pid" ] && \
-    [ "$gate_stall_child_alive_before_rescue" -eq 0 ]; then
+    [ "$gate_stall_child_alive_after_gate" -eq 0 ]; then
   pass "the stalled step leaves no descendant process"
 else
   fail "the stalled step leaves no descendant process" \
-    "before rescue, fixture child [$gate_stall_child_pid] alive=$gate_stall_child_alive_before_rescue"
+    "after gate exit, fixture child [$gate_stall_child_pid] alive=$gate_stall_child_alive_after_gate"
 fi
-if [ "$gate_stall_lock_rc_before_rescue" -eq 0 ]; then
+if [ "$gate_stall_lock_rc_after_gate" -eq 0 ]; then
   pass "the stalled gate releases its heavy-test lock"
 else
   fail "the stalled gate releases its heavy-test lock" \
-    "before rescue, the private lock probe exited $gate_stall_lock_rc_before_rescue"
+    "after gate exit, the private lock probe exited $gate_stall_lock_rc_after_gate"
 fi
 
 # A STALL MARKER PRECEDES THE SLOW REPORT AND THE BRANCH'S STATUS WRITE. If the
@@ -1105,7 +1257,12 @@ gate_refusal_block="$RUN_ROOT/gate-refusal-block"
 gate_refusal_stream="$RUN_ROOT/gate-refusal-stream"
 gate_refusal_pidfile="$RUN_ROOT/gate-refusal-child.pid"
 gate_refusal_lock="$RUN_ROOT/gate-refusal.lock"
-mkfifo "$gate_refusal_block" "$gate_refusal_stream"
+gate_refusal_ready="$RUN_ROOT/gate-refusal-ready"
+gate_refusal_release="$RUN_ROOT/gate-refusal-release"
+gate_refusal_wrapper="$RUN_ROOT/gate-refusal-wrapper"
+mkfifo "$gate_refusal_block" "$gate_refusal_ready" "$gate_refusal_release"
+exec 9<> "$gate_refusal_ready"
+exec 10<> "$gate_refusal_release"
 sed -e "s|$gate_stall_block|$gate_refusal_block|g" \
   -e "s|$gate_stall_pidfile|$gate_refusal_pidfile|g" \
   "$gate_refusal/test/integration.sh" > "$gate_refusal/test/integration.sh.new"
@@ -1118,44 +1275,74 @@ chmod +x "$gate_refusal/test/gate.sh" "$gate_refusal/test/integration.sh"
 git -C "$gate_refusal" add test/gate.sh test/integration.sh
 git -C "$gate_refusal" -c user.name=fixture -c user.email=fixture@example.invalid \
   commit -qm 'test: force watchdog ownership refusal'
+cat > "$gate_refusal_wrapper" <<SH
+#!/usr/bin/env bash
+# SPDX-License-Identifier: Apache-2.0
+set +e
+gate_pid=""
+stop_gate() {
+  trap - TERM
+  if [ -n "\$gate_pid" ]; then
+    kill -TERM "\$gate_pid" 2>/dev/null || true
+    wait "\$gate_pid" 2>/dev/null || true
+  fi
+  exit 124
+}
+trap stop_gate TERM
+"$gate_refusal/test/gate.sh" &
+gate_pid=\$!
+wait "\$gate_pid"
+rc=\$?
+gate_pid=""
+printf 'complete\\n' >&9
+IFS= read -r -u 10 || true
+exit "\$rc"
+SH
+chmod +x "$gate_refusal_wrapper"
 env -u _GANGLINE_GATE_LOCKED GANG_GATE_QUIET_SECONDS=1 \
-  setsid "$gate_refusal/test/gate.sh" > "$gate_refusal_stream" 2>&1 &
+  setsid "$gate_refusal_wrapper" > "$gate_refusal_stream" 2>&1 &
 gate_refusal_gate_pid=$!
-exec 9< "$gate_refusal_stream"
-gate_refusal_out=""
-while IFS= read -r -t 3 -u 9 gate_refusal_line; do
-  gate_refusal_out="${gate_refusal_out}${gate_refusal_out:+
-}${gate_refusal_line}"
-done
-gate_refusal_alive_before_rescue=0
-kill -0 "$gate_refusal_gate_pid" 2>/dev/null \
-  && gate_refusal_alive_before_rescue=1
+gate_refusal_outcome=""
+gate_refusal_state=""
+gate_fixture_event 9 gate_refusal_outcome gate_refusal_state \
+  "$RUN_ROOT/gate-refusal-completion"
+case "$gate_refusal_outcome:$gate_refusal_state" in
+  event:complete)
+    pass "an ownership refusal exits instead of wedging the gate"
+    printf 'release\n' >&10
+    ;;
+  deadline:*)
+    fail "an ownership refusal exits instead of wedging the gate" \
+      "the nested gate emitted no completion event within the ${GATE_FIXTURE_EVENT_CEILING}s fixture ceiling"
+    gate_fixture_stop_session "$gate_refusal_gate_pid" "the refusal fixture" || true
+    ;;
+  *)
+    fail "an ownership refusal exits instead of wedging the gate" \
+      "the nested gate's completion channel closed without an event"
+    gate_fixture_stop_session "$gate_refusal_gate_pid" "the refusal fixture" || true
+    ;;
+esac
+gate_refusal_rc=0
+wait "$gate_refusal_gate_pid" 2>/dev/null || gate_refusal_rc=$?
+if [ "$gate_refusal_outcome" != event ]; then
+  gate_refusal_rc="$gate_refusal_outcome"
+fi
+gate_refusal_out="$(<"$gate_refusal_stream")"
+exec 9>&- 10>&-
 gate_refusal_lock_rc=0
 flock -n "$gate_refusal_lock" true || gate_refusal_lock_rc=$?
-if [ "$gate_refusal_alive_before_rescue" -eq 1 ]; then
-  gate_refusal_gate_parent="$(ps -o ppid= -p "$gate_refusal_gate_pid" | tr -d ' ')"
-  gate_refusal_gate_sid="$(ps -o sid= -p "$gate_refusal_gate_pid" | tr -d ' ')"
-  if [ "$gate_refusal_gate_parent" = "$BASHPID" ] && \
-      [ "$gate_refusal_gate_sid" = "$gate_refusal_gate_pid" ]; then
-    kill -KILL -- "-$gate_refusal_gate_pid" 2>/dev/null || true
-  else
-    fail "the refusal fixture remains scoped to its disposable process group" \
-      "pid=$gate_refusal_gate_pid ppid=$gate_refusal_gate_parent sid=$gate_refusal_gate_sid"
-  fi
-fi
-gate_refusal_rc=0
-wait "$gate_refusal_gate_pid" || gate_refusal_rc=$?
-exec 9>&-
-equal "an ownership refusal exits instead of wedging the gate" \
-  "0" "$gate_refusal_alive_before_rescue"
 equal "an ownership refusal keeps its distinct gate status" "125" "$gate_refusal_rc"
 equal "an ownership refusal releases the heavy-test lock" "0" "$gate_refusal_lock_rc"
 contains "an ownership refusal says why the child was not killed" \
   "$gate_refusal_out" "refusing to kill integration"
 if [ -s "$gate_refusal_pidfile" ]; then
   gate_refusal_child_pid="$(<"$gate_refusal_pidfile")"
-  gate_refusal_sid="$(ps -o sid= -p "$gate_refusal_child_pid" 2>/dev/null | tr -d ' ')"
-  if [ "$gate_refusal_sid" = "$gate_refusal_child_pid" ]; then
+  gate_refusal_sid="$(ps -o sid= -p "$gate_refusal_child_pid" 2>/dev/null \
+    | tr -d ' ' || true)"
+  if [ -z "$gate_refusal_sid" ]; then
+    pass "the refused fixture child vanished before test rescue"
+  elif [ "$gate_refusal_sid" = "$gate_refusal_child_pid" ]; then
+    pass "the refused fixture child remains scoped for test rescue"
     kill -KILL -- "-$gate_refusal_child_pid" 2>/dev/null || true
   else
     fail "the refused fixture child remains scoped for test rescue" \
@@ -1210,8 +1397,12 @@ if [ "${GANG_INTEGRATION_REQUIRE_ALL_PROBE:-0}" != 1 ]; then
   excludes "a focused required run never attests every part ran" \
     "$require_all_probe_out" "integration: every declared part ran"
 
+  focused_probe_rc=0
   focused_probe_out="$(env -u GANG_INTEGRATION_REQUIRE_ALL GANG_INTEGRATION_PARTS=cli \
-    GANG_INTEGRATION_REQUIRE_ALL_PROBE=1 "$ROOT/test/integration.sh" 2>&1)"
+    GANG_INTEGRATION_REQUIRE_ALL_PROBE=1 "$ROOT/test/integration.sh" 2>&1)" \
+    || focused_probe_rc=$?
+  equal "the nested focused integration probe completes successfully" \
+    "0" "$focused_probe_rc"
   contains "a focused run carries its scope in the terminal summary" \
     "$(printf '%s\n' "$focused_probe_out" | tail -n 1)" \
     "focused parts cli (full suite: cli substrate hitch compose spool readiness hooks notify usage tick)"

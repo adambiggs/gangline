@@ -635,9 +635,6 @@ pane_all() { tmux capture-pane -pJ -S - -t "$(window_id "$1")"; }
 role_output="$RUN_ROOT/role-briefs.out"
 role_host_home="$RUN_ROOT/role-fixture-host-home"
 role_host_usage="$role_host_home/.local/share/gangline/usage/events.jsonl"
-env -u XDG_DATA_HOME HOME="$role_host_home" \
-  "$ROOT/test/role-briefs.sh" > "$role_output" 2>&1 &
-role_pid=$!
 
 # THE GATE SELF-TEST BUILDS ONLY ITS OWN GIT FIXTURES. It reads the helpers and
 # counters above but no tmux window or mutable fixture used by the substrate
@@ -646,16 +643,22 @@ role_pid=$!
 # it elsewhere must not make its assertions disappear from the suite count.
 gate_output="$RUN_ROOT/integration-gate.out"
 gate_counts="$RUN_ROOT/integration-gate.counts"
-(
-  trap - EXIT HUP INT TERM
-  gate_checks_at_start="$checks"
-  gate_fails_at_start="$fails"
-  . "$ROOT/test/integration-gate.sh"
-  printf '%s %s\n' \
-    "$((checks - gate_checks_at_start))" "$((fails - gate_fails_at_start))" \
-    > "$gate_counts"
-) > "$gate_output" 2>&1 &
-gate_pid=$!
+
+start_parallel_instruments() {
+  env -u XDG_DATA_HOME HOME="$role_host_home" \
+    "$ROOT/test/role-briefs.sh" > "$role_output" 2>&1 &
+  role_pid=$!
+  (
+    trap - EXIT HUP INT TERM
+    gate_checks_at_start="$checks"
+    gate_fails_at_start="$fails"
+    . "$ROOT/test/integration-gate.sh"
+    printf '%s %s\n' \
+      "$((checks - gate_checks_at_start))" "$((fails - gate_fails_at_start))" \
+      > "$gate_counts"
+  ) > "$gate_output" 2>&1 &
+  gate_pid=$!
+}
 
 # THE SUITE IS ONE PROGRAM, SPLIT ONLY SO THAT IT CAN BE LINTED. Each part below
 # is sourced in order into this shell and reads the fixtures, helpers and
@@ -736,6 +739,7 @@ if ! integration_part all; then
     exit 2
   done
 fi
+start_parallel_instruments
 integration_ran_parts=""
 integration_part cli && { integration_ran_parts="${integration_ran_parts:+$integration_ran_parts }cli"; . "$ROOT/test/integration-cli.sh"; }
 integration_part substrate && { integration_ran_parts="${integration_ran_parts:+$integration_ran_parts }substrate"; . "$ROOT/test/integration-substrate.sh"; }
@@ -749,6 +753,7 @@ integration_part notify && { integration_ran_parts="${integration_ran_parts:+$in
 integration_part usage && { integration_ran_parts="${integration_ran_parts:+$integration_ran_parts }usage"; . "$ROOT/test/integration-usage.sh"; }
 integration_part tick && { integration_ran_parts="${integration_ran_parts:+$integration_ran_parts }tick"; . "$ROOT/test/integration-tick.sh"; }
 
+integration_require_all_rc=0
 if [ "${GANG_INTEGRATION_REQUIRE_ALL:-0}" = 1 ]; then
   integration_missing_parts=""
   for integration_declared_part in $integration_declared_parts; do
@@ -760,9 +765,10 @@ if [ "${GANG_INTEGRATION_REQUIRE_ALL:-0}" = 1 ]; then
   if [ -n "$integration_missing_parts" ]; then
     printf 'integration: required full run omitted declared parts: %s\n' \
       "$integration_missing_parts" >&2
-    exit 1
+    integration_require_all_rc=1
+  else
+    printf 'integration: every declared part ran\n'
   fi
-  printf 'integration: every declared part ran\n'
 fi
 
 unset integration_declared_part integration_declared_parts integration_missing_parts \
@@ -800,6 +806,7 @@ role_host_usage_rows=0
 [ ! -f "$role_host_usage" ] || role_host_usage_rows="$(wc -l < "$role_host_usage" | tr -d ' ')"
 equal "role fixtures leave the observed host usage path untouched" \
   "0" "$role_host_usage_rows"
+[ "$integration_require_all_rc" -eq 0 ] || exit "$integration_require_all_rc"
 
 # THE SAME TREE THIS RUN STARTED AGAINST, OR NO VERDICT. A source edit landing
 # mid-run is not caught by either read — bash has already executed whatever it
