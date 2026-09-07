@@ -5634,7 +5634,7 @@ cmd_tick() { # public synchronous seam; its worker is always self-deadlined
 
 cmd_alerts() { # read active conditions; --open changes only their seen state
   local mode=read record="" state="" at="" note="" seen="" visibility=""
-  local conflict="" read_rc=0 latched="" open_guard=0
+  local conflict="" read_rc=0 latched="" open_guard=0 popup=0 cursor=""
   case "$#:${1:-}" in
     0:) ;;
     1:--porcelain) mode=porcelain ;;
@@ -5682,37 +5682,124 @@ cmd_alerts() { # read active conditions; --open changes only their seen state
       open_guard=0
     fi
     if [ "$seen" = 1 ]; then visibility=seen; else visibility=unseen; fi
-    if [ "$mode" = porcelain ]; then
-      printf 'tick\tactive\t%s\t%s\t%s\n' "$visibility" "$at" "$note"
-    else
-      printf '1 active alert (%s)\n\n' "$visibility"
-      printf '[%s] cooperative tick failed at %s\n%s\n' \
-        "$visibility" "$at" "$note"
-    fi
-  else
-    if [ "$open_guard" -eq 1 ]; then
-      tick_result_guard_drop
-      open_guard=0
-    fi
-    [ "$mode" = porcelain ] || printf "no active alerts for '%s'\n" "$SESSION"
+  elif [ "$open_guard" -eq 1 ]; then
+    tick_result_guard_drop
+    open_guard=0
   fi
   if [ "$mode" != porcelain ]; then
     conflict="$(tmux show-options -qv -t "=$SESSION:" \
       @gl_alert_binding_conflict 2>/dev/null)" || conflict=""
+  fi
+  if [ "$mode" = open ] && [ -t 0 ] && [ -t 1 ]; then
+    popup=1
+  fi
+  if [ "$state" = failed ]; then
+    if [ "$mode" = porcelain ]; then
+      printf 'tick\tactive\t%s\t%s\t%s\n' "$visibility" "$at" "$note"
+    else
+      printf '1 active alert (%s)\n\n' "$visibility"
+      printf '[%s] cooperative tick failed at %s\n' "$visibility" "$at"
+      if [ "$popup" -eq 1 ]; then
+        # The popup is a scrolling terminal the size of its interior. Rows
+        # that overflow it push the headline and the close key off the screen
+        # tmux repaints from, leaving the operator the tail of the note and no
+        # way to tell what it is or how to close it.
+        alert_note_fit "$note" "1 active alert ($visibility)" "" \
+          "[$visibility] cooperative tick failed at $at" \
+          ${conflict:+"" "open key unavailable: $conflict"} \
+          "" "Press any key to close."
+      else
+        printf '%s\n' "$note"
+      fi
+    fi
+  else
+    [ "$mode" = porcelain ] || printf "no active alerts for '%s'\n" "$SESSION"
+  fi
+  if [ "$mode" != porcelain ]; then
     if [ -n "$conflict" ]; then
       printf '\nopen key unavailable: %s\n' "$conflict"
     elif [ "$mode" != open ]; then
       printf '\nopen in tmux: Prefix+A\n'
     fi
   fi
-  if [ "$mode" = open ] && [ -t 0 ] && [ -t 1 ]; then
+  if [ "$popup" -eq 1 ]; then
     printf '\nPress any key to close.\n'
     if [ "${GANG_TEST_COLLARS:-}" = 1 ] \
        && [ -n "${GANG_TEST_ALERT_RENDER_READY_EVENT:-}" ]; then
-      tmux wait-for -S "$GANG_TEST_ALERT_RENDER_READY_EVENT" 2>/dev/null || true
+      # The terminal answers a cursor position request only after it has
+      # consumed every byte written before it, so the event fires once the
+      # popup screen holds the whole report, and only then: without a valid
+      # answer the event is withheld and the waiting proof fails at its own
+      # ceiling. That ceiling is the only one. A second, smaller deadline here
+      # would call a slow terminal a broken one, so the read carries none and
+      # the proof that owns the wait also owns ending this client. Echo is off
+      # around the answer so its bytes do not land on that screen.
+      stty -echo 2>/dev/null || true
+      printf '\033[6n'
+      cursor=""
+      IFS= read -r -s -d R -n 32 cursor || cursor=""
+      stty echo 2>/dev/null || true
+      if [[ "$cursor" =~ ^$'\033'\[[0-9]+\;[0-9]+$ ]]; then
+        tmux wait-for -S "$GANG_TEST_ALERT_RENDER_READY_EVENT"
+      else
+        printf 'gang: no cursor report from the terminal; render-ready withheld\n' >&2
+      fi
     fi
     IFS= read -r -n 1 _ || true
   fi
+}
+
+alert_text_rows() { # $1 text, $2 columns -> the rows a terminal shows it on, one per line
+  # Every character stays whole, and a non-ASCII character counts as two
+  # columns: never fewer than the terminal draws, so no row spills over on a
+  # terminal at least two columns wide. A character counted wider than the
+  # whole terminal gets a row of its own and overflows it: below one column
+  # per character there is no row that holds it.
+  local cols="$2" row="" width=0 c w
+  while IFS= read -r -n 1 c; do
+    [ -n "$c" ] || continue
+    case "$c" in [[:ascii:]]) w=1 ;; *) w=2 ;; esac
+    [ "$w" -le "$cols" ] || w="$cols"
+    if [ "$width" -gt 0 ] && [ $((width + w)) -gt "$cols" ]; then
+      printf '%s\n' "$row"
+      row="" width=0
+    fi
+    row="$row$c" width=$((width + w))
+  done <<<"$1"
+  printf '%s\n' "$row"
+}
+
+alert_text_height() { # $1 text, $2 columns -> rows the terminal shows it on
+  alert_text_rows "$1" "$2" | wc -l | tr -d ' '
+}
+
+alert_note_fit() { # $1 note, $2.. the report's other lines -> the note rows that fit stdin's terminal
+  local note="$1" rows=0 cols=0 reserved=1 avail=0 wrapped="" count=0
+  local pointer_rows=0 shown=0 line
+  shift
+  read -r rows cols < <(stty size 2>/dev/null) || rows=0
+  case "$rows:$cols" in *[!0-9:]*|:*|*:|0:*|*:0) rows=0 ;; esac
+  if [ "$rows" -eq 0 ]; then
+    printf '(note hidden: size unknown; run gang alerts)\n'
+    return 0
+  fi
+  # The cursor row after the prompt, then every other line as the terminal
+  # wraps it; the blank lines arrive here as empty strings.
+  for line in "$@"; do
+    reserved=$((reserved + $(alert_text_height "$line" "$cols")))
+  done
+  avail=$((rows - reserved))
+  wrapped="$(alert_text_rows "$note" "$cols")"
+  count="$(printf '%s\n' "$wrapped" | wc -l | tr -d ' ')"
+  if [ "$count" -le "$avail" ]; then
+    printf '%s\n' "$note"
+    return 0
+  fi
+  pointer_rows="$(alert_text_height "(+$count lines; run gang alerts for the full note)" "$cols")"
+  [ "$avail" -ge "$pointer_rows" ] || return 0
+  shown=$((avail - pointer_rows))
+  [ "$shown" -eq 0 ] || printf '%s\n' "$wrapped" | sed -n "1,${shown}p"
+  printf '(+%s lines; run gang alerts for the full note)\n' "$((count - shown))"
 }
 
 tick_launch() { # isolate a post-command candidate from the command's own result
