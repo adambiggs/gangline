@@ -1932,6 +1932,45 @@ equal "a host without setsid refuses too, rather than sharing the run's group" \
   "1" "$reaper_nosetsid_rc"
 contains "and says so" "$reaper_nosetsid_said" "no setsid"
 
+# A ROOT THAT WOULD NOT GO IS NAMED. Removal is best-effort — a teardown carries
+# on either way — but a directory that survives one is a fixture the next run
+# inherits, and a removal that failed silently reads exactly like one that
+# worked. Declining a directory this caller does not own is not that, and says
+# nothing.
+reaper_stuck_root="$reaper_fix/will-not-go"
+mkdir -p "$reaper_stuck_root/held"
+: > "$reaper_stuck_root/held/file"
+suite_reaper_claim "$reaper_stuck_root" > /dev/null
+chmod 500 "$reaper_stuck_root/held"
+reaper_stuck_said="$(suite_reaper_sweep "$reaper_stuck_root" 2>&1)"
+contains "a run root that could not be removed is named" \
+  "$reaper_stuck_said" "$reaper_stuck_root could not be removed"
+contains "and the teardown says the sweep did not come back clean" \
+  "$reaper_stuck_said" "exited 4"
+if [ -d "$reaper_stuck_root" ]; then
+  pass "and it really is still there to read"
+else
+  fail "and it really is still there to read" "$reaper_stuck_root is gone"
+fi
+chmod 700 "$reaper_stuck_root/held"
+suite_reaper_claim "$reaper_stuck_root" > /dev/null
+equal "the same teardown says nothing once the root can go" \
+  "" "$(suite_reaper_sweep "$reaper_stuck_root" 2>&1)"
+if [ -e "$reaper_stuck_root" ]; then
+  fail "and the root is gone" "$reaper_stuck_root is still there"
+else
+  pass "and the root is gone"
+fi
+reaper_unowned_root="$reaper_fix/not-ours"
+mkdir -p "$reaper_unowned_root"
+equal "declining a directory this caller does not own says nothing" \
+  "" "$(suite_reaper_sweep "$reaper_unowned_root" 2>&1)"
+if [ -d "$reaper_unowned_root" ]; then
+  pass "and leaves it exactly as it was"
+else
+  fail "and leaves it exactly as it was" "$reaper_unowned_root was removed"
+fi
+
 # A TEARDOWN TRAPPED DIRECTLY ON A SIGNAL RUNS AND THEN RETURNS to the flow it
 # interrupted, so the run carries on with its fixtures deleted and its claim on
 # its own directory gone — and every server it starts after that point belongs
