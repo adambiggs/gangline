@@ -292,7 +292,19 @@ equal "the structured list reports an opened alert as seen" \
 # pty reached the server, the instrumented session option reports that the
 # installed binding resolved it, and its final event fires only after the alert
 # command returns. No delay, pane scrape, or polling stands in for completion.
+#
+# The popup is a scrolling pty: a note that wraps past its rows pushes the
+# headline off its screen, and tmux repaints the popup from that screen. A
+# full suite already ships enough collars for the note to overflow; a long
+# collar name makes every part selection render the same overflowing note.
+# Its first characters are two-byte so that a row boundary can fall inside
+# one of them.
 alert_ui_tmux set-option -u -t "=$alert_ui_session:" @gl_alert_seen
+printf -v alert_ui_e_acute '\303\251'
+printf -v alert_ui_long_collar_head '%040d' 0
+printf -v alert_ui_long_collar_tail '%0400d' 0
+alert_ui_long_collar="missing-alert-collar-${alert_ui_long_collar_head//0/$alert_ui_e_acute}${alert_ui_long_collar_tail//0/x}"
+alert_ui_tmux set-option -w -t "$alert_ui_caller_id" @gl_collar "$alert_ui_long_collar"
 alert_ui_attached_reset_rc=0
 PATH="$alert_ui_tmux_bin:$PATH" alert_ui_gang tick >/dev/null 2>&1 \
   || alert_ui_attached_reset_rc=$?
@@ -320,6 +332,293 @@ equal "the attached client excludes the suite's fake instant commands" absent \
       && printf present || printf absent)"
 mkfifo "$alert_ui_client_input"
 exec 8<>"$alert_ui_client_input"
+# The client's terminal bytes pass through a reader on their way to the
+# capture file. It signals a tmux event the moment a named marker has been
+# written to the file, so a wait on that event is a wait on the file's
+# contents, not on time. A second program replays the capture up to a marker
+# as an 80x24 terminal and prints the popup's interior rows: what the
+# client's screen showed inside the popup at that point, and nothing outside
+# it. It refuses any control sequence it does not model instead of guessing.
+alert_ui_client_reader="$RUN_ROOT/alert-ui-capture-reader"
+alert_ui_client_screen="$RUN_ROOT/alert-ui-capture-screen"
+cat > "$alert_ui_client_screen" <<'PY'
+import re
+import sys
+import unicodedata
+
+ROWS, COLS = 24, 80
+TOP, BOTTOM, LEFT, RIGHT = 4, 17, 8, 69  # popup interior, 0-based, inclusive
+# tmux erases the panes before it draws the overlay, so the marker's own bytes
+# land on a screen the popup has been erased from and not yet drawn back onto.
+# The replay therefore runs to the end of the repaint that follows the marker,
+# whose last cell is the popup's bottom-right corner.
+CORNER = "┘"
+# Modes that change no cell: cursor keys, cursor visibility and shape, mouse
+# reporting, bracketed paste, and the application-escape mode.
+NEUTRAL_MODES = {1, 12, 25, 1000, 1002, 1003, 1004, 1005, 1006, 2004, 7727}
+
+raw = open(sys.argv[1], "rb").read()
+marker = sys.argv[2].encode()
+found = raw.find(marker)
+cut = raw.find(CORNER.encode(), found + len(marker)) if found >= 0 else -1
+if cut < 0:
+    print("marker-missing")
+    sys.exit(0)
+unsupported = []
+head = raw[:cut + len(CORNER.encode())]
+try:
+    text = head.decode("utf-8")
+except UnicodeDecodeError as bad:
+    unsupported.append("utf-8@%d" % bad.start)
+    text = head.decode("utf-8", "replace")
+screen = [[" "] * COLS for _ in range(ROWS)]
+row = col = 0
+top, bottom = 0, ROWS - 1
+saved = (0, 0)
+alternate = None
+pending = False
+
+
+def scroll_up(n):
+    for _ in range(n):
+        del screen[top]
+        screen.insert(bottom, [" "] * COLS)
+
+
+def scroll_down(n):
+    for _ in range(n):
+        del screen[bottom]
+        screen.insert(top, [" "] * COLS)
+
+
+def linefeed():
+    global row, pending
+    pending = False
+    if row == bottom:
+        scroll_up(1)
+    elif row < ROWS - 1:
+        row += 1
+
+
+CSI = re.compile(r"\x1b\[([0-9;?>]*)([ -/]*)([@-~])")
+OSC = re.compile(r"\x1b\][^\x07\x1b]*(?:\x07|\x1b\\)")
+i = 0
+while i < len(text):
+    ch = text[i]
+    if ch == "\x1b":
+        m = CSI.match(text, i)
+        if m:
+            params, inter, final = m.groups()
+            private = params[:1] if params[:1] in "?>" else ""
+            digits = params[len(private):]
+            nums = [int(x) if x else 0 for x in digits.split(";")] if digits else []
+            n = nums[0] if nums and nums[0] else 1
+            if inter or private == ">" and final not in "cq":
+                unsupported.append(m.group(0))
+            elif private == ">":
+                pass  # a request for the terminal's identity writes no cell
+            elif private == "?":
+                if final not in "hl" or not nums:
+                    unsupported.append(m.group(0))
+                elif nums == [1049]:
+                    if final == "h":
+                        alternate = ([line[:] for line in screen], row, col)
+                        for r in range(ROWS):
+                            screen[r] = [" "] * COLS
+                    elif alternate is not None:
+                        screen[:], row, col = alternate
+                        alternate = None
+                        pending = False
+                elif not all(mode in NEUTRAL_MODES for mode in nums):
+                    unsupported.append(m.group(0))
+            elif final in "Hf":
+                row = min(ROWS - 1, max(0, (nums[0] if nums else 1) - 1))
+                col = min(COLS - 1, max(0, (nums[1] if len(nums) > 1 else 1) - 1))
+                pending = False
+            elif final == "A":
+                row = max(0, row - n)
+                pending = False
+            elif final == "B":
+                row = min(ROWS - 1, row + n)
+                pending = False
+            elif final == "C":
+                col = min(COLS - 1, col + n)
+                pending = False
+            elif final == "D":
+                col = max(0, col - n)
+                pending = False
+            elif final == "G":
+                col = min(COLS - 1, n - 1)
+                pending = False
+            elif final == "d":
+                row = min(ROWS - 1, n - 1)
+                pending = False
+            elif final == "X":
+                for c in range(col, min(COLS, col + n)):
+                    screen[row][c] = " "
+            elif final == "K":
+                mode = nums[0] if nums else 0
+                rng = range(col, COLS) if mode == 0 else \
+                    range(0, col + 1) if mode == 1 else range(COLS)
+                for c in rng:
+                    screen[row][c] = " "
+            elif final == "J":
+                mode = nums[0] if nums else 0
+                if mode == 0:
+                    for c in range(col, COLS):
+                        screen[row][c] = " "
+                    for r in range(row + 1, ROWS):
+                        screen[r] = [" "] * COLS
+                elif mode == 1:
+                    for c in range(0, col + 1):
+                        screen[row][c] = " "
+                    for r in range(0, row):
+                        screen[r] = [" "] * COLS
+                else:
+                    for r in range(ROWS):
+                        screen[r] = [" "] * COLS
+            elif final == "r":
+                top = max(0, (nums[0] if nums and nums[0] else 1) - 1)
+                bottom = min(ROWS - 1, (nums[1] if len(nums) > 1 and nums[1] else ROWS) - 1)
+                row = col = 0
+                pending = False
+            elif final == "L":
+                if top <= row <= bottom:
+                    for _ in range(n):
+                        del screen[bottom]
+                        screen.insert(row, [" "] * COLS)
+            elif final == "M":
+                if top <= row <= bottom:
+                    for _ in range(n):
+                        del screen[row]
+                        screen.insert(bottom, [" "] * COLS)
+            elif final == "S":
+                scroll_up(n)
+            elif final == "T":
+                scroll_down(n)
+            elif final == "P":
+                line = screen[row]
+                del line[col:col + n]
+                line.extend([" "] * (COLS - len(line)))
+            elif final == "@":
+                line = screen[row]
+                line[col:col] = [" "] * n
+                del line[COLS:]
+            elif final == "m":
+                pass  # colour and attributes leave both the cells and the
+                # pending wrap alone
+            elif final == "c":
+                pass  # a request for the terminal's identity writes no cell
+            elif final == "t" and nums and nums[0] in (22, 23):
+                pass  # the window title stack holds no cell
+            else:
+                unsupported.append(m.group(0))
+            i = m.end()
+            continue
+        m = OSC.match(text, i)
+        if m:
+            i = m.end()
+            continue
+        nxt = text[i + 1] if i + 1 < len(text) else ""
+        if nxt in "()*+":
+            i += 3
+        elif nxt == "7":
+            saved = (row, col)
+            i += 2
+        elif nxt == "8":
+            row, col = saved
+            pending = False
+            i += 2
+        elif nxt in "=>":
+            i += 2
+        elif nxt == "M":
+            if row == top:
+                scroll_down(1)
+            elif row > 0:
+                row -= 1
+            pending = False
+            i += 2
+        elif nxt == "D":
+            linefeed()
+            i += 2
+        else:
+            unsupported.append(text[i:i + 2])
+            i += 2
+        continue
+    if ch == "\r":
+        col = 0
+        pending = False
+    elif ch == "\n":
+        linefeed()
+    elif ch == "\b":
+        col = max(0, col - 1)
+        pending = False
+    elif ch == "\t":
+        col = min(COLS - 1, (col // 8 + 1) * 8)
+        pending = False
+    elif ch in "\x00\x07":
+        pass
+    elif ch < " " or ch == "\x7f":
+        unsupported.append(ch)
+    else:
+        if unicodedata.category(ch) in ("Cf", "Mn", "Me") \
+                or unicodedata.east_asian_width(ch) in "WF":
+            unsupported.append(ch)  # this screen models one cell per character
+        if pending:
+            col = 0
+            linefeed()
+        screen[row][col] = ch
+        if col == COLS - 1:
+            pending = True
+        else:
+            col += 1
+    i += 1
+
+for r in range(TOP, BOTTOM + 1):
+    print("".join(screen[r][LEFT:RIGHT + 1]).rstrip())
+print("unsupported=%d%s" % (len(unsupported), "".join(" " + repr(u) for u in unsupported[:5])))
+print("frame=%s" % ("marker" if sys.argv[2] in "".join(screen[ROWS - 1]) else "other"))
+PY
+alert_ui_popup_marker_first="alert-ui-popup-witness-$$-first"
+alert_ui_popup_marker_second="alert-ui-popup-witness-$$-second"
+cat > "$alert_ui_client_reader" <<'PY'
+import os
+import subprocess
+import sys
+
+# A marker's event fires once the capture also holds the popup repaint that
+# follows it. tmux erases the panes before it draws the overlay, so the marker
+# alone names a screen the popup has been erased from; the corner is the last
+# cell that repaint writes.
+CORNER = "┘".encode()
+markers = [m.encode() for m in sys.argv[1:]]
+pending = [[m, False] for m in markers]
+keep = max([len(m) for m in markers] + [len(CORNER)]) - 1
+tail = b""
+while True:
+    chunk = os.read(0, 65536)
+    if not chunk:
+        break
+    view = memoryview(chunk)
+    while len(view):
+        view = view[os.write(1, view):]
+    window = tail + chunk
+    for entry in list(pending):
+        marker, seen = entry
+        start = 0
+        if not seen:
+            at = window.find(marker)
+            if at < 0:
+                continue
+            entry[1] = True
+            start = at + len(marker)
+        if window.find(CORNER, start) < 0:
+            continue
+        pending.remove(entry)
+        subprocess.run(
+            ["tmux", "wait-for", "-S", marker.decode() + "-seen"], check=True)
+    tail = window[-keep:] if keep > 0 else b""
+PY
 alert_ui_tmux set-hook -g client-attached \
   "wait-for -S $alert_ui_client_attached"
 TMUX_TMPDIR="$alert_ui_root" tmux wait-for "$alert_ui_client_attached" &
@@ -328,7 +627,10 @@ alert_ui_client_attached_waiter=$!
   alert_ui_client_rc=0
   TERM=xterm PATH="$alert_ui_client_path" script -qefc \
     "stty rows 24 cols 80; TMUX_TMPDIR='$alert_ui_root' tmux attach-session -t $alert_ui_client_target" \
-    /dev/null < "$alert_ui_client_input" > "$alert_ui_client_output" 2>&1 \
+    /dev/null < "$alert_ui_client_input" 2>&1 \
+    | TMUX_TMPDIR="$alert_ui_root" python3 "$alert_ui_client_reader" \
+        "$alert_ui_popup_marker_first" "$alert_ui_popup_marker_second" \
+        > "$alert_ui_client_output" \
     || alert_ui_client_rc=$?
   printf '%s\n' "$alert_ui_client_rc" > "$alert_ui_client_status"
   TMUX_TMPDIR="$alert_ui_root" tmux wait-for -S "$alert_ui_client_exited"
@@ -367,6 +669,69 @@ alert_ui_popup_render_ready_rc=0
 wait "$alert_ui_popup_render_ready_waiter" || alert_ui_popup_render_ready_rc=$?
 equal "Prefix+A reaches the popup's rendered close gate before its close key" \
   0 "$alert_ui_popup_render_ready_rc"
+if [ "$alert_ui_popup_render_ready_rc" -ne 0 ]; then
+  # This barrier is the only ceiling on the popup's wait for its terminal, so
+  # it also ends the client: a popup still waiting for an answer that never
+  # came consumes the close key instead of ending on it, and the checks below
+  # would then never reach their own verdicts.
+  alert_ui_popup_abandoned_rc=0
+  alert_ui_tmux kill-session -t "=$alert_ui_session:" \
+    || alert_ui_popup_abandoned_rc=$?
+  equal "the abandoned popup's client is torn down rather than waited on" \
+    0 "$alert_ui_popup_abandoned_rc"
+fi
+
+# The capture holds every byte tmux ever sent, including the popup's transient
+# incremental writes. The rendered state is what tmux repaints the popup from,
+# and render-ready fired only after tmux had consumed the whole report into
+# that screen. Changing a session option redraws every attached client in
+# full: panes, then status, then the overlay. The marker therefore arrives
+# mid-frame, on a screen whose panes have just been erased and whose popup has
+# not been drawn again yet, so both the event and the replay run on to the end
+# of that repaint. What the replayed screen then shows inside the popup is the
+# overlay's own repaint, drawn from the popup screen as it stands while the
+# popup waits for its key.
+alert_ui_tmux set-option -t "=$alert_ui_session:" status-left-length 64
+TMUX_TMPDIR="$alert_ui_root" tmux wait-for "$alert_ui_popup_marker_first-seen" &
+alert_ui_popup_marker_first_waiter=$!
+alert_ui_tmux set-option -t "=$alert_ui_session:" status-left \
+  "$alert_ui_popup_marker_first"
+alert_ui_popup_marker_first_rc=0
+wait "$alert_ui_popup_marker_first_waiter" || alert_ui_popup_marker_first_rc=$?
+TMUX_TMPDIR="$alert_ui_root" tmux wait-for "$alert_ui_popup_marker_second-seen" &
+alert_ui_popup_marker_second_waiter=$!
+alert_ui_tmux set-option -t "=$alert_ui_session:" status-left \
+  "$alert_ui_popup_marker_second"
+alert_ui_popup_marker_second_rc=0
+wait "$alert_ui_popup_marker_second_waiter" || alert_ui_popup_marker_second_rc=$?
+alert_ui_tmux set-option -u -t "=$alert_ui_session:" status-left
+alert_ui_tmux set-option -u -t "=$alert_ui_session:" status-left-length
+equal "the attached client repaints on each popup witness marker" '0 0' \
+  "$alert_ui_popup_marker_first_rc $alert_ui_popup_marker_second_rc"
+# The binding's 80% by 70% popup on the 80x24 client has a 62x14 interior;
+# the report reserves six of those rows, so the note gets seven rows and its
+# pointer the eighth.
+alert_ui_popup_screen="$(python3 "$alert_ui_client_screen" \
+  "$alert_ui_client_output" "$alert_ui_popup_marker_second")"
+alert_ui_popup_row() { printf '%s\n' "$alert_ui_popup_screen" | sed -n "${1}p"; }
+equal "the replayed client screen used only modelled control sequences" \
+  "unsupported=0" "$(alert_ui_popup_row 15)"
+equal "the replayed popup rows come from the marked repaint" \
+  "frame=marker" "$(alert_ui_popup_row 16)"
+equal "the attached client renders the active alert inside the popup" \
+  "1 active alert (seen)" "$(alert_ui_popup_row 1)"
+equal "the attached popup separates its headline from the transition" \
+  "" "$(alert_ui_popup_row 2)"
+contains "the attached popup states the failing transition" \
+  "$(alert_ui_popup_row 3)" "[seen] cooperative tick failed at "
+contains "the attached popup keeps the failure note inside its rows" \
+  "$(alert_ui_popup_row 4)" "gang: unknown collar 'missing-alert-collar-"
+contains "the attached popup points at the full note it cannot show" \
+  "$(alert_ui_popup_row 11)" "run gang alerts for the full note)"
+equal "the attached popup stays open for its documented close key" \
+  "Press any key to close." "$(alert_ui_popup_row 13)"
+equal "the attached popup ends on the row after its close key" \
+  "" "$(alert_ui_popup_row 14)"
 printf 'x' >&8
 alert_ui_client_done_rc=0
 wait "$alert_ui_client_done_waiter" || alert_ui_client_done_rc=$?
@@ -389,13 +754,71 @@ alert_ui_client_rc="$(<"$alert_ui_client_status")"
 wait "$alert_ui_client_pid" || true
 exec 8>&-
 equal "the attached popup client detaches cleanly" 0 "$alert_ui_client_rc"
-contains "the attached client renders the active alert inside the popup" \
-  "$(<"$alert_ui_client_output")" "1 active alert (seen)"
-contains "the attached popup stays open for its documented close key" \
-  "$(<"$alert_ui_client_output")" "Press any key to close."
 equal "the real popup executes none of the hostile session name" absent \
   "$([ ! -e "$alert_ui_injected" ] && printf absent || printf present)"
 rm -f -- "$alert_ui_injected"
+
+# The same report on a terminal the popup binding did not size. Narrow
+# columns wrap the fixed lines too, and a two-byte character can straddle a
+# row boundary; the report still has to end inside the terminal's rows with
+# its pointer whole and every character intact.
+alert_ui_direct_env="TMUX_TMPDIR=$(printf '%q' "$alert_ui_root") XDG_STATE_HOME=$(printf '%q' "$RUN_ROOT/alert-ui-state") GANG_ARCHIVE_DIR=$(printf '%q' "$RUN_ROOT/alert-ui-archive")"
+alert_ui_narrow_output="$RUN_ROOT/alert-ui-narrow-output"
+alert_ui_narrow_rc=0
+printf 'x' | TERM=xterm PATH="$alert_ui_client_path" script -qefc \
+  "stty rows 16 cols 20; $alert_ui_direct_env $alert_ui_installed_command" \
+  /dev/null > "$alert_ui_narrow_output" 2>&1 || alert_ui_narrow_rc=$?
+equal "the open report on a narrow terminal returns cleanly" 0 "$alert_ui_narrow_rc"
+alert_ui_narrow_shape="$(python3 - "$alert_ui_narrow_output" <<'PY'
+import sys
+raw = open(sys.argv[1], "rb").read()
+try:
+    text = raw.decode("utf-8")
+except UnicodeDecodeError:
+    print("split-character")
+    sys.exit(0)
+rows = 0
+for line in text.split("\r\n"):
+    width = sum(2 if ord(c) > 127 else 1 for c in line)
+    rows += max(1, -(-width // 20))
+print("fits" if rows <= 16 else "overflows by %d" % (rows - 16))
+PY
+)"
+equal "the narrow report keeps whole characters and ends inside the terminal" \
+  fits "$alert_ui_narrow_shape"
+alert_ui_narrow_flat="$(tr -d '\r\n' < "$alert_ui_narrow_output")"
+contains "the narrow report keeps its headline" \
+  "$alert_ui_narrow_flat" "1 active alert (seen)"
+contains "the narrow report keeps the note's start" \
+  "$alert_ui_narrow_flat" "unknown collar 'missing-alert-collar-"
+contains "the narrow report keeps its pointer whole" \
+  "$alert_ui_narrow_flat" "run gang alerts for the full note)"
+contains "the narrow report keeps its close key" \
+  "$alert_ui_narrow_flat" "Press any key to close."
+
+# A terminal that cannot be measured cannot bound the note, and a guessed
+# size would let the note scroll the popup again. The report then carries
+# only the pointer.
+alert_ui_unsized_bin="$RUN_ROOT/alert-ui-unsized-bin"
+mkdir -p "$alert_ui_unsized_bin"
+printf '#!/bin/sh\nexit 1\n' > "$alert_ui_unsized_bin/stty"
+chmod +x "$alert_ui_unsized_bin/stty"
+alert_ui_unsized_output="$RUN_ROOT/alert-ui-unsized-output"
+alert_ui_unsized_rc=0
+printf 'x' | TERM=xterm PATH="$alert_ui_client_path" script -qefc \
+  "stty rows 24 cols 80; PATH=$(printf '%q' "$alert_ui_unsized_bin"):\$PATH $alert_ui_direct_env $alert_ui_installed_command" \
+  /dev/null > "$alert_ui_unsized_output" 2>&1 || alert_ui_unsized_rc=$?
+equal "the open report on an unmeasurable terminal returns cleanly" 0 \
+  "$alert_ui_unsized_rc"
+alert_ui_unsized_flat="$(tr -d '\r\n' < "$alert_ui_unsized_output")"
+contains "the unmeasured report keeps its headline" \
+  "$alert_ui_unsized_flat" "1 active alert (seen)"
+contains "the unmeasured report says why the note is absent" \
+  "$alert_ui_unsized_flat" "(note hidden: size unknown; run gang alerts)"
+excludes "the unmeasured report prints no note row it cannot bound" \
+  "$alert_ui_unsized_flat" "unknown collar"
+contains "the unmeasured report keeps its close key" \
+  "$alert_ui_unsized_flat" "Press any key to close."
 
 # An unrelated session has no recorded command. Drive the installed popup from
 # a second real client and append only an inside-the-popup completion event to
