@@ -1,5 +1,50 @@
 # Changelog
 
+## [2.11.0](https://github.com/adambiggs/gangline/compare/gangline-v2.10.1...gangline-v2.11.0) (2026-09-07)
+
+
+### Features
+
+* close a reply thread on any acknowledgement ([62a793e](https://github.com/adambiggs/gangline/commit/62a793e19a620e2c5804cac8ac13d27d84cfe472))
+* **compact:** witness Codex idle from its rollout after Stop ([c54ea91](https://github.com/adambiggs/gangline/commit/c54ea91f177423d517199c5944d6659868eb6d6e))
+* **roles:** ship a worker role brief ([64839b4](https://github.com/adambiggs/gangline/commit/64839b41fda99e755e6175a948251454d685ec90))
+
+
+### Bug Fixes
+
+* **alerts:** keep the popup's headline and close key on its screen ([7d2412b](https://github.com/adambiggs/gangline/commit/7d2412bcbe2e2153d348be4f36adfa219ef2cc74))
+* close read replies at every turn end, and refuse a Stop that cannot ([0c17db7](https://github.com/adambiggs/gangline/commit/0c17db7a1b3713b59c89c99daf28291c7ccd7082))
+* **collars:** budget the Stop boundary against the native fuse ([#207](https://github.com/adambiggs/gangline/issues/207)) ([24b3ae8](https://github.com/adambiggs/gangline/commit/24b3ae880c0a60a39af0ee223b8c6ce08013d0d6))
+* correlate outbound mail only to requests the sender has read ([fa97beb](https://github.com/adambiggs/gangline/commit/fa97bebac9951dbdf80c6ed374d85c941fa57e15))
+* **gate:** fail loud when a mandatory step stalls ([8b1fb46](https://github.com/adambiggs/gangline/commit/8b1fb46392bd93fb2ffb221fa4854b0a1a3b6446))
+* **gate:** make stall marker authoritative ([d3e0d30](https://github.com/adambiggs/gangline/commit/d3e0d3034235e8e8af7d8493b3e50f5bd3573c03))
+* **gate:** preserve budget and verify lock ownership ([437b891](https://github.com/adambiggs/gangline/commit/437b89101604a8f887c59538fb5e6cc7343ff1a6))
+* **gate:** preserve stall verdict across cancellation ([9bcd1b7](https://github.com/adambiggs/gangline/commit/9bcd1b709733c59e407297eb82394f9f9566bdf0))
+* hold peer delivery through native Stop ([cd1df45](https://github.com/adambiggs/gangline/commit/cd1df45c06fefe6ec1c6b792829195a26cebf5df))
+* **hooks:** read a Notification kind only as a string ([c9b6d21](https://github.com/adambiggs/gangline/commit/c9b6d210a13e656fcbbb5887cb0252d771925796))
+* isolate agent panes from the team tmux socket ([e8c737a](https://github.com/adambiggs/gangline/commit/e8c737aee0c2b9e050413cf5bae7d959a4ce0e5f))
+* join gate self-tests by child events ([7c2eb17](https://github.com/adambiggs/gangline/commit/7c2eb17fc78af8e948b5b1318b0c7870e3ff8eb1))
+* name the standing debt when a released Stop cannot close ([b9415bc](https://github.com/adambiggs/gangline/commit/b9415bca960998f9563dadefb586bf9a71607703))
+* **scope:** decouple units from mutable agent names ([b877b49](https://github.com/adambiggs/gangline/commit/b877b495bf6859f5e0bef842c87a3f28c190c997))
+* **scope:** stop orphaned agent scopes ([9610c70](https://github.com/adambiggs/gangline/commit/9610c705d9b92b8f62a9a9179baddd6cd0432626))
+* settle a correlated reply on the creditor's prompt witness ([476ec9a](https://github.com/adambiggs/gangline/commit/476ec9a647a9337671fdcb44a1ceeee433bbd9df))
+* **spool:** retire records from vanished senders ([bac6809](https://github.com/adambiggs/gangline/commit/bac68092d4b26189321b7f1c0da9639341f076ee))
+* **test:** hold the role-brief session open instead of pinning window-size ([e7107ce](https://github.com/adambiggs/gangline/commit/e7107ced92113bdd6f6a895aadc8371e96491713))
+* **test:** name a run root the reaper could not remove ([71279ae](https://github.com/adambiggs/gangline/commit/71279aef293f26038199504bcf73d89fe955e720))
+* **test:** normalize python calibration paths ([eabe018](https://github.com/adambiggs/gangline/commit/eabe018c84f4c6dbf4b18d6f24ab7f23da94a178))
+* **test:** pin the role-brief grid so a pane read is not a redrawn fragment ([2be6083](https://github.com/adambiggs/gangline/commit/2be6083a77b37479ac5327e2a512d095bbc57269))
+* **test:** read a neighbouring process's name as bytes, not as UTF-8 ([a1c97da](https://github.com/adambiggs/gangline/commit/a1c97da84fb9e64975389fecbc5f98984ede1776))
+* **test:** report a nested focused run that ended nonzero ([a1a8736](https://github.com/adambiggs/gangline/commit/a1a87360b4b2c8c624ae274be4323c8a9df660a7))
+* **test:** resolve python3 to an absolute interpreter before the run owns HOME ([ed96293](https://github.com/adambiggs/gangline/commit/ed96293653d57465b4e6aed7471d4ab6936c8b25))
+* **tick:** bound a worker to one dirty rerun and hand later edges to a successor ([5b2c819](https://github.com/adambiggs/gangline/commit/5b2c81926aab04b0e262be57bc1ce590626c27b3))
+* **usage:** keep the teardown append off an agent's pane ([9f43fac](https://github.com/adambiggs/gangline/commit/9f43facf51f2781d33731908a5593827377e15fb))
+* **usage:** persist teardown events outside caller sandbox ([d874b2a](https://github.com/adambiggs/gangline/commit/d874b2a833117d20791f651e6b8cf5a74b38ab08))
+
+
+### Performance Improvements
+
+* **tick:** cache invariant team lookups per invocation ([4df8289](https://github.com/adambiggs/gangline/commit/4df828951c7715af77239eb5e2a603bd36f1a8af))
+
 ## [2.10.1](https://github.com/adambiggs/gangline/compare/gangline-v2.10.0...gangline-v2.10.1) (2026-09-04)
 
 
