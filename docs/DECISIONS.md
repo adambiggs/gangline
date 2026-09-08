@@ -2519,3 +2519,18 @@ The provider-wait variant without Retry remains untouched because Dismiss is
 option 1 there, and the approaching-rate-limit menu remains untouched because
 its choices alter model policy. Other numbered menus retain their existing
 occupied behavior.
+
+## Release Please creates the tag before the GitHub Release
+
+Release Please explicitly creates each release tag before asking GitHub to
+create the corresponding Release object. The release API ignores
+`target_commitish` when its tag already exists, so a release commit remains
+publishable after `main` moves through a workflow-only repair: the Actions
+`GITHUB_TOKEN` needs only its declared contents permission for the existing-tag
+release call instead of a workflows permission that GitHub does not make
+available to that token.
+
+Release Please still chooses the tag name and target SHA from its merged release
+pull request. This setting authorizes no independent tag writer and changes no
+release ordering: the same main-push verification jobs must pass before the
+release job runs.
