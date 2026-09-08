@@ -3591,13 +3591,21 @@ else
 fi
 
 shell_workflow="$(cat "$ROOT/.github/workflows/shell.yml")"
+integration_job="$(printf '%s\n' "$shell_workflow" | sed -n '/^  integration:/,/^  raw-option-bytes:/p')"
+raw_option_job="$(printf '%s\n' "$shell_workflow" | sed -n '/^  raw-option-bytes:/,/^  release-please:/p')"
 release_job="$(printf '%s\n' "$shell_workflow" | sed -n '/^  release-please:/,$p')"
 contains "release publication waits for both main-push verification jobs" \
   "$release_job" "needs: [check, integration]"
 contains "release publication stays scoped to a main push" \
   "$release_job" "github.event_name == 'push' && github.ref == 'refs/heads/main'"
-contains "main integration has a measured CI ceiling" \
-  "$shell_workflow" "timeout-minutes: 15"
+equal "hosted-tmux integration owns exactly one aggregate ceiling" \
+  "1" "$(printf '%s\n' "$integration_job" | awk '/timeout-minutes:/{count++} END{print count+0}')"
+contains "hosted-tmux integration has a measured 45-minute CI ceiling" \
+  "$integration_job" "timeout-minutes: 45"
+equal "raw-option integration owns exactly one aggregate ceiling" \
+  "1" "$(printf '%s\n' "$raw_option_job" | awk '/timeout-minutes:/{count++} END{print count+0}')"
+contains "raw-option integration has a measured 45-minute CI ceiling" \
+  "$raw_option_job" "timeout-minutes: 45"
 if [ ! -e "$ROOT/.github/workflows/release.yml" ]; then
   pass "no independent release workflow can bypass the integration verdict"
 else

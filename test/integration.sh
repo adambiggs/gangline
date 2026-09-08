@@ -166,7 +166,7 @@ chmod +x "$RUN_ROOT/bin/sleep"
 #   signalled barrier, latched then read back   ~17ms   (same box, under load)
 #   slowest legitimate wait in this suite       a boot, single-digit seconds
 #   this ceiling                                120s
-#   whole-suite budget in CI                    900s
+#   whole-suite budget in CI                   2700s
 #
 # A hundred and twenty seconds is more than an order of magnitude past the
 # slowest wait any fixture here legitimately takes, so it cannot turn a slow box

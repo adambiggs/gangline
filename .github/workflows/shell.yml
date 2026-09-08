@@ -93,10 +93,12 @@ jobs:
           echo "DBUS_SESSION_BUS_ADDRESS=$DBUS_SESSION_BUS_ADDRESS" >> "$GITHUB_ENV"
 
       - name: Integration test
-        # Measured 3m45s for integration.sh and 4m09s for the capped complete
-        # gate on 2026-08-14. Fifteen minutes leaves at least 3x that observed
-        # integration runtime so a slow runner fails by assertion, not truncation.
-        timeout-minutes: 15
+        # Recent healthy progress needs up to 15m21s: a 2026-09-08 run reached
+        # the same assertion sequence at uniform speed and was truncated about
+        # eight seconds before its green baseline's finish. Forty-five minutes
+        # preserves about 3x total-wall margin so hosted-runner variance reaches
+        # the suite's own verdict; the total wall remains an aggregate backstop.
+        timeout-minutes: 45
         run: test/integration.sh
 
   # THE WORLD THE RESOLVER GUARDS WERE WRITTEN FOR. Every hosted runner ships a
@@ -109,7 +111,7 @@ jobs:
   #
   # test/tmux-option-bytes.sh is the single definition of the question. The
   # suite reads it to decide whether to make the claim at all; this cell reads
-  # it to refuse before spending fifteen minutes proving nothing.
+  # it to refuse before spending forty-five minutes proving nothing.
   raw-option-bytes:
     if: github.event_name == 'push' && github.ref == 'refs/heads/main'
     runs-on: ubuntu-latest
@@ -175,9 +177,9 @@ jobs:
           }
 
       - name: Integration test
-        # The same ceiling as the hosted-tmux cell, for the same suite and the
-        # same reason; the build above is cached and outside it.
-        timeout-minutes: 15
+        # The same measured ceiling as the hosted-tmux cell, for the same suite;
+        # the build above is cached and outside it.
+        timeout-minutes: 45
         run: |
           set -eu
           export PATH="$TMUX_RAW_PREFIX/bin:$PATH"

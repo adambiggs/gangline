@@ -1081,7 +1081,7 @@ exec 7>&- 8>&-
 # quiet budget is 1s. The nested gate's exit is the event that ends this
 # fixture. A separate 120s test-harness ceiling does not claim the gate is late;
 # it makes a missing event a named failure and leaves time for cleanup inside
-# the integration job's 900s ceiling.
+# the integration job's 2700s ceiling.
 # The blocked step writes two lines and its PID first; both are independent
 # witnesses that it ran before the watchdog acts. The fake flock owns a marker
 # for exactly as long as the nested ordinary gate, so its disappearance proves

@@ -459,7 +459,7 @@ startup_up_delivered="test-startup-up-delivered-$$"
 #
 #   detach to driver exit, this run   the instrument line printed below
 #   test ceiling (this read)          30s
-#   push CI ceiling for the whole     15 minutes (.github/workflows/shell.yml)
+#   push CI ceiling for the whole     45 minutes (.github/workflows/shell.yml)
 #   suite, which this must not reach
 #
 # The first row is measured on every run rather than written down once here. A
