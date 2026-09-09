@@ -7,9 +7,8 @@
 > acceptance. Sections 1.4 and 1.6 also promoted environment-only implementation
 > seams into persistent configuration; their tables below reflect the narrower
 > landed allowlist. The body is left as it was written; see
-> `docs/DECISIONS.md`, "The contract rides the system prompt where a collar has
-> one" and "Persistent config exposes operator choices, not implementation
-> seams".
+> [ADR-0070](../adr/0070-the-contract-rides-the-system-prompt-where-a-collar-has-one.md) and
+> [ADR-0054](../adr/0054-persistent-config-exposes-operator-choices-not-implementation-seams.md).
 
 Four coupled changes: a user configuration file behind the `GANG_*` environment
 surface, an operator doctrine slot appended to the startup contract, a
@@ -861,12 +860,12 @@ behaviour:
 - `docs/operations.md` — two recovery entries: a malformed config refusing every
   command including hooks (§1.10), and a startup contract too large for the
   target pane failing at delivery (§2.6).
-- `docs/DECISIONS.md` — three terse entries in the house voice:
-  - *Configuration is parsed, never sourced* — the file mirrors the environment
+- The decision-record corpus — three records in the house voice:
+  - [ADR-0041](../adr/0041-configuration-is-parsed-never-sourced.md) — the file mirrors the environment
     names, the environment stays authoritative, an unknown key is fatal.
-  - *Doctrine is the operator's, and every hitch carries it* — core ships the
+  - [ADR-0042](../adr/0042-doctrine-is-the-operator-s-and-every-hitch-carries-it.md) — core ships the
     slot and no content; Gangline does not infer an operator it cannot see.
-  - *A hitch states its model and its effort* — the contract requires the choice,
+  - [ADR-0043](../adr/0043-a-hitch-makes-missing-model-and-effort-choices-loud.md) — the contract requires the choice,
     never the choice's content.
 - `README.md` — unchanged. This adds no product claim.
 - `CHANGELOG.md` — untouched; Release Please owns it.

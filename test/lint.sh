@@ -119,6 +119,7 @@ if [ "$cal_shim_rc" -eq 0 ] \
 fi
 
 python3 test/source-guards.py --discover test
+python3 test/adr-corpus.py
 if [ "$fast" -eq 0 ]; then
   test/source-guards-fixtures.sh
 fi

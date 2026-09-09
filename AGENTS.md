@@ -53,9 +53,9 @@ not coordinate work or supervise agents.
 - Do not record changing counts, versions, sizes, or tallies in standing docs.
   Point to the command that measures them.
 
-Durable rationale belongs in terse entries in
-[`docs/DECISIONS.md`](docs/DECISIONS.md), not numbered decision essays or history
-sections.
+Durable constraints belong in the decision-record corpus under
+[`docs/adr/`](docs/adr/index.md), written to the strict template in
+`CONTRIBUTING.md`.
 
 ## Enable hooks before committing
 
@@ -112,7 +112,7 @@ an operator request.
 | `README.md` | what Gangline is and why it exists |
 | `CONSTITUTION.md` | binding project laws |
 | `CONTRACT.md` | the standing terms every hitched agent is held to |
-| `docs/DECISIONS.md` | terse durable decisions and rationale |
+| `docs/adr/` | durable decision records and their index |
 | `docs/reference.md` | exact commands, environment, and collar contract |
 | `docs/operations.md` | unattended operation and recovery |
 | `CONTRIBUTING.md` | repository gates, commits, releases, and measurement |

@@ -49,6 +49,66 @@ git config --global core.sshCommand \
   in a shipped collar.
 - Add an SPDX license identifier to every new shell or Python file.
 
+## Decision records
+
+An ADR records one durable constraint. Read the
+[decision-record index](docs/adr/index.md) before changing one. An ADR is written
+to this template and to nothing else:
+
+```text
+---
+id: NNNN
+status: proposed
+date: YYYY-MM-DD
+supersedes: []
+superseded-by: []
+tags: [a, b]
+---
+
+# ADR-NNNN: <the decision, stated as a sentence>
+
+## Context
+## Decision
+## Consequences
+```
+
+**Context** states the forces in tension in a few sentences. It is not the
+investigation: not what was tried, measured, drafted, rejected, or reviewed, and
+not the order in which anything happened.
+
+**Decision** states what is decided, in the present tense and Gangline's voice.
+
+**Consequences** states what follows, including unwelcome results and the
+falsifier: the observation that would show the decision wrong. There is no fourth
+section. A rejected option belongs here only when taking it would break something
+named and therefore still binds.
+
+The budget is 200 words. A record over 400 must earn every word in review. Existing
+accepted records that exceed the budget are corpus debt, not precedent. Evidence
+belongs outside the record; the record states only the resulting property that is
+checkable from the tree.
+
+Ids are permanent. Nothing is renumbered or reused, and a gap remains a gap. A
+superseded record keeps a one-line tombstone naming its replacement and loses its
+body; git retains the former body.
+
+A record is born `proposed` and binds nothing: no living artifact cites it as
+settled authority, no test asserts its constraint, and no record names it in a
+relationship list. The accepted corpus predates this creation rule. Revise a
+proposed body in place. Only the operator accepts a record, in a change that alters
+status metadata and nothing else. A proposal aimed at an accepted record names that
+fact in Context and leaves both relationship lists empty until acceptance.
+
+Existing accepted records whose Context does not state forces specific to that
+decision, or that carry a `Founding-import placeholder` instead of a falsifier,
+are corpus debt, not precedent. A successor states its own forces and supplies the
+concrete observation.
+
+An accepted decision is superseded by a new record rather than rewritten.
+Distilling an accepted body to this template changes no decision and is not a
+rewrite. A decision that cannot fit without losing its falsifier contains more
+than one constraint; split it and spend another id.
+
 Before editing `bin/gang`, resolve the executable on `PATH`:
 
 ```sh
@@ -239,7 +299,7 @@ When multiple contributors share a checkout:
 
 The local pre-push hook delegates to the operator's installed Snubline gate,
 which is the only PII scan Gangline runs — there is no CI backstop, so a clone
-without Snubline pushes unscanned. That gate runs the operator-installed
+without that gate installed pushes unscanned. That gate runs the operator-installed
 `~/.config/snubline/pii-scan`, never a copy from this repository. Issue and pull
 request bodies reach no hook at all, so scan them, and anything else you are
 about to publish, with that configured scanner first:

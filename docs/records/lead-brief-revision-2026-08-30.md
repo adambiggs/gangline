@@ -162,8 +162,9 @@ the behaviour; this record carries the reason.
 
 One of these lines is now scored. `test/leadeval.sh` measures the
 reviewer-selection line against a staged lead's dispatches; its scope and its
-limits are stated in the lane itself and in `docs/DECISIONS.md`. The rest of
-this section states why the remaining lines are harder to reach.
+limits are stated in the lane itself and in
+[ADR-0171](../adr/0171-the-lead-evaluation-scores-reviewer-diversity-from-dispatched-argv.md).
+The rest of this section states why the remaining lines are harder to reach.
 
 Testing conduct needs a different lane, and it is further from the current
 substrate than it first appears. Gangline transports prose and observes tmux. It

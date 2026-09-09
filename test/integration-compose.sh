@@ -1058,8 +1058,8 @@ tmux send-keys -t "$parked_id" C-u
 # side of the comparison. The old guard proved a refusal against a difference
 # the real instrument never delivers, while the readings it DID deliver — a
 # placeholder against an expanded body — could never match. Refusing here now
-# means refusing every multiline recovery, which is the defect. docs/DECISIONS
-# states the cost: whitespace-only substitutions are indistinguishable, and no
+# means refusing every multiline recovery, which is the defect. ADR-0028 states
+# the cost: whitespace-only substitutions are indistinguishable, and no
 # comparison against a capture could have distinguished them.
 #
 # THE DIFFERENCE IS BUILT FROM THE RECORD, because the record is what a recall

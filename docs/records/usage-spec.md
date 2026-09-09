@@ -1,7 +1,8 @@
 # Token usage reporting — implementation record and follow-ups
 
-> Status: v1 landed. The decision is "Token consumption is ccusage's reading,
-> joined by Gangline" in `docs/DECISIONS.md`; `docs/reference.md` documents
+> Status: v1 landed. The decision is
+> [ADR-0152](../adr/0152-gangline-joins-ccusage-output-by-native-session-identity.md);
+> `docs/reference.md` documents
 > `gang usage`, the hitch flags, and the event file. This record keeps the
 > measurements the design rests on and the work deliberately left out.
 

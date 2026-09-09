@@ -9,7 +9,7 @@ own right. Violating a law is a defect.
    harness speaks natively (e.g. MCP). tmux is the default transport — agents are
    tmux windows, messages are keystrokes, observation is `capture-pane`,
    termination is `kill-window`, state lives in tmux options. A harness-specific
-   code path requires an entry in `docs/DECISIONS.md` proving no universal surface
+   code path requires an accepted decision record proving no universal surface
    can carry the value.
    No bespoke message buses, no databases, no daemons.
 
@@ -26,8 +26,8 @@ own right. Violating a law is a defect.
 
 4. **Harness integration is a collar, not a plugin.** Per-harness knowledge lives in
    a collar, never as a branch in `bin/gang`; the collar contract itself is
-   documented in `docs/reference.md`. Code inside a harness requires an entry in
-   `docs/DECISIONS.md` proving the value is real and unachievable any other way.
+   documented in `docs/reference.md`. Code inside a harness requires an accepted
+   decision record proving the value is real and unachievable any other way.
 
 5. **Nothing lands without a live consumer.** If nothing invokes it the day it
    merges, it does not merge.

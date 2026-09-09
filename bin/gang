@@ -1918,8 +1918,8 @@ contract_file() { # -> winning contract path on stdout, operator first
 
 # Never pasted into a composer: the contract rides the collar's system-prompt
 # option where one is declared, and is pointed at as a file where none is.
-# Either way hitch proves the file present and prose. See docs/DECISIONS.md
-# "The contract rides the system prompt where a collar has one".
+# Either way hitch proves the file present and prose. See
+# docs/adr/0070-the-contract-rides-the-system-prompt-where-a-collar-has-one.md.
 contract_read() { # vet the contract slot, into CONTRACT_FILE and CONTRACT_BODY
   local display
   CONTRACT_FILE="$(contract_file)"

@@ -37,8 +37,8 @@ else belongs in operator reference material or nowhere.
 - Agent-facing diagnostics and issue-filing machinery that belong to operators.
 - Historical arguments, forensic commentary, duplicated explanations, and dead
   compatibility surface in code, profiles, and documentation.
-- The numbered decision archive; durable constraints live as terse entries in
-  `DECISIONS.md`.
+- The numbered decision archive that preceded the current
+  [decision-record corpus](../adr/index.md).
 
 Delete policy while preserving transport guarantees: sender attribution, verified
 delivery, exact addressing, truthful observation, and loud failure.

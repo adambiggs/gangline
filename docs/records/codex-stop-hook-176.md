@@ -150,7 +150,7 @@ been observed; the technical counter is already known.
 
 Codex needs a writable `CODEX_HOME` for its local state database; its auth file
 may remain read-only. This same in-process state-database write also prevents
-the snubline scanner from running with `--ephemeral` under a read-only home.
+the host-installed scanner from running with `--ephemeral` under a read-only home.
 
 These independent paths establish the same operational prerequisite. The
 scanner path does not establish the Stop-hook contract, nor does the Stop-hook
