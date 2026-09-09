@@ -1393,7 +1393,7 @@ if [ "${GANG_INTEGRATION_REQUIRE_ALL_PROBE:-0}" != 1 ]; then
     "1" "$require_all_probe_rc"
   contains "the required run names every part cli omitted" \
     "$require_all_probe_out" \
-    "required full run omitted declared parts: substrate,hitch,compose,spool,readiness,hooks,notify,usage,tick"
+    "required full run omitted declared parts: substrate,hitch,compose,spool,readiness,hooks,notify,usage,cap,tick"
   excludes "a focused required run never attests every part ran" \
     "$require_all_probe_out" "integration: every declared part ran"
 
@@ -1415,7 +1415,7 @@ if [ "${GANG_INTEGRATION_REQUIRE_ALL_PROBE:-0}" != 1 ]; then
   fi
   contains "a focused run carries its scope in the terminal summary" \
     "$(printf '%s\n' "$focused_probe_out" | tail -n 1)" \
-    "focused parts cli (full suite: cli substrate hitch compose spool readiness hooks notify usage tick)"
+    "focused parts cli (full suite: cli substrate hitch compose spool readiness hooks notify usage cap tick)"
 
   readiness_dependency_rc=0
   readiness_dependency_out="$(env -u GANG_INTEGRATION_REQUIRE_ALL \

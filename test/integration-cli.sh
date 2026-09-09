@@ -19,7 +19,7 @@ dispatch_commands="$({
     '
 } | awk '$0 != "hook" && $0 != "reply-obligations" && $0 != "reply-released" && $0 != "__tick-worker" && $0 != "__usage-record-worker" && $0 != "-h" && $0 != "--help" && $0 != "help"' | sort -u)"
 bare_error_commands="hitch adopt rename talk send at flush mail interrupt compact context limits wait-limit wait status explain capture composer whoami drop down"
-meaningful_bare_commands="up roster attach teams alerts tick collars models roles config curfew notify usage upgrade"
+meaningful_bare_commands="up roster attach teams alerts tick collars models roles config curfew notify usage cap upgrade"
 classified_commands="$(printf '%s\n' $bare_error_commands $meaningful_bare_commands | sort -u)"
 
 # ONE MONOTONIC READER AND ONE ELAPSED-SINCE DECISION. Callers retain their
@@ -246,6 +246,7 @@ arity_probes=(
   "config|STRAY|config: takes no arguments"
   "upgrade|STRAY|upgrade: unexpected argument 'STRAY'"
   "usage|STRAY|usage: unexpected argument 'STRAY'"
+  "cap|STRAY|cap: unknown action 'STRAY'"
 )
 arity_probe_commands="$(printf '%s\n' "${arity_probes[@]}" | cut -d'|' -f1 | sort -u)"
 equal "every dispatched operator command refuses arity it cannot consume" \

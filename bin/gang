@@ -319,6 +319,7 @@ GANGLINE_TEAM_ROUTE=new
 
 GANGLINE_CLOCK_HELPER="$ROOT/libexec/gang-clock"
 GANGLINE_USAGE_HELPER="$ROOT/libexec/gang-usage"
+GANGLINE_CAP_HELPER="$ROOT/libexec/gang-cap"
 if [ "${GANG_TEST_COLLARS:-}" = 1 ] && [ -n "${GANG_TEST_CLOCK:-}" ]; then
   case "$GANG_TEST_CLOCK" in
     /*) [ -x "$GANG_TEST_CLOCK" ] \
@@ -495,6 +496,7 @@ watch agents
   context   read an agent's context
   limits    read provider usage limits
   usage     read token consumption per agent
+  cap       read provider window history
   wait-limit resume at a provider reset
   whoami    read this pane's identity
   attach    join the team in tmux
@@ -964,6 +966,32 @@ gang usage
   Without ccusage the table still prints, and
   says why the token columns are empty.
   Provider percent-used windows are gang limits.
+EOF
+      ;;
+    cap) cat <<'EOF'
+gang cap
+  Read the recorded history of each provider's
+  weekly usage window.
+
+  gang cap                  what was last read
+  gang cap check            read now and alert
+  gang cap watch [--clear]  sample on a timer
+  gang cap replay --readings FILE
+  gang cap forget           erase the history
+
+  gang limits reads one agent's live windows;
+  cap keeps the account-wide weekly figure over
+  time, because neither harness does. Codex is
+  read from its own session files at no cost;
+  Claude's costs one provider turn, so it is
+  read less often. check alerts once per
+  threshold crossing per window, and reports a
+  provider it could not read rather than
+  passing over it in silence. Every percentage
+  is one the provider published; none is
+  derived from token volume. Readings older
+  than eight weeks age out on each pass, and
+  forget removes everything cap has written.
 EOF
       ;;
     wait-limit) cat <<'EOF'
@@ -12094,6 +12122,17 @@ cmd_limits() { # sample the collar's correctness source, never its usage UI
   done <<<"$USAGE_LIMIT_ROWS"
 }
 
+cmd_cap() { # provider window history; the helper owns storage and thresholds
+  local action=show
+  if [ $# -gt 0 ]; then action="$1"; shift; fi
+  case "$action" in
+    -h|--help) cmd_help cap; return 0 ;;
+    check|show|watch|replay|forget) ;;
+    *) die "cap: unknown action '$action'; expected check, show, watch, replay or forget" ;;
+  esac
+  "$GANGLINE_CAP_HELPER" "$action" "$@"
+}
+
 usage_wake_read() { # $1 window -> reset<TAB>unit<TAB>label; 1 absent, 2 invalid
   local raw reset unit label
   raw="$(tmux show-options -wqv -t "$1" @gl_usage_wake 2>/dev/null)" || raw=""
@@ -14469,6 +14508,7 @@ case "$cmd" in
   compact)  cmd_compact "$@" ;;
   context)  cmd_context "$@" ;;
   usage)    cmd_usage "$@" ;;
+  cap)      cmd_cap "$@" ;;
   limits)   cmd_limits "$@" ;;
   wait-limit) cmd_wait_limit "$@" ;;
   wait)     cmd_wait "$@" ;;

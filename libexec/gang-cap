@@ -1,0 +1,1095 @@
+#!/usr/bin/env python3
+# SPDX-License-Identifier: Apache-2.0
+"""Keep a history of each provider's published weekly usage percentage.
+
+Neither harness keeps one. Codex writes a `rate_limits` snapshot into every
+session file it appends to, so its weekly reading is free to take and its past
+is on disk; Claude publishes the same kind of reading only to a live
+`/usage` turn, so a Claude history exists only where something writes one down.
+`check` takes a reading from each provider, appends it, and emits an alert the
+first time a reading crosses a threshold inside one provider window. `show`
+prints what was last read without spending a turn.
+
+Every percentage stored here is a number the provider published. Nothing in
+this program derives a percentage from token volume: a figure that reads as a
+measurement while being an estimate is worse than an absent one, because the
+absent one is visibly absent.
+"""
+
+from __future__ import annotations
+
+import argparse
+import fcntl
+import json
+import os
+import subprocess
+import sys
+import time
+from contextlib import contextmanager
+from pathlib import Path
+
+ROOT = Path(__file__).resolve().parents[1]
+
+# The account-wide weekly window Codex bills against. Other limit ids appear in
+# the same files for models that carry their own pool; they are not this one.
+CODEX_LIMIT_ID = "codex"
+WEEKLY_MINUTES = 10080
+# The one surface each provider publishes on. A row naming anything else, or
+# naming the other provider's surface, was not published by the provider it
+# claims: an allowed source name is not provenance on its own.
+SOURCE_FOR_PROVIDER = {"codex": "codex-session-file", "claude": "claude-usage-turn"}
+# The measured basis for 70: in the recorded Codex history the only window that
+# approached the wall crossed 70 two days before its peak, and no window that
+# stayed clear of the wall reached it. 90 marks entry into the band the one
+# near-wall window actually occupied.
+DEFAULT_THRESHOLDS = (70, 90)
+# A provider that has been unreadable this long is reported as unreadable. The
+# failure of a reading is itself a reading; silence about it is the blindness
+# this program exists to end.
+DEFAULT_STALE_SECONDS = 6 * 3600
+CLAUDE_PROBE_SECONDS = 3300
+NOTIFY_TIMEOUT = 30
+# Two weekly windows and the slack to compare them. Readings older than this are
+# dropped on every pass, so the history is bounded rather than endless.
+DEFAULT_RETAIN_SECONDS = 8 * 7 * 24 * 3600
+LOCK_WAIT_SECONDS = 30
+
+
+class Unreadable(Exception):
+    """Telemetry that could not be read, or could not be believed."""
+
+
+def state_root() -> Path:
+    override = os.environ.get("GANG_CAP_DIR")
+    if override:
+        return Path(override)
+    base = os.environ.get("XDG_DATA_HOME") or os.path.join(
+        os.path.expanduser("~"), ".local", "share")
+    return Path(base) / "gangline" / "cap"
+
+
+@contextmanager
+def owned(root: Path):
+    """Hold the history while one pass folds a reading into it.
+
+    A manual check and the timer's own pass overlap by design. Without an
+    owner, every concurrent pass loads the same state, alerts on the same
+    crossing, and writes back fired bits that erase the others'.
+    """
+    root.mkdir(parents=True, exist_ok=True)
+    path = root / "lock"
+    deadline = time.time() + LOCK_WAIT_SECONDS
+    handle = None
+    while True:
+        if handle is not None:
+            handle.close()
+        root.mkdir(parents=True, exist_ok=True)
+        handle = open(path, "a+b")
+        held = False
+        try:
+            fcntl.flock(handle, fcntl.LOCK_EX | fcntl.LOCK_NB)
+            held = True
+            # `forget` removes this file, so a pass that waited can wake holding
+            # an inode the name no longer points at. Two passes would then each
+            # hold a different lock and each believe it owned the history, so
+            # the stale one is dropped and taken again on the file that is there.
+            if os.fstat(handle.fileno()).st_ino == os.stat(path).st_ino:
+                break
+        except FileNotFoundError:
+            pass
+        except OSError:
+            pass
+        if held:
+            fcntl.flock(handle, fcntl.LOCK_UN)
+        if time.time() >= deadline:
+            handle.close()
+            raise Unreadable(
+                f"another 'gang cap' pass has held {path} for more than "
+                f"{LOCK_WAIT_SECONDS}s")
+        time.sleep(0.01)
+    try:
+        yield
+    finally:
+        fcntl.flock(handle, fcntl.LOCK_UN)
+        handle.close()
+
+
+def append_jsonl(path: Path, record: dict) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    line = json.dumps(record, sort_keys=True, separators=(",", ":"))
+    with open(path, "a+b") as stream:
+        # A write that stopped part way leaves a line with no end. Appending to
+        # it would splice the two into one unreadable line and lose both, so
+        # the tear is closed first: the fragment stays as its own line, plainly
+        # broken and visible, and the record that follows is a record.
+        stream.seek(0, 2)
+        if stream.tell():
+            stream.seek(-1, 2)
+            if stream.read(1) != b"\n":
+                stream.write(b"\n")
+        stream.write((line + "\n").encode("utf-8"))
+
+
+def load_state(path: Path) -> dict:
+    try:
+        raw = path.read_text(encoding="utf-8")
+    except FileNotFoundError:
+        return {"windows": {}, "providers": {}}
+    try:
+        state = json.loads(raw)
+    except ValueError as err:
+        raise Unreadable(f"the alert state file is not JSON: {err}")
+    if not isinstance(state, dict):
+        raise Unreadable("the alert state file does not hold an object")
+    state.setdefault("windows", {})
+    state.setdefault("providers", {})
+    state.setdefault("pending", [])
+    if not isinstance(state["windows"], dict) or not isinstance(state["providers"], dict):
+        raise Unreadable("the alert state file holds a malformed section")
+    if not isinstance(state["pending"], list):
+        raise Unreadable("the alert state file holds a malformed section")
+    # An alert waiting in the state file is not text to be reprinted on trust:
+    # it is checked field by field and its sentence is written again from those
+    # fields, so nothing a person reads here can be put there by editing a file.
+    state["pending"] = [validated_alert(entry, "a pending alert")
+                        for entry in state["pending"]]
+    # The file is outside the readers, so what it holds is checked before
+    # anything here reports it. A percentage that reaches a person through this
+    # file without a provider having published it is the failure this program
+    # exists to prevent, and it is refused here rather than printed.
+    for key, entry in state["windows"].items():
+        state["windows"][key] = validated_window(key, entry)
+    for name, seen in state["providers"].items():
+        if not isinstance(seen, dict):
+            raise Unreadable(f"the stored telemetry for {name} is not an object")
+        for field in ("last_ok", "failing_since", "reported"):
+            if field in seen:
+                whole_epoch(seen[field], f"the stored {field} for {name}")
+    return state
+
+
+def validated_row(raw, where: str) -> dict:
+    """A reading, or a refusal naming what the provider did not publish."""
+    if not isinstance(raw, dict):
+        raise Unreadable(f"{where} is not an object")
+    status = raw.get("status", "ok")
+    if status != "ok":
+        raise Unreadable(f"{where} records no reading, so it carries no percentage")
+    provider = raw.get("provider")
+    if provider not in SOURCE_FOR_PROVIDER:
+        raise Unreadable(f"{where} names no known provider: {provider!r}")
+    if raw.get("source") != SOURCE_FOR_PROVIDER[provider]:
+        raise Unreadable(
+            f"{where} carries no source {provider} publishes on: {raw.get('source')!r}")
+    label = raw.get("label")
+    if not isinstance(label, str) or not label.strip():
+        raise Unreadable(f"{where} carries no window label")
+    window = raw.get("window")
+    if window not in ("weekly", "other"):
+        raise Unreadable(f"{where} names no known window kind: {window!r}")
+    return {
+        "provider": provider,
+        "label": label.strip(),
+        "window": window,
+        "used": whole_percent(raw.get("used"), f"{where} used_percent"),
+        "resets_at": whole_epoch(raw.get("resets_at"), f"{where} resets_at"),
+        "observed": whole_epoch(raw.get("observed"), f"{where} observed"),
+        "source": raw.get("source"),
+    }
+
+
+def alert_id(alert: dict) -> str:
+    """What makes two alerts the same alert.
+
+    A crossing is identified by the window it happened in and the threshold it
+    reached; a blindness by the failure it started from. An alert already
+    written under this identity is never written again, whatever else happens
+    between deciding to raise it and having raised it.
+    """
+    if alert["kind"] == "threshold":
+        return (f"threshold\t{alert['provider']}\t{alert['label']}"
+                f"\t{alert['resets_at']}\t{alert['threshold']}")
+    return f"telemetry\t{alert['provider']}\t{alert['since']}"
+
+
+def alert_text(alert: dict) -> str:
+    """The sentence an alert is read as, written from its checked fields."""
+    if alert["kind"] == "threshold":
+        return (f"{alert['label']} is {alert['used']}% used, at or past "
+                f"{alert['threshold']}%; the window resets "
+                f"{stamp(alert['resets_at'])}")
+    return (f"{alert['provider']} usage telemetry has been unreadable since "
+            f"{stamp(alert['since'])}"
+            + (f" (last read {stamp(alert['last_ok'])})" if alert.get("last_ok") else "")
+            + f": {alert['reason']}")
+
+
+def validated_alert(raw, where: str) -> dict:
+    """One alert, checked the way a reading is checked."""
+    if not isinstance(raw, dict):
+        raise Unreadable(f"{where} is not an object")
+    kind = raw.get("kind")
+    provider = raw.get("provider")
+    if provider not in SOURCE_FOR_PROVIDER:
+        raise Unreadable(f"{where} names no known provider: {provider!r}")
+    alert = {"kind": kind, "provider": provider,
+             "at": whole_epoch(raw.get("at"), f"{where} time")}
+    if kind == "threshold":
+        label = raw.get("label")
+        if not isinstance(label, str) or not label.strip():
+            raise Unreadable(f"{where} carries no window label")
+        if raw.get("source") != SOURCE_FOR_PROVIDER[provider]:
+            raise Unreadable(
+                f"{where} carries no source {provider} publishes on: {raw.get('source')!r}")
+        alert.update({
+            "label": label.strip(),
+            "source": raw.get("source"),
+            "threshold": whole_percent(raw.get("threshold"), f"{where} threshold"),
+            "used": whole_percent(raw.get("used"), f"{where} used_percent"),
+            "resets_at": whole_epoch(raw.get("resets_at"), f"{where} resets_at"),
+        })
+    elif kind == "telemetry":
+        reason = raw.get("reason")
+        if not isinstance(reason, str) or not reason.strip():
+            raise Unreadable(f"{where} names no reason")
+        alert.update({"since": whole_epoch(raw.get("since"), f"{where} start"),
+                      "reason": reason.strip()})
+        if raw.get("last_ok") is not None:
+            alert["last_ok"] = whole_epoch(raw.get("last_ok"), f"{where} last reading")
+    else:
+        raise Unreadable(f"{where} names no known kind of alert: {kind!r}")
+    alert["id"] = alert_id(alert)
+    return alert
+
+
+def recorded_alert_ids(path: Path) -> set:
+    """The alerts already durably written, by identity."""
+    known = set()
+    if not path.exists():
+        return known
+    try:
+        stream = open(path, encoding="utf-8")
+    except OSError:
+        # Unreadable is not empty. Answering with an empty set would say every
+        # alert is unrecorded, and the caller checks what landed rather than
+        # trusting that it did, so saying nothing is known is the safe answer.
+        return known
+    with stream:
+        for line in stream:
+            try:
+                record = json.loads(line)
+            except ValueError:
+                continue
+            if isinstance(record, dict) and isinstance(record.get("id"), str):
+                known.add(record["id"])
+    return known
+
+
+def validated_window(key: str, entry: dict) -> dict:
+    """One stored window, checked the way a fresh reading is checked."""
+    where = f"the stored window {key.replace(chr(9), '/')}"
+    checked = validated_row(entry, where)
+    if not isinstance(entry, dict):
+        raise Unreadable(f"{where} is not an object")
+    checked["peak"] = whole_percent(entry.get("peak", checked["used"]),
+                                    f"{where} peak")
+    checked["at"] = whole_epoch(entry.get("at", checked["observed"]), f"{where} read time")
+    fired = entry.get("fired", [])
+    if not isinstance(fired, list):
+        raise Unreadable(f"{where} holds a malformed alert record")
+    checked["fired"] = sorted(
+        whole_percent(value, f"{where} fired threshold") for value in fired)
+    return checked
+
+
+def save_state(path: Path, state: dict) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    # The rename is atomic on the same filesystem, so a killed run leaves either
+    # the previous state or the new one, never a half-written file that would
+    # read as no thresholds fired and alert a second time on the same crossing.
+    temporary = path.with_name(f"{path.name}.new.{os.getpid()}")
+    temporary.write_text(
+        json.dumps(state, sort_keys=True, indent=1) + "\n", encoding="utf-8")
+    os.replace(temporary, path)
+
+
+def whole_percent(value, where: str) -> int:
+    if isinstance(value, bool) or not isinstance(value, (int, float)):
+        raise Unreadable(f"{where} is not a number: {value!r}")
+    if float(value) != int(value):
+        raise Unreadable(f"{where} is not a whole percentage: {value!r}")
+    number = int(value)
+    if number < 0 or number > 100:
+        raise Unreadable(f"{where} is outside 0-100: {number}")
+    return number
+
+
+def whole_epoch(value, where: str) -> int:
+    if isinstance(value, bool) or not isinstance(value, int) or value <= 0:
+        raise Unreadable(f"{where} is not a positive epoch: {value!r}")
+    return value
+
+
+def reverse_lines(path: Path):
+    """Yield a file's lines from the last to the first."""
+    with open(path, "rb") as stream:
+        stream.seek(0, 2)
+        position = stream.tell()
+        carry = b""
+        while position:
+            size = min(65536, position)
+            position -= size
+            stream.seek(position)
+            parts = (stream.read(size) + carry).split(b"\n")
+            carry = parts[0]
+            yield from reversed(parts[1:])
+        if carry:
+            yield carry
+
+
+def codex_sessions_dir() -> Path:
+    override = os.environ.get("GANG_CAP_CODEX_SESSIONS")
+    if override:
+        return Path(override)
+    home = os.environ.get("CODEX_HOME") or os.path.join(os.path.expanduser("~"), ".codex")
+    return Path(home) / "sessions"
+
+
+def codex_candidates(sessions: Path, now: int) -> list:
+    """The session files that could hold a reading of the window standing now.
+
+    A file untouched since before the current weekly window cannot carry a
+    snapshot of it, so the search is bounded by the window the reading is
+    about. A bound counted in files instead turns a reading that is present
+    into one reported absent, as soon as enough sessions run on a model whose
+    pool is not the account's.
+    """
+    files = [p for p in sessions.rglob("*.jsonl") if p.is_file()]
+    if not files:
+        raise Unreadable(f"no Codex session files under {sessions}")
+    horizon = now - WEEKLY_MINUTES * 60
+    within = [p for p in files if p.stat().st_mtime >= horizon]
+    # Every candidate is read and the latest observation among them wins, so
+    # their order carries nothing. When nothing was written this window the
+    # newest file is read anyway, so the refusal names what the provider last
+    # published rather than reporting an empty tree.
+    return within or [max(files, key=lambda p: p.stat().st_mtime)]
+
+
+def codex_newest_in(path: Path):
+    """The last account weekly record one session file holds, if it holds one.
+
+    Answers (observation epoch, reading, defect): a defect is carried rather
+    than skipped, because reading past an unbelievable record would answer with
+    an older window while calling it the present one.
+    """
+    for raw in reverse_lines(path):
+        if b'"rate_limits"' not in raw:
+            continue
+        try:
+            record = json.loads(raw)
+        except ValueError:
+            continue
+        payload = record.get("payload") if isinstance(record, dict) else None
+        limits = payload.get("rate_limits") if isinstance(payload, dict) else None
+        if not isinstance(limits, dict) or limits.get("limit_id") != CODEX_LIMIT_ID:
+            continue
+        window = limits.get("primary")
+        if not isinstance(window, dict):
+            continue
+        if window.get("window_minutes") != WEEKLY_MINUTES:
+            continue
+        try:
+            observed = record_stamp(record)
+        except Unreadable as err:
+            return (int(path.stat().st_mtime), None, str(err))
+        try:
+            return (observed, validated_row({
+                "provider": "codex",
+                "label": "codex weekly",
+                "window": "weekly",
+                "used": window.get("used_percent"),
+                "resets_at": window.get("resets_at"),
+                "observed": observed,
+                "source": "codex-session-file",
+            }, "Codex"), None)
+        except Unreadable as err:
+            return (observed, None, str(err))
+    return None
+
+
+def read_codex(now: int) -> list:
+    """The reading Codex published last, wherever it wrote it.
+
+    File modification time orders writes to files, not the observations inside
+    them: sessions run concurrently, so a file appended to later can carry an
+    older snapshot than one already on disk. The reading chosen is the one with
+    the latest observation the provider stamped on it.
+    """
+    sessions = codex_sessions_dir()
+    if not sessions.is_dir():
+        raise Unreadable(f"no Codex session directory at {sessions}")
+    candidates = codex_candidates(sessions, now)
+    best = defect = None
+    for path in candidates:
+        found = codex_newest_in(path)
+        if found is None:
+            continue
+        observed, row, problem = found
+        if problem is not None:
+            if defect is None or observed > defect[0]:
+                defect = (observed, problem)
+        elif best is None or observed > best[0]:
+            best = (observed, row)
+    if defect is not None and (best is None or defect[0] >= best[0]):
+        raise Unreadable(defect[1])
+    if best is None:
+        raise Unreadable(
+            f"no weekly '{CODEX_LIMIT_ID}' rate_limits record in the "
+            f"{len(candidates)} Codex session files written this window")
+    return [best[1]]
+
+
+def record_stamp(record: dict) -> int:
+    stamp = record.get("timestamp")
+    if not isinstance(stamp, str):
+        raise Unreadable("a Codex rate_limits record carries no timestamp")
+    from datetime import datetime
+    try:
+        return int(datetime.fromisoformat(stamp.replace("Z", "+00:00")).timestamp())
+    except ValueError as err:
+        raise Unreadable(f"a Codex rate_limits timestamp is unreadable: {err}")
+
+
+def claude_reader_argv() -> list:
+    override = os.environ.get("GANG_CAP_CLAUDE_READER")
+    if override:
+        return ["sh", "-c", override]
+    collar = os.environ.get("GANG_CAP_CLAUDE_COLLAR") or str(ROOT / "collars" / "claude-code.sh")
+    # The collar's own reader is called rather than reimplemented, so one parser
+    # answers for `gang limits` and for the history written here.
+    return ["bash", "-c", f'. "$1"; collar_usage_limits ""', "gang-cap", collar]
+
+
+def read_claude(now: int) -> list:
+    """Claude's live reading, which costs one provider turn to take."""
+    argv = claude_reader_argv()
+    try:
+        finished = subprocess.run(
+            argv, capture_output=True, timeout=CLAUDE_PROBE_SECONDS)
+    except FileNotFoundError as err:
+        raise Unreadable(f"the Claude limit reader could not be run: {err}")
+    except subprocess.TimeoutExpired:
+        raise Unreadable(
+            f"the Claude limit reader did not answer within {CLAUDE_PROBE_SECONDS}s")
+    if finished.returncode != 0:
+        detail = finished.stderr.decode("utf-8", "replace").strip().splitlines()
+        tail = detail[-1] if detail else "no explanation on stderr"
+        raise Unreadable(
+            f"the Claude limit reader exited {finished.returncode}: {tail}")
+    rows = []
+    for line in finished.stdout.decode("utf-8", "replace").splitlines():
+        if not line.strip():
+            continue
+        fields = line.split("\t")
+        if len(fields) != 4:
+            raise Unreadable(f"a Claude limit row has {len(fields)} fields: {line!r}")
+        label, used, resets, observed = fields
+        if not label.strip():
+            raise Unreadable("a Claude limit row carries no label")
+        rows.append(validated_row({
+            "provider": "claude",
+            "label": label.strip(),
+            "window": "weekly" if label.strip().lower().startswith("current week") else "other",
+            "used": int_or_defect(used, "a Claude limit row used_percent"),
+            "resets_at": int_or_defect(resets, "a Claude limit row resets_at"),
+            "observed": int_or_defect(observed, "a Claude limit row observed"),
+            "source": "claude-usage-turn",
+        }, "a Claude limit row"))
+    if not rows:
+        raise Unreadable("the Claude limit reader printed no rows")
+    if not any(row["window"] == "weekly" for row in rows):
+        raise Unreadable("the Claude limit reader printed no weekly window")
+    return rows
+
+
+def int_or_defect(text: str, where: str) -> int:
+    try:
+        return int(text)
+    except ValueError:
+        raise Unreadable(f"{where} is not a whole number: {text!r}")
+
+
+def window_key(row: dict) -> str:
+    return f"{row['provider']}\t{row['label']}"
+
+
+def parse_thresholds(text: str) -> list:
+    values = []
+    for piece in text.split(","):
+        piece = piece.strip()
+        if not piece:
+            continue
+        try:
+            number = int(piece)
+        except ValueError:
+            raise Unreadable(f"threshold {piece!r} is not a whole percentage")
+        if number < 1 or number > 100:
+            raise Unreadable(f"threshold {number} is outside 1-100")
+        values.append(number)
+    if not values:
+        raise Unreadable("no thresholds were given")
+    return sorted(set(values))
+
+
+def admit(state: dict, row: dict, at: int) -> str:
+    """Fold one reading into the window state; say what it was.
+
+    A reading whose window resets earlier than the newest window already seen
+    for that label belongs to a window that has closed. Session files outlive
+    their window and replay their last snapshot, so such a reading arrives with
+    a percentage that was true and is not; admitting it would both misreport
+    the present and re-arm thresholds that already fired.
+    """
+    key = window_key(row)
+    known = state["windows"].get(key)
+    if row["resets_at"] <= at:
+        # The provider's own reset time has already passed, so this reading
+        # measures an allowance that is gone. This is what a first pass on a
+        # quiet host reads, because a session file keeps replaying its last
+        # snapshot for as long as the file exists, and a state holding nothing
+        # yet has no newer window to compare it against.
+        return "superseded"
+    if known and row["resets_at"] < known.get("resets_at", 0):
+        return "superseded"
+    if not known or row["resets_at"] > known.get("resets_at", 0):
+        state["windows"][key] = {
+            "provider": row["provider"],
+            "label": row["label"],
+            "window": row["window"],
+            "resets_at": row["resets_at"],
+            "used": row["used"],
+            "peak": row["used"],
+            "observed": row["observed"],
+            "source": row["source"],
+            "at": at,
+            "fired": [],
+        }
+        return "opened"
+    if row["observed"] < known.get("observed", 0):
+        # The same window, observed earlier than what already stands: a
+        # duplicate arriving late, which would otherwise replace the newer
+        # percentage with an older one and call the result current.
+        return "stale"
+    known.update({
+        "used": row["used"],
+        "peak": max(known.get("peak", 0), row["used"]),
+        "observed": row["observed"],
+        "window": row["window"],
+        "source": row["source"],
+        "at": at,
+    })
+    return "current"
+
+
+def threshold_alerts(state: dict, row: dict, thresholds: list, at: int) -> list:
+    """The crossings this reading is the first to reach in its own window."""
+    if row["window"] != "weekly":
+        return []
+    known = state["windows"][window_key(row)]
+    fired = list(known.get("fired", []))
+    alerts = []
+    for threshold in thresholds:
+        if threshold in fired or row["used"] < threshold:
+            continue
+        fired.append(threshold)
+        alerts.append(validated_alert({
+            "at": at,
+            "kind": "threshold",
+            "provider": row["provider"],
+            "label": row["label"],
+            "source": row["source"],
+            "threshold": threshold,
+            "used": row["used"],
+            "resets_at": row["resets_at"],
+        }, "a threshold crossing"))
+    known["fired"] = sorted(fired)
+    return alerts
+
+
+def telemetry_alerts(state: dict, provider: str, ok: bool, reason: str,
+                     at: int, stale_seconds: int) -> list:
+    """One alert when a provider stops answering, and none until it answers again."""
+    seen = state["providers"].setdefault(provider, {})
+    if ok:
+        seen["last_ok"] = at
+        seen.pop("failing_since", None)
+        seen.pop("reported", None)
+        seen.pop("reason", None)
+        return []
+    seen["reason"] = reason
+    seen.setdefault("failing_since", at)
+    # The bound runs from the first failure anyone observed, not from the last
+    # success: a host that sampled, paused for a day and then failed once has
+    # been unreadable for one pass, and calling that a day of silence spends
+    # the alert on a gap in sampling rather than on a provider going dark.
+    blind_since = seen["failing_since"]
+    if at - blind_since < stale_seconds or seen.get("reported"):
+        return []
+    seen["reported"] = at
+    last_ok = seen.get("last_ok")
+    return [validated_alert({
+        "at": at,
+        "kind": "telemetry",
+        "provider": provider,
+        "since": blind_since,
+        "reason": reason,
+        "last_ok": last_ok if isinstance(last_ok, int) else None,
+    }, "a telemetry failure")]
+
+
+def stamp(epoch: int) -> str:
+    return time.strftime("%Y-%m-%d %H:%M %Z", time.localtime(epoch))
+
+
+def duration(seconds: int) -> str:
+    seconds = max(0, int(seconds))
+    if seconds < 90:
+        return f"{seconds}s"
+    if seconds < 5400:
+        return f"{seconds // 60}m"
+    if seconds < 172800:
+        return f"{seconds // 3600}h"
+    return f"{seconds // 86400}d"
+
+
+def notify(alerts: list) -> list:
+    """Hand each alert to the operator's own notifier, and say if that failed."""
+    command = os.environ.get("GANG_CAP_NOTIFY", "").strip()
+    if not command or not alerts:
+        return []
+    failures = []
+    for alert in alerts:
+        try:
+            finished = subprocess.run(
+                ["sh", "-c", command], input=alert_text(alert).encode("utf-8"),
+                capture_output=True, timeout=NOTIFY_TIMEOUT)
+        except (OSError, subprocess.TimeoutExpired) as err:
+            failures.append(f"GANG_CAP_NOTIFY did not run for one alert: {err}")
+            continue
+        if finished.returncode != 0:
+            tail = finished.stderr.decode("utf-8", "replace").strip().splitlines()
+            failures.append(
+                f"GANG_CAP_NOTIFY exited {finished.returncode}: "
+                f"{tail[-1] if tail else 'no explanation on stderr'}")
+    return failures
+
+
+def providers_to_read(names: list, state: dict, now: int, claude_interval: int) -> list:
+    """Codex costs a file read, Claude costs a provider turn; pace them apart."""
+    chosen = []
+    for name in names:
+        if name == "claude" and claude_interval > 0:
+            last = state["providers"].get("claude", {}).get("last_ok")
+            if isinstance(last, int) and now - last < claude_interval:
+                continue
+        chosen.append(name)
+    return chosen
+
+
+def prune(path: Path, retain_seconds: int, now: int) -> None:
+    """Age records out of a log, so the history this keeps stays bounded."""
+    if retain_seconds <= 0 or not path.exists():
+        return
+    horizon, kept, dropped = now - retain_seconds, [], 0
+    try:
+        stream = open(path, encoding="utf-8")
+    except OSError:
+        # Ageing records out is housekeeping. A log that cannot be read is a
+        # failure the pass has already reported; it is not this function's to
+        # raise a second time, and raising here would lose that report.
+        return
+    with stream:
+        for line in stream:
+            if not line.strip():
+                continue
+            try:
+                at = json.loads(line).get("at")
+            except ValueError:
+                # A line this cannot read is a line it must not delete.
+                at = None
+            if isinstance(at, int) and at < horizon:
+                dropped += 1
+                continue
+            kept.append(line if line.endswith("\n") else line + "\n")
+    if not dropped:
+        return
+    temporary = path.with_name(f"{path.name}.kept.{os.getpid()}")
+    temporary.write_text("".join(kept), encoding="utf-8")
+    os.replace(temporary, path)
+
+
+def cmd_check(args) -> int:
+    root = state_root()
+    readings, alerts_path = root / "readings.jsonl", root / "alerts.jsonl"
+    state_path = root / "state.json"
+    thresholds = parse_thresholds(args.thresholds)
+    now = int(time.time())
+    complaints, read_any, owed, unrecorded = [], False, [], []
+    with owned(root):
+        state = load_state(state_path)
+        wanted = providers_to_read(args.providers, state, now, args.claude_interval)
+        emitted = []
+        for provider in args.providers:
+            if provider not in wanted:
+                continue
+            reader = read_codex if provider == "codex" else read_claude
+            try:
+                rows = reader(now)
+            except Unreadable as err:
+                append_jsonl(readings, {"at": now, "provider": provider,
+                                        "status": "unreadable", "reason": str(err)})
+                complaints.append(f"gang cap: {provider}: {err}")
+                emitted += telemetry_alerts(state, provider, False, str(err),
+                                            now, args.stale_seconds)
+                continue
+            live = False
+            for row in rows:
+                disposition = admit(state, row, now)
+                append_jsonl(readings, dict(row, at=now, status="ok",
+                                            disposition=disposition))
+                if disposition != "superseded" or row["resets_at"] > now:
+                    live = True
+                if disposition in ("opened", "current"):
+                    emitted += threshold_alerts(state, row, thresholds, now)
+            if not live:
+                # Every window the provider published has already reset. The
+                # readings are kept as history, but there is no current figure,
+                # and reporting the pass as healthy would report headroom that
+                # belongs to an allowance already replaced.
+                closed = max(row["resets_at"] for row in rows)
+                excuse = (f"every window it published has closed; the newest "
+                          f"reset {stamp(closed)}")
+                complaints.append(f"gang cap: {provider}: {excuse}")
+                emitted += telemetry_alerts(state, provider, False, excuse,
+                                            now, args.stale_seconds)
+                continue
+            read_any = True
+            emitted += telemetry_alerts(state, provider, True, "", now, args.stale_seconds)
+        # An alert and the fired bit that stops it being decided again are
+        # committed together: the alerts owed go into the state first, and are
+        # cleared only once they have been written down and delivered. A pass
+        # that dies anywhere in between leaves them owed and the next pass
+        # finishes the job, which is why the durable write is by identity —
+        # an alert already written under its own id is never written twice,
+        # so the record holds one entry per crossing however often a pass is
+        # interrupted. Delivery can repeat, and repeating a warning is the
+        # failure worth having.
+        pending = {alert["id"]: alert for alert in state.get("pending", [])}
+        for alert in emitted:
+            pending.setdefault(alert["id"], alert)
+        state["pending"] = list(pending.values())
+        save_state(state_path, state)
+        owed = state["pending"]
+        written = recorded_alert_ids(alerts_path)
+        for alert in owed:
+            if alert["id"] in written:
+                continue
+            try:
+                append_jsonl(alerts_path, dict(alert, text=alert_text(alert)))
+            except OSError as err:
+                complaints.append(f"gang cap: {alerts_path} could not be appended to: {err}")
+                continue
+            written.add(alert["id"])
+        for alert in owed:
+            print(f"gang cap alert: {alert_text(alert)}")
+        complaints += notify(owed)
+        # Nothing is forgotten until the log can be read back with the alert in
+        # it. Whatever the reason a record did not land — a torn tail, a full
+        # disk, a write that failed silently — the alert stays owed rather than
+        # announced once and dropped, and the pass says so and fails.
+        landed = recorded_alert_ids(alerts_path)
+        state["pending"] = [alert for alert in owed if alert["id"] not in landed]
+        for alert in state["pending"]:
+            complaints.append(
+                f"gang cap: the record for an alert on "
+                f"{alert['provider']} could not be read back from "
+                f"{alerts_path}; it stays owed")
+        save_state(state_path, state)
+        unrecorded = state["pending"]
+        prune(readings, args.retain_seconds, now)
+        prune(alerts_path, args.retain_seconds, now)
+    for line in complaints:
+        print(line, file=sys.stderr)
+    if not read_any and wanted:
+        return 1
+    if unrecorded:
+        return 1
+    return 0
+
+
+def cmd_show(args) -> int:
+    root = state_root()
+    try:
+        state = load_state(root / "state.json")
+    except Unreadable as err:
+        print(f"gang cap: {err}", file=sys.stderr)
+        return 1
+    now = int(time.time())
+    windows = sorted(state["windows"].values(),
+                     key=lambda w: (w.get("provider", ""), w.get("label", "")))
+    if not windows:
+        print("gang cap: no reading has been recorded yet; take one with "
+              "'gang cap check'")
+    for entry in windows:
+        if entry.get("resets_at", 0) <= now:
+            # The allowance this measured has been replaced. The percentage was
+            # published and is kept, but presenting it as the standing figure
+            # would report headroom that belongs to a window already gone.
+            print(f"{entry.get('label')}: window closed "
+                  f"{stamp(entry.get('resets_at', 0))}"
+                  f" — last read {entry.get('used')}% used"
+                  f" — take a reading with 'gang cap check'")
+            continue
+        line = (f"{entry.get('label')}: {entry.get('used')}% used"
+                f" — resets {stamp(entry.get('resets_at', 0))}"
+                f" — read {duration(now - entry.get('at', now))} ago")
+        fired = entry.get("fired") or []
+        if fired:
+            line += f" — ALERT at {', '.join(str(t) + '%' for t in fired)}"
+        print(line)
+    for provider, seen in sorted(state["providers"].items()):
+        if seen.get("failing_since"):
+            print(f"{provider}: unreadable since "
+                  f"{stamp(seen['failing_since'])}: {seen.get('reason', 'no reason recorded')}",
+                  file=sys.stderr)
+    return 0
+
+
+def cmd_forget(args) -> int:
+    """Remove everything this command has written."""
+    root = state_root()
+    if not root.exists():
+        print(f"gang cap: nothing is recorded under {root}")
+        return 0
+    removed = []
+    with owned(root):
+        for name in ("readings.jsonl", "alerts.jsonl", "state.json"):
+            path = root / name
+            if path.exists():
+                path.unlink()
+                removed.append(name)
+        for leftover in list(root.glob("*.new.*")) + list(root.glob("*.kept.*")):
+            leftover.unlink()
+        # Removed while still held, so a pass waiting on this lock wakes on an
+        # inode the name has left and takes the lock again rather than running
+        # beside whoever holds the file that replaced it.
+        lock = root / "lock"
+        if lock.exists():
+            lock.unlink()
+    try:
+        root.rmdir()
+    except OSError:
+        pass
+    print(f"gang cap: removed the recorded usage history under {root}"
+          + (f" ({', '.join(removed)})" if removed else " (nothing was recorded)"))
+    return 0
+
+
+def cmd_replay(args) -> int:
+    """Run recorded readings through the live threshold engine."""
+    thresholds = parse_thresholds(args.thresholds)
+    state = {"windows": {}, "providers": {}}
+    emitted = []
+    with open(args.readings, encoding="utf-8") as stream:
+        for number, line in enumerate(stream, 1):
+            if not line.strip():
+                continue
+            try:
+                raw = json.loads(line)
+            except ValueError as err:
+                print(f"gang cap: replay line {number} is not JSON: {err}",
+                      file=sys.stderr)
+                return 2
+            # Replay input arrives from outside the readers, so it is admitted
+            # on the same terms a live reading is. A row that records no
+            # reading carries no percentage to replay, whatever number it holds.
+            try:
+                row = validated_row(raw, f"replay line {number}")
+            except Unreadable as err:
+                print(f"gang cap: {err}", file=sys.stderr)
+                return 2
+            at = raw.get("at", row["observed"])
+            if not isinstance(at, int) or at <= 0:
+                print(f"gang cap: replay line {number} carries no reading time",
+                      file=sys.stderr)
+                return 2
+            disposition = admit(state, row, at)
+            if disposition in ("opened", "current"):
+                emitted += threshold_alerts(state, row, thresholds, at)
+            if args.verbose:
+                print(f"{stamp(at)}\t{row['label']}\t{row['used']}%\t{disposition}")
+    for alert in emitted:
+        print(f"{stamp(alert['at'])}\t{alert['label']}\t"
+              f"crossed {alert['threshold']}% at {alert['used']}%")
+    print(f"alerts: {len(emitted)}")
+    return 0
+
+
+UNIT_TIMER = """[Unit]
+Description=Gangline provider usage sampling
+
+[Timer]
+OnBootSec={interval}
+OnUnitActiveSec={interval}
+AccuracySec=1min
+
+[Install]
+WantedBy=timers.target
+"""
+
+UNIT_SERVICE = """[Unit]
+Description=Gangline provider usage sampling
+
+[Service]
+Type=oneshot
+ExecStart={gang} cap check
+{environment}"""
+
+
+def unit_dir() -> Path:
+    override = os.environ.get("GANG_CAP_UNIT_DIR")
+    if override:
+        return Path(override)
+    base = os.environ.get("XDG_CONFIG_HOME") or os.path.join(
+        os.path.expanduser("~"), ".config")
+    return Path(base) / "systemd" / "user"
+
+
+def unit_value(value: str) -> str:
+    """One systemd Environment= value, quoted so nothing in it is lost.
+
+    An unquoted space splits one assignment into several and systemd drops the
+    remainder with a warning nothing reads, so a notifier command with an
+    argument would be installed as its first word and the timer would report
+    success while sampling with values the operator never wrote.
+    """
+    escaped = (value.replace("\\", "\\\\").replace('"', '\\"')
+               .replace("\n", "\\n").replace("\r", "\\r"))
+    return '"' + escaped.replace("%", "%%") + '"'
+
+
+def unit_text(interval: str) -> tuple:
+    environment = ""
+    for name in ("GANG_CAP_NOTIFY", "GANG_CAP_THRESHOLDS", "GANG_CAP_DIR"):
+        value = os.environ.get(name)
+        if value:
+            environment += f"Environment={name}={unit_value(value)}\n"
+    service = UNIT_SERVICE.format(gang=ROOT / "bin" / "gang", environment=environment)
+    return UNIT_TIMER.format(interval=interval), service
+
+
+def cmd_watch(args) -> int:
+    timer, service = unit_text(args.interval)
+    if args.print_units:
+        print(service)
+        print(timer)
+        return 0
+    directory = unit_dir()
+    activate = os.environ.get("GANG_CAP_UNIT_DIR") is None
+    if args.clear:
+        for name in ("gangline-cap.timer", "gangline-cap.service"):
+            path = directory / name
+            if activate and name.endswith(".timer"):
+                run_systemctl(["disable", "--now", name], required=False)
+            if path.exists():
+                path.unlink()
+        if activate:
+            run_systemctl(["daemon-reload"], required=False)
+        print("gang cap: the sampling timer is removed")
+        return 0
+    directory.mkdir(parents=True, exist_ok=True)
+    (directory / "gangline-cap.service").write_text(service, encoding="utf-8")
+    (directory / "gangline-cap.timer").write_text(timer, encoding="utf-8")
+    if not activate:
+        print(f"gang cap: units written under {directory}")
+        return 0
+    if run_systemctl(["daemon-reload"], required=True) != 0:
+        return 1
+    if run_systemctl(["enable", "--now", "gangline-cap.timer"], required=True) != 0:
+        return 1
+    print(f"gang cap: sampling every {args.interval}; "
+          f"readings under {state_root()}")
+    return 0
+
+
+def run_systemctl(argv: list, required: bool) -> int:
+    try:
+        finished = subprocess.run(["systemctl", "--user"] + argv,
+                                  capture_output=True, timeout=60)
+    except (OSError, subprocess.TimeoutExpired) as err:
+        print(f"gang cap: systemctl --user {' '.join(argv)} could not run: {err}",
+              file=sys.stderr)
+        return 1 if required else 0
+    if finished.returncode != 0:
+        detail = finished.stderr.decode("utf-8", "replace").strip()
+        print(f"gang cap: systemctl --user {' '.join(argv)} failed: {detail}",
+              file=sys.stderr)
+    return finished.returncode
+
+
+def main(argv: list) -> int:
+    parser = argparse.ArgumentParser(prog="gang cap", add_help=True)
+    subparsers = parser.add_subparsers(dest="command")
+
+    def thresholds_default() -> str:
+        return os.environ.get("GANG_CAP_THRESHOLDS") or ",".join(
+            str(t) for t in DEFAULT_THRESHOLDS)
+
+    check = subparsers.add_parser("check")
+    check.add_argument("--thresholds", default=thresholds_default())
+    check.add_argument("--providers", default="codex,claude")
+    check.add_argument("--claude-interval", type=int,
+                       default=int(os.environ.get("GANG_CAP_CLAUDE_INTERVAL", 3300)))
+    check.add_argument("--stale-seconds", type=int, default=DEFAULT_STALE_SECONDS)
+    check.add_argument("--retain-seconds", type=int, default=DEFAULT_RETAIN_SECONDS)
+    check.set_defaults(run=cmd_check)
+
+    forget = subparsers.add_parser("forget")
+    forget.set_defaults(run=cmd_forget)
+
+    show = subparsers.add_parser("show")
+    show.set_defaults(run=cmd_show)
+
+    replay = subparsers.add_parser("replay")
+    replay.add_argument("--readings", required=True)
+    replay.add_argument("--thresholds", default=thresholds_default())
+    replay.add_argument("--verbose", action="store_true")
+    replay.set_defaults(run=cmd_replay)
+
+    watch = subparsers.add_parser("watch")
+    watch.add_argument("--interval", default="15min")
+    watch.add_argument("--clear", action="store_true")
+    watch.add_argument("--print-units", action="store_true")
+    watch.set_defaults(run=cmd_watch)
+
+    args = parser.parse_args(argv)
+    if not getattr(args, "run", None):
+        parser.print_help()
+        return 2
+    if getattr(args, "providers", None) is not None:
+        names = [p.strip() for p in args.providers.split(",") if p.strip()]
+        for name in names:
+            if name not in ("codex", "claude"):
+                print(f"gang cap: unknown provider '{name}'", file=sys.stderr)
+                return 2
+        args.providers = names
+    try:
+        return args.run(args)
+    except Unreadable as err:
+        print(f"gang cap: {err}", file=sys.stderr)
+        return 1
+
+
+if __name__ == "__main__":
+    sys.exit(main(sys.argv[1:]))
