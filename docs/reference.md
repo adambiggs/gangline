@@ -1360,6 +1360,72 @@ that file to the repaired event file and remove it. If neither path is writable,
 Gangline prints the named tmux buffer that retains the JSON until the server
 exits. Provider percent-used windows are `gang limits`, not this command.
 
+### `gang cap [check|show|watch|replay|forget]`
+
+Keeps the account-wide weekly percentage each provider publishes, over time.
+`gang limits` reads one agent's live windows and keeps nothing; neither harness
+keeps a history of its own, so a wall's first sign is a refusal mid-turn.
+
+With no action, or with `show`, it prints the last reading recorded for every
+window, its age, its reset time, and any threshold already crossed inside the
+window that still stands. A window whose published reset time has passed is
+printed as closed rather than as the standing figure. It spends no provider
+turn.
+
+`check` takes one reading per provider and appends it. The Codex reading is the
+account's own weekly `rate_limits` window, read from its session files at no
+cost; a record under any other limit id belongs to a pool with its own allowance
+and is not read as this one. The Claude reading comes through the collar reader
+`gang limits` uses and costs one provider turn, so `--claude-interval` (default
+55 minutes) skips it while a recent reading stands. `--thresholds` defaults to
+`70,90` and `GANG_CAP_THRESHOLDS` sets it; each threshold alerts once inside one
+provider window and re-arms when the provider publishes a later reset time. A
+reading whose reset time has already passed, or precedes the newest one seen,
+is stored as superseded: session files outlive their window and replay the
+snapshot they last held. Where several session files hold a reading, the one
+taken is the one carrying the latest observation the provider stamped, not the
+one in the file written last.
+
+One pass at a time folds a reading in, so a manual check and the timer's pass
+cannot both alert on the same crossing; a pass that waits more than 30 seconds
+for the one before it fails rather than proceeding. An alert is committed with
+the state that stops it being decided again, and cleared only once it has been
+written down and delivered, so a pass killed in between leaves it owed and the
+next pass finishes the job. The durable record is written by identity — the
+window and threshold a crossing belongs to — so one crossing leaves one record
+however often a pass is interrupted, while delivery to the terminal and to
+`GANG_CAP_NOTIFY` may repeat. Repeating a warning is the failure worth having.
+
+A provider that cannot be read is stored with the defect named and reported on
+stderr, never passed over; a pass that read no provider at all exits nonzero, as
+does one whose every published window has already closed. A percentage is
+printed only where a provider published it: replay input, the stored state, and
+any alert waiting there are checked on the same terms as a live reading, and a
+row failing that check is refused by name rather than rendered. Each provider
+publishes on one surface, so a row naming the other provider's surface is not
+provenance; an alert's sentence is written from its checked fields rather than
+read back from the file. A
+provider unreadable past `--stale-seconds` raises one alert of its own. No
+percentage anywhere is derived from token volume. `GANG_CAP_NOTIFY` names a
+shell command each alert is piped to, and its own failure is reported too.
+
+`watch` writes a systemd user timer that runs `gang cap check` on `--interval`
+(default 15 minutes) and enables it; `--clear` removes both units;
+`--print-units` prints them without writing. Values carried into the unit are
+systemd-quoted, so a notifier command keeps its arguments instead of being
+installed as its first word. Readings, alerts, and window state
+live under `$XDG_DATA_HOME/gangline/cap`, which `GANG_CAP_DIR` overrides.
+
+Records older than `--retain-seconds` (default eight weeks, two weekly windows
+and the slack to compare them) are dropped from both logs on every `check`, so
+the history stays bounded. `forget` removes everything the command has written,
+the lock it coordinates on, and the directory holding them; nothing here
+outlives it.
+
+`replay --readings FILE` runs recorded readings through the same threshold
+engine and prints the crossings, so a threshold can be judged against history
+before it is armed.
+
 ### `gang wait-limit [name] [--resume <turn>]` / `gang wait-limit [name] --clear`
 
 Reads the same non-interactive provider limits as `gang limits`, chooses the

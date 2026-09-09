@@ -235,6 +235,14 @@ same table with its gaps named when it is not.
 provider-reset wait is one transient systemd user timer; it delivers an
 attributed continuation through the ordinary Gangline path and then disappears.
 
+`gang cap` keeps those windows over time, which no harness does: `gang cap
+watch` samples the weekly percentage each provider publishes, `gang cap` prints
+the last reading without spending a turn, and a threshold alerts once inside a
+provider window rather than on every pass. Every figure it stores is one a
+provider published; none is inferred from token volume, and a provider it could
+not read is reported as unread. Readings age out after eight weeks and `gang cap
+forget` removes the history outright.
+
 `GANG_AUTO_RESUME="97%"` arms that wait automatically, once per provider window,
 from the agent's own turn — so a team keeps working across provider windows with
 nobody at the keyboard:
