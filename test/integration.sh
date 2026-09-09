@@ -8,6 +8,8 @@ unset TMUX TMUX_PANE
 
 ROOT="$(cd -P "$(dirname "$0")/.." && pwd)"
 GANG="$ROOT/bin/gang"
+: "${GANG_TEST_PATH_SHIM_GUARD:=$ROOT/test/path-shim-guard.sh}"
+export GANG_TEST_PATH_SHIM_GUARD
 
 # A VERDICT IS ABOUT A TREE, so the tree has to hold still. This refuses to
 # start against a working tree that is already moving — bash reads this script
@@ -47,6 +49,8 @@ suite_python3_pin "$RUN_ROOT/pybin" || exit 1
 # detached watcher that fires when this process is gone by any means.
 . "$ROOT/test/suite-reaper.sh"
 suite_reaper_start "$RUN_ROOT" || exit 1
+
+"$ROOT/test/path-shim-guard-test.sh"
 
 # The Bash fixture establishes every transition synchronously except one: a pane
 # answers its terminal asynchronously. Production waits are inputs here, not
@@ -127,6 +131,8 @@ suite_reaper_start "$RUN_ROOT" || exit 1
 mkdir -p "$RUN_ROOT/bin"
 cat > "$RUN_ROOT/bin/sleep" <<'SH'
 #!/bin/sh
+. "$GANG_TEST_PATH_SHIM_GUARD"
+path_shim_guard /bin/sleep "$0" clock || exit $?
 [ -z "${GANG_TEST_CLOCK_LEDGER:-}" ] || printf '%s\n' "$1" >> "$GANG_TEST_CLOCK_LEDGER"
 case "$1" in
   0.3) exit 0 ;;
@@ -207,6 +213,8 @@ main_socket='$TMUX_SOCKET'
 SH
 cat >> "$RUN_ROOT/waitbin/tmux" <<'SH'
 set -u
+. "$GANG_TEST_PATH_SHIM_GUARD"
+path_shim_guard "$real" "$0" tmux || exit $?
 
 # THE TEST DRIVER'S BARE CLIENTS FOLLOW THE TEAM'S NAMED SOCKET, INCLUDING THE
 # CHILD SHELLS THAT READ CONFIGURATION AND COMPOSERS. This wrapper is their

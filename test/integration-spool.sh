@@ -339,6 +339,8 @@ cross_log="$RUN_ROOT/cross-claims"
 real_mv="$(command -v mv)"
 cat > "$RUN_ROOT/bin/mv" <<SH
 #!/bin/sh
+. "\$GANG_TEST_PATH_SHIM_GUARD"
+path_shim_guard "$real_mv" "\$0" mv || exit \$?
 dest=""
 for arg do dest="\$arg"; done
 case "\$dest" in
@@ -639,8 +641,11 @@ cat > "$RUN_ROOT/mintbin/od" <<SH
 #!/bin/sh
 REAL="$(command -v od)"
 counter="$RUN_ROOT/mint-counter"
+GANG_TEST_PATH_SHIM_GUARD="$GANG_TEST_PATH_SHIM_GUARD"
 SH
 cat >> "$RUN_ROOT/mintbin/od" <<'SH'
+. "$GANG_TEST_PATH_SHIM_GUARD"
+path_shim_guard "$REAL" "$0" od || exit $?
 [ -f "$counter" ] || exec "$REAL" "$@"
 n=$(( $(cat "$counter") + 1 ))
 printf '%s' "$n" > "$counter"
@@ -719,8 +724,11 @@ mkdir -p "$RUN_ROOT/nopublish"
 cat > "$RUN_ROOT/nopublish/tmux" <<SH
 #!/bin/sh
 REAL="$(command -v tmux)"
+GANG_TEST_PATH_SHIM_GUARD="$GANG_TEST_PATH_SHIM_GUARD"
 SH
 cat >> "$RUN_ROOT/nopublish/tmux" <<'SH'
+. "$GANG_TEST_PATH_SHIM_GUARD"
+path_shim_guard "$REAL" "$0" tmux || exit $?
 # The publication exactly: set-option -w ... @gl_spool <token>. The unset that
 # teardown does carries -uw and is left alone, so this breaks the one write the
 # fixture is about and nothing else.
@@ -765,8 +773,11 @@ cat > "$RUN_ROOT/legacybin/od" <<SH
 REAL="$(command -v od)"
 counter="$RUN_ROOT/legacy-counter"
 token="$legacy_token"
+GANG_TEST_PATH_SHIM_GUARD="$GANG_TEST_PATH_SHIM_GUARD"
 SH
 cat >> "$RUN_ROOT/legacybin/od" <<'SH'
+. "$GANG_TEST_PATH_SHIM_GUARD"
+path_shim_guard "$REAL" "$0" od || exit $?
 [ -f "$counter" ] || exec "$REAL" "$@"
 n=$(( $(cat "$counter") + 1 ))
 printf '%s' "$n" > "$counter"
@@ -1070,6 +1081,8 @@ mkdir -p "$RUN_ROOT/nostamp"
 # and this case would pass without exercising the ordering at all.
 cat > "$RUN_ROOT/nostamp/python3" <<SH
 #!/bin/sh
+. "\$GANG_TEST_PATH_SHIM_GUARD"
+path_shim_guard "$(command -v python3)" "\$0" python3 || exit \$?
 case "\$*" in *time_ns*) exit 1 ;; esac
 exec "$(command -v python3)" "\$@"
 SH
@@ -1201,8 +1214,11 @@ mkdir -p "$RUN_ROOT/nocommit"
 cat > "$RUN_ROOT/nocommit/mv" <<SH
 #!/bin/sh
 REAL="$(command -v mv)"
+GANG_TEST_PATH_SHIM_GUARD="$GANG_TEST_PATH_SHIM_GUARD"
 SH
 cat >> "$RUN_ROOT/nocommit/mv" <<'SH'
+. "$GANG_TEST_PATH_SHIM_GUARD"
+path_shim_guard "$REAL" "$0" mv || exit $?
 for a in "$@"; do
   case "$a" in
     *"/.writing-"*) exit 1 ;;
@@ -1299,8 +1315,11 @@ mkdir -p "$RUN_ROOT/norollback"
 cat > "$RUN_ROOT/norollback/mv" <<SH
 #!/bin/sh
 REAL="$(command -v mv)"
+GANG_TEST_PATH_SHIM_GUARD="$GANG_TEST_PATH_SHIM_GUARD"
 SH
 cat >> "$RUN_ROOT/norollback/mv" <<'SH'
+. "$GANG_TEST_PATH_SHIM_GUARD"
+path_shim_guard "$REAL" "$0" mv || exit $?
 # mv receives `-- source destination`: allow a predecessor's move TO the
 # retirement namespace, then fail both commit and rollback by their sources.
 case "$2" in */.writing-*|*/.retiring-*) exit 1 ;; esac
@@ -1772,6 +1791,8 @@ mkdir -p "$RUN_ROOT/porcelain-bin"
 cat > "$RUN_ROOT/porcelain-bin/date" <<'SH'
 #!/bin/sh
 # SPDX-License-Identifier: Apache-2.0
+. "$GANG_TEST_PATH_SHIM_GUARD"
+path_shim_guard /usr/bin/date "$0" date || exit $?
 case "${1:-}" in
   +%s) printf '105\n' ;;
   *) exec /usr/bin/date "$@" ;;
@@ -2392,6 +2413,8 @@ esac
 SH
 cat > "$at_bin/date" <<SH
 #!/bin/sh
+. "\$GANG_TEST_PATH_SHIM_GUARD"
+path_shim_guard "$at_real_date" "\$0" date || exit \$?
 if [ "\${1:-}" = +%s ] && [ -n "\${GANG_TEST_NOW:-}" ]; then
   printf '%s\n' "\$GANG_TEST_NOW"
 else

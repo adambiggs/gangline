@@ -5,6 +5,8 @@
 set -euo pipefail
 
 cd "$(dirname "$0")/.."
+: "${GANG_TEST_PATH_SHIM_GUARD:=$(pwd -P)/test/path-shim-guard.sh}"
+export GANG_TEST_PATH_SHIM_GUARD
 
 fast=0
 case "${1:-}" in
@@ -58,6 +60,8 @@ printf 'home = %s\ninclude-system-site-packages = false\n' \
   "$(dirname "$python_cal_base")" > "$python_cal/venv/pyvenv.cfg"
 cat > "$python_cal/bin/python3" <<SH
 #!/bin/sh
+. '$GANG_TEST_PATH_SHIM_GUARD'
+path_shim_guard '$python_cal_physical/venv/bin/python3' "\$0" python3 || exit \$?
 [ -f "\$HOME/.tool-versions" ] || {
   echo 'python3: No version is set for command python3' >&2
   exit 126

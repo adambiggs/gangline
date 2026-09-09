@@ -598,6 +598,8 @@ mkdir -p "$RUN_ROOT/headless-up-bin"
 real_tmux="$(command -v tmux)"
 cat > "$RUN_ROOT/headless-up-bin/tmux" <<SH
 #!/bin/sh
+. "\$GANG_TEST_PATH_SHIM_GUARD"
+path_shim_guard "$real_tmux" "\$0" tmux || exit \$?
 if [ "\${1:-}" = attach ]; then
   "$real_tmux" wait-for -S "$startup_up_headless_clear"
   exit 17
@@ -1359,6 +1361,8 @@ chmod +x "$curfew_clock_shim"
   printf '#!/bin/sh\n'
   printf 'REAL=%q\n' "$(command -v date)"
   cat <<'SH'
+. "$GANG_TEST_PATH_SHIM_GUARD"
+path_shim_guard "$REAL" "$0" date || exit $?
 if [ "${1:-}" = +%s ]; then
   printf '%s\n' 9999999999
   exit 0

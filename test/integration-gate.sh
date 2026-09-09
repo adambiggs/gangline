@@ -279,6 +279,8 @@ gate_real_git="$(command -v git)"
 cat > "$gate_git_bin/git" <<SH
 #!/bin/sh
 # SPDX-License-Identifier: Apache-2.0
+. "\$GANG_TEST_PATH_SHIM_GUARD"
+path_shim_guard "$gate_real_git" "\$0" git || exit \$?
 # Only the NUL-separated listing is counted: that is the one the copy is built
 # from and the one it is verified against, so the second of those two is the
 # moment an editor's save would land inside the copy window. The index probe
@@ -470,6 +472,8 @@ mkdir -p "$RUN_ROOT/gate-blindgit"
 cat > "$RUN_ROOT/gate-blindgit/git" <<SH
 #!/bin/sh
 # SPDX-License-Identifier: Apache-2.0
+. "\$GANG_TEST_PATH_SHIM_GUARD"
+path_shim_guard "$gate_real_git" "\$0" git || exit \$?
 for gl_arg in "\$@"; do
   [ "\$gl_arg" = status ] && exit 42
 done
@@ -590,6 +594,8 @@ mkdir -p "$RUN_ROOT/gate-blindls"
 cat > "$RUN_ROOT/gate-blindls/git" <<SH
 #!/bin/sh
 # SPDX-License-Identifier: Apache-2.0
+. "\$GANG_TEST_PATH_SHIM_GUARD"
+path_shim_guard "$gate_real_git" "\$0" git || exit \$?
 for gl_arg in "\$@"; do
   [ "\$gl_arg" = -v ] && exit 42
 done
@@ -629,6 +635,8 @@ mkdir -p "$RUN_ROOT/gate-bigindex"
 cat > "$RUN_ROOT/gate-bigindex/git" <<SH
 #!/bin/sh
 # SPDX-License-Identifier: Apache-2.0
+. "\$GANG_TEST_PATH_SHIM_GUARD"
+path_shim_guard "$gate_real_git" "\$0" git || exit \$?
 gl_v=0
 for gl_arg in "\$@"; do
   [ "\$gl_arg" = -v ] && gl_v=1

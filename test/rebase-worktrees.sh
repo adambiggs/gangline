@@ -3,6 +3,8 @@
 set -euo pipefail
 
 ROOT="$(cd -P "$(dirname "$0")/.." && pwd)"
+: "${GANG_TEST_PATH_SHIM_GUARD:=$ROOT/test/path-shim-guard.sh}"
+export GANG_TEST_PATH_SHIM_GUARD
 FIXTURE="$(mktemp -d "${TMPDIR:-/tmp}/gangline-rebase-worktrees.XXXXXX")"
 trap 'rm -rf -- "$FIXTURE"' EXIT HUP INT TERM
 
@@ -139,6 +141,8 @@ REAL_FLOCK="$(command -v flock)"
 mkdir -p "$lock_bin"
 cat > "$lock_bin/flock" <<SH
 #!/usr/bin/env bash
+. "\$GANG_TEST_PATH_SHIM_GUARD"
+path_shim_guard '$REAL_FLOCK' "\$0" flock || exit \$?
 readlink "/proc/\$PPID/fd/\${1:?}" > '$lock_log'
 exec '$REAL_FLOCK' "\$@"
 SH
@@ -194,6 +198,8 @@ REAL_GIT="$(command -v git)"
 mkdir -p "$race_git_bin"
 cat > "$race_git_bin/git" <<SH
 #!/usr/bin/env bash
+. "\$GANG_TEST_PATH_SHIM_GUARD"
+path_shim_guard '$REAL_GIT' "\$0" git || exit \$?
 if [ "\${1:-}" = -C ] && [ "\${2:-}" = '$race' ] \\
     && [ "\${3:-}" = rebase ] && [ "\${4:-}" = --interactive ] \\
     && [ "\${5:-}" = origin/main ] \\

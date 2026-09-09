@@ -117,9 +117,9 @@ if ! "$ROOT/test/leadeval/score-selftest.sh" > "$W/selftest.log" 2>&1; then
   exit 1
 fi
 
-# THE RECORDER. Guards proven in test/leadeval/gang-shim.template; do not run a
-# variant of it that lacks them.
+# THE RECORDER. Its same-name delegation uses the suite's shared guard.
 sed -e "s|@GANG_REAL@|$ROOT/bin/gang|" -e "s|@RECORD_DIR@|$W/rec|" \
+  -e "s|@PATH_SHIM_GUARD@|$ROOT/test/path-shim-guard.sh|" \
   "$ROOT/test/leadeval/gang-shim.template" > "$W/bin/gang"
 chmod +x "$W/bin/gang"
 

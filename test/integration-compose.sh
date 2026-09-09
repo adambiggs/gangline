@@ -130,6 +130,8 @@ mkdir -p "$lock_release_race_bin"
   printf 'LOCK=%q\n' "$alpha_delivery_lock"
   printf 'SEEN=%q\n' "$lock_release_race_seen"
   cat <<'SH'
+. "$GANG_TEST_PATH_SHIM_GUARD"
+path_shim_guard "$REAL" "$0" readlink || exit $?
 if [ "${1:-}" = "$LOCK" ] && [ ! -e "$SEEN" ]; then
   : > "$SEEN"
   rm -f -- "$LOCK"
@@ -185,6 +187,8 @@ mkdir -p "$lock_bound_race_bin"
   printf 'LOCK=%q\n' "$alpha_delivery_lock"
   printf 'READS=%q\n' "$lock_bound_reads"
   cat <<'SH'
+. "$GANG_TEST_PATH_SHIM_GUARD"
+path_shim_guard "$REAL" "$0" readlink || exit $?
 if [ "${1:-}" = "$LOCK" ]; then
   printf x >> "$READS"
   rm -f -- "$LOCK"
@@ -199,6 +203,8 @@ SH
   printf 'HOLDER=%q\n' "$$"
   printf 'LNS=%q\n' "$lock_bound_lns"
   cat <<'SH'
+. "$GANG_TEST_PATH_SHIM_GUARD"
+path_shim_guard "$REAL" "$0" ln || exit $?
 last=''
 for arg in "$@"; do last=$arg; done
 if [ "$last" = "$LOCK" ]; then

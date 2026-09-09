@@ -499,6 +499,8 @@ contains "and roster's snapshot refuses it on the same witness" \
 # activity-only bound: after the stamp was read, before any witness could be.
 mkdir -p "$RUN_ROOT/bin-seam"
 { printf '#!/usr/bin/env bash\nreal=%s\n' "$(command -v tmux)"; cat <<'SH'
+. "$GANG_TEST_PATH_SHIM_GUARD"
+path_shim_guard "$real" "$0" tmux || exit $?
 seen=0; target=""; prev=""
 for a in "$@"; do
   [ "$a" != @gl_activity_only_since ] || seen=1
@@ -1848,6 +1850,8 @@ mkdir -p "$compact_race_bin" "$compact_race_pair" "$compact_race_done"
   printf 'DONE=%q\n' "$compact_race_done"
   printf 'CHANNEL=%q\n' "$compact_race_channel"
   cat <<'SH'
+. "$GANG_TEST_PATH_SHIM_GUARD"
+path_shim_guard "$REAL" "$0" tmux || exit $?
 request=0 dispatch=0 release=0
 for arg in "$@"; do
   case "$arg" in
@@ -1908,6 +1912,8 @@ SH
   printf 'CONFIRM=%q\n' "$compact_race_confirm"
   printf 'DRAFT=%q\n' "$compact_race_draft"
   cat <<'SH'
+. "$GANG_TEST_PATH_SHIM_GUARD"
+path_shim_guard "$REAL" "$0" ln || exit $?
 last="${!#}"
 case "$last" in
   *self-compact-*.claim)
@@ -1940,6 +1946,8 @@ SH
   printf 'CONFIRM=%q\n' "$compact_race_confirm"
   printf 'CHANNEL=%q\n' "$compact_race_channel"
   cat <<'SH'
+. "$GANG_TEST_PATH_SHIM_GUARD"
+path_shim_guard "$REAL" "$0" rm || exit $?
 last="${!#}"
 case "$last" in
   *self-compact-*.claim)
@@ -1964,6 +1972,8 @@ SH
   printf 'CHANNEL=%q\n' "$compact_race_channel"
   printf 'HOLDER=%q\n' "$compact_race_holder"
   cat <<'SH'
+. "$GANG_TEST_PATH_SHIM_GUARD"
+path_shim_guard "$REAL" "$0" readlink || exit $?
 last="${!#}"
 case "$last" in
   *self-compact-*.claim)
@@ -2081,6 +2091,8 @@ mkdir "$compact_delay_bin"
   printf 'REAL=%q\n' "$(command -v tmux)"
   printf 'CHANNEL=%q\n' "$compact_delay_channel"
   cat <<'SH'
+. "$GANG_TEST_PATH_SHIM_GUARD"
+path_shim_guard "$REAL" "$0" tmux || exit $?
 case " $* " in
   *' set-option '*' @gl_self_compact_failed '*)
     "$REAL" wait-for -S "$CHANNEL-ready"
@@ -2423,6 +2435,8 @@ mkdir -p "$RUN_ROOT/refuse-bin"
   printf 'LOG=%q\n' "$RUN_ROOT/refuse-log"
   printf 'COUNT=%q\n' "$RUN_ROOT/refuse-count"
   cat <<'SH'
+. "$GANG_TEST_PATH_SHIM_GUARD"
+path_shim_guard "$REAL" "$0" tmux || exit $?
 if [ "${1:-}" = capture-pane ] && [ -n "${REFUSE_CAPTURE_FROM:-}" ]; then
   n=0
   [ ! -s "$COUNT" ] || n="$(cat "$COUNT")"

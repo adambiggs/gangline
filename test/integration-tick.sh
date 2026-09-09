@@ -201,6 +201,8 @@ alert_ui_message_ledger="$RUN_ROOT/alert-ui-display-messages"
 mkdir -p "$alert_ui_tmux_bin"
 cat > "$alert_ui_tmux_bin/tmux" <<SH
 #!/bin/sh
+. "\$GANG_TEST_PATH_SHIM_GUARD"
+path_shim_guard '$REAL_TMUX' "\$0" tmux || exit \$?
 case "\$*" in
   *'gang: new alert: tick failed:'*) printf '%s\n' "\$*" >> '$alert_ui_message_ledger' ;;
 esac
@@ -1187,6 +1189,8 @@ tick_cost_real_python="$(python3 -c 'import sys; print(sys.executable)')"
 mkdir -p "$tick_cost_bin"
 cat > "$tick_cost_bin/id" <<SH
 #!/bin/sh
+. "\$GANG_TEST_PATH_SHIM_GUARD"
+path_shim_guard '$tick_cost_real_id' "\$0" id || exit \$?
 if [ "\$#" -eq 1 ] && [ "\$1" = -u ]; then
   printf 'uid\n' >> '$tick_cost_uid_calls'
 fi
@@ -1194,6 +1198,8 @@ exec '$tick_cost_real_id' "\$@"
 SH
 cat > "$tick_cost_bin/python3" <<SH
 #!/bin/sh
+. "\$GANG_TEST_PATH_SHIM_GUARD"
+path_shim_guard '$tick_cost_real_python' "\$0" python3 || exit \$?
 case "\${1:-}:\${2:-}" in
   -c:*hashlib.sha256*) printf 'hash\n' >> '$tick_cost_hash_calls' ;;
 esac
@@ -1843,6 +1849,8 @@ tick_real_tmux="$(command -v tmux)"
 mkdir -p "$tick_mode_bin"
 cat > "$tick_mode_bin/tmux" <<SH
 #!/usr/bin/env bash
+. "\$GANG_TEST_PATH_SHIM_GUARD"
+path_shim_guard '$tick_real_tmux' "\$0" tmux || exit \$?
 if [ "\${1:-}" = display-message ] && [ "\${*: -1}" = '#{pane_in_mode}' ]; then
   if [ ! -e '$tick_mode_once' ]; then
     : > '$tick_mode_once'
@@ -1964,6 +1972,8 @@ mkdir -p "$tick_guard_probe_bin"
   printf 'DIRTY=%q\n' "$tick_dirty_path"
   printf 'PROBE=%q\n' "$tick_guard_probe"
   cat <<'SH'
+. "$GANG_TEST_PATH_SHIM_GUARD"
+path_shim_guard "$REAL" "$0" rm || exit $?
 if [ "${1:-}" = -f ] && [ "${2:-}" = -- ] && [ "${3:-}" = "$DIRTY" ] \
    && [ ! -e "$PROBE" ]; then
   exec 9>"$GUARD"
@@ -2020,6 +2030,8 @@ mkfifo "$tick_rerun_ready" "$tick_rerun_release" \
   printf 'OWNER=%q\n' "$tick_rerun_owner_worker"
   printf 'SESSIONS=%q\n' "$tick_rerun_sessions"
   cat <<'SH'
+. "$GANG_TEST_PATH_SHIM_GUARD"
+path_shim_guard "$REAL" "$0" rm || exit $?
 # The worker removes the marker itself, so the shim's parent is the worker.
 # The fields after the command name in /proc/PID/stat are state, parent,
 # process group, session; $1 is the number of the wanted field, $2 the pid.
@@ -2163,6 +2175,8 @@ mkfifo "$tick_noarm_ready" "$tick_noarm_release" \
   printf 'RELEASE=%q\n' "$tick_noarm_release"
   printf 'COUNT=%q\n' "$tick_noarm_count"
   cat <<'SH'
+. "$GANG_TEST_PATH_SHIM_GUARD"
+path_shim_guard "$REAL" "$0" rm || exit $?
 if [ "${1:-}" = -f ] && [ "${2:-}" = -- ] && [ "${3:-}" = "$DIRTY" ]; then
   n=0
   [ ! -e "$COUNT" ] || IFS= read -r n < "$COUNT"
@@ -2182,6 +2196,8 @@ SH
   printf '#!/usr/bin/env bash\n'
   printf 'REAL=%q\n' "$(python3 -c 'import sys; print(sys.executable)')"
   cat <<'SH'
+. "$GANG_TEST_PATH_SHIM_GUARD"
+path_shim_guard "$REAL" "$0" python3 || exit $?
 case "${1:-}:${2:-}" in -c:*start_new_session*) exit 1 ;; esac
 exec "$REAL" "$@"
 SH
@@ -2249,6 +2265,8 @@ mkdir -p "$tick_lock_race_bin"
   printf 'LOCK=%q\n' "$tick_lock_path"
   printf 'SEEN=%q\n' "$tick_lock_race_seen"
   cat <<'SH'
+. "$GANG_TEST_PATH_SHIM_GUARD"
+path_shim_guard "$REAL" "$0" readlink || exit $?
 if [ "${1:-}" = "$LOCK" ] && [ ! -e "$SEEN" ]; then
   : > "$SEEN"
   rm -f -- "$LOCK"
@@ -2294,6 +2312,8 @@ mkdir -p "$tick_lock_bound_bin"
   printf 'LOCK=%q\n' "$tick_lock_path"
   printf 'READS=%q\n' "$tick_lock_bound_reads"
   cat <<'SH'
+. "$GANG_TEST_PATH_SHIM_GUARD"
+path_shim_guard "$REAL" "$0" readlink || exit $?
 if [ "${1:-}" = "$LOCK" ] && [ -L "$LOCK" ]; then
   printf x >> "$READS"
   rm -f -- "$LOCK"
@@ -2308,6 +2328,8 @@ SH
   printf 'HOLDER=%q\n' "$$"
   printf 'LNS=%q\n' "$tick_lock_bound_lns"
   cat <<'SH'
+. "$GANG_TEST_PATH_SHIM_GUARD"
+path_shim_guard "$REAL" "$0" ln || exit $?
 last=''
 for arg in "$@"; do last=$arg; done
 if [ "$last" = "$LOCK" ]; then
@@ -2740,6 +2762,8 @@ tick_reclaim_guard_race() { # $1 suffix, $2 planted record, $3 observed pid
     printf 'RELEASE=%q\n' "$identity_release"
     printf 'ONCE=%q\n' "$wrapper_once"
     cat <<'SH'
+. "$GANG_TEST_PATH_SHIM_GUARD"
+path_shim_guard "$REAL" "$0" python3 || exit $?
 if [ "${1:-}" = "$HELPER" ] && [ "${2:-}" = --tick ] \
    && [ "${3:-}" = "$TARGET" ] && [ ! -e "$ONCE" ]; then
   : > "$ONCE"
@@ -2791,6 +2815,8 @@ tick_identity_shape_probe() { # $1 suffix, $2 wrapper body
     printf 'REAL=%q\n' "$(command -v python3)"
     printf 'HELPER=%q\n' "$ROOT/libexec/gang-process-identity"
     printf 'TARGET=%q\n' "$$"
+    printf '%s\n' '. "$GANG_TEST_PATH_SHIM_GUARD"'
+    printf '%s\n' 'path_shim_guard "$REAL" "$0" python3 || exit $?'
     printf '%s\n' "$body"
   } > "$probe_bin/python3"
   chmod +x "$probe_bin/python3"
@@ -3036,6 +3062,8 @@ chmod +x "$tick_clock_helper"
   printf '#!/bin/sh\n'
   printf 'REAL=%q\n' "$(command -v date)"
   cat <<'SH'
+. "$GANG_TEST_PATH_SHIM_GUARD"
+path_shim_guard "$REAL" "$0" date || exit $?
 if [ "${1:-}" = +%s ]; then
   now="$("$REAL" +%s)" || exit $?
   printf '%s\n' "$((now + 300))"

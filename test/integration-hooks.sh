@@ -1901,6 +1901,8 @@ chmod +x "$usage_fire_clock"
 # and a path with no way to fail is a path with no evidence behind it.
 cat > "$usage_timer_bin/tmux" <<SH
 #!/bin/sh
+. "\$GANG_TEST_PATH_SHIM_GUARD"
+path_shim_guard "$usage_real_tmux" "\$0" tmux || exit \$?
 if [ -n "\${GANG_TEST_TMUX_FAIL:-}" ] && [ "\$1" = set-option ]; then
   for arg in "\$@"; do
     [ "\$arg" = "\$GANG_TEST_TMUX_FAIL" ] || continue
@@ -1970,6 +1972,8 @@ esac
 SH
 cat > "$usage_timer_bin/date" <<SH
 #!/bin/sh
+. "\$GANG_TEST_PATH_SHIM_GUARD"
+path_shim_guard "$usage_real_date" "\$0" date || exit \$?
 if [ "\${1:-}" = +%s ] && [ -n "\${GANG_TEST_NOW:-}" ]; then
   printf '%s\n' "\$GANG_TEST_NOW"
 else
@@ -3304,6 +3308,8 @@ mkdir -p "$malformed_bin"
 cat > "$malformed_bin/git" <<SH
 #!/bin/sh
 # SPDX-License-Identifier: Apache-2.0
+. "\$GANG_TEST_PATH_SHIM_GUARD"
+path_shim_guard "$real_git" "\$0" git || exit \$?
 if [ "\${1:-}" = ls-remote ]; then
   printf 'malformed release advertisement\n'
   exit 0

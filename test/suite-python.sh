@@ -69,12 +69,16 @@ suite_python3() { # stdout = the absolute python3 interpreter for this run
 # different set of installed packages than the caller is testing with. Exec'ing
 # the resolved path leaves the executable location the caller's own.
 suite_python3_pin() { # $1 = a directory this run owns and later removes
-  local dir="$1" interpreter quoted pinned
+  local dir="$1" interpreter quoted guard guard_quoted pinned
   interpreter="$(suite_python3)" || return 1
+  guard="${GANG_TEST_PATH_SHIM_GUARD:?the shared PATH-shim guard is not configured}"
   # POSIX single-quoting, because the wrapper is /bin/sh and an interpreter
   # path may hold a space or a quote of its own.
   quoted="'${interpreter//\'/\'\\\'\'}'"
-  mkdir -p "$dir" && printf '#!/bin/sh\nexec %s "$@"\n' "$quoted" > "$dir/python3" \
+  guard_quoted="'${guard//\'/\'\\\'\'}'"
+  mkdir -p "$dir" && printf \
+    '#!/bin/sh\n. %s\npath_shim_guard %s "$0" python3 || exit $?\nexec %s "$@"\n' \
+    "$guard_quoted" "$quoted" "$quoted" > "$dir/python3" \
     && chmod +x "$dir/python3" || {
       printf 'suite: could not write the python3 wrapper in %s\n' "$dir" >&2
       return 1

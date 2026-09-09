@@ -11,6 +11,8 @@ TMUX_SOCKET="$TEST_ROOT/tmux-$(id -u)/gangline"
 SCRIPT_ROOT="$(cd -P "$(dirname "$0")/.." && pwd)"
 GANG="${GANG_UNDER_TEST:-$SCRIPT_ROOT/bin/gang}"
 PRODUCT_ROOT="$(cd -P "$(dirname "$GANG")/.." && pwd)"
+: "${GANG_TEST_PATH_SHIM_GUARD:=$SCRIPT_ROOT/test/path-shim-guard.sh}"
+export GANG_TEST_PATH_SHIM_GUARD
 
 # A TMUX SERVER OUTLIVES WHATEVER FORKED IT. This instrument starts servers
 # under nested roots of its own as well as on the socket named above, and a
@@ -328,6 +330,8 @@ SH
   cat > "$TEST_ROOT/bin/tmux" <<SH
 #!/bin/sh
 # SPDX-License-Identifier: Apache-2.0
+. "\$GANG_TEST_PATH_SHIM_GUARD"
+path_shim_guard /usr/bin/tmux "\$0" tmux || exit \$?
 if [ "\${1:-}" = load-buffer ]; then
   : > '$loaded'
 fi
