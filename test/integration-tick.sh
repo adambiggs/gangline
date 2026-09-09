@@ -1435,6 +1435,18 @@ def render():
                 "and this menu will close when the response is ready.",
             )
         )
+    elif menu == "rate_limit":
+        out.extend(
+            line + "\r\n"
+            for line in (
+                "esc to interrupt",
+                "Approaching rate limits",
+                "Switch to gpt-5-codex-mini for lower credit usage?",
+                "  1. Switch to gpt-5-codex-mini",
+                "› 2. Keep current model",
+                "Press enter to confirm or esc to go back",
+            )
+        )
     elif menu == "unmarked_history":
         out.extend(
             line + "\r\n"
@@ -1519,6 +1531,12 @@ def submit():
         return
     if body == "SHOW_NO_RETRY_MENU":
         menu = "no_retry"
+        busy = True
+        render()
+        signal_ready()
+        return
+    if body == "SHOW_RATE_LIMIT_MENU":
+        menu = "rate_limit"
         busy = True
         render()
         signal_ready()
@@ -1628,6 +1646,52 @@ printf '%s' '{"hook_event_name":"Stop"}' \
 printf '%s' '{"hook_event_name":"UserPromptSubmit"}' \
   | GANG_TEST_TICK_MODE=manual TMUX_PANE="$codex_menu_pane" "$GANG" hook >/dev/null
 
+# The dismissal action belongs to the retry-capable advisory, not to a queued
+# envelope. First hold that menu with an empty Gangline spool and ask the
+# cooperative pass directly. Keep the fixture answer below only as fails-first
+# cleanup: it cannot make either assertion green because the key ledger is read
+# before the cleanup runs.
+: > "$codex_menu_keys"
+tmux wait-for "$codex_menu_channel" &
+codex_menu_waiter=$!
+tmux send-keys -l -t "$codex_menu_id" SHOW_PROVIDER_MENU
+tmux send-keys -t "$codex_menu_id" Enter
+wait "$codex_menu_waiter"
+equal "the retry-capable provider menu starts with no Gangline mail" 0 \
+  "$("$GANG" roster --porcelain | awk -F '\t' '$1 == "codex-menu" { print $4 }')"
+GANG_TEST_TICK_MODE=sync "$GANG" roster >/dev/null
+equal "a team command dismisses the provider menu without pending mail" 2 \
+  "$(<"$codex_menu_keys")"
+if [ ! -s "$codex_menu_keys" ]; then
+  tmux wait-for "$codex_menu_dismissed" &
+  codex_menu_dismissed_waiter=$!
+  tmux send-keys -t "$codex_menu_id" 2
+  wait "$codex_menu_dismissed_waiter"
+fi
+
+# A native boundary on another agent launches the same global cooperative
+# pass. The actionable menu has no attributed mail, so its collar declaration
+# alone must make the pass visit it.
+: > "$codex_menu_keys"
+tmux wait-for "$codex_menu_channel" &
+codex_menu_waiter=$!
+tmux send-keys -l -t "$codex_menu_id" SHOW_PROVIDER_MENU
+tmux send-keys -t "$codex_menu_id" Enter
+wait "$codex_menu_waiter"
+equal "the second retry-capable menu also has no Gangline mail" 0 \
+  "$("$GANG" roster --porcelain | awk -F '\t' '$1 == "codex-menu" { print $4 }')"
+printf '%s' '{"hook_event_name":"Stop"}' \
+  | GANG_TEST_TICK_MODE=sync TMUX_PANE="$tick_copy_pane" "$GANG" hook >/dev/null
+equal "another agent's native hook dismisses the provider menu without pending mail" 2 \
+  "$(<"$codex_menu_keys")"
+if [ ! -s "$codex_menu_keys" ]; then
+  tmux wait-for "$codex_menu_dismissed" &
+  codex_menu_dismissed_waiter=$!
+  tmux send-keys -t "$codex_menu_id" 2
+  wait "$codex_menu_dismissed_waiter"
+fi
+
+: > "$codex_menu_keys"
 tmux wait-for "$codex_menu_channel" &
 codex_menu_waiter=$!
 tmux send-keys -l -t "$codex_menu_id" SHOW_PROVIDER_MENU
@@ -1800,6 +1864,36 @@ wait "$codex_menu_waiter"
 printf '%s' '{"hook_event_name":"Stop"}' \
   | GANG_TEST_TICK_MODE=manual TMUX_PANE="$codex_menu_pane" "$GANG" hook >/dev/null
 "$GANG" tick >/dev/null
+
+# The approaching-rate-limit chooser changes the active model. Even though an
+# actionable collar makes an empty-spool pass visit this pane, that different
+# menu cannot authorize its currently selected option 2 or any other key.
+: > "$codex_menu_keys"
+printf '%s' '{"hook_event_name":"UserPromptSubmit"}' \
+  | GANG_TEST_TICK_MODE=manual TMUX_PANE="$codex_menu_pane" "$GANG" hook >/dev/null
+tmux wait-for "$codex_menu_channel" &
+codex_menu_waiter=$!
+tmux send-keys -l -t "$codex_menu_id" SHOW_RATE_LIMIT_MENU
+tmux send-keys -t "$codex_menu_id" Enter
+wait "$codex_menu_waiter"
+equal "the approaching-rate-limit menu starts with no Gangline mail" 0 \
+  "$("$GANG" roster --porcelain | awk -F '\t' '$1 == "codex-menu" { print $4 }')"
+excludes "the approaching-rate-limit chooser is not reported as an advisory" \
+  "$("$GANG" status codex-menu)" "!occupied! (advisory:"
+"$GANG" tick >/dev/null
+equal "the approaching-rate-limit menu never spends its selected option 2" "" \
+  "$(<"$codex_menu_keys")"
+tmux wait-for "$codex_menu_dismissed" &
+codex_menu_dismissed_waiter=$!
+tmux send-keys -t "$codex_menu_id" 2
+wait "$codex_menu_dismissed_waiter"
+tmux wait-for "$codex_menu_channel" &
+codex_menu_waiter=$!
+tmux send-keys -l -t "$codex_menu_id" CLEAR_BUSY
+tmux send-keys -t "$codex_menu_id" Enter
+wait "$codex_menu_waiter"
+printf '%s' '{"hook_event_name":"Stop"}' \
+  | GANG_TEST_TICK_MODE=manual TMUX_PANE="$codex_menu_pane" "$GANG" hook >/dev/null
 
 # A different queued envelope can win the narrow interval between inject's
 # empty preflight and its post-Enter queue reading. Its unique attribution tag

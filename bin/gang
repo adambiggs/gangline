@@ -5545,7 +5545,8 @@ tick_full_pass_once() {
       state_note "$id" harness-lost tick
       continue
     fi
-    if [ "$(spool_count "$id")" -gt 0 ]; then
+    if [ "$(spool_count "$id")" -gt 0 ] \
+       || declare -F collar_dismiss_advisory >/dev/null; then
       pass_rc=0 err=""
       if ! tmux set-option -w -t "$id" @gl_tick_delivery "$$" 2>/dev/null; then
         printf 'tick could not mark delivery ownership for %s\n' "$agent" >&2

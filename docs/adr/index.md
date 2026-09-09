@@ -186,3 +186,4 @@ Gangline's durable constraints live in the records below. A record's id is perma
 | [0180](0180-cooperative-ticks-dismiss-codex-s-retry-capable-provider-wait-menu.md) | Cooperative ticks dismiss Codex's retry-capable provider wait menu | accepted | 2026-09-07 |
 | [0181](0181-release-please-holds-no-tag-creation-override.md) | Release Please holds no tag-creation override | accepted | 2026-09-08 |
 | [0182](0182-same-name-test-path-shims-share-one-fail-closed-guard.md) | Same-name test PATH shims share one fail-closed guard | accepted | 2026-09-09 |
+| [0183](0183-actionable-advisory-collars-receive-empty-spool-ticks.md) | Actionable advisory collars receive empty-spool ticks | accepted | 2026-09-09 |
