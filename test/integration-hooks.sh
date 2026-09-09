@@ -3598,13 +3598,13 @@ import sys
 
 with open(sys.argv[1], encoding="utf-8") as config_file:
     config = json.load(config_file)
-print(str(config["packages"]["."]["force-tag-creation"]).lower())
+print(str(config["packages"]["."].get("force-tag-creation", "absent")).lower())
 ' "$ROOT/release-please-config.json")" || :
 integration_job="$(printf '%s\n' "$shell_workflow" | sed -n '/^  integration:/,/^  raw-option-bytes:/p')"
 raw_option_job="$(printf '%s\n' "$shell_workflow" | sed -n '/^  raw-option-bytes:/,/^  release-please:/p')"
 release_job="$(printf '%s\n' "$shell_workflow" | sed -n '/^  release-please:/,$p')"
-equal "Release Please creates the tag before the release object" \
-  "true" "$release_force_tag"
+equal "Release Please holds no tag-creation override" \
+  "absent" "$release_force_tag"
 contains "release publication waits for both main-push verification jobs" \
   "$release_job" "needs: [check, integration]"
 contains "release publication stays scoped to a main push" \

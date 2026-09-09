@@ -2520,17 +2520,30 @@ option 1 there, and the approaching-rate-limit menu remains untouched because
 its choices alter model policy. Other numbered menus retain their existing
 occupied behavior.
 
-## Release Please creates the tag before the GitHub Release
+## Release Please holds no tag-creation override
 
-Release Please explicitly creates each release tag before asking GitHub to
-create the corresponding Release object. The release API ignores
-`target_commitish` when its tag already exists, so a release commit remains
-publishable after `main` moves through a workflow-only repair: the Actions
-`GITHUB_TOKEN` needs only its declared contents permission for the existing-tag
-release call instead of a workflows permission that GitHub does not make
-available to that token.
+Release Please issues no separate tag-creation call. A release whose tag does not
+already exist is tagged by its Create a release call, which is how every release
+through 2.11.0 was tagged.
 
-Release Please still chooses the tag name and target SHA from its merged release
-pull request. This setting authorizes no independent tag writer and changes no
-release ordering: the same main-push verification jobs must pass before the
-release job runs.
+Create a Reference refuses an Actions `GITHUB_TOKEN` for a tag whose target
+differs from the default branch under `.github/workflows/`, and it refuses before
+reading whether the ref already exists. With `refs/tags/gangline-v2.11.1` present
+at the exact commit Release Please selects for it, that call answers `Resource
+not accessible by integration` rather than the already-exists status a tag-first
+ordering needs. An ordering that creates the tag first therefore never reaches
+its existing-tag branch, and it displaces the release call, which has an
+existing-tag path of its own: the release API ignores `target_commitish` when its
+tag already exists.
+
+A release commit whose workflow files have fallen behind `main` is publishable
+only through that existing-tag path, and only once its tag exists. Nothing
+available to `GITHUB_TOKEN` can create that tag, because workflows permission is
+not among the permissions a workflow may grant it, so such a tag reaches the
+remote from outside Actions: `gangline-v2.11.1` carries the numbered version its
+own release commit declares, pushed under a credential holding the workflow
+scope.
+
+Tag name and target commit stay Release Please's own, chosen from its merged
+release pull request, and the same main-push verification jobs gate the release
+job.

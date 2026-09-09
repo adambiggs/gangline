@@ -7,7 +7,6 @@
       "release-type": "simple",
       "package-name": "gangline",
       "changelog-path": "CHANGELOG.md",
-      "force-tag-creation": true,
       "extra-files": [
         {
           "type": "json",
