@@ -1597,7 +1597,7 @@ contains "an unverified submission from a live stable sender remains readable" \
   "$held_live_mail" "MARK_STABLE_HELD"
 contains "mail distinguishes kept ambiguity from mail awaiting delivery" \
   "$held_live_mail" \
-  "0 waiting for delivery, 0 deferred until another wake, 1 kept (not awaiting delivery)"
+  "0 waiting for delivery, 0 deferred until an ordinary delivery or its deadline, 1 kept (not awaiting delivery)"
 held_live_roster="$("$GANG" roster | grep '^held-target ')"
 contains "roster counts the live sender's kept record separately" \
   "$held_live_roster" "spool-held=1"

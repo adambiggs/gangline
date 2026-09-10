@@ -75,8 +75,8 @@ reduction is measurable prospectively rather than claimed from the old 122-turn 
 This decision is falsified by a replay in which an uncorrelated peer message fails to
 wake an idle recipient immediately, an answer to a matched request is held, the
 recipient's unrelated reply-obligation query changes across a hold, accumulated
-envelopes overtake older ordinary mail or arrive after the ordinary waking message
-whose drain promoted them or more than once, hook stdout consumes an entry without
+envelopes overtake older ordinary mail or arrive in a later delivery than the ordinary
+waking message whose drain promoted them or more than once, hook stdout consumes an entry without
 verified harness acceptance, retry
 processes continue beyond their five-minute recovery window, or a hidden entry with no
 live retry authority lacks a loud overdue handoff.

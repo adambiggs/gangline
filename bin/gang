@@ -719,7 +719,8 @@ gang send
   An answer to a request stays immediate. A
   reply only acknowledging other replies owes
   no reply, so default delivery holds it for
-  the target's next wake, marked accumulated.
+  the target's next ordinary verified Gangline
+  delivery, marked accumulated.
   Its deadline service starts after 30 minutes
   and retries contention; --live-only bypasses
   deferred delivery.
@@ -7946,7 +7947,8 @@ spool_drain() { # $1 window id; whole queue oldest-first; optional $2 = locked
   # beside older ordinary mail before one claim loop builds one verified
   # bundle. A failed promotion is transactional and must not delay the current
   # waking message; it stays on its own timer and the failure remains loud.
-  if [ "$(deferred_count "$1")" -gt 0 ] \
+  if [ "$(spool_count "$1")" -gt 0 ] \
+     && [ "$(deferred_count "$1")" -gt 0 ] \
      && ! deferred_promote_all_locked "$1"; then
     printf 'spool drain continuing without accumulated context: %s; deferred envelopes retain their forced-delivery timers\n' \
       "$DEFERRED_PROMOTE_ERROR" >&2
@@ -11654,7 +11656,7 @@ deferred_report() { # $1 window id; one truthful line per no-reply envelope
     state="$(timed_unit_state "$unit")"
     if [ "$due" -gt "$now" ]; then
       case "$state" in
-        live) printf 'deferred delivery: 1 envelope owes no reply; joins the next wake or is forced in %s\n' "$(human_seconds "$(( due - now ))")" ;;
+        live) printf 'deferred delivery: 1 envelope owes no reply; joins the next ordinary delivery or is forced in %s\n' "$(human_seconds "$(( due - now ))")" ;;
         gone) printf 'deferred delivery: 1 envelope owes no reply, but its forced-wake timer is GONE; it remains visible at %s\n' "$e" ;;
         *) printf 'deferred delivery: 1 envelope owes no reply; timer health is unreadable for %s.timer and the entry remains at %s\n' "$unit" "$e" ;;
       esac
@@ -13855,7 +13857,7 @@ cmd_mail() { # read a queue; its own agent's read archives what it consumes
     [ -z "$mail_archive" ] \
       || printf 'self-mail archived %s consumed message(s) at %s\n' "$n" "$mail_archive" >&2
   else
-    printf '%s\n' "$(colour "$C_DIM" "$n waiting for delivery, $deferred deferred until another wake, $held kept (not awaiting delivery), in $dir")"
+    printf '%s\n' "$(colour "$C_DIM" "$n waiting for delivery, $deferred deferred until an ordinary delivery or its deadline, $held kept (not awaiting delivery), in $dir")"
   fi
 }
 

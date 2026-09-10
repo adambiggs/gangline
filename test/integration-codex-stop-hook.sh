@@ -28,6 +28,12 @@ collar_context() {
   tmux show-options -wqv -t "\$1" @test_context
 }
 SH
+cat > "$RUN_ROOT/collars/reply-advisory.sh" <<SH
+# shellcheck shell=bash
+# shellcheck disable=SC2034
+. "$RUN_ROOT/collars/replyable.sh"
+collar_dismiss_advisory() { return 1; }
+SH
 export GANG_COLLARS="$RUN_ROOT/collars"
 
 # Deferred-reply timers are observed without leaving hundreds of transient
@@ -272,6 +278,25 @@ contains "mail exposes the complete held envelope without consuming it" \
 equal "holding a correlated reply cannot hide an obligation already owed" \
   "$defer_owed_before" \
   "$(TMUX_PANE="$defer_a_pane" "$GANG" reply-obligations)"
+defer_a_spool="$GANG_LOCK_DIR/spool/$(tmux show-options -wqv -t "$defer_a_id" @gl_spool)"
+defer_hidden_before="$(find "$defer_a_spool" -maxdepth 1 -type f -name '.deferred-*' -printf '%f\n')"
+reply_prompt_event "$defer_a_pane" "operator prompt while acknowledgement remains held"
+excludes "a native prompt alone does not deliver the held acknowledgement" \
+  "$(pane_all defer-a)" "DEFERRED_REPLY"
+equal "a native prompt leaves the deferred entry hidden" \
+  "$defer_hidden_before" \
+  "$(find "$defer_a_spool" -maxdepth 1 -type f -name '.deferred-*' -printf '%f\n')"
+reply_stop_run "$defer_a_pane" "$reply_stop_active_payload"
+tmux set-option -w -t "$defer_a_id" @gl_collar reply-advisory
+defer_tick_pane_before="$(pane_all defer-a)"
+GANG_TEST_TICK_MODE=manual "$GANG" tick >/dev/null
+# source-guard: whole-surface@518a167ba3cf: an advisory-only tick must leave every byte of this dedicated recipient pane unchanged because it has no ordinary delivery to submit
+equal "an advisory tick with no ordinary mail types no standalone acknowledgement" \
+  "$defer_tick_pane_before" "$(pane_all defer-a)"
+equal "an advisory tick with no ordinary mail leaves the deferred entry hidden" \
+  "$defer_hidden_before" \
+  "$(find "$defer_a_spool" -maxdepth 1 -type f -name '.deferred-*' -printf '%f\n')"
+tmux set-option -w -t "$defer_a_id" @gl_collar replyable
 printf '%s' DEFER_WAKE_REQUEST \
   | TMUX_PANE="$defer_c_pane" "$GANG" send --to defer-a --stdin >/dev/null
 defer_bundle="$(pane_all defer-a)"

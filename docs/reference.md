@@ -702,7 +702,7 @@ for `status` until the next native prompt, and raises a `reply-owed` state
 note to the notify target or, when none is declared, to the agent named
 `lead`. That Gangline-authored stop alert owes no reply, so it uses the same
 deadline-backed deferred path as a pure acknowledgement and joins the notify target's next
-wake. State and input-stall alerts remain immediate because they report a
+ordinary composer-verified Gangline delivery. State and input-stall alerts remain immediate because they report a
 condition that may require intervention. The next delivery's first Stop refuses idle again. A query that answers
 nothing inside the adapter's deadline is retried within it and then refused
 and released under the name `query-timeout`; that release stamps the window
