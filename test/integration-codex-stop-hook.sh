@@ -7,6 +7,7 @@
 # supplies the private tmux server, helpers, counters, and cleanup.
 
 reply_original_collars="${GANG_COLLARS:-}"
+reply_original_path="$PATH"
 mkdir -p "$RUN_ROOT/collars"
 cat > "$RUN_ROOT/collars/replyable.sh" <<SH
 # shellcheck shell=bash
@@ -23,8 +24,65 @@ if not isinstance(value, str) or not value:
 print(value, end="")
 '
 }
+collar_context() {
+  tmux show-options -wqv -t "\$1" @test_context
+}
 SH
 export GANG_COLLARS="$RUN_ROOT/collars"
+
+# Deferred-reply timers are observed without leaving hundreds of transient
+# host units behind this correlation suite. The callback tests below read the
+# exact argv written here, then advance only this fixture's wall clock.
+reply_timer_bin="$RUN_ROOT/reply-timer-bin"
+reply_timer_args="$RUN_ROOT/reply-timer-args"
+reply_real_date="$(command -v date)"
+mkdir -p "$reply_timer_bin"
+: > "$reply_timer_args"
+cat > "$reply_timer_bin/systemd-run" <<SH
+#!/bin/sh
+printf '%s\n' "\$@" > "$reply_timer_args"
+# A hidden entry already present here would expose a process-death interval
+# with accepted mail but no recovery clock. The harmless inverse ordering is
+# required: arm a callback that finds nothing until the atomic commit follows.
+for arg do
+  case "\$arg" in
+    .deferred-*)
+      for entry in "\$GANG_LOCK_DIR"/spool/*/"\$arg"; do
+        [ ! -f "\$entry" ] || exit 91
+      done
+      ;;
+  esac
+done
+exit \${GANG_TEST_DEFER_ARM_FAIL:-0}
+SH
+cat > "$reply_timer_bin/systemctl" <<'SH'
+#!/bin/sh
+case "$*" in
+  *is-active*)
+    if [ -n "${GANG_TEST_DEFER_SERVICE_GONE:-}" ]; then
+      printf 'inactive\n'
+      exit 3
+    fi
+    if [ -n "${GANG_TEST_DEFER_SERVICE_UNREADABLE:-}" ]; then
+      exit 1
+    fi
+    printf 'active\n'
+    exit 0
+    ;;
+  *) exit 0 ;;
+esac
+SH
+cat > "$reply_timer_bin/date" <<SH
+#!/bin/sh
+if [ "\${1:-}" = +%s ] && [ -n "\${GANG_TEST_DEFER_NOW:-}" ]; then
+  printf '%s\n' "\$GANG_TEST_DEFER_NOW"
+else
+  exec "$reply_real_date" "\$@"
+fi
+SH
+chmod +x "$reply_timer_bin/systemd-run" "$reply_timer_bin/systemctl" \
+  "$reply_timer_bin/date"
+export PATH="$reply_timer_bin:$PATH"
 
 reply_stop_hook="$ROOT/collars/plugins/codex-stop-hook.py"
 reply_stop_payload='{"hook_event_name":"Stop","stop_hook_active":false}'
@@ -130,6 +188,444 @@ printf '%s' OPERATOR_ENVELOPE \
 equal "a verified self-declared operator envelope creates no peer debt" \
   $'clear\t-\t-\t-' \
   "$(TMUX_PANE="$reply_b_pane" "$GANG" reply-obligations)"
+
+# A REPLY THAT CREATES NO RECIPROCAL DEBT DOES NOT EARN A TURN OF ITS OWN.
+# Requests remain immediate because their native prompt proof is what opens the
+# recipient's obligation; replies wait for the next request that would wake the
+# recipient anyway. The unrelated request already owed by the reply recipient
+# is the safety discriminator: holding must not settle, shadow, or delay it.
+"$HITCH" defer-a -c replyable -d "$RUN_ROOT" >/dev/null
+"$HITCH" defer-b -c replyable -d "$RUN_ROOT" >/dev/null
+"$HITCH" defer-c -c replyable -d "$RUN_ROOT" >/dev/null
+defer_a_id="$(window_id defer-a)"
+defer_a_pane="$(tmux list-panes -t "$defer_a_id" -F '#{pane_id}')"
+defer_b_id="$(window_id defer-b)"
+defer_b_pane="$(tmux list-panes -t "$defer_b_id" -F '#{pane_id}')"
+defer_c_id="$(window_id defer-c)"
+defer_c_pane="$(tmux list-panes -t "$defer_c_id" -F '#{pane_id}')"
+
+# Prepare the only reply subtype that may be quiet: B asks A, A's answer wakes
+# B immediately, B reads it, and B's next message merely acknowledges that
+# reply. Direct answers and pure acknowledgements are distinguishable from the
+# same immutable mode records the production classifier reads.
+DEFER_ACK_ANSWER_META="" DEFER_ACK_ANSWER_PROMPT=""
+prepare_defer_ack_chain() { # $1 unique fixture prefix
+  local request="${1}_REQUEST" answer="${1}_ANSWER" request_nonce answer_nonce
+  printf '%s' "$request" \
+    | TMUX_PANE="$defer_b_pane" "$GANG" send --to defer-a --stdin >/dev/null
+  request_nonce="$(reply_nonce_for_body \
+    "$defer_a_id" defer-b request "$request")"
+  reply_prompt_event "$defer_a_pane" \
+    "$(reply_request_envelope defer-b "$request_nonce" "$request")"
+  DEFER_DIRECT_OUT="$(printf '%s' "$answer" \
+    | TMUX_PANE="$defer_a_pane" "$GANG" send --to defer-b --stdin)"
+  answer_nonce="$(reply_nonce_for_body \
+    "$defer_b_id" defer-a reply "$answer")"
+  reply_prompt_event "$defer_b_pane" \
+    "$(reply_response_envelope defer-a "$answer_nonce" "$request_nonce" "$answer")"
+  DEFER_ACK_ANSWER_META="$(tmux show-options -wqv -t "$defer_b_id" "@gl_reply_$answer_nonce")"
+  DEFER_ACK_ANSWER_PROMPT="$(tmux show-options -wqv -t "$defer_b_id" "@gl_rprompt_$answer_nonce")"
+}
+
+prepare_defer_ack_chain DEFER_INITIAL
+contains "an answer to the recipient's own request stays immediate" \
+  "$DEFER_DIRECT_OUT" "delivered to defer-b"
+# source-guard: producer@b8242f807df4: DEFER_INITIAL_ANSWER is unique to the direct answer whose immediate send verdict is asserted above
+contains "the awaited answer wakes its recipient" \
+  "$(pane_all defer-b)" "DEFER_INITIAL_ANSWER"
+# A answered the request, but its native turn remains open until Stop. Close
+# that settled turn so defer-c's unrelated request exercises an idle recipient
+# instead of entering the ordinary busy-recipient queue.
+reply_stop_run "$defer_a_pane" "$reply_stop_active_payload"
+printf '%s' DEFER_OWED_REQUEST \
+  | TMUX_PANE="$defer_c_pane" "$GANG" send --to defer-a --stdin >/dev/null
+defer_owed_request="$(reply_nonce_for_body \
+  "$defer_a_id" defer-c request DEFER_OWED_REQUEST)"
+reply_prompt_event "$defer_a_pane" \
+  "$(reply_request_envelope defer-c "$defer_owed_request" DEFER_OWED_REQUEST)"
+# source-guard: producer@dc07cf123c5d: DEFER_OWED_REQUEST is minted only by defer-c's immediately preceding verified send and prompt witness
+equal "a request that opens reply debt wakes its recipient immediately" yes \
+  "$([[ "$(pane_all defer-a)" == *DEFER_OWED_REQUEST* ]] \
+      && printf yes || printf no)"
+defer_owed_before="$(TMUX_PANE="$defer_a_pane" "$GANG" reply-obligations)"
+equal "the immediate request leaves its reply obligation standing" \
+  $'owed\t'"$defer_owed_request"$'\tdefer-c\tlive' "$defer_owed_before"
+# End the native turn without forgiving the standing obligation. This makes
+# defer-a idle before the correlated reply arrives, so unfixed live delivery
+# necessarily wakes it and turns the negative assertion below red.
+reply_stop_run "$defer_a_pane" "$reply_stop_active_payload"
+equal "ending the recipient's turn preserves its unrelated obligation" \
+  "$defer_owed_before" \
+  "$(TMUX_PANE="$defer_a_pane" "$GANG" reply-obligations)"
+defer_reply_out="$(printf '%s' DEFERRED_REPLY \
+  | TMUX_PANE="$defer_b_pane" "$GANG" send --to defer-a --stdin)"
+excludes "a pure acknowledgement is accepted without waking its recipient" \
+  "$(pane_all defer-a)" "DEFERRED_REPLY"
+contains "the accepted reply says it is deliberately deferred" \
+  "$defer_reply_out" "held for defer-a"
+contains "status exposes the bounded no-reply hold" \
+  "$($GANG status defer-a)" "deferred delivery: 1 envelope owes no reply"
+contains "roster separates deferred envelopes from waking queue depth" \
+  "$($GANG roster | grep '^defer-a ')" "deferred=1"
+contains "mail exposes the complete held envelope without consuming it" \
+  "$($GANG mail defer-a)" "DEFERRED_REPLY"
+equal "holding a correlated reply cannot hide an obligation already owed" \
+  "$defer_owed_before" \
+  "$(TMUX_PANE="$defer_a_pane" "$GANG" reply-obligations)"
+printf '%s' DEFER_WAKE_REQUEST \
+  | TMUX_PANE="$defer_c_pane" "$GANG" send --to defer-a --stdin >/dev/null
+defer_bundle="$(pane_all defer-a)"
+# source-guard: producer@9153b7e0f59e: the two unique markers bind this combined pane read to the held reply and the immediately preceding waking send
+equal "the next waking request carries the held reply ahead of itself" \
+  "DEFERRED_REPLY DEFER_WAKE_REQUEST " \
+  "$(printf '%s\n' "$defer_bundle" \
+      | grep -oE 'DEFERRED_REPLY|DEFER_WAKE_REQUEST' | awk '!seen[$0]++' | tr '\n' ' ')"
+# source-guard: producer@21fa8863e6ac: the accumulated marker is emitted only by the deferred reply whose two unique delivery markers were just ordered on this pane
+contains "the delivered reply is marked as accumulated context" \
+  "$defer_bundle" "accumulated context; held because this envelope owed no reply"
+
+# The reply settled defer-b's debt but did not itself end defer-b's native
+# turn. Close that turn before using the next request as an immediate delivery
+# witness; otherwise the established spool path quite correctly parks it.
+defer_b_stop_rc=0
+reply_stop_run "$defer_b_pane" || defer_b_stop_rc=$?
+defer_b_stop_why="$(tr '\n' ' ' < "$reply_stop_stderr")"
+equal "the sender can end its turn after its deferred reply is accepted" 0 \
+  "$defer_b_stop_rc${defer_b_stop_why:+: $defer_b_stop_why}"
+reply_stop_run "$defer_a_pane" "$reply_stop_active_payload"
+prepare_defer_ack_chain DEFER_NATIVE
+defer_native_older_out="$(printf '%s' DEFER_NATIVE_OLDER_REQUEST \
+  | TMUX_PANE="$defer_c_pane" "$GANG" send --to defer-a --stdin)"
+contains "an older request waits while the recipient's turn is live" \
+  "$defer_native_older_out" "queued for defer-a"
+printf '%s' DEFER_NATIVE_REPLY \
+  | TMUX_PANE="$defer_b_pane" "$GANG" send --to defer-a --stdin >/dev/null
+defer_native_obligations_before="$(TMUX_PANE="$defer_a_pane" "$GANG" reply-obligations)"
+tmux set-option -w -t "$defer_a_id" @gl_context_lights 100000,200000
+tmux set-option -w -t "$defer_a_id" @gl_context_ready 1
+tmux set-option -w -t "$defer_a_id" @test_context '150k/300k (50%)'
+defer_native_lock="$GANG_LOCK_DIR/$(printf '%s' "$defer_a_id" | tr -c 'A-Za-z0-9' '_').lock"
+ln -s "$$" "$defer_native_lock"
+defer_native_contended_hook="$(python3 -c \
+  'import json; print(json.dumps({"hook_event_name":"UserPromptSubmit","prompt":"DEFER_CONTENDED_WAKE"}))' \
+  | TMUX_PANE="$defer_a_pane" "$GANG" hook)"
+contains "promotion lock contention cannot swallow an unrelated advisory light" \
+  "$defer_native_contended_hook" "Yellow context light"
+contains "a refused native promotion leaves the hidden envelope for another wake" \
+  "$(printf '%s\n' "$GANG_LOCK_DIR/spool/$(tmux show-options -wqv -t "$defer_a_id" @gl_spool)"/.deferred-*)" \
+  "/.deferred-"
+rm -f -- "$defer_native_lock"
+defer_native_hook="$(python3 -c \
+  'import json; print(json.dumps({"hook_event_name":"UserPromptSubmit","prompt":"DEFER_OPERATOR_WAKE"}))' \
+  | TMUX_PANE="$defer_a_pane" "$GANG" hook)"
+excludes "a native prompt never claims unverified hook context as delivery" \
+  "$defer_native_hook" "DEFER_NATIVE_REPLY"
+tmux set-option -uw -t "$defer_a_id" @gl_context_lights
+tmux set-option -uw -t "$defer_a_id" @gl_context_ready
+tmux set-option -uw -t "$defer_a_id" @test_context
+tmux set-option -uw -t "$defer_a_id" @gl_context_light
+defer_native_mail="$($GANG mail defer-a)"
+contains "the native prompt exposes the held reply to verified drains" \
+  "$defer_native_mail" "DEFER_NATIVE_REPLY"
+contains "promoted accumulated context stays visibly distinguished" \
+  "$defer_native_mail" "accumulated context; held because this envelope owed no reply"
+equal "the native wake preserves global order across ordinary and deferred mail" \
+  "DEFER_NATIVE_OLDER_REQUEST DEFER_NATIVE_REPLY " \
+  "$(printf '%s\n' "$defer_native_mail" \
+      | grep -oE 'DEFER_NATIVE_OLDER_REQUEST|DEFER_NATIVE_REPLY' \
+      | awk '!seen[$0]++' | tr '\n' ' ')"
+equal "native promotion cannot change the recipient's obligation set" \
+  "$defer_native_obligations_before" \
+  "$(TMUX_PANE="$defer_a_pane" "$GANG" reply-obligations)"
+equal "native promotion removes the hidden entry exactly once" "" \
+  "$(printf '%s\n' "$GANG_LOCK_DIR/spool/$(tmux show-options -wqv -t "$defer_a_id" @gl_spool)"/.deferred-* \
+      | grep -v '\*$' || :)"
+defer_native_read="$(TMUX_PANE="$defer_a_pane" "$GANG" mail)"
+equal "a verified self-read preserves global order after native promotion" \
+  "DEFER_NATIVE_OLDER_REQUEST DEFER_NATIVE_REPLY " \
+  "$(printf '%s\n' "$defer_native_read" \
+      | grep -oE 'DEFER_NATIVE_OLDER_REQUEST|DEFER_NATIVE_REPLY' \
+      | awk '!seen[$0]++' | tr '\n' ' ')"
+excludes "the verified read consumes every promoted entry" \
+  "$($GANG mail defer-a)" "DEFER_NATIVE_REPLY"
+
+reply_stop_run "$defer_a_pane" "$reply_stop_active_payload"
+defer_b_stop_rc=0
+reply_stop_run "$defer_b_pane" || defer_b_stop_rc=$?
+defer_b_stop_why="$(tr '\n' ' ' < "$reply_stop_stderr")"
+equal "the sender can end its turn after native-context reply delivery" 0 \
+  "$defer_b_stop_rc${defer_b_stop_why:+: $defer_b_stop_why}"
+prepare_defer_ack_chain DEFER_SUPERSEDE
+printf '%s' DEFER_SUPERSEDED_REPLY \
+  | TMUX_PANE="$defer_b_pane" "$GANG" send --to defer-a --stdin >/dev/null
+defer_replacement_out="$(printf '%s' DEFER_REPLACEMENT_REPLY \
+  | TMUX_PANE="$defer_b_pane" "$GANG" send --to defer-a --supersede --stdin)"
+defer_superseded_mail="$($GANG mail defer-a)"
+excludes "supersession retires an older reply from the deferred namespace" \
+  "$defer_superseded_mail" "DEFER_SUPERSEDED_REPLY"
+contains "the replacement inherits the retired reply's correlation" \
+  "$defer_superseded_mail" "DEFER_REPLACEMENT_REPLY"
+# Acceptance of the first acknowledgement closes its thread. The replacement
+# inherits correlation so it opens no debt, but it matches no still-open reply
+# record and therefore cannot inherit quiet-delivery eligibility. Because A is
+# live, ordinary immediate delivery means the replacement waits in the waking
+# queue until A's native boundary drains it.
+contains "a replacement after the acknowledgement stays on the ordinary path" \
+  "$defer_replacement_out" "queued for defer-a"
+contains "the ordinary replacement remains visible in the waking queue" \
+  "$($GANG roster | grep '^defer-a ')" "spooled=1"
+equal "supersession moves the replacement out of the hidden namespace" "" \
+  "$(printf '%s\n' "$GANG_LOCK_DIR/spool/$(tmux show-options -wqv -t "$defer_a_id" @gl_spool)"/.deferred-* \
+      | grep -v '\*$' || :)"
+reply_stop_run "$defer_a_pane" "$reply_stop_active_payload"
+excludes "the superseded body never reaches that context" \
+  "$(pane_all defer-a)" "DEFER_SUPERSEDED_REPLY"
+
+# Supersession may inherit an old correlation without inheriting quiet-delivery
+# eligibility. Once B's reply-reading turn is closed, its new instructions are
+# a fresh wake even when they replace a still-held acknowledgement.
+reply_stop_run "$defer_a_pane" "$reply_stop_active_payload"
+reply_stop_run "$defer_b_pane"
+prepare_defer_ack_chain DEFER_FRESH_SUPERSEDE
+printf '%s' DEFER_OLD_ACK \
+  | TMUX_PANE="$defer_b_pane" "$GANG" send --to defer-a --stdin >/dev/null
+reply_stop_run "$defer_b_pane"
+reply_stop_run "$defer_a_pane" "$reply_stop_active_payload"
+defer_fresh_supersede_out="$(printf '%s' DEFER_FRESH_REQUEST \
+  | TMUX_PANE="$defer_b_pane" "$GANG" send --to defer-a --supersede --stdin)"
+contains "a fresh request that supersedes a held acknowledgement stays immediate" \
+  "$defer_fresh_supersede_out" "delivered to defer-a"
+# source-guard: producer@ba50b5eba65f: DEFER_FRESH_REQUEST is unique to the immediate superseding send whose verdict is asserted above
+contains "the superseding request wakes its idle recipient" \
+  "$(pane_all defer-a)" "DEFER_FRESH_REQUEST"
+excludes "the retired acknowledgement never reaches the recipient" \
+  "$(pane_all defer-a)" "DEFER_OLD_ACK"
+equal "fresh supersession leaves no hidden acknowledgement" "" \
+  "$(printf '%s\n' "$GANG_LOCK_DIR/spool/$(tmux show-options -wqv -t "$defer_a_id" @gl_spool)"/.deferred-* \
+      | grep -v '\*$' || :)"
+
+# The bound is executable recovery, not status prose. Open another request at
+# defer-b, accept its reply into the quiet queue, and fire the exact callback
+# recorded by the fake transient timer after that entry's own due epoch.
+reply_stop_run "$defer_a_pane" "$reply_stop_active_payload"
+reply_stop_run "$defer_b_pane"
+prepare_defer_ack_chain DEFER_BOUND
+# The deadline is allowed to create a turn only when the recipient is idle.
+# Close A's settled answer turn before B submits the quiet acknowledgement.
+reply_stop_run "$defer_a_pane" "$reply_stop_active_payload"
+defer_bound_before="$(TMUX_PANE="$defer_a_pane" "$GANG" reply-obligations)"
+defer_bound_out="$(printf '%s' DEFER_BOUND_REPLY \
+  | TMUX_PANE="$defer_b_pane" "$GANG" send --to defer-a --stdin)"
+contains "the second correlated reply is held behind a forced wake" \
+  "$defer_bound_out" "retrying deadline starts in 30m"
+excludes "the bounded hold still creates no immediate recipient turn" \
+  "$(pane_all defer-a)" "DEFER_BOUND_REPLY"
+defer_bound_entry="$(awk '/^\.deferred-[0-9]/ { print; exit }' "$reply_timer_args")"
+defer_bound_unit="$(awk -F= '/^--unit=/ { print $2; exit }' "$reply_timer_args")"
+defer_bound_due="${defer_bound_entry#.deferred-}"
+defer_bound_due="${defer_bound_due%%-*}"
+contains "the deadline service retries a callback that meets lock contention" \
+  "$(cat "$reply_timer_args")" "--property=Restart=on-failure"
+contains "deadline retries are paced rather than spun" \
+  "$(cat "$reply_timer_args")" "--property=RestartSec=5s"
+defer_bound_lock="$GANG_LOCK_DIR/$(printf '%s' "$defer_a_id" | tr -c 'A-Za-z0-9' '_').lock"
+ln -s "$$" "$defer_bound_lock"
+defer_bound_retry_rc=0
+defer_bound_retry_err="$(GANG_TEST_DEFER_NOW="$((10#$defer_bound_due + 1))" \
+  "$GANG" at --fire "$defer_bound_entry" --to defer-a \
+    --unit "$defer_bound_unit" 2>&1)" || defer_bound_retry_rc=$?
+equal "a deadline callback reports lock contention as retryable failure" 3 \
+  "$defer_bound_retry_rc"
+contains "the retryable callback names the competing delivery" \
+  "$defer_bound_retry_err" "another Gangline process is delivering to defer-a"
+contains "lock contention leaves the exact hidden envelope for the service retry" \
+  "$(printf '%s\n' "$GANG_LOCK_DIR/spool/$(tmux show-options -wqv -t "$defer_a_id" @gl_spool)"/.deferred-*)" \
+  "$defer_bound_entry"
+contains "status names an overdue envelope with live retry authority" \
+  "$(GANG_TEST_DEFER_NOW="$((10#$defer_bound_due + 1))" "$GANG" status defer-a)" \
+  "passed its deadline by 1s; its retry service is live"
+rm -f -- "$defer_bound_lock"
+GANG_TEST_DEFER_NOW="$((10#$defer_bound_due + 1))" \
+  "$GANG" at --fire "$defer_bound_entry" --to defer-a \
+    --unit "$defer_bound_unit" >/dev/null
+# source-guard: producer@6f02d1a96735: DEFER_BOUND_REPLY is unique to the correlated send whose recorded timer callback was fired immediately above
+contains "the deadline callback forces the held reply into the recipient" \
+  "$(pane_all defer-a)" "DEFER_BOUND_REPLY"
+equal "the forced wake also leaves the unrelated obligation visible" \
+  "$defer_bound_before" \
+  "$(TMUX_PANE="$defer_a_pane" "$GANG" reply-obligations)"
+equal "the forced delivery leaves no hidden entry behind" "" \
+  "$(printf '%s\n' "$GANG_LOCK_DIR/spool/$(tmux show-options -wqv -t "$defer_a_id" @gl_spool)"/.deferred-* \
+      | grep -v '\*$' || :)"
+
+reply_stop_run "$defer_a_pane" "$reply_stop_active_payload"
+reply_stop_run "$defer_b_pane"
+prepare_defer_ack_chain DEFER_NOARM
+# With no deadline service available, the optimization falls back through the
+# ordinary immediate path. Make that path's live-delivery outcome observable.
+reply_stop_run "$defer_a_pane" "$reply_stop_active_payload"
+defer_noarm_out="$(printf '%s' DEFER_NOARM_REPLY \
+  | GANG_TEST_DEFER_ARM_FAIL=1 TMUX_PANE="$defer_b_pane" \
+    "$GANG" send --to defer-a --stdin 2>&1)"
+contains "a host that cannot arm the bound says deferral is unavailable" \
+  "$defer_noarm_out" "preserving immediate delivery"
+contains "and falls back to a verified immediate delivery" \
+  "$defer_noarm_out" "delivered to defer-a"
+# source-guard: producer@2449e5abf204: DEFER_NOARM_REPLY is unique to the timer-refused send whose verified fallback verdict is asserted immediately above
+contains "the fallback reply reached the recipient rather than disappearing" \
+  "$(pane_all defer-a)" "DEFER_NOARM_REPLY"
+equal "timer-arm failure leaves no hidden envelope behind" "" \
+  "$(printf '%s\n' "$GANG_LOCK_DIR/spool/$(tmux show-options -wqv -t "$defer_a_id" @gl_spool)"/.deferred-* \
+      | grep -v '\*$' || :)"
+
+# A superseding message may match a newly read reply while inheriting the
+# request correlation of an older parked answer. The inherited request makes
+# quiet delivery unsafe even though the fresh classifier saw only replies.
+reply_stop_run "$defer_a_pane" "$reply_stop_active_payload"
+reply_stop_run "$defer_b_pane"
+prepare_defer_ack_chain DEFER_INHERITED_REQUEST
+printf '%s' DEFER_INHERITED_OLD_ACK \
+  | TMUX_PANE="$defer_b_pane" "$GANG" send --to defer-a --stdin >/dev/null
+defer_inherited_clone=f8f8f8f8f8f8f8f8
+tmux set-option -w -t "$defer_b_id" "@gl_reply_$defer_inherited_clone" \
+  "$DEFER_ACK_ANSWER_META"
+tmux set-option -w -t "$defer_b_id" "@gl_rprompt_$defer_inherited_clone" \
+  "$DEFER_ACK_ANSWER_PROMPT"
+defer_inherited_out="$(printf '%s' DEFER_INHERITED_REPLACEMENT \
+  | TMUX_PANE="$defer_b_pane" "$GANG" send --to defer-a --supersede --stdin)"
+contains "inherited request correlation keeps a superseding acknowledgement waking" \
+  "$defer_inherited_out" "queued for defer-a"
+excludes "the inherited-request replacement is never accepted as a quiet hold" \
+  "$defer_inherited_out" "held for defer-a"
+equal "inherited request correlation leaves no hidden replacement" "" \
+  "$(printf '%s\n' "$GANG_LOCK_DIR/spool/$(tmux show-options -wqv -t "$defer_a_id" @gl_spool)"/.deferred-* \
+      | grep -v '\*$' || :)"
+contains "the waking replacement remains readable in the ordinary queue" \
+  "$($GANG mail defer-a)" "DEFER_INHERITED_REPLACEMENT"
+TMUX_PANE="$defer_a_pane" "$GANG" mail >/dev/null
+tmux set-option -uw -t "$defer_b_id" "@gl_reply_$defer_inherited_clone"
+tmux set-option -uw -t "$defer_b_id" "@gl_rprompt_$defer_inherited_clone"
+tmux set-option -uw -t "$defer_b_id" "@gl_rsettled_$defer_inherited_clone"
+
+# A first deadline invocation delayed by suspend still gets one real attempt.
+# Its wall-clock lateness limits only repeat failures; it is not a precondition
+# that can abandon a deliverable envelope before touching the pane lock.
+reply_stop_run "$defer_a_pane" "$reply_stop_active_payload"
+reply_stop_run "$defer_b_pane"
+prepare_defer_ack_chain DEFER_LATE_FIRST
+reply_stop_run "$defer_a_pane" "$reply_stop_active_payload"
+printf '%s' DEFER_LATE_FIRST_REPLY \
+  | TMUX_PANE="$defer_b_pane" "$GANG" send --to defer-a --stdin >/dev/null
+defer_late_entry="$(awk '/^\.deferred-[0-9]/ { print; exit }' "$reply_timer_args")"
+defer_late_unit="$(awk -F= '/^--unit=/ { print $2; exit }' "$reply_timer_args")"
+defer_late_due="${defer_late_entry#.deferred-}"
+defer_late_due="${defer_late_due%%-*}"
+GANG_TEST_DEFER_NOW="$((10#$defer_late_due + 301))" \
+  "$GANG" at --fire "$defer_late_entry" --to defer-a \
+    --unit "$defer_late_unit" >/dev/null
+# source-guard: producer@dca9bfd40f76: DEFER_LATE_FIRST_REPLY is unique to the held acknowledgement whose deliberately late first callback fires immediately above
+contains "a suspend-delayed first callback still attempts and delivers" \
+  "$(pane_all defer-a)" "DEFER_LATE_FIRST_REPLY"
+equal "a successful late first attempt leaves no hidden envelope" "" \
+  "$(printf '%s\n' "$GANG_LOCK_DIR/spool/$(tmux show-options -wqv -t "$defer_a_id" @gl_spool)"/.deferred-* \
+      | grep -v '\*$' || :)"
+
+# Persistent callback failure has a finite retry budget. Once it is spent the
+# service exits successfully, the hidden envelope stays readable, and status
+# hands the stopped recovery to the operator instead of spawning forever.
+reply_stop_run "$defer_a_pane" "$reply_stop_active_payload"
+reply_stop_run "$defer_b_pane"
+prepare_defer_ack_chain DEFER_RETRY_CAP
+reply_stop_run "$defer_a_pane" "$reply_stop_active_payload"
+printf '%s' DEFER_RETRY_CAP_REPLY \
+  | TMUX_PANE="$defer_b_pane" "$GANG" send --to defer-a --stdin >/dev/null
+defer_cap_entry="$(awk '/^\.deferred-[0-9]/ { print; exit }' "$reply_timer_args")"
+defer_cap_unit="$(awk -F= '/^--unit=/ { print $2; exit }' "$reply_timer_args")"
+defer_cap_due="${defer_cap_entry#.deferred-}"
+defer_cap_due="${defer_cap_due%%-*}"
+defer_cap_lock="$GANG_LOCK_DIR/$(printf '%s' "$defer_a_id" | tr -c 'A-Za-z0-9' '_').lock"
+ln -s "$$" "$defer_cap_lock"
+defer_cap_rc=0
+defer_cap_err="$(GANG_TEST_DEFER_NOW="$((10#$defer_cap_due + 301))" \
+  "$GANG" at --fire "$defer_cap_entry" --to defer-a \
+    --unit "$defer_cap_unit" 2>&1)" || defer_cap_rc=$?
+equal "the deadline retry process stops after its bounded recovery window" 0 \
+  "$defer_cap_rc"
+contains "retry exhaustion names the retained envelope and operator handoff" \
+  "$defer_cap_err" "exhausted its 5m retry window after a failed promotion attempt"
+contains "retry exhaustion leaves the hidden envelope readable" \
+  "$(printf '%s\n' "$GANG_LOCK_DIR/spool/$(tmux show-options -wqv -t "$defer_a_id" @gl_spool)"/.deferred-*)" \
+  "$defer_cap_entry"
+contains "status reports that capped retry authority is gone" \
+  "$(GANG_TEST_DEFER_NOW="$((10#$defer_cap_due + 301))" \
+      GANG_TEST_DEFER_SERVICE_GONE=1 "$GANG" status defer-a)" \
+  "retry budget was exhausted after a failed promotion attempt"
+contains "the exhaustion marker explains the handoff when service state is unreadable" \
+  "$(GANG_TEST_DEFER_NOW="$((10#$defer_cap_due + 301))" \
+      GANG_TEST_DEFER_SERVICE_UNREADABLE=1 "$GANG" status defer-a)" \
+  "retry budget was exhausted after a failed promotion attempt"
+
+# A broken spool cannot record the detailed exhaustion marker. The callback
+# still stops at its finite bound, and status names the marker-less GONE state
+# instead of letting systemd respawn a process that cannot repair the disk.
+defer_cap_spool="$GANG_LOCK_DIR/spool/$(tmux show-options -wqv -t "$defer_a_id" @gl_spool)"
+defer_cap_marker="$defer_cap_spool/.retry-exhausted-$defer_cap_entry"
+rm -f -- "$defer_cap_marker"
+chmod 500 "$defer_cap_spool"
+defer_marker_rc=0
+defer_marker_err="$(GANG_TEST_DEFER_NOW="$((10#$defer_cap_due + 301))" \
+  "$GANG" at --fire "$defer_cap_entry" --to defer-a \
+    --unit "$defer_cap_unit" 2>&1)" || defer_marker_rc=$?
+chmod 700 "$defer_cap_spool"
+equal "an unwritable exhaustion handoff stops the retry process" 0 \
+  "$defer_marker_rc"
+contains "marker failure says the callback stopped rather than remaining retryable" \
+  "$defer_marker_err" "stopping the callback so it cannot spin"
+contains "status reports marker-less exhaustion as a GONE service of unknown cause" \
+  "$(GANG_TEST_DEFER_NOW="$((10#$defer_cap_due + 301))" \
+      GANG_TEST_DEFER_SERVICE_GONE=1 "$GANG" status defer-a)" \
+  "retry service is GONE for an unknown reason"
+
+# Hold the callback immediately after its failed attempt, then model the pane
+# lock holder promoting the same entry. No exhausted marker may be written for
+# the envelope that left the hidden namespace in that window.
+defer_race_ready="$RUN_ROOT/defer-attempt-ready"
+defer_race_release="$RUN_ROOT/defer-attempt-release"
+defer_race_rc_file="$RUN_ROOT/defer-attempt-rc"
+defer_race_out="$RUN_ROOT/defer-attempt.out"
+defer_race_err="$RUN_ROOT/defer-attempt.err"
+mkfifo "$defer_race_ready" "$defer_race_release"
+(
+  defer_race_rc=0
+  GANG_TEST_DEFER_NOW="$((10#$defer_cap_due + 301))" \
+    GANG_TEST_DEFER_ATTEMPT_READY_FIFO="$defer_race_ready" \
+    GANG_TEST_DEFER_ATTEMPT_RELEASE_FIFO="$defer_race_release" \
+    "$GANG" at --fire "$defer_cap_entry" --to defer-a \
+      --unit "$defer_cap_unit" >"$defer_race_out" 2>"$defer_race_err" \
+      || defer_race_rc=$?
+  printf '%s\n' "$defer_race_rc" > "$defer_race_rc_file"
+) &
+defer_race_pid=$!
+IFS= read -r _ < "$defer_race_ready" || true
+defer_race_original="${defer_cap_entry#".deferred-${defer_cap_due}-"}"
+mv -- "$defer_cap_spool/$defer_cap_entry" \
+  "$defer_cap_spool/$defer_race_original"
+printf x > "$defer_race_release"
+wait "$defer_race_pid"
+equal "a concurrent promotion ends the failed callback cleanly" 0 \
+  "$(cat "$defer_race_rc_file")"
+equal "a concurrently promoted envelope gets no orphan exhaustion marker" no \
+  "$([ -e "$defer_cap_marker" ] && printf yes || printf no)"
+equal "the simulated lock holder moved the envelope into the waking queue" yes \
+  "$([ -f "$defer_cap_spool/$defer_race_original" ] && printf yes || printf no)"
+rm -f -- "$defer_cap_spool/$defer_race_original"
+rm -f -- "$defer_cap_lock"
+tmux set-option -uw -t "$defer_a_id" "@gl_reply_$defer_owed_request"
+tmux set-option -uw -t "$defer_a_id" "@gl_rprompt_$defer_owed_request"
+tmux set-option -uw -t "$defer_a_id" "@gl_rdelivery_$defer_owed_request"
+"$GANG" drop defer-a >/dev/null
+"$GANG" drop defer-b >/dev/null
+"$GANG" drop defer-c >/dev/null
 
 # Force native prompt proof to land while transport verification is paused
 # after reading the same immutable record. The suite tmux shim supplies the
@@ -426,10 +922,11 @@ contains "with no notify target and no lead, the undelivered alert is said on th
 reply_stop_run "$reply_b_pane" "$reply_stop_active_payload"
 equal "a later re-Stop with the debt still standing is released the same way" \
   "{}" "$reply_stop_output"
-# source-guard: whole-surface@f1d1ed63e691: the complete notify pane is the delivered stop alert, so any producer is valid evidence
-contains "the notify target is told the turn went idle with the debt standing" \
-  "$(tmux capture-pane -p -J -t "$reply_c_pane")" \
+excludes "a stop alert does not wake its notify target on its own" \
+  "$(pane_all reply-c)" \
   "stop alert (stop): reply-b went idle with a reply owed to reply-a (message $reply_a_one) standing"
+contains "status exposes the deferred stop alert and its forced wake" \
+  "$($GANG status reply-c)" "deferred delivery: 1 envelope owes no reply"
 equal "the alert is Gangline's own and leaves its target nothing to owe" \
   $'clear\t-\t-\t-' "$(TMUX_PANE="$reply_c_pane" "$GANG" reply-obligations)"
 excludes "a delivered alert retires the undelivered note" \
@@ -441,13 +938,38 @@ TMUX_PANE="$reply_auto_pane" "$GANG" reply-released query-timeout
 contains "a query-timeout release with nothing standing still stamps the window" \
   "$($GANG status auto-resume)" \
   "ago after its reply query timed out; nothing readable stood, and the next delivery raises whatever does"
-# source-guard: whole-surface@b5bf205de486: the complete notify pane is the delivered timeout alert, so any producer is valid evidence
-contains "the notify target is told about the timed-out query itself" \
-  "$(tmux capture-pane -p -J -t "$reply_c_pane")" \
+excludes "a query-timeout alert also waits without waking its notify target" \
+  "$(pane_all reply-c)" \
   "stop alert (query-timeout): auto-resume went idle after its reply query timed out; nothing readable stands now"
+contains "the quiet-alert queue accumulates both machine envelopes" \
+  "$($GANG status reply-c)" "deferred delivery: 1 envelope owes no reply"
+printf '%s' ALERT_WAKE \
+  | "$GANG" send --to reply-c --from operator --stdin >/dev/null
+reply_c_alert_bundle="$(pane_all reply-c)"
+# source-guard: producer@8238b7b6eeca: both alert texts name their distinct raising windows and ALERT_WAKE is unique to the immediately preceding operator send
+equal "the next operator wake carries both alerts ahead of current input" \
+  "stop alert (stop) stop alert (query-timeout) ALERT_WAKE " \
+  "$(printf '%s\n' "$reply_c_alert_bundle" \
+      | grep -oE 'stop alert \(stop\)|stop alert \(query-timeout\)|ALERT_WAKE' \
+      | awk '!seen[$0]++' | tr '\n' ' ')"
 reply_prompt_event "$reply_auto_pane" "the next native prompt retires a query-timeout stamp"
 excludes "a new native prompt retires the query-timeout stamp" \
   "$($GANG status auto-resume)" "Stop released"
+
+# A legacy notify window can still be live-addressable before it owns durable
+# spool identity. Deferral is unavailable there, but the alert must retain its
+# established immediate fallback instead of dying inside spool establishment.
+reply_stop_run "$reply_c_pane"
+reply_c_spool_token="$(tmux show-options -wqv -t "$reply_c_id" @gl_spool)"
+reply_c_timeout_before="$(pane_all reply-c | grep -o 'stop alert (query-timeout): auto-resume went idle' | wc -l)"
+tmux set-option -uw -t "$reply_c_id" @gl_spool
+TMUX_PANE="$reply_auto_pane" "$GANG" reply-released query-timeout
+reply_c_timeout_after="$(pane_all reply-c | grep -o 'stop alert (query-timeout): auto-resume went idle' | wc -l)"
+# source-guard: producer@f2fe94e7a052: the before/after delta binds this combined-pane count to the one spool-less fallback emitted immediately above
+equal "a spool-less notify target retains immediate alert delivery" \
+  "$((reply_c_timeout_before + 1))" "$reply_c_timeout_after"
+tmux set-option -w -t "$reply_c_id" @gl_spool "$reply_c_spool_token"
+reply_prompt_event "$reply_auto_pane" "retire the spool-less fallback release stamp"
 TMUX_PANE="$reply_b_pane" "$GANG" reply-released query-timeout
 contains "a query-timeout release names what the second reading found standing" \
   "$($GANG status reply-b)" \
@@ -650,7 +1172,7 @@ reply_late_state="$RUN_ROOT/reply-late-witness-state"
 printf '%s' REPLY_LATE_WITNESS \
   | GANG_TEST_REPLY_PROOF_GATE="$reply_late_gate" \
     GANG_TEST_REPLY_GATE_STATE="$reply_late_state" \
-    TMUX_PANE="$reply_b_pane" "$GANG" send --to reply-a --stdin \
+    TMUX_PANE="$reply_b_pane" "$GANG" send --to reply-a --live-only --stdin \
       >"$RUN_ROOT/reply-late-witness.out" 2>"$RUN_ROOT/reply-late-witness.err" &
 reply_late_pid=$!
 tmux wait-for "$reply_late_gate-ready"
@@ -701,6 +1223,16 @@ reply_drain_waiter=$!
 printf '%s' "$reply_stop_payload" \
   | TMUX_PANE="$reply_b_pane" "$GANG" hook >/dev/null
 wait "$reply_drain_waiter"
+# The production completion channel is intentionally reused. A signal from an
+# earlier drain can remain latched when no fixture waiter owned it, so reject
+# that stale completion once by waiting for the worker that must create this
+# exact immutable record. The suite's tmux wait ceiling keeps a real missing-
+# record defect loud instead of polling it into an eventual pass.
+if [ -z "$(tmux show-options -wqv -t "$reply_b_id" "@gl_reply_$reply_spool_nonce")" ]; then
+  tmux wait-for "$reply_drain_channel" &
+  reply_drain_waiter=$!
+  wait "$reply_drain_waiter"
+fi
 equal "a drained spool entry is not debt before its native prompt witness" \
   $'clear\t-\t-\t-' \
   "$(TMUX_PANE="$reply_b_pane" "$GANG" reply-obligations)"
@@ -721,11 +1253,10 @@ reply_stop_run "$reply_a_pane"
 reply_stop_run "$reply_b_pane"
 equal "a reply to durable mail restores an idle-safe clear state" "{}" "$reply_stop_output"
 
-# A correlated reply parked behind the creditor's live turn is already the
-# debtor's whole answer: only the creditor's next boundary drains it, so a
-# debtor held until delivery was blocked at every Stop for a reply it had
-# sent, and each block invited another copy. Acceptance into the spool settles
-# the debt; the drain then completes the audit record with the delivery proof.
+# A correlated answer parked behind the creditor's live turn is already the
+# debtor's whole answer. Answers remain immediate-delivery mail rather than
+# quiet acknowledgements, but durable acceptance still settles the debt; the
+# ordinary drain then completes the audit record with its delivery proof.
 printf '%s' REQ_PARKED_REPLY \
   | TMUX_PANE="$reply_a_pane" "$GANG" send --to reply-b --stdin >/dev/null
 reply_parked_req="$(reply_nonce_from "$reply_b_id" reply-a)"
@@ -1391,3 +1922,4 @@ if [ -n "$reply_original_collars" ]; then
 else
   unset GANG_COLLARS
 fi
+export PATH="$reply_original_path"

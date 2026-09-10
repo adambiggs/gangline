@@ -189,3 +189,4 @@ Gangline's durable constraints live in the records below. A record's id is perma
 | [0183](0183-actionable-advisory-collars-receive-empty-spool-ticks.md) | Actionable advisory collars receive empty-spool ticks | accepted | 2026-09-09 |
 | [0184](0184-recorded-usage-percentages-are-the-ones-a-provider-published.md) | Recorded usage percentages are the ones a provider published | accepted | 2026-09-09 |
 | [0185](0185-a-usage-threshold-alerts-once-inside-the-window-it-measures.md) | A usage threshold alerts once inside the window it measures | accepted | 2026-09-09 |
+| [0186](0186-no-reply-envelopes-join-the-next-waking-delivery.md) | No-reply envelopes join the next waking delivery | accepted | 2026-09-09 |

@@ -102,10 +102,18 @@ Inspect the failing parser tests, fix the root cause, and report the proof.
 TASK
 ```
 
-Every delivered message names its sender in a nonce-bound envelope. Inside the
+Every message names its sender in a nonce-bound envelope. Inside the
 team, Gangline reads the sender from the calling window; outside callers name
-themselves with `--from`. Delivery succeeds only after the target composer
-visibly accepts the paste and submission.
+themselves with `--from`. Ordinary delivery succeeds only after the target
+composer visibly accepts the paste and submission. An answer to a request still
+wakes its requester. A pure acknowledgement of one or more replies owes no
+reply of its own, so it is held for the recipient's next waking event and
+visibly joined as accumulated context. After thirty minutes its deadline
+service attempts the ordinary verified path even if suspend delayed its first
+invocation, then retries short-lived delivery contention for up to five minutes.
+If an attempted recovery exhausts that window, `gang status` distinguishes the
+retained envelope's spent retry budget from a retry service lost for an unknown
+reason.
 
 A target that cannot take input right now gets the message parked by default:
 it waits in the target's spool. Native delivery opportunities, `gang tick`, and

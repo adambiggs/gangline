@@ -639,10 +639,25 @@ reply is therefore itself correlated and opens no debt, a thread closes on any
 acknowledgement, and a message sent in a later turn is a new request. The
 close is the last fact a Stop records and fails closed: a boundary that cannot
 write it is refused, so the turn stays open and its replies stay answerable. A
-parked reply drains at the peer's next native boundary; the drain writes the
-delivery proof beside the settlement that acceptance already wrote, and the
-spool entry stays visible to `status` and `mail` until then. A `--supersede` that retires a parked reply hands its
-correlation to the replacement, which is then the reply.
+message correlated only to reply records is a pure acknowledgement and is held outside
+the waking queue after durable spool acceptance. A message answering any request record
+stays immediate because its peer is waiting for the answer. Deferred acknowledgements
+join the peer's next Gangline wake ahead of current mail. A native prompt promotes
+them under their original stamps but does not claim hook stdout as delivery; the whole
+ordinary queue remains for the next composer-verified drain. A transient timer begins
+an ordinary verified wake after thirty minutes. Even a suspend-delayed first callback
+attempts delivery once; after a failed attempt its service retries every five seconds
+for at most five minutes beyond the deadline. If that recovery window is exhausted,
+`status` distinguishes the retained entry's spent retry budget from a service that is
+gone for an unknown reason. If the spool cannot record the detailed handoff, the
+callback still stops rather than spinning and status uses that marker-less GONE
+verdict. If the initial
+timer cannot be armed, Gangline preserves immediate delivery instead of accepting an
+unbounded hold. The deferred entry and timer health stay visible to `status`, human
+`roster`, and `mail`. A `--supersede`
+that retires a deferred or ordinary reply hands its correlation to the replacement,
+but any inherited correlation keeps the replacement on the waking path.
+
 A correlated reply discharges the request as soon as either arrival witness,
 the exact native prompt proof or positive delivery proof, stands beside it. The
 delivery proof is written only by the sending process that produced it, so a
@@ -683,7 +698,10 @@ with `stop_hook_active` is released through the private `reply-released`
 report, which leaves every record untouched, stamps the release on the window
 for `status` until the next native prompt, and raises a `reply-owed` state
 note to the notify target or, when none is declared, to the agent named
-`lead`. The next delivery's first Stop refuses idle again. A query that answers
+`lead`. That Gangline-authored stop alert owes no reply, so it uses the same
+deadline-backed deferred path as a pure acknowledgement and joins the notify target's next
+wake. State and input-stall alerts remain immediate because they report a
+condition that may require intervention. The next delivery's first Stop refuses idle again. A query that answers
 nothing inside the adapter's deadline is retried within it and then refused
 and released under the name `query-timeout`; that release stamps the window
 and raises its note before the state is read again, so a timeout is told even
@@ -1059,10 +1077,10 @@ operator's tmux status formats.
 
 ### `gang mail [name]`
 
-Prints every message waiting for delivery in that agent's spool, oldest first,
-then every kept record, each with its sender and its entry filename, each body
+Prints every message waiting for delivery in that agent's spool, every deferred
+no-reply envelope, then every kept record, each with its sender and its entry filename, each body
 exactly as it would go onto the wire. The summary separates messages waiting
-for delivery from kept records that Gangline will not deliver. A kept record
+for delivery, active deferred entries, and kept records that Gangline will not deliver. A kept record
 says which kind it is: one Gangline typed and could not confirm warns its reader
 they may have seen the body already. An unverified record with stable peer
 provenance remains kept while that exact sender identity exists. Once its
@@ -1254,7 +1272,8 @@ Gangline did; the `box:` line says what is there at reading time.
 
 It also reports staged input and the current box reading, pending or failed
 self-compaction, the number of messages spooled for that target and how long
-the oldest has waited, held-message
+the oldest has waited, deferred no-reply envelopes and their deadline/retry service
+health, held-message
 details and their directory, a spool drain that could not be verified, a stall
 note that could not be accepted, live native-session loss, the last cooperative
 tick failure, and binary
@@ -1537,7 +1556,8 @@ Use `gang context <name>` when a reading is wanted. Each row compares the
 window's binary stamp with the invoked `gang` binary and visibly marks skew; the
 comparison runs only for this snapshot. A non-empty delivery queue reports both
 its depth as `spooled=N` and the age of its oldest waiting entry. A separate
-`spool-held=N` reports kept records whose delivery will not be retried; it is not
+`deferred=N` reports no-reply envelopes waiting to join another wake, while
+`spool-held=N` reports kept records whose delivery will not be retried; neither is
 queue depth. In a plain roster, an unverified record whose exact stable sender
 identity is gone is archived before the row is printed and contributes to
 neither count. A fresh agent using the old sender name has a different identity
@@ -1567,9 +1587,9 @@ word: `busy`, `waiting`, `idle`, `occupied`, `dead`, `bricked`, `session-lost`, 
 settle and one it could not read at all; the human row separates them and the
 porcelain word does not.
 unadopted windows and missing collars read `unadopted` and `collar-missing`.
-`spooled` is the deliverable-queue integer; kept records are deliberately absent
-from the fixed porcelain shape and remain visible as `spool-held=N` in the human
-row. Porcelain roster performs no retirement; it observes the fixed per-agent
+`spooled` is the deliverable-queue integer; deferred and kept records are deliberately
+absent from the fixed porcelain shape and remain visible as `deferred=N` and
+`spool-held=N` in the human row. Porcelain roster performs no retirement; it observes the fixed per-agent
 shape without the plain roster's archival side effect. `oldest_age_s` is integer
 seconds or `-` for an empty queue or an unreadable age. A row Gangline could not
 produce at all falls back
