@@ -204,8 +204,9 @@ and the attach recovery above does not apply to it.
   letters, digits, dot, dash, and underscore and may not begin with dot or dash.
 - `-l`, `--lights` sets context lights for this agent alone: `collar` to take
   the collar's own default for the chosen model, `off` for none, or explicit
-  `yellow,red` tokens or `yellow%,red%`. It overrides `GANG_CONTEXT_LIGHTS`,
-  whose own built-in value is `collar`. The collar is sourced already knowing
+  `yellow,red` tokens or `yellow%,red%`. It replaces the whole
+  `GANG_CONTEXT_LIGHTS` map, whose own built-in value is `collar`, and the hitch
+  line says `(--lights)`. The collar is sourced already knowing
   this agent's request, because a collar may wire its native context source at
   launch and lights armed over a source nobody painted report a miss on every
   turn.
@@ -309,9 +310,29 @@ staying armed over a launch that wired no native source to read them. A resume
 that omits `-m` therefore resolves no collar default, exactly as a first hitch
 would; `gang drop` prints no model in its relaunch line, so pass `-m` or `-l`
 again to keep the lights the agent had. Which thresholds those are is
-decided in one pass: `-l`/`--lights` if given, otherwise `GANG_CONTEXT_LIGHTS`,
-whose built-in value `collar` asks the collar for its own default for the
-hitched model. A collar answers per model because one harness runs models whose
+decided in one pass: `-l`/`--lights` if given, otherwise the `GANG_CONTEXT_LIGHTS`
+entry that matches this hitch most specifically, and where none matches the
+built-in `collar`, which asks the collar for its own default for the hitched
+model.
+
+`GANG_CONTEXT_LIGHTS` is a whitespace-separated list of `COLLAR/MODEL=SPEC`
+entries. SPEC is `collar`, `off`, or thresholds, and either half of the selector
+may be `*`. A `COLLAR/MODEL` entry beats `COLLAR/*`, which beats `*/MODEL`,
+which beats `*`, wherever each is written. COLLAR is the collar's name and MODEL
+is compared exactly with `-m` as given, not as a pattern: patterns can overlap
+and would need a second rule to rank two that both match, while an exact name is
+the one the operator typed on the hitch. An alias and the model id it stands for
+are therefore different entries, and a hitch without `-m` matches only
+`COLLAR/*` and `*`. A SPEC with no selector is the `*` entry, so a single value
+means what it always has; it is deprecated, and each hitch that uses it prints
+one warning naming its `*=` form. Every entry is checked on every hitch,
+including entries this agent would not use, and a malformed one refuses the
+hitch under the operator's setting and its origin before any window exists.
+Selectors are not checked against the collars and models that exist, because a
+model alias cannot be; `gang config` lists the map as read, and the hitch line
+names the entry that chose the lights, or `(collar default)` where none did.
+
+A collar answers per model because one harness runs models whose
 native windows differ several-fold, and the same fraction leaves very different
 absolute runway in each. A collar that declares no default, or none for that
 model, leaves the lights off, and so does a collar with no native context source
@@ -1667,7 +1688,11 @@ brief whole. `gang roles` is what says which briefs this installation has.
 Prints every effective operator setting with its origin: built-in default,
 config file and line, or environment, including when the environment overrides
 a file line. It also reports whether the doctrine file and operator roles
-directory are present, with the terminal-safe path to each slot. Dynamic text
+directory are present, with the terminal-safe path to each slot. It ends with
+the context-light map as `context-lights` lines of selector and SPEC, most
+specific first and closing on the `*` entry that answers when nothing else
+matches; a malformed map is refused under its origin after every other line has
+printed. Dynamic text
 is terminal-safe: control bytes are rendered visibly rather than written raw.
 The command takes no arguments and needs no tmux server.
 
@@ -1739,7 +1764,7 @@ Exactly these keys are settable:
 | `GANG_COLLARS` | unset | custom collar directory searched before shipped collars |
 | `GANG_LOCK_DIR` | `/tmp/gangline-$(id -u)` | shared delivery locks and per-target spools |
 | `GANG_ARCHIVE_DIR` | `${XDG_STATE_HOME:-$HOME/.local/state}/gangline/archive` | pending-message archive written before windows die |
-| `GANG_CONTEXT_LIGHTS` | `collar` | `collar` to take each collar's own default for the hitched model, `off`, `yellow,red` token thresholds, or `yellow%,red%` relative thresholds; `gang hitch -l` overrides it for one agent |
+| `GANG_CONTEXT_LIGHTS` | `collar` | whitespace-separated `COLLAR/MODEL=SPEC` entries, either half `*`, the most specific match winning; SPEC is `collar` to take the collar's own default for the hitched model, `off`, `yellow,red` token thresholds, or `yellow%,red%` relative thresholds, and a SPEC with no selector is the deprecated form of `*=SPEC`; `gang hitch -l` overrides the whole map for one agent |
 | `GANG_USAGE_LIGHTS` | `off` | `off` or increasing provider-used thresholds such as `90%,95%` |
 | `GANG_AUTO_RESUME` | `off` | `off` or one provider-used percentage such as `97%` at which a reset wake is armed automatically |
 | `GANG_SCOPE` | `off` | `off`, or `on` to launch each hitched harness, and the tmux server gang forks, in its own transient systemd user scope |

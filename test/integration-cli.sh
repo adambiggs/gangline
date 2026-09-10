@@ -486,6 +486,32 @@ for environment_only in GANG_ACTIVITY_LIMIT GANG_CLEAR_PRESSES; do
     "$config_report" "$environment_only="
 done
 
+# GANG CONFIG SHOWS THE CONTEXT-LIGHT MAP IN THE ORDER HITCH CONSULTS IT: most
+# specific first, whatever order it was written in, ending at the * entry that
+# answers when nothing else matches — the built-in `collar` where none is set.
+lights_map_report="$(GANG_CONFIG_DIR="$CONFIG_CASES/report" \
+  GANG_CONTEXT_LIGHTS='*=11%,21% model-lights/*=13%,23% */exact=12%,22% model-lights/exact=14%,24%' \
+  "$GANG" config | grep '^context-lights' || :)"
+equal "gang config lists the context-light map most specific first" \
+  $'context-lights\tmodel-lights/exact\t14%,24%\ncontext-lights\tmodel-lights/*\t13%,23%\ncontext-lights\t*/exact\t12%,22%\ncontext-lights\t*\t11%,21%' \
+  "$lights_map_report"
+equal "a bare value is listed as the * entry" \
+  $'context-lights\t*\t11%,21%' \
+  "$(GANG_CONFIG_DIR="$CONFIG_CASES/report" GANG_CONTEXT_LIGHTS='11%,21%' \
+    "$GANG" config | grep '^context-lights' || :)"
+equal "with nothing set the map is the built-in collar default" \
+  $'context-lights\t*\tcollar' \
+  "$(env -u GANG_CONTEXT_LIGHTS GANG_CONFIG_DIR="$CONFIG_CASES/report" \
+    "$GANG" config | grep '^context-lights' || :)"
+equal "an unmatched map still ends at the built-in collar default" \
+  $'context-lights\tcodex/*\t75%,90%\ncontext-lights\t*\tcollar' \
+  "$(GANG_CONFIG_DIR="$CONFIG_CASES/report" GANG_CONTEXT_LIGHTS='codex/*=75%,90%' \
+    "$GANG" config | grep '^context-lights' || :)"
+refuses "gang config refuses a malformed map under its origin" \
+  "GANG_CONTEXT_LIGHTS entry 'codex/*' must increase from yellow to red, got '90,10' (from the environment)" \
+  env GANG_CONFIG_DIR="$CONFIG_CASES/report" GANG_CONTEXT_LIGHTS='codex/*=90,10' \
+    "$GANG" config
+
 # 2.0 removed the pre-rename config spellings, so there is no second name for
 # one setting to normalize or conflict with. In a config file the old spelling
 # is an unknown key and refuses; in the environment it is a variable Gangline

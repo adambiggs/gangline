@@ -9098,8 +9098,8 @@ LIGHT_RELATIVE=0
 # operator's GANG_CONTEXT_LIGHTS sends them to edit a setting they never wrote.
 # The origin note is looked up only for the unnamed caller, so the per-hook read
 # below never pays for a config lookup it would not print.
-context_lights_parse() { # $1 = off or yellow,red thresholds; $2 = subject for refusals
-  local yellow red subject="${2:-}" note=""
+context_lights_parse() { # $1 = off or yellow,red thresholds; $2 = subject for refusals, $3 = its origin note
+  local yellow red subject="${2:-}" note="${3:-}"
   if [ -z "$subject" ]; then
     subject=GANG_CONTEXT_LIGHTS
     note="$(config_origin_note GANG_CONTEXT_LIGHTS)"
@@ -9130,6 +9130,98 @@ context_lights_parse() { # $1 = off or yellow,red thresholds; $2 = subject for r
       return 0 ;;
     *) die "$subject must be off or two thresholds: yellow,red tokens or yellow%,red%$note" ;;
   esac
+}
+
+# THE OPERATOR'S SETTING IS A MAP, ONE ENTRY PER COLLAR AND MODEL. A collar
+# answers per model, but one operator value spoke for every collar at once, so
+# a percentage pair sized for one harness's window armed another's at a
+# fraction of it. Each entry is COLLAR/MODEL=SPEC with either half `*`, and the
+# most specific match wins: collar/model, collar/*, */model, *. A model matches
+# the -m value exactly, as the collar receives it: patterns would need a second
+# rule for which of two overlapping patterns is the more specific, and an exact
+# string needs none. A bare SPEC is the * entry, which is what every value
+# written before entries existed meant.
+#
+# EVERY ENTRY IS CHECKED, not only the one that wins: a broken entry for another
+# collar is broken for that collar's next hitch, and is better refused now,
+# under the line that wrote it, than there.
+CONTEXT_LIGHTS_SELECTORS=() CONTEXT_LIGHTS_SPECS=() CONTEXT_LIGHTS_BARE=""
+context_lights_map() { # $1 = the setting -> the arrays above, most specific first
+  local note entry sel spec collar_part model_part rank bare seen=" " i
+  local -a entries=() ranks=() sels=() specs=()
+  note="$(config_origin_note GANG_CONTEXT_LIGHTS)"
+  CONTEXT_LIGHTS_SELECTORS=() CONTEXT_LIGHTS_SPECS=() CONTEXT_LIGHTS_BARE=""
+  # READ, NOT A for-LOOP OVER $1: word splitting there also globs, and `*` is
+  # the one selector every map may carry.
+  IFS=$' \t\n' read -r -d '' -a entries <<<"$1" || :
+  [ "${#entries[@]}" -gt 0 ] \
+    || die "GANG_CONTEXT_LIGHTS names no entry: write collar, off, yellow,red thresholds, or COLLAR/MODEL=SPEC entries$note"
+  for entry in "${entries[@]}"; do
+    bare=0
+    case "$entry" in
+      *=*) sel="${entry%%=*}"; spec="${entry#*=}" ;;
+      *) sel='*'; spec="$entry"; bare=1 ;;
+    esac
+    case "$sel" in
+      '*'|'*/*') sel='*'; rank=1 ;;
+      */*)
+        # Split at the FIRST slash: a model id may carry its own.
+        collar_part="${sel%%/*}" model_part="${sel#*/}" rank=1
+        case "$collar_part" in
+          '*') ;;
+          ''|*[!A-Za-z0-9._-]*) rank=0 ;;
+          *) rank=$((rank + 2)) ;;
+        esac
+        case "$model_part" in
+          '*') ;;
+          ''|*[!A-Za-z0-9._:/@-]*) rank=0 ;;
+          *) [ "$rank" -eq 0 ] || rank=$((rank + 1)) ;;
+        esac ;;
+      *) rank=0 ;;
+    esac
+    [ "$rank" -gt 0 ] \
+      || die "GANG_CONTEXT_LIGHTS entry '$entry' must select COLLAR/MODEL or *, where COLLAR is a collar name and MODEL is a model exactly as -m gives it, and either may be *$note"
+    case "$seen" in
+      *" $sel "*) die "GANG_CONTEXT_LIGHTS names '$sel' twice; keep one entry for it$note" ;;
+    esac
+    seen="$seen$sel "
+    case "$spec" in
+      '') die "GANG_CONTEXT_LIGHTS entry '$sel' is empty: write collar, off, or yellow,red thresholds$note" ;;
+      collar|off) ;;
+      *)
+        if [ "$bare" -eq 1 ]; then
+          context_lights_parse "$spec" || :
+        else
+          context_lights_parse "$spec" "GANG_CONTEXT_LIGHTS entry '$sel'" "$note" || :
+        fi ;;
+    esac
+    [ "$bare" -eq 0 ] || CONTEXT_LIGHTS_BARE="$spec"
+    ranks+=("$rank") sels+=("$sel") specs+=("$spec")
+  done
+  for rank in 4 3 2 1; do
+    for i in "${!sels[@]}"; do
+      [ "${ranks[$i]}" -eq "$rank" ] || continue
+      CONTEXT_LIGHTS_SELECTORS+=("${sels[$i]}")
+      CONTEXT_LIGHTS_SPECS+=("${specs[$i]}")
+    done
+  done
+}
+
+# THE FIRST MATCH IN PRECEDENCE ORDER, or the built-in `collar` with no entry
+# named when nothing matches: a map that names only other collars leaves this
+# one exactly where an unset setting would.
+CONTEXT_LIGHTS_ENTRY="" CONTEXT_LIGHTS_SELECTED=""
+context_lights_select() { # $1 collar, $2 model; map read -> the two globals above
+  local i
+  CONTEXT_LIGHTS_ENTRY="" CONTEXT_LIGHTS_SELECTED=collar
+  for i in "${!CONTEXT_LIGHTS_SELECTORS[@]}"; do
+    case "${CONTEXT_LIGHTS_SELECTORS[$i]}" in
+      "$1/$2"|"$1/*"|"*/$2"|'*')
+        CONTEXT_LIGHTS_ENTRY="${CONTEXT_LIGHTS_SELECTORS[$i]}"
+        CONTEXT_LIGHTS_SELECTED="${CONTEXT_LIGHTS_SPECS[$i]}"
+        return 0 ;;
+    esac
+  done
 }
 
 # WHICH THRESHOLDS SUIT AN AGENT IS A PER-MODEL QUESTION, and only the collar
@@ -10434,7 +10526,7 @@ hitch_register() { # $1 window, $2 agent name, $3 option, $4 value
 
 cmd_hitch() {
   local name="" prof="${GANG_COLLAR:-claude-code}" dir="$PWD" model="" effort="" task="" missing="" role="" role_path="" id="" resume=0 resume_id="" resume_stamped="" launch_env collar_arg=0 pane_dead lookup_rc=0 opened_session=0
-  local lights="" lights_arg="" lights_given=0 lights_subject="" boot="${GANG_BOOT_TIMEOUT:-30}" gate_looks="${GANG_GATE_LOOKS:-60}"
+  local lights="" lights_arg="" lights_given=0 lights_subject="" lights_from="" lights_note="" boot="${GANG_BOOT_TIMEOUT:-30}" gate_looks="${GANG_GATE_LOOKS:-60}"
   local hitched_by=""
   name="${1:-}"; case "$name" in ''|-*) usage_die ;; esac; shift
   valid_name "$name" \
@@ -10475,9 +10567,29 @@ cmd_hitch() {
   # would report a miss on a window the operator had just asked to watch. The
   # model travels with it for the same reason: a collar's default is a per-model
   # answer, and it must reach the same one gang resolves below.
+  # The operator's map is settled to this agent's one entry here for the same
+  # reason, and `--lights` replaces it whole: a flag on one hitch is the most
+  # specific thing anyone said about this agent.
   if [ "$lights_given" -eq 1 ]; then
     GANG_CONTEXT_LIGHTS="$lights_arg"
     lights_subject="hitch --lights"
+    lights_from="--lights"
+  else
+    context_lights_map "$GANG_CONTEXT_LIGHTS"
+    context_lights_select "$prof" "$model"
+    # TOLD AT HITCH, NEVER REFUSED: the bare form means exactly what it always
+    # did, and this is where its author is looking.
+    if [ -n "$CONTEXT_LIGHTS_BARE" ] && config_origin GANG_CONTEXT_LIGHTS >/dev/null; then
+      printf "gang: WARNING: GANG_CONTEXT_LIGHTS entry '%s' has no COLLAR/MODEL selector, which is deprecated; write it as '*=%s', which means the same%s\n" \
+        "$CONTEXT_LIGHTS_BARE" "$CONTEXT_LIGHTS_BARE" "$(config_origin_note GANG_CONTEXT_LIGHTS)" >&2
+    fi
+    if [ -n "$CONTEXT_LIGHTS_ENTRY" ] && config_origin GANG_CONTEXT_LIGHTS >/dev/null; then
+      lights_from="GANG_CONTEXT_LIGHTS '$CONTEXT_LIGHTS_ENTRY'"
+      if [ -z "$CONTEXT_LIGHTS_BARE" ] || [ "$CONTEXT_LIGHTS_ENTRY" != '*' ]; then
+        lights_subject="GANG_CONTEXT_LIGHTS entry '$CONTEXT_LIGHTS_ENTRY'"
+      fi
+    fi
+    GANG_CONTEXT_LIGHTS="$CONTEXT_LIGHTS_SELECTED"
   fi
   # shellcheck disable=SC2034  # read by the collar sourced on the next line
   GANG_MODEL="$model"
@@ -10599,6 +10711,13 @@ cmd_hitch() {
   context_lights_resolve "$prof" "$model" "$GANG_CONTEXT_LIGHTS" "$lights_subject"
   if context_lights_parse "$CONTEXT_LIGHTS_SPEC" "$CONTEXT_LIGHTS_SUBJECT"; then
     lights="$CONTEXT_LIGHTS_SPEC"
+  fi
+  # THE HITCH LINE SAYS WHICH SETTING WON, because with a map the thresholds
+  # alone no longer tell the operator which of their entries this agent got.
+  if [ "$GANG_CONTEXT_LIGHTS" = collar ]; then
+    lights_note="collar default${lights_from:+, by $lights_from}"
+  else
+    lights_note="$lights_from"
   fi
 
   require_python3
@@ -10730,7 +10849,7 @@ cmd_hitch() {
   }
   local msg delivery_err="" delivery_rc=0
   msg="$(startup_brief "$name" "$DOCTRINE")"
-  echo "$(colour "$C_OK" "hitched $name") ($prof) in $dir$(colour "$C_DIM" "${lights:+ — context lights $lights} — watch: gang attach")"
+  echo "$(colour "$C_OK" "hitched $name") ($prof) in $dir$(colour "$C_DIM" "${lights:+ — context lights $lights${lights_note:+ ($lights_note)}} — watch: gang attach")"
   printf '%s\n' "$(colour "$C_WORK" "waiting for $name to finish booting...")"
   local ready=0 recovery
   wait_ready "$id" "$boot" "$name" || ready=$?
@@ -14839,7 +14958,7 @@ config_effective() { # $1 settable key -> the value its consumers read
 }
 
 cmd_config() {
-  local k value record key origin line source file doctrine roles state
+  local k value record key origin line source file doctrine roles state i
   [ $# -eq 0 ] || die "config: takes no arguments"
   for k in $GANG_CONFIG_KEYS; do
     value="$(config_effective "$k" | config_sanitize)"
@@ -14873,6 +14992,15 @@ cmd_config() {
   if [ -e "$roles" ] || [ -L "$roles" ]; then state=present; else state=absent; fi
   roles="$(config_path "$roles" | config_sanitize)"
   printf 'roles\t%s\t%s\n' "$roles" "$state"
+  # LAST, so a map this refuses still leaves every line above on the screen.
+  # Listed in the order hitch consults it, ending where hitch ends: at *, which
+  # is the built-in collar where no entry names it.
+  context_lights_map "$GANG_CONTEXT_LIGHTS"
+  for i in "${!CONTEXT_LIGHTS_SELECTORS[@]}"; do
+    printf 'context-lights\t%s\t%s\n' "${CONTEXT_LIGHTS_SELECTORS[$i]}" "${CONTEXT_LIGHTS_SPECS[$i]}"
+  done
+  [ "${CONTEXT_LIGHTS_SELECTORS[${#CONTEXT_LIGHTS_SELECTORS[@]}-1]}" = '*' ] \
+    || printf 'context-lights\t*\tcollar\n'
 }
 
 cmd_upgrade() {

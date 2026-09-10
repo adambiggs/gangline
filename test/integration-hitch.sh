@@ -1892,6 +1892,146 @@ refuses "a malformed --lights is refused under the flag's name" \
 equal "and a refused --lights leaves no window behind" "" \
   "$(window_id lightsflagbad)"
 
+# THE OPERATOR SETS LIGHTS PER COLLAR AND MODEL, AND THE MOST SPECIFIC ENTRY
+# WINS. A collar's default is one answer per model, but the operator's own
+# setting was one value for every collar: a percentage pair sized for one
+# harness's window armed the other's at a fraction of it. Four entries, one per
+# rank, and four hitches that each reach exactly one of them.
+lights_map='*=11%,21% */exact=12%,22% model-lights/*=13%,23% model-lights/exact=14%,24%'
+lights_map_reversed='model-lights/exact=14%,24% model-lights/*=13%,23% */exact=12%,22% *=11%,21%'
+GANG_CONTEXT_LIGHTS="$lights_map" "$HITCH" lmexact -c model-lights -d /tmp \
+  -m exact >"$RUN_ROOT/lmexact.out" 2>&1 || :
+equal "a collar/model entry beats every less specific one" \
+  "14%,24%" "$(lights_stamp lmexact)"
+GANG_CONTEXT_LIGHTS="$lights_map_reversed" "$HITCH" lmorder -c model-lights -d /tmp \
+  -m exact >/dev/null 2>&1 || :
+equal "and wins by specificity, not by where it is written" \
+  "14%,24%" "$(lights_stamp lmorder)"
+GANG_CONTEXT_LIGHTS="$lights_map" "$HITCH" lmcollar -c model-lights -d /tmp \
+  -m neighbor >/dev/null 2>&1 || :
+equal "a collar/* entry beats * for any other model on that collar" \
+  "13%,23%" "$(lights_stamp lmcollar)"
+GANG_CONTEXT_LIGHTS='*/exact=12%,22% model-lights/*=13%,23%' "$HITCH" lmover \
+  -c model-lights -d /tmp -m exact >/dev/null 2>&1 || :
+equal "and beats a */model entry that also matches, written before it" \
+  "13%,23%" "$(lights_stamp lmover)"
+GANG_CONTEXT_LIGHTS="$lights_map" "$HITCH" lmmodel -c catalog-model -d /tmp \
+  -m exact >/dev/null 2>&1 || :
+equal "a */model entry beats * on a collar no entry names" \
+  "12%,22%" "$(lights_stamp lmmodel)"
+GANG_CONTEXT_LIGHTS="$lights_map" "$HITCH" lmstar -c catalog-model -d /tmp \
+  -m neighbor >/dev/null 2>&1 || :
+equal "and * answers when nothing more specific matches" \
+  "11%,21%" "$(lights_stamp lmstar)"
+contains "the hitch line names the entry that won" \
+  "$(<"$RUN_ROOT/lmexact.out")" \
+  "context lights 14%,24% (GANG_CONTEXT_LIGHTS 'model-lights/exact')"
+# A MODEL MATCHES EXACTLY, AS THE COLLAR RECEIVES IT. A prefix that happens to
+# lead the hitched model is a different model, and with no entry matching, the
+# built-in `collar` answers rather than nothing.
+GANG_CONTEXT_LIGHTS='*/exac=15%,25%' "$HITCH" lmprefix -c model-lights -d /tmp \
+  -m exact >"$RUN_ROOT/lmprefix.out" 2>&1 || :
+equal "a model entry matches the -m value exactly, not as a prefix" \
+  "40%,70%" "$(lights_stamp lmprefix)"
+contains "and the collar's default names itself on the hitch line" \
+  "$(<"$RUN_ROOT/lmprefix.out")" "context lights 40%,70% (collar default) — "
+GANG_CONTEXT_LIGHTS='*=11%,21% model-lights/*=collar' "$HITCH" lmask -c model-lights \
+  -d /tmp -m exact >"$RUN_ROOT/lmask.out" 2>&1 || :
+equal "an entry can hand one collar back its own per-model default" \
+  "40%,70%" "$(lights_stamp lmask)"
+contains "and the hitch line names both the default and the entry that chose it" \
+  "$(<"$RUN_ROOT/lmask.out")" \
+  "context lights 40%,70% (collar default, by GANG_CONTEXT_LIGHTS 'model-lights/*')"
+GANG_CONTEXT_LIGHTS='*=11%,21% model-lights/exact=off' "$HITCH" lmoff -c model-lights \
+  -d /tmp -m exact >/dev/null 2>&1 || :
+equal "an off entry takes one collar and model out of a team the rest light" \
+  "set:" "$([ -z "$(window_id lmoff)" ] || printf set):$(lights_stamp lmoff)"
+
+# A BARE VALUE IS THE * ENTRY, so every configuration written before entries
+# existed keeps its meaning — and is told once, at hitch, how to write it now.
+GANG_CONTEXT_LIGHTS='*=11%,21%' "$HITCH" lmstarform -c model-lights -d /tmp \
+  -m exact >/dev/null 2>"$RUN_ROOT/lmstarform.err" || :
+GANG_CONTEXT_LIGHTS='11%,21%' "$HITCH" lmbare -c model-lights -d /tmp \
+  -m exact >/dev/null 2>"$RUN_ROOT/lmbare.err" || :
+equal "a bare value arms exactly what its *= form arms" \
+  "11%,21%" "$(lights_stamp lmstarform)"
+equal "and the *= form hitches without the deprecation warning" \
+  "11%,21%|0" \
+  "$(lights_stamp lmstarform)|$(grep -c 'deprecated' "$RUN_ROOT/lmstarform.err" || :)"
+equal "a bare value warns exactly once per hitch and still hitches" \
+  "11%,21%|1" \
+  "$(lights_stamp lmbare)|$(grep -c 'deprecated' "$RUN_ROOT/lmbare.err" || :)"
+contains "the warning names the *= form that means the same" \
+  "$(<"$RUN_ROOT/lmbare.err")" \
+  "gang: WARNING: GANG_CONTEXT_LIGHTS entry '11%,21%' has no COLLAR/MODEL selector, which is deprecated; write it as '*=11%,21%', which means the same (from the environment)"
+GANG_CONTEXT_LIGHTS='11%,21% model-lights/exact=14%,24%' "$HITCH" lmbarelist \
+  -c model-lights -d /tmp -m neighbor >/dev/null 2>&1 || :
+equal "a bare value in a list is the * entry of that list" \
+  "11%,21%" "$(lights_stamp lmbarelist)"
+# The built-in default is a bare value too, but nobody wrote it: an unset
+# setting has nothing to rewrite, so it is not the one to warn about.
+lmunset_rc=0
+env -u GANG_CONTEXT_LIGHTS "$HITCH" lmunset -c model-lights -d /tmp -m exact \
+  >"$RUN_ROOT/lmunset.out" 2>"$RUN_ROOT/lmunset.err" || lmunset_rc=$?
+equal "an unset setting hitches, arms the collar default and names it, without a warning" \
+  "0|40%,70%|yes|0" \
+  "$lmunset_rc|$(lights_stamp lmunset)|$(case "$(<"$RUN_ROOT/lmunset.out")" in *"context lights 40%,70% (collar default) — "*) printf yes ;; *) printf no ;; esac)|$(grep -c 'deprecated' "$RUN_ROOT/lmunset.err" || :)"
+
+# --lights STILL DECIDES FOR ITS ONE AGENT, over the most specific entry the
+# operator wrote, and a setting it replaced is not the one to warn about.
+lmflag_rc=0
+GANG_CONTEXT_LIGHTS='11%,21% model-lights/exact=14%,24%' "$HITCH" lmflag \
+  -c model-lights -d /tmp -m exact -l 30%,60% \
+  >"$RUN_ROOT/lmflag.out" 2>"$RUN_ROOT/lmflag.err" || lmflag_rc=$?
+equal "--lights beats even a collar/model entry, and says so, without a warning" \
+  "0|30%,60%|yes|0" \
+  "$lmflag_rc|$(lights_stamp lmflag)|$(case "$(<"$RUN_ROOT/lmflag.out")" in *"context lights 30%,60% (--lights) — "*) printf yes ;; *) printf no ;; esac)|$(grep -c 'deprecated' "$RUN_ROOT/lmflag.err" || :)"
+for lights_agent in lmexact lmorder lmcollar lmover lmmodel lmstar lmprefix lmask \
+  lmoff lmstarform lmbare lmbarelist lmunset lmflag; do
+  if [ -n "$(window_id "$lights_agent")" ]; then
+    "$GANG" drop "$lights_agent" >/dev/null
+  fi
+done
+
+# A MALFORMED ENTRY REFUSES THE HITCH UNDER THE OPERATOR'S SETTING, with the
+# line it came from — including an entry this agent would never have used,
+# because a broken entry for another collar is broken for the next hitch too.
+lights_config="$RUN_ROOT/lights-config"
+mkdir -p "$lights_config"
+printf '%s\n' '# per-collar lights' \
+  'GANG_CONTEXT_LIGHTS=model-lights/exact=14%,24% codex/*=90,10' \
+  > "$lights_config/config"
+lights_config_out="$(env -u GANG_CONTEXT_LIGHTS GANG_CONFIG_DIR="$lights_config" \
+  "$GANG" hitch lmbadline -c model-lights -d /tmp -m exact 2>&1 || :)"
+contains "a malformed entry is refused under its own selector and the line that wrote it" \
+  "$lights_config_out" \
+  "GANG_CONTEXT_LIGHTS entry 'codex/*' must increase from yellow to red, got '90,10' (from $lights_config/config line 2)"
+refuses "an entry without a COLLAR/MODEL selector is refused" \
+  "GANG_CONTEXT_LIGHTS entry 'codex=50%,80%' must select COLLAR/MODEL or *" \
+  env GANG_CONTEXT_LIGHTS='codex=50%,80%' "$GANG" hitch lmnoslash -c model-lights \
+    -d /tmp -m exact
+refuses "an entry with an empty half of its selector is refused" \
+  "GANG_CONTEXT_LIGHTS entry 'model-lights/=50%,80%' must select COLLAR/MODEL or *" \
+  env GANG_CONTEXT_LIGHTS='model-lights/=50%,80%' "$GANG" hitch lmhalf -c model-lights \
+    -d /tmp -m exact
+refuses "an entry with nothing after = is refused rather than read as off" \
+  "GANG_CONTEXT_LIGHTS entry 'model-lights/*' is empty" \
+  env GANG_CONTEXT_LIGHTS='model-lights/*=' "$GANG" hitch lmempty -c model-lights \
+    -d /tmp -m exact
+refuses "a bare value and a *= entry are the same entry twice" \
+  "GANG_CONTEXT_LIGHTS names '*' twice" \
+  env GANG_CONTEXT_LIGHTS='20%,40% *=30%,60%' "$GANG" hitch lmtwice -c model-lights \
+    -d /tmp -m exact
+equal "a refused map leaves no window behind" "" "$(
+  for lights_agent in lmbadline lmnoslash lmhalf lmempty lmtwice; do
+    window_id "$lights_agent"
+  done)"
+for lights_agent in lmbadline lmnoslash lmhalf lmempty lmtwice; do
+  if [ -n "$(window_id "$lights_agent")" ]; then
+    "$GANG" drop "$lights_agent" >/dev/null
+  fi
+done
+
 # A DEFAULT NEVER ARMS A LIGHT ITS OWN COLLAR CANNOT READ. Nothing asked for
 # this light, so a hook reporting the reading it could not take on every turn
 # of every agent would be noise the operator never chose. An explicitly

@@ -301,18 +301,24 @@ gang hitch worker -c codex -m "$CODEX_MODEL" -e "$CODEX_EFFORT"
 Each hitch prints the thresholds it settled on. A collar that ships no default
 for that model, or that reads no native context source, leaves the lights off.
 
-Override for one agent with `-l`/`--lights`, or for the whole team with
-`GANG_CONTEXT_LIGHTS`. Both take `collar`, `off`, `yellow,red` tokens, or
-`yellow%,red%`. Percentages serve mixed-window teams; absolute tokens are for
-one observed harness window and cannot fit a team whose windows differ. Set them
+Override for one agent with `-l`/`--lights`, or per collar and model with
+`GANG_CONTEXT_LIGHTS`. Each takes `collar`, `off`, `yellow,red` tokens, or
+`yellow%,red%`; `GANG_CONTEXT_LIGHTS` takes a list of them as
+`COLLAR/MODEL=SPEC` entries, either half `*`, and the most specific entry that
+matches wins. Percentages serve mixed-window teams; absolute tokens are for one
+observed harness window and cannot fit a team whose windows differ. Set them
 intentionally high, but below the observed automatic-compaction boundary so the
 agent can self-compact first:
 
 ```sh
 gang hitch worker -c codex -m "$CODEX_MODEL" -e "$CODEX_EFFORT" --lights 50%,80%
-GANG_CONTEXT_LIGHTS="50%,80%" gang up
+GANG_CONTEXT_LIGHTS='*=50%,80% codex/*=collar' gang up
 gang hitch quiet -c codex -m "$CODEX_MODEL" -e "$CODEX_EFFORT" --lights off
 ```
+
+`gang config` lists the map most specific first, and each hitch line names the
+entry that chose its lights. A value with no selector still means `*=` that
+value, and each hitch that reads it warns once with that form.
 
 A collar may wire its native context source at launch — `claude-code` paints the
 beacon its own reader consumes, replacing whatever status line the operator

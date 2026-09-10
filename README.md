@@ -200,9 +200,10 @@ in `gang status` and `gang roster`.
 
 Context lights default to the collar's own thresholds for the model being
 hitched, so a team mixing harnesses gets working lights on every agent with
-nothing configured. Override them for one agent, or for the whole team, with
-percentages that serve mixed windows or absolute tokens for a single observed
-one. Keep both edges high, but below the harness's observed automatic-compaction
+nothing configured. Override them for one agent, or per collar and model in
+operator configuration, with percentages that serve mixed windows or absolute
+tokens for a single observed one. Keep both edges high, but below the harness's
+observed automatic-compaction
 boundary:
 
 ```sh
