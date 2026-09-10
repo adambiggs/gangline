@@ -529,6 +529,161 @@ if [ -n "$heredoc_ticks" ]; then
   exit 1
 fi
 
+# A TMUX TIME FORMAT IS EXPANDED ONLY FOR AN OBJECT TMUX HAS FOUND. tmux 3.2a's
+# format_find dereferences a time-typed value without checking it, and every
+# time callback returns NULL when its object is missing from the format tree:
+# display-message whose -t names a window that has gone, or a session read as a
+# pane target, segfaults the server and ends every session on it (fixed
+# upstream in tmux 3.3). list-windows, list-sessions and list-panes expand a
+# format only for the windows, sessions and panes they iterate, where the window
+# and session clocks always exist. The client and buffer clocks have no such
+# listing here and are refused outright.
+#
+# The listing has to be the command that expands the format, which a word on
+# the line cannot show: list-windows can be a target, or text inside another
+# command's format. So each line is read as shell far enough to know which
+# command a clock name is an argument of: quotes, $(...) and backticks, a
+# comment, and the ; & | ( ) that begin another command, including the \; that
+# separates tmux commands. A window or session clock name passes only in a
+# command whose words are tmux, tmux's own options, and then list-windows,
+# list-sessions or list-panes. Anywhere else in code it is refused, including
+# as a bare word a variable could carry into a format, and a format whose name
+# is itself a variable (#{$f}, #{t:${f}}) is refused because nothing here can
+# see which command will expand it. A name in a trailing comment is prose. The
+# check reads one line at a time, so a time format stays on the same line as
+# the listing that expands it.
+timefmt_awk='
+  function push(d, backtick) { ST[d] = 1; d++; Q[d] = ""; BT[d] = backtick; NW[d] = 0; CW[d] = ""; ST[d] = 0; return d }
+  function endword(d) { if (ST[d]) { NW[d]++; W[d, NW[d]] = CW[d] } CW[d] = ""; ST[d] = 0 }
+  # 1 when column stop is an argument of tmux list-windows, list-sessions or
+  # list-panes; 0 anywhere else in code; -1 inside a comment
+  function owned(line, stop,    i, c, d, k, x) {
+    d = 0; Q[0] = ""; BT[0] = 0; NW[0] = 0; CW[0] = ""; ST[0] = 0
+    for (i = 1; i < stop; i++) {
+      c = substr(line, i, 1)
+      if (Q[d] == SQ) { if (c == SQ) Q[d] = ""; else CW[d] = CW[d] c; continue }
+      if (c == "\\") { i++; CW[d] = CW[d] substr(line, i, 1); ST[d] = 1; continue }
+      if (Q[d] == DQ) {
+        if (c == DQ) Q[d] = ""
+        else if (c == "$" && substr(line, i + 1, 1) == "(") { i++; d = push(d, 0) }
+        else if (c == "`") d = push(d, 1)
+        else CW[d] = CW[d] c
+        continue
+      }
+      if (c == SQ || c == DQ) { Q[d] = c; ST[d] = 1; continue }
+      if (c == "#" && !ST[d]) return -1
+      if (c == "$" && substr(line, i + 1, 1) == "(") { i++; d = push(d, 0); continue }
+      if (c == "`") { if (BT[d]) d--; else d = push(d, 1); continue }
+      if (c == ")" && d > 0 && !BT[d]) { d--; continue }
+      if (c ~ /[;&|()]/) { endword(d); NW[d] = 0; continue }
+      if (c ~ /[[:space:]]/) { endword(d); continue }
+      CW[d] = CW[d] c; ST[d] = 1
+    }
+    k = 1
+    while (k <= NW[d] && (W[d, k] ~ /^[A-Za-z_][A-Za-z0-9_]*=/ || W[d, k] ~ /^(if|then|elif|else|do|while|until|!|command|exec|time)$/)) k++
+    if (k > NW[d] || W[d, k] != "tmux") return 0
+    for (k++; k <= NW[d]; k++) {
+      x = W[d, k]
+      if (x ~ /^-[cfLST]$/) { k++; continue }
+      if (x ~ /^-[cfLST]./ || x ~ /^-[2CDlNuvV]+$/) continue
+      break
+    }
+    if (k > NW[d] || W[d, k] !~ /^list-(windows|sessions|panes)$/) return 0
+    for (k++; k <= NW[d]; k++) if (W[d, k] ~ /;/) return 0
+    return 1
+  }
+  BEGIN { SQ = "\047"; DQ = "\"" }
+  FILENAME ~ /lint\.sh$/ { next }       # the checker has to name what it refuses
+  /^[[:space:]]*#/ { next }
+  /#[{]([^}$#{]*:)?[$]/ { print FILENAME ":" FNR ":" $0; next }
+  {
+    rest = $0; used = 0
+    while (match(rest, /(buffer_created|client_activity|client_created|session_activity|session_created|session_last_attached|window_activity)/)) {
+      name = substr(rest, RSTART, RLENGTH)
+      at = used + RSTART
+      before = at > 1 ? substr($0, at - 1, 1) : ""   # BWK awk reads substr(s, 0, 1) as s[1]
+      after = substr(rest, RSTART + RLENGTH, 1)
+      used += RSTART + RLENGTH - 1
+      rest = substr(rest, RSTART + RLENGTH)
+      if (before ~ /[A-Za-z0-9_]/ || after ~ /[A-Za-z0-9_]/) continue
+      r = owned($0, at)
+      if (r < 0) break
+      if (name ~ /^(buffer|client)_/ || r == 0) { print FILENAME ":" FNR ":" $0; break }
+    }
+  }
+'
+
+# A CHECKER PROVES ITSELF BEFORE IT JUDGES. The bad calibration names a listing
+# everywhere it is not the command: after the name, in a trailing comment, as a
+# target, inside the format, as the value of a tmux option, and across a shell
+# or tmux command boundary, a pipe and a subshell. The safe calibration carries
+# the production read itself, the helper that wraps it, a listing behind tmux's
+# own options or a shell keyword, a pipe after the format, a filter that
+# compares against a variable, a non-time pane format through display-message,
+# and prose in a comment line and a trailing comment, because each is a way
+# this predicate could have been written to refuse the tree it is meant to
+# pass.
+timefmt_cal="$(mktemp -d "${TMPDIR:-/tmp}/gangline-lint.XXXXXX")"
+cat > "$timefmt_cal/bad" <<'CAL'
+stamped="$(tmux display-message -p -t "$1" '#{window_activity}')"
+tmux display-message -p -t "=$SESSION" '#{session_created}'
+at="$(tmux display-message -p '#{t:session_activity}')"
+tmux list-windows -F '#{client_activity}'
+tmux display-message -p -t "$1" \
+  '#{window_activity}'
+tmux display-message -p -t "$id" '#{window_activity}' # read through list-windows later
+field=window_activity
+tmux display-message -p -t "$id" "#{${field}}"
+tmux display-message -p -t "$id" "#{t:$field}"
+tmux list-windows -F '#{window_id}'; tmux display-message -p '#{window_activity}'
+tmux list-panes -a -F '#{pane_id}' && tmux display-message -p '#{window_activity}'
+tmux list-windows -F '#{window_id}' | tmux display-message -p '#{window_activity}'
+tmux list-windows -F "$(tmux display-message -p '#{session_created}')"
+tmux display-message -p -t list-windows '#{window_activity}'
+tmux display-message -p -t "$id" 'list-panes #{window_activity}'
+tmux display-message -p "tmux list-windows #{window_activity}"
+tmux -S list-windows display-message -p '#{window_activity}'
+tmux list-windows -F '#{window_id}' \; display-message -p '#{window_activity}'
+window_activity="$(tmux list-windows -F '#{window_id}')"
+CAL
+cat > "$timefmt_cal/safe" <<'CAL'
+tmux list-windows -t "$1" -f "#{==:#{window_id},$1}" -F '#{window_activity}'
+created="$(tmux list-windows -t "=$SESSION" -F '#{session_created}')"
+tmux list-sessions -F '#{session_last_attached}'
+tmux list-panes -a -F '#{window_activity}'
+stamped="$(read_window_activity "$1" 2>/dev/null)"
+tmux -S "$socket" list-windows -t "$1" -F '#{window_activity}'
+if tmux list-sessions -F '#{session_activity}' | sort -n; then :; fi
+tmux list-windows -f "#{==:#{window_name},$name}" -F '#{window_id}'
+tmux display-message -p -t "$1" '#{pane_activity} #{window_id}'
+tmux display-message -p -t "$1" '#{pane_id}' # not window_activity: that crashes
+# display-message -p -t @9 '#{window_activity}' in a comment is prose
+CAL
+cal_bad="$(awk "$timefmt_awk" "$timefmt_cal/bad" | wc -l | tr -d ' ')"
+cal_safe="$(awk "$timefmt_awk" "$timefmt_cal/safe")"
+rm -rf -- "$timefmt_cal"
+if [ "$cal_bad" != 19 ] || [ -n "$cal_safe" ]; then
+  printf '%s\n' \
+    "lint: the tmux time-format check does not hold its own calibration, so its verdict about the tree means nothing." \
+    "rejected $cal_bad of 19 known-bad lines; wrongly rejected: ${cal_safe:-none}" >&2
+  exit 1
+fi
+
+timefmt_files=""
+for f in bin/gang install.sh collars/*.sh collars/plugins/* libexec/gang-* \
+  libexec/gang-tmux-guard/tmux statusline/*.sh test/*.sh; do
+  [ -f "$f" ] || continue
+  timefmt_files="$timefmt_files $f"
+done
+# shellcheck disable=SC2086  # a space-separated list of repository paths
+timefmt_hits="$(awk "$timefmt_awk" $timefmt_files)"
+if [ -n "$timefmt_hits" ]; then
+  printf '%s\n' \
+    "lint: a tmux window or session time format may appear only as the format of a list-windows, list-sessions or list-panes earlier on the same line, and a format name may not come from a variable; tmux 3.2a's server segfaults expanding one for a target that did not resolve:" \
+    "$timefmt_hits" >&2
+  exit 1
+fi
+
 # .githooks is globbed rather than listed: hooksPath points the whole directory
 # at git, so a hook added later is a shell file this repo runs, and it should
 # not also need an edit here to be read.
