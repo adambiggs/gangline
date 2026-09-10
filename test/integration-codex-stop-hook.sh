@@ -1256,6 +1256,26 @@ equal "the debtor may idle while its reply waits for the creditor's boundary" \
 # retires, so it carries the retired reply's correlation: the record on the
 # debtor is already settled and would not correlate it again.
 reply_a_spool="$GANG_LOCK_DIR/spool/$(tmux show-options -wqv -t "$reply_a_id" @gl_spool)"
+reply_super_expected=""
+for reply_super_entry in "$reply_a_spool"/[0-9]* "$reply_a_spool"/.deferred-[0-9]*; do
+  [ -f "$reply_super_entry" ] || continue
+  IFS=$'\t' read -r _ reply_super_sender _ reply_super_mode reply_super_reply_to _ \
+    < "$reply_super_entry"
+  [ "$reply_super_sender" = reply-b ] && [ "$reply_super_mode" = reply ] || continue
+  reply_super_rest="$reply_super_reply_to"
+  while :; do
+    reply_super_nonce="${reply_super_rest%%,*}"
+    case ",$reply_super_expected," in
+      *",$reply_super_nonce,"*) ;;
+      *) reply_super_expected="${reply_super_expected:+$reply_super_expected,}$reply_super_nonce" ;;
+    esac
+    [ "$reply_super_rest" != "$reply_super_nonce" ] || break
+    reply_super_rest="${reply_super_rest#*,}"
+  done
+done
+equal "the parked answer is among the replies the replacement will supersede" \
+  "$reply_parked_req" \
+  "$(printf '%s\n' "$reply_super_expected" | tr ',' '\n' | grep -Fx "$reply_parked_req")"
 reply_super_out="$(printf '%s' ACK_PARKED_SUPERSEDE \
   | TMUX_PANE="$reply_b_pane" "$GANG" send --to reply-a --supersede --stdin)"
 contains "a replacement for a parked reply is accepted" \
@@ -1264,8 +1284,8 @@ reply_super_meta=""
 for reply_super_entry in "$reply_a_spool"/[0-9]*; do
   reply_super_meta="$reply_super_meta$(head -n 1 "$reply_super_entry" | cut -f2,4,5)"$'\n'
 done
-equal "the replacement inherits the retired reply's correlation" \
-  $'reply-b\treply\t'"$reply_parked_req"$'\n' "$reply_super_meta"
+equal "the replacement inherits every retired reply correlation" \
+  $'reply-b\treply\t'"$reply_super_expected"$'\n' "$reply_super_meta"
 equal "superseding a settled reply leaves the debt settled" \
   $'clear\t-\t-\t-' \
   "$(TMUX_PANE="$reply_b_pane" "$GANG" reply-obligations)"
