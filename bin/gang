@@ -2383,9 +2383,20 @@ activity_hold_clear() { # $1 = window id; end any activity-only busy episode
     || die "cannot clear the activity-only bound on pane $1 — refusing to fabricate its state"
 }
 
+# A TIME FORMAT IS READ ONLY THROUGH A WINDOW TMUX HAS FOUND. tmux 3.2a expands
+# a time-typed format such as #{window_activity} for display-message even when
+# -t resolves to nothing, dereferences the missing window's clock, and the
+# server segfaults, taking every session on it (fixed upstream in tmux 3.3). A
+# window gang names can go at any moment, so this read never passes through a
+# target that may not resolve: list-windows expands its format only for windows
+# it iterates, and exits nonzero with "can't find window" once this one is gone.
+read_window_activity() { # $1 = window id (@N); print tmux's activity clock for it
+  tmux list-windows -t "$1" -f "#{==:#{window_id},$1}" -F '#{window_activity}'
+}
+
 activity_stamp() { # $1 = window id; tmux's own clock of the last write to that pty
   local stamped
-  stamped="$(tmux display-message -p -t "$1" '#{window_activity}' 2>/dev/null)" \
+  stamped="$(read_window_activity "$1" 2>/dev/null)" \
     || die "cannot read pty activity for pane $1 — refusing to consume unknown as inactive"
   case "$stamped" in
     ''|*[!0-9]*) die "tmux returned an unreadable activity stamp for pane $1: '$stamped'" ;;
@@ -2599,7 +2610,7 @@ turn_pane_still_writing() { # $1 = window id; 0 = the pty is being written to no
   [ "${GANG_QUIET_AT_REST:-}" = 1 ] || return 1
   require_whole GANG_ACTIVITY_WINDOW "$GANG_ACTIVITY_WINDOW" seconds
   local stamped now
-  stamped="$(tmux display-message -p -t "$1" '#{window_activity}' 2>/dev/null)" \
+  stamped="$(read_window_activity "$1" 2>/dev/null)" \
     || die "cannot read pty activity for pane $1 — refusing to consume unknown as a quiet pane"
   case "$stamped" in
     ''|*[!0-9]*) die "tmux returned an unreadable activity stamp for pane $1: '$stamped'" ;;
@@ -3799,7 +3810,7 @@ last_action_read() { # $1 window, collar loaded; ACTION_* set, never fatal
 
 pane_write_age() { # $1 = window id; seconds since the pty last moved; 1 = unreadable
   local stamped now
-  stamped="$(tmux display-message -p -t "$1" '#{window_activity}' 2>/dev/null)" || return 1
+  stamped="$(read_window_activity "$1" 2>/dev/null)" || return 1
   case "$stamped" in ''|*[!0-9]*) return 1 ;; esac
   now="$(date +%s)"
   [ "$stamped" -le "$now" ] || return 1
@@ -12276,9 +12287,11 @@ launch_record_check() { # $1 = task label; refuse what a record line cannot carr
 usage_events_path() { printf '%s' "${XDG_DATA_HOME:-$HOME/.local/share}/gangline/usage/events.jsonl"; }
 
 usage_team_created() { # print the live session's creation epoch, or nothing
-  # READ THROUGH THE SESSION'S WINDOWS, not display-message: tmux 3.2a's
-  # server exits on `display-message -p -t =session` from a client with no
-  # pane, and every window of a session carries the same creation time. The
+  # READ THROUGH THE SESSION'S WINDOWS, not display-message: display-message
+  # reads `-t =session` as a pane target, which does not resolve, and tmux
+  # 3.2a's server segfaults expanding a time format for a target that did not
+  # resolve (see read_window_activity). Every window of a session carries the same
+  # creation time. The
   # name plus this epoch is the team's identity in the usage record; a later
   # team reusing the name is a different team.
   local created
