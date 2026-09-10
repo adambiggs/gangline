@@ -190,3 +190,4 @@ Gangline's durable constraints live in the records below. A record's id is perma
 | [0184](0184-recorded-usage-percentages-are-the-ones-a-provider-published.md) | Recorded usage percentages are the ones a provider published | accepted | 2026-09-09 |
 | [0185](0185-a-usage-threshold-alerts-once-inside-the-window-it-measures.md) | A usage threshold alerts once inside the window it measures | accepted | 2026-09-09 |
 | [0186](0186-no-reply-envelopes-join-the-next-ordinary-delivery.md) | No-reply envelopes join the next ordinary delivery | accepted | 2026-09-09 |
+| [0187](0187-context-lights-resolve-per-collar-and-model-from-operator-configuration.md) | Context lights resolve per collar and model from operator configuration | proposed | 2026-09-10 |
