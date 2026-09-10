@@ -774,6 +774,8 @@ fi
 # A WAKING CALLER MUST NOT DELETE A NEW CALLER'S HOOK. A is held after Stop
 # removed and signalled its old registration; C arms in that gap. Only after C
 # owns its sparse key may A run cleanup. The second Stop must still reach C.
+# The deadline is only a leak guard here, and spans both production wait setups
+# plus the fixture-controlled hold, so leave headroom for a loaded host.
 tmux set-option -w -t "$waitable_id" @gl_turn "open $(date +%s)"
 wait_arm_a="gang-test-wait-arm-$$-race-a"
 wait_woke_a="gang-test-wait-woke-$$-race-a"
@@ -783,7 +785,7 @@ BASH_ENV="$RUN_ROOT/wait-arm-env" GANG_TEST_WAIT_ARM="$wait_arm_a" \
   GANG_TEST_CLEANUP_RELEASE="$wait_cleanup_a" \
   GANG_TEST_WAIT_TRACE="$wait_trace" GANG_TEST_REFUSE_REWAIT=1 \
   GANG_TEST_WAKE_SEEN_FILE="$RUN_ROOT/wait-wake-seen-race-a" \
-  "$GANG" wait waitable --until "done" --timeout 5 \
+  "$GANG" wait waitable --until "done" --timeout 15 \
   >"$RUN_ROOT/wait-race-a.out" 2>"$RUN_ROOT/wait-race-a.err" &
 wait_race_a_pid=$!
 tmux wait-for "$wait_arm_a"
@@ -794,7 +796,7 @@ tmux set-option -w -t "$waitable_id" @gl_turn "open $(date +%s)"
 wait_arm_c="gang-test-wait-arm-$$-race-c"
 BASH_ENV="$RUN_ROOT/wait-arm-env" GANG_TEST_WAIT_ARM="$wait_arm_c" \
   GANG_TEST_WAIT_TRACE="$wait_trace" GANG_TEST_REFUSE_REWAIT=1 \
-  "$GANG" wait waitable --until "done" --timeout 5 \
+  "$GANG" wait waitable --until "done" --timeout 15 \
   >"$RUN_ROOT/wait-race-c.out" 2>"$RUN_ROOT/wait-race-c.err" &
 wait_race_c_pid=$!
 tmux wait-for "$wait_arm_c"
