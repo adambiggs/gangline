@@ -1559,12 +1559,12 @@ done
 # nothing from gang about what it did and did not read. The window is really
 # killed, on a real server, through the real guard.
 #
-# A SECOND EXPLICITLY NAMED DISPOSABLE SERVER, because the death takes its
-# server with it — measured: the keeper window below survives the kill-window
-# itself and the server is gone by the very next read — and this proof must not
-# take the suite's substrate with it. Which of the guard's two nonzero causes
-# fires is therefore not pinned; what is asserted is the clause that belongs to
-# gang, which is the same either way.
+# A SECOND EXPLICITLY NAMED DISPOSABLE SERVER, so a read that kills its server
+# kills only this one. tmux 3.2a segfaults when display-message expands a
+# time-typed format such as #{window_activity} for a target that no longer
+# resolves (fixed upstream in tmux 3.3), and a window that has just gone is
+# exactly that target. The server must still answer when each world ends, and
+# status must report the window as gone, not the server as lost.
 #
 # THE TWO COMMANDS NEED THE DEATH AT DIFFERENT MOMENTS, and each is placed at
 # the earliest point that is still the read under test. `resolve` loads the
@@ -1618,12 +1618,15 @@ vanish_world() { # $1 = agent name, $2 = collar; a private server and a keeper
   env -u TMUX TMUX_TMPDIR="$vanish_root" tmux set-option -w -t "$vanish_id" @gl_collar "$2"
 }
 
-vanish_down() { # the private server must be gone BEFORE its root is removed,
-                # and must say so itself rather than be assumed
-  local said="" rc=0 alive=""
+vanish_down() { # the private server must outlive the vanished window, then be
+                # gone BEFORE its root is removed, and say so itself
+  local said="" rc=0 alive="" survived=no
   if tmux -S "$vanish_socket" list-sessions >/dev/null 2>&1; then
+    survived=yes
     said="$(tmux -S "$vanish_socket" kill-server 2>&1)" || rc=$?
   fi
+  equal "the vanish world's private server outlives the window gang read" \
+    yes "$survived"
   ! tmux -S "$vanish_socket" list-sessions >/dev/null 2>&1 \
     || alive="kill-server exited $rc and said: ${said:-nothing}"
   equal "the vanish world's private server is gone before its root is removed" \
@@ -1648,6 +1651,10 @@ contains "and status says in its own words that the rest is unknown" \
   "$vanish_status" "the rest of the report for 'vanishing' is unknown"
 contains "naming the option whose value it will not report as unset" \
   "$vanish_status" "UNVERIFIED rather than unset"
+contains "because the window is gone" \
+  "$vanish_status" "the window is gone as of the read of"
+excludes "not because its read took the server down" \
+  "$vanish_status" "the tmux server stopped answering"
 excludes "and it is not the pane-activity refusal answering instead" \
   "$vanish_status" "activity-only bound"
 
