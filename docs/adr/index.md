@@ -187,3 +187,5 @@ Gangline's durable constraints live in the records below. A record's id is perma
 | [0181](0181-release-please-holds-no-tag-creation-override.md) | Release Please holds no tag-creation override | accepted | 2026-09-08 |
 | [0182](0182-same-name-test-path-shims-share-one-fail-closed-guard.md) | Same-name test PATH shims share one fail-closed guard | accepted | 2026-09-09 |
 | [0183](0183-actionable-advisory-collars-receive-empty-spool-ticks.md) | Actionable advisory collars receive empty-spool ticks | accepted | 2026-09-09 |
+| [0184](0184-recorded-usage-percentages-are-the-ones-a-provider-published.md) | Recorded usage percentages are the ones a provider published | accepted | 2026-09-09 |
+| [0185](0185-a-usage-threshold-alerts-once-inside-the-window-it-measures.md) | A usage threshold alerts once inside the window it measures | accepted | 2026-09-09 |
