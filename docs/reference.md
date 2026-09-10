@@ -642,9 +642,11 @@ write it is refused, so the turn stays open and its replies stay answerable. A
 message correlated only to reply records is a pure acknowledgement and is held outside
 the waking queue after durable spool acceptance. A message answering any request record
 stays immediate because its peer is waiting for the answer. Deferred acknowledgements
-join the peer's next Gangline wake ahead of current mail. A native prompt promotes
-them under their original stamps but does not claim hook stdout as delivery; the whole
-ordinary queue remains for the next composer-verified drain. A transient timer begins
+join the peer's next ordinary composer-verified Gangline drain ahead of current mail.
+The drain promotes them under their original stamps only after it proves a landing
+zone, so an older ordinary request and a held acknowledgement enter one bundle. A
+native prompt alone does not promote them or mint a follow-up acknowledgement turn;
+advisory hook stdout is not delivery proof. A transient timer begins
 an ordinary verified wake after thirty minutes. Even a suspend-delayed first callback
 attempts delivery once; after a failed attempt its service retries every five seconds
 for at most five minutes beyond the deadline. If that recovery window is exhausted,

@@ -107,8 +107,10 @@ team, Gangline reads the sender from the calling window; outside callers name
 themselves with `--from`. Ordinary delivery succeeds only after the target
 composer visibly accepts the paste and submission. An answer to a request still
 wakes its requester. A pure acknowledgement of one or more replies owes no
-reply of its own, so it is held for the recipient's next waking event and
-visibly joined as accumulated context. After thirty minutes its deadline
+reply of its own, so it is held for the recipient's next ordinary verified
+Gangline delivery and visibly joined as accumulated context. A native prompt
+alone does not turn the held acknowledgement into a follow-up turn. After
+thirty minutes its deadline
 service attempts the ordinary verified path even if suspend delayed its first
 invocation, then retries short-lived delivery contention for up to five minutes.
 If an attempted recovery exhausts that window, `gang status` distinguishes the

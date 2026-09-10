@@ -7,7 +7,7 @@ superseded-by: []
 tags: [delivery, replies]
 ---
 
-# ADR-0186: No-reply envelopes join the next waking delivery
+# ADR-0186: No-reply envelopes join the next ordinary delivery
 
 ## Context
 
@@ -45,13 +45,16 @@ service as gone for an unknown reason. Status, roster, mail, teardown, and orpha
 archival expose the hidden entry and its timer health, including an overdue entry whose
 retry authority is gone.
 
-The next Gangline message that would wake the recipient is first committed beside the
-deferred entries; they are promoted under one pane lock and the original acceptance
-stamps order one verified delivery. A native prompt promotes the deferred set under
-those same stamps but does not treat advisory hook stdout as delivery proof; the entire
-ordinary queue remains for the next composer-verified drain. Each deferred body is
-visibly marked. If no earlier wake arrives, the timer promotes the whole accumulated
-set and attempts an ordinary drain.
+The next ordinary Gangline delivery that reaches a composer-verified drain promotes
+the deferred entries under the drain's pane lock. Their original acceptance stamps
+place them beside older ordinary mail before one claim loop builds one verified
+delivery. A native prompt alone does not promote them: advisory hook output is not
+delivery proof, and exposing held mail there would make the prompt's following Stop
+create a second turn solely for acknowledgements. Each deferred body is visibly
+marked. If no earlier ordinary delivery arrives, the timer promotes the whole
+accumulated set and attempts an ordinary drain. Explicit live-only sends and immediate
+state or input-stall alerts retain their priority semantics rather than joining the
+spool transaction.
 
 ## Consequences
 
@@ -61,8 +64,10 @@ An early wake leaves stale timer callbacks harmless because their exact hidden e
 longer exists. Promotion, delivery ambiguity, teardown, and timer loss remain named
 states rather than disappearance.
 
-A collar without native hooks cannot contribute a prompt or Stop delivery opportunity;
-its acknowledgement waits for another peer wake, self-mail, or the deadline service.
+A collar without native hooks cannot contribute a Stop delivery opportunity; its
+acknowledgement waits for another ordinary Gangline delivery, self-mail, or the
+deadline service. A prompt with no ordinary queued delivery does not mint a standalone
+acknowledgement turn.
 The historical trace cannot quantify the newly safe subtype split. Future command
 verdicts distinguish `held` pure acknowledgements from immediate answers, so production
 reduction is measurable prospectively rather than claimed from the old 122-turn total.
@@ -70,7 +75,8 @@ reduction is measurable prospectively rather than claimed from the old 122-turn 
 This decision is falsified by a replay in which an uncorrelated peer message fails to
 wake an idle recipient immediately, an answer to a matched request is held, the
 recipient's unrelated reply-obligation query changes across a hold, accumulated
-envelopes overtake older ordinary mail or arrive after the waking message or more than
-once, hook stdout consumes an entry without verified harness acceptance, retry
+envelopes overtake older ordinary mail or arrive after the ordinary waking message
+whose drain promoted them or more than once, hook stdout consumes an entry without
+verified harness acceptance, retry
 processes continue beyond their five-minute recovery window, or a hidden entry with no
 live retry authority lacks a loud overdue handoff.

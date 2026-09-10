@@ -7476,32 +7476,6 @@ deferred_promote_all_locked() { # $1 window; caller holds its pane lock
   return 1
 }
 
-deferred_context_promote() { # $1 pane/window; expose quiet mail to verified drains
-  local id
-  id="$(tmux display-message -p -t "$1" '#{window_id}' 2>/dev/null)" || {
-    DEFERRED_ERROR="the native prompt's window could not be resolved"
-    return 2
-  }
-  [ "$(deferred_count "$id")" -gt 0 ] || return 1
-  lock_pane "$id"
-  spool_existing "$id" || {
-    lock_release
-    DEFERRED_ERROR="the native prompt's spool identity disappeared before its deferred mail was promoted"
-    return 2
-  }
-  # Hook stdout is advisory context, not verified harness acceptance. Promote
-  # the quiet population back under its original stamps, but leave the entire
-  # ordinary queue for a composer-verified drain. This preserves T1-before-T2
-  # order without consuming an owed request the harness may never display.
-  if ! deferred_promote_all_locked "$id"; then
-    lock_release
-    DEFERRED_ERROR="deferred envelopes could not be exposed at the native wake: $DEFERRED_PROMOTE_ERROR"
-    return 2
-  fi
-  lock_release
-  return 0
-}
-
 ARCHIVE_CLAIMED="" ARCHIVE_CLAIM_ERROR=""
 archive_claim_try() { # $1 = operation label; claim a fresh archive in ARCHIVE_CLAIMED
   local root
@@ -7966,6 +7940,17 @@ spool_drain() { # $1 window id; whole queue oldest-first; optional $2 = locked
        fi ;;
     *) die "internal: busy returned unknown verdict $busy_rc" ;;
   esac
+  # THIS DRAIN IS ALREADY THE WAKE. Promote quiet envelopes only after the
+  # landing zone is proved, while the same pane lock still excludes every
+  # sender and competing drain. Their original acceptance stamps put them
+  # beside older ordinary mail before one claim loop builds one verified
+  # bundle. A failed promotion is transactional and must not delay the current
+  # waking message; it stays on its own timer and the failure remains loud.
+  if [ "$(deferred_count "$1")" -gt 0 ] \
+     && ! deferred_promote_all_locked "$1"; then
+    printf 'spool drain continuing without accumulated context: %s; deferred envelopes retain their forced-delivery timers\n' \
+      "$DEFERRED_PROMOTE_ERROR" >&2
+  fi
   for e in "$SPOOL_DIR"/[0-9]*; do
     [ -f "$e" ] || continue
     claim="$SPOOL_DIR/sending-${e##*/}"
@@ -9852,36 +9837,10 @@ time_light_note() { # append the team curfew edge, if any, to ADVISORY_NOTE
 }
 
 advisory_reply() { # $1 event, $2 collar; emit at most one native hook payload
-  local deferred_rc=1 deferred_detail="" light_note=""
   ADVISORY_NOTE=""
-  # Build potentially collar-backed advisory readings before promoting mail,
-  # so an ordinary drain gets the earliest possible verified opportunity once
-  # the native event makes the hidden entries visible.
   context_light_note "$2"
   usage_light_note "$2"
   time_light_note
-  light_note="$ADVISORY_NOTE"
-  if [ "$1" = UserPromptSubmit ]; then
-    deferred_rc=0
-    # Promotion is opportunistic at this native edge. lock_pane refuses by
-    # exiting, so isolate it: a competing Gangline delivery must delay hidden
-    # mail without discarding unrelated advisory lights already sampled above.
-    deferred_detail="$(
-      {
-        deferred_context_promote "$TMUX_PANE" || {
-          deferred_rc=$?
-          [ -z "$DEFERRED_ERROR" ] || printf '%s\n' "$DEFERRED_ERROR" >&2
-          exit "$deferred_rc"
-        }
-      } 2>&1
-    )" || deferred_rc=$?
-    case "$deferred_rc" in
-      0|1) ;;
-      *) printf 'deferred envelopes could not be exposed at this native wake: %s\n' \
-           "${deferred_detail:-the promotion attempt returned no diagnostic}" >&2 ;;
-    esac
-  fi
-  ADVISORY_NOTE="$light_note"
   [ -n "$ADVISORY_NOTE" ] || return 0
   python3 -c 'import json,sys; print(json.dumps({"hookSpecificOutput":{"hookEventName":sys.argv[1],"additionalContext":sys.argv[2]}}))' \
     "$1" "$ADVISORY_NOTE"
@@ -11284,7 +11243,7 @@ cmd_send() {
       lock_release
       printf '%s\n%s\n' \
         "$(colour "$C_OK" "held for $name as [gang:$SEND_WIRE] — accepted, not yet in the session")" \
-        "$(colour "$C_DIM" "(owes no reply) it joins the next waking delivery; its retrying deadline starts in $(human_seconds "$DEFERRED_MAX_SECONDS"). 'gang status $name' names it until then.")"
+        "$(colour "$C_DIM" "(owes no reply) it joins the next ordinary verified Gangline delivery; its retrying deadline starts in $(human_seconds "$DEFERRED_MAX_SECONDS"). 'gang status $name' names it until then.")"
       return 0
     fi
     printf 'gang: deferred delivery unavailable (%s); preserving immediate delivery for %s\n' \
