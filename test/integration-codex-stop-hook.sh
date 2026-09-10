@@ -301,59 +301,30 @@ contains "an older request waits while the recipient's turn is live" \
 printf '%s' DEFER_NATIVE_REPLY \
   | TMUX_PANE="$defer_b_pane" "$GANG" send --to defer-a --stdin >/dev/null
 defer_native_obligations_before="$(TMUX_PANE="$defer_a_pane" "$GANG" reply-obligations)"
-tmux set-option -w -t "$defer_a_id" @gl_context_lights 100000,200000
-tmux set-option -w -t "$defer_a_id" @gl_context_ready 1
-tmux set-option -w -t "$defer_a_id" @test_context '150k/300k (50%)'
-defer_native_lock="$GANG_LOCK_DIR/$(printf '%s' "$defer_a_id" | tr -c 'A-Za-z0-9' '_').lock"
-ln -s "$$" "$defer_native_lock"
-defer_native_contended_hook="$(python3 -c \
-  'import json; print(json.dumps({"hook_event_name":"UserPromptSubmit","prompt":"DEFER_CONTENDED_WAKE"}))' \
-  | TMUX_PANE="$defer_a_pane" "$GANG" hook)"
-contains "promotion lock contention cannot swallow an unrelated advisory light" \
-  "$defer_native_contended_hook" "Yellow context light"
-contains "a refused native promotion leaves the hidden envelope for another wake" \
-  "$(printf '%s\n' "$GANG_LOCK_DIR/spool/$(tmux show-options -wqv -t "$defer_a_id" @gl_spool)"/.deferred-*)" \
-  "/.deferred-"
-rm -f -- "$defer_native_lock"
-defer_native_hook="$(python3 -c \
-  'import json; print(json.dumps({"hook_event_name":"UserPromptSubmit","prompt":"DEFER_OPERATOR_WAKE"}))' \
-  | TMUX_PANE="$defer_a_pane" "$GANG" hook)"
-excludes "a native prompt never claims unverified hook context as delivery" \
-  "$defer_native_hook" "DEFER_NATIVE_REPLY"
-tmux set-option -uw -t "$defer_a_id" @gl_context_lights
-tmux set-option -uw -t "$defer_a_id" @gl_context_ready
-tmux set-option -uw -t "$defer_a_id" @test_context
-tmux set-option -uw -t "$defer_a_id" @gl_context_light
-defer_native_mail="$($GANG mail defer-a)"
-contains "the native prompt exposes the held reply to verified drains" \
-  "$defer_native_mail" "DEFER_NATIVE_REPLY"
-contains "promoted accumulated context stays visibly distinguished" \
-  "$defer_native_mail" "accumulated context; held because this envelope owed no reply"
-equal "the native wake preserves global order across ordinary and deferred mail" \
+defer_native_drain_channel="gang-spool-drain-$defer_a_id"
+tmux wait-for "$defer_native_drain_channel" &
+defer_native_drain_wait=$!
+reply_stop_run "$defer_a_pane" "$reply_stop_active_payload"
+wait "$defer_native_drain_wait"
+defer_native_bundle="$(pane_all defer-a)"
+# source-guard: producer@c7fe7240e1a5: both markers are unique to the ordinary request and held acknowledgement that the immediately preceding Stop must submit in one bundle
+equal "one waking Stop preserves global order across ordinary and deferred mail" \
   "DEFER_NATIVE_OLDER_REQUEST DEFER_NATIVE_REPLY " \
-  "$(printf '%s\n' "$defer_native_mail" \
+  "$(printf '%s\n' "$defer_native_bundle" \
       | grep -oE 'DEFER_NATIVE_OLDER_REQUEST|DEFER_NATIVE_REPLY' \
       | awk '!seen[$0]++' | tr '\n' ' ')"
-equal "native promotion cannot change the recipient's obligation set" \
+equal "drain-time promotion cannot change the recipient's obligation set" \
   "$defer_native_obligations_before" \
   "$(TMUX_PANE="$defer_a_pane" "$GANG" reply-obligations)"
-equal "native promotion removes the hidden entry exactly once" "" \
+equal "the waking Stop removes the hidden entry exactly once" "" \
   "$(printf '%s\n' "$GANG_LOCK_DIR/spool/$(tmux show-options -wqv -t "$defer_a_id" @gl_spool)"/.deferred-* \
       | grep -v '\*$' || :)"
-defer_native_read="$(TMUX_PANE="$defer_a_pane" "$GANG" mail)"
-equal "a verified self-read preserves global order after native promotion" \
-  "DEFER_NATIVE_OLDER_REQUEST DEFER_NATIVE_REPLY " \
-  "$(printf '%s\n' "$defer_native_read" \
-      | grep -oE 'DEFER_NATIVE_OLDER_REQUEST|DEFER_NATIVE_REPLY' \
-      | awk '!seen[$0]++' | tr '\n' ' ')"
-excludes "the verified read consumes every promoted entry" \
-  "$($GANG mail defer-a)" "DEFER_NATIVE_REPLY"
 
 reply_stop_run "$defer_a_pane" "$reply_stop_active_payload"
 defer_b_stop_rc=0
 reply_stop_run "$defer_b_pane" || defer_b_stop_rc=$?
 defer_b_stop_why="$(tr '\n' ' ' < "$reply_stop_stderr")"
-equal "the sender can end its turn after native-context reply delivery" 0 \
+equal "the sender can end its turn after bundled reply delivery" 0 \
   "$defer_b_stop_rc${defer_b_stop_why:+: $defer_b_stop_why}"
 prepare_defer_ack_chain DEFER_SUPERSEDE
 printf '%s' DEFER_SUPERSEDED_REPLY \
