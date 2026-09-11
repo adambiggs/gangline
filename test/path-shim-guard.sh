@@ -43,6 +43,10 @@ path_shim_guard() {
       "$gl_path_shim_label" "${gl_path_shim_self:-<empty>}" >&2
     return 97
   fi
+  # POSIX leaves -ef unspecified, but every sh that sources this guard
+  # implements it (dash, bash, busybox ash), and the alternatives compare
+  # paths or inodes alone and would miss a hard link or a cross-device match.
+  # shellcheck disable=SC3013
   if [ "$gl_path_shim_target" -ef "$gl_path_shim_self" ]; then
     printf '%s: target resolves to the shim itself: %s\n' \
       "$gl_path_shim_label" "$gl_path_shim_target" >&2
