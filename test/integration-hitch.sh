@@ -2982,3 +2982,48 @@ refuses "and once every pane has exited the same window reads as empty" \
   "$GANG" hitch splitcorpse -c bash -d /tmp
 "$GANG" drop splitcorpse >/dev/null
 equal "clearing the split window frees the name" "" "$(window_id splitcorpse)"
+
+# A REFUSED CODEX LAUNCH HOLDS ITS OWN CORPSE, ON THE TEAM'S SERVER. The Codex
+# collar's hook preflight exits 78 in the pane before the harness starts, and
+# hitch can quote why only from a held corpse. The launch withholds TMUX, so the
+# hold has to be aimed: beside a team on a labelled server a bare client reaches
+# the default socket, which is another server or none. This pane is launched
+# with the prefix hitch gives an agent, and TMUX_TMPDIR names an empty directory
+# so a bare client finds no server, as it does beside a -L team, instead of
+# being routed to this suite's socket. Its death is ordered through the fifo.
+codexheld_elsewhere="$RUN_ROOT/codexheld-elsewhere"
+mkdir -m 700 "$codexheld_elsewhere"
+mkfifo "$RUN_ROOT/codexheld.fifo"
+codexheld_python="$(command -v python3)"
+codexheld_hooks=""
+for event in SessionStart UserPromptSubmit PostToolUse PermissionRequest \
+             PreCompact PostCompact Stop; do
+  codexheld_hooks="$codexheld_hooks -c 'hooks.$event=[{ hooks = [{ type = \"command\", command = \"/bin/true\" }] }]'"
+done
+codexheld_pane="$(tmux new-window -d -P -F '#{pane_id}' -t "=$GANG_SESSION" \
+  -n codexheld -c "$RUN_ROOT" \
+  "exec 9<>$RUN_ROOT/codexheld.fifo; exec env -u TMUX GANG_TMUX_SOCKET=\"\${TMUX%%,*}\" TMUX_TMPDIR=$codexheld_elsewhere PATH=$CODEX_STUB/bin:\$PATH CODEX_UNTRUSTED=1 $codexheld_python $ROOT/collars/plugins/codex-hooks-preflight.py codex$codexheld_hooks")"
+exec 3<"$RUN_ROOT/codexheld.fifo"
+cat <&3 >/dev/null
+exec 3<&-
+tmux run-shell true >/dev/null
+codexheld_window_rc=0
+codexheld_window="$(window_id codexheld)" || codexheld_window_rc=$?
+if [ "$codexheld_window_rc" -ne 0 ] || [ -z "$codexheld_window" ]; then
+  fail "a refused codex launch leaves its pane held on the team's server" \
+    "its window is gone, so nothing can read why it refused"
+else
+  equal "a refused codex launch leaves its pane held on the team's server" \
+    1 "$(tmux list-panes -t "$codexheld_pane" \
+      -f "#{==:#{pane_id},$codexheld_pane}" -F '#{pane_dead}')"
+  codexheld_capture="$(tmux capture-pane -p -J -S - -t "$codexheld_pane")"
+  # source-guard: producer@ac3781031fd5: the preflight is the only process this pane ever ran and the only source of this line; the stub answers it over pipes and prints nothing to the terminal on this path
+  contains "and the held corpse carries the refusal's last line" \
+    "$codexheld_capture" "codex hook(s) are untrusted"
+  # source-guard: producer@c26570109d3e: only the preflight's refusal composes this cd-and-codex line, from the pane's start directory and its argv; tmux runs the launch command without echoing it into the pane
+  contains "and the remediation as one line that runs from any directory" \
+    "$codexheld_capture" "  cd $(cd -P "$RUN_ROOT" && pwd) && codex -c "
+  excludes "and holding it met no refusal" \
+    "$codexheld_capture" "could not hold this pane"
+  tmux kill-window -t "$codexheld_window"
+fi

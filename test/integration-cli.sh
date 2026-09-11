@@ -713,7 +713,8 @@ if "app-server" in args:
             "eventName": event,
             "command": command,
             "enabled": os.environ.get("CODEX_DISABLE_EVENT", "").lower() != event,
-            "trustStatus": "trusted",
+            "trustStatus": ("untrusted" if os.environ.get("CODEX_UNTRUSTED")
+                            else "trusted"),
         })
     drop = os.environ.get("CODEX_DROP_EVENT", "").lower()
     hooks = [hook for hook in hooks if hook["eventName"] != drop]

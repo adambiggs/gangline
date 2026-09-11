@@ -91,17 +91,31 @@ def hold_corpse():
     pane only for a held corpse. Without this the refusal is printed to a pane
     that is gone before anything reads it, and the operator is left with a
     launch line and no reason attached to it.
+
+    The launch withholds TMUX from the pane, so a bare client reaches tmux's
+    default socket, not the team's server, and a pane id names a pane only on
+    its own server. GANG_TMUX_SOCKET is the launch's explicit route back; a run
+    by hand inside tmux has neither it nor the need for it, since TMUX is set.
     """
     pane = os.environ.get("TMUX_PANE")
     if not pane:
         return
+    argv = ["tmux"]
+    socket = os.environ.get("GANG_TMUX_SOCKET")
+    if socket:
+        argv += ["-S", socket]
+    argv += ["set-option", "-w", "-t", pane, "remain-on-exit", "on"]
     try:
-        subprocess.run(
-            ["tmux", "set-option", "-w", "-t", pane, "remain-on-exit", "on"],
-            stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, timeout=10,
-        )
-    except (OSError, subprocess.SubprocessError):
-        pass
+        held = subprocess.run(argv, stdout=subprocess.DEVNULL,
+                              stderr=subprocess.PIPE, text=True, timeout=10)
+    except (OSError, subprocess.SubprocessError) as exc:
+        print("gang: could not hold this pane for hitch to read (%s)" % exc,
+              file=sys.stderr)
+        return
+    if held.returncode != 0:
+        print("gang: could not hold this pane for hitch to read: %s"
+              % (held.stderr.strip() or "tmux exited %d" % held.returncode),
+              file=sys.stderr)
 
 
 def refuse(detail, last_line) -> NoReturn:
@@ -379,18 +393,23 @@ def main():
         "second install, a worktree or a moved tree presents a hook codex has not",
         "seen. Replacing the files under the same root does not.",
         "",
-        "Trusting is yours to grant, not Gangline's. Start codex once in",
-        "%s with the same launch and answer" % cwd,
-        "'Trust all and continue', then re-hitch:",
+        "Codex keys this trust to each hook's content, not to a directory: granted",
+        "once, it holds in every directory for this install. The cd only lets the",
+        "same run answer this directory's folder-trust prompt, which codex records",
+        "per path.",
         "",
-        "  " + " ".join(shlex.quote(word) for word in command),
+        "Trusting is yours to grant, not Gangline's. Run this line once, answer",
+        "'Trust all and continue', quit codex, then re-hitch:",
+        "",
+        "  cd %s && %s" % (shlex.quote(cwd),
+                           " ".join(shlex.quote(word) for word in command)),
         "",
     ]
     refuse(
         detail,
-        "gang: %d codex hook(s) are untrusted here — run the codex line above in %s "
-        "once, answer 'Trust all and continue', then re-hitch (this held window "
-        "carries the full list: gang capture <name> 40)." % (len(pending), cwd))
+        "gang: %d codex hook(s) are untrusted — run the cd && codex line above "
+        "once, answer 'Trust all and continue', quit codex, then re-hitch (this held "
+        "window carries the full list: gang capture <name> 40)." % len(pending))
 
 
 if __name__ == "__main__":
