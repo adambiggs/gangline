@@ -106,7 +106,7 @@ selects the harness. If a native first-run gate appears, `up` exposes it before
 waiting for startup-contract delivery, so answering that prompt remains the
 only operator step.
 
-### `gang hitch <name> [-c harness] [-d dir] [-m model] [-e effort] [-t|--task label] [-r|--role role] [-l|--lights lights] [--resume [session-id]]`
+### `gang hitch <name> [-c harness] [-d dir] [-m model] [-e effort] [-t|--task label] [-r|--role role] [-l|--lights lights] [--resume [session-id]] [--stdin]`
 
 Starts a native harness in a named tmux window and delivers one startup contract.
 That contract names the agent and carries `CONTRACT.md`, which holds the
@@ -129,6 +129,17 @@ If `$GANG_CONFIG_DIR/DOCTRINE.md` is present, readable,
 valid UTF-8 prose, the contract attributes and
 appends it byte-exactly. Every hitch carries doctrine; Gangline cannot infer
 which caller is the operator. `adopt` still injects no startup text.
+
+With `--stdin`, `hitch` reads a message from standard input before it launches
+anything and sends it to the new agent after the startup contract, through the
+ordinary `gang send` path from the calling window. The message carries that
+window's observed identity and the reply it owes, and it waits behind the
+contract wherever the contract waits, a first-run prompt included. Only a caller
+inside the team has an identity to send it under; one outside is refused before
+launch and sends separately with `gang send --from`. Standard input is read as
+`gang send --stdin` reads it: a pipe, a file or a heredoc, never a terminal.
+Without the flag `hitch` reads nothing from standard input, so where it can see
+unread input waiting there it refuses before launching rather than drop it.
 
 `hitch` registers the launch record `gang usage` joins on: the model and effort
 chosen (empty where none was), the directory, the wall-clock start, and the
@@ -155,7 +166,8 @@ After positive gate evidence, `GANG_BOOT_TIMEOUT` is one observation slice and
 `GANG_GATE_LOOKS` bounds how many slices see the prompt still unanswered. At the
 bound `hitch` stops waiting and exits 4 — distinct from a failed hitch and from
 a delivered one — with the window alive, the harness running behind its prompt,
-and the attributed contract committed to the spool. A prompt is answered by a
+and the attributed contract committed to the spool, with any `--stdin` message
+queued behind it. A prompt is answered by a
 person, and holding the caller's terminal until one arrives stalls whoever
 called: often another agent, which cannot answer a native prompt at all, so one
 gated boot becomes two stopped agents. Raise `GANG_GATE_LOOKS` where the

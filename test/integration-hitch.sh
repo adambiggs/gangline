@@ -818,6 +818,91 @@ excludes "the late gate receives none of the startup contract" \
   "$(pane startup-delivery-gate)" "You are startup-delivery-gate in Gangline"
 "$GANG" drop startup-delivery-gate >/dev/null
 
+# A MESSAGE HANDED TO HITCH FOLLOWS THE CONTRACT. Hitch read no stdin, so a
+# heredoc given to it was dropped in every outcome, first-run prompt or not.
+# With --stdin the message is read before anything launches and sent after the
+# contract as an ordinary send from the calling window, under that window's
+# observed identity.
+hitch_body_sender="$(tmux list-panes -t "$(window_id alpha)" -F '#{pane_id}')"
+hitch_body_rc=0
+hitch_body_out="$(printf 'MARK_HITCH_BODY' | TMUX_PANE="$hitch_body_sender" \
+  "$GANG" hitch hitchbody -c bash -d /tmp --stdin 2>&1)" || hitch_body_rc=$?
+equal "hitch --stdin launches the agent and sends it the message" \
+  0 "$hitch_body_rc"
+if [ -n "$(window_id hitchbody)" ]; then
+  hitch_body_mail_rc=0
+  hitch_body_mail="$("$GANG" mail hitchbody 2>&1)" || hitch_body_mail_rc=$?
+  equal "the new agent's spool reads" 0 "$hitch_body_mail_rc"
+  # Delivered or queued behind the turn the contract started: either way it is
+  # in exactly one of these two places, and after the contract in both. Both
+  # carry whole envelopes, so the one opened nearest before the body wraps it.
+  hitch_body_seen="$(pane hitchbody)
+$hitch_body_mail"
+  hitch_body_head="${hitch_body_seen%%MARK_HITCH_BODY*}"
+  hitch_body_wire="${hitch_body_head##*"[gang:"}"
+  # source-guard: producer@f0933762a42b: the hitch --stdin above is the sole producer of this literal; it exists only on that command's stdin, and no other send, spool entry or fixture writes it
+  contains "the message reaches the new agent or waits in its spool" \
+    "$hitch_body_seen" "MARK_HITCH_BODY"
+  # source-guard: producer@4f6cec313dec: gang writes sender, body and closing tag as one envelope on both surfaces, so the envelope opened nearest before the literal is the one that carried it; the startup contract's envelope names hitch, not alpha
+  equal "under the calling window's observed identity" \
+    "alpha" "${hitch_body_wire%%#*}"
+  # source-guard: producer@1d49991cbbd2: the successful hitch is the only producer of this startup body, and the head ends at the first copy of the message's literal, so the contract precedes that copy on whichever surface holds it
+  contains "after the startup contract" \
+    "$hitch_body_head" "You are hitchbody in Gangline"
+  "$GANG" drop hitchbody >/dev/null
+else
+  fail "hitch --stdin leaves a live agent holding the message" \
+    "no window 'hitchbody': $hitch_body_out"
+fi
+
+# The message rides out a first-run prompt as the contract does. Send refuses to
+# type into the prompt and queues the message behind the parked contract, so the
+# end of hitch's wait no longer takes the message with it.
+rm -f "$RUN_ROOT/startup-gate-first" "$RUN_ROOT/startup-gate-second"
+gated_body_rc=0
+gated_body_out="$(printf 'MARK_GATED_BODY' | GANG_GATE_LOOKS=1 \
+  TMUX_PANE="$hitch_body_sender" "$GANG" hitch gatedbody \
+  -c startup-delivery-gate -d /tmp --stdin 2>&1)" || gated_body_rc=$?
+equal "a gated hitch carrying a stdin message keeps the gate verdict" \
+  4 "$gated_body_rc"
+contains "and says the message is parked behind the contract" \
+  "$gated_body_out" "the contract and the message on stdin are parked in its spool, in that order"
+if [ -n "$(window_id gatedbody)" ]; then
+  contains "both wait in the gated agent's spool" \
+    "$("$GANG" status gatedbody)" "spooled: 2"
+  gated_body_mail_rc=0
+  gated_body_mail="$("$GANG" mail gatedbody 2>&1)" || gated_body_mail_rc=$?
+  equal "the gated agent's spool reads" 0 "$gated_body_mail_rc"
+  contains "the message waits in that spool" \
+    "$gated_body_mail" "MARK_GATED_BODY"
+  contains "behind the startup contract" \
+    "${gated_body_mail%%MARK_GATED_BODY*}" "You are gatedbody in Gangline"
+  excludes "and none of it is typed into the prompt" \
+    "$(pane gatedbody)" "MARK_GATED_BODY"
+  "$GANG" drop gatedbody >/dev/null
+else
+  fail "a gated hitch carrying a stdin message leaves the agent alive" \
+    "no window 'gatedbody': $gated_body_out"
+fi
+
+# Input waiting on stdin without --stdin is refused before anything launches,
+# rather than dropped. A caller outside the team has no identity to send the
+# message under, so --stdin refuses it before launch too.
+refuses "hitch refuses input waiting on stdin it was not told to read" \
+  "hitch: stdin holds unread input" \
+  "$GANG" hitch hitchunread -c bash -d /tmp <<'MSG'
+MARK_HITCH_UNREAD
+MSG
+equal "and launches nothing" "" "$(window_id hitchunread)"
+[ -z "$(window_id hitchunread)" ] || "$GANG" drop hitchunread >/dev/null
+refuses "hitch --stdin refuses a caller outside the team" \
+  "hitch --stdin: the message is sent as the calling window's agent" \
+  env -u TMUX_PANE "$GANG" hitch hitchoutside -c bash -d /tmp --stdin <<'MSG'
+MARK_HITCH_OUTSIDE
+MSG
+equal "and launches nothing either" "" "$(window_id hitchoutside)"
+[ -z "$(window_id hitchoutside)" ] || "$GANG" drop hitchoutside >/dev/null
+
 cat > "$RUN_ROOT/collars/broken-observer.sh" <<SH
 # shellcheck shell=bash
 # shellcheck disable=SC2034

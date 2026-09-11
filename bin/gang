@@ -561,6 +561,7 @@ gang hitch
     [-r <role>]
     [-l <lights>]
     [--resume [session-id]]
+    [--stdin]
 
   <name>  how teammates address it. Letters,
           digits, dot, dash and underscore;
@@ -604,6 +605,14 @@ gang hitch
       printed; the bare form reads it off a
       dead but still registered window, so it
       does not survive that window's removal.
+  --stdin
+      read a message from stdin — a pipe,
+      file or heredoc — and send it to the
+      new agent after its startup contract,
+      as this window's agent. Only from
+      inside the team. Input waiting on
+      stdin without --stdin refuses the
+      hitch before anything launches.
 
   Omitting -m or -e where the harness takes
   them warns: the harness then falls back to
@@ -10539,10 +10548,43 @@ hitch_register() { # $1 window, $2 agent name, $3 option, $4 value
   die "could not register '$2' in window $1: tmux refused the window option $3${refusal:+ — $refusal}"
 }
 
+# THE STDIN MESSAGE FOLLOWS THE CONTRACT; it is not folded into it. The contract
+# is hitch's own attributed text and the message is the caller's, so it goes out
+# as an ordinary send from the caller's window: it carries that observed identity
+# and the reply it owes, and it queues behind the contract wherever the contract
+# waits.
+HITCH_BODY=""
 cmd_hitch() {
+  HITCH_BODY=""
+  hitch_launch "$@"
+  [ -z "$HITCH_BODY" ] || hitch_body_send "$1" \
+    || fail "$?" "'$1' is up with its startup contract, but gang send did not accept the message on stdin; its report above says what became of it"
+}
+
+hitch_body_send() { # $1 name; hand HITCH_BODY to gang send from the calling window
+  printf '%s' "$HITCH_BODY" | "$ROOT/bin/gang" send --to "$1" --stdin
+}
+
+stdin_unread() { # succeed when stdin is a pipe, socket or file holding bytes nobody read
+  local count
+  [ -p /dev/stdin ] || [ -S /dev/stdin ] || [ -f /dev/stdin ] || return 1
+  require_python3
+  count="$(python3 -c '
+import fcntl, os, stat, struct, termios
+st = os.fstat(0)
+if stat.S_ISREG(st.st_mode):
+    print(max(st.st_size - os.lseek(0, 0, os.SEEK_CUR), 0))
+else:
+    print(struct.unpack("i", fcntl.ioctl(0, termios.FIONREAD, b"\0\0\0\0"))[0])
+')" || die "cannot tell whether stdin holds unread input"
+  case "$count" in ''|*[!0-9]*) die "cannot tell whether stdin holds unread input: read '$count'" ;; esac
+  [ "$count" -gt 0 ]
+}
+
+hitch_launch() {
   local name="" prof="${GANG_COLLAR:-claude-code}" dir="$PWD" model="" effort="" task="" missing="" role="" role_path="" id="" resume=0 resume_id="" resume_stamped="" launch_env collar_arg=0 pane_dead lookup_rc=0 opened_session=0
   local lights="" lights_arg="" lights_given=0 lights_subject="" lights_from="" lights_note="" boot="${GANG_BOOT_TIMEOUT:-30}" gate_looks="${GANG_GATE_LOOKS:-60}"
-  local hitched_by=""
+  local hitched_by="" use_stdin=0
   name="${1:-}"; case "$name" in ''|-*) usage_die ;; esac; shift
   valid_name "$name" \
     || die "hitch: '$name' is not usable — use letters, digits, dot, dash and underscore; do not start with dash or dot; hitch and gangline are reserved"
@@ -10558,6 +10600,8 @@ cmd_hitch() {
                   lights_arg="$2"; lights_given=1; shift 2 ;;
     --resume)     resume=1; shift
                   if [ $# -gt 0 ] && [[ "$1" != -* ]]; then resume_id="$1"; shift; fi ;;
+    --stdin)      [ "$use_stdin" -eq 0 ] || die "hitch: --stdin may be passed only once"
+                  use_stdin=1; shift ;;
     *) die "hitch: unknown argument '$1'" ;;
   esac; done
   usage_lights_parse "$GANG_USAGE_LIGHTS" >/dev/null || true
@@ -10655,6 +10699,21 @@ cmd_hitch() {
     ! launch_dead "$id" \
       || die "agent '$name' already exists and nothing is running in its window: clear it with 'gang drop $name', or relaunch the harness session it is stamped for with 'gang hitch $name --resume'"
     die "agent '$name' already exists"
+  fi
+  # THE MESSAGE IS READ BEFORE ANYTHING IS LAUNCHED and sent after the contract
+  # by cmd_hitch. It goes out as an ordinary send from the calling window, so a
+  # caller outside the team is refused here, while no window exists yet.
+  if [ "$use_stdin" -eq 1 ]; then
+    self_window >/dev/null \
+      || die "hitch --stdin: the message is sent as the calling window's agent, and this caller is outside session '$SESSION'; hitch without --stdin, then gang send --from <sender> --to $name --stdin"
+    send_sender "" "hitch --stdin"
+    send_identity_guard "hitch --stdin"
+    stdin_body "hitch"
+    HITCH_BODY="$STDIN_BODY"
+  elif stdin_unread; then
+    # Without the flag hitch reads no stdin, so a heredoc handed to it used to be
+    # dropped with nothing said. One it can see waiting is refused instead.
+    die "hitch: stdin holds unread input and hitch reads none without --stdin, so nothing was launched; pass --stdin to send it to '$name' after the startup contract, or give hitch nothing on stdin"
   fi
   if [ -n "$GANG_MODEL_OPT" ] && [ -z "$model" ]; then missing="-m"; fi
   if [ -n "$GANG_EFFORT_OPT" ] && [ -z "$effort" ]; then
@@ -11071,8 +11130,21 @@ cmd_hitch() {
 # for that agent to take a turn. Answering is a native, persisted choice, so the
 # existing harness should be kept unless the native process itself needs
 # replacement.
+#
+# A STDIN MESSAGE PARKS BEHIND THE CONTRACT. The prompt owns the composer, so
+# send refuses to type it and queues it after the contract, and the two drain in
+# that order once the prompt is answered.
 hitch_gate_unanswered() { # $1 name, $2 window, $3 observations spent
-  fail 4 "'$1' is still showing a native first-run prompt after $3 observations, so its startup contract was NOT delivered and gang has stopped waiting for the prompt to be answered. The agent is alive and the contract is parked in its spool ('gang mail $1' reads it, 'gang roster' shows it waiting). Answer the prompt with 'gang attach', then run 'gang tick' to retry delivery. Drop and hitch again only if the native process itself must be replaced. Raise GANG_GATE_LOOKS where a terminal is free to keep waiting."
+  local parked="the contract is parked in its spool ('gang mail $1' reads it, 'gang roster' shows it waiting)" send_rc=0
+  if [ -n "$HITCH_BODY" ]; then
+    hitch_body_send "$1" || send_rc=$?
+    if [ "$send_rc" -eq 0 ]; then
+      parked="the contract and the message on stdin are parked in its spool, in that order ('gang mail $1' reads them, 'gang roster' shows them waiting)"
+    else
+      parked="$parked, but gang send did not accept the message on stdin (exit $send_rc; its report above says what became of it)"
+    fi
+  fi
+  fail 4 "'$1' is still showing a native first-run prompt after $3 observations, so its startup contract was NOT delivered and gang has stopped waiting for the prompt to be answered. The agent is alive and $parked. Answer the prompt with 'gang attach', then run 'gang tick' to retry delivery. Drop and hitch again only if the native process itself must be replaced. Raise GANG_GATE_LOOKS where a terminal is free to keep waiting."
 }
 
 cmd_up() { # bare `gang up` is the whole setup: one agent, and you in it
