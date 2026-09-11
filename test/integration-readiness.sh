@@ -366,6 +366,18 @@ contains "frozen busy paint over an expired bracket reads expired, not busy" \
   "$fossil_status" "?unknown?"
 contains "naming the frozen paint beside the bracket's reason" \
   "$fossil_status" "busy paint frozen"
+# Explain pins the active pane, not the window, and hands that pane id to the
+# same state readers, so a quiet-at-rest collar's activity leg reads the pty
+# clock through a pane target. A window listing filtered to a window id
+# matches nothing for one, and the empty read refused a live agent.
+fossil_explain_rc=0
+fossil_explain="$(GANG_ACTIVITY_WINDOW=0 "$GANG" explain fossil 2>&1)" \
+  || fossil_explain_rc=$?
+equal "explain reads a quiet-at-rest agent's pty clock through its pinned pane" \
+  0 "$fossil_explain_rc"
+contains "and reports the state it read there" "$fossil_explain" "state: "
+excludes "rather than refusing an empty activity stamp" \
+  "$fossil_explain" "unreadable activity stamp"
 if printf 'MARK_FOSSIL' | GANG_ACTIVITY_WINDOW=0 \
   "$GANG" send --to fossil --from tester --stdin >/dev/null 2>&1; then
   pass "a fossil busy marker does not veto delivery to a provably empty box"

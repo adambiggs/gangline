@@ -2390,8 +2390,14 @@ activity_hold_clear() { # $1 = window id; end any activity-only busy episode
 # window gang names can go at any moment, so this read never passes through a
 # target that may not resolve: list-windows expands its format only for windows
 # it iterates, and exits nonzero with "can't find window" once this one is gone.
-read_window_activity() { # $1 = window id (@N); print tmux's activity clock for it
-  tmux list-windows -t "$1" -f "#{==:#{window_id},$1}" -F '#{window_activity}'
+# A pinned pane (%N) reads its own window's clock through list-panes instead:
+# list-windows takes a pane target as its session, so a filter on the pane id
+# matches none of the windows it lists and the read comes back empty.
+read_window_activity() { # $1 = window id (@N) or pane id (%N); print tmux's activity clock for it
+  case "$1" in
+    %*) tmux list-panes -t "$1" -f "#{==:#{pane_id},$1}" -F '#{window_activity}' ;;
+    *) tmux list-windows -t "$1" -f "#{==:#{window_id},$1}" -F '#{window_activity}' ;;
+  esac
 }
 
 activity_stamp() { # $1 = window id; tmux's own clock of the last write to that pty
