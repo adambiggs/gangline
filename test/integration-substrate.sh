@@ -55,6 +55,35 @@ refuses "talk tells a non-terminal caller to use stdin delivery" \
 excludes "the non-terminal refusal does not launch the editor" \
   "$(test -e "$RUN_ROOT/talk-editor-opened" && printf opened)" "opened"
 
+# The other direction: send --stdin reads a pipe, a file or a heredoc, never a
+# terminal. A terminal ends a body only at a Ctrl-D typed on an empty line, so a
+# body written into a pty with its last line unterminated and one Ctrl-D after
+# it hands that line over and leaves the read blocked: nothing is accepted and
+# nothing is said. This pty already holds a complete line and the end-of-file,
+# so a reader that accepted a terminal would finish at once, not hang the run.
+cat > "$RUN_ROOT/pty-stdin.py" <<'PY'
+# SPDX-License-Identifier: Apache-2.0
+import os
+import pty
+import subprocess
+import sys
+
+master, slave = pty.openpty()
+os.write(master, b"MARK_TTY_BODY\n\x04")
+child = subprocess.run(sys.argv[1:], stdin=slave, stdout=subprocess.PIPE,
+                       stderr=subprocess.STDOUT, check=False)
+os.close(slave)
+os.close(master)
+sys.stdout.buffer.write(child.stdout)
+sys.exit(child.returncode)
+PY
+refuses "send refuses a terminal on stdin before reading a body from it" \
+  "send: stdin is a terminal" \
+  python3 "$RUN_ROOT/pty-stdin.py" "$GANG" send --to alpha --from tester --stdin
+excludes "and nothing the terminal held reaches the recipient" \
+  "$(pane alpha)" "MARK_TTY_BODY"
+excludes "or waits in its spool" "$("$GANG" status alpha)" "spooled:"
+
 # A disposable tmux window is the operator terminal. Its own TMUX_PANE is
 # deliberately absent: this is a human outside the team, so talk's default
 # sender must be the clearly claimed `operator`, not a fictitious agent.

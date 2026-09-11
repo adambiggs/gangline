@@ -680,10 +680,11 @@ gang send
       gang send --to lead --stdin
 
   --to <name>   who receives it
-  --stdin       read the body from stdin.
-                Required, and the only way
-                to pass a body. An empty
-                body is an error.
+  --stdin       read the body from stdin: a
+                pipe, file or heredoc, never
+                a terminal. Required, and the
+                only way to pass a body. An
+                empty body is an error.
   --from <who>  who it is from. Required
                 from outside the team; an
                 error inside it, where the
@@ -786,9 +787,10 @@ gang at
                 time like 17:00, which means
                 its next occurrence.
   --to <name>   who receives it
-  --stdin       read the body from stdin.
-                Required, and the only way to
-                pass a body.
+  --stdin       read the body from stdin: a
+                pipe, file or heredoc, never
+                a terminal. Required, and the
+                only way to pass a body.
   --from <who>  who it is from. Required from
                 outside the team; an error
                 inside it. Attribution is
@@ -1765,6 +1767,13 @@ envelope() { # $1 sender, $2 body, optional $3 correlated reply nonces
 STDIN_BODY=""
 stdin_body() { # $1 = command/option label; read all text from stdin into STDIN_BODY
   local marked sentinel=$'\034' rc
+  # A TERMINAL IS NOT A BODY SOURCE. It ends a body only at a Ctrl-D typed on an
+  # empty line: after an unterminated last line one Ctrl-D only hands that line
+  # over, and the read then blocks with nothing accepted and nothing said, which
+  # a caller writing into a pty cannot tell from a send still in progress. The
+  # refusal comes before any read, so the terminal's input stays its own.
+  [ ! -t 0 ] \
+    || die "$1: stdin is a terminal, where a body ends only at a Ctrl-D typed on an empty line; pipe the body in or redirect it from a heredoc or a file"
   if marked="$(
     cat || { rc=$?; exit "$rc"; }
     printf '\034'

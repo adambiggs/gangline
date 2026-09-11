@@ -609,7 +609,11 @@ removed before delivery begins.
 
 ### `gang send --to <name> [--from <sender>] [--live-only] [--supersede] --stdin`
 
-Reads the full message body from standard input. Inside the team, Gangline derives
+Reads the full message body from standard input, which must be a pipe, a file,
+or a heredoc. A terminal is refused before anything is read: it ends a body only
+at a Ctrl-D typed on an empty line, and a body whose last line is unterminated
+leaves the read blocked with nothing accepted. `gang talk` is the terminal path;
+`gang at` refuses a terminal the same way. Inside the team, Gangline derives
 the sender from the calling window and refuses `--from`, but only when the pane
 carries matching `@gl_agent` and collar registration and no recorded native
 session mismatch. An unadopted window name is not an identity. Self-send to the
