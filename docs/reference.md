@@ -450,7 +450,12 @@ same occupancy, turn, copy-mode, composer and verified-submission gates used by
 safe. It also asks collars that declare `collar_live_session_id` whether the
 process currently holding the pane is the registered native session. A
 contradiction becomes `session-lost`, blocks delivery, and fails the pass rather
-than letting a restarted harness impersonate the old agent.
+than letting a restarted harness impersonate the old agent. Last, it reads each
+window it visited through the same classification `roster` uses and repaints
+that window's glyph, so a condition that cleared without a further native event,
+such as a permission dialog answered or declined, leaves the window name within
+one pass. A window whose state cannot be read is painted `?name?` and fails the
+pass. This read offers no delivery of its own; the spool retry above owns that.
 
 One per-team kernel flock serializes generation-lock metadata transactions; the
 generation symlink records worker ownership between them. The guard descriptor
@@ -1105,8 +1110,10 @@ action. Declaring again replaces and restarts the span; `clear` removes it.
 
 Gang-managed tmux windows wrap the bare agent name in the glyph of the state
 Gangline last witnessed: `-name-`, `~name~`, `!name!`, or `?name?`. This is an
-at-a-glance hint and can be stale between existing observation points and native
-hook events; `gang roster` remains the live-computed truth. Both occupied and
+at-a-glance hint, repainted wherever a state is read, on native hook events, and
+for every window a cooperative tick visits, so a cleared condition leaves the
+name within one tick; between those points it can lag, and `gang roster`
+remains the live-computed truth. Both occupied and
 bricked use the snagged-line `!` glyph because either needs operator attention;
 the live roster word distinguishes them. Addressing always uses the bare name,
 so `gang send --to pii-impl` never changes. tmux appends its own flags after the

@@ -2024,6 +2024,41 @@ contains "the closed native turn beats false occupied paint for delivery" \
 equal "the completed pass retires every tick delivery owner marker" absent \
   "$(if [ -n "$(tmux show-options -wqv -t "$tick_copy_id" @gl_tick_delivery)$(tmux show-options -wqv -t "$tick_false_id" @gl_tick_delivery)" ]; then printf present; else printf absent; fi)"
 
+# A CLEARED CONDITION LEAVES THE STATUS BAR WITHIN ONE TICK. A permission
+# request paints !name! and may be the last event its dialog ever sends: a
+# person who answers or declines it raises nothing further. The composer coming
+# back is the clearing evidence, so the cooperative pass must read it and
+# repaint the window. The startup prompt stays free of hook work, exactly as
+# for the fixtures above, until hitch has verified its contract.
+rm -f -- "$tick_prompt_enable"
+"$HITCH" tick-glyph -c tick-native -d /tmp >/dev/null
+tick_glyph_id="$(window_id tick-glyph)"
+tick_glyph_pane="$(tmux list-panes -t "$tick_glyph_id" -F '#{pane_id}')"
+: > "$tick_prompt_enable"
+tmux wait-for "gang-tick-prompt-${tick_glyph_pane#%}" &
+tick_glyph_prompt_waiter=$!
+tmux send-keys -t "$tick_glyph_id" Enter
+wait "$tick_glyph_prompt_waiter"
+printf '%s' '{"hook_event_name":"Stop"}' \
+  | GANG_TEST_TICK_MODE=manual TMUX_PANE="$tick_glyph_pane" "$GANG" hook >/dev/null
+equal "the closed native turn paints the glyph fixture idle" '~tick-glyph~' \
+  "$(tmux display-message -p -t "$tick_glyph_id" '#{window_name}')"
+printf '%s' '{"hook_event_name":"PermissionRequest"}' \
+  | GANG_TEST_TICK_MODE=manual TMUX_PANE="$tick_glyph_pane" "$GANG" hook >/dev/null
+equal "a native permission request paints the window occupied" '!tick-glyph!' \
+  "$(tmux display-message -p -t "$tick_glyph_id" '#{window_name}')"
+contains "and raises the event-tier occupied fact" \
+  "$(tmux show-options -wqv -t "$tick_glyph_id" @gl_occupied)" "open "
+tick_glyph_rc=0
+"$GANG" tick >/dev/null || tick_glyph_rc=$?
+equal "the refreshing pass itself succeeds" 0 "$tick_glyph_rc"
+equal "one cooperative tick repaints the answered window idle" '~tick-glyph~' \
+  "$(tmux display-message -p -t "$tick_glyph_id" '#{window_name}')"
+equal "the same pass retires the raise the live composer answered" "" \
+  "$(tmux show-options -wqv -t "$tick_glyph_id" @gl_occupied)"
+
+"$GANG" drop tick-glyph >/dev/null
+
 # A live holder is dirtied, not joined or piled up. FIFO edges make the exact
 # crossing deterministic: the contender runs only after the holder owns its
 # symlink and the holder cannot finish its first pass until released.

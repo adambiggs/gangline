@@ -5633,6 +5633,26 @@ tick_full_pass_once() {
         fi
       fi
     fi
+    # A CLEARED CONDITION LEAVES THE STATUS BAR WITHIN ONE PASS. A glyph is
+    # otherwise painted only where a state is read or a native event arrives,
+    # and the event that painted a condition is often the last one it sends: a
+    # permission dialog answered or declined raises nothing further, so its
+    # !name! outlived the dialog until something happened to read the window.
+    # The pass reads each window it visited through the evaluation roster uses.
+    # The retry-only turn rule in occupied() decides delivery, not paint, so it
+    # is lifted here and the glyph agrees with roster; delivery stays with the
+    # drain above, so an expired turn found here is not dispatched a second
+    # time from the same pass. A window that went between the listing and this
+    # read has no glyph left to correct.
+    err=""
+    if ! err="$(TICK_PASS=0 TICK_GLYPH_REFRESH=1 state_now "$id" snapshot 2>&1 >/dev/null)" \
+       && tmux display-message -p -t "$id" '#{window_id}' >/dev/null 2>&1; then
+      err="${err##*$'\n'}"
+      err="${err#gang: }"
+      glyph_write "$id" "?unknown? (the cooperative pass could not read this window)"
+      printf 'tick could not read the state of %s: %s\n' "$agent" "${err:-unknown error}" >&2
+      rc=1
+    fi
   done <<<"$wins"
   return "$rc"
 }
@@ -13088,6 +13108,9 @@ STATE_NOW_RESULT=""
 turn_abandoned_event() { # $1 = window id, $2 = the fact turn_witness recorded
   local collar
   [ "${2:-0}" -eq 1 ] || return 0
+  # The cooperative pass refreshes glyphs after its own drain has offered the
+  # window its spool; a second drainer started from that read is not its own.
+  [ "${TICK_GLYPH_REFRESH:-0}" != 1 ] || return 0
   collar="$(collar_read "$1" 2>/dev/null)" || return 0
   [ -n "$collar" ] || return 0
   spool_drain_dispatch "$1" "$collar"
