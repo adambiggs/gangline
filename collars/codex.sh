@@ -41,7 +41,13 @@ if [ -n "${ROOT:-}" ] && [ -x "$ROOT/bin/gang" ]; then
       # so neither a wedged lock nor failed bookkeeping can hold Codex at Stop
       # indefinitely.
       _gl_codex_stop_hook="[{ hooks = [{ type = \"command\", command = \"python3 \\\"$_gl_codex_dir/plugins/codex-stop-hook.py\\\" \\\"$ROOT/bin/gang\\\"\", timeout = 15 }] }]"
+      # SessionStart stdout is native extra developer context. It reaches
+      # startup, resume, clear, and post-compaction starts without replacing
+      # operator-configured developer instructions, and keeps this guidance in
+      # the collar that owns the yielding exec behavior it describes.
+      _gl_codex_session_start_hook="[{ hooks = [{ type = \"command\", command = \"sh \\\"$_gl_codex_dir/plugins/codex-session-start.sh\\\"\" }] }]"
       _gl_codex_hook_flags=""
+      _gl_codex_hook_flags+=" -c 'hooks.SessionStart=$_gl_codex_session_start_hook'"
       # PreCompact/PostCompact are wired for the same reason claude-code wires
       # them: @gl_turn is closed for the whole of a compaction, and the turn
       # witness outranks the pane, so without the bracket a compacting codex
@@ -93,7 +99,8 @@ if [ -n "${ROOT:-}" ] && [ -x "$ROOT/bin/gang" ]; then
       # of active_turn a submission starts a new turn rather than steering the
       # finished one, which is where Codex's own TUI submits its queued input.
       GANG_SELF_COMPACT_WITNESS=native-idle
-      unset _gl_codex_hook _gl_codex_stop_hook _gl_codex_hook_flags _gl_codex_event
+      unset _gl_codex_hook _gl_codex_stop_hook _gl_codex_session_start_hook \
+        _gl_codex_hook_flags _gl_codex_event
       ;;
   esac
 fi

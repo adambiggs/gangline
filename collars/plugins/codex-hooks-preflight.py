@@ -52,7 +52,7 @@ PROBE_TIMEOUT_SEC = 25
 EXIT_REFUSED = 78  # EX_CONFIG
 TRUSTED = ("trusted", "managed")
 GANGLINE_EVENTS = {
-    "userpromptsubmit", "posttooluse", "permissionrequest",
+    "sessionstart", "userpromptsubmit", "posttooluse", "permissionrequest",
     "precompact", "postcompact", "stop",
 }
 VALUE_LAYER_FLAGS = ("-c", "--config", "--enable", "--disable")

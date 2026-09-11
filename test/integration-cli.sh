@@ -752,7 +752,8 @@ chmod +x "$CODEX_STUB/bin/codex"
 
 codex_preflight="$ROOT/collars/plugins/codex-hooks-preflight.py"
 codex_expected_hook_args=()
-for event in UserPromptSubmit PostToolUse PermissionRequest PreCompact PostCompact Stop; do
+for event in SessionStart UserPromptSubmit PostToolUse PermissionRequest \
+             PreCompact PostCompact Stop; do
   codex_expected_hook_args+=(
     -c "hooks.$event=[{ hooks = [{ type = \"command\", command = \"/bin/true\" }] }]"
   )
@@ -823,7 +824,7 @@ import re
 import sys
 
 events = {
-    "UserPromptSubmit", "PostToolUse", "Stop", "PermissionRequest",
+    "SessionStart", "UserPromptSubmit", "PostToolUse", "Stop", "PermissionRequest",
     "PreCompact", "PostCompact",
 }
 shape = re.compile(
@@ -880,6 +881,24 @@ done
 equal "Codex native hooks survive fresh and resumed launch paths" \
   "plain/GANG_LAUNCH=hook  | plain/GANG_RESUME_LAUNCH=hook  | has space/GANG_LAUNCH=hook  | has space/GANG_RESUME_LAUNCH=hook " \
   "$hook_receipts"
+codex_launch_fresh="$(codex_launch "$ROOT" GANG_LAUNCH)"
+codex_launch_resumed="$(codex_launch "$ROOT" GANG_RESUME_LAUNCH)"
+contains "Codex fresh sessions receive long-command guidance at native SessionStart" \
+  "$codex_launch_fresh" "hooks.SessionStart="
+contains "Codex resumed sessions receive long-command guidance at native SessionStart" \
+  "$codex_launch_resumed" "hooks.SessionStart="
+contains "the native SessionStart hook reads the collar-owned guidance" \
+  "$codex_launch_fresh" "codex-session-start.sh"
+codex_guidance_rc=0
+codex_guidance="$($ROOT/collars/plugins/codex-session-start.sh 2>&1)" \
+  || codex_guidance_rc=$?
+equal "the Codex long-command guidance is executable" "0" "$codex_guidance_rc"
+contains "a yielded Codex command is not called complete" \
+  "$codex_guidance" "A yield is not completion evidence."
+contains "Codex is told not to timer-poll a long command" \
+  "$codex_guidance" "do not re-poll it on a timer"
+contains "Codex is told the detached self-wake is unavailable" \
+  "$codex_guidance" "Gangline refuses self-addressed send and at messages"
 codex_resume="$(codex_launch "$ROOT" GANG_RESUME_LAUNCH)"
 contains "Codex resume declares an explicit native session slot" \
   "$codex_resume" "codex resume {{session_id}}"
