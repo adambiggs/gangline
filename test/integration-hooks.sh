@@ -256,6 +256,13 @@ exec '$REAL_TMUX' "\$@"
 SH
 chmod +x "$waiting_hold_bin/tmux"
 
+# The prompt above left its turn open, and a state reader re-probes only a
+# window that is not busy, so a Stop with no held work closes that turn first.
+rm -f -- "$RUN_ROOT/waiting-evidence"
+printf '%s' '{"hook_event_name":"Stop"}' |
+  TMUX_PANE="$waitable_pane" "$GANG" hook >/dev/null
+contains "a closed turn leaves the window for a reader to re-probe" \
+  "$("$GANG" status waitable)" "~idle~"
 tmux set-option -w -t "$waitable_id" @gl_waiting \
   "waiting"$'\t'"a witness older than the re-probe age"
 tmux set-option -w -t "$waitable_id" @gl_waiting_at 1
