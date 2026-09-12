@@ -824,10 +824,21 @@ survivor_read_rc=0
 IFS= read -r -n 1 survivor_signal < "$survivor_dead" || survivor_read_rc=$?
 equal "the surviving window announced its own exit before it was read back" \
   "0 x" "$survivor_read_rc $survivor_signal"
+# A RESUMED WINDOW KEEPS ITS OPTIONS, and a waiting record stored there belongs
+# to the native process that died with the pane. Only the new launch's own Stop
+# may witness held work again, so the respawn retires the record and moves the
+# count a reader of the old record is judged by.
+tmux set-option -w -t "$survivor_id" @gl_waiting \
+  "waiting"$'\t'"a witness from the launch that died"
+tmux set-option -w -t "$survivor_id" @gl_waiting_gen 5
 "$HITCH" survivor -c identity -d /tmp --resume >/dev/null
 contains "bare resume reads the stamp from a surviving dead window" \
   "$(tmux display-message -p -t "$survivor_id" '#{pane_start_command}')" \
   "resume-surviving-native-id"
+equal "a resume retires the waiting record its dead launch left" \
+  "" "$(tmux show-options -wqv -t "$survivor_id" @gl_waiting)"
+equal "and moves the count a reader of that record is judged by" \
+  6 "$(tmux show-options -wqv -t "$survivor_id" @gl_waiting_gen)"
 "$GANG" drop survivor >/dev/null
 
 # A BARRIER NOBODY SIGNALS MUST GO RED, NOT QUIET. Every barrier above learns
