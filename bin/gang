@@ -9035,13 +9035,13 @@ inject() { # $1 window, $2 text, $3 head, $4 locked,
 submit_verify() { # $1 window id, $2 the box the Enter goes against, $3 fragment,
                   # $4 paste|recall, $5 park_ok|park_record|park_confirm landing,
                   # $6 the body gang composed, recorded if the harness parks it
-  local tname verb noun stuck mayclear unchanged=0 looks=0 posted
+  local tname verb noun mayclear unchanged=0 looks=0 posted
   local deferred_turn=0 turn_before="" turn_after=""
   tname="$(agent_name_of "$1")"
   case "$4" in
-    paste)  verb="pasted" noun="paste" stuck=", and would not clear" mayclear=1 ;;
+    paste)  verb="pasted" noun="paste" mayclear=1 ;;
     recall) verb="recalled out of the harness's queue" noun="recalled message"
-            stuck="" mayclear=0 ;;
+            mayclear=0 ;;
     *) die "internal: submit_verify was given mode '$4'" ;;
   esac
   pane_mode_free "$1" || {
@@ -9072,11 +9072,19 @@ submit_verify() { # $1 window id, $2 the box the Enter goes against, $3 fragment
       [ "$posted" = "$2" ] || break
       unchanged=$((unchanged + 1))
       if [ "$unchanged" -ge 5 ]; then
-        if [ "$mayclear" -eq 1 ] && clear_box "$1"; then
-          die "submit NOT verified: '$3' was $verb into the input box of $tname and never sent — the $noun has been cleared back out of that box"
+        if [ "$mayclear" -eq 1 ]; then
+          if clear_box "$1"; then
+            die "submit NOT verified: '$3' was $verb into the input box of $tname and never sent — the $noun has been cleared back out of that box"
+          fi
+          # A box that ignored the Enter AND the clear key is not a reading of
+          # the composer at all, so it cannot show the paste unsent: the Enter
+          # may have landed. Reporting it unsent sends the operator to clear a
+          # box that may be empty and re-send a message the agent already has.
+          stage_record "$1" "'$3' was $verb here and Enter sent, but neither Enter nor a clear key moved the box reading — it may be sitting there unsent" ""
+          unverified "submission unverifiable, and NOT ruled out: '$3' was $verb into the input box of $tname and Enter was pressed against it, but the box ignored both the Enter and a clear key, so its reading is not following the composer and whether the message entered the session is unknown. Gang will not clear or re-send it on a guess; read the screen with 'gang capture $tname' and re-send only if it is not there"
         fi
-        stage_record "$1" "'$3' is staged unsent in this box — it was $verb, never sent$stuck" "$posted"
-        die "submit NOT verified: '$3' was $verb into the input box of $tname, never sent$stuck — it is staged there now and has to be cleared by hand (gang attach)"
+        stage_record "$1" "'$3' is staged unsent in this box — it was $verb, never sent" "$posted"
+        die "submit NOT verified: '$3' was $verb into the input box of $tname, never sent — it is staged there now and has to be cleared by hand (gang attach)"
       fi
     else
       # Counted only where the read FAILED, because an unreadable box is what

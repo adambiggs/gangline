@@ -1406,6 +1406,54 @@ equal "the park-only handoff submits exactly once" "1" \
   "$(pane park-only | grep -o MARK_PARK_ONLY | wc -l | tr -d ' ')"
 "$GANG" drop park-only >/dev/null
 
+# A BOX THAT IGNORES BOTH ENTER AND A CLEAR KEY IS NOT FOLLOWING THE COMPOSER,
+# so it cannot show that a message never left. This collar's reading freezes on
+# the pasted envelope while the shell underneath really takes the Enter and runs
+# the line — the shape of a render that overlapping status lines have corrupted.
+# Not timing-dependent: every reading after the paste is frozen, so the unchanged
+# bound is reached on its count; it costs the production budget of five 0.4s
+# rereads and one clear press, about 2.4s.
+cat > "$RUN_ROOT/collars/frozenbox.sh" <<SH
+# shellcheck shell=bash
+# shellcheck disable=SC2034
+. "$ROOT/collars/bash.sh"
+GANG_LAUNCH="sh -c 'PS1=\"❯ \" exec bash --norc' fixture"
+_gl_frozen_real="\$(declare -f collar_input)"
+eval "frozen_real_input \${_gl_frozen_real#collar_input}"
+collar_input() {
+  local box rc=0
+  if [ -s "$RUN_ROOT/frozenbox-reading" ]; then
+    cat "$RUN_ROOT/frozenbox-reading"
+    return 0
+  fi
+  box="\$(frozen_real_input "\$1")" || rc=\$?
+  [ "\$rc" -eq 0 ] || return "\$rc"
+  case "\$box" in
+    *MARK_FROZEN_BOX*'[/gang:'*) printf '%s' "\$box" > "$RUN_ROOT/frozenbox-reading" ;;
+  esac
+  printf '%s' "\$box"
+}
+SH
+"$HITCH" frozenbox -c frozenbox -d /tmp >/dev/null
+frozenbox_id="$(window_id frozenbox)"
+frozenbox_rc=0
+frozenbox_out="$(printf 'MARK_FROZEN_BOX' |
+  "$GANG" send --to frozenbox --from tester --stdin 2>&1)" || frozenbox_rc=$?
+equal "the frozen reading holds the whole pasted envelope" "held" \
+  "$(if [ -s "$RUN_ROOT/frozenbox-reading" ]; then printf held; fi)"
+contains "the Enter reached the shell under the frozen reading" \
+  "$(pane frozenbox)" "command not found"
+equal "a box that ignores Enter and a clear key leaves submission unknown" \
+  "5" "$frozenbox_rc"
+contains "and names it unverifiable" "$frozenbox_out" "submission unverifiable"
+excludes "never reporting the message as unsent" "$frozenbox_out" "never sent"
+excludes "nor sending the operator to clear the box by hand" \
+  "$frozenbox_out" "cleared by hand"
+equal "nor recording a box a later delivery would clear" "" \
+  "$(tmux show-options -wqv -t "$frozenbox_id" @gl_staged_box)"
+"$GANG" drop frozenbox >/dev/null
+rm -f "$RUN_ROOT/frozenbox-reading"
+
 # A keystroke gang cannot send by name is a broken declaration, refused before
 # any window opens: tmux would deliver the letters into the composer instead.
 cat > "$RUN_ROOT/collars/badkey.sh" <<SH
