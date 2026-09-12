@@ -10634,10 +10634,17 @@ scope_issue_forget() { # $1 exact issued unit; release its persistent provenance
 
 SCOPE_ACTIVE_STATE=""
 scope_unit_active() { # manager connected, $1 unit; 0 active-like, 1 gone, 2 unknown
-  SCOPE_ACTIVE_STATE="$("${SCOPE_SYSTEMCTL[@]}" is-active -- "$1" 2>/dev/null)" || true
+  local rc=0
+  SCOPE_ACTIVE_STATE="$("${SCOPE_SYSTEMCTL[@]}" is-active -- "$1" 2>/dev/null)" || rc=$?
   case "$SCOPE_ACTIVE_STATE" in
     active|activating|deactivating|reloading|refreshing) return 0 ;;
-    inactive|failed|unknown|'') return 1 ;;
+    inactive|failed|unknown) return 1 ;;
+    # AN EMPTY ANSWER IS GONE ONLY WITH THE NOT-RUNNING STATUS. is-active exits
+    # 3 for a unit that is not running; any other status with nothing on stdout
+    # is a read that failed, and a failed read says nothing about whether the
+    # scope still runs.
+    '') [ "$rc" -ne 3 ] || return 1
+        return 2 ;;
     *) return 2 ;;
   esac
 }

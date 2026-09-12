@@ -2229,7 +2229,7 @@ equal "re-adopting a registered agent preserves its launch scope" \
 # inferred from the final absence.
 mkdir -p "$RUN_ROOT/scope-orphan-bin" "$RUN_ROOT/scope-orphan-active" \
   "$RUN_ROOT/scope-orphan-deactivating" "$RUN_ROOT/scope-orphan-autocollect" \
-  "$RUN_ROOT/scope-orphan-vanish"
+  "$RUN_ROOT/scope-orphan-vanish" "$RUN_ROOT/scope-orphan-bus"
 cat > "$RUN_ROOT/scope-orphan-bin/systemd-run" <<SH
 #!/bin/sh
 unit=''
@@ -2274,6 +2274,13 @@ case "\$cmd" in
         ;;
       *' --property=ControlGroup '*)
         unit=''; for arg in "\$@"; do unit="\$arg"; done
+        # The manager stops answering: this read and every later one fail
+        # with nothing on stdout.
+        if [ -f '$RUN_ROOT/scope-orphan-bus/'"\$unit" ]; then
+          : > '$RUN_ROOT/scope-orphan-bus/'"\$unit.down"
+          printf '%s\\n' 'membership-unreadable' >> '$RUN_ROOT/scope-orphan.ops'
+          exit 1
+        fi
         # A transient scope reaped between is-active and this read: the
         # manager answers with an empty value and the unit is gone.
         if [ -f '$RUN_ROOT/scope-orphan-vanish/'"\$unit" ]; then
@@ -2291,6 +2298,7 @@ case "\$cmd" in
     ;;
   is-active)
     unit=''; for arg in "\$@"; do unit="\$arg"; done
+    [ ! -f '$RUN_ROOT/scope-orphan-bus/'"\$unit.down" ] || exit 1
     [ -f '$RUN_ROOT/scope-orphan-active/'"\$unit" ] || exit 3
     if [ -f '$RUN_ROOT/scope-orphan-autocollect/'"\$unit" ] \
        && ! tmux list-windows -a -F '#{@gl_scope}' 2>/dev/null \
@@ -2382,6 +2390,30 @@ equal "the reaped scope's issuance record is forgotten" "" \
   "$(find "$GANG_LOCK_DIR/scopes/$GANG_SESSION/$scope_vanish_nonce" \
     -maxdepth 1 -type f -name unit -printf '%f' 2>/dev/null || true)"
 rm -f -- "$RUN_ROOT/scope-orphan-vanish/$scope_vanish_unit"
+
+# A RE-READ THAT FAILS IS NOT A SCOPE THAT EXITED. When the manager stops
+# answering between the state read and the membership read, the recheck has no
+# state to go on, and the issuance record that authorizes a later stop stays.
+PATH="$RUN_ROOT/scope-orphan-bin:$PATH" GANG_SCOPE=on \
+  "$HITCH" scopebus -c bash -d /tmp >/dev/null
+scope_bus_unit="$(tmux show-options -wqv -t "$(window_id scopebus)" @gl_scope)"
+: > "$RUN_ROOT/scope-orphan-deactivating/$scope_bus_unit"
+: > "$RUN_ROOT/scope-orphan-bus/$scope_bus_unit"
+: > "$RUN_ROOT/scope-orphan.ops"
+scope_bus_out="$(PATH="$RUN_ROOT/scope-orphan-bin:$PATH" \
+  "$GANG" drop scopebus 2>&1)" || true
+contains "drop reports a membership it could not read when the recheck fails too" \
+  "$scope_bus_out" "surviving scope $scope_bus_unit was NOT stopped: its cgroup membership could not be read"
+scope_bus_nonce="${scope_bus_unit%.scope}"; scope_bus_nonce="${scope_bus_nonce##*-}"
+equal "and keeps the issuance record that authorizes a later stop" unit \
+  "$(find "$GANG_LOCK_DIR/scopes/$GANG_SESSION/$scope_bus_nonce" \
+    -maxdepth 1 -type f -name unit -printf '%f' 2>/dev/null || true)"
+rm -f -- "$RUN_ROOT/scope-orphan-bus/$scope_bus_unit" \
+  "$RUN_ROOT/scope-orphan-bus/$scope_bus_unit.down" \
+  "$RUN_ROOT/scope-orphan-active/$scope_bus_unit" \
+  "$RUN_ROOT/scope-orphan-deactivating/$scope_bus_unit"
+[ -z "$scope_bus_nonce" ] \
+  || rm -rf -- "$GANG_LOCK_DIR/scopes/$GANG_SESSION/$scope_bus_nonce"
 
 # READS NAME BOTH CLASSES AND MUTATE NEITHER. The first unit was issued by an
 # actual hitch and then orphaned by an external window death. The second only
