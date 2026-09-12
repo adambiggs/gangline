@@ -350,6 +350,11 @@ GANG_CACHE_COMPACTION='claude-code=3600:300 codex=1800:180'
 GANG_CACHE_COMPACTION='claude-code=3600:300 codex=off'
 ```
 
+Gangline validates and settles that map when it hitches an agent, then records
+only that agent's selected TTL and margin. Change the operator setting before
+hitching the agent it should govern; a later tick never reinterprets a live
+configuration map.
+
 The cache age is the bound transcript or rollout file's mtime, not the last
 tool call or terminal activity. Gangline has no provider expiry timestamp, so
 the margin absorbs transcript flush and clock granularity; an unreadable stamp

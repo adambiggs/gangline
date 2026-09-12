@@ -223,7 +223,9 @@ compaction shortly before Claude Code's one-hour cache or Codex's thirty-minute
 cache expires, then records the submission for `gang explain`. It never acts on
 a busy, occupied, or spooled agent, and it will not compact again in that idle
 gap. Set `GANG_CACHE_COMPACTION=off` to opt out, or use a per-collar
-`COLLAR=TTL:MARGIN` map in the operator configuration.
+`COLLAR=TTL:MARGIN` map in the operator configuration. The setting is resolved
+when an agent is hitched, so change it before hitching the agents it should
+govern.
 
 An operator may also declare one optional curfew for the whole team:
 

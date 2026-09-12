@@ -5567,7 +5567,7 @@ tick_delivery_release() { # $1 window; clear only this worker's marker
 
 tick_full_pass_once() {
   local id agent collar special wins rc=0 pass_rc=0 err="" pending="" busy_rc=0
-  local compact_note="" compact_rc=0
+  local compact_note="" compact_rc=0 cache_rc=0
   local TICK_PASS=1 GLYPH_SOURCE=tick
   alert_ui_ensure || { printf 'tick could not install the tmux alert center\n' >&2; rc=1; }
   wins="$(tmux list-windows -t "=$SESSION" \
@@ -5649,11 +5649,17 @@ tick_full_pass_once() {
         fi
       fi
     fi
-    if cache_compaction_candidate "$id" "$collar"; then
-      if ! cache_compaction_submit "$id" "$agent"; then
-        rc=1
-      fi
-    fi
+    cache_rc=0
+    cache_compaction_candidate "$id" "$collar" || cache_rc=$?
+    case "$cache_rc" in
+      0)
+        if ! cache_compaction_submit "$id" "$agent"; then
+          rc=1
+        fi ;;
+      1) ;;
+      2) rc=1 ;;
+      *) die "internal: cache_compaction_candidate returned unknown status $cache_rc" ;;
+    esac
     # A CLEARED CONDITION LEAVES THE STATUS BAR WITHIN ONE PASS. A glyph is
     # otherwise painted only where a state is read or a native event arrives,
     # and the event that painted a condition is often the last one it sends: a
@@ -9378,6 +9384,7 @@ context_light_read() { # $1 = window, collar loaded; yellow|red, or 1 below
 # start compacting merely because it happened to implement a stamp reader.
 CACHE_COMPACTION_SELECTORS=() CACHE_COMPACTION_SPECS=()
 CACHE_COMPACTION_TTLS=() CACHE_COMPACTION_MARGINS=()
+CACHE_COMPACTION_SPEC=off
 CACHE_COMPACTION_TTL=0 CACHE_COMPACTION_MARGIN=0
 cache_compaction_map() { # $1 off or whitespace-separated COLLAR=TTL:MARGIN|off
   local setting="$1" note entry selector spec ttl margin seen=" "
@@ -9413,6 +9420,8 @@ cache_compaction_map() { # $1 off or whitespace-separated COLLAR=TTL:MARGIN|off
         esac
         [ "$ttl" -gt 0 ] \
           || die "GANG_CACHE_COMPACTION entry '$entry' needs a positive TTL$note"
+        [ "$margin" -gt 0 ] \
+          || die "GANG_CACHE_COMPACTION entry '$entry' needs a positive margin$note"
         [ "$margin" -lt "$ttl" ] \
           || die "GANG_CACHE_COMPACTION entry '$entry' needs a margin below its TTL$note"
         ;;
@@ -9425,10 +9434,10 @@ cache_compaction_map() { # $1 off or whitespace-separated COLLAR=TTL:MARGIN|off
   done
 }
 
-cache_compaction_select() { # $1 collar; 0 active, 1 opt-out or no entry
+cache_compaction_select() { # $1 collar; map already read -> selected global
   local collar="$1" i fallback=-1 chosen=-1
+  CACHE_COMPACTION_SPEC=off
   CACHE_COMPACTION_TTL=0 CACHE_COMPACTION_MARGIN=0
-  cache_compaction_map "$GANG_CACHE_COMPACTION"
   for i in "${!CACHE_COMPACTION_SELECTORS[@]}"; do
     case "${CACHE_COMPACTION_SELECTORS[$i]}" in
       "$collar") chosen="$i"; break ;;
@@ -9437,9 +9446,30 @@ cache_compaction_select() { # $1 collar; 0 active, 1 opt-out or no entry
   done
   [ "$chosen" -ge 0 ] || chosen="$fallback"
   [ "$chosen" -ge 0 ] || return 1
+  CACHE_COMPACTION_SPEC="${CACHE_COMPACTION_SPECS[$chosen]}"
   CACHE_COMPACTION_TTL="${CACHE_COMPACTION_TTLS[$chosen]}"
   CACHE_COMPACTION_MARGIN="${CACHE_COMPACTION_MARGINS[$chosen]}"
   [ "$CACHE_COMPACTION_TTL" -gt 0 ]
+}
+
+cache_compaction_for() { # $1 window; 0 active, 1 off, 2 malformed registration
+  local spec ttl margin
+  CACHE_COMPACTION_TTL=0 CACHE_COMPACTION_MARGIN=0
+  spec="$(tmux show-options -wqv -t "$1" @gl_cache_compaction 2>/dev/null)" \
+    || spec=""
+  case "$spec" in
+    ''|off) return 1 ;;
+    *:*)
+      ttl="${spec%%:*}"
+      margin="${spec#*:}"
+      case "$ttl:$margin" in :*|*:|*[!0-9:]*|*:*:*) return 2 ;; esac
+      [ "$ttl" -gt 0 ] && [ "$margin" -gt 0 ] && [ "$margin" -lt "$ttl" ] \
+        || return 2
+      CACHE_COMPACTION_TTL="$ttl"
+      CACHE_COMPACTION_MARGIN="$margin"
+      return 0 ;;
+    *) return 2 ;;
+  esac
 }
 
 cache_compaction_stamp_read() { # $1 window, collar loaded -> source mtime
@@ -9477,7 +9507,7 @@ cache_compaction_pending_settle() { # $1 window; retain a pending action until i
     1) return 0 ;;
     2) printf 'tick cache compaction marker for %s is malformed; refusing to decide its idle gap\n' \
          "$(agent_name_of "$1")" >&2
-       return 1 ;;
+       return 2 ;;
     *) die "internal: cache_compaction_mark_read returned unknown status $pending_rc" ;;
   esac
   busy "$1" || busy_rc=$?
@@ -9486,13 +9516,19 @@ cache_compaction_pending_settle() { # $1 window; retain a pending action until i
   tmux set-option -w -t "$1" @gl_cache_compact_gap "v1:$stamp" \
     && tmux set-option -uw -t "$1" @gl_cache_compact_pending 2>/dev/null \
     || { printf 'tick could not settle the automatic-compaction marker for %s\n' \
-         "$(agent_name_of "$1")" >&2; return 1; }
+         "$(agent_name_of "$1")" >&2; return 2; }
 }
 
 CACHE_COMPACTION_STAMP=""
 cache_compaction_idle_gap() { # $1 window; 0 allowed, 1 same or unproved gap
-  local stamp="" marked="" marked_rc=0
-  cache_compaction_pending_settle "$1" || return 1
+  local stamp="" marked="" marked_rc=0 pending_rc=0
+  cache_compaction_pending_settle "$1" || pending_rc=$?
+  case "$pending_rc" in
+    0) ;;
+    1) return 1 ;;
+    2) return 2 ;;
+    *) die "internal: cache_compaction_pending_settle returned unknown status $pending_rc" ;;
+  esac
   stamp="$(cache_compaction_stamp_read "$1")" || return 1
   marked="$(cache_compaction_mark_read "$1" gap)" || marked_rc=$?
   case "$marked_rc" in
@@ -9500,20 +9536,28 @@ cache_compaction_idle_gap() { # $1 window; 0 allowed, 1 same or unproved gap
       [ "$marked" = "$stamp" ] && return 1
       tmux set-option -uw -t "$1" @gl_cache_compact_gap 2>/dev/null \
         || { printf 'tick could not clear the completed automatic-compaction marker for %s\n' \
-             "$(agent_name_of "$1")" >&2; return 1; }
+             "$(agent_name_of "$1")" >&2; return 2; }
       ;;
     1) ;;
     2) printf 'tick cache compaction marker for %s is malformed; refusing to decide its idle gap\n' \
          "$(agent_name_of "$1")" >&2
-       return 1 ;;
+       return 2 ;;
     *) die "internal: cache_compaction_mark_read returned unknown status $marked_rc" ;;
   esac
   CACHE_COMPACTION_STAMP="$stamp"
 }
 
-cache_compaction_candidate() { # $1 window, $2 collar; 0 ready to submit
-  local busy_rc=0 now age self_pending=""
-  cache_compaction_select "$2" || return 1
+cache_compaction_candidate() { # $1 window, $2 collar; 0 ready, 1 no, 2 diagnostic failure
+  local busy_rc=0 config_rc=0 idle_rc=0 now age self_pending=""
+  cache_compaction_for "$1" || config_rc=$?
+  case "$config_rc" in
+    0) ;;
+    1) return 1 ;;
+    2) printf 'tick cache compaction registration for %s is malformed; refusing automatic compaction\n' \
+         "$(agent_name_of "$1")" >&2
+       return 2 ;;
+    *) die "internal: cache_compaction_for returned unknown status $config_rc" ;;
+  esac
   [ -n "${GANG_COMPACT_CMD:-}" ] || return 1
   self_pending="$(tmux show-options -wqv -t "$1" @gl_self_compact_requested 2>/dev/null)" \
     || self_pending=""
@@ -9528,7 +9572,13 @@ cache_compaction_candidate() { # $1 window, $2 collar; 0 ready to submit
   busy "$1" || busy_rc=$?
   [ "$busy_rc" -eq 1 ] || return 1
   context_light_read "$1" >/dev/null || return 1
-  cache_compaction_idle_gap "$1" || return 1
+  cache_compaction_idle_gap "$1" || idle_rc=$?
+  case "$idle_rc" in
+    0) ;;
+    1) return 1 ;;
+    2) return 2 ;;
+    *) die "internal: cache_compaction_idle_gap returned unknown status $idle_rc" ;;
+  esac
   now="$(date +%s)" || return 1
   [ "$CACHE_COMPACTION_STAMP" -le "$now" ] || return 1
   age=$(( now - CACHE_COMPACTION_STAMP ))
@@ -10810,7 +10860,7 @@ else:
 
 hitch_launch() {
   local name="" prof="${GANG_COLLAR:-claude-code}" dir="$PWD" model="" effort="" task="" missing="" role="" role_path="" id="" resume=0 resume_id="" resume_stamped="" launch_env collar_arg=0 pane_dead lookup_rc=0 opened_session=0
-  local lights="" lights_arg="" lights_given=0 lights_subject="" lights_from="" lights_note="" boot="${GANG_BOOT_TIMEOUT:-30}" gate_looks="${GANG_GATE_LOOKS:-60}"
+  local lights="" lights_arg="" lights_given=0 lights_subject="" lights_from="" lights_note="" cache_compaction=off boot="${GANG_BOOT_TIMEOUT:-30}" gate_looks="${GANG_GATE_LOOKS:-60}"
   local hitched_by="" use_stdin=0
   name="${1:-}"; case "$name" in ''|-*) usage_die ;; esac; shift
   valid_name "$name" \
@@ -10833,6 +10883,9 @@ hitch_launch() {
   esac; done
   usage_lights_parse "$GANG_USAGE_LIGHTS" >/dev/null || true
   auto_resume_parse "$GANG_AUTO_RESUME" >/dev/null || true
+  cache_compaction_map "$GANG_CACHE_COMPACTION"
+  cache_compaction_select "$prof" || :
+  cache_compaction="$CACHE_COMPACTION_SPEC"
   # These settings can refuse a hitch, so validate them before its first tmux
   # mutation. Checking them only at the read site leaves a registered agent
   # behind after reporting that the hitch failed.
@@ -11136,6 +11189,7 @@ hitch_launch() {
   # reading it could not take. The lights an agent has are the ones its own
   # launch resolved; an empty value is off, exactly as an absent one is.
   hitch_register "$id" "$name" @gl_context_lights "$lights"
+  hitch_register "$id" "$name" @gl_cache_compaction "$cache_compaction"
   if [ "$GANG_USAGE_LIGHTS" != off ]; then
     hitch_register "$id" "$name" @gl_usage_lights "$GANG_USAGE_LIGHTS"
   fi

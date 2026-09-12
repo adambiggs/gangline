@@ -1353,7 +1353,8 @@ printf '%s' '{"hook_event_name":"Stop"}' \
 # its native context source is over the first configured light. Each negative
 # case changes exactly one eligibility fact from that ready state.
 : > "$tick_cache_stamp"
-"$HITCH" tick-cache -c tick-cache -l 50000,75000 -d /tmp >/dev/null
+GANG_CACHE_COMPACTION='tick-cache=120:90' "$HITCH" tick-cache -c tick-cache \
+  -l 50000,75000 -d /tmp >/dev/null
 tick_cache_id="$(window_id tick-cache)"
 tmux set-option -w -t "$tick_cache_id" @gl_session "$tick_cache_stamp"
 tick_cache_ready() {
@@ -1399,24 +1400,52 @@ GANG_CACHE_COMPACTION='tick-cache=120:90' GANG_TEST_TICK_MODE=sync \
 equal "a later idle gap may compact after its own cache approaches expiry" 2 \
   "$(tick_cache_count)"
 
+# Cache-compaction configuration is settled when an agent is hitched, as
+# context and usage lights are. A malformed environment supplied only to a
+# later tick must therefore neither kill the pass nor alter this agent's
+# already-selected TTL and margin.
+tick_cache_ready
+tick_cache_map_rc=0
+GANG_CACHE_COMPACTION='not-a-cache-compaction-map' \
+  GANG_TEST_TICK_MODE=sync "$GANG" tick >/dev/null || tick_cache_map_rc=$?
+equal "a malformed ambient cache map does not abort a tick" 0 "$tick_cache_map_rc"
+equal "the hitch-resolved cache entry still compacts inside its margin" 3 \
+  "$(tick_cache_count)"
+
+# A malformed once-per-gap marker is not an ordinary ineligible state. The
+# tick must retain both the nonzero health result and its diagnostic instead of
+# swallowing the helper's stderr while returning green.
+tick_cache_ready
+tmux set-option -w -t "$tick_cache_id" @gl_cache_compact_gap malformed
+tick_cache_marker_rc=0
+tick_cache_marker_out="$(GANG_TEST_TICK_MODE=sync "$GANG" tick 2>&1)" \
+  || tick_cache_marker_rc=$?
+equal "a malformed cache-compaction marker fails the tick" 1 \
+  "$tick_cache_marker_rc"
+contains "the malformed marker is visible in tick output" \
+  "$tick_cache_marker_out" "tick cache compaction marker for tick-cache is malformed"
+equal "a malformed marker never submits another automatic compaction" 3 \
+  "$(tick_cache_count)"
+tmux set-option -uw -t "$tick_cache_id" @gl_cache_compact_gap
+
 tick_cache_ready
 tmux set-option -w -t "$tick_cache_id" @gl_context_lights 95000,99000
 GANG_CACHE_COMPACTION='tick-cache=120:90' GANG_TEST_TICK_MODE=sync \
   "$GANG" tick >/dev/null
-equal "context below the first band is not compacted" 2 "$(tick_cache_count)"
+equal "context below the first band is not compacted" 3 "$(tick_cache_count)"
 
 tick_cache_ready
 tmux set-option -w -t "$tick_cache_id" @gl_turn "open $(date +%s)"
 GANG_CACHE_COMPACTION='tick-cache=120:90' GANG_TEST_TICK_MODE=sync \
   "$GANG" tick >/dev/null
-equal "a busy agent is not compacted" 2 "$(tick_cache_count)"
+equal "a busy agent is not compacted" 3 "$(tick_cache_count)"
 
 tick_cache_ready
 tick_cache_spool="$(tmux show-options -wqv -t "$tick_cache_id" @gl_spool)"
 : > "$GANG_LOCK_DIR/spool/$tick_cache_spool/sending-cache-test"
 GANG_CACHE_COMPACTION='tick-cache=120:90' GANG_TEST_TICK_MODE=sync \
   "$GANG" tick >/dev/null
-equal "a spool held mid-delivery blocks automatic compaction" 2 \
+equal "a spool held mid-delivery blocks automatic compaction" 3 \
   "$(tick_cache_count)"
 rm -f -- "$GANG_LOCK_DIR/spool/$tick_cache_spool/sending-cache-test"
 
@@ -1424,13 +1453,24 @@ tick_cache_ready
 touch -d '121 seconds ago' "$tick_cache_stamp"
 GANG_CACHE_COMPACTION='tick-cache=120:90' GANG_TEST_TICK_MODE=sync \
   "$GANG" tick >/dev/null
-equal "an already-cold cache is not compacted" 2 "$(tick_cache_count)"
+equal "an already-cold cache is not compacted" 3 "$(tick_cache_count)"
 
-tick_cache_ready
-GANG_CACHE_COMPACTION=off GANG_TEST_TICK_MODE=sync "$GANG" tick >/dev/null
-equal "the operator opt-out disables automatic compaction" 2 \
-  "$(tick_cache_count)"
 "$GANG" drop tick-cache >/dev/null
+
+# The global opt-out is likewise resolved on the hitch that would otherwise
+# arm the backstop. A later tick has no raw map to reinterpret.
+tick_cache_off_stamp="$RUN_ROOT/tick-cache-off-transcript"
+: > "$tick_cache_off_stamp"
+GANG_CACHE_COMPACTION=off "$HITCH" tick-cache-off -c tick-cache \
+  -l 50000,75000 -d /tmp >/dev/null
+tick_cache_off_id="$(window_id tick-cache-off)"
+tmux set-option -w -t "$tick_cache_off_id" @gl_session "$tick_cache_off_stamp"
+tmux set-option -w -t "$tick_cache_off_id" @gl_turn "closed $(date +%s)"
+touch -d '45 seconds ago' "$tick_cache_off_stamp"
+GANG_TEST_TICK_MODE=sync "$GANG" tick >/dev/null
+equal "the operator opt-out disables automatic compaction" 3 \
+  "$(tick_cache_count)"
+"$GANG" drop tick-cache-off >/dev/null
 
 # Codex 0.151.0 draws the provider wait chooser over its composer while the
 # turn itself remains live. This stand-in speaks the same terminal contract:

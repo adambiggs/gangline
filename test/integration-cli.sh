@@ -519,6 +519,10 @@ refuses "gang config refuses a cache margin at or beyond its TTL" \
   "GANG_CACHE_COMPACTION entry 'codex=1800:1800' needs a margin below its TTL (from the environment)" \
   env GANG_CONFIG_DIR="$CONFIG_CASES/report" GANG_CACHE_COMPACTION='codex=1800:1800' \
     "$GANG" config
+refuses "gang config refuses a zero cache margin" \
+  "GANG_CACHE_COMPACTION entry 'codex=1800:0' needs a positive margin (from the environment)" \
+  env GANG_CONFIG_DIR="$CONFIG_CASES/report" GANG_CACHE_COMPACTION='codex=1800:0' \
+    "$GANG" config
 refuses "gang config refuses a malformed map under its origin" \
   "GANG_CONTEXT_LIGHTS entry 'codex/*' must increase from yellow to red, got '90,10' (from the environment)" \
   env GANG_CONFIG_DIR="$CONFIG_CASES/report" GANG_CONTEXT_LIGHTS='codex/*=90,10' \
