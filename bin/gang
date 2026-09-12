@@ -4715,15 +4715,23 @@ tick_alert_history_note() { # guard held; $1 prior state, $2 prior note, $3 stat
     ok:ok|:ok) return 0 ;;
     failed:failed) [ "$2" != "$4" ] || return 0 ;;
   esac
+  # ROTATE BEFORE THE APPEND, AND ONLY ONTO A FILE. mv onto a directory moves
+  # the journal inside it, where no reader looks. A rotation that cannot land
+  # appends nothing: every row stays in place, the bound holds, and the history
+  # says it is incomplete.
+  if [ -f "$TICK_ALERTS" ]; then
+    size="$(wc -c < "$TICK_ALERTS")" || size=""
+    size="${size//[!0-9]/}"
+  fi
+  if [ "${size:-0}" -gt "$GLYPH_JOURNAL_BOUND" ]; then
+    if [ -d "$TICK_ALERTS.1" ] || ! mv -f -- "$TICK_ALERTS" "$TICK_ALERTS.1"; then
+      tick_alert_history_lost
+      return 0
+    fi
+  fi
   if ! { printf '%s\t%s\t%s\n' "$5" "$3" "$4" >> "$TICK_ALERTS"; } 2>/dev/null; then
     tick_alert_history_lost
     return 0
-  fi
-  size="$(wc -c < "$TICK_ALERTS")" || size=""
-  size="${size//[!0-9]/}"
-  # A move that fails leaves every row in place, only the bound unenforced.
-  if [ "${size:-0}" -gt "$GLYPH_JOURNAL_BOUND" ]; then
-    mv -f -- "$TICK_ALERTS" "$TICK_ALERTS.1" || true
   fi
 }
 

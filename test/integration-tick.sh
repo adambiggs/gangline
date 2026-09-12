@@ -1094,6 +1094,60 @@ excludes "a surplus field is not read into the failure summary" \
   "$alert_ui_surplus" "raised: note"
 mv -- "$RUN_ROOT/alert-ui-alerts-saved" "$alert_ui_alerts"
 
+# ROTATION PRECEDES THE APPEND AND LANDS ONLY ON A FILE. A journal past its
+# bound is rotated before the next row. A rotation that cannot land keeps every
+# row in place, appends nothing and marks the history incomplete, so the bound
+# holds and the gap is visible; mv onto a directory would move the journal
+# inside it, where no reader looks.
+alert_ui_pad_journal() {
+  awk 'BEGIN { for (i = 0; i < 72000; i++) printf "%d\tok\t\n", 1000000000 + i }' \
+    > "$alert_ui_alerts"
+}
+cp -- "$alert_ui_alerts" "$RUN_ROOT/alert-ui-alerts-saved"
+alert_ui_pad_journal
+alert_ui_padded="$(wc -c < "$alert_ui_alerts" | tr -d ' ')"
+equal "the padded journal is past its bound" over \
+  "$(if [ "$alert_ui_padded" -gt 1048576 ]; then printf over; else printf within; fi)"
+mkdir -- "$alert_ui_alerts.1"
+alert_ui_tmux set-option -u -t "=$alert_ui_session:" @gl_alert_history_lost
+alert_ui_tmux set-option -w -t "$alert_ui_caller_id" @gl_collar missing-alert-collar
+alert_ui_dir_rotation_rc=0
+alert_ui_gang tick >/dev/null 2>&1 || alert_ui_dir_rotation_rc=$?
+equal "the transition over a directory generation is a failing tick" 1 \
+  "$alert_ui_dir_rotation_rc"
+equal "a rotation onto a directory keeps the journal in place" \
+  "$alert_ui_padded" "$(wc -c < "$alert_ui_alerts" | tr -d ' ')"
+equal "a rotation onto a directory moves nothing into it" "" \
+  "$(ls -A -- "$alert_ui_alerts.1")"
+equal "a rotation onto a directory marks the history incomplete" 1 \
+  "$(alert_ui_tmux show-options -qv -t "=$alert_ui_session:" @gl_alert_history_lost)"
+rm -rf -- "$alert_ui_alerts.1"
+
+alert_ui_mv_bin="$RUN_ROOT/alert-ui-mv-bin"
+alert_ui_mv_ledger="$RUN_ROOT/alert-ui-mv-refusals"
+mkdir -p "$alert_ui_mv_bin"
+cat > "$alert_ui_mv_bin/mv" <<SH
+#!/bin/sh
+. "\$GANG_TEST_PATH_SHIM_GUARD"
+path_shim_guard '$alert_ui_real_mv' "\$0" mv || exit \$?
+case "\$*" in
+  *alerts.1) printf '%s\n' "\$*" >> '$alert_ui_mv_ledger'; exit 1 ;;
+esac
+exec '$alert_ui_real_mv' "\$@"
+SH
+chmod +x "$alert_ui_mv_bin/mv"
+alert_ui_pad_journal
+alert_ui_tmux set-option -u -t "=$alert_ui_session:" @gl_alert_history_lost
+alert_ui_tmux set-option -w -t "$alert_ui_caller_id" @gl_collar bash
+PATH="$alert_ui_mv_bin:$PATH" alert_ui_gang tick >/dev/null
+equal "the clean transition attempted one refused rotation" 1 \
+  "$(wc -l < "$alert_ui_mv_ledger" | tr -d ' ')"
+equal "a refused rotation keeps the journal at its size" \
+  "$alert_ui_padded" "$(wc -c < "$alert_ui_alerts" | tr -d ' ')"
+equal "a refused rotation marks the history incomplete" 1 \
+  "$(alert_ui_tmux show-options -qv -t "=$alert_ui_session:" @gl_alert_history_lost)"
+mv -- "$RUN_ROOT/alert-ui-alerts-saved" "$alert_ui_alerts"
+
 # A pass owns the tick lock through its health commit. Hold a failing pass at
 # that exact seam, request another pass after repairing the condition, and
 # require the same owner to consume the dirty edge before its result returns.
