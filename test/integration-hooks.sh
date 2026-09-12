@@ -237,7 +237,12 @@ equal "a prompt that crosses a held re-probe keeps the record retired" "" \
 # clear both, and the Stop then stamped an empty record. This shim parks the
 # hook's first write that names the stamp; with both options in one invocation
 # it parks before either, so the reader's write lands first and the hook's
-# stands. Its barriers go through the suite's bounded tmux.
+# stands. Its barriers go through the suite's bounded tmux: the path PATH
+# resolves here, captured because a shim cannot write the bare word without
+# calling itself.
+waiting_wait_tmux="$(command -v tmux)"
+equal "the waiting holds' barriers resolve to the suite's bounded tmux" \
+  "$RUN_ROOT/waitbin/tmux" "$waiting_wait_tmux"
 waiting_hold_bin="$RUN_ROOT/waiting-hold-bin"
 mkdir -p "$waiting_hold_bin"
 cat > "$waiting_hold_bin/tmux" <<SH
@@ -248,8 +253,8 @@ if [ "\$1" = set-option ] && [ -e '$RUN_ROOT/waiting-store-hold' ]; then
   case "\$*" in
     *@gl_waiting_at*)
       rm -f -- '$RUN_ROOT/waiting-store-hold'
-      '$RUN_ROOT/waitbin/tmux' wait-for -S waiting-store-held
-      '$RUN_ROOT/waitbin/tmux' wait-for waiting-store-release ;;
+      '$waiting_wait_tmux' wait-for -S waiting-store-held
+      '$waiting_wait_tmux' wait-for waiting-store-release ;;
   esac
 fi
 exec '$REAL_TMUX' "\$@"
