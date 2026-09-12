@@ -6008,10 +6008,11 @@ alert_history_report() { # the latest alert transitions, oldest first
     return 0
   fi
   # LIST THE CURRENT GENERATION FIRST. A reader takes no lock and a rotation can
-  # land between these checks. .1 is only ever replaced while the team lives,
-  # so in this order a rotation can add .1 to a listing that already names the
-  # moved file, whose read then fails as unknown; in the other order the first
-  # rotation hides both files and a journal with rows reads as no history.
+  # land between these checks. In this order a rotation can add .1 to a listing
+  # that already names the moved file, whose read then fails as unknown; in the
+  # other order the first rotation hides both files and a journal with rows
+  # reads as no history. The history-lost read stays between the checks: it is
+  # where the test lands that rotation.
   [ ! -f "$TICK_ALERTS" ] || current="$TICK_ALERTS"
   lost="$(tmux show-options -qv -t "=$SESSION:" @gl_alert_history_lost 2>/dev/null)" \
     || lost=""
