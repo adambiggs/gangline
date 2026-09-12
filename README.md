@@ -217,6 +217,14 @@ red. Dropping below yellow starts a new context epoch. Lights are guidance only;
 the agent chooses the natural checkpoint. An absolute red threshold above the
 native window reports itself as invalid when that window is first readable.
 
+For an idle agent already past its first context-light band, the cooperative
+tick is also a cache-expiry backstop. By default it submits one native
+compaction shortly before Claude Code's one-hour cache or Codex's thirty-minute
+cache expires, then records the submission for `gang explain`. It never acts on
+a busy, occupied, or spooled agent, and it will not compact again in that idle
+gap. Set `GANG_CACHE_COMPACTION=off` to opt out, or use a per-collar
+`COLLAR=TTL:MARGIN` map in the operator configuration.
+
 An operator may also declare one optional curfew for the whole team:
 
 ```sh

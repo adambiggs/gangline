@@ -507,6 +507,18 @@ equal "an unmatched map still ends at the built-in collar default" \
   $'context-lights\tcodex/*\t75%,90%\ncontext-lights\t*\tcollar' \
   "$(GANG_CONFIG_DIR="$CONFIG_CASES/report" GANG_CONTEXT_LIGHTS='codex/*=75%,90%' \
     "$GANG" config | grep '^context-lights' || :)"
+equal "gang config lists the per-collar cache-compaction map" \
+  $'cache-compaction\tcodex\t1800:180\ncache-compaction\tclaude-code\t3600:300\ncache-compaction\t*\toff' \
+  "$(GANG_CONFIG_DIR="$CONFIG_CASES/report" \
+    GANG_CACHE_COMPACTION='codex=1800:180 claude-code=3600:300 *=off' \
+    "$GANG" config | grep '^cache-compaction' || :)"
+equal "a disabled cache-compaction map prints no collar entries" "" \
+  "$(GANG_CONFIG_DIR="$CONFIG_CASES/report" GANG_CACHE_COMPACTION=off \
+    "$GANG" config | grep '^cache-compaction' || :)"
+refuses "gang config refuses a cache margin at or beyond its TTL" \
+  "GANG_CACHE_COMPACTION entry 'codex=1800:1800' needs a margin below its TTL (from the environment)" \
+  env GANG_CONFIG_DIR="$CONFIG_CASES/report" GANG_CACHE_COMPACTION='codex=1800:1800' \
+    "$GANG" config
 refuses "gang config refuses a malformed map under its origin" \
   "GANG_CONTEXT_LIGHTS entry 'codex/*' must increase from yellow to red, got '90,10' (from the environment)" \
   env GANG_CONFIG_DIR="$CONFIG_CASES/report" GANG_CONTEXT_LIGHTS='codex/*=90,10' \

@@ -1263,6 +1263,8 @@ PROMPT_COMMAND=tick_prompt
 SH
 
 tick_compacted="$RUN_ROOT/tick-compacted"
+tick_cache_ledger="$RUN_ROOT/tick-cache-compactions"
+tick_cache_stamp="$RUN_ROOT/tick-cache-transcript"
 mkdir -p "$RUN_ROOT/collars"
 export GANG_COLLARS="$RUN_ROOT/collars"
 cat > "$RUN_ROOT/collars/tick-native.sh" <<SH
@@ -1273,6 +1275,21 @@ GANG_LAUNCH="ENV='$RUN_ROOT/tick-bashrc' bash --posix"
 GANG_STOP_HOOK=1
 GANG_SELF_COMPACT=deferred
 GANG_COMPACT_CMD="printf TICK_COMPACT; : > '$tick_compacted'"
+SH
+cat > "$RUN_ROOT/collars/tick-cache.sh" <<SH
+# shellcheck shell=bash
+# shellcheck disable=SC2034
+. "$ROOT/collars/bash.sh"
+GANG_LAUNCH="ENV='$RUN_ROOT/tick-bashrc' bash --posix"
+GANG_STOP_HOOK=1
+GANG_COMPACT_CMD="printf 'TICK_CACHE_COMPACT\\n'; printf 'x\\n' >> '$tick_cache_ledger'"
+collar_context() { printf '80k/100k\\n'; }
+collar_cache_stamp() {
+  local file
+  file="\$(tmux show-options -wqv -t "\$1" @gl_session)" || return 1
+  [ -f "\$file" ] || return 1
+  stat -c %Y -- "\$file"
+}
 SH
 cat > "$RUN_ROOT/collars/tick-codex-adopt.sh" <<SH
 # shellcheck shell=bash
@@ -1330,6 +1347,90 @@ printf '%s' '{"hook_event_name":"Stop"}' \
   | GANG_TEST_TICK_MODE=manual TMUX_PANE="$tick_false_pane" "$GANG" hook >/dev/null
 printf '%s' '{"hook_event_name":"Stop"}' \
   | GANG_TEST_TICK_MODE=manual TMUX_PANE="$tick_mode_pane" "$GANG" hook >/dev/null
+
+# A cache-expiry compaction is a tick-only action. The fixture's transcript
+# stamp is deliberately older than the margin but younger than the TTL, while
+# its native context source is over the first configured light. Each negative
+# case changes exactly one eligibility fact from that ready state.
+: > "$tick_cache_stamp"
+"$HITCH" tick-cache -c tick-cache -l 50000,75000 -d /tmp >/dev/null
+tick_cache_id="$(window_id tick-cache)"
+tmux set-option -w -t "$tick_cache_id" @gl_session "$tick_cache_stamp"
+tick_cache_ready() {
+  tmux set-option -w -t "$tick_cache_id" @gl_context_lights 50000,75000
+  tmux set-option -w -t "$tick_cache_id" @gl_turn "closed $(date +%s)"
+  tmux set-option -uw -t "$tick_cache_id" @gl_cache_compact_gap
+  tmux set-option -uw -t "$tick_cache_id" @gl_cache_compact_pending
+  touch -d '45 seconds ago' "$tick_cache_stamp"
+}
+tick_cache_count() { wc -l < "$tick_cache_ledger" | tr -d ' '; }
+tick_cache_ready
+GANG_CACHE_COMPACTION='tick-cache=120:90' GANG_TEST_TICK_MODE=sync \
+  "$GANG" tick >/dev/null
+equal "an idle context inside its cache-expiry margin is compacted" 1 \
+  "$(tick_cache_count)"
+tick_cache_digest="$(python3 -c 'import hashlib,sys; print(hashlib.sha256((sys.argv[1]+"\0"+sys.argv[2]).encode()).hexdigest()[:24])' \
+  "$(tmux display-message -p -t "=$GANG_SESSION" '#{socket_path}')" "$GANG_SESSION")"
+tick_cache_journal="$XDG_STATE_HOME/gangline/tick/$tick_cache_digest/cache-compactions"
+equal "the automatic compaction writes its bounded journal record" \
+  '1 120 90' \
+  "$(awk -F '\t' '$2 == "tick-cache" { print ($3 ~ /^[0-9]+$/), $4, $5 }' "$tick_cache_journal")"
+contains "explain keeps the automatic compaction in a durable journal" \
+  "$("$GANG" explain tick-cache)" "cache compactions:"
+contains "explain renders the automatic compaction's cache age inputs" \
+  "$("$GANG" explain tick-cache)" 'cache stamp '
+
+# The automatic command can update a transcript as it makes the short summary.
+# That is still the same idle gap, so settle the agent idle and require the
+# stored mark to prevent a second compaction of that summary.
+tmux set-option -w -t "$tick_cache_id" @gl_turn "closed $(date +%s)"
+GANG_CACHE_COMPACTION='tick-cache=120:90' GANG_TEST_TICK_MODE=sync \
+  "$GANG" tick >/dev/null
+equal "one idle gap receives at most one automatic compaction" 1 \
+  "$(tick_cache_count)"
+
+# A later request creates another idle gap. Its fresh transcript mtime is the
+# generic, harness-owned witness; the tick needs no pane scrape or guessed
+# request timestamp to permit the next near-expiry compaction.
+touch -d '45 seconds ago' "$tick_cache_stamp"
+tmux set-option -w -t "$tick_cache_id" @gl_turn "closed $(date +%s)"
+GANG_CACHE_COMPACTION='tick-cache=120:90' GANG_TEST_TICK_MODE=sync \
+  "$GANG" tick >/dev/null
+equal "a later idle gap may compact after its own cache approaches expiry" 2 \
+  "$(tick_cache_count)"
+
+tick_cache_ready
+tmux set-option -w -t "$tick_cache_id" @gl_context_lights 95000,99000
+GANG_CACHE_COMPACTION='tick-cache=120:90' GANG_TEST_TICK_MODE=sync \
+  "$GANG" tick >/dev/null
+equal "context below the first band is not compacted" 2 "$(tick_cache_count)"
+
+tick_cache_ready
+tmux set-option -w -t "$tick_cache_id" @gl_turn "open $(date +%s)"
+GANG_CACHE_COMPACTION='tick-cache=120:90' GANG_TEST_TICK_MODE=sync \
+  "$GANG" tick >/dev/null
+equal "a busy agent is not compacted" 2 "$(tick_cache_count)"
+
+tick_cache_ready
+tick_cache_spool="$(tmux show-options -wqv -t "$tick_cache_id" @gl_spool)"
+: > "$GANG_LOCK_DIR/spool/$tick_cache_spool/sending-cache-test"
+GANG_CACHE_COMPACTION='tick-cache=120:90' GANG_TEST_TICK_MODE=sync \
+  "$GANG" tick >/dev/null
+equal "a spool held mid-delivery blocks automatic compaction" 2 \
+  "$(tick_cache_count)"
+rm -f -- "$GANG_LOCK_DIR/spool/$tick_cache_spool/sending-cache-test"
+
+tick_cache_ready
+touch -d '121 seconds ago' "$tick_cache_stamp"
+GANG_CACHE_COMPACTION='tick-cache=120:90' GANG_TEST_TICK_MODE=sync \
+  "$GANG" tick >/dev/null
+equal "an already-cold cache is not compacted" 2 "$(tick_cache_count)"
+
+tick_cache_ready
+GANG_CACHE_COMPACTION=off GANG_TEST_TICK_MODE=sync "$GANG" tick >/dev/null
+equal "the operator opt-out disables automatic compaction" 2 \
+  "$(tick_cache_count)"
+"$GANG" drop tick-cache >/dev/null
 
 # Codex 0.151.0 draws the provider wait chooser over its composer while the
 # turn itself remains live. This stand-in speaks the same terminal contract:
@@ -3856,6 +3957,9 @@ equal "team teardown removes its ephemeral tick health file" absent \
   "$([ ! -e "$tick_health_file" ] && printf absent || printf present)"
 equal "team teardown removes both generations of its transition journal" absent \
   "$([ ! -e "$tick_glyph_journal" ] && [ ! -e "$tick_glyph_journal.1" ] \
+      && printf absent || printf present)"
+equal "team teardown removes both generations of its cache-compaction journal" absent \
+  "$([ ! -e "$tick_cache_journal" ] && [ ! -e "$tick_cache_journal.1" ] \
       && printf absent || printf present)"
 
 export GANG_SESSION="$tick_original_session"

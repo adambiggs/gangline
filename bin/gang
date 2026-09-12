@@ -76,7 +76,7 @@ fail() { # $1 = exit status, rest = message
   exit "$code"
 }
 
-GANG_CONFIG_KEYS='GANG_COLLAR GANG_SESSION GANG_COLLARS GANG_LOCK_DIR GANG_ARCHIVE_DIR GANG_CONTEXT_LIGHTS GANG_USAGE_LIGHTS GANG_AUTO_RESUME GANG_SCOPE GANG_TMUX_GUARD GANG_BOOT_TIMEOUT GANG_GATE_LOOKS GANG_CHURN_WAIT GANG_ACTIVITY_WINDOW GANG_TURN_LIMIT'
+GANG_CONFIG_KEYS='GANG_COLLAR GANG_SESSION GANG_COLLARS GANG_LOCK_DIR GANG_ARCHIVE_DIR GANG_CONTEXT_LIGHTS GANG_CACHE_COMPACTION GANG_USAGE_LIGHTS GANG_AUTO_RESUME GANG_SCOPE GANG_TMUX_GUARD GANG_BOOT_TIMEOUT GANG_GATE_LOOKS GANG_CHURN_WAIT GANG_ACTIVITY_WINDOW GANG_TURN_LIMIT'
 GANG_COLLAR_KEYS='GANG_LAUNCH GANG_RESUME_LAUNCH GANG_MODEL_OPT GANG_MODEL_ALIASES GANG_EFFORT_OPT GANG_EFFORT_CMD GANG_ROLE_PROMPT_OPT GANG_HARNESS_PROMPT GANG_BUSY_REGEX GANG_OCCUPIED_REGEX GANG_QUEUED_REGEX GANG_QUEUE_RECALL_KEY GANG_INTERRUPT_KEY GANG_STOP_HOOK GANG_STALL_TYPES GANG_QUIET_AT_REST GANG_MIDTURN_INPUT GANG_COMPACT_CMD GANG_SELF_COMPACT GANG_SELF_COMPACT_WITNESS GANG_USAGE_LIGHT_INTERVAL GANG_USAGE_LIMIT_MAX_AGE'
 CONFIG_DIR="" CONFIG_FILE="" CONFIG_ORIGINS="" CONFIG_SEEN=""
 
@@ -364,6 +364,7 @@ GANG_ACTIVITY_WINDOW="${GANG_ACTIVITY_WINDOW:-5}"
 GANG_ACTIVITY_LIMIT="${GANG_ACTIVITY_LIMIT:-300}"
 GANG_TURN_LIMIT="${GANG_TURN_LIMIT:-300}"
 GANG_CONTEXT_LIGHTS="${GANG_CONTEXT_LIGHTS:-collar}"
+GANG_CACHE_COMPACTION="${GANG_CACHE_COMPACTION:-claude-code=3600:300 codex=1800:180}"
 GANG_USAGE_LIGHTS="${GANG_USAGE_LIGHTS:-off}"
 GANG_AUTO_RESUME="${GANG_AUTO_RESUME:-off}"
 GANG_SCOPE="${GANG_SCOPE:-off}"
@@ -1663,7 +1664,7 @@ load_collar() { # $1 = collar name; sets the GANG_* strategy surface
   # the next, and `declare -F` is how each of them is asked whether it exists.
   unset -f collar_context collar_context_lights collar_input collar_overlay \
     collar_session_id collar_live_session_id collar_harness_identity collar_models collar_model_check collar_bricked collar_blocked collar_waiting collar_queued collar_advisory collar_dismiss_advisory \
-    collar_last_action collar_usage_limits collar_usage_limits_error \
+    collar_last_action collar_cache_stamp collar_usage_limits collar_usage_limits_error \
     collar_auto_resume_record collar_submitted_prompt collar_native_idle 2>/dev/null || true
   # shellcheck source=/dev/null
   . "$f"
@@ -4529,12 +4530,14 @@ tick_session_live() { # cleanup/epilogue probe: no diagnostic may replace caller
 
 tick_paths_set() { # resolve the current team to its health/log directory
   TICK_DIR="" TICK_HEALTH="" TICK_LOG="" TICK_TICKET="" TICK_JOURNAL=""
+  TICK_CACHE_COMPACTION_JOURNAL=""
   tick_team_digest_set || return 1
   TICK_DIR="$(tick_state_root)/$TICK_TEAM_DIGEST"
   TICK_HEALTH="$TICK_DIR/health"
   TICK_LOG="$TICK_DIR/tick.log"
   TICK_TICKET="$TICK_DIR/ticket"
   TICK_JOURNAL="$TICK_DIR/transitions"
+  TICK_CACHE_COMPACTION_JOURNAL="$TICK_DIR/cache-compactions"
 }
 
 tick_state_prepare() {
@@ -5012,14 +5015,15 @@ tick_health_report() {
   printf '%s\n' "$(colour "$C_BAD" "last tick failed: $note")"
 }
 
-tick_state_forget() { # health and the transition journal die with their team
+tick_state_forget() { # health and the tick journals die with their team
   local err=""
   if ! tick_paths_set; then
-    printf '%s\n' "$(colour "$C_BAD" "tick health and transition journal NOT removed: the team's state directory could not be resolved")" >&2
+    printf '%s\n' "$(colour "$C_BAD" "tick state files NOT removed: the team's state directory could not be resolved")" >&2
     return 1
   fi
   if ! err="$(rm -f -- "$TICK_HEALTH" "$TICK_LOG" "$TICK_TICKET" \
-         "$TICK_JOURNAL" "$TICK_JOURNAL.1" 2>&1)"; then
+         "$TICK_JOURNAL" "$TICK_JOURNAL.1" \
+         "$TICK_CACHE_COMPACTION_JOURNAL" "$TICK_CACHE_COMPACTION_JOURNAL.1" 2>&1)"; then
     printf '%s\n' "$(colour "$C_BAD" "tick state files NOT all removed from $TICK_DIR: ${err##*$'\n'}")" >&2
     return 1
   fi
@@ -5643,6 +5647,11 @@ tick_full_pass_once() {
             rc=1
           fi
         fi
+      fi
+    fi
+    if cache_compaction_candidate "$id" "$collar"; then
+      if ! cache_compaction_submit "$id" "$agent"; then
+        rc=1
       fi
     fi
     # A CLEARED CONDITION LEAVES THE STATUS BAR WITHIN ONE PASS. A glyph is
@@ -9359,6 +9368,191 @@ context_light_read() { # $1 = window, collar loaded; yellow|red, or 1 below
   else
     return 1
   fi
+}
+
+# CACHE EXPIRY IS A HARNESS PROPERTY, NOT A PANE PROPERTY. A transcript or
+# rollout's mtime advances when its harness writes a request/response record;
+# last-tool and pty activity are useful operational signals, but neither dates
+# the provider's prompt cache. The operator supplies one TTL and safety margin
+# per collar. An omitted collar is intentionally off, so a new adapter cannot
+# start compacting merely because it happened to implement a stamp reader.
+CACHE_COMPACTION_SELECTORS=() CACHE_COMPACTION_SPECS=()
+CACHE_COMPACTION_TTLS=() CACHE_COMPACTION_MARGINS=()
+CACHE_COMPACTION_TTL=0 CACHE_COMPACTION_MARGIN=0
+cache_compaction_map() { # $1 off or whitespace-separated COLLAR=TTL:MARGIN|off
+  local setting="$1" note entry selector spec ttl margin seen=" "
+  local -a entries=()
+  CACHE_COMPACTION_SELECTORS=() CACHE_COMPACTION_SPECS=()
+  CACHE_COMPACTION_TTLS=() CACHE_COMPACTION_MARGINS=()
+  case "$setting" in off) return 0 ;; esac
+  note="$(config_origin_note GANG_CACHE_COMPACTION)"
+  IFS=$' \t\n' read -r -d '' -a entries <<<"$setting" || :
+  [ "${#entries[@]}" -gt 0 ] \
+    || die "GANG_CACHE_COMPACTION is empty: write off or COLLAR=TTL:MARGIN entries$note"
+  for entry in "${entries[@]}"; do
+    case "$entry" in
+      *=*) selector="${entry%%=*}"; spec="${entry#*=}" ;;
+      *) die "GANG_CACHE_COMPACTION entry '$entry' must be COLLAR=TTL:MARGIN or COLLAR=off$note" ;;
+    esac
+    case "$selector" in
+      '*') ;;
+      ''|*[!A-Za-z0-9._-]*) die "GANG_CACHE_COMPACTION selector '$selector' must be a collar name or *$note" ;;
+    esac
+    case "$seen" in
+      *" $selector "*) die "GANG_CACHE_COMPACTION names '$selector' twice; keep one entry for it$note" ;;
+    esac
+    seen="$seen$selector "
+    ttl=0 margin=0
+    case "$spec" in
+      off) ;;
+      *:*)
+        ttl="${spec%%:*}"
+        margin="${spec#*:}"
+        case "$ttl:$margin" in
+          :*|*:|*[!0-9:]*|*:*:*) die "GANG_CACHE_COMPACTION entry '$entry' must use whole-second TTL:MARGIN values$note" ;;
+        esac
+        [ "$ttl" -gt 0 ] \
+          || die "GANG_CACHE_COMPACTION entry '$entry' needs a positive TTL$note"
+        [ "$margin" -lt "$ttl" ] \
+          || die "GANG_CACHE_COMPACTION entry '$entry' needs a margin below its TTL$note"
+        ;;
+      *) die "GANG_CACHE_COMPACTION entry '$entry' must be COLLAR=TTL:MARGIN or COLLAR=off$note" ;;
+    esac
+    CACHE_COMPACTION_SELECTORS+=("$selector")
+    CACHE_COMPACTION_SPECS+=("$spec")
+    CACHE_COMPACTION_TTLS+=("$ttl")
+    CACHE_COMPACTION_MARGINS+=("$margin")
+  done
+}
+
+cache_compaction_select() { # $1 collar; 0 active, 1 opt-out or no entry
+  local collar="$1" i fallback=-1 chosen=-1
+  CACHE_COMPACTION_TTL=0 CACHE_COMPACTION_MARGIN=0
+  cache_compaction_map "$GANG_CACHE_COMPACTION"
+  for i in "${!CACHE_COMPACTION_SELECTORS[@]}"; do
+    case "${CACHE_COMPACTION_SELECTORS[$i]}" in
+      "$collar") chosen="$i"; break ;;
+      '*') fallback="$i" ;;
+    esac
+  done
+  [ "$chosen" -ge 0 ] || chosen="$fallback"
+  [ "$chosen" -ge 0 ] || return 1
+  CACHE_COMPACTION_TTL="${CACHE_COMPACTION_TTLS[$chosen]}"
+  CACHE_COMPACTION_MARGIN="${CACHE_COMPACTION_MARGINS[$chosen]}"
+  [ "$CACHE_COMPACTION_TTL" -gt 0 ]
+}
+
+cache_compaction_stamp_read() { # $1 window, collar loaded -> source mtime
+  local stamp
+  declare -F collar_cache_stamp >/dev/null || return 1
+  stamp="$(collar_cache_stamp "$1")" || return 1
+  case "$stamp" in ''|*[!0-9]*) return 1 ;; esac
+  printf '%s' "$stamp"
+}
+
+cache_compaction_mark_read() { # $1 window, $2 gap|pending -> stamp, 1 absent, 2 malformed
+  local raw option
+  case "$2" in
+    gap) option=@gl_cache_compact_gap ;;
+    pending) option=@gl_cache_compact_pending ;;
+    *) die "internal: unknown cache-compaction marker '$2'" ;;
+  esac
+  raw="$(tmux show-options -wqv -t "$1" "$option" 2>/dev/null)" || raw=""
+  [ -n "$raw" ] || return 1
+  case "$raw" in
+    v1:[0-9]*)
+      raw="${raw#v1:}"
+      case "$raw" in *[!0-9]*) return 2 ;; esac
+      printf '%s' "$raw"
+      return 0 ;;
+    *) return 2 ;;
+  esac
+}
+
+cache_compaction_pending_settle() { # $1 window; retain a pending action until idle
+  local pending="" pending_rc=0 busy_rc=0 stamp=""
+  pending="$(cache_compaction_mark_read "$1" pending)" || pending_rc=$?
+  case "$pending_rc" in
+    0) ;;
+    1) return 0 ;;
+    2) printf 'tick cache compaction marker for %s is malformed; refusing to decide its idle gap\n' \
+         "$(agent_name_of "$1")" >&2
+       return 1 ;;
+    *) die "internal: cache_compaction_mark_read returned unknown status $pending_rc" ;;
+  esac
+  busy "$1" || busy_rc=$?
+  [ "$busy_rc" -eq 1 ] || return 1
+  stamp="$(cache_compaction_stamp_read "$1")" || return 1
+  tmux set-option -w -t "$1" @gl_cache_compact_gap "v1:$stamp" \
+    && tmux set-option -uw -t "$1" @gl_cache_compact_pending 2>/dev/null \
+    || { printf 'tick could not settle the automatic-compaction marker for %s\n' \
+         "$(agent_name_of "$1")" >&2; return 1; }
+}
+
+CACHE_COMPACTION_STAMP=""
+cache_compaction_idle_gap() { # $1 window; 0 allowed, 1 same or unproved gap
+  local stamp="" marked="" marked_rc=0
+  cache_compaction_pending_settle "$1" || return 1
+  stamp="$(cache_compaction_stamp_read "$1")" || return 1
+  marked="$(cache_compaction_mark_read "$1" gap)" || marked_rc=$?
+  case "$marked_rc" in
+    0)
+      [ "$marked" = "$stamp" ] && return 1
+      tmux set-option -uw -t "$1" @gl_cache_compact_gap 2>/dev/null \
+        || { printf 'tick could not clear the completed automatic-compaction marker for %s\n' \
+             "$(agent_name_of "$1")" >&2; return 1; }
+      ;;
+    1) ;;
+    2) printf 'tick cache compaction marker for %s is malformed; refusing to decide its idle gap\n' \
+         "$(agent_name_of "$1")" >&2
+       return 1 ;;
+    *) die "internal: cache_compaction_mark_read returned unknown status $marked_rc" ;;
+  esac
+  CACHE_COMPACTION_STAMP="$stamp"
+}
+
+cache_compaction_candidate() { # $1 window, $2 collar; 0 ready to submit
+  local busy_rc=0 now age self_pending=""
+  cache_compaction_select "$2" || return 1
+  [ -n "${GANG_COMPACT_CMD:-}" ] || return 1
+  self_pending="$(tmux show-options -wqv -t "$1" @gl_self_compact_requested 2>/dev/null)" \
+    || self_pending=""
+  [ -z "$self_pending" ] || return 1
+  self_pending="$(tmux show-options -wqv -t "$1" @gl_self_compact_dispatching 2>/dev/null)" \
+    || self_pending=""
+  [ -z "$self_pending" ] || return 1
+  [ "$(spool_count "$1")" -eq 0 ] || return 1
+  [ "$(spool_held "$1")" -eq 0 ] || return 1
+  tick_delivery_active "$1" && return 1
+  occupied "$1" && return 1
+  busy "$1" || busy_rc=$?
+  [ "$busy_rc" -eq 1 ] || return 1
+  context_light_read "$1" >/dev/null || return 1
+  cache_compaction_idle_gap "$1" || return 1
+  now="$(date +%s)" || return 1
+  [ "$CACHE_COMPACTION_STAMP" -le "$now" ] || return 1
+  age=$(( now - CACHE_COMPACTION_STAMP ))
+  [ "$age" -ge $(( CACHE_COMPACTION_TTL - CACHE_COMPACTION_MARGIN )) ] \
+    && [ "$age" -lt "$CACHE_COMPACTION_TTL" ]
+}
+
+cache_compaction_submit() { # $1 window, $2 agent; caller proved eligibility
+  local win="$1" agent="$2" err="" rc=0
+  tmux set-option -w -t "$win" @gl_cache_compact_pending "v1:$CACHE_COMPACTION_STAMP" \
+    || { printf 'tick could not mark automatic compaction pending for %s\n' "$agent" >&2; return 1; }
+  err="$(cmd_compact "$agent" 2>&1)" || rc=$?
+  if [ "$rc" -ne 0 ]; then
+    tmux set-option -uw -t "$win" @gl_cache_compact_pending 2>/dev/null || true
+    err="${err##*$'\n'}"
+    printf 'tick automatic compaction was not submitted to %s: %s\n' \
+      "$agent" "${err:-the target changed before submission}" >&2
+    return 1
+  fi
+  cache_compaction_journal_note "$win" "$agent" "$CACHE_COMPACTION_STAMP" \
+    "$CACHE_COMPACTION_TTL" "$CACHE_COMPACTION_MARGIN"
+  tmux set-option -w -t "$win" @gl_tick_action \
+    "automatic cache compaction submitted (ttl ${CACHE_COMPACTION_TTL}s, margin ${CACHE_COMPACTION_MARGIN}s)" \
+    2>/dev/null || true
 }
 
 ADVISORY_NOTE=""
@@ -13141,6 +13335,60 @@ glyph_journal_append() { # $1 agent, $2 previous word, $3 new word, $4 source;
   return "$rc"
 }
 
+# Automatic compaction is a distinct event from a glyph transition. The status
+# glyph answers what an agent is doing now; this journal answers why Gangline
+# spent a warm cache before it expired. It uses the same two-generation bound
+# and single-writer rotation discipline as transitions, so one active team
+# cannot make a long-lived idle history grow without limit.
+CACHE_COMPACTION_JOURNAL_BOUND=1048576
+cache_compaction_journal_append() { # $1 agent, $2 cache stamp, $3 ttl, $4 margin
+  local stamp size="" claim_rc=0 rc=0
+  tick_paths_set || { printf 'the team state directory could not be resolved'; return 1; }
+  if [ -L "$TICK_DIR" ] || [ ! -d "$TICK_DIR" ] || [ ! -O "$TICK_DIR" ]; then
+    tick_state_prepare
+  fi
+  stamp="$(date -u +%Y-%m-%dT%H:%M:%SZ)" || return 1
+  printf '%s\t%s\t%s\t%s\t%s\n' "$stamp" "$1" "$2" "$3" "$4" \
+    >> "$TICK_CACHE_COMPACTION_JOURNAL" || return 1
+  size="$(wc -c < "$TICK_CACHE_COMPACTION_JOURNAL")" || size=""
+  size="${size//[!0-9]/}"
+  [ -z "$size" ] || [ "$size" -gt "$CACHE_COMPACTION_JOURNAL_BOUND" ] || return 0
+  event_claim journal "$TICK_TEAM_DIGEST" cache-compaction-rotate || claim_rc=$?
+  case "$claim_rc" in
+    0) ;;
+    1) return 0 ;;
+    *) return 3 ;;
+  esac
+  if [ -e "$TICK_CACHE_COMPACTION_JOURNAL" ]; then
+    if size="$(wc -c < "$TICK_CACHE_COMPACTION_JOURNAL")"; then
+      size="${size//[!0-9]/}"
+      if [ "${size:-0}" -gt "$CACHE_COMPACTION_JOURNAL_BOUND" ]; then
+        mv -f -- "$TICK_CACHE_COMPACTION_JOURNAL" \
+          "$TICK_CACHE_COMPACTION_JOURNAL.1" || rc=3
+      fi
+    else
+      rc=3
+    fi
+  fi
+  event_claim_release || rc=3
+  return "$rc"
+}
+
+cache_compaction_journal_note() { # $1 window, $2 agent, $3 cache stamp, $4 ttl, $5 margin
+  local id="$1" err="" rc=0 gap
+  err="$(cache_compaction_journal_append "$2" "$3" "$4" "$5" 2>&1)" || rc=$?
+  [ "$rc" -ne 0 ] || return 0
+  err="${err##*$'\n'}"
+  err="${err#gang: }"
+  case "$rc" in
+    3) gap="the cache-compaction journal was NOT kept within its bound: ${err:-unknown error}" ;;
+    *) gap="the automatic compaction was NOT journaled: ${err:-unknown error}" ;;
+  esac
+  tmux set-option -w -t "$id" @gl_cache_compaction_journal_failed "$gap" \
+    2>/dev/null || true
+  return 0
+}
+
 glyph_transition_note() { # $1 window id, $2 agent, $3 previous word, $4 new word; never fatal
   local id="$1" src err="" rc=0 gap
   src="${GLYPH_SOURCE:-${cmd:-}}"
@@ -13393,6 +13641,46 @@ explain_transitions_report() { # $1 = window id; its latest journaled glyph edge
   [ -z "$failed" ] || printf 'transition journal: %s\n' "$failed"
 }
 
+EXPLAIN_CACHE_COMPACTIONS=5
+explain_cache_compactions_report() { # $1 window id; recent automatic submissions
+  local agent failed rows="" awk_rc=0
+  local -a journals=()
+  agent="$(tmux show-options -wqv -t "$1" @gl_agent 2>/dev/null)" || agent=""
+  if ! tick_paths_set; then
+    printf 'cache compactions: unknown (the team state directory could not be resolved)\n'
+  else
+    [ ! -f "$TICK_CACHE_COMPACTION_JOURNAL.1" ] \
+      || journals+=("$TICK_CACHE_COMPACTION_JOURNAL.1")
+    [ ! -f "$TICK_CACHE_COMPACTION_JOURNAL" ] \
+      || journals+=("$TICK_CACHE_COMPACTION_JOURNAL")
+    if [ "${#journals[@]}" -eq 0 ]; then
+      printf 'cache compactions: no journal at %s\n' "$TICK_CACHE_COMPACTION_JOURNAL"
+    else
+      rows="$(CACHE_AGENT="$agent" CACHE_KEEP="$EXPLAIN_CACHE_COMPACTIONS" awk -F '\t' '
+        BEGIN { keep = ENVIRON["CACHE_KEEP"] + 0 }
+        NF == 5 && $2 == ENVIRON["CACHE_AGENT"] \
+          && $1 ~ /^[0-9][0-9][0-9][0-9]-[0-9][0-9]-[0-9][0-9]T[0-9][0-9]:[0-9][0-9]:[0-9][0-9]Z$/ \
+          && $3 ~ /^[0-9]+$/ && $4 ~ /^[0-9]+$/ && $5 ~ /^[0-9]+$/ {
+          row[n++ % keep] = "  " $1 " cache stamp " $3 " (ttl " $4 "s, margin " $5 "s)"
+        }
+        END { for (i = (n > keep ? n - keep : 0); i < n; i++) print row[i % keep] }
+      ' "${journals[@]}")" || awk_rc=$?
+      if [ "$awk_rc" -ne 0 ]; then
+        printf 'cache compactions: unknown (the journal at %s could not be read)\n' \
+          "$TICK_CACHE_COMPACTION_JOURNAL"
+      elif [ -z "$rows" ]; then
+        printf 'cache compactions: none recorded for %s\n' "$agent"
+      else
+        printf 'cache compactions:\n%s\n' "$rows"
+      fi
+    fi
+  fi
+  failed="$(tmux show-options -wqv -t "$1" @gl_cache_compaction_journal_failed 2>/dev/null)" \
+    || failed=""
+  failed="$(printf '%s' "$failed" | config_sanitize)"
+  [ -z "$failed" ] || printf 'cache-compaction journal: %s\n' "$failed"
+}
+
 cmd_explain() {
   local name="${1:-}" pane scope_unit="" harness_identity="" harness_lost="" harness_unreadable="" tick_action=""
   [ $# -le 1 ] || die "explain: unexpected argument '$2'"
@@ -13459,6 +13747,7 @@ cmd_explain() {
   tick_action="$(printf '%s' "$tick_action" | config_sanitize)"
   [ -z "$tick_action" ] || printf 'tick action: %s\n' "$tick_action"
   explain_transitions_report "$AGENT_ID"
+  explain_cache_compactions_report "$AGENT_ID"
 }
 
 # A WAIT IS A TEMPORARY TMUX BARRIER, NOT TEAM STATE. Each caller owns one
@@ -15208,6 +15497,7 @@ config_effective() { # $1 settable key -> the value its consumers read
     GANG_TMUX_GUARD) printf '%s' "$GANG_TMUX_GUARD" ;;
     GANG_ARCHIVE_DIR) printf '%s' "$(archive_root)" ;;
     GANG_CONTEXT_LIGHTS) printf '%s' "$GANG_CONTEXT_LIGHTS" ;;
+    GANG_CACHE_COMPACTION) printf '%s' "$GANG_CACHE_COMPACTION" ;;
     GANG_USAGE_LIGHTS) printf '%s' "$GANG_USAGE_LIGHTS" ;;
     GANG_AUTO_RESUME) printf '%s' "$GANG_AUTO_RESUME" ;;
     GANG_SCOPE) printf '%s' "$GANG_SCOPE" ;;
@@ -15264,6 +15554,11 @@ cmd_config() {
   done
   [ "${CONTEXT_LIGHTS_SELECTORS[${#CONTEXT_LIGHTS_SELECTORS[@]}-1]}" = '*' ] \
     || printf 'context-lights\t*\tcollar\n'
+  cache_compaction_map "$GANG_CACHE_COMPACTION"
+  for i in "${!CACHE_COMPACTION_SELECTORS[@]}"; do
+    printf 'cache-compaction\t%s\t%s\n' \
+      "${CACHE_COMPACTION_SELECTORS[$i]}" "${CACHE_COMPACTION_SPECS[$i]}"
+  done
 }
 
 cmd_upgrade() {

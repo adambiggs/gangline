@@ -590,6 +590,12 @@ codex_session_file() { # $1 = tmux target -> this window's bound rollout path
   printf '%s' "$file"
 }
 
+collar_cache_stamp() { # $1 target -> epoch of the last rollout write
+  local file
+  file="$(codex_session_file "$1")" || return 1
+  stat -c %Y -- "$file"
+}
+
 # THE POST-STOP WITNESS IS THE ROLLOUT, NOT THE SCREEN. Answers 0 when the
 # bound rollout holds a terminal record (task_complete or turn_aborted) for
 # the turn the Stop payload names, 1 while that turn's newest record is still

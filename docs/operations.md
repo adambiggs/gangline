@@ -330,6 +330,31 @@ finish the current arc and compact now. Each is emitted once per context epoch;
 usage falling below yellow resets that epoch. These are advisory native hook
 messages, not patrols or automatic actions.
 
+## Cache-expiry compaction backstop
+
+The cooperative `gang tick` can compact an otherwise idle, high-context agent
+shortly before its provider prompt cache expires. This preserves a short durable
+summary while the large context is still a warm cache read. It never types into
+a busy or occupied agent, an agent with queued or held spool delivery, or one
+below its first context-light threshold. Each idle gap receives at most one
+automatic submission: after that compaction, a later cold turn rewrites only
+the summary. `gang explain NAME` shows the bounded journal of those submissions.
+
+The default map enables Claude Code at one hour with a five-minute margin and
+Codex at thirty minutes with a three-minute margin. A collar that is not named
+does nothing. Set `GANG_CACHE_COMPACTION=off` to disable the backstop entirely,
+or replace the map to change one harness without enabling another:
+
+```sh
+GANG_CACHE_COMPACTION='claude-code=3600:300 codex=1800:180'
+GANG_CACHE_COMPACTION='claude-code=3600:300 codex=off'
+```
+
+The cache age is the bound transcript or rollout file's mtime, not the last
+tool call or terminal activity. Gangline has no provider expiry timestamp, so
+the margin absorbs transcript flush and clock granularity; an unreadable stamp
+fails closed and does not trigger a compaction.
+
 A readable Claude frame with no context beacon emits one transient-miss notice
 without changing the last real light. Good frames break consecutiveness but do
 not repeat that notice; a second consecutive miss emits one unavailable notice.

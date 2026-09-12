@@ -1744,8 +1744,8 @@ a file line. It also reports whether the doctrine file and operator roles
 directory are present, with the terminal-safe path to each slot. It ends with
 the context-light map as `context-lights` lines of selector and SPEC, most
 specific first and closing on the `*` entry that answers when nothing else
-matches; a malformed map is refused under its origin after every other line has
-printed. Dynamic text
+matches, then the cache-compaction map as `cache-compaction` lines. A malformed
+map is refused under its origin after every other line has printed. Dynamic text
 is terminal-safe: control bytes are rendered visibly rather than written raw.
 The command takes no arguments and needs no tmux server.
 
@@ -1818,6 +1818,7 @@ Exactly these keys are settable:
 | `GANG_LOCK_DIR` | `/tmp/gangline-$(id -u)` | shared delivery locks and per-target spools |
 | `GANG_ARCHIVE_DIR` | `${XDG_STATE_HOME:-$HOME/.local/state}/gangline/archive` | pending-message archive written before windows die |
 | `GANG_CONTEXT_LIGHTS` | `collar` | whitespace-separated `COLLAR/MODEL=SPEC` entries, either half `*`, the most specific match winning; SPEC is `collar` to take the collar's own default for the hitched model, `off`, `yellow,red` token thresholds, or `yellow%,red%` relative thresholds, and a SPEC with no selector is the deprecated form of `*=SPEC`; `gang hitch -l` overrides the whole map for one agent |
+| `GANG_CACHE_COMPACTION` | `claude-code=3600:300 codex=1800:180` | `off`, or whitespace-separated `COLLAR=TTL:MARGIN` / `COLLAR=off` entries; an exact collar entry beats `*`, and a collar omitted from the map is off. The tick considers only an idle agent with a readable transcript/rollout mtime inside `[TTL-MARGIN, TTL)`, past its first context-light band, and with no spool delivery or outstanding self-compaction. |
 | `GANG_USAGE_LIGHTS` | `off` | `off` or increasing provider-used thresholds such as `90%,95%` |
 | `GANG_AUTO_RESUME` | `off` | `off` or one provider-used percentage such as `97%` at which a reset wake is armed automatically |
 | `GANG_SCOPE` | `off` | `off`, or `on` to launch each hitched harness, and the tmux server gang forks, in its own transient systemd user scope |

@@ -172,6 +172,12 @@ claude_session_file() { # $1 = tmux target -> hook-bound transcript path
   printf '%s' "$file"
 }
 
+collar_cache_stamp() { # $1 target -> epoch of the last transcript write
+  local file
+  file="$(claude_session_file "$1")" || return 1
+  stat -c %Y -- "$file"
+}
+
 # ERROR EVIDENCE IS READ FROM THE TAIL ONCE. Both consumers ask about the newest
 # relevant complete record, so bytes before that record cannot change either
 # answer. Sharing the backward walk keeps ordinary idle notifications from
