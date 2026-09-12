@@ -6008,7 +6008,7 @@ alert_key_hint() { # the alert center's tmux key, or why it has none
 ALERT_HISTORY_ROWS=10
 
 alert_history_report() { # the latest alert transitions, oldest first
-  local files=() current="" rows="" epoch state note rest lost=""
+  local files=() current="" rows="" row tabs tab=$'\t' epoch state note lost=""
   if ! tick_paths_set; then
     printf '\nrecent alerts: unknown (the team state directory could not be resolved)\n'
     return 0
@@ -6030,9 +6030,16 @@ alert_history_report() { # the latest alert transitions, oldest first
     printf '\nrecent alerts: unknown (the history at %s could not be read)\n' "$TICK_ALERTS"
   else
     printf '\nrecent alerts:\n'
-    while IFS=$'\t' read -r epoch state note rest; do
-      # This writer emits three fields; a fourth is a row it did not write.
-      if [ -n "$rest" ]; then printf '  unreadable history row\n'; continue; fi
+    while IFS= read -r row; do
+      # This writer emits three fields; any other count, an empty surplus field
+      # included, is a row it did not write. Tab is whitespace to read, which
+      # drops a trailing empty field, so the count is taken on the raw row.
+      tabs="${row//[!$tab]/}"
+      if [ "${#tabs}" -ne 2 ]; then printf '  unreadable history row\n'; continue; fi
+      epoch="${row%%"$tab"*}"
+      row="${row#*"$tab"}"
+      state="${row%%"$tab"*}"
+      note="${row#*"$tab"}"
       case "$state:$epoch" in
         failed:*[!0-9]*|ok:*[!0-9]*|failed:|ok:) printf '  unreadable history row\n' ;;
         failed:*) printf '  %s raised: %s\n' "$epoch" "$note" ;;
