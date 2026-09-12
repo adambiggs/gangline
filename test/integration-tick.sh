@@ -70,6 +70,8 @@ contains "alert-center install preserves a pre-existing Prefix+A binding" \
 contains "the preserved key conflict remains inspectable" \
   "$(alert_ui_tmux show-options -qv -t "=$alert_ui_session:" \
     @gl_alert_binding_conflict)" "left it unchanged"
+contains "the roster names why the alert center has no key" \
+  "$(alert_ui_gang roster)" "open key unavailable:"
 
 # The binding claim locks the existing socket directory descriptor so callers
 # with different Gangline lock roots still agree. The former guard-file checks
@@ -237,6 +239,20 @@ case "$alert_ui_at" in ''|*[!0-9]*) alert_ui_epoch=invalid ;; *) alert_ui_epoch=
 equal "porcelain carries the alert transition epoch" valid "$alert_ui_epoch"
 contains "porcelain carries the failure summary" \
   "$alert_ui_summary" "missing-alert-collar"
+
+# The alert list keeps what the tick raised and cleared, so a failure a later
+# pass resolved can still be read after the fact. Porcelain stays the active
+# conditions only.
+alert_ui_listing="$(alert_ui_gang alerts)"
+contains "the alert list carries a recent-alerts history" \
+  "$alert_ui_listing" "recent alerts:"
+alert_ui_history="${alert_ui_listing#*recent alerts:}"
+contains "the history records the raised failure" \
+  "$alert_ui_history" "raised: "
+contains "the raised history row carries the failure summary" \
+  "$alert_ui_history" "missing-alert-collar"
+equal "porcelain lists no history rows" 1 \
+  "$(alert_ui_gang alerts --porcelain | wc -l | tr -d ' ')"
 
 # Opening holds the same short result guard as recovery/new-failure commits.
 # The nonblocking kernel probe is immediate evidence that the seen mutation is
@@ -980,6 +996,16 @@ equal "a clean pass resolves the active alert" '0 0' \
   "$(alert_ui_tmux show-options -qv -t "=$alert_ui_session:" @gl_alert_active) $(alert_ui_tmux show-options -qv -t "=$alert_ui_session:" @gl_alert_unseen)"
 equal "the resolved alert disappears from the structured list" 0 \
   "$(alert_ui_gang alerts --porcelain | wc -l | tr -d ' ')"
+alert_ui_resolved="$(alert_ui_gang alerts)"
+contains "a resolved alert leaves its history readable" \
+  "$alert_ui_resolved" "recent alerts:"
+alert_ui_resolved_history="${alert_ui_resolved#*recent alerts:}"
+contains "the history keeps the resolved failure" \
+  "$alert_ui_resolved_history" "raised: "
+contains "the history records the pass that cleared it" \
+  "$alert_ui_resolved_history" " cleared"
+contains "the roster names the alert center key with no active alert" \
+  "$(alert_ui_gang roster)" "Prefix+A"
 
 alert_ui_tmux set-option -w -t "$alert_ui_caller_id" @gl_collar missing-alert-collar
 PATH="$alert_ui_tmux_bin:$PATH" alert_ui_gang tick >/dev/null 2>&1 || true

@@ -527,6 +527,15 @@ malformed health record is unknown and `gang alerts` fails loudly; the status
 options retain their last active rendering. Only a valid clean tick record may
 resolve the condition.
 
+The ordinary list also prints the team's recent alert history: the latest ten
+transitions, each a failure raised with its summary or a failure cleared by a
+clean pass, so a condition that resolved before anyone looked still leaves a
+trace. The history is a best-effort journal kept beside the health record,
+bounded to two generations and removed with it by `down`; a transition that
+could not be recorded marks the history incomplete. It ends with the tmux key
+that opens the center, or the reason no key is bound, and `gang roster` names
+the same key in its header.
+
 `--porcelain` prints one uncoloured TSV row per active condition with `kind`,
 `state`, `visibility`, `epoch`, and `summary` columns. The current kind is
 `tick`, its state is `active`, and visibility is `unseen` or `seen`. With no

@@ -4572,7 +4572,7 @@ tick_session_live() { # cleanup/epilogue probe: no diagnostic may replace caller
 
 tick_paths_set() { # resolve the current team to its health/log directory
   TICK_DIR="" TICK_HEALTH="" TICK_LOG="" TICK_TICKET="" TICK_JOURNAL=""
-  TICK_CACHE_COMPACTION_JOURNAL=""
+  TICK_CACHE_COMPACTION_JOURNAL="" TICK_ALERTS=""
   tick_team_digest_set || return 1
   TICK_DIR="$(tick_state_root)/$TICK_TEAM_DIGEST"
   TICK_HEALTH="$TICK_DIR/health"
@@ -4580,6 +4580,7 @@ tick_paths_set() { # resolve the current team to its health/log directory
   TICK_TICKET="$TICK_DIR/ticket"
   TICK_JOURNAL="$TICK_DIR/transitions"
   TICK_CACHE_COMPACTION_JOURNAL="$TICK_DIR/cache-compactions"
+  TICK_ALERTS="$TICK_DIR/alerts"
 }
 
 tick_state_prepare() {
@@ -4666,6 +4667,7 @@ alert_health_read() { # 0 record, 1 no record yet, 2 unreadable/malformed
 
 tick_health_store() { # guard held; $1 state, $2 message, optional $3 epoch
   local state="$1" note="$2" at="${3:-}" tmp ticket="${GANG_TICK_TICKET:-}"
+  local prior="" prior_state="" prior_at="" prior_note=""
   tick_paths_set || return 1
   tick_state_prepare
   note="$(printf '%s' "$note" | config_sanitize)"
@@ -4675,7 +4677,36 @@ tick_health_store() { # guard held; $1 state, $2 message, optional $3 epoch
   tmp="$TICK_HEALTH.new.${BASHPID:-$$}"
   printf '%s\t%s\t%s\t%s\n' "$state" "$at" "$note" "$ticket" > "$tmp" \
     || return 1
+  prior="$(tick_health_file_read "$TICK_HEALTH")" || prior=""
   mv -f -- "$tmp" "$TICK_HEALTH" || { rm -f -- "$tmp"; return 1; }
+  [ -z "$prior" ] || IFS=$'\t' read -r prior_state prior_at prior_note <<<"$prior"
+  tick_alert_history_note "$prior_state" "$prior_note" "$state" "$note" "$at"
+}
+
+# A RESOLVED ALERT LEAVES A TRACE. Health holds one record, so a failure that a
+# later clean pass resolved vanished from every surface: the operator who missed
+# the red widget could not learn that a tick had failed, or why. Each change of
+# alert condition appends one row here under the same result guard that orders
+# health, so there is one writer and its rotation needs no claim. The history is
+# a best-effort journal: a row that cannot be written never fails the health
+# store it describes, and marks the history incomplete instead of leaving a gap
+# that reads as an uneventful stretch.
+tick_alert_history_note() { # guard held; $1 prior state, $2 prior note, $3 state, $4 note, $5 epoch
+  local size=""
+  case "$1:$3" in
+    ok:ok|:ok) return 0 ;;
+    failed:failed) [ "$2" != "$4" ] || return 0 ;;
+  esac
+  if ! { printf '%s\t%s\t%s\n' "$5" "$3" "$4" >> "$TICK_ALERTS"; } 2>/dev/null; then
+    tmux set-option -t "=$SESSION:" @gl_alert_history_lost 1 2>/dev/null || true
+    return 0
+  fi
+  size="$(wc -c < "$TICK_ALERTS")" || size=""
+  size="${size//[!0-9]/}"
+  # A move that fails leaves every row in place, only the bound unenforced.
+  if [ "${size:-0}" -gt "$GLYPH_JOURNAL_BOUND" ]; then
+    mv -f -- "$TICK_ALERTS" "$TICK_ALERTS.1" || true
+  fi
 }
 
 tick_log_store() { # $1 ok|FAILED, $2 single-line detail; paths already prepared
@@ -5069,7 +5100,8 @@ tick_state_forget() { # health and the tick journals die with their team
   fi
   if ! err="$(rm -f -- "$TICK_HEALTH" "$TICK_LOG" "$TICK_TICKET" \
          "$TICK_JOURNAL" "$TICK_JOURNAL.1" \
-         "$TICK_CACHE_COMPACTION_JOURNAL" "$TICK_CACHE_COMPACTION_JOURNAL.1" 2>&1)"; then
+         "$TICK_CACHE_COMPACTION_JOURNAL" "$TICK_CACHE_COMPACTION_JOURNAL.1" \
+         "$TICK_ALERTS" "$TICK_ALERTS.1" 2>&1)"; then
     printf '%s\n' "$(colour "$C_BAD" "tick state files NOT all removed from $TICK_DIR: ${err##*$'\n'}")" >&2
     return 1
   fi
@@ -5926,6 +5958,47 @@ cmd_tick() { # public synchronous seam; its worker is always self-deadlined
   esac
 }
 
+alert_key_hint() { # the alert center's tmux key, or why it has none
+  local conflict=""
+  conflict="$(tmux show-options -qv -t "=$SESSION:" \
+    @gl_alert_binding_conflict 2>/dev/null)" || conflict=""
+  if [ -n "$conflict" ]; then
+    printf 'open key unavailable: %s\n' "$conflict"
+  else
+    printf 'open in tmux: Prefix+A\n'
+  fi
+}
+
+ALERT_HISTORY_ROWS=10
+
+alert_history_report() { # the latest alert transitions, oldest first
+  local files=() rows="" epoch state note lost=""
+  if ! tick_paths_set; then
+    printf '\nrecent alerts: unknown (the team state directory could not be resolved)\n'
+    return 0
+  fi
+  [ ! -f "$TICK_ALERTS.1" ] || files+=("$TICK_ALERTS.1")
+  [ ! -f "$TICK_ALERTS" ] || files+=("$TICK_ALERTS")
+  lost="$(tmux show-options -qv -t "=$SESSION:" @gl_alert_history_lost 2>/dev/null)" \
+    || lost=""
+  if [ "${#files[@]}" -eq 0 ]; then
+    printf '\nno alert history\n'
+  elif ! rows="$(cat -- "${files[@]}" | tail -n "$ALERT_HISTORY_ROWS")"; then
+    printf '\nrecent alerts: unknown (the history at %s could not be read)\n' "$TICK_ALERTS"
+  else
+    printf '\nrecent alerts:\n'
+    while IFS=$'\t' read -r epoch state note; do
+      case "$state:$epoch" in
+        failed:*[!0-9]*|ok:*[!0-9]*|failed:|ok:) printf '  unreadable history row\n' ;;
+        failed:*) printf '  %s raised: %s\n' "$epoch" "$note" ;;
+        ok:*) printf '  %s cleared\n' "$epoch" ;;
+        *) printf '  unreadable history row\n' ;;
+      esac
+    done <<<"$rows"
+  fi
+  [ "$lost" != 1 ] || printf '  incomplete: a transition could not be recorded\n'
+}
+
 cmd_alerts() { # read active conditions; --open changes only their seen state
   local mode=read record="" state="" at="" note="" seen="" visibility=""
   local conflict="" read_rc=0 latched="" open_guard=0 popup=0 cursor=""
@@ -6009,12 +6082,10 @@ cmd_alerts() { # read active conditions; --open changes only their seen state
   else
     [ "$mode" = porcelain ] || printf "no active alerts for '%s'\n" "$SESSION"
   fi
-  if [ "$mode" != porcelain ]; then
-    if [ -n "$conflict" ]; then
-      printf '\nopen key unavailable: %s\n' "$conflict"
-    elif [ "$mode" != open ]; then
-      printf '\nopen in tmux: Prefix+A\n'
-    fi
+  [ "$mode" != read ] || alert_history_report
+  if [ -n "$conflict" ] || [ "$mode" = read ]; then
+    printf '\n'
+    alert_key_hint
   fi
   if [ "$popup" -eq 1 ]; then
     printf '\nPress any key to close.\n'
@@ -14775,7 +14846,10 @@ cmd_roster() {
       || printf '%s\n' "$(colour "$C_DIM" "no team (session '$SESSION' not running)")"
     return
   fi
-  [ "$porcelain" -eq 1 ] || tick_health_report
+  if [ "$porcelain" -eq 0 ]; then
+    tick_health_report
+    printf '%s\n' "$(colour "$C_DIM" "alerts: $(alert_key_hint)")"
+  fi
   current="$(binary_id)"
   wins="$(tmux list-windows -t "=$SESSION" -F '#{window_id} #W #{@gl_tick_alerts}')"
   while read -r id name special; do
