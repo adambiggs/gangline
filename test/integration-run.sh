@@ -1,11 +1,12 @@
 #!/usr/bin/env bash
 # SPDX-License-Identifier: Apache-2.0
 # shellcheck shell=bash
-# shellcheck disable=SC2154  # alpha fixture identifiers are set in test/integration-substrate.sh
 # Host-service run requests: durable result, bounded delivery, cancellation, and a gone requester.
 #
 # A PART IS A FRAGMENT, NOT A SCRIPT. test/integration.sh sources this file in
 # order and it reads that shell's fixtures, helpers and counters.
+: "${alpha_id:?test/integration-run.sh requires alpha_id from test/integration-substrate.sh}"
+: "${alpha_tmux_pane:?test/integration-run.sh requires alpha_tmux_pane from test/integration-substrate.sh}"
 run_bin="$RUN_ROOT/run-bin"
 run_args="$RUN_ROOT/run-systemd-args"
 run_stops="$RUN_ROOT/run-systemd-stops"
