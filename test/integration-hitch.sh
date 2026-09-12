@@ -849,6 +849,11 @@ $hitch_body_mail"
   # source-guard: producer@1d49991cbbd2: the successful hitch is the only producer of this startup body, and the head ends at the first copy of the message's literal, so the contract precedes that copy on whichever surface holds it
   contains "after the startup contract" \
     "$hitch_body_head" "You are hitchbody in Gangline"
+  # The contract and the message arrive as one batch, so a closing "End this
+  # turn." reads as the last instruction for both and the agent stops at a
+  # read receipt instead of starting the message's work.
+  excludes "a contract followed by a message does not end the turn" \
+    "$hitch_body_head" "End this turn."
   "$GANG" drop hitchbody >/dev/null
 else
   fail "hitch --stdin leaves a live agent holding the message" \

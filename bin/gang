@@ -2018,8 +2018,12 @@ system_prompt_build() { # populate the system-prompt-level composite byte-exact
     "$SYSTEM_PROMPT" "$role" "$path" "$ROLE_BODY"
 }
 
-startup_brief() { # $1 = agent name, $2 = doctrine body or empty
-  local role path contract
+startup_brief() { # $1 = agent name, $2 = doctrine body or empty, $3 = non-empty when a message follows
+  local role path contract closer=' End this turn.'
+  # A MESSAGE HANDED TO HITCH ARRIVES IN THE SAME BATCH, right behind this
+  # contract, so a closing "End this turn." reads as the last instruction for
+  # both and the agent stops at a read receipt instead of starting that work.
+  [ -z "${3:-}" ] || closer=''
   contract="$(config_path "$CONTRACT_FILE" | config_sanitize)"
   if [ -n "$ROLE_NAME" ]; then
     role="$(printf '%s' "$ROLE_NAME" | config_sanitize)"
@@ -2043,12 +2047,13 @@ startup_brief() { # $1 = agent name, $2 = doctrine body or empty
     fi
   fi
   if [ -n "$2" ]; then
-    printf '\n\nOperator doctrine (%s):\n\n%s\n\nEnd this turn.' \
+    printf '\n\nOperator doctrine (%s):\n\n%s' \
       "$(config_path "$CONFIG_DIR/DOCTRINE.md")" "$2"
+    [ -z "$closer" ] || printf '\n\n%s' "${closer# }"
   elif [ -n "$ROLE_NAME" ]; then
-    printf '\n\nEnd this turn.'
+    [ -z "$closer" ] || printf '\n\n%s' "${closer# }"
   else
-    printf ' End this turn.'
+    printf '%s' "$closer"
   fi
 }
 
@@ -11203,7 +11208,7 @@ hitch_launch() {
     win_id_missing "$lookup_rc" "'$name' died at launch (cmd: $GANG_LAUNCH)"
   }
   local msg delivery_err="" delivery_rc=0
-  msg="$(startup_brief "$name" "$DOCTRINE")"
+  msg="$(startup_brief "$name" "$DOCTRINE" "${HITCH_BODY:+body}")"
   echo "$(colour "$C_OK" "hitched $name") ($prof) in $dir$(colour "$C_DIM" "${lights:+ — context lights $lights${lights_note:+ ($lights_note)}} — watch: gang attach")"
   printf '%s\n' "$(colour "$C_WORK" "waiting for $name to finish booting...")"
   local ready=0 recovery
