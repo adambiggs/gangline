@@ -4724,10 +4724,15 @@ tick_alert_history_note() { # guard held; $1 prior state, $2 prior note, $3 stat
   # ROTATE BEFORE THE APPEND, AND ONLY ONTO A FILE. mv onto a directory moves
   # the journal inside it, where no reader looks. A rotation that cannot land
   # appends nothing: every row stays in place, the bound holds, and the history
-  # says it is incomplete.
+  # says it is incomplete. A size that cannot be read is such a rotation; read
+  # as zero, the journal would never rotate.
   if [ -f "$TICK_ALERTS" ]; then
     size="$(wc -c < "$TICK_ALERTS")" || size=""
     size="${size//[!0-9]/}"
+    if [ -z "$size" ]; then
+      tick_alert_history_lost
+      return 0
+    fi
   fi
   if [ "${size:-0}" -gt "$GLYPH_JOURNAL_BOUND" ]; then
     if [ -d "$TICK_ALERTS.1" ] || ! mv -f -- "$TICK_ALERTS" "$TICK_ALERTS.1"; then

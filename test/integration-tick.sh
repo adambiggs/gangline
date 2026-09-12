@@ -1156,6 +1156,25 @@ equal "a refused rotation keeps the journal at its size" \
   "$alert_ui_padded" "$(wc -c < "$alert_ui_alerts" | tr -d ' ')"
 equal "a refused rotation marks the history incomplete" 1 \
   "$(alert_ui_tmux show-options -qv -t "=$alert_ui_session:" @gl_alert_history_lost)"
+
+# A SIZE THAT CANNOT BE READ IS A ROTATION THAT CANNOT LAND. Read as zero, a
+# journal that cannot be read was never rotated, and every transition appended
+# to it past its bound with no marker. It keeps its rows, gains none, and the
+# history says it is incomplete.
+chmod 200 -- "$alert_ui_alerts"
+equal "the write-only journal cannot be read" unreadable \
+  "$(if [ -r "$alert_ui_alerts" ]; then printf readable; else printf unreadable; fi)"
+alert_ui_tmux set-option -u -t "=$alert_ui_session:" @gl_alert_history_lost
+alert_ui_tmux set-option -w -t "$alert_ui_caller_id" @gl_collar missing-alert-collar
+alert_ui_unsized_rc=0
+alert_ui_gang tick >/dev/null 2>&1 || alert_ui_unsized_rc=$?
+chmod 600 -- "$alert_ui_alerts"
+equal "the transition over an unreadable journal is a failing tick" 1 \
+  "$alert_ui_unsized_rc"
+equal "a journal whose size cannot be read gains no row" \
+  "$alert_ui_padded" "$(wc -c < "$alert_ui_alerts" | tr -d ' ')"
+equal "a journal whose size cannot be read marks the history incomplete" 1 \
+  "$(alert_ui_tmux show-options -qv -t "=$alert_ui_session:" @gl_alert_history_lost)"
 mv -- "$RUN_ROOT/alert-ui-alerts-saved" "$alert_ui_alerts"
 
 # A pass owns the tick lock through its health commit. Hold a failing pass at
