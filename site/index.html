@@ -10,10 +10,12 @@
       color-scheme: light dark;
       --snow:#fbf7ee; --ink:#3b261a; --accent:#9c455a; --dim:#705c4d; --term-dim:#c7b8a3;
       --rule:#77593b66; --code:#eadfce;
+      --hero:#f1e5cf; --hero-dim:#564335; --hero-accent:#7c3244; --fold:#6c4930;
+      --art:#6c4930; --art-opacity:.24;
     }
     * { box-sizing:border-box; }
-    body { margin:0; padding:4rem 1.5rem; background:var(--snow); color:var(--ink); font:16px/1.65 ui-monospace,SFMono-Regular,Menlo,Consolas,monospace; }
-    main { max-width:48rem; margin:auto; }
+    body { margin:0; background:var(--snow); color:var(--ink); font:16px/1.65 ui-monospace,SFMono-Regular,Menlo,Consolas,monospace; }
+    main { max-width:48rem; margin:auto; padding:3rem 1.5rem 4rem; }
     h1 { margin:0; font-size:2rem; }
     h2 { margin-top:3rem; padding-bottom:.4rem; border-bottom:1px solid var(--rule); font-size:1rem; }
     .tag,.dim,li { color:var(--dim); }
@@ -28,45 +30,53 @@
     .term video { display:block; width:100%; height:auto; }
     .term p { margin:0; padding:.7rem 1rem; color:var(--term-dim); font-size:.8rem; }
     footer { margin-top:4rem; padding-top:1rem; border-top:1px solid var(--rule); color:var(--dim); }
-    .hero { position:relative; isolation:isolate; overflow:hidden; margin:-1.5rem -1rem 0; padding:1.5rem 1rem 1rem; }
-    .hero-copy { position:relative; z-index:1; }
-    .mushing { position:absolute; z-index:-1; inset:0; overflow:hidden; opacity:.15; pointer-events:none; user-select:none; mask-image:radial-gradient(ellipse closest-side at center,#000 50%,transparent 100%); }
-    .mushing pre { position:absolute; top:50%; left:50%; margin:0; padding:0; border:0; background:none; color:#6c4930; overflow:visible; font:clamp(8px,1.4vw,12px)/.82 ui-monospace,SFMono-Regular,Menlo,Consolas,monospace; letter-spacing:0; transform:translate(-50%,-50%) scale(1.35,1.7); }
+    /* The hero is the area above the fold: the animation fills it edge to edge and ends on the fold rule. */
+    .hero { position:relative; isolation:isolate; overflow:hidden; display:flex; align-items:center; justify-content:center; min-height:26rem; min-height:clamp(26rem,72svh,42rem); padding:4rem 1.5rem 3rem; background:var(--hero); border-bottom:2px solid var(--fold); }
+    /* Title and tagline read as a dictionary entry: headword, pronunciation and part of speech, definition. */
+    .hero-copy { position:relative; z-index:1; max-width:40rem; text-align:left; }
+    .hero h1 { font-size:clamp(3.25rem,15vw,7.5rem); line-height:1; letter-spacing:-.04em; }
+    .hero .entry { margin:1rem 0 0; color:var(--hero-dim); }
+    .hero .def { max-width:34rem; margin:.4rem 0 0; font-size:1.125rem; }
+    .hero nav { margin:2.5rem 0 0; }
+    .hero nav a { display:inline-block; margin:0 1.1rem 0 0; color:var(--hero-accent); white-space:nowrap; }
+    /* Size container, so the frame can cover the hero at any aspect ratio. */
+    .mushing { position:absolute; z-index:-1; inset:0; overflow:hidden; container-type:size; opacity:var(--art-opacity); pointer-events:none; user-select:none; mask-image:linear-gradient(to bottom,transparent,#000 40%); }
+    .mushing pre { position:absolute; top:50%; left:50%; margin:0; padding:0; border:0; background:none; color:var(--art); overflow:visible; font:1.5rem/.82 ui-monospace,SFMono-Regular,Menlo,Consolas,monospace; font-size:max(2.15vw,1.5rem); font-size:max(2.15cqw,3.45cqh); letter-spacing:0; transform:translate(-50%,-50%) scaleY(1.34); }
     @media (prefers-color-scheme: dark) {
-      :root { --snow:#211914; --ink:#f5eee0; --accent:#f09aac; --dim:#cebda5; --term-dim:#cebda5; --rule:#c9a98166; --code:#34271e; }
-      .mushing pre { color:#d9b586; }
+      :root { --snow:#211914; --ink:#f5eee0; --accent:#f09aac; --dim:#cebda5; --term-dim:#cebda5; --rule:#c9a98166; --code:#34271e;
+        --hero:#17110d; --hero-dim:#cebda5; --hero-accent:#f09aac; --fold:#a8845c; --art:#d9b586; --art-opacity:.25; }
     }
     @media (max-width: 430px) {
-      body { padding:2rem 1rem; }
-      .hero { margin:-1rem -.5rem 0; padding:1rem .5rem .5rem; }
-      .mushing pre { transform:translate(-50%,-50%) scale(1.6,2.65); }
+      main { padding:2rem 1rem 3rem; }
+      .hero { min-height:clamp(24rem,64svh,36rem); padding:3rem 1rem 2.5rem; }
+      .hero nav a { margin-right:.8rem; }
     }
   </style>
   <script src="mushing-frames.js" defer></script>
 </head>
 <body>
+<header class="hero">
+  <div class="mushing" aria-hidden="true"><pre id="mushing"></pre></div>
+  <div class="hero-copy">
+    <h1>gangline</h1>
+    <p class="entry"><span class="ipa">/ˈɡæŋˌlaɪn/</span> <i>noun</i></p>
+    <p class="def"><i>Mushing.</i> The line that joins several harnesses into one team.</p>
+
+    <nav>
+      <a href="#demo">demo</a>
+      <a href="#start">start</a>
+      <a href="#surface">what it does</a>
+      <a href="#long">long sessions</a>
+      <a href="https://github.com/adambiggs/gangline">github</a>
+    </nav>
+  </div>
+</header>
 <main>
-  <section class="hero" aria-label="Gangline introduction">
-    <div class="mushing" aria-hidden="true"><pre id="mushing"></pre></div>
-    <div class="hero-copy">
-      <h1>gangline</h1>
-      <p class="tag">A gangline is the line that connects every dog's harness to the sled.</p>
+  <p>Gangline runs Claude Code, Codex, OpenCode, and Pi as named windows in one
+  tmux session, so they can hand each other work by name and you can watch the
+  whole thing happen.</p>
 
-      <nav>
-        <a href="#demo">demo</a>
-        <a href="#start">start</a>
-        <a href="#surface">what it does</a>
-        <a href="#long">long sessions</a>
-        <a href="https://github.com/adambiggs/gangline">github</a>
-      </nav>
-
-      <p>Gangline runs Claude Code, Codex, OpenCode, and Pi as named windows in one
-      tmux session, so they can hand each other work by name and you can watch the
-      whole thing happen.</p>
-
-      <pre><code>curl -fsSL https://raw.githubusercontent.com/adambiggs/gangline/main/install.sh | sh</code></pre>
-    </div>
-  </section>
+  <pre><code>curl -fsSL https://raw.githubusercontent.com/adambiggs/gangline/main/install.sh | sh</code></pre>
 
   <section id="demo">
     <h2>Demo</h2>
