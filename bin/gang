@@ -4682,7 +4682,7 @@ alert_health_read() { # 0 record, 1 no record yet, 2 unreadable/malformed
 
 tick_health_store() { # guard held; $1 state, $2 message, optional $3 epoch
   local state="$1" note="$2" at="${3:-}" tmp ticket="${GANG_TICK_TICKET:-}"
-  local prior="" prior_state="" prior_at="" prior_note="" prior_rc=0
+  local prior="" prior_state="" prior_note="" prior_rc=0
   tick_paths_set || return 1
   tick_state_prepare
   note="$(printf '%s' "$note" | config_sanitize)"
@@ -4703,7 +4703,7 @@ tick_health_store() { # guard held; $1 state, $2 message, optional $3 epoch
     tick_alert_history_lost
     return 0
   fi
-  [ -z "$prior" ] || IFS=$'\t' read -r prior_state prior_at prior_note <<<"$prior"
+  [ -z "$prior" ] || IFS=$'\t' read -r prior_state _ prior_note <<<"$prior"
   tick_alert_history_note "$prior_state" "$prior_note" "$state" "$note" "$at"
 }
 
