@@ -1492,12 +1492,18 @@ equal "the park-only handoff submits exactly once" "1" \
 # the line — the shape of a render that overlapping status lines have corrupted.
 # Not timing-dependent: every reading after the paste is frozen, so the unchanged
 # bound is reached on its count; it costs the production budget of five 0.4s
-# rereads and one clear press, about 2.4s.
+# rereads and one clear press, about 2.4s. The shell's handler for an unknown
+# command records the line it was given, so only the envelope running leaves
+# MARK_FROZEN_BOX in that file; the pane text cannot tell whose error it shows.
+cat > "$RUN_ROOT/frozenbox-rc" <<RC
+PS1='❯ '
+command_not_found_handle() { printf '%s\n' "\$*" >> "$RUN_ROOT/frozenbox-ran"; return 127; }
+RC
 cat > "$RUN_ROOT/collars/frozenbox.sh" <<SH
 # shellcheck shell=bash
 # shellcheck disable=SC2034
 . "$ROOT/collars/bash.sh"
-GANG_LAUNCH="sh -c 'PS1=\"❯ \" exec bash --norc' fixture"
+GANG_LAUNCH="sh -c 'exec bash --rcfile $RUN_ROOT/frozenbox-rc' fixture"
 _gl_frozen_real="\$(declare -f collar_input)"
 eval "frozen_real_input \${_gl_frozen_real#collar_input}"
 collar_input() {
@@ -1521,8 +1527,16 @@ frozenbox_out="$(printf 'MARK_FROZEN_BOX' |
   "$GANG" send --to frozenbox --from tester --stdin 2>&1)" || frozenbox_rc=$?
 equal "the frozen reading holds the whole pasted envelope" "held" \
   "$(if [ -s "$RUN_ROOT/frozenbox-reading" ]; then printf held; fi)"
+# Ordered the same way as the frozen recall above, and for the same reasons.
+frozenbox_chan="test-frozenbox-$$"
+tmux wait-for "$frozenbox_chan" &
+frozenbox_waiter=$!
+tmux send-keys -t "$frozenbox_id" C-u
+tmux send-keys -l -t "$frozenbox_id" "tmux wait-for -S $frozenbox_chan"
+tmux send-keys -t "$frozenbox_id" Enter
+wait "$frozenbox_waiter"
 contains "the Enter reached the shell under the frozen reading" \
-  "$(pane frozenbox)" "command not found"
+  "$(<"$RUN_ROOT/frozenbox-ran")" "MARK_FROZEN_BOX"
 equal "a box that ignores Enter and a clear key leaves submission unknown" \
   "5" "$frozenbox_rc"
 contains "and names it unverifiable" "$frozenbox_out" "submission unverifiable"
