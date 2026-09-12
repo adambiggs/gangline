@@ -542,6 +542,28 @@ contains "a record under a garbled stamp is re-probed" \
 equal "the re-probe retires a record under a garbled stamp" "" \
   "$(tmux show-options -wqv -t "$waitable_id" @gl_waiting)"
 
+# A GARBLED STAMP NEVER OVERRIDES A STOP THAT CROSSED ITS READER. Spliced into
+# the reader's condition, this stamp leaves it malformed, and a malformed
+# condition expands empty: the reader would erase the record the Stop wrote.
+tmux set-option -w -t "$waitable_id" @gl_waiting \
+  "waiting"$'\t'"a witness older than the re-probe age"
+tmux set-option -w -t "$waitable_id" @gl_waiting_at 'x,}'
+printf '%s' probe-crossed > "$RUN_ROOT/waiting-evidence"
+: > "$RUN_ROOT/waiting-probe-hold"
+"$GANG" status waitable > "$RUN_ROOT/garbled-crossed.out" 2>&1 &
+probe_reader_pid=$!
+tmux wait-for waiting-probe-held
+printf '%s' '{"hook_event_name":"Stop"}' |
+  TMUX_PANE="$waitable_pane" "$GANG" hook >/dev/null
+tmux wait-for -S waiting-probe-release
+probe_reader_rc=0
+wait "$probe_reader_pid" || probe_reader_rc=$?
+equal "a reader that judged a garbled stamp exits cleanly after a Stop" 0 \
+  "$probe_reader_rc"
+equal "a Stop that crosses a reader of a garbled stamp keeps its own record" \
+  "waiting"$'\t'"fixture Stop crossed the probe" \
+  "$(tmux show-options -wqv -t "$waitable_id" @gl_waiting)"
+
 printf '%s' unknown > "$RUN_ROOT/waiting-evidence"
 printf '%s' '{"hook_event_name":"Stop"}' |
   TMUX_PANE="$waitable_pane" "$GANG" hook >/dev/null
