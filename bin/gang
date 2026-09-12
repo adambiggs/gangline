@@ -3745,28 +3745,37 @@ waiting_read() { # $1 window -> 0 waiting, 1 absent, 2 unknown; sets WAITING_WHA
   esac
 }
 
-# A RECORD AND ITS STAMP CHANGE IN ONE TMUX COMMAND LIST. A re-probing reader
-# writes only while the stamp it judged still stands, which holds only if no
-# reader can run between a hook's two writes. tmux runs one client's command
-# list to its end before it takes another client's command, so a reader sees
-# all of a hook's write or none of it.
+# A HOOK STAMPS BEFORE IT WRITES ITS RECORD. A re-probing reader writes only
+# while the stamp it judged still stands, testing it in the same command as
+# each write. One command list is not one step: the server runs it a command at
+# a time, and a waiting after-set-option hook yields the client's queue between
+# two of them, so a reader can land inside a hook's write. With the stamp first,
+# a reader that lands there finds its judged stamp gone and writes nothing, and
+# the hook's record is the last one written. A retirement of a record sets a
+# fresh stamp rather than unsetting it, so a reader that judged an unstamped
+# record is refuted too. Where no record is left, whatever removed it already
+# moved the stamp, so the stamp stands as it is and a hitch that retires nothing
+# writes no clock reading into its window; a stamp with no record is inert. The
+# record is tested in the stamp's own command. A failed command ends the list:
+# a lost stamp leaves the old record and stamp, which the next reader re-probes,
+# and a record write lost after its stamp leaves the old record trusted for at
+# most one re-probe age.
 waiting_clear() { # $1 window; a new native event retires the old Stop witness
-  tmux set-option -uw -t "$1" @gl_waiting \; \
-    set-option -uw -t "$1" @gl_waiting_at 2>/dev/null || true
+  tmux set-option -wF -t "$1" @gl_waiting_at \
+    "#{?#{!=:#{@gl_waiting},},$(date +%s),#{@gl_waiting_at}}" \; \
+    set-option -uw -t "$1" @gl_waiting 2>/dev/null || true
 }
 
 # A WAITING RECORD AGES. It is one reading taken at Stop, and an idle window may
 # send no further native event: the held work can finish and the record would
 # name it indefinitely. Each record is stamped so the next state reader can take
 # a fresh bounded reading of one older than this, as ADR 0044 retires refuted
-# state at a reading. The record comes first in the list, and a failed command
-# ends the list, so a lost stamp leaves a record that is re-probed rather than
-# one that is trusted.
+# state at a reading.
 WAITING_REPROBE_AFTER=60
 
 waiting_store() { # $1 window, $2 record
-  tmux set-option -w -t "$1" @gl_waiting "$2" \; \
-    set-option -w -t "$1" @gl_waiting_at "$(date +%s)" 2>/dev/null || true
+  tmux set-option -w -t "$1" @gl_waiting_at "$(date +%s)" \; \
+    set-option -w -t "$1" @gl_waiting "$2" 2>/dev/null || true
 }
 
 WAITING_AT=""
@@ -3784,7 +3793,7 @@ waiting_stale() { # $1 window -> 0 when the stored record is due a fresh probe; 
 # $1 window, $2 collar, $3 Stop payload, optional $4 the stamp a reader judged
 # stale; cache one bounded probe
 waiting_refresh() {
-  local raw="" header="" output="" rc=0 source="collar '$2'" record="" at=""
+  local raw="" header="" output="" rc=0 source="collar '$2'" record="" judged="" now=""
   # CONTAIN THE OPTIONAL RELOAD. Stop's universal turn boundary has always
   # survived a collar removed after hitch; a derived-state reader cannot make
   # that boundary depend on the file still existing. Capturing stderr also
@@ -3823,18 +3832,41 @@ waiting_refresh() {
       *) record="unknown"$'\t'"collar_waiting in $source returned unknown verdict $rc" ;;
     esac
   fi
+  # A HOOK PASSES NO STAMP: it is the newer event, and its reading always stands.
+  if [ "$#" -lt 4 ]; then
+    if [ -n "$record" ]; then
+      waiting_store "$1" "$record"
+    else
+      waiting_clear "$1"
+    fi
+    return 0
+  fi
   # A READER WRITES ONLY OVER THE RECORD IT JUDGED. Its probe runs outside any
   # lock, so a hook can store a newer record or retire this one while the probe
-  # is held; either changes the stamp. A hook passes no stamp: it is the newer
-  # event, and its reading always stands.
-  if [ "$#" -ge 4 ]; then
-    at="$(tmux show-options -wqv -t "$1" @gl_waiting_at 2>/dev/null)" || at=""
-    [ "$at" = "$4" ] || return 0
-  fi
+  # is held, and every hook changes the stamp first. Each write below tests the
+  # judged stamp and writes in one set-option, so nothing can land between the
+  # test and the write; a read followed by a write let a hook land between them
+  # and be undone. The record goes first, since the reader's own stamp would
+  # refute it. Only digits are ever written as a stamp, so a judged stamp with
+  # any other byte is tested as "still not a number" and never enters the
+  # format. One collision remains: a hook stamp equal to the judged one, which
+  # only a clock stepped back to that second can write. A list that fails part
+  # way can leave the scratch option, under a name no other process uses.
+  case "$4" in
+    *[!0-9]*) judged="#{m:*[!0-9]*,#{@gl_waiting_at}}" ;;
+    *) judged="#{==:#{@gl_waiting_at},$4}" ;;
+  esac
+  now="$(date +%s)"
   if [ -n "$record" ]; then
-    waiting_store "$1" "$record"
+    tmux set-option -w -t "$1" "@gl_waiting_next_$$" "$record" \; \
+      set-option -wF -t "$1" @gl_waiting \
+        "#{?$judged,#{@gl_waiting_next_$$},#{@gl_waiting}}" \; \
+      set-option -wF -t "$1" @gl_waiting_at "#{?$judged,$now,#{@gl_waiting_at}}" \; \
+      set-option -uw -t "$1" "@gl_waiting_next_$$" 2>/dev/null || true
   else
-    waiting_clear "$1"
+    tmux set-option -wF -t "$1" @gl_waiting "#{?$judged,,#{@gl_waiting}}" \; \
+      set-option -wF -t "$1" @gl_waiting_at "#{?$judged,$now,#{@gl_waiting_at}}" \
+      2>/dev/null || true
   fi
 }
 
@@ -13880,11 +13912,9 @@ state_now() { # $1 = window id, collar loaded -> the state, in words
     1) waiting_rc=0
        waiting_read "$1" || waiting_rc=$?
        # A stale record is re-probed here, with no Stop payload to pass, and the
-       # reading is discarded if a hook changed the stamp meanwhile. Two windows
-       # remain: the few steps between that re-read and the write, and an
-       # unstamped record that a hook clears, where the stamp reads empty before
-       # and after. The residue of either is itself stamped, so it outlives the
-       # event that refuted it by at most one re-probe age.
+       # reading is written only while the stamp judged stale still stands;
+       # every hook changes the stamp before its record, so a native event that
+       # crosses the probe is never overwritten by the reading it refuted.
        if [ "$waiting_rc" -ne 1 ] && waiting_stale "$1"; then
          waiting_refresh "$1" "$(collar_read "$1")" "" "$WAITING_AT"
          waiting_rc=0
