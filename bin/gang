@@ -3781,14 +3781,21 @@ waiting_store() { # $1 window, $2 record
 WAITING_GEN=""
 WAITING_AT=""
 
-# $1 window -> 0 when the stored record is due a fresh probe; sets WAITING_GEN
-# and WAITING_AT
-waiting_stale() {
-  local now
-  # The count is read before the stamp: a write that lands between the two
-  # reads moves the count past the one judged, so the reader's write is refused.
+# $1 window; sets WAITING_GEN and WAITING_AT. A reader takes both before it
+# reads the record: a retirement that lands after the record read would leave
+# the reader holding a record no longer stored under the retirement's fresh
+# stamp, too young to re-probe. The count is read first, so a write that lands
+# between any two of the three reads moves the count past the one judged and
+# the reader's write is refused. A stamp read before the record is never newer
+# than the record, so at worst it spends one probe that the count refuses.
+waiting_mark() {
   WAITING_GEN="$(tmux show-options -wqv -t "$1" @gl_waiting_gen 2>/dev/null)" || WAITING_GEN=""
   WAITING_AT="$(tmux show-options -wqv -t "$1" @gl_waiting_at 2>/dev/null)" || WAITING_AT=""
+}
+
+# -> 0 when the record read after waiting_mark is due a fresh probe
+waiting_stale() {
+  local now
   case "$WAITING_AT" in ''|*[!0-9]*) return 0 ;; esac
   now="$(date +%s)"
   # A stamp from the future was not written by this clock; it proves no age.
@@ -3797,7 +3804,7 @@ waiting_stale() {
 }
 
 # $1 window, $2 collar, $3 Stop payload, optional $4 the count a reader read
-# with the record it judged stale; cache one bounded probe
+# before the record it judged stale; cache one bounded probe
 waiting_refresh() {
   local raw="" header="" output="" rc=0 source="collar '$2'" record="" judged="" now="" bump=""
   # CONTAIN THE OPTIONAL RELOAD. Stop's universal turn boundary has always
@@ -13923,9 +13930,10 @@ state_now() { # $1 = window id, collar loaded -> the state, in words
   case "$busy_rc" in
     0) state="-busy-" ;;
     1) waiting_rc=0
+       waiting_mark "$1"
        waiting_read "$1" || waiting_rc=$?
        # A stale record is re-probed here, with no Stop payload to pass, and the
-       # reading is written only while the count read with that record still
+       # reading is written only while the count read before that record still
        # stands; every hook moves the count before its record, so a native
        # event that crosses the probe is never overwritten by the reading it
        # refuted.

@@ -265,6 +265,14 @@ if [ "\$1" = set-option ] && [ -e '$RUN_ROOT/waiting-write-hold' ]; then
       '$waiting_wait_tmux' wait-for waiting-write-release ;;
   esac
 fi
+if [ "\$1" = show-options ] && [ -e '$RUN_ROOT/waiting-stamp-read-hold' ]; then
+  case "\$*" in
+    *@gl_waiting_at*)
+      rm -f -- '$RUN_ROOT/waiting-stamp-read-hold'
+      '$waiting_wait_tmux' wait-for -S waiting-stamp-read-held
+      '$waiting_wait_tmux' wait-for waiting-stamp-read-release ;;
+  esac
+fi
 exec '$REAL_TMUX' "\$@"
 SH
 chmod +x "$waiting_hold_bin/tmux"
@@ -629,6 +637,30 @@ equal "a clearing reader overtaken by a storing one leaves the newer record" \
 rm -f -- "$RUN_ROOT/waiting-evidence"
 printf '%s' '{"hook_event_name":"Stop"}' |
   TMUX_PANE="$waitable_pane" "$GANG" hook >/dev/null
+
+# A READER READS THE COUNT AND STAMP BEFORE THE RECORD. A record read first can
+# be retired before the stamp is read; the reader then finds the retirement's
+# fresh stamp, judges the record too young to re-probe, and reports a witness
+# no longer stored. This reader is parked at its stamp read while a Stop with
+# no held work retires the record.
+tmux set-option -w -t "$waitable_id" @gl_waiting \
+  "waiting"$'\t'"a witness older than the re-probe age"
+tmux set-option -w -t "$waitable_id" @gl_waiting_at 1
+: > "$RUN_ROOT/waiting-stamp-read-hold"
+PATH="$waiting_hold_bin:$PATH" "$GANG" status waitable \
+  > "$RUN_ROOT/retired-unread.out" 2>&1 &
+stamp_reader_pid=$!
+tmux wait-for waiting-stamp-read-held
+printf '%s' '{"hook_event_name":"Stop"}' |
+  TMUX_PANE="$waitable_pane" "$GANG" hook >/dev/null
+tmux wait-for -S waiting-stamp-read-release
+stamp_reader_rc=0
+wait "$stamp_reader_pid" || stamp_reader_rc=$?
+equal "a reader parked at its stamp read exits cleanly after a Stop" 0 "$stamp_reader_rc"
+contains "a record retired before its reader read the stamp is not reported" \
+  "$(cat "$RUN_ROOT/retired-unread.out")" "~idle~"
+equal "a reader parked at its stamp read writes nothing over the retirement" "" \
+  "$(tmux show-options -wqv -t "$waitable_id" @gl_waiting)"
 
 # A STAMP OR COUNT THAT IS NOT A NUMBER IS STALE AND NEVER ENTERS A FORMAT. A
 # count this file writes is a number or empty, so a reader that judged a
