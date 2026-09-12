@@ -3845,6 +3845,13 @@ tick_next_err="$RUN_ROOT/tick-next.err"
 "$GANG" teams >/dev/null 2> "$tick_next_err"
 contains "the next Gangline invocation repeats the last tick failure" \
   "$(<"$tick_next_err")" "last tick failed:"
+# The warning lands on an unrelated command, so it has to say whether anything
+# is stalled and where the caller goes next. Every ordinary command starts a
+# tick as it exits, health or not, and a clean pass clears the record.
+contains "the repeated failure says cooperative ticking continues" \
+  "$(<"$tick_next_err")" "ticking continues"
+contains "and names the command that reads the failure" \
+  "$(<"$tick_next_err")" "gang alerts"
 tick_isolation_rc=0
 GANG_TEST_TICK_MODE=sync "$GANG" teams >/dev/null 2>&1 || tick_isolation_rc=$?
 equal "a detached tick failure never changes its spawning command result" 0 "$tick_isolation_rc"

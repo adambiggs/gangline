@@ -5009,7 +5009,11 @@ tick_health_warn() { # the next invocation carries the last failure on stderr
   record="$(tick_health_read)" || return 0
   IFS=$'\t' read -r state at note <<<"$record"
   [ "$state" = failed ] || return 0
-  printf 'gang: last tick failed: %s\n' "$note" >&2
+  # This lands on whatever command ran next, so it says what is stalled and
+  # where to look: every ordinary command starts a tick as it exits, whatever
+  # the last one did, and the first clean pass clears this record.
+  printf 'gang: last tick failed: %s — ticking continues and a clean pass clears this; run gang alerts for the failure\n' \
+    "$note" >&2
 }
 
 tick_health_report() {

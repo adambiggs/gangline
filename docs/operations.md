@@ -515,7 +515,8 @@ session registered for that agent. Treat it as an identity failure, not an idle
 or busy verdict: delivery is blocked until the intended session is re-hitched.
 `last tick failed:` is team-level health rather than an agent verdict; it is
 repeated by the next command and by status/roster until a clean pass replaces
-it.
+it. A failure does not stop cooperative ticking: every ordinary command still
+starts a pass as it exits. `gang alerts` reads the failure.
 
 For the window-name glyph, its staleness, its transition journal, bare
 addressing, and tmux's appended flags, see
