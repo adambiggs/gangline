@@ -1052,8 +1052,10 @@ equal "a clean pass over unreadable health marks the history incomplete" 1 \
 # THE LISTING NAMES THE CURRENT GENERATION FIRST. A reader takes no lock, and
 # the first rotation can land between its two existence checks; checked in the
 # other order, neither file is seen and a journal with rows reads as "no alert
-# history". The tmux read between the checks is the seam, so this shim rotates
-# the journal there.
+# history". The history-lost read is the one external command between the
+# checks, so this shim rotates the journal there. These assertions show what a
+# rotation at that read produces; they reach the window between the checks only
+# while the read stays between them.
 alert_ui_real_mv="$(command -v mv)"
 alert_ui_rotate_bin="$RUN_ROOT/alert-ui-rotate-bin"
 alert_ui_rotate_ledger="$RUN_ROOT/alert-ui-rotations"
@@ -1075,11 +1077,11 @@ chmod +x "$alert_ui_rotate_bin/tmux"
 equal "the rotation fixture starts with one generation" absent \
   "$(if [ -e "$alert_ui_alerts.1" ]; then printf present; else printf absent; fi)"
 alert_ui_rotated="$(PATH="$alert_ui_rotate_bin:$PATH" alert_ui_gang alerts)"
-equal "the journal rotated between the listing checks" 1 \
+equal "the journal rotated at the history-lost read" 1 \
   "$(wc -l < "$alert_ui_rotate_ledger" | tr -d ' ')"
-excludes "a rotation between the listing checks cannot read as no history" \
+excludes "a rotation at the history-lost read cannot read as no history" \
   "$alert_ui_rotated" "no alert history"
-contains "a rotation between the listing checks reads as unknown" \
+contains "a rotation at the history-lost read reads as unknown" \
   "$alert_ui_rotated" "recent alerts: unknown"
 mv -- "$alert_ui_alerts.1" "$alert_ui_alerts"
 
