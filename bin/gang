@@ -3751,18 +3751,16 @@ waiting_read() { # $1 window -> 0 waiting, 1 absent, 2 unknown; sets WAITING_WHA
 # a time, and a waiting after-set-option hook yields the client's queue between
 # two of them, so a reader can land inside a hook's write. With the stamp first,
 # a reader that lands there finds its judged stamp gone and writes nothing, and
-# the hook's record is the last one written. A retirement of a record sets a
-# fresh stamp rather than unsetting it, so a reader that judged an unstamped
-# record is refuted too. Where no record is left, whatever removed it already
-# moved the stamp, so the stamp stands as it is and a hitch that retires nothing
-# writes no clock reading into its window; a stamp with no record is inert. The
-# record is tested in the stamp's own command. A failed command ends the list:
-# a lost stamp leaves the old record and stamp, which the next reader re-probes,
-# and a record write lost after its stamp leaves the old record trusted for at
-# most one re-probe age.
+# the hook's record is the last one written. A retirement sets a fresh stamp
+# rather than unsetting it, so a reader that judged an unstamped record is
+# refuted too. It does so even where no record is left: a reader that finds the
+# source gone empties the record before it moves the stamp, so an empty record
+# is no sign that the stamp has moved. A failed command ends the list: a lost
+# stamp leaves the old record and stamp, which the next reader re-probes, and a
+# record write lost after its stamp leaves the old record trusted for at most
+# one re-probe age.
 waiting_clear() { # $1 window; a new native event retires the old Stop witness
-  tmux set-option -wF -t "$1" @gl_waiting_at \
-    "#{?#{!=:#{@gl_waiting},},$(date +%s),#{@gl_waiting_at}}" \; \
+  tmux set-option -w -t "$1" @gl_waiting_at "$(date +%s)" \; \
     set-option -uw -t "$1" @gl_waiting 2>/dev/null || true
 }
 
@@ -11134,7 +11132,7 @@ else:
 }
 
 hitch_launch() {
-  local name="" prof="${GANG_COLLAR:-claude-code}" dir="$PWD" model="" effort="" task="" missing="" role="" role_path="" id="" resume=0 resume_id="" resume_stamped="" launch_env collar_arg=0 pane_dead lookup_rc=0 opened_session=0
+  local name="" prof="${GANG_COLLAR:-claude-code}" dir="$PWD" model="" effort="" task="" missing="" role="" role_path="" id="" resume=0 resume_id="" resume_stamped="" launch_env collar_arg=0 pane_dead lookup_rc=0 opened_session=0 respawned=0
   local lights="" lights_arg="" lights_given=0 lights_subject="" lights_from="" lights_note="" cache_compaction=off boot="${GANG_BOOT_TIMEOUT:-30}" gate_looks="${GANG_GATE_LOOKS:-60}"
   local hitched_by="" use_stdin=0
   name="${1:-}"; case "$name" in ''|-*) usage_die ;; esac; shift
@@ -11412,6 +11410,7 @@ hitch_launch() {
       || die "agent '$name' already exists and its pane is live; refusing to replace it with a resumed harness"
     tmux respawn-window -k -t "$id" -c "$dir" "$GANG_LAUNCH" \
       || die "could not resume '$name' in its registered window"
+    respawned=1
   else
     id="$(tmux new-window -d -P -F '#{window_id}' -t "=$SESSION" -n "$name" -c "$dir" "$GANG_LAUNCH")" \
       || die "could not open a window for '$name' in session '$SESSION'"
@@ -11431,8 +11430,10 @@ hitch_launch() {
   hitch_register "$id" "$name" @gl_hitched_by "${hitched_by%%$'\t'*}"
   hitch_register "$id" "$name" @gl_hitched_by_name "${hitched_by#*$'\t'}"
   # Window options survive a resume respawn. A held resource belonged to the
-  # old native process; only the new launch's own Stop may witness another.
-  waiting_clear "$id"
+  # old native process; only the new launch's own Stop may witness another. A
+  # window opened here holds no record, and a reader re-probes only a record,
+  # so no reader can have judged its stamp and it is left without one.
+  [ "$respawned" -eq 0 ] || waiting_clear "$id"
   hitch_register "$id" "$name" @gl_root "$ROOT"
   # THE REGISTERED NAME MAY MOVE. Keep the cgroup's immutable launch identity
   # on the window that owns it, so no later lifecycle path has to reconstruct a

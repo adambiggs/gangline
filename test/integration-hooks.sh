@@ -491,6 +491,43 @@ case "$waiting_stamp" in
   *) waiting_stamp=stamped ;;
 esac
 equal "a Stop inside a reader's write keeps its stamp" stamped "$waiting_stamp"
+
+# A PROMPT RETIRES WITH A FRESH STAMP EVEN WHEN NO RECORD IS LEFT. A clearing
+# reader empties the record before it moves the stamp, so a prompt landing
+# between those writes finds no record; if it kept the stamp, a second reader
+# that judged the same stamp would store the reading the prompt refuted.
+tmux set-option -w -t "$waitable_id" @gl_waiting \
+  "waiting"$'\t'"a witness older than the re-probe age"
+tmux set-option -w -t "$waitable_id" @gl_waiting_at 1
+printf '%s' probe-outlived > "$RUN_ROOT/waiting-evidence"
+: > "$RUN_ROOT/waiting-probe-hold"
+PATH="$waiting_hold_bin:$PATH" "$GANG" status waitable \
+  > "$RUN_ROOT/refuted-writer.out" 2>&1 &
+writer_reader_pid=$!
+tmux wait-for waiting-probe-held
+: > "$RUN_ROOT/waiting-write-hold"
+tmux wait-for -S waiting-probe-release
+tmux wait-for waiting-write-held
+rm -f -- "$RUN_ROOT/waiting-evidence"
+: > "$RUN_ROOT/waiting-server-hold"
+"$GANG" status waitable > "$RUN_ROOT/refuted-clearer.out" 2>&1 &
+clearer_reader_pid=$!
+tmux wait-for waiting-server-held
+printf '%s' '{"hook_event_name":"UserPromptSubmit"}' |
+  TMUX_PANE="$waitable_pane" "$GANG" hook >/dev/null
+tmux wait-for -S waiting-write-release
+writer_reader_rc=0
+wait "$writer_reader_pid" || writer_reader_rc=$?
+tmux wait-for -S waiting-server-release
+clearer_reader_rc=0
+wait "$clearer_reader_pid" || clearer_reader_rc=$?
+equal "a reader released after a prompt crossed its probe exits cleanly" 0 \
+  "$writer_reader_rc"
+equal "a reader parked inside its clear exits cleanly" 0 "$clearer_reader_rc"
+equal "a prompt that lands inside a reader's clear refutes every crossed reader" "" \
+  "$(tmux show-options -wqv -t "$waitable_id" @gl_waiting)"
+printf '%s' '{"hook_event_name":"Stop"}' |
+  TMUX_PANE="$waitable_pane" "$GANG" hook >/dev/null
 tmux set-hook -gu after-set-option
 rm -f -- "$RUN_ROOT/waiting-server-hold" "$RUN_ROOT/waiting-server-window"
 
