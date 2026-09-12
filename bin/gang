@@ -10739,6 +10739,12 @@ scope_orphan_stop() { # $1 unit, $2=issued after provenance was read before deat
   case "$cgroup" in /*) ;; *) cgroup="" ;; esac
   case "$tasks" in ''|*[!0-9]*) tasks="" ;; esac
   if [ -z "$cgroup" ] || [ -z "$tasks" ]; then
+    # A transient scope can finish and be reaped between the state read and
+    # these reads, and the manager answers a reaped unit with empty values.
+    # Ask again: a unit that is now gone had nothing left to stop.
+    state_rc=0
+    scope_unit_active "$unit" || state_rc=$?
+    [ "$state_rc" -ne 1 ] || { scope_issue_forget "$unit"; return 0; }
     printf 'gang: surviving scope %s was NOT stopped: its cgroup membership could not be read\n' \
       "$unit" >&2
     return 1

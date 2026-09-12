@@ -2228,7 +2228,8 @@ equal "re-adopting a registered agent preserves its launch scope" \
 # exists, making the required post-window ordering observable rather than
 # inferred from the final absence.
 mkdir -p "$RUN_ROOT/scope-orphan-bin" "$RUN_ROOT/scope-orphan-active" \
-  "$RUN_ROOT/scope-orphan-deactivating" "$RUN_ROOT/scope-orphan-autocollect"
+  "$RUN_ROOT/scope-orphan-deactivating" "$RUN_ROOT/scope-orphan-autocollect" \
+  "$RUN_ROOT/scope-orphan-vanish"
 cat > "$RUN_ROOT/scope-orphan-bin/systemd-run" <<SH
 #!/bin/sh
 unit=''
@@ -2273,6 +2274,14 @@ case "\$cmd" in
         ;;
       *' --property=ControlGroup '*)
         unit=''; for arg in "\$@"; do unit="\$arg"; done
+        # A transient scope reaped between is-active and this read: the
+        # manager answers with an empty value and the unit is gone.
+        if [ -f '$RUN_ROOT/scope-orphan-vanish/'"\$unit" ]; then
+          rm -f -- '$RUN_ROOT/scope-orphan-active/'"\$unit" \
+            '$RUN_ROOT/scope-orphan-deactivating/'"\$unit"
+          printf '%s\\n' 'membership-vanished' >> '$RUN_ROOT/scope-orphan.ops'
+          exit 0
+        fi
         printf '%s\\n' "/fixture/\$unit"
         printf '%s\\n' 'membership' >> '$RUN_ROOT/scope-orphan.ops'
         ;;
@@ -2348,6 +2357,31 @@ scope_leak_nonce="${scope_leak_unit%.scope}"; scope_leak_nonce="${scope_leak_non
 equal "a successful stop removes the persistent issuance record" "" \
   "$(find "$GANG_LOCK_DIR/scopes/$GANG_SESSION/$scope_leak_nonce" \
     -maxdepth 1 -type f -name unit -printf '%f' 2>/dev/null || true)"
+
+# A SCOPE THAT EXITS BETWEEN THE STATE READ AND THE MEMBERSHIP READ IS GONE,
+# NOT UNREADABLE. The manager answers empty properties for a reaped unit, and
+# reporting that as a scope that may still be running sends the operator after
+# a process that no longer exists.
+PATH="$RUN_ROOT/scope-orphan-bin:$PATH" GANG_SCOPE=on \
+  "$HITCH" scopevanish -c bash -d /tmp >/dev/null
+scope_vanish_unit="$(tmux show-options -wqv -t "$(window_id scopevanish)" @gl_scope)"
+: > "$RUN_ROOT/scope-orphan-deactivating/$scope_vanish_unit"
+: > "$RUN_ROOT/scope-orphan-vanish/$scope_vanish_unit"
+: > "$RUN_ROOT/scope-orphan.ops"
+scope_vanish_rc=0
+scope_vanish_out="$(PATH="$RUN_ROOT/scope-orphan-bin:$PATH" \
+  "$GANG" drop scopevanish 2>&1)" || scope_vanish_rc=$?
+equal "drop succeeds when the surviving scope exits before its membership is read" \
+  0 "$scope_vanish_rc"
+excludes "and does not report the reaped scope as unreadable" \
+  "$scope_vanish_out" "could not be read"
+equal "gang reads the vanished membership and stops nothing" \
+  "membership-vanished" "$(<"$RUN_ROOT/scope-orphan.ops")"
+scope_vanish_nonce="${scope_vanish_unit%.scope}"; scope_vanish_nonce="${scope_vanish_nonce##*-}"
+equal "the reaped scope's issuance record is forgotten" "" \
+  "$(find "$GANG_LOCK_DIR/scopes/$GANG_SESSION/$scope_vanish_nonce" \
+    -maxdepth 1 -type f -name unit -printf '%f' 2>/dev/null || true)"
+rm -f -- "$RUN_ROOT/scope-orphan-vanish/$scope_vanish_unit"
 
 # READS NAME BOTH CLASSES AND MUTATE NEITHER. The first unit was issued by an
 # actual hitch and then orphaned by an external window death. The second only
