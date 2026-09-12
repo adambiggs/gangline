@@ -10907,6 +10907,10 @@ hitch_launch() {
   require_whole GANG_BOOT_TIMEOUT "$boot" seconds
   require_whole GANG_GATE_LOOKS "$gate_looks" observations
   [ -d "$dir" ] || die "hitch: no such directory '$dir'"
+  # A RELATIVE DIRECTORY NAMES A PLACE ONLY FROM THIS CALLER'S CWD. The window,
+  # the relaunch line drop prints and the usage ledger all outlive that cwd, so
+  # the hitch records the absolute directory the name led to.
+  dir="$(CDPATH='' cd -- "$dir" && pwd)" || die "hitch: cannot resolve directory '$dir'"
   launch_record_check "$task"
   ! test_only_collar "$prof" \
     || die "hitch: '$prof' is a stand-in for gangline's own suite, not a harness to run an agent on (GANG_TEST_COLLARS=1 if you are testing gang itself)"

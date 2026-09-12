@@ -763,6 +763,13 @@ contains "explicit resume substitutes the quoted identity from any cwd" \
   "$(tmux display-message -p -t "$(window_id identity)" '#{pane_start_command}')" \
   "resume-native-identity-123"
 "$GANG" drop identity >/dev/null
+# A relative -d names a directory only from the hitching caller's cwd, so the
+# hitch records the absolute directory it led to and the relaunch line works
+# wherever the operator runs it.
+(cd "$RUN_ROOT" && "$HITCH" reldir -c identity -d . >/dev/null)
+tmux set-option -w -t "$(window_id reldir)" @gl_session_id native-reldir-123
+contains "a relative -d is relaunched from the absolute directory it named" \
+  "$("$GANG" drop reldir)" " -d $(printf '%q' "$RUN_ROOT")"
 refuses "bare resume without a surviving stamped window refuses loudly" \
   "gang hitch identity --resume <session-id>" \
   "$GANG" hitch identity -c identity -d /tmp --resume
