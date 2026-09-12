@@ -1,5 +1,17 @@
 # Changelog
 
+## [2.13.0](https://github.com/adambiggs/gangline/compare/gangline-v2.12.0...gangline-v2.13.0) (2026-09-12)
+
+
+### Features
+
+* **tick:** compact idle contexts before cache expiry ([e57f60d](https://github.com/adambiggs/gangline/commit/e57f60d0e4d9d822e3a362ef6094e38ccf25c19a)), closes [#240](https://github.com/adambiggs/gangline/issues/240)
+
+
+### Bug Fixes
+
+* **tick:** preserve cache-compaction safety signals ([15befac](https://github.com/adambiggs/gangline/commit/15befac08c63d0625416af1cd18fcb9249b61fcc)), closes [#240](https://github.com/adambiggs/gangline/issues/240)
+
 ## [2.12.0](https://github.com/adambiggs/gangline/compare/gangline-v2.11.1...gangline-v2.12.0) (2026-09-12)
 
 
