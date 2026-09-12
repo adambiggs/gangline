@@ -976,7 +976,12 @@ contains "NUL-corrupted health is named as malformed" \
 
 # Corruption does not erase the last trustworthy active lifecycle. A failing
 # producer repairs its record, but must neither reopen the seen transition nor
-# emit a duplicate new-alert message.
+# emit a duplicate new-alert message. With the prior record unreadable the
+# transition is unknown: a history row would read as a second raised failure,
+# so the repair appends none and marks the history incomplete instead.
+alert_ui_alerts="${alert_ui_health%/health}/alerts"
+alert_ui_tmux set-option -u -t "=$alert_ui_session:" @gl_alert_history_lost
+alert_ui_rows_before="$(wc -l < "$alert_ui_alerts" | tr -d ' ')"
 alert_ui_corrupt_repeat_rc=0
 PATH="$alert_ui_tmux_bin:$PATH" alert_ui_gang tick >/dev/null 2>&1 \
   || alert_ui_corrupt_repeat_rc=$?
@@ -988,6 +993,10 @@ equal "repairing corrupt active health emits no duplicate transition" 1 \
   "$(wc -l < "$alert_ui_message_ledger" | tr -d ' ')"
 contains "the corrupt active record is repaired to inspectable failure" \
   "$(<"$alert_ui_health")" $'failed\t'
+equal "repairing unreadable health appends no history row" \
+  "$alert_ui_rows_before" "$(wc -l < "$alert_ui_alerts" | tr -d ' ')"
+equal "repairing unreadable health marks the history incomplete" 1 \
+  "$(alert_ui_tmux show-options -qv -t "=$alert_ui_session:" @gl_alert_history_lost)"
 rm -f -- "$alert_ui_health_saved"
 
 alert_ui_tmux set-option -w -t "$alert_ui_caller_id" @gl_collar bash
@@ -1013,8 +1022,32 @@ equal "failure after recovery is a new unseen transition" '1 1' \
   "$(alert_ui_tmux show-options -qv -t "=$alert_ui_session:" @gl_alert_active) $(alert_ui_tmux show-options -qv -t "=$alert_ui_session:" @gl_alert_unseen)"
 equal "the post-recovery transition emits exactly one new message" 2 \
   "$(wc -l < "$alert_ui_message_ledger" | tr -d ' ')"
+
+# A clean pass over an unreadable prior record cannot tell a resolution from a
+# pass that resolved nothing, so it too appends no row and marks the history
+# incomplete. A pass refuses health it cannot read when it starts, so the
+# record turns unreadable while the pass is held at its commit.
+alert_ui_unread_ready="$RUN_ROOT/alert-ui-unread-ready"
+alert_ui_unread_release="$RUN_ROOT/alert-ui-unread-release"
+mkfifo "$alert_ui_unread_ready" "$alert_ui_unread_release"
+alert_ui_tmux set-option -u -t "=$alert_ui_session:" @gl_alert_history_lost
+alert_ui_rows_before="$(wc -l < "$alert_ui_alerts" | tr -d ' ')"
 alert_ui_tmux set-option -w -t "$alert_ui_caller_id" @gl_collar bash
-alert_ui_gang tick >/dev/null
+GANG_TEST_TICK_COMMIT_READY_FIFO="$alert_ui_unread_ready" \
+GANG_TEST_TICK_COMMIT_RELEASE_FIFO="$alert_ui_unread_release" \
+  alert_ui_gang tick > "$RUN_ROOT/alert-ui-unread.out" 2>&1 &
+alert_ui_unread_owner=$!
+IFS= read -r -N 1 _ < "$alert_ui_unread_ready"
+printf 'junk\n' > "$alert_ui_health"
+printf '\n' > "$alert_ui_unread_release"
+alert_ui_unread_rc=0
+wait "$alert_ui_unread_owner" || alert_ui_unread_rc=$?
+equal "a clean pass over health made unreadable at its commit completes" \
+  0 "$alert_ui_unread_rc"
+equal "a clean pass over unreadable health appends no history row" \
+  "$alert_ui_rows_before" "$(wc -l < "$alert_ui_alerts" | tr -d ' ')"
+equal "a clean pass over unreadable health marks the history incomplete" 1 \
+  "$(alert_ui_tmux show-options -qv -t "=$alert_ui_session:" @gl_alert_history_lost)"
 
 # A pass owns the tick lock through its health commit. Hold a failing pass at
 # that exact seam, request another pass after repairing the condition, and
