@@ -3382,7 +3382,8 @@ equal "the installer refuses local changes instead of replacing them" \
 
 # The default install directory is also Gangline's data directory: the usage
 # ledger lives under it. Gang's own writes there are not local changes, so an
-# install over a tree that has recorded usage proceeds and keeps the ledger.
+# install over a tree from a release that ignores the ledger proceeds and keeps
+# it.
 ledger_home="$installer_root/ledger-home"
 ledger_bin="$installer_root/ledger-bin"
 GANGLINE_REPO="$installer_src" GANGLINE_HOME="$ledger_home" \
@@ -3392,10 +3393,47 @@ printf '%s\n' '{"fixture":"ledger"}' > "$ledger_home/usage/events.jsonl"
 ledger_rc=0
 ledger_out="$(GANGLINE_REPO="$installer_src" GANGLINE_HOME="$ledger_home" \
   GANGLINE_BIN="$ledger_bin" sh "$ROOT/install.sh" 2>&1)" || ledger_rc=$?
-equal "the installer does not read the usage ledger as local changes" 0 "$ledger_rc"
+equal "a release that ignores the ledger does not read it as local changes" 0 "$ledger_rc"
 excludes "and does not refuse over it" "$ledger_out" "has local changes"
 equal "the usage ledger survives the install" '{"fixture":"ledger"}' \
   "$(<"$ledger_home/usage/events.jsonl")"
+
+# A release from before that rule cannot be repaired by a newer one: the
+# installer checks the installed tree, with that tree's own ignore rules, before
+# it fetches anything. Excluding the ledger once in the installed tree's git
+# metadata lets the upgrade proceed, and the ledger survives it.
+ledger_old_src="$installer_root/ledger-old-src"
+cp -R "$installer_src" "$ledger_old_src"
+grep -v '^/usage/$' "$installer_src/.gitignore" > "$ledger_old_src/.gitignore"
+printf '%s\n' 0.9.0 > "$ledger_old_src/version.txt"
+git -C "$ledger_old_src" commit -qam 'test: a release that does not ignore the ledger'
+git -C "$ledger_old_src" tag -l 'gangline-v*' | while read -r ledger_old_tag; do
+  git -C "$ledger_old_src" tag -d "$ledger_old_tag" >/dev/null
+done
+git -C "$ledger_old_src" tag gangline-v0.9.0
+ledger_old_home="$installer_root/ledger-old-home"
+ledger_old_bin="$installer_root/ledger-old-bin"
+GANGLINE_REPO="$ledger_old_src" GANGLINE_HOME="$ledger_old_home" \
+  GANGLINE_BIN="$ledger_old_bin" sh "$ROOT/install.sh" >/dev/null 2>&1
+equal "the old install is the release without the rule" 0.9.0 \
+  "$(tail -n 1 "$ledger_old_home/version.txt")"
+mkdir -p "$ledger_old_home/usage"
+printf '%s\n' '{"fixture":"old-ledger"}' > "$ledger_old_home/usage/events.jsonl"
+ledger_old_rc=0
+ledger_old_out="$(GANGLINE_REPO="$installer_src" GANGLINE_HOME="$ledger_old_home" \
+  GANGLINE_BIN="$ledger_old_bin" sh "$ROOT/install.sh" 2>&1)" || ledger_old_rc=$?
+contains "a release without the rule still reads its ledger as local changes" \
+  "$ledger_old_out" "has local changes"
+mkdir -p "$ledger_old_home/.git/info"
+printf '/usage/\n' >> "$ledger_old_home/.git/info/exclude"
+ledger_old_rc=0
+ledger_old_out="$(GANGLINE_REPO="$installer_src" GANGLINE_HOME="$ledger_old_home" \
+  GANGLINE_BIN="$ledger_old_bin" sh "$ROOT/install.sh" 2>&1)" || ledger_old_rc=$?
+equal "excluding the ledger once lets that install upgrade" 0 "$ledger_old_rc"
+equal "the upgrade reaches the release that ignores the ledger" 1.2.0 \
+  "$(tail -n 1 "$ledger_old_home/version.txt")"
+equal "and the ledger survives it" '{"fixture":"old-ledger"}' \
+  "$(<"$ledger_old_home/usage/events.jsonl")"
 
 installer_dir_bin="$installer_root/bin-dir"
 mkdir -p "$installer_dir_bin/gang"
