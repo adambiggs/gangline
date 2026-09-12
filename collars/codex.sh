@@ -1385,6 +1385,24 @@ try:
                 raise SystemExit(1)
             if kind != "task_complete":
                 continue
+            # A COMPLETION CARRYING AN ERROR ENDED WITHOUT ITS RESULT. The
+            # provider content refusal is one: the pane shows a card over an
+            # idle prompt, and a first token has usually streamed already, so
+            # the conjunction below never sees it. Measured on codex-cli
+            # 0.146.0 through 0.151.0, no errored completion carries a reply;
+            # the errors were cyber_policy, server_overloaded, unauthorized
+            # and other.
+            error = payload.get("error")
+            if isinstance(error, dict):
+                info = error.get("codex_error_info")
+                info = info if isinstance(info, str) and info else "unnamed"
+                detail = error.get("message")
+                detail = " ".join(detail.split())[:200] if isinstance(detail, str) else ""
+                print(
+                    "the codex turn that took the last input ended on a "
+                    f"provider error ({info})" + (f": {detail}" if detail else "")
+                )
+                raise SystemExit(0)
             message = payload.get("last_agent_message")
             first_token = payload.get("time_to_first_token_ms")
             if message or first_token is not None:

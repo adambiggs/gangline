@@ -1900,6 +1900,21 @@ JSONL
 equal "a codex turn that worked and closed without a message is not blocked" \
   $'1\t' "$(codex_blocked_read "$codex_worked")"
 
+# A PROVIDER REFUSAL IS AN ERROR ON THE COMPLETION. The pane shows a card and
+# the idle prompt; the rollout closes the turn with an error object, no reply,
+# and a first token already streamed, so the no-first-token leg above never
+# fires. Observed on codex-cli 0.146.0 and 0.151.0 (cyber_policy).
+codex_refused="$RUN_ROOT/codex-blocked-refused.jsonl"
+cat > "$codex_refused" <<'JSONL'
+{"type":"event_msg","payload":{"type":"task_started","turn_id":"t1"}}
+{"type":"event_msg","payload":{"type":"user_message","message":"[gang:lead] review this"}}
+{"type":"response_item","payload":{"type":"reasoning"}}
+{"type":"event_msg","payload":{"type":"task_complete","turn_id":"t1","last_agent_message":null,"error":{"message":"This content was flagged for possible cybersecurity risk.","codex_error_info":"cyber_policy"},"time_to_first_token_ms":1203,"duration_ms":4120}}
+JSONL
+equal "codex reports a turn its provider refused as blocked, naming the refusal" \
+  $'0\tthe codex turn that took the last input ended on a provider error (cyber_policy): This content was flagged for possible cybersecurity risk.' \
+  "$(codex_blocked_read "$codex_refused")"
+
 codex_spoke="$RUN_ROOT/codex-blocked-spoke.jsonl"
 cat > "$codex_spoke" <<'JSONL'
 {"type":"event_msg","payload":{"type":"task_started","turn_id":"t1"}}
