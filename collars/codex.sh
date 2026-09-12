@@ -707,8 +707,9 @@ collar_harness_identity() { # $1 = tmux target; PID<TAB>start stamp, 0/1/2
 # and automatic goal continuations in its goal store. None is intent: each is a
 # resource the harness has actually retained after the turn. Observed on Codex
 # 0.149.1. This reader walks only a bounded process set and a bounded number/tail
-# of child records, and it is called only from Gangline's existing native-hook
-# pass — never by a patrol.
+# of child records. Gangline calls it from the Stop hook and, once that reading
+# is a minute old, from the next state reader with an empty payload — never by
+# a patrol.
 collar_waiting() { # $1 target, $2 Stop payload; print witness, 0 held, 1 absent, 2 unknown
   local pane_pid session_id codex_home
   pane_pid="$(tmux display-message -p -t "$1" '#{pane_pid}' 2>/dev/null)" \

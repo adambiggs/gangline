@@ -1287,8 +1287,10 @@ Prints one current state:
 Waiting is event-derived rather than a patrol. At Stop, an optional bounded
 collar probe may name a live child shell, an unfinished native task record, or
 an armed native continuation; Gangline records that held resource. The next
-recognized native event retires the record, while hook silence leaves it
-honestly stale. Mere intent to return later holds nothing and remains idle.
+recognized native event retires the record. Hook silence does not preserve it:
+a record older than a minute is re-probed by the next state reader, which
+serves idle once the held work has ended. Mere intent to return later holds
+nothing and remains idle.
 The waiting and idle window names share the slack `~name~` glyph; the state word
 in `status` and `roster` carries the distinction.
 
@@ -1935,7 +1937,7 @@ there, never in a harness-name branch in the core script.
 | `GANG_OCCUPIED_REGEX` | pane evidence that a native UI owns input |
 | `collar_bricked target` | inspect native fatal-turn evidence; print a cause and return 0 fatal, return 1 with no output when absent, or print a cause and return 2 when unreadable |
 | `collar_blocked target` | inspect native evidence that the turn this window was given ended without producing work; print a reason and return 0 blocked, return 1 with no output when absent, or print a cause and return 2 when unreadable. Declared by the `claude-code` and `codex` collars. Declare it only where the harness exposes such evidence; a collar that declares nothing simply cannot answer, which `gang explain` reports as `not declared`. A turn still in flight is absent, never blocked — a running turn and a harness that died inside one are indistinguishable from a transcript, so that case is left to process liveness rather than claimed here |
-| `collar_waiting target payload` | optional bounded Stop-time probe for native background resources; print the held-resource witness and return 0 waiting, return 1 with no output when none is held, or print a cause and return 2 when the native sources are unreadable. The result is cached only until later recognized hook traffic; intent without a held resource stays idle. The probe repeats its own bounded reads until two agree rather than reporting a race |
+| `collar_waiting target payload` | optional bounded Stop-time probe for native background resources; print the held-resource witness and return 0 waiting, return 1 with no output when none is held, or print a cause and return 2 when the native sources are unreadable. The result is cached until later recognized hook traffic, and a state reader re-probes a result older than a minute with an empty payload; intent without a held resource stays idle. The probe repeats its own bounded reads until two agree rather than reporting a race |
 | `collar_last_action target` | optional; print `at <epoch>` for the newest tool call the harness recorded, or `before <epoch>` when a scan bound was reached first and the newest call is older than that time. Return 0 having printed one of those, 1 with no output when the source holds no tool call at all, or print a reason and return 2 when no reading could be taken. A collar that does not declare it leaves the reading unknown, which is a distinct answer from an agent that has run nothing |
 | `GANG_QUEUED_REGEX` | input-box evidence that the harness parked input in a native queue instead of submitting |
 | `collar_queued target [evidence]` | optional; answers for a harness whose parked queue is not drawn in the input box, and outranks `GANG_QUEUED_REGEX` where both are declared. With no evidence: return 0 when the harness holds parked input, 1 with no output when it does not, or print a cause and return 2 when the screen cannot settle it — an unknown here is carried into the delivery outcome, never flattened to submitted. With evidence: return 0 only when that exact text is in the parked preview, or print a cause and return 2. The evidence form must never return 1; text the collar cannot find is a reading it could not take, not proof the message entered the session. Core normally supplies the whole composed body; when a harness truncates previews, it may supply the body's unique leading attribution prefix through its nonce instead |

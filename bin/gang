@@ -3747,6 +3747,30 @@ waiting_read() { # $1 window -> 0 waiting, 1 absent, 2 unknown; sets WAITING_WHA
 
 waiting_clear() { # $1 window; a new native event retires the old Stop witness
   tmux set-option -uw -t "$1" @gl_waiting 2>/dev/null || true
+  tmux set-option -uw -t "$1" @gl_waiting_at 2>/dev/null || true
+}
+
+# A WAITING RECORD AGES. It is one reading taken at Stop, and an idle window may
+# send no further native event: the held work can finish and the record would
+# name it indefinitely. Each record is stamped so the next state reader can take
+# a fresh bounded reading of one older than this, as ADR 0044 retires refuted
+# state at a reading. The record is written before its stamp, so a lost stamp
+# leaves a record that is re-probed rather than one that is trusted.
+WAITING_REPROBE_AFTER=60
+
+waiting_store() { # $1 window, $2 record
+  tmux set-option -w -t "$1" @gl_waiting "$2" 2>/dev/null || true
+  tmux set-option -w -t "$1" @gl_waiting_at "$(date +%s)" 2>/dev/null || true
+}
+
+waiting_stale() { # $1 window -> 0 when the stored record is due a fresh probe
+  local at now
+  at="$(tmux show-options -wqv -t "$1" @gl_waiting_at 2>/dev/null)" || at=""
+  case "$at" in ''|*[!0-9]*) return 0 ;; esac
+  now="$(date +%s)"
+  # A stamp from the future was not written by this clock; it proves no age.
+  [ "$((10#$at))" -le "$now" ] || return 0
+  [ "$((now - 10#$at))" -ge "$WAITING_REPROBE_AFTER" ]
 }
 
 waiting_refresh() { # $1 window, $2 collar, $3 Stop payload; cache one bounded probe
@@ -3779,26 +3803,23 @@ waiting_refresh() { # $1 window, $2 collar, $3 Stop payload; cache one bounded p
   case "$rc" in
     0)
       if [ -n "$output" ]; then
-        tmux set-option -w -t "$1" @gl_waiting "waiting"$'\t'"$output" 2>/dev/null || true
+        waiting_store "$1" "waiting"$'\t'"$output"
       else
-        tmux set-option -w -t "$1" @gl_waiting \
-          "unknown"$'\t'"collar_waiting in $source reported held background work without naming its witness" \
-          2>/dev/null || true
+        waiting_store "$1" \
+          "unknown"$'\t'"collar_waiting in $source reported held background work without naming its witness"
       fi ;;
     1)
       if [ -n "$output" ]; then
-        tmux set-option -w -t "$1" @gl_waiting \
-          "unknown"$'\t'"collar_waiting in $source printed a witness while reporting no held background work" \
-          2>/dev/null || true
+        waiting_store "$1" \
+          "unknown"$'\t'"collar_waiting in $source printed a witness while reporting no held background work"
       else
         waiting_clear "$1"
       fi ;;
     2)
       [ -n "$output" ] || output="collar_waiting in $source reported unknown without a cause"
-      tmux set-option -w -t "$1" @gl_waiting "unknown"$'\t'"$output" 2>/dev/null || true ;;
-    *) tmux set-option -w -t "$1" @gl_waiting \
-         "unknown"$'\t'"collar_waiting in $source returned unknown verdict $rc" \
-         2>/dev/null || true ;;
+      waiting_store "$1" "unknown"$'\t'"$output" ;;
+    *) waiting_store "$1" \
+         "unknown"$'\t'"collar_waiting in $source returned unknown verdict $rc" ;;
   esac
 }
 
@@ -13730,6 +13751,15 @@ state_now() { # $1 = window id, collar loaded -> the state, in words
     0) state="-busy-" ;;
     1) waiting_rc=0
        waiting_read "$1" || waiting_rc=$?
+       # A stale record is re-probed here, with no Stop payload to pass. A hook
+       # clearing the record while this probe runs can be overwritten by its
+       # result; that residue is itself stamped, so it outlives the event that
+       # refuted it by at most one re-probe age.
+       if [ "$waiting_rc" -ne 1 ] && waiting_stale "$1"; then
+         waiting_refresh "$1" "$(collar_read "$1")" ""
+         waiting_rc=0
+         waiting_read "$1" || waiting_rc=$?
+       fi
        case "$waiting_rc" in
          0) state="~wait~ ($WAITING_WHAT)" ;;
          1) state="~idle~" ;;

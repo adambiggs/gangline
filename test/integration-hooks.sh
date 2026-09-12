@@ -156,6 +156,30 @@ printf '%s' '{"hook_event_name":"Stop"}' |
 contains "a Stop with no held background work remains idle" \
   "$("$GANG" status waitable)" "~idle~"
 
+# A WAITING RECORD AGES. It is one reading taken at Stop, and an idle window
+# may send no further native event: the held work can finish and the record
+# would name it indefinitely. A fresh record is served as recorded; the next
+# state reader re-probes one older than the re-probe age, or one with no stamp.
+# The stamp is set to a past epoch rather than waited out.
+printf '%s' held > "$RUN_ROOT/waiting-evidence"
+printf '%s' '{"hook_event_name":"Stop"}' |
+  TMUX_PANE="$waitable_pane" "$GANG" hook >/dev/null
+contains "a Stop records the held work it witnessed" \
+  "$("$GANG" status waitable)" "~wait~ (fixture background child is live)"
+rm -f -- "$RUN_ROOT/waiting-evidence"
+contains "a fresh waiting record is served without a new probe" \
+  "$("$GANG" status waitable)" "~wait~ (fixture background child is live)"
+tmux set-option -w -t "$waitable_id" @gl_waiting_at 1
+contains "a stale waiting record is re-probed by the next state reader" \
+  "$("$GANG" status waitable)" "~idle~"
+equal "the re-probe retires the stale waiting record" "" \
+  "$(tmux show-options -wqv -t "$waitable_id" @gl_waiting)"
+tmux set-option -w -t "$waitable_id" @gl_waiting \
+  "waiting"$'\t'"a witness recorded before stamps"
+tmux set-option -uw -t "$waitable_id" @gl_waiting_at
+contains "an unstamped waiting record is re-probed" \
+  "$("$GANG" status waitable)" "~idle~"
+
 printf '%s' unknown > "$RUN_ROOT/waiting-evidence"
 printf '%s' '{"hook_event_name":"Stop"}' |
   TMUX_PANE="$waitable_pane" "$GANG" hook >/dev/null
