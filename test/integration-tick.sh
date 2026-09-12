@@ -1049,6 +1049,40 @@ equal "a clean pass over unreadable health appends no history row" \
 equal "a clean pass over unreadable health marks the history incomplete" 1 \
   "$(alert_ui_tmux show-options -qv -t "=$alert_ui_session:" @gl_alert_history_lost)"
 
+# THE LISTING NAMES THE CURRENT GENERATION FIRST. A reader takes no lock, and
+# the first rotation can land between its two existence checks; checked in the
+# other order, neither file is seen and a journal with rows reads as "no alert
+# history". The tmux read between the checks is the seam, so this shim rotates
+# the journal there.
+alert_ui_real_mv="$(command -v mv)"
+alert_ui_rotate_bin="$RUN_ROOT/alert-ui-rotate-bin"
+alert_ui_rotate_ledger="$RUN_ROOT/alert-ui-rotations"
+mkdir -p "$alert_ui_rotate_bin"
+cat > "$alert_ui_rotate_bin/tmux" <<SH
+#!/bin/sh
+. "\$GANG_TEST_PATH_SHIM_GUARD"
+path_shim_guard '$REAL_TMUX' "\$0" tmux || exit \$?
+case "\$*" in
+  *@gl_alert_history_lost*)
+    if [ -f '$alert_ui_alerts' ]; then
+      '$alert_ui_real_mv' -f -- '$alert_ui_alerts' '$alert_ui_alerts.1'
+      printf 'rotated\n' >> '$alert_ui_rotate_ledger'
+    fi ;;
+esac
+exec '$REAL_TMUX' "\$@"
+SH
+chmod +x "$alert_ui_rotate_bin/tmux"
+equal "the rotation fixture starts with one generation" absent \
+  "$(if [ -e "$alert_ui_alerts.1" ]; then printf present; else printf absent; fi)"
+alert_ui_rotated="$(PATH="$alert_ui_rotate_bin:$PATH" alert_ui_gang alerts)"
+equal "the journal rotated between the listing checks" 1 \
+  "$(wc -l < "$alert_ui_rotate_ledger" | tr -d ' ')"
+excludes "a rotation between the listing checks cannot read as no history" \
+  "$alert_ui_rotated" "no alert history"
+contains "a rotation between the listing checks reads as unknown" \
+  "$alert_ui_rotated" "recent alerts: unknown"
+mv -- "$alert_ui_alerts.1" "$alert_ui_alerts"
+
 # A pass owns the tick lock through its health commit. Hold a failing pass at
 # that exact seam, request another pass after repairing the condition, and
 # require the same owner to consume the dirty edge before its result returns.
