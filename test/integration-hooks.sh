@@ -3097,9 +3097,9 @@ git -C "$range_repo" -c user.name=fixture -c user.email=fixture@example.invalid 
   commit -q --allow-empty -m 'fix: on the branch'
 range_head="$(git -C "$range_repo" rev-parse HEAD)"
 range_zero=0000000000000000000000000000000000000000
-range_run() { # $1 base, $2 head, $3 default branch -> rc<TAB>stdout
+range_run() { # base head default-branch [pushed-branch] -> rc<TAB>stdout
   local out rc=0
-  out="$(cd "$range_repo" && "$range_script" "$1" "$2" "$3" 2>/dev/null)" || rc=$?
+  out="$(cd "$range_repo" && "$range_script" "$@" 2>/dev/null)" || rc=$?
   printf '%s\t%s' "$rc" "$out"
 }
 equal "an event with a base checks exactly base..head" \
@@ -3108,6 +3108,13 @@ equal "a new branch's all-zero base checks what it adds to the default branch" \
   "0	$range_fork..$range_head" "$(range_run "$range_zero" "$range_head" main)"
 equal "an all-zero base with no default branch to fork from is refused" \
   "1	" "$(range_run "$range_zero" "$range_head" absent)"
+# The push that creates the default branch leaves checkout's origin/<default>
+# at the pushed head, so a fork point taken from it is the head itself and the
+# range was empty: every commit that push carried went unchecked.
+equal "the push that creates the default branch checks every commit it carries" \
+  "0	$range_fork" "$(range_run "$range_zero" "$range_fork" main main)"
+equal "a new branch that adds nothing to the default branch checks nothing" \
+  "0	$range_fork..$range_fork" "$(range_run "$range_zero" "$range_fork" main other)"
 equal "a base that is not a commit here is refused" \
   "1	" "$(range_run "$(printf 'f%.0s' {1..40})" "$range_head" main)"
 range_err="$(cd "$range_repo" && "$range_script" "$range_zero" "$range_head" absent 2>&1 >/dev/null)" || true

@@ -19,13 +19,15 @@ jobs:
           BASE: ${{ github.event.pull_request.base.sha || github.event.before }}
           HEAD_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
           DEFAULT_BRANCH: ${{ github.event.repository.default_branch }}
+          PUSHED_BRANCH: ${{ github.event_name == 'push' && github.ref_name || '' }}
         run: |
           set -euo pipefail
 
           # Use the same gate as commit-msg over the exact event range. A new
-          # branch covers what it adds to the default branch; a missing base
+          # branch covers what it adds to the default branch, the push that
+          # creates the default branch covers all of it, and a missing base
           # cannot be replaced by a verdict over unrelated history.
-          range="$(.github/workflows/commit-range.sh "$BASE" "$HEAD_SHA" "$DEFAULT_BRANCH")"
+          range="$(.github/workflows/commit-range.sh "$BASE" "$HEAD_SHA" "$DEFAULT_BRANCH" "$PUSHED_BRANCH")"
 
           fail=0 n=0
           for sha in $(git rev-list "$range"); do
