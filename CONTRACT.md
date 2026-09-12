@@ -24,9 +24,11 @@ Messages are pushed to you at a turn boundary, so never poll for them.
 A verified message from a teammate is owed one concise reply or acknowledgement
 through Gangline. No literal wording is required: saying you are waiting on
 background work and will report later is enough, and so is any message you send
-that sender after reading theirs. Session-keyboard input, including operator
-input, neither creates nor clears that debt. Gangline tracks the rest itself;
-`gang send` in `docs/reference.md` holds how.
+that sender after reading theirs. A reply to one of your messages is owed
+nothing, and neither is an acknowledgement you send its sender in the turn that
+read it; a message you send in a later turn is a new request. Session-keyboard
+input, including operator input, neither creates nor clears that debt. Gangline
+tracks the rest itself; `gang send` in `docs/reference.md` holds how.
 
 If a teammate's message crossed one you just sent, say so in your next reply
 and state what is already true before acting on the stale message.

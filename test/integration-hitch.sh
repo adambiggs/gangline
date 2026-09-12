@@ -982,6 +982,9 @@ contains "the contract makes crossed state explicit before stale instructions ac
 contains "the contract states the reply every verified teammate message is owed" \
   "$(contract_prose)" \
   "A verified message from a teammate is owed one concise reply or acknowledgement through Gangline."
+contains "the contract says a reply and its same-turn acknowledgement owe nothing" \
+  "$(contract_prose)" \
+  "A reply to one of your messages is owed nothing, and neither is an acknowledgement you send its sender in the turn that read it; a message you send in a later turn is a new request."
 contains "the contract keeps keyboard input out of that debt" \
   "$(contract_prose)" \
   "Session-keyboard input, including operator input, neither creates nor clears that debt."
