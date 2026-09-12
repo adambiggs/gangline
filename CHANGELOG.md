@@ -1,5 +1,34 @@
 # Changelog
 
+## [2.12.0](https://github.com/adambiggs/gangline/compare/gangline-v2.11.1...gangline-v2.12.0) (2026-09-12)
+
+
+### Features
+
+* **cap:** provider weekly usage windows have a recorded history ([a34f3bf](https://github.com/adambiggs/gangline/commit/a34f3bf29191799209248e82d7cd9d4545e47f11))
+* **explain:** journal every glyph transition and show recent ones ([72ece29](https://github.com/adambiggs/gangline/commit/72ece292fc88f6fc31195d47e38b390f6f46a460))
+* **hitch:** send a stdin message after the startup contract ([7a5663c](https://github.com/adambiggs/gangline/commit/7a5663c01d0a822c9b307595c450d4d3ba599e6c))
+* **lights:** resolve GANG_CONTEXT_LIGHTS per collar and model ([1042d53](https://github.com/adambiggs/gangline/commit/1042d5362ec33ef2be31f64fbd9c90c4b8831566))
+* **send:** defer pure acknowledgements until a waking delivery ([39cb3fe](https://github.com/adambiggs/gangline/commit/39cb3fed84c0744fe5be392bee75f19e1dd88fb7))
+
+
+### Bug Fixes
+
+* **codex:** actionable advisories receive empty-spool ticks ([972ce57](https://github.com/adambiggs/gangline/commit/972ce578b1ea2974091f962dca566fceb163a1a8))
+* **codex:** hold a refused launch's pane on the team's server ([c540d96](https://github.com/adambiggs/gangline/commit/c540d9611842beea3b7f4d09afe83400aba34309))
+* **down:** report tick state that down could not remove ([a6c554d](https://github.com/adambiggs/gangline/commit/a6c554d8a2e3d0f019686b29d0e2acc3d4534bc8))
+* **explain:** read a pinned pane's activity through list-panes ([b81999d](https://github.com/adambiggs/gangline/commit/b81999d64c0291a6f375aae559bbb7d5ff67683e))
+* **send:** coalesce held replies inside waking drains ([4f53852](https://github.com/adambiggs/gangline/commit/4f53852d365476f6fbb516f13378fb28661e9e4d))
+* **send:** keep quiet replies out of empty drains ([ead8030](https://github.com/adambiggs/gangline/commit/ead80300c001436f5d42d2f93d8cd9631fa5d9e2))
+* **send:** refuse a terminal on stdin before reading a body ([376b9d9](https://github.com/adambiggs/gangline/commit/376b9d9db6f9429b7b44ee91ab7c2126c36c2142))
+* **tick:** repaint each visited window's glyph from a fresh state read ([765f2ba](https://github.com/adambiggs/gangline/commit/765f2ba38d774aa667ab7dfbde841968858cb7ef))
+* **tmux:** read window activity through list-windows ([be02d83](https://github.com/adambiggs/gangline/commit/be02d83c80589c1fc4a9aabf9ce1ed23e9a521bc)), closes [#234](https://github.com/adambiggs/gangline/issues/234)
+
+
+### Performance Improvements
+
+* **collar:** defer yielded command continuations ([f4fa4f2](https://github.com/adambiggs/gangline/commit/f4fa4f2a6950c34748abe055896fe026b0ac23b3))
+
 ## [2.11.1](https://github.com/adambiggs/gangline/compare/gangline-v2.11.0...gangline-v2.11.1) (2026-09-07)
 
 
