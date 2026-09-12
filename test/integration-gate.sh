@@ -1532,7 +1532,7 @@ fi
 # A deletion path is only a deletion path if it deletes THIS artifact. The
 # command is taken from the message and run, and the snapshot has to be gone.
 gate_removal="$(printf '%s\n' "$gate_fail_out" |
-  sed -n 's/^gate: nothing removes it but you:  //p')"
+  sed -n 's/^gate: the next passing run of this tree removes it, or:  //p')"
 contains "and says exactly how that snapshot dies" "$gate_removal" "rm -rf "
 if [ -n "$gate_removal" ] && [ -d "$gate_kept" ]; then
   eval "$gate_removal"
@@ -1546,6 +1546,44 @@ else
   fail "and that command is the one that ends it" \
     "no removal command was printed for $gate_kept"
 fi
+
+# A KEPT SNAPSHOT IS RETIRED BY THE NEXT PASS OF THE SAME TREE. Each refused run
+# leaves a full copy of the source, and a later pass of that tree makes the
+# refusal's evidence history. A pinned snapshot is evidence someone is still
+# reading, and a snapshot of another tree is not this run's to judge.
+gate_retain_failing="$RUN_ROOT/gate-retain-failing.sh"
+cp "$gate_run/test/integration.sh" "$gate_retain_failing"
+gate_retain_pinned_out="$("$gate_run/test/gate.sh" 2>&1)" || true
+gate_retain_pinned="$(printf '%s\n' "$gate_retain_pinned_out" | awk '/^  \// { print $1; exit }')"
+gate_retain_pin="$(printf '%s\n' "$gate_retain_pinned_out" |
+  sed -n 's/^gate: to keep it past the next passing run of this tree:  //p')"
+contains "a kept snapshot says how to pin it" "$gate_retain_pin" "touch "
+[ -z "$gate_retain_pin" ] || eval "$gate_retain_pin"
+gate_retain_stale_out="$("$gate_run/test/gate.sh" 2>&1)" || true
+gate_retain_stale="$(printf '%s\n' "$gate_retain_stale_out" | awk '/^  \// { print $1; exit }')"
+gate_retain_foreign="$(mktemp -d "${TMPDIR:-/tmp}/gangline-gate.XXXXXX")"
+mkdir "$gate_retain_foreign/tree"
+printf '%s\n' "$RUN_ROOT/another-tree" > "$gate_retain_foreign/kept"
+cat > "$gate_run/test/integration.sh" <<'SH'
+#!/bin/sh
+# SPDX-License-Identifier: Apache-2.0
+printf 'integration: every declared part ran\n'
+exit 0
+SH
+gate_retain_rc=0
+gate_retain_out="$("$gate_run/test/gate.sh" 2>&1)" || gate_retain_rc=$?
+equal "the passing run of the same tree succeeds" 0 "$gate_retain_rc"
+equal "it retires the unpinned snapshot an earlier refusal kept" "retired" \
+  "$([ -n "$gate_retain_stale" ] && [ ! -e "${gate_retain_stale%/tree}" ] && printf retired || printf 'kept:[%s]' "$gate_retain_stale")"
+contains "and names what it retired" "$gate_retain_out" "${gate_retain_stale%/tree}"
+equal "a pinned snapshot survives the pass" "kept" \
+  "$([ -n "$gate_retain_pinned" ] && [ -d "$gate_retain_pinned" ] && printf kept || printf 'gone:[%s]' "$gate_retain_pinned")"
+equal "a snapshot of another tree survives the pass" "kept" \
+  "$([ -d "$gate_retain_foreign/tree" ] && printf kept || printf gone)"
+[ -z "$gate_retain_pinned" ] || rm -rf -- "${gate_retain_pinned%/tree}"
+[ -z "$gate_retain_stale" ] || rm -rf -- "${gate_retain_stale%/tree}"
+rm -rf -- "$gate_retain_foreign"
+cp "$gate_retain_failing" "$gate_run/test/integration.sh"
 
 # A SIGNALLED GATE STOPS AT THE SIGNAL. One handler for the exit and for the
 # signals does not end a run — a bash signal handler returns to the interrupted

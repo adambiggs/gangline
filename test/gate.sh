@@ -762,10 +762,11 @@ main() {
     echo "gate: setsid is required to isolate each mandatory step" >&2
     exit 1
   }
-  # A FAILED RUN KEEPS ITS EVIDENCE, AND SAYS HOW THAT EVIDENCE DIES. Nothing
-  # collects these later — no gate run touches another run's snapshot — so the
-  # deletion is the reader's, stated as the exact command rather than left to be
-  # discovered as accumulated copies of the source under TMPDIR.
+  # A FAILED RUN KEEPS ITS EVIDENCE, AND SAYS HOW THAT EVIDENCE DIES. The
+  # deletion is the reader's, stated as the exact command, and the next passing
+  # run of the same source tree retires it (gate_retire_kept) unless the reader
+  # pinned it — otherwise every refusal leaves another copy of the source under
+  # TMPDIR and nothing ever collects them.
   lint_monitor_pid=""
   suite_monitor_pid=""
   cleanup() {
@@ -789,11 +790,14 @@ main() {
       fi
     fi
     if [ "$keep" -eq 1 ]; then
+      # The source it was taken from, so only a later run of that tree retires it.
+      printf '%s\n' "$ROOT" > "$WORK/kept" || true
       printf '\ngate: the snapshot that produced this verdict is kept for reading:\n' >&2
       printf '  %s\n' "$SNAP" >&2
       # Quoted, because an unquoted path with a space in it is a command that
       # deletes something else.
-      printf 'gate: nothing removes it but you:  rm -rf %q\n' "$WORK" >&2
+      printf 'gate: the next passing run of this tree removes it, or:  rm -rf %q\n' "$WORK" >&2
+      printf 'gate: to keep it past the next passing run of this tree:  touch %q\n' "$WORK/pin" >&2
     else
       rm -rf -- "$WORK"
     fi
@@ -912,6 +916,28 @@ main() {
   fi
   decided=1
   printf '\ngate: the snapshot passed lint, smoke, and the integration suite.\n'
+  gate_retire_kept
+}
+
+# A PASS RETIRES WHAT EARLIER REFUSALS OF THIS TREE KEPT. Ownership is the
+# marker a refused run wrote naming its source, never the directory name: a
+# snapshot of another tree, one from a gate that wrote no marker, and one its
+# reader pinned are all left alone. A run writes that marker only in its own
+# teardown, after its verdict, so no directory still in use carries one.
+gate_retire_kept() {
+  local dir source
+  for dir in "${TMPDIR:-/tmp}"/gangline-gate.*; do
+    [ "$dir" != "$WORK" ] && [ -d "$dir" ] && [ ! -L "$dir" ] && [ -O "$dir" ] \
+      || continue
+    [ -f "$dir/kept" ] && [ ! -e "$dir/pin" ] || continue
+    IFS= read -r source < "$dir/kept" || continue
+    [ "$source" = "$ROOT" ] || continue
+    if rm -rf -- "$dir"; then
+      printf 'gate: retired a snapshot an earlier refusal of this tree kept: %s\n' "$dir"
+    else
+      printf 'gate: could not retire the kept snapshot %s\n' "$dir" >&2
+    fi
+  done
 }
 
 # The exit shares this line, so it is read with the call rather than after it:
