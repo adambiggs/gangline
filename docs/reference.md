@@ -580,7 +580,10 @@ alert lifecycle state.
 Prints the window's stamped native session id, then kills the exact agent
 window. Whether that id comes with a relaunch command depends on the collar: one
 that declares a resume launch gets the exact
-`gang hitch <name> --resume <session-id>` line, and one that witnesses its
+`gang hitch <name> --resume <session-id> -c <collar>` line, followed by the
+`-m`, `-e` and `-d` the window was launched with, because hitch otherwise
+fills the collar from the caller's own and a harness resumes a session only
+under the collar that recorded it; one that witnesses its
 harness's id without declaring such a launch gets the id alone, said to be a
 record of the session rather than a way back into it — `hitch` takes no
 `--resume` for that collar, so quoting the command would print a line it

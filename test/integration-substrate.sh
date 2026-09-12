@@ -749,6 +749,14 @@ contains "drop prints the parting native session id before destroying its window
   "$drop_identity_out" "session id: native-identity-123"
 contains "drop prints the exact explicit-id relaunch line" "$drop_identity_out" \
   "gang hitch identity --resume native-identity-123"
+# The id belongs to the harness this window ran, and hitch resolves a missing
+# -c from the caller's ambient collar, so a relaunch line without the collar
+# hands the id to whichever harness the operator happens to type from. Claude
+# also keys its resume on the working directory.
+contains "the relaunch line names the collar the id was recorded under" \
+  "$drop_identity_out" "gang hitch identity --resume native-identity-123 -c identity"
+contains "and the directory the harness resumes from" \
+  "$drop_identity_out" " -d /tmp"
 "$GANG" hitch identity -c identity -d "$RUN_ROOT" \
   --resume native-identity-123 >/dev/null
 contains "explicit resume substitutes the quoted identity from any cwd" \

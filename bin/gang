@@ -15287,8 +15287,19 @@ parting_lines() { # $1 = window id, $2 = the name a relaunch would take
   fi
   case "$(collar_resume_word "$prof")" in
     resume|resume-id-only)
-      printf 'session id: %s\nrelaunch: gang hitch %s --resume %s\n' \
-        "$stamped" "$2" "$stamped" ;;
+      # THE ID BELONGS TO THIS COLLAR'S HARNESS. Hitch fills a missing -c from
+      # the caller's ambient collar, so a line without it hands the id to
+      # whichever harness the operator types from, and that launch dies. The
+      # model, effort and directory are this launch's too; a harness that keys
+      # its resume on the working directory finds nothing from another one.
+      local flags opt val
+      printf -v flags ' -c %q' "$prof"
+      for opt in m:@gl_model e:@gl_effort d:@gl_dir; do
+        val="$(tmux show-options -wqv -t "$1" "${opt#*:}" 2>/dev/null)" || val=""
+        [ -z "$val" ] || printf -v flags '%s -%s %q' "$flags" "${opt%%:*}" "$val"
+      done
+      printf 'session id: %s\nrelaunch: gang hitch %s --resume %s%s\n' \
+        "$stamped" "$2" "$stamped" "$flags" ;;
     no-resume)
       printf 'session id: %s\nrelaunch: none — collar %s declares no resume launch, so hitch takes no --resume for it. The id above is a record of the harness session, not a way back into it\n' \
         "$stamped" "$prof" ;;
