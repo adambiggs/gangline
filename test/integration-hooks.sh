@@ -75,6 +75,15 @@ collar_waiting() {
     held-empty) return 0 ;;
     absent-witness) printf 'impossible absent witness'; return 1 ;;
     invalid-verdict) return 7 ;;
+    probe-crossed|probe-outlived)
+      if [ -n "\$2" ]; then printf 'fixture Stop crossed the probe'; return 0; fi
+      if [ -e "$RUN_ROOT/waiting-probe-hold" ]; then
+        rm -f -- "$RUN_ROOT/waiting-probe-hold"
+        tmux wait-for -S waiting-probe-held
+        tmux wait-for waiting-probe-release
+      fi
+      [ "\$evidence" = probe-outlived ] || return 1
+      printf 'fixture probe outlived its refutation'; return 0 ;;
     *) return 1 ;;
   esac
 }
@@ -179,6 +188,48 @@ tmux set-option -w -t "$waitable_id" @gl_waiting \
 tmux set-option -uw -t "$waitable_id" @gl_waiting_at
 contains "an unstamped waiting record is re-probed" \
   "$("$GANG" status waitable)" "~idle~"
+
+# A RE-PROBE NEVER OVERWRITES A NEWER EVENT. A state reader re-probes outside
+# any lock, so a native hook can land while its probe is held. The reader keeps
+# the stamp it judged stale and writes only while that stamp still stands. The
+# one-shot hold below parks the reader's probe; a Stop and then a prompt cross
+# it, and each hook's write must survive the reader's.
+tmux set-option -w -t "$waitable_id" @gl_waiting \
+  "waiting"$'\t'"a witness older than the re-probe age"
+tmux set-option -w -t "$waitable_id" @gl_waiting_at 1
+printf '%s' probe-crossed > "$RUN_ROOT/waiting-evidence"
+: > "$RUN_ROOT/waiting-probe-hold"
+"$GANG" status waitable > "$RUN_ROOT/probe-crossed.out" 2>&1 &
+probe_reader_pid=$!
+tmux wait-for waiting-probe-held
+printf '%s' '{"hook_event_name":"Stop"}' |
+  TMUX_PANE="$waitable_pane" "$GANG" hook >/dev/null
+tmux wait-for -S waiting-probe-release
+probe_reader_rc=0
+wait "$probe_reader_pid" || probe_reader_rc=$?
+equal "a reader whose held probe a Stop crossed exits cleanly" 0 "$probe_reader_rc"
+equal "a Stop that crosses a held re-probe keeps its own record" \
+  "waiting"$'\t'"fixture Stop crossed the probe" \
+  "$(tmux show-options -wqv -t "$waitable_id" @gl_waiting)"
+contains "the crossed reader reports the Stop's record" \
+  "$(<"$RUN_ROOT/probe-crossed.out")" "~wait~ (fixture Stop crossed the probe)"
+
+tmux set-option -w -t "$waitable_id" @gl_waiting \
+  "waiting"$'\t'"a witness older than the re-probe age"
+tmux set-option -w -t "$waitable_id" @gl_waiting_at 1
+printf '%s' probe-outlived > "$RUN_ROOT/waiting-evidence"
+: > "$RUN_ROOT/waiting-probe-hold"
+"$GANG" status waitable > "$RUN_ROOT/probe-outlived.out" 2>&1 &
+probe_reader_pid=$!
+tmux wait-for waiting-probe-held
+printf '%s' '{"hook_event_name":"UserPromptSubmit"}' |
+  TMUX_PANE="$waitable_pane" "$GANG" hook >/dev/null
+tmux wait-for -S waiting-probe-release
+probe_reader_rc=0
+wait "$probe_reader_pid" || probe_reader_rc=$?
+equal "a reader whose held probe a prompt crossed exits cleanly" 0 "$probe_reader_rc"
+equal "a prompt that crosses a held re-probe keeps the record retired" "" \
+  "$(tmux show-options -wqv -t "$waitable_id" @gl_waiting)"
 
 printf '%s' unknown > "$RUN_ROOT/waiting-evidence"
 printf '%s' '{"hook_event_name":"Stop"}' |

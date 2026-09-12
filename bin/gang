@@ -3763,18 +3763,22 @@ waiting_store() { # $1 window, $2 record
   tmux set-option -w -t "$1" @gl_waiting_at "$(date +%s)" 2>/dev/null || true
 }
 
-waiting_stale() { # $1 window -> 0 when the stored record is due a fresh probe
-  local at now
-  at="$(tmux show-options -wqv -t "$1" @gl_waiting_at 2>/dev/null)" || at=""
-  case "$at" in ''|*[!0-9]*) return 0 ;; esac
+WAITING_AT=""
+
+waiting_stale() { # $1 window -> 0 when the stored record is due a fresh probe; sets WAITING_AT
+  local now
+  WAITING_AT="$(tmux show-options -wqv -t "$1" @gl_waiting_at 2>/dev/null)" || WAITING_AT=""
+  case "$WAITING_AT" in ''|*[!0-9]*) return 0 ;; esac
   now="$(date +%s)"
   # A stamp from the future was not written by this clock; it proves no age.
-  [ "$((10#$at))" -le "$now" ] || return 0
-  [ "$((now - 10#$at))" -ge "$WAITING_REPROBE_AFTER" ]
+  [ "$((10#$WAITING_AT))" -le "$now" ] || return 0
+  [ "$((now - 10#$WAITING_AT))" -ge "$WAITING_REPROBE_AFTER" ]
 }
 
-waiting_refresh() { # $1 window, $2 collar, $3 Stop payload; cache one bounded probe
-  local raw="" header="" output="" rc=0 source="collar '$2'"
+# $1 window, $2 collar, $3 Stop payload, optional $4 the stamp a reader judged
+# stale; cache one bounded probe
+waiting_refresh() {
+  local raw="" header="" output="" rc=0 source="collar '$2'" record="" at=""
   # CONTAIN THE OPTIONAL RELOAD. Stop's universal turn boundary has always
   # survived a collar removed after hitch; a derived-state reader cannot make
   # that boundary depend on the file still existing. Capturing stderr also
@@ -3789,38 +3793,43 @@ waiting_refresh() { # $1 window, $2 collar, $3 Stop payload; cache one bounded p
     fi
   } 2>&1)" || rc=$?
   header="${raw%%:*}"
-  if [ "$header" = absent ] && [ "$rc" -eq 0 ]; then
-    waiting_clear "$1"
-    return 0
+  if [ "$header" != absent ] || [ "$rc" -ne 0 ]; then
+    if [ "$header" = declared ]; then
+      output="${raw#*:}"
+    else
+      output="$raw"
+      rc=2
+    fi
+    output="$(printf '%s' "$output" | config_sanitize)"
+    case "$rc" in
+      0)
+        if [ -n "$output" ]; then
+          record="waiting"$'\t'"$output"
+        else
+          record="unknown"$'\t'"collar_waiting in $source reported held background work without naming its witness"
+        fi ;;
+      1)
+        [ -z "$output" ] \
+          || record="unknown"$'\t'"collar_waiting in $source printed a witness while reporting no held background work" ;;
+      2)
+        [ -n "$output" ] || output="collar_waiting in $source reported unknown without a cause"
+        record="unknown"$'\t'"$output" ;;
+      *) record="unknown"$'\t'"collar_waiting in $source returned unknown verdict $rc" ;;
+    esac
   fi
-  if [ "$header" = declared ]; then
-    output="${raw#*:}"
+  # A READER WRITES ONLY OVER THE RECORD IT JUDGED. Its probe runs outside any
+  # lock, so a hook can store a newer record or retire this one while the probe
+  # is held; either changes the stamp. A hook passes no stamp: it is the newer
+  # event, and its reading always stands.
+  if [ "$#" -ge 4 ]; then
+    at="$(tmux show-options -wqv -t "$1" @gl_waiting_at 2>/dev/null)" || at=""
+    [ "$at" = "$4" ] || return 0
+  fi
+  if [ -n "$record" ]; then
+    waiting_store "$1" "$record"
   else
-    output="$raw"
-    rc=2
+    waiting_clear "$1"
   fi
-  output="$(printf '%s' "$output" | config_sanitize)"
-  case "$rc" in
-    0)
-      if [ -n "$output" ]; then
-        waiting_store "$1" "waiting"$'\t'"$output"
-      else
-        waiting_store "$1" \
-          "unknown"$'\t'"collar_waiting in $source reported held background work without naming its witness"
-      fi ;;
-    1)
-      if [ -n "$output" ]; then
-        waiting_store "$1" \
-          "unknown"$'\t'"collar_waiting in $source printed a witness while reporting no held background work"
-      else
-        waiting_clear "$1"
-      fi ;;
-    2)
-      [ -n "$output" ] || output="collar_waiting in $source reported unknown without a cause"
-      waiting_store "$1" "unknown"$'\t'"$output" ;;
-    *) waiting_store "$1" \
-         "unknown"$'\t'"collar_waiting in $source returned unknown verdict $rc" ;;
-  esac
 }
 
 # WHAT AN AGENT HAS ACTUALLY DONE, AS TWO AGES AND NO VERDICT. A delivery can be
@@ -13822,12 +13831,14 @@ state_now() { # $1 = window id, collar loaded -> the state, in words
     0) state="-busy-" ;;
     1) waiting_rc=0
        waiting_read "$1" || waiting_rc=$?
-       # A stale record is re-probed here, with no Stop payload to pass. A hook
-       # clearing the record while this probe runs can be overwritten by its
-       # result; that residue is itself stamped, so it outlives the event that
-       # refuted it by at most one re-probe age.
+       # A stale record is re-probed here, with no Stop payload to pass, and the
+       # reading is discarded if a hook changed the stamp meanwhile. Two windows
+       # remain: the few steps between that re-read and the write, and an
+       # unstamped record that a hook clears, where the stamp reads empty before
+       # and after. The residue of either is itself stamped, so it outlives the
+       # event that refuted it by at most one re-probe age.
        if [ "$waiting_rc" -ne 1 ] && waiting_stale "$1"; then
-         waiting_refresh "$1" "$(collar_read "$1")" ""
+         waiting_refresh "$1" "$(collar_read "$1")" "" "$WAITING_AT"
          waiting_rc=0
          waiting_read "$1" || waiting_rc=$?
        fi
