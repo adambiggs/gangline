@@ -1,5 +1,7 @@
 #!/usr/bin/env bash
 # SPDX-License-Identifier: Apache-2.0
+# shellcheck shell=bash
+# shellcheck disable=SC2154  # alpha fixture identifiers are set in test/integration-substrate.sh
 # Host-service run requests: durable result, bounded delivery, cancellation, and a gone requester.
 #
 # A PART IS A FRAGMENT, NOT A SCRIPT. test/integration.sh sources this file in
