@@ -3080,6 +3080,39 @@ contains "the local hook names the CI boundary without claiming this push reache
 excludes "a deletion-only push does not claim it ran lint or smoke" \
   "$no_outer_output" "running pushed-tree fast lint and smoke"
 
+# THE COMMITS WORKFLOW CHECKS A PUSH'S NEW COMMITS, AND A NEW BRANCH HAS SOME.
+# GitHub reports a branch's first push with an all-zero before, and refusing
+# that event failed every new branch. The commits already on the default branch
+# were checked when they landed there, so a new branch is checked from where it
+# left it; a base that is missing or unrelated is still refused.
+range_script="$ROOT/.github/workflows/commit-range.sh"
+range_repo="$RUN_ROOT/commit-range"
+git init -q -b main "$range_repo"
+git -C "$range_repo" -c user.name=fixture -c user.email=fixture@example.invalid \
+  commit -q --allow-empty -m 'chore: root'
+range_fork="$(git -C "$range_repo" rev-parse HEAD)"
+git -C "$range_repo" update-ref refs/remotes/origin/main "$range_fork"
+git -C "$range_repo" checkout -q -b topic
+git -C "$range_repo" -c user.name=fixture -c user.email=fixture@example.invalid \
+  commit -q --allow-empty -m 'fix: on the branch'
+range_head="$(git -C "$range_repo" rev-parse HEAD)"
+range_zero=0000000000000000000000000000000000000000
+range_run() { # $1 base, $2 head, $3 default branch -> rc<TAB>stdout
+  local out rc=0
+  out="$(cd "$range_repo" && "$range_script" "$1" "$2" "$3" 2>/dev/null)" || rc=$?
+  printf '%s\t%s' "$rc" "$out"
+}
+equal "an event with a base checks exactly base..head" \
+  "0	$range_fork..$range_head" "$(range_run "$range_fork" "$range_head" main)"
+equal "a new branch's all-zero base checks what it adds to the default branch" \
+  "0	$range_fork..$range_head" "$(range_run "$range_zero" "$range_head" main)"
+equal "an all-zero base with no default branch to fork from is refused" \
+  "1	" "$(range_run "$range_zero" "$range_head" absent)"
+equal "a base that is not a commit here is refused" \
+  "1	" "$(range_run "$(printf 'f%.0s' {1..40})" "$range_head" main)"
+range_err="$(cd "$range_repo" && "$range_script" "$range_zero" "$range_head" absent 2>&1 >/dev/null)" || true
+contains "and the refusal says why" "$range_err" "no usable base"
+
 # `ln -sf` DEREFERENCES a symlink-to-directory: with the destination already a
 # link to a directory it writes <that directory>/gang and leaves the link
 # standing, so the installer mutates a directory nobody named and only fails
