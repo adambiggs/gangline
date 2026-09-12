@@ -3089,6 +3089,7 @@ installer_src="$installer_root/src"
 mkdir -p "$installer_src/bin"
 cp "$ROOT/bin/gang" "$installer_src/bin/gang"
 cp "$ROOT/install.sh" "$installer_src/install.sh"
+cp "$ROOT/.gitignore" "$installer_src/.gitignore"
 cp -R "$ROOT/collars" "$installer_src/collars"
 printf '%s\n' 1.0.0 > "$installer_src/version.txt"
 git init -q "$installer_src"
@@ -3338,6 +3339,23 @@ dirty_out="$(GANGLINE_REPO="$installer_src" GANGLINE_HOME="$dirty_home" \
 equal "the installer refuses local changes instead of replacing them" \
   "refused named dirty" \
   "$([ "$dirty_rc" -ne 0 ] && printf refused || printf replaced) $([[ "$dirty_out" = *'has local changes'* ]] && printf named || printf unnamed) $(tail -n 1 "$dirty_home/version.txt")"
+
+# The default install directory is also Gangline's data directory: the usage
+# ledger lives under it. Gang's own writes there are not local changes, so an
+# install over a tree that has recorded usage proceeds and keeps the ledger.
+ledger_home="$installer_root/ledger-home"
+ledger_bin="$installer_root/ledger-bin"
+GANGLINE_REPO="$installer_src" GANGLINE_HOME="$ledger_home" \
+  GANGLINE_BIN="$ledger_bin" sh "$ROOT/install.sh" >/dev/null 2>&1
+mkdir -p "$ledger_home/usage"
+printf '%s\n' '{"fixture":"ledger"}' > "$ledger_home/usage/events.jsonl"
+ledger_rc=0
+ledger_out="$(GANGLINE_REPO="$installer_src" GANGLINE_HOME="$ledger_home" \
+  GANGLINE_BIN="$ledger_bin" sh "$ROOT/install.sh" 2>&1)" || ledger_rc=$?
+equal "the installer does not read the usage ledger as local changes" 0 "$ledger_rc"
+excludes "and does not refuse over it" "$ledger_out" "has local changes"
+equal "the usage ledger survives the install" '{"fixture":"ledger"}' \
+  "$(<"$ledger_home/usage/events.jsonl")"
 
 installer_dir_bin="$installer_root/bin-dir"
 mkdir -p "$installer_dir_bin/gang"

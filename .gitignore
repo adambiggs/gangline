@@ -5,3 +5,6 @@ packaging/pypi/*.egg-info/
 .gang-briefs/
 .claude/settings.local.json
 .pii-scan-denylist
+# The default install directory is also the data directory; the usage ledger
+# gang writes there is not a local change to the installed tree.
+/usage/
