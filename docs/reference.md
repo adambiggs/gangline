@@ -25,7 +25,7 @@ Self is resolved from the calling tmux pane in the same way as a message sender.
 |---|---|
 | `status`, `capture`, `composer`, `compact`, `context`, `mail`, `limits`, `wait-limit`, `interrupt`, `flush` | Target the calling agent. |
 | `drop` | Print help; destructive commands never target by omission. |
-| `hitch`, `adopt`, `rename`, `send`, `wait`, `explain`, `down` | Print help; the missing name is not a self target. |
+| `hitch`, `adopt`, `rename`, `send`, `run`, `wait`, `explain`, `down` | Print help; the missing name is not a self target. |
 | `up`, `roster`, `attach`, `teams`, `alerts`, `tick`, `collars`, `models`, `roles`, `config`, `curfew`, `notify`, `upgrade` | Keep their ordinary bare meaning. |
 
 `gang --version` prints the release version from the adjacent `version.txt`
@@ -1025,6 +1025,46 @@ If the timer cannot be created, nothing is parked. If the agent is dropped first
 the entry is archived with the rest of its mail and arrives under a visible name,
 because a spool archives every child. `--clear` cancels every timed send parked
 for a target, stopping each timer before removing the message it would deliver.
+
+### `gang run -- <command> [argument ...]` / `gang run --cancel <run-id>`
+
+Starts one command on behalf of the calling registered agent, then returns as
+soon as the host accepted the transient service. The command runs through the
+current user's local-host systemd manager, not in the caller's sandbox; it uses
+the calling agent's working directory, `PATH`, and `TMPDIR` (or creates a
+durable state-tree `TMPDIR` when that variable was absent). This is a convenience
+over host execution already available to the team, not a sandbox security
+boundary. The requesting agent passes the command as argv after `--`; Gangline
+never evaluates a shell string.
+
+The service writes combined stdout and stderr to a private durable record under
+`${XDG_STATE_HOME:-$HOME/.local/state}/gangline/runs/`, keyed to the live team.
+On every service stop—including cancellation, timeout, and a killed
+runner—an `ExecStopPost` finalizer records an exit result if the runner could
+not. It then sends one ordinary enveloped completion from
+`self-declared:gang-run` to the requesting agent. The completion carries the
+result-file path and a terminal-safe tail of the final 2,048 output bytes; the
+full output is only in the named file. It therefore reaches a Codex requester
+through the existing push delivery path, without a tool continuation. A
+completion accepted while the agent is busy is spooled by the ordinary delivery
+rules and drains at its next safe boundary.
+
+At most four records may be active for one team. The limit is checked while
+creating the durable declaration, before systemd is asked to launch anything.
+There is no resident runner: each transient service owns only its command and
+completion. `--cancel` addresses the exact recorded service and makes a
+courtesy check that the calling live pane carries the requester's stable spool
+identity. Cancellation asks the service to stop and the finalizer reports the
+resulting exit status.
+
+If the requesting window has been dropped or replaced before exit, Gangline
+does not send the result to a same-named replacement and does not recreate a
+spool. A rename retains the stable identity and receives the completion under
+its new name. Gangline records a discarded or unconfirmed delivery beside the
+retained result file. The per-team `audit.tsv` appends one tab-separated entry
+per completed run: timestamp, run id, requester, NUL-argv encoded as base64,
+exit, duration, and output path. The state directory is the recovery path;
+remove its record after the output is no longer needed.
 
 ### `gang flush [name]`
 

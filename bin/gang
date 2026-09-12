@@ -481,6 +481,7 @@ talk to agents
   talk      compose a message in your editor
   send      deliver a message to an agent
   at        deliver a message at a time
+  run       run a host command; send its result
   mail      read an agent's waiting queue
   flush     recover a harness-queued message
   interrupt stop an agent's current turn
@@ -790,6 +791,29 @@ gang talk
   its stdin body and exit meanings are
   unchanged. An editor failure sends nothing
   and returns its status.
+EOF
+      ;;
+    run) cat <<'EOF'
+gang run
+  Run one command in a transient host service
+  and send its result back to this agent.
+
+  gang run -- <command> [argument ...]
+  gang run --cancel <run-id>
+
+  The command inherits this agent's working
+  directory and command environment, but not
+  its sandbox. Gangline stores combined output
+  under its durable state directory. When the
+  command exits it
+  sends one enveloped result with exit code,
+  duration, that file's path, and a short tail.
+
+  Only the requesting agent's stable
+  identity may cancel its run. If the requester
+  is gone on exit,
+  Gangline keeps the result file and does not
+  deliver it to a replacement window.
 EOF
       ;;
     at) cat <<'EOF'
@@ -7479,6 +7503,361 @@ timed_unit() { # $1 = window id, $2 = entry basename -> a safe transient unit ba
   sum="$(printf '%s:%s:%s\n' "$SESSION" "$1" "$2" | cksum)" \
     || die "at: cannot derive a transient unit name"
   printf 'gangline-at-%s-%s' "$GANGLINE_PROCESS_UID" "${sum%% *}"
+}
+
+# A RUN IS A HOST-SERVICE REQUEST, NOT ANOTHER DELIVERY LOOP. The request
+# declaration lives in the state tree because the service and the requesting
+# agent cross an execution sandbox. The ordinary spool remains only the
+# completion transport.
+RUN_TAIL_BYTES=2048
+RUN_MAX_ACTIVE=4
+RUN_STATE_BASE=""
+RUN_TEAM_ROOT=""
+RUN_MANAGER_MACHINE=""
+RUN_SYSTEMCTL=()
+
+run_id_valid() { # $1 = Gangline-minted 16-hex run id
+  [ "${#1}" -eq 16 ] || return 1
+  case "$1" in *[!a-f0-9]*) return 1 ;; esac
+}
+
+run_requester_token_valid() { # $1 = the existing eight-hex stable spool identity
+  [ "${#1}" -eq 8 ] || return 1
+  case "$1" in *[!a-f0-9]*) return 1 ;; esac
+}
+
+run_state_prepare() { # requires one live team; sets RUN_STATE_BASE/RUN_TEAM_ROOT
+  local base="${XDG_STATE_HOME:-${HOME:-}/.local/state}"
+  case "$base" in
+    /*) ;;
+    *) die "run: XDG_STATE_HOME must be an absolute path, got '$base'" ;;
+  esac
+  tick_team_digest_set || die "run: could not derive this team's durable identity"
+  umask 077
+  RUN_STATE_BASE="$base/gangline/runs"
+  RUN_TEAM_ROOT="$RUN_STATE_BASE/$TICK_TEAM_DIGEST"
+  mkdir -p -m 700 "$RUN_TEAM_ROOT" \
+    || die "run: cannot create the durable result directory $RUN_TEAM_ROOT"
+}
+
+run_environment_prepare() { # $1 = XDG state root; copies the requester's executable environment
+  RUN_PATH="${PATH:-}"
+  [ -n "$RUN_PATH" ] \
+    || die "run: PATH is empty; no host command was started"
+  RUN_TMPDIR="${TMPDIR:-$1/gangline/tmp}"
+  case "$RUN_TMPDIR" in
+    /*) ;;
+    *) die "run: TMPDIR must be an absolute path, got '$RUN_TMPDIR'; no host command was started" ;;
+  esac
+  mkdir -p -m 700 "$RUN_TMPDIR" \
+    || die "run: cannot prepare durable TMPDIR at $RUN_TMPDIR; no host command was started"
+}
+
+run_systemd_exec_quote() { # $1 = one ExecStopPost word, quoted for systemd's unit parser
+  local value="$1" escaped="" char i
+  case "$value" in *$'\n'*|*$'\r'*) return 1 ;; esac
+  for ((i = 0; i < ${#value}; i++)); do
+    char="${value:i:1}"
+    case "$char" in
+      '\\') escaped+='\\\\' ;;
+      "'") escaped+="\\'" ;;
+      '$') escaped+='$$' ;;
+      *) escaped+="$char" ;;
+    esac
+  done
+  printf "'%s'" "$escaped"
+}
+
+run_unit_for() { # $1 = run id -> the exact transient service unit name
+  local sum
+  sum="$(printf '%s:%s:%s\n' "$SESSION" "$TICK_TEAM_DIGEST" "$1" | cksum)" \
+    || die "run: cannot derive a transient service name"
+  printf 'gangline-run-%s-%s' "$GANGLINE_PROCESS_UID" "${sum%% *}"
+}
+
+run_manager_prepare() { # host manager is the boundary that lets a service outlive a sandbox
+  local manager_user
+  command -v systemd-run >/dev/null 2>&1 \
+    || die "run: systemd-run is required to start a host service"
+  command -v systemctl >/dev/null 2>&1 \
+    || die "run: systemctl is required to account for a host service"
+  manager_user="$(id -un)" || die "run: could not determine the host user manager"
+  [ -n "$manager_user" ] || die "run: could not determine the host user manager"
+  RUN_MANAGER_MACHINE="$manager_user@.host"
+  RUN_SYSTEMCTL=(systemctl --user --machine="$RUN_MANAGER_MACHINE")
+  "${RUN_SYSTEMCTL[@]}" show --property=Version --value >/dev/null 2>&1 \
+    || die "run: the local host user manager is unreachable through $RUN_MANAGER_MACHINE; no command was started"
+}
+
+run_file_read() { # $1 run directory, $2 fixed one-line field -> its byte-exact value
+  local file="$1/$2" value marked sentinel=$'\034'
+  [ -f "$file" ] && [ ! -L "$file" ] \
+    || die "run: result record $1 has no readable $2 field"
+  marked="$(cat "$file"; printf '\034')" \
+    || die "run: cannot read result record $1/$2"
+  case "$marked" in
+    *"$sentinel") value="${marked%"$sentinel"}" ;;
+    *) die "run: result record $1/$2 lost its read sentinel" ;;
+  esac
+  # Record writers terminate their fixed fields for ordinary inspection. The
+  # sentinel follows that newline, so command substitution retains it rather
+  # than doing its usual trailing-newline trim; remove exactly that terminator
+  # before rejecting an embedded second line.
+  case "$value" in *$'\n') value="${value%$'\n'}" ;; esac
+  case "$value" in *$'\n'*) die "run: result record $1/$2 is not one line" ;; esac
+  printf '%s' "$value"
+}
+
+run_record_remove() { # $1 exact new record directory after an unarmed launch
+  rm -f -- "$1/requester" "$1/requester-token" "$1/unit" "$1/argv" \
+    "$1/output" "$1/active" "$1/created" "$1/audited" || {
+      printf 'run: could not remove the unarmed result record at %s\n' "$1" >&2
+      return 1
+    }
+  rmdir -- "$1" || {
+    printf 'run: could not remove the unarmed result record directory %s\n' "$1" >&2
+    return 1
+  }
+}
+
+run_requester_read() { # requester name/window/spool token for a new run
+  local id token name
+  id="$(self_window)" \
+    || refuse "run: must be requested from a live Gangline agent pane"
+  name="$(self_name)" \
+    || refuse "run: this pane has no registered Gangline agent identity"
+  token="$(tmux show-options -wqv -t "$id" @gl_spool)" \
+    || refuse "run: cannot read '$name' stable spool identity; no host command was started"
+  run_requester_token_valid "$token" \
+    || refuse "run: '$name' has no readable stable spool identity; no host command was started"
+  RUN_REQUESTER="$name"
+  RUN_REQUESTER_TOKEN="$token"
+}
+
+run_active_count() { # $1 team root -> current durable active declarations
+  local dir n=0
+  for dir in "$1"/*; do
+    [ -d "$dir" ] && [ ! -L "$dir" ] && [ -f "$dir/active" ] || continue
+    n=$((n + 1))
+  done
+  printf '%s' "$n"
+}
+
+run_record_create() { # caller holds RUN_TEAM_ROOT/.lock; argv follows --
+  local id="" dir="" tries=0 unit now
+  while [ "$tries" -lt 8 ]; do
+    id="$(mint_message_nonce)"
+    dir="$RUN_TEAM_ROOT/$id"
+    if mkdir -m 700 "$dir" 2>/dev/null; then break; fi
+    tries=$((tries + 1))
+    id=""; dir=""
+  done
+  [ -n "$id" ] \
+    || die "run: could not allocate a unique durable result record"
+  unit="$(run_unit_for "$id")"
+  now="$(date +%s)" || { run_record_remove "$dir"; die "run: could not timestamp result record"; }
+  printf '%s\n' "$RUN_REQUESTER" > "$dir/requester" \
+    && printf '%s\n' "$RUN_REQUESTER_TOKEN" > "$dir/requester-token" \
+    && printf '%s\n' "$unit" > "$dir/unit" \
+    && printf '%s\n' "$now" > "$dir/created" \
+    && printf '%s\0' "$@" > "$dir/argv" \
+    && : > "$dir/output" \
+    && : > "$dir/active" \
+    || { run_record_remove "$dir"; die "run: could not write durable result record under $dir"; }
+  RUN_ID="$id"
+  RUN_DIR="$dir"
+  RUN_UNIT="$unit"
+}
+
+run_start() { # argv follows --
+  local active out="" rc=0 state_home post post_runner post_finalize post_dir
+  [ "$#" -gt 0 ] || die "run: command required after --"
+  session_live || refuse "run: no Gangline team is running, so no completion can be delivered"
+  run_requester_read
+  run_state_prepare
+  run_manager_prepare
+  state_home="${XDG_STATE_HOME:-${HOME:-}/.local/state}"
+  run_environment_prepare "$state_home"
+  exec {RUN_LOCK_FD}>"$RUN_TEAM_ROOT/.lock" \
+    || die "run: cannot open the durable result lock at $RUN_TEAM_ROOT/.lock"
+  flock -x "$RUN_LOCK_FD" \
+    || die "run: cannot lock the durable result directory"
+  active="$(run_active_count "$RUN_TEAM_ROOT")"
+  if [ "$active" -ge "$RUN_MAX_ACTIVE" ]; then
+    flock -u "$RUN_LOCK_FD"
+    die "run: this team already has $active active commands; wait for a completion or cancel one"
+  fi
+  run_record_create "$@"
+  post_runner="$(run_systemd_exec_quote "$ROOT/libexec/gang-runner")" \
+    && post_finalize="$(run_systemd_exec_quote --finalize)" \
+    && post_dir="$(run_systemd_exec_quote "$RUN_DIR")" \
+    || { run_record_remove "$RUN_DIR"; flock -u "$RUN_LOCK_FD"; die "run: cannot quote the post-stop finalizer"; }
+  post="$post_runner $post_finalize $post_dir"
+  local -a launch=(systemd-run --user --machine="$RUN_MANAGER_MACHINE" --quiet --collect
+    --service-type=exec --unit="$RUN_UNIT" --property=KillMode=mixed
+    --property=TimeoutStopSec=20s --property=UMask=0077 --working-directory="$PWD"
+    --property="ExecStopPost=$post"
+    --setenv="GANG_SESSION=$SESSION" --setenv="GANG_CONFIG_DIR=$CONFIG_DIR"
+    --setenv="GANG_LOCK_DIR=${GANG_LOCK_DIR:-/tmp/gangline-$GANGLINE_PROCESS_UID}"
+    --setenv="GANG_ARCHIVE_DIR=$(archive_root)" --setenv="GANG_TMUX_GUARD=$GANG_TMUX_GUARD"
+    --setenv="XDG_STATE_HOME=$state_home" --setenv="HOME=$HOME"
+    --setenv="GANG_RUN_TEAM_ROOT=$RUN_TEAM_ROOT"
+    --setenv="PATH=$RUN_PATH" --setenv="TMPDIR=$RUN_TMPDIR")
+  [ -z "${GANG_COLLARS:-}" ] || launch+=(--setenv="GANG_COLLARS=$GANG_COLLARS")
+  launch+=("$ROOT/libexec/gang-runner" "$RUN_DIR")
+  out="$("${launch[@]}" 2>&1)" || rc=$?
+  if [ "$rc" -ne 0 ]; then
+    run_record_remove "$RUN_DIR"
+    flock -u "$RUN_LOCK_FD"
+    [ -z "$out" ] || printf '%s\n' "$out" >&2
+    die "run: the host service could not be started, so no command was accepted"
+  fi
+  flock -u "$RUN_LOCK_FD"
+  [ -z "$out" ] || printf '%s\n' "$out" >&2
+  printf '%s\n' "started run $RUN_ID for $RUN_REQUESTER; completion will be delivered with output at $RUN_DIR/output"
+}
+
+run_result_read() { # $1 directory -> RUN_RESULT_EXIT/RUN_RESULT_SECONDS/RUN_RESULT_FINISHED
+  local raw extra
+  raw="$(run_file_read "$1" result)"
+  IFS=$'\t' read -r RUN_RESULT_EXIT RUN_RESULT_SECONDS RUN_RESULT_FINISHED extra <<<"$raw"
+  [ -z "$extra" ] \
+    && [[ "$RUN_RESULT_EXIT" =~ ^[0-9]+$ ]] \
+    && [[ "$RUN_RESULT_SECONDS" =~ ^[0-9]+$ ]] \
+    && [[ "$RUN_RESULT_FINISHED" =~ ^[0-9]+$ ]] \
+    || die "run: result record $1/result is malformed"
+}
+
+run_delivery_store() { # $1 directory, $2 terminal delivery state
+  printf '%s\n' "$2" > "$1/delivery" \
+    || die "run: cannot record the completion delivery outcome under $1"
+}
+
+run_audit_append() { # $1 result directory; append exactly one lossless terminal record
+  local dir="$1" requester argv64 now
+  [ -f "$dir/audited" ] && return 0
+  exec {RUN_AUDIT_LOCK_FD}>>"$RUN_TEAM_ROOT/.audit.lock" \
+    || die "run: cannot open the durable audit lock at $RUN_TEAM_ROOT/.audit.lock"
+  flock -x "$RUN_AUDIT_LOCK_FD" \
+    || die "run: cannot lock the durable run audit"
+  if [ ! -f "$dir/audited" ]; then
+    requester="$(run_file_read "$dir" requester)"
+    argv64="$(base64 < "$dir/argv" | tr -d '\n')" \
+      || { flock -u "$RUN_AUDIT_LOCK_FD"; die "run: cannot encode argv for the durable audit"; }
+    now="$(date +%s)" || { flock -u "$RUN_AUDIT_LOCK_FD"; die "run: cannot timestamp the durable audit"; }
+    printf '%s\t%s\t%s\t%s\t%s\t%s\t%s/output\n' \
+      "$now" "${dir##*/}" "$requester" "$argv64" "$RUN_RESULT_EXIT" \
+      "$RUN_RESULT_SECONDS" "$dir" >> "$RUN_TEAM_ROOT/audit.tsv" \
+      || { flock -u "$RUN_AUDIT_LOCK_FD"; die "run: cannot append the durable run audit"; }
+    : > "$dir/audited" \
+      || { flock -u "$RUN_AUDIT_LOCK_FD"; die "run: cannot mark the durable run audit"; }
+  fi
+  flock -u "$RUN_AUDIT_LOCK_FD"
+}
+
+run_message() { # $1 directory -> bounded terminal-safe completion body
+  local tail=""
+  [ -f "$1/output" ] && [ ! -L "$1/output" ] \
+    || die "run: result record $1 has no readable output file"
+  tail="$(LC_ALL=C tail -c "$RUN_TAIL_BYTES" "$1/output" | LC_ALL=C tr -c '\11\12\15\40-\176' '?')" \
+    || die "run: cannot read the output tail at $1/output"
+  [ -n "$tail" ] || tail='(no output)'
+  printf 'run %s completed: exit %s; duration %ss; full output: %s/output\ncombined output tail (last %s bytes; control and non-ASCII bytes shown as ?):\n%s' \
+    "${1##*/}" "$RUN_RESULT_EXIT" "$RUN_RESULT_SECONDS" "$1" "$RUN_TAIL_BYTES" "$tail"
+}
+
+run_finish() { # invoked by the service's ExecStopPost finalizer: --finish ID --unit UNIT
+  local id="" unit="" dir requester token body="" dispatch="" rc=0 stable_rc=0
+  while [ $# -gt 0 ]; do case "$1" in
+    --finish) [ $# -ge 2 ] || die "run: --finish needs a run id"; id="$2"; shift 2 ;;
+    --unit) [ $# -ge 2 ] || die "run: --unit needs a service name"; unit="$2"; shift 2 ;;
+    *) die "run: internal completion received unexpected argument '$1'" ;;
+  esac; done
+  run_id_valid "$id" || die "run: internal completion has an invalid run id"
+  [ -n "$unit" ] || die "run: internal completion needs its service name"
+  case "${GANG_RUN_TEAM_ROOT:-}" in
+    /*) RUN_TEAM_ROOT="$GANG_RUN_TEAM_ROOT" ;;
+    *) die "run: internal completion has no absolute durable team directory" ;;
+  esac
+  dir="$RUN_TEAM_ROOT/$id"
+  [ -d "$dir" ] && [ ! -L "$dir" ] \
+    || die "run: internal completion has no result record for $id"
+  [ "$(run_file_read "$dir" unit)" = "$unit" ] \
+    || die "run: internal completion service does not own run $id"
+  run_result_read "$dir"
+  rm -f -- "$dir/active" || die "run: cannot settle the active declaration for $id"
+  run_audit_append "$dir"
+  [ ! -f "$dir/delivery" ] || return 0
+  requester="$(run_file_read "$dir" requester)"
+  token="$(run_file_read "$dir" requester-token)"
+  valid_name "$requester" && run_requester_token_valid "$token" \
+    || die "run: result record $dir has an invalid requester identity"
+  if ! session_live; then
+    run_delivery_store "$dir" 'discarded: team is gone; output retained'
+    return 0
+  fi
+  stable_agent_resolve "$token" || stable_rc=$?
+  case "$stable_rc" in
+    0) requester="$STABLE_AGENT_NAME" ;;
+    3) run_delivery_store "$dir" 'discarded: requester is gone; output retained'; return 0 ;;
+    *) run_delivery_store "$dir" 'unconfirmed: requester identity could not be resolved; output retained'; return 1 ;;
+  esac
+  body="$(run_message "$dir")"
+  dispatch="$(printf '%s\n' "$body" | "$ROOT/bin/gang" send --to "$requester" --from gang-run --stdin 2>&1)" || rc=$?
+  if [ "$rc" -eq 0 ]; then
+    run_delivery_store "$dir" 'accepted into requester delivery path'
+    printf '%s\n' "$dispatch"
+    return 0
+  fi
+  run_delivery_store "$dir" 'unconfirmed: completion transport refused; output retained'
+  [ -z "$dispatch" ] || printf '%s\n' "$dispatch" >&2
+  return 1
+}
+
+run_cancel() { # --cancel ID; agent owners cancel their own stable run identity
+  local id="$1" dir token unit current="" current_token="" rc=0 out=""
+  run_id_valid "$id" || die "run: '$id' is not a run id"
+  session_live || refuse "run: no Gangline team is running"
+  run_state_prepare
+  dir="$RUN_TEAM_ROOT/$id"
+  [ -d "$dir" ] && [ ! -L "$dir" ] \
+    || die "run: no result record exists for $id in this team"
+  [ -f "$dir/result" ] && { printf 'run %s already completed; output remains at %s/output\n' "$id" "$dir"; return 0; }
+  token="$(run_file_read "$dir" requester-token)"
+  current="$(self_window)" \
+    || refuse "run: only the stable identity that requested $id may cancel it"
+  current_token="$(tmux show-options -wqv -t "$current" @gl_spool)" \
+    || refuse "run: cannot read the requesting pane stable spool identity"
+  [ "$current_token" = "$token" ] \
+    || refuse "run: only the stable identity that requested $id may cancel it"
+  unit="$(run_file_read "$dir" unit)"
+  printf '%s\n' 'cancellation requested' > "$dir/cancel-requested" \
+    || die "run: could not record the cancellation request at $dir"
+  run_manager_prepare
+  out="$("${RUN_SYSTEMCTL[@]}" stop -- "$unit" 2>&1)" || rc=$?
+  if [ "$rc" -ne 0 ]; then
+    [ -z "$out" ] || printf '%s\n' "$out" >&2
+    die "run: could not stop service $unit; its result record remains at $dir"
+  fi
+  printf 'cancellation requested for run %s; its completion message will report the command exit\n' "$id"
+}
+
+cmd_run() {
+  case "${1:-}" in
+    --)
+      shift
+      run_start "$@"
+      ;;
+    --cancel)
+      [ "$#" -eq 2 ] || die "run: --cancel takes one run id"
+      run_cancel "$2"
+      ;;
+    --finish)
+      run_finish "$@"
+      ;;
+    '') cmd_help run; return 1 ;;
+    *) die "run: expected -- <command>, or --cancel <run-id>" ;;
+  esac
 }
 
 spool_dir_of() { # $1 = window id -> its spool directory on stdout, nothing if it has none
@@ -16199,7 +16578,7 @@ fi
 # clock passes, and hitch, adopt and rename name a window that is not this one.
 if [ $# -eq 0 ]; then
   case "$cmd" in
-    hitch|adopt|rename|talk|send|at|wait|explain|drop|down)
+    hitch|adopt|rename|talk|send|at|run|wait|explain|drop|down)
       cmd_help "$cmd"
       exit 1
       ;;
@@ -16213,6 +16592,7 @@ case "$cmd" in
   talk)     cmd_talk "$@" ;;
   send)     cmd_send "$@" ;;
   at)       cmd_at "$@" ;;
+  run)      cmd_run "$@" ;;
   flush)    cmd_flush "$@" ;;
   mail)     cmd_mail "$@" ;;
   interrupt) cmd_interrupt "$@" ;;
