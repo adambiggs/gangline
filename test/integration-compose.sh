@@ -1503,7 +1503,7 @@ cat > "$RUN_ROOT/collars/frozenbox.sh" <<SH
 # shellcheck shell=bash
 # shellcheck disable=SC2034
 . "$ROOT/collars/bash.sh"
-GANG_LAUNCH="sh -c 'exec bash --rcfile $RUN_ROOT/frozenbox-rc' fixture"
+GANG_LAUNCH="sh -c 'ENV=$RUN_ROOT/frozenbox-rc exec bash --posix' fixture"
 _gl_frozen_real="\$(declare -f collar_input)"
 eval "frozen_real_input \${_gl_frozen_real#collar_input}"
 collar_input() {
