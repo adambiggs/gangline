@@ -114,7 +114,7 @@ reply_nonce_from() { # $1 window, $2 witnessed sender -> its one nonce
     IFS=: read -r marker _token witness mode _digest _replies extra <<<"$value"
     [ "$marker" = message ] && [ "$witness" = "$2" ] && [ -z "$extra" ] || continue
     case "$mode" in
-      request) [ -z "$(tmux show-options -wqv -t "$1" "@gl_rsettled_$nonce")" ] || continue ;;
+      request|waived) [ -z "$(tmux show-options -wqv -t "$1" "@gl_rsettled_$nonce")" ] || continue ;;
       reply) [ -z "$(tmux show-options -wqv -t "$1" "@gl_rprompt_$nonce")" ] || continue ;;
       *) continue ;;
     esac
@@ -160,6 +160,10 @@ reply_request_envelope() { # sender nonce body
   printf '[gang:%s#%s] %s [/gang:%s#%s]' "$1" "$2" "$3" "$1" "$2"
 }
 
+reply_waived_envelope() { # sender nonce body
+  printf '[gang:%s#%s no-reply] %s [/gang:%s#%s]' "$1" "$2" "$3" "$1" "$2"
+}
+
 reply_response_envelope() { # sender nonce reply-to body
   printf '[gang:%s#%s reply-to=%s] %s [/gang:%s#%s]' \
     "$1" "$2" "$3" "$4" "$1" "$2"
@@ -189,6 +193,72 @@ equal "operator/session-keyboard input creates no peer reply debt" \
   "$(TMUX_PANE="$reply_b_pane" "$GANG" reply-obligations)"
 reply_stop_run "$reply_b_pane"
 equal "operator-only work is allowed to become idle" "{}" "$reply_stop_output"
+
+# A SENDER MAY WAIVE THE REPLY. --no-reply stamps the envelope and the record,
+# so the recipient owes nothing for the message and explain keeps the waiver as
+# audit. The thread still closes at the reading turn's boundary, so a later
+# message to the sender is a fresh request rather than an answer.
+reply_waived_out="$(printf '%s' WAIVED_ONE \
+  | TMUX_PANE="$reply_a_pane" "$GANG" send --to reply-b --no-reply --stdin)"
+contains "a waived send to an idle recipient is delivered at once" \
+  "$reply_waived_out" "delivered to reply-b"
+contains "a waived send says it owes no reply" "$reply_waived_out" "(owes no reply)"
+reply_waived_one="$(reply_nonce_from "$reply_b_id" reply-a)" || reply_waived_one=""
+equal "the waived send leaves its recipient one record" 16 "${#reply_waived_one}"
+contains "the waiver travels in the envelope" "$(pane_all reply-b)" \
+  "[gang:reply-a#$reply_waived_one no-reply] WAIVED_ONE"
+reply_waived_one_digest="$(tmux show-options -wqv -t "$reply_b_id" "@gl_reply_$reply_waived_one" | cut -d: -f5)"
+equal "the waived record carries its envelope digest" 64 "${#reply_waived_one_digest}"
+reply_prompt_event "$reply_b_pane" \
+  "$(reply_waived_envelope reply-a "$reply_waived_one" WAIVED_ONE)"
+equal "a waived message the recipient has read owes no reply" \
+  $'clear\t-\t-\t-' \
+  "$(TMUX_PANE="$reply_b_pane" "$GANG" reply-obligations)"
+equal "the read waived message has its prompt proof" "$reply_waived_one_digest" \
+  "$(tmux show-options -wqv -t "$reply_b_id" "@gl_rprompt_$reply_waived_one")"
+excludes "status names no debt for a waived message" "$($GANG status reply-b)" \
+  "reply owed to reply-a"
+reply_stop_run "$reply_b_pane"
+equal "a waived message never refuses idle" "{}" "$reply_stop_output"
+equal "the reading turn's boundary closes the waived thread" \
+  "$reply_waived_one_digest" \
+  "$(tmux show-options -wqv -t "$reply_b_id" "@gl_rsettled_$reply_waived_one")"
+contains "explain keeps the waiver as audit" "$($GANG explain reply-b)" \
+  "reply waived by reply-a (message $reply_waived_one; nothing owed; read)"
+
+# An answer to a waived message is allowed, correlated, delivered at once, and
+# opens no reciprocal debt.
+contains "a second waived send is delivered at once" \
+  "$(printf '%s' WAIVED_TWO \
+    | TMUX_PANE="$reply_a_pane" "$GANG" send --to reply-b --no-reply --stdin)" \
+  "delivered to reply-b"
+reply_waived_two="$(reply_nonce_from "$reply_b_id" reply-a)" || reply_waived_two=""
+equal "the second waived send leaves its own record" 16 "${#reply_waived_two}"
+reply_waived_two_digest="$(tmux show-options -wqv -t "$reply_b_id" "@gl_reply_$reply_waived_two" | cut -d: -f5)"
+reply_prompt_event "$reply_b_pane" \
+  "$(reply_waived_envelope reply-a "$reply_waived_two" WAIVED_TWO)"
+contains "an answer to a waived message is delivered at once" \
+  "$(printf '%s' WAIVED_ANSWER | TMUX_PANE="$reply_b_pane" "$GANG" send --to reply-a --stdin)" \
+  "delivered to reply-a"
+reply_waived_answer="$(reply_nonce_for_body "$reply_a_id" reply-b reply WAIVED_ANSWER)" \
+  || reply_waived_answer=""
+equal "the answer leaves its recipient one record" 16 "${#reply_waived_answer}"
+equal "the answer is correlated to the waived message" "$reply_waived_two" \
+  "$(tmux show-options -wqv -t "$reply_a_id" "@gl_reply_$reply_waived_answer" | cut -d: -f6)"
+equal "the answer settles the waived record" "$reply_waived_two_digest" \
+  "$(tmux show-options -wqv -t "$reply_b_id" "@gl_rsettled_$reply_waived_two")"
+reply_prompt_event "$reply_a_pane" \
+  "$(reply_response_envelope reply-b "$reply_waived_answer" "$reply_waived_two" WAIVED_ANSWER)"
+equal "an answer to a waived message opens no reciprocal debt" \
+  $'clear\t-\t-\t-' \
+  "$(TMUX_PANE="$reply_a_pane" "$GANG" reply-obligations)"
+reply_stop_run "$reply_a_pane"
+reply_stop_run "$reply_b_pane"
+for reply_waived_prefix in @gl_reply_ @gl_rprompt_ @gl_rdelivery_ @gl_rsettled_; do
+  tmux set-option -uqw -t "$reply_b_id" "$reply_waived_prefix$reply_waived_one"
+  tmux set-option -uqw -t "$reply_b_id" "$reply_waived_prefix$reply_waived_two"
+  tmux set-option -uqw -t "$reply_a_id" "$reply_waived_prefix$reply_waived_answer"
+done
 printf '%s' OPERATOR_ENVELOPE \
   | "$GANG" send --to reply-b --from operator --stdin >/dev/null
 equal "a verified self-declared operator envelope creates no peer debt" \

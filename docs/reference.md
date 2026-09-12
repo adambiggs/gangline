@@ -630,7 +630,7 @@ operator outside a Gangline agent window defaults to the clearly claimed sender
 exits non-zero sends nothing and returns its status. The temporary draft is
 removed before delivery begins.
 
-### `gang send --to <name> [--from <sender>] [--live-only] [--supersede] --stdin`
+### `gang send --to <name> [--from <sender>] [--live-only] [--supersede] [--no-reply] --stdin`
 
 Reads the full message body from standard input, which must be a pipe, a file,
 or a heredoc. A terminal is refused before anything is read: it ends a body only
@@ -670,6 +670,15 @@ nor is repaired into absence. An orphaned or malformed record remains unknown
 and makes the native Stop helper fail closed. A record the sender stamped as a
 reply is audit rather than debt at every stage of its arrival evidence, so it
 never blocks.
+
+`--no-reply` says a fresh message asks for nothing back. Its envelope carries
+`no-reply` after the nonce, the recipient's record is stamped waived rather
+than request, and like a reply it is audit at every stage, so it never blocks
+Stop and `gang status` never reports it owed; `gang explain` names it as
+waived, read or not yet read. The recipient may still answer it in the turn
+that read it, and that answer is a reply that owes nothing in return. A
+message that already answers the recipient is a reply either way, so the flag
+then changes only what its envelope says.
 
 The next verified outbound message to a peer is correlated to every request
 from that peer the sender has read (its native prompt proof stands) and to

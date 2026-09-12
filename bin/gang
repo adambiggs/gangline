@@ -683,6 +683,7 @@ gang send
     [--from <sender>]
     [--live-only]
     [--supersede]
+    [--no-reply]
 
   The body is read from stdin:
 
@@ -711,6 +712,11 @@ gang send
                 Scoped to the sender, not
                 to a subject: unrelated
                 messages of yours go too.
+  --no-reply    this message asks for
+                nothing back: the target
+                reads it owing no reply,
+                and may still answer it
+                in the turn that read it.
 
   A refused delivery parks by default and
   enters the session when the target next
@@ -1758,7 +1764,8 @@ mint_nonce() { od -An -N4 -tx1 /dev/urandom | tr -d ' \n'; }
 mint_message_nonce() { od -An -N8 -tx1 /dev/urandom | tr -d ' \n'; }
 
 ENVELOPE="" ENVELOPE_NONCE=""
-envelope() { # $1 sender, $2 body, optional $3 correlated reply nonces
+envelope() { # $1 sender, $2 body, optional $3 correlated reply nonces,
+             # optional $4 non-empty when the sender waived a reply
              # -> exact wire message in ENVELOPE and its nonce in ENVELOPE_NONCE
   local nonce body marked sentinel=$'\034'
   nonce="$(mint_message_nonce)"
@@ -1771,6 +1778,7 @@ envelope() { # $1 sender, $2 body, optional $3 correlated reply nonces
   ENVELOPE_NONCE="$nonce"
   ENVELOPE="[gang:$1#$nonce"
   [ -z "${3:-}" ] || ENVELOPE="$ENVELOPE reply-to=$3"
+  [ -z "${4:-}" ] || ENVELOPE="$ENVELOPE no-reply"
   ENVELOPE="$ENVELOPE] $body [/gang:$1#$nonce]"
 }
 
@@ -6176,6 +6184,8 @@ EOF
 # the turn that read it ends: an acknowledgement of a reply is correlated to
 # it and opens no debt, and a message sent in a later turn is a new request.
 # The immutable record remains as its audit trail until the window goes away.
+# A request its sender sent with --no-reply is stamped waived: it owes nothing,
+# and like a reply it can be answered until the turn that read it ends.
 # Any missing, malformed, or orphaned evidence fails closed.
 REPLY_STATE_PREFIX='@gl_reply_'
 REPLY_PROMPT_PREFIX='@gl_rprompt_'
@@ -6211,7 +6221,7 @@ reply_state_parse() { # $1 option name, $2 value; 0 valid, 1 malformed
   [ "${#REPLY_TOKEN}" -eq 8 ] || return 1
   case "$REPLY_TOKEN" in *[!a-f0-9]*) return 1 ;; esac
   valid_name "$REPLY_WITNESS" || return 1
-  case "$REPLY_MODE" in request|reply|legacy) ;; *) return 1 ;; esac
+  case "$REPLY_MODE" in request|reply|waived|legacy) ;; *) return 1 ;; esac
   [ "${#REPLY_DIGEST}" -eq 64 ] || return 1
   case "$REPLY_DIGEST" in *[!a-f0-9]*) return 1 ;; esac
   reply_nonce_list_valid "$REPLY_TO"
@@ -6468,7 +6478,7 @@ reply_outgoing_classify() { # $1 sender window, $2 target window
   while read -r nonce state token witness mode digest replies; do
     [ -n "$nonce" ] || continue
     case "$mode:$state" in
-      request:prompt|request:owed|reply:prompt|reply:complete) ;;
+      request:prompt|request:owed|reply:prompt|reply:complete|waived:prompt|waived:complete) ;;
       *) continue ;;
     esac
     [ "$token" = "$target_token" ] || continue
@@ -6623,7 +6633,8 @@ reply_threads_close() { # $1 window; the turn that read a reply is over
   # every later message to its sender a correlated reply, and a follow-up
   # request would open no debt. Closing it at the boundary that ends the
   # reading turn keeps the ack window exactly one turn wide. A reply the
-  # holder has not read yet is left alone: its turn has not begun.
+  # holder has not read yet is left alone: its turn has not begun. A waived
+  # request closes the same way, for the same reason.
   # FAILS CLOSED. A close that could not be read or written leaves the
   # reply open and says so, so the caller can refuse to end the turn: an
   # unclosed boundary keeps the reply answerable, where a silently allowed
@@ -6635,7 +6646,8 @@ reply_threads_close() { # $1 window; the turn that read a reply is over
     return 1
   }
   while read -r nonce state token witness mode digest replies; do
-    [ -n "$nonce" ] && [ "$mode" = reply ] || continue
+    [ -n "$nonce" ] || continue
+    case "$mode" in reply|waived) ;; *) continue ;; esac
     case "$state" in prompt|complete) ;; *) continue ;; esac
     reply_proof_write "$1" "$REPLY_SETTLED_PREFIX" "$nonce" "$digest" || {
       printf 'read reply %s could not be closed: its settlement proof was not written\n' "$nonce" >&2
@@ -6672,8 +6684,9 @@ reply_obligation_query() { # calling window -> one or more four-field TSV verdic
     # immutable metadata whether or not both arrival proofs landed, so a
     # partial reply record is exactly as much a non-obligation as a complete
     # one. Failing closed on one named no action, because no message its
-    # holder can send settles a record that was never a request.
-    [ "$mode" != reply ] || continue
+    # holder can send settles a record that was never a request. A waived
+    # request is audit for the same reason: its sender declared nothing owed.
+    case "$mode" in reply|waived) continue ;; esac
     # DEBT BEGINS WITH THE NATIVE PROMPT PROOF. A request the harness has not
     # yet submitted into the debtor's context is not one the debtor can answer:
     # the metadata lands before the paste and the delivery proof lands before
@@ -6797,6 +6810,24 @@ reply_obligation_status_report() { # $1 window; every debt or ambiguous record
       retired) printf '%s\n' "$(colour "$C_DIM" "reply obligation retired for $peer (message $nonce; sender gone)")" ;;
       unknown) printf '%s\n' "$(colour "$C_BAD" "reply obligation UNKNOWN (${nonce:-?} from ${peer:-?}: $detail); Stop fails closed")" ;;
     esac
+  done <<<"$rows"
+}
+
+reply_waived_report() { # $1 window; messages whose sender asked for nothing back
+  local rows rc=0 nonce state token witness mode digest replies seen
+  rows="$(reply_state_rows "$1")" || rc=$?
+  if [ "$rc" -ne 0 ]; then
+    printf 'reply waivers: unknown (%s)\n' "$(reply_rows_error "$rows")"
+    return 0
+  fi
+  while read -r nonce state token witness mode digest replies; do
+    [ "$mode" = waived ] || continue
+    case "$state" in
+      prompt|complete|settled|discharged) seen=read ;;
+      candidate|verified) seen="not yet read" ;;
+      *) seen="$state" ;;
+    esac
+    printf '%s\n' "$(colour "$C_DIM" "reply waived by $witness (message $nonce; nothing owed; $seen)")"
   done <<<"$rows"
 }
 
@@ -7145,7 +7176,7 @@ spool_retire_gone_unverified() { # $1 = window id; archive ambiguity whose stabl
   for e in "$dir"/unverified-*; do
     [ -f "$e" ] || continue
     spool_read_try "$e" || continue
-    case "$SPOOL_REPLY_MODE" in request|reply) ;; *) continue ;; esac
+    case "$SPOOL_REPLY_MODE" in request|reply|waived) ;; *) continue ;; esac
     sender="$SPOOL_SENDER"
     rc=0
     stable_agent_resolve "$SPOOL_SENDER_TOKEN" || rc=$?
@@ -7287,13 +7318,13 @@ spool_read_try() { # $1 = entry path; 0 loaded, 1 with SPOOL_READ_ERROR
       case "$SPOOL_SENDER_TOKEN:$SPOOL_REPLY_MODE" in
         -:control) [ "$SPOOL_REPLY_TO" = - ] \
           || { SPOOL_READ_ERROR="the spooled control message $1 claims peer correlation"; return 1; } ;;
-        *:request|*:reply)
+        *:request|*:reply|*:waived)
           [ "${#SPOOL_SENDER_TOKEN}" -eq 8 ] \
             || { SPOOL_READ_ERROR="the spooled message $1 has malformed sender identity metadata"; return 1; }
           case "$SPOOL_SENDER_TOKEN" in *[!a-f0-9]*) SPOOL_READ_ERROR="the spooled message $1 has malformed sender identity metadata"; return 1 ;; esac
           valid_name "$SPOOL_SENDER" \
             || { SPOOL_READ_ERROR="the spooled message $1 has an invalid witnessed sender"; return 1; }
-          if [ "$SPOOL_REPLY_MODE" = request ]; then
+          if [ "$SPOOL_REPLY_MODE" != reply ]; then
             [ "$SPOOL_REPLY_TO" = - ] \
               || { SPOOL_READ_ERROR="the spooled request $1 carries reply-only correlation"; return 1; }
           else
@@ -11677,7 +11708,7 @@ send_live() { # $1 target, $2 locked if caller holds lock, $3 live-only probe;
 cmd_send() {
   local name="" from="" use_stdin=0 body="" live_only=0 supersede=0 rc=0 err="" frag n rest
   local drain_rc=0 drain_err="" commit_err="" next_opportunity="next completes a turn"
-  local promote_warning=""
+  local promote_warning="" no_reply=0 waiver="" waived_note=""
   while [ $# -gt 0 ]; do case "$1" in
     --to) [ $# -ge 2 ] || die "send: --to needs a value"
           [ -z "$name" ] || die "send: --to may be passed only once"
@@ -11687,6 +11718,7 @@ cmd_send() {
              use_stdin=1; shift ;;
     --live-only) live_only=1; shift ;;
     --supersede) supersede=1; shift ;;
+    --no-reply) no_reply=1; waiver=no-reply; shift ;;
     # A BODY IS THE LIKELY MISTAKE, so the refusal that catches it names the
     # remedy. Anything not shaped like a flag is what someone typed where the
     # body goes, and the whole body then comes back at them as "unknown
@@ -11706,7 +11738,14 @@ cmd_send() {
   [ -z "$SEND_WINDOW" ] || [ "$SEND_WINDOW" != "$AGENT_ID" ] \
     || refuse "send: '$name' resolves to this sending pane; a message that returns to its author is never intended"
   reply_outgoing_classify "$SEND_WINDOW" "$AGENT_ID"
-  envelope "$SEND_WIRE" "$body" "$([ "$MESSAGE_REPLY_TO" = - ] || printf '%s' "$MESSAGE_REPLY_TO")"
+  # ONLY A FRESH REQUEST CHANGES MODE. A message that answers is a reply and
+  # owes nothing already, and self-declared traffic never opened a debt; the
+  # envelope still carries the waiver so the recipient reads what was said.
+  if [ "$no_reply" -eq 1 ] && [ "$MESSAGE_REPLY_MODE" = request ]; then
+    MESSAGE_REPLY_MODE=waived
+    waived_note=" $(colour "$C_DIM" "(owes no reply)")"
+  fi
+  envelope "$SEND_WIRE" "$body" "$([ "$MESSAGE_REPLY_TO" = - ] || printf '%s' "$MESSAGE_REPLY_TO")" "$waiver"
   frag="${body%%$'\n'*}"
   [ "${#frag}" -le 40 ] || frag="${frag:0:40}…"
   if [ "$live_only" -eq 1 ]; then
@@ -11718,7 +11757,7 @@ cmd_send() {
       0) reply_candidates_verified \
            || printf '%s\n' "gang: delivered to $name, but its reply provenance stayed ambiguous and Stop will fail closed" >&2
          [ -z "$err" ] || printf '%s\n' "$err" >&2
-         printf '%s\n' "$(colour "$C_OK" "delivered to $name as [gang:$SEND_WIRE]") $(colour "$C_DIM" "$(send_outcome "$name")")"
+         printf '%s\n' "$(colour "$C_OK" "delivered to $name as [gang:$SEND_WIRE]") $(colour "$C_DIM" "$(send_outcome "$name")")$waived_note"
          return 0 ;;
       3) reply_candidates_abort
          [ -z "$err" ] || printf '%s\n' "$err" >&2
@@ -11772,7 +11811,8 @@ cmd_send() {
       rest="${rest#*,}"
     done
     MESSAGE_REPLY_MODE="reply"
-    envelope "$SEND_WIRE" "$body" "$MESSAGE_REPLY_TO"
+    waived_note=""
+    envelope "$SEND_WIRE" "$body" "$MESSAGE_REPLY_TO" "$waiver"
   fi
   # A PURE ACKNOWLEDGEMENT CHAIN CREATES NO RECIPROCAL DEBT and carries no
   # answer its recipient is waiting for, so it earns no turn of its own. Accept the complete attributed envelope into a
@@ -11829,20 +11869,20 @@ cmd_send() {
       0) lock_release
          [ -z "$drain_err" ] || printf '%s\n' "$drain_err" >&2
          if [ -z "$promote_warning" ]; then
-           printf '%s\n' "$(colour "$C_OK" "delivered accumulated context and current [gang:$SEND_WIRE] to $name in one verified wake")"
+           printf '%s\n' "$(colour "$C_OK" "delivered accumulated context and current [gang:$SEND_WIRE] to $name in one verified wake")$waived_note"
          else
-           printf '%s\n' "$(colour "$C_OK" "delivered current [gang:$SEND_WIRE] to $name; accumulated context remains on its separately reported recovery path")"
+           printf '%s\n' "$(colour "$C_OK" "delivered current [gang:$SEND_WIRE] to $name; accumulated context remains on its separately reported recovery path")$waived_note"
          fi
          return 0 ;;
       3|4) lock_release
          [ -z "$drain_err" ] || printf '%s\n' "$drain_err" >&2
          if [ -z "$promote_warning" ]; then
            printf '%s\n%s\n' \
-             "$(colour "$C_OK" "queued current [gang:$SEND_WIRE] with accumulated context for $name — accepted, not yet in the session")" \
+             "$(colour "$C_OK" "queued current [gang:$SEND_WIRE] with accumulated context for $name — accepted, not yet in the session")$waived_note" \
              "$(colour "$C_DIM" "($(spool_count "$AGENT_ID") waiting) the bundle enters at $name's next delivery opportunity; nothing further is needed from you.")"
          else
            printf '%s\n%s\n' \
-             "$(colour "$C_OK" "queued current [gang:$SEND_WIRE] for $name — accepted, not yet in the session; accumulated context remains separately deferred")" \
+             "$(colour "$C_OK" "queued current [gang:$SEND_WIRE] for $name — accepted, not yet in the session; accumulated context remains separately deferred")$waived_note" \
              "$(colour "$C_DIM" "($(spool_count "$AGENT_ID") waiting) current mail enters at $name's next delivery opportunity; nothing further is needed from you.")"
          fi
          return 0 ;;
@@ -11868,7 +11908,7 @@ cmd_send() {
          || printf '%s\n' "gang: $SPOOL_SUPERSEDE_ERROR" >&2
        lock_release
        [ -z "$err" ] || printf '%s\n' "$err" >&2
-       printf '%s\n' "$(colour "$C_OK" "delivered to $name as [gang:$SEND_WIRE]") $(colour "$C_DIM" "$(send_outcome "$name")")"
+       printf '%s\n' "$(colour "$C_OK" "delivered to $name as [gang:$SEND_WIRE]") $(colour "$C_DIM" "$(send_outcome "$name")")$waived_note"
        return 0 ;;
     3) reply_candidates_abort ;;
     5) # KEYSTROKES LANDED AND THEIR OUTCOME IS UNKNOWN, so this send is neither
@@ -11951,7 +11991,7 @@ cmd_send() {
     case "$drain_rc" in
       0) lock_release
          [ -z "$drain_err" ] || printf '%s\n' "$drain_err" >&2
-         printf '%s\n' "$(colour "$C_OK" "delivered to $name as [gang:$SEND_WIRE]") $(colour "$C_DIM" "(verified from its attributed spool into collar-declared mid-turn input)")"
+         printf '%s\n' "$(colour "$C_OK" "delivered to $name as [gang:$SEND_WIRE]") $(colour "$C_DIM" "(verified from its attributed spool into collar-declared mid-turn input)")$waived_note"
          return 0 ;;
       3|4) err="$drain_err" ;;
       5) lock_release
@@ -11982,12 +12022,12 @@ cmd_send() {
   blocked "$AGENT_ID" || queue_blocked=$?
   if [ "$queue_blocked" -eq 0 ]; then
     printf '%s\n%s\n' \
-      "$(colour "$C_OK" "queued for $name as [gang:$SEND_WIRE] — accepted, not yet in the session")" \
+      "$(colour "$C_OK" "queued for $name as [gang:$SEND_WIRE] — accepted, not yet in the session")$waived_note" \
       "$(colour "$C_BAD" "($(spool_count "$AGENT_ID") waiting) '$name' is blocked ($BLOCKED_WHAT). No turn boundary is coming from it unattended, so this will NOT drain on its own — it waits until somebody repairs that window (gang capture $name; gang attach $name). 'gang roster' shows it queued against a blocked window.")"
     return 0
   fi
   printf '%s\n%s\n' \
-    "$(colour "$C_OK" "queued for $name as [gang:$SEND_WIRE] — accepted, not yet in the session")" \
+    "$(colour "$C_OK" "queued for $name as [gang:$SEND_WIRE] — accepted, not yet in the session")$waived_note" \
     "$(colour "$C_DIM" "($(spool_count "$AGENT_ID") waiting) ${err##*$'\n'} — it enters the session when '$name' $next_opportunity, and nothing further is needed from you. Until then 'gang roster' shows it queued.")"
 }
 
@@ -13848,6 +13888,7 @@ cmd_explain() {
   [ -z "$tick_action" ] || printf 'tick action: %s\n' "$tick_action"
   explain_transitions_report "$AGENT_ID"
   explain_cache_compactions_report "$AGENT_ID"
+  reply_waived_report "$AGENT_ID"
 }
 
 # A WAIT IS A TEMPORARY TMUX BARRIER, NOT TEAM STATE. Each caller owns one
