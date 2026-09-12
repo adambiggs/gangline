@@ -231,6 +231,83 @@ equal "a reader whose held probe a prompt crossed exits cleanly" 0 "$probe_reade
 equal "a prompt that crosses a held re-probe keeps the record retired" "" \
   "$(tmux show-options -wqv -t "$waitable_id" @gl_waiting)"
 
+# A HOOK'S WRITE IS ONE TMUX COMMAND LIST. The reader's stamp check holds only
+# if no reader can land between a hook's record and its stamp: a Stop parked
+# between them let a crossed reader re-read the old stamp, pass the check and
+# clear both, and the Stop then stamped an empty record. This shim parks the
+# hook's first write that names the stamp; with both options in one invocation
+# it parks before either, so the reader's write lands first and the hook's
+# stands. Its barriers go through the suite's bounded tmux.
+waiting_hold_bin="$RUN_ROOT/waiting-hold-bin"
+mkdir -p "$waiting_hold_bin"
+cat > "$waiting_hold_bin/tmux" <<SH
+#!/bin/sh
+. "\$GANG_TEST_PATH_SHIM_GUARD"
+path_shim_guard '$REAL_TMUX' "\$0" tmux || exit \$?
+if [ "\$1" = set-option ] && [ -e '$RUN_ROOT/waiting-store-hold' ]; then
+  case "\$*" in
+    *@gl_waiting_at*)
+      rm -f -- '$RUN_ROOT/waiting-store-hold'
+      '$RUN_ROOT/waitbin/tmux' wait-for -S waiting-store-held
+      '$RUN_ROOT/waitbin/tmux' wait-for waiting-store-release ;;
+  esac
+fi
+exec '$REAL_TMUX' "\$@"
+SH
+chmod +x "$waiting_hold_bin/tmux"
+
+tmux set-option -w -t "$waitable_id" @gl_waiting \
+  "waiting"$'\t'"a witness older than the re-probe age"
+tmux set-option -w -t "$waitable_id" @gl_waiting_at 1
+printf '%s' probe-crossed > "$RUN_ROOT/waiting-evidence"
+: > "$RUN_ROOT/waiting-probe-hold"
+"$GANG" status waitable > "$RUN_ROOT/store-crossed.out" 2>&1 &
+probe_reader_pid=$!
+tmux wait-for waiting-probe-held
+: > "$RUN_ROOT/waiting-store-hold"
+printf '%s' '{"hook_event_name":"Stop"}' |
+  PATH="$waiting_hold_bin:$PATH" TMUX_PANE="$waitable_pane" "$GANG" hook >/dev/null &
+store_hook_pid=$!
+tmux wait-for waiting-store-held
+tmux wait-for -S waiting-probe-release
+probe_reader_rc=0
+wait "$probe_reader_pid" || probe_reader_rc=$?
+tmux wait-for -S waiting-store-release
+store_hook_rc=0
+wait "$store_hook_pid" || store_hook_rc=$?
+equal "a reader released while a Stop's write is parked exits cleanly" 0 "$probe_reader_rc"
+equal "a Stop whose parked write a reader crossed exits cleanly" 0 "$store_hook_rc"
+equal "a reader cannot land between a Stop's record and its stamp" \
+  "waiting"$'\t'"fixture Stop crossed the probe" \
+  "$(tmux show-options -wqv -t "$waitable_id" @gl_waiting)"
+contains "a Stop's record survives a reader crossing its write" \
+  "$("$GANG" status waitable)" "~wait~ (fixture Stop crossed the probe)"
+
+tmux set-option -w -t "$waitable_id" @gl_waiting \
+  "waiting"$'\t'"a witness older than the re-probe age"
+tmux set-option -w -t "$waitable_id" @gl_waiting_at 1
+printf '%s' probe-outlived > "$RUN_ROOT/waiting-evidence"
+: > "$RUN_ROOT/waiting-probe-hold"
+"$GANG" status waitable > "$RUN_ROOT/clear-crossed.out" 2>&1 &
+probe_reader_pid=$!
+tmux wait-for waiting-probe-held
+: > "$RUN_ROOT/waiting-store-hold"
+printf '%s' '{"hook_event_name":"UserPromptSubmit"}' |
+  PATH="$waiting_hold_bin:$PATH" TMUX_PANE="$waitable_pane" "$GANG" hook >/dev/null &
+store_hook_pid=$!
+tmux wait-for waiting-store-held
+tmux wait-for -S waiting-probe-release
+probe_reader_rc=0
+wait "$probe_reader_pid" || probe_reader_rc=$?
+tmux wait-for -S waiting-store-release
+store_hook_rc=0
+wait "$store_hook_pid" || store_hook_rc=$?
+equal "a reader released while a prompt's retirement is parked exits cleanly" 0 \
+  "$probe_reader_rc"
+equal "a prompt whose parked retirement a reader crossed exits cleanly" 0 "$store_hook_rc"
+equal "a reader cannot land between a prompt's two retirements" "" \
+  "$(tmux show-options -wqv -t "$waitable_id" @gl_waiting)"
+
 printf '%s' unknown > "$RUN_ROOT/waiting-evidence"
 printf '%s' '{"hook_event_name":"Stop"}' |
   TMUX_PANE="$waitable_pane" "$GANG" hook >/dev/null

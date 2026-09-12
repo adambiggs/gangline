@@ -3745,22 +3745,28 @@ waiting_read() { # $1 window -> 0 waiting, 1 absent, 2 unknown; sets WAITING_WHA
   esac
 }
 
+# A RECORD AND ITS STAMP CHANGE IN ONE TMUX COMMAND LIST. A re-probing reader
+# writes only while the stamp it judged still stands, which holds only if no
+# reader can run between a hook's two writes. tmux runs one client's command
+# list to its end before it takes another client's command, so a reader sees
+# all of a hook's write or none of it.
 waiting_clear() { # $1 window; a new native event retires the old Stop witness
-  tmux set-option -uw -t "$1" @gl_waiting 2>/dev/null || true
-  tmux set-option -uw -t "$1" @gl_waiting_at 2>/dev/null || true
+  tmux set-option -uw -t "$1" @gl_waiting \; \
+    set-option -uw -t "$1" @gl_waiting_at 2>/dev/null || true
 }
 
 # A WAITING RECORD AGES. It is one reading taken at Stop, and an idle window may
 # send no further native event: the held work can finish and the record would
 # name it indefinitely. Each record is stamped so the next state reader can take
 # a fresh bounded reading of one older than this, as ADR 0044 retires refuted
-# state at a reading. The record is written before its stamp, so a lost stamp
-# leaves a record that is re-probed rather than one that is trusted.
+# state at a reading. The record comes first in the list, and a failed command
+# ends the list, so a lost stamp leaves a record that is re-probed rather than
+# one that is trusted.
 WAITING_REPROBE_AFTER=60
 
 waiting_store() { # $1 window, $2 record
-  tmux set-option -w -t "$1" @gl_waiting "$2" 2>/dev/null || true
-  tmux set-option -w -t "$1" @gl_waiting_at "$(date +%s)" 2>/dev/null || true
+  tmux set-option -w -t "$1" @gl_waiting "$2" \; \
+    set-option -w -t "$1" @gl_waiting_at "$(date +%s)" 2>/dev/null || true
 }
 
 WAITING_AT=""
