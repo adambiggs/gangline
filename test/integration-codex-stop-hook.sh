@@ -205,6 +205,7 @@ contains "a waived send to an idle recipient is delivered at once" \
 contains "a waived send says it owes no reply" "$reply_waived_out" "(owes no reply)"
 reply_waived_one="$(reply_nonce_from "$reply_b_id" reply-a)" || reply_waived_one=""
 equal "the waived send leaves its recipient one record" 16 "${#reply_waived_one}"
+# source-guard: producer@3ab20b3c6c8d: the nonce is read from the one record the waived send asserted immediately above left on reply-b, and WAIVED_ONE is unique to that send
 contains "the waiver travels in the envelope" "$(pane_all reply-b)" \
   "[gang:reply-a#$reply_waived_one no-reply] WAIVED_ONE"
 reply_waived_one_digest="$(tmux show-options -wqv -t "$reply_b_id" "@gl_reply_$reply_waived_one" | cut -d: -f5)"
