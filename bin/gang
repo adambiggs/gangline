@@ -5013,10 +5013,20 @@ tick_health_report() {
 }
 
 tick_state_forget() { # health and the transition journal die with their team
-  tick_paths_set || return 0
-  rm -f -- "$TICK_HEALTH" "$TICK_LOG" "$TICK_TICKET" \
-    "$TICK_JOURNAL" "$TICK_JOURNAL.1" 2>/dev/null || true
-  rmdir -- "$TICK_DIR" 2>/dev/null || true
+  local err=""
+  if ! tick_paths_set; then
+    printf '%s\n' "$(colour "$C_BAD" "tick health and transition journal NOT removed: the team's state directory could not be resolved")" >&2
+    return 1
+  fi
+  if ! err="$(rm -f -- "$TICK_HEALTH" "$TICK_LOG" "$TICK_TICKET" \
+         "$TICK_JOURNAL" "$TICK_JOURNAL.1" 2>&1)"; then
+    printf '%s\n' "$(colour "$C_BAD" "tick state files NOT all removed from $TICK_DIR: ${err##*$'\n'}")" >&2
+    return 1
+  fi
+  if [ -d "$TICK_DIR" ] && ! err="$(rmdir -- "$TICK_DIR" 2>&1)"; then
+    printf '%s\n' "$(colour "$C_BAD" "tick state directory $TICK_DIR NOT removed: ${err##*$'\n'}")" >&2
+    return 1
+  fi
 }
 
 tick_lock_paths_set() {
@@ -14980,7 +14990,7 @@ cmd_drop() {
 
 cmd_down() { # inverse of up: end the whole team's session
   local named="${1:-}" id raw special shown names="" self="" wait_ids="" ids=""
-  local unit scope_units="" unissued_scopes="" orphan_scopes="" scope_rc=0
+  local unit scope_units="" unissued_scopes="" orphan_scopes="" scope_rc=0 forget_rc=0
   [ $# -le 1 ] || die "down: unexpected argument '$2'"
   [ "$named" = "$SESSION" ] \
     || die "down: this shell's team is '$SESSION' and you named '$named' — refusing to end a session you did not name. Gang ends exactly the team it is pointed at (gang roster; GANG_SESSION selects another)"
@@ -15054,7 +15064,9 @@ cmd_down() { # inverse of up: end the whole team's session
   # ccusage snapshot, and the teardown pays ccusage's bound once, not per window.
   # shellcheck disable=SC2086  # ids are tmux window ids, never blank-bearing
   usage_events_record down $wait_ids
-  tick_state_forget
+  # A team that cannot have its tick state removed still ends; the leftover is
+  # named on stderr and makes the teardown's status nonzero.
+  tick_state_forget || forget_rc=1
   tmux kill-session -t "=$SESSION"
   team_socket_forget "$SESSION"
   for id in $wait_ids; do wait_signal_registered "$id"; done
@@ -15067,6 +15079,7 @@ $orphan_scopes"
     [ -n "$unit" ] || continue
     scope_unissued_survivor "$unit" || scope_rc=$?
   done <<<"$unissued_scopes"
+  [ "$scope_rc" -ne 0 ] || scope_rc="$forget_rc"
   return "$scope_rc"
 }
 

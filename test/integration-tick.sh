@@ -3835,8 +3835,21 @@ equal "and a silent probe miss does not fail the tick" 0 \
 "$GANG" drop tick-bare >/dev/null 2>&1
 
 # Team teardown uninstalls the session's alert-center options and retires the
-# ephemeral health files with the session that gave them meaning.
-"$GANG" down "$GANG_SESSION" >/dev/null
+# ephemeral health files with the session that gave them meaning. A file down
+# does not own keeps their directory in place: the team still ends, and the
+# leftover is named and fails the teardown instead of passing it silently.
+tick_state_foreign="${tick_health_file%/health}/foreign"
+: > "$tick_state_foreign"
+tick_down_rc=0
+tick_down_err="$("$GANG" down "$GANG_SESSION" 2>&1 >/dev/null)" || tick_down_rc=$?
+equal "a tick state directory down could not remove fails the teardown" 1 \
+  "$tick_down_rc"
+contains "and down names the directory it left behind" "$tick_down_err" \
+  "tick state directory ${tick_health_file%/health} NOT removed"
+excludes "and does not claim its own files were left there" "$tick_down_err" \
+  "files NOT all removed"
+rm -f -- "$tick_state_foreign"
+rmdir -- "${tick_health_file%/health}"
 equal "tick test teardown ends only its exact disposable session" absent \
   "$(if tmux has-session -t "=$GANG_SESSION" 2>/dev/null; then printf present; else printf absent; fi)"
 equal "team teardown removes its ephemeral tick health file" absent \

@@ -604,7 +604,10 @@ shell is pointed at; `down` refuses a name that does not match, and refuses
 outright when it is run from a pane inside that session. There is no override:
 an agent must not be able to end the team it is running in. After the archives
 it prepares one usage record per window with a single ccusage read and asks the
-tmux server to append the prepared batch from its host mount namespace.
+tmux server to append the prepared batch from its host mount namespace. It
+removes the team's tick health and transition journal before ending the
+session; a removal that fails is named on stderr, the session still ends, and
+`down` then exits nonzero.
 
 ## Delivery and compaction
 
