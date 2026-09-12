@@ -977,6 +977,18 @@ contains "the contract states the complement of envelope attribution" \
 contains "the contract makes crossed state explicit before stale instructions act" \
   "$(contract_prose)" \
   "If a teammate's message crossed one you just sent, say so in your next reply and state what is already true before acting on the stale message."
+# The contract states only the rule an agent acts on; how Gangline correlates
+# replies and retires obligations is enforcement, documented under gang send.
+contains "the contract states the reply every verified teammate message is owed" \
+  "$(contract_prose)" \
+  "A verified message from a teammate is owed one concise reply or acknowledgement through Gangline."
+contains "the contract keeps keyboard input out of that debt" \
+  "$(contract_prose)" \
+  "Session-keyboard input, including operator input, neither creates nor clears that debt."
+excludes "the contract leaves reply correlation to the reference" \
+  "$(contract_prose)" "correlat"
+excludes "the contract leaves obligation retirement to the reference" \
+  "$(contract_prose)" "retire"
 excludes "an absent doctrine leaves no doctrine origin in the base contract" \
   "$(pane alpha)" "Operator doctrine ("
 excludes "startup contains no session-marker prompt" "$(pane alpha)" "Session marker"
