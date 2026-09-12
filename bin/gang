@@ -6823,7 +6823,7 @@ reply_waived_report() { # $1 window; messages whose sender asked for nothing bac
   while read -r nonce state token witness mode digest replies; do
     [ "$mode" = waived ] || continue
     case "$state" in
-      prompt|complete|settled|discharged) seen=read ;;
+      prompt|complete|settled|discharged) seen="read" ;;
       candidate|verified) seen="not yet read" ;;
       *) seen="$state" ;;
     esac
