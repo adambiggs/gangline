@@ -28,7 +28,7 @@ jobs:
         run: |
           set -euo pipefail
           mkdir -p _site
-          cp site/index.html _site/index.html
+          cp site/index.html site/mushing-frames.js _site/
           cp site/demo.gif site/demo.mp4 site/demo-poster.jpg _site/
           # Install instructions point at the raw GitHub URL on purpose — what you
           # pipe is verifiably the repo file — so no /install copy is published.

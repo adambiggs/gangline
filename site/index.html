@@ -6,9 +6,13 @@
   <title>Gangline — coding agents in one tmux session</title>
   <meta name="description" content="Gangline runs Claude Code, Codex, OpenCode, and Pi as named windows in one tmux session. Send work by name, watch it land, keep agents going for hours. No daemon, no database.">
   <style>
-    :root { color-scheme: light dark; --accent:#6ea8fe; --dim:#888; --rule:#7774; --code:#7771; }
+    :root {
+      color-scheme: light dark;
+      --snow:#fbf7ee; --ink:#3b261a; --accent:#9c455a; --dim:#705c4d; --term-dim:#c7b8a3;
+      --rule:#77593b66; --code:#eadfce;
+    }
     * { box-sizing:border-box; }
-    body { margin:0; padding:4rem 1.5rem; font:16px/1.65 ui-monospace,SFMono-Regular,Menlo,Consolas,monospace; }
+    body { margin:0; padding:4rem 1.5rem; background:var(--snow); color:var(--ink); font:16px/1.65 ui-monospace,SFMono-Regular,Menlo,Consolas,monospace; }
     main { max-width:48rem; margin:auto; }
     h1 { margin:0; font-size:2rem; }
     h2 { margin-top:3rem; padding-bottom:.4rem; border-bottom:1px solid var(--rule); font-size:1rem; }
@@ -22,28 +26,47 @@
     li { margin:.5rem 0; }
     .term { overflow:hidden; margin:2rem 0; border:1px solid var(--rule); border-radius:.4rem; background:#0f1115; }
     .term video { display:block; width:100%; height:auto; }
-    .term p { margin:0; padding:.7rem 1rem; color:var(--dim); font-size:.8rem; }
+    .term p { margin:0; padding:.7rem 1rem; color:var(--term-dim); font-size:.8rem; }
     footer { margin-top:4rem; padding-top:1rem; border-top:1px solid var(--rule); color:var(--dim); }
+    .hero { position:relative; isolation:isolate; overflow:hidden; margin:-1.5rem -1rem 0; padding:1.5rem 1rem 1rem; }
+    .hero-copy { position:relative; z-index:1; }
+    .mushing { position:absolute; z-index:-1; inset:0; overflow:hidden; opacity:.15; pointer-events:none; user-select:none; mask-image:radial-gradient(ellipse closest-side at center,#000 50%,transparent 100%); }
+    .mushing pre { position:absolute; top:50%; left:50%; margin:0; padding:0; border:0; background:none; color:#6c4930; overflow:visible; font:clamp(8px,1.4vw,12px)/.82 ui-monospace,SFMono-Regular,Menlo,Consolas,monospace; letter-spacing:0; transform:translate(-50%,-50%) scale(1.35,1.7); }
+    @media (prefers-color-scheme: dark) {
+      :root { --snow:#211914; --ink:#f5eee0; --accent:#f09aac; --dim:#cebda5; --term-dim:#cebda5; --rule:#c9a98166; --code:#34271e; }
+      .mushing pre { color:#d9b586; }
+    }
+    @media (max-width: 430px) {
+      body { padding:2rem 1rem; }
+      .hero { margin:-1rem -.5rem 0; padding:1rem .5rem .5rem; }
+      .mushing pre { transform:translate(-50%,-50%) scale(1.6,2.65); }
+    }
   </style>
+  <script src="mushing-frames.js" defer></script>
 </head>
 <body>
 <main>
-  <h1>gangline</h1>
-  <p class="tag">A gangline is the line that connects every dog's harness to the sled.</p>
+  <section class="hero" aria-label="Gangline introduction">
+    <div class="mushing" aria-hidden="true"><pre id="mushing"></pre></div>
+    <div class="hero-copy">
+      <h1>gangline</h1>
+      <p class="tag">A gangline is the line that connects every dog's harness to the sled.</p>
 
-  <nav>
-    <a href="#demo">demo</a>
-    <a href="#start">start</a>
-    <a href="#surface">what it does</a>
-    <a href="#long">long sessions</a>
-    <a href="https://github.com/adambiggs/gangline">github</a>
-  </nav>
+      <nav>
+        <a href="#demo">demo</a>
+        <a href="#start">start</a>
+        <a href="#surface">what it does</a>
+        <a href="#long">long sessions</a>
+        <a href="https://github.com/adambiggs/gangline">github</a>
+      </nav>
 
-  <p>Gangline runs Claude Code, Codex, OpenCode, and Pi as named windows in one
-  tmux session, so they can hand each other work by name and you can watch the
-  whole thing happen.</p>
+      <p>Gangline runs Claude Code, Codex, OpenCode, and Pi as named windows in one
+      tmux session, so they can hand each other work by name and you can watch the
+      whole thing happen.</p>
 
-  <pre><code>curl -fsSL https://raw.githubusercontent.com/adambiggs/gangline/main/install.sh | sh</code></pre>
+      <pre><code>curl -fsSL https://raw.githubusercontent.com/adambiggs/gangline/main/install.sh | sh</code></pre>
+    </div>
+  </section>
 
   <section id="demo">
     <h2>Demo</h2>
@@ -174,6 +197,7 @@ gang roster</code></pre>
     <a href="https://github.com/adambiggs/gangline">source</a> ·
     <a href="https://github.com/adambiggs/gangline/blob/main/docs/reference.md">reference</a> ·
     <a href="https://github.com/adambiggs/gangline/blob/main/CONSTITUTION.md">constitution</a> ·
+    <a href="https://commons.wikimedia.org/wiki/File:Dogs_pulling_a_sled.webm">mushing backdrop adapted from <cite>Dogs pulling a sled</cite> by Jan Mosimann, CC BY 2.0</a> ·
     Apache-2.0
   </footer>
 </main>
