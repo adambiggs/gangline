@@ -3745,22 +3745,23 @@ waiting_read() { # $1 window -> 0 waiting, 1 absent, 2 unknown; sets WAITING_WHA
   esac
 }
 
-# A HOOK STAMPS BEFORE IT WRITES ITS RECORD. A re-probing reader writes only
-# while the stamp it judged still stands, testing it in the same command as
-# each write. One command list is not one step: the server runs it a command at
-# a time, and a waiting after-set-option hook yields the client's queue between
-# two of them, so a reader can land inside a hook's write. With the stamp first,
-# a reader that lands there finds its judged stamp gone and writes nothing, and
-# the hook's record is the last one written. A retirement sets a fresh stamp
-# rather than unsetting it, so a reader that judged an unstamped record is
-# refuted too. It does so even where no record is left: a reader that finds the
-# source gone empties the record before it moves the stamp, so an empty record
-# is no sign that the stamp has moved. A failed command ends the list: a lost
-# stamp leaves the old record and stamp, which the next reader re-probes, and a
-# record write lost after its stamp leaves the old record trusted for at most
-# one re-probe age.
+# EVERY WRITER MOVES THE COUNT BEFORE ITS RECORD. @gl_waiting_gen counts the
+# writes to the record, and a re-probing reader writes only while the count it
+# judged still stands, testing it in the same command as each write. One
+# command list is not one step: the server runs it a command at a time, and a
+# waiting after-set-option hook yields the client's queue between two of them,
+# so a reader can land inside a hook's write. With the count moved first, a
+# reader that lands there finds its judged count gone and writes nothing, and
+# the hook's record is the last one written. A retirement moves the count even
+# where no record is left: a reader that finds the source gone empties the
+# record before it moves the count, so an empty record is no sign that the
+# count has moved. A count only moves forward, so unlike a stamp it never comes
+# back to a value a reader judged; only a count this file did not write can
+# repeat one. A failed command ends the list and leaves the old record trusted
+# for at most one re-probe age.
 waiting_clear() { # $1 window; a new native event retires the old Stop witness
-  tmux set-option -w -t "$1" @gl_waiting_at "$(date +%s)" \; \
+  tmux set-option -wF -t "$1" @gl_waiting_gen "#{e|+:#{@gl_waiting_gen},1}" \; \
+    set-option -w -t "$1" @gl_waiting_at "$(date +%s)" \; \
     set-option -uw -t "$1" @gl_waiting 2>/dev/null || true
 }
 
@@ -3772,14 +3773,21 @@ waiting_clear() { # $1 window; a new native event retires the old Stop witness
 WAITING_REPROBE_AFTER=60
 
 waiting_store() { # $1 window, $2 record
-  tmux set-option -w -t "$1" @gl_waiting_at "$(date +%s)" \; \
+  tmux set-option -wF -t "$1" @gl_waiting_gen "#{e|+:#{@gl_waiting_gen},1}" \; \
+    set-option -w -t "$1" @gl_waiting_at "$(date +%s)" \; \
     set-option -w -t "$1" @gl_waiting "$2" 2>/dev/null || true
 }
 
+WAITING_GEN=""
 WAITING_AT=""
 
-waiting_stale() { # $1 window -> 0 when the stored record is due a fresh probe; sets WAITING_AT
+# $1 window -> 0 when the stored record is due a fresh probe; sets WAITING_GEN
+# and WAITING_AT
+waiting_stale() {
   local now
+  # The count is read before the stamp: a write that lands between the two
+  # reads moves the count past the one judged, so the reader's write is refused.
+  WAITING_GEN="$(tmux show-options -wqv -t "$1" @gl_waiting_gen 2>/dev/null)" || WAITING_GEN=""
   WAITING_AT="$(tmux show-options -wqv -t "$1" @gl_waiting_at 2>/dev/null)" || WAITING_AT=""
   case "$WAITING_AT" in ''|*[!0-9]*) return 0 ;; esac
   now="$(date +%s)"
@@ -3788,10 +3796,10 @@ waiting_stale() { # $1 window -> 0 when the stored record is due a fresh probe; 
   [ "$((now - 10#$WAITING_AT))" -ge "$WAITING_REPROBE_AFTER" ]
 }
 
-# $1 window, $2 collar, $3 Stop payload, optional $4 the stamp a reader judged
-# stale; cache one bounded probe
+# $1 window, $2 collar, $3 Stop payload, optional $4 the count a reader read
+# with the record it judged stale; cache one bounded probe
 waiting_refresh() {
-  local raw="" header="" output="" rc=0 source="collar '$2'" record="" judged="" now=""
+  local raw="" header="" output="" rc=0 source="collar '$2'" record="" judged="" now="" bump=""
   # CONTAIN THE OPTIONAL RELOAD. Stop's universal turn boundary has always
   # survived a collar removed after hitch; a derived-state reader cannot make
   # that boundary depend on the file still existing. Capturing stderr also
@@ -3830,7 +3838,7 @@ waiting_refresh() {
       *) record="unknown"$'\t'"collar_waiting in $source returned unknown verdict $rc" ;;
     esac
   fi
-  # A HOOK PASSES NO STAMP: it is the newer event, and its reading always stands.
+  # A HOOK PASSES NO COUNT: it is the newer event, and its reading always stands.
   if [ "$#" -lt 4 ]; then
     if [ -n "$record" ]; then
       waiting_store "$1" "$record"
@@ -3841,29 +3849,33 @@ waiting_refresh() {
   fi
   # A READER WRITES ONLY OVER THE RECORD IT JUDGED. Its probe runs outside any
   # lock, so a hook can store a newer record or retire this one while the probe
-  # is held, and every hook changes the stamp first. Each write below tests the
-  # judged stamp and writes in one set-option, so nothing can land between the
+  # is held, and every writer moves the count first. Each write below tests the
+  # judged count and writes in one set-option, so nothing can land between the
   # test and the write; a read followed by a write let a hook land between them
-  # and be undone. The record goes first, since the reader's own stamp would
-  # refute it. Only digits are ever written as a stamp, so a judged stamp with
-  # any other byte is tested as "still not a number" and never enters the
-  # format. One collision remains: a hook stamp equal to the judged one, which
-  # only a clock stepped back to that second can write. A list that fails part
-  # way can leave the scratch option, under a name no other process uses.
+  # and be undone. The count moves last, since the reader's own bump would
+  # refute its other writes, and once it has moved a second reader that judged
+  # the same count writes nothing. A count this file writes is a number or
+  # empty, so a judged count with any other byte is tested as "still not a
+  # number" and never enters the format; bumping one yields empty, which is
+  # not. A list that fails part way can leave the scratch option, under a name
+  # no other process uses.
   case "$4" in
-    *[!0-9]*) judged="#{m:*[!0-9]*,#{@gl_waiting_at}}" ;;
-    *) judged="#{==:#{@gl_waiting_at},$4}" ;;
+    *[!0-9]*) judged="#{m:*[!0-9]*,#{@gl_waiting_gen}}" ;;
+    *) judged="#{==:#{@gl_waiting_gen},$4}" ;;
   esac
   now="$(date +%s)"
+  bump="#{?$judged,#{e|+:#{@gl_waiting_gen},1},#{@gl_waiting_gen}}"
   if [ -n "$record" ]; then
     tmux set-option -w -t "$1" "@gl_waiting_next_$$" "$record" \; \
       set-option -wF -t "$1" @gl_waiting \
         "#{?$judged,#{@gl_waiting_next_$$},#{@gl_waiting}}" \; \
       set-option -wF -t "$1" @gl_waiting_at "#{?$judged,$now,#{@gl_waiting_at}}" \; \
+      set-option -wF -t "$1" @gl_waiting_gen "$bump" \; \
       set-option -uw -t "$1" "@gl_waiting_next_$$" 2>/dev/null || true
   else
     tmux set-option -wF -t "$1" @gl_waiting "#{?$judged,,#{@gl_waiting}}" \; \
-      set-option -wF -t "$1" @gl_waiting_at "#{?$judged,$now,#{@gl_waiting_at}}" \
+      set-option -wF -t "$1" @gl_waiting_at "#{?$judged,$now,#{@gl_waiting_at}}" \; \
+      set-option -wF -t "$1" @gl_waiting_gen "$bump" \
       2>/dev/null || true
   fi
 }
@@ -13913,11 +13925,12 @@ state_now() { # $1 = window id, collar loaded -> the state, in words
     1) waiting_rc=0
        waiting_read "$1" || waiting_rc=$?
        # A stale record is re-probed here, with no Stop payload to pass, and the
-       # reading is written only while the stamp judged stale still stands;
-       # every hook changes the stamp before its record, so a native event that
-       # crosses the probe is never overwritten by the reading it refuted.
+       # reading is written only while the count read with that record still
+       # stands; every hook moves the count before its record, so a native
+       # event that crosses the probe is never overwritten by the reading it
+       # refuted.
        if [ "$waiting_rc" -ne 1 ] && waiting_stale "$1"; then
-         waiting_refresh "$1" "$(collar_read "$1")" "" "$WAITING_AT"
+         waiting_refresh "$1" "$(collar_read "$1")" "" "$WAITING_GEN"
          waiting_rc=0
          waiting_read "$1" || waiting_rc=$?
        fi

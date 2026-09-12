@@ -231,12 +231,10 @@ equal "a reader whose held probe a prompt crossed exits cleanly" 0 "$probe_reade
 equal "a prompt that crosses a held re-probe keeps the record retired" "" \
   "$(tmux show-options -wqv -t "$waitable_id" @gl_waiting)"
 
-# A HOOK SENDS ITS RECORD AND STAMP AS ONE INVOCATION. A Stop whose two writes
-# were separate calls could be parked between them, and a crossed reader then
-# re-read the old stamp, passed the check and cleared both. This client-side
-# shim parks the hook's first call that names the stamp; with both options in
-# one invocation it parks before either reaches the server, so the reader's
-# write lands first and the hook's stands. It parks a reader's first waiting
+# A READER THAT LANDS BEFORE A HOOK'S WRITES LEAVES THE HOOK THE LAST WORD.
+# This client-side shim parks the hook's first call that names the stamp; with
+# the hook's writes in one invocation it parks before any reaches the server,
+# so the reader's write lands first and the hook's stands. It parks a reader's first waiting
 # write the same way when armed for that. Its barriers, and the fixture
 # collar's when a reader runs under it, go through the suite's bounded tmux:
 # the path PATH resolves here, captured because a shim cannot write the bare
@@ -334,17 +332,17 @@ equal "a reader cannot land between a prompt's two retirements" "" \
 # list one command at a time, and a waiting after-set-option hook yields that
 # client's queue between two set-options of one list, so another client can
 # land there. This server-side hold parks the first set-option that moves the
-# record or the stamp off its setup value, once, wherever in a list it falls.
-# It reads through the suite's bounded tmux on the suite's own socket.
+# record off its setup value, once, wherever in a list it falls: every write
+# the list makes before the record has landed, and none after it. It reads
+# through the suite's bounded tmux on the suite's own socket.
 cat > "$RUN_ROOT/waiting-server-hold.sh" <<SH
 [ -e '$RUN_ROOT/waiting-server-hold' ] || exit 0
 GANG_TEST_PATH_SHIM_GUARD='$GANG_TEST_PATH_SHIM_GUARD'
 export GANG_TEST_PATH_SHIM_GUARD
 w="\$(cat '$RUN_ROOT/waiting-server-window')" || exit 1
 rec="\$('$waiting_wait_tmux' -S '$TMUX_SOCKET' show-options -wqv -t "\$w" @gl_waiting)"
-at="\$('$waiting_wait_tmux' -S '$TMUX_SOCKET' show-options -wqv -t "\$w" @gl_waiting_at)"
 case "\$rec" in
-  "waiting"?"a witness older than the re-probe age") [ "\$at" != 1 ] || exit 0 ;;
+  "waiting"?"a witness older than the re-probe age") exit 0 ;;
 esac
 rm -f -- '$RUN_ROOT/waiting-server-hold'
 '$waiting_wait_tmux' -S '$TMUX_SOCKET' wait-for -S waiting-server-held
@@ -354,9 +352,10 @@ printf '%s' "$waitable_id" > "$RUN_ROOT/waiting-server-window"
 tmux set-hook -g after-set-option \
   "run-shell \"sh '$RUN_ROOT/waiting-server-hold.sh'\""
 
-# A HOOK STAMPS BEFORE IT WRITES ITS RECORD. A Stop parked after its first
-# write lets a crossed reader in; with the stamp first, that reader finds the
-# stamp it judged gone and writes nothing, and the Stop's record then lands.
+# A HOOK MOVES THE COUNT BEFORE IT WRITES ITS RECORD. A Stop parked after its
+# record write lets a crossed reader in; with the count moved first, that
+# reader finds the count it judged gone and writes nothing, and the Stop's
+# record stands.
 rm -f -- "$RUN_ROOT/waiting-evidence"
 printf '%s' '{"hook_event_name":"Stop"}' |
   TMUX_PANE="$waitable_pane" "$GANG" hook >/dev/null
@@ -385,8 +384,9 @@ equal "a reader landing inside a Stop's write leaves the Stop's record" \
   "waiting"$'\t'"fixture Stop crossed the probe" \
   "$(tmux show-options -wqv -t "$waitable_id" @gl_waiting)"
 
-# A RETIREMENT STAMPS BEFORE IT UNSETS THE RECORD, for the same reason: a
-# reader that lands between them must not store the reading the prompt refuted.
+# A RETIREMENT MOVES THE COUNT BEFORE IT UNSETS THE RECORD, for the same
+# reason: a reader that lands after the unset must not store the reading the
+# prompt refuted.
 tmux set-option -w -t "$waitable_id" @gl_waiting \
   "waiting"$'\t'"a witness older than the re-probe age"
 tmux set-option -w -t "$waitable_id" @gl_waiting_at 1
@@ -411,7 +411,7 @@ equal "a prompt parked inside its retirement exits cleanly" 0 "$store_hook_rc"
 equal "a reader landing inside a prompt's retirement stores nothing" "" \
   "$(tmux show-options -wqv -t "$waitable_id" @gl_waiting)"
 
-# A READER TESTS AND WRITES IN ONE COMMAND. A reader that read the stamp and
+# A READER TESTS AND WRITES IN ONE COMMAND. A reader that read the count and
 # then wrote could be overtaken between the two; here it is parked at its
 # first waiting write while a Stop runs in full, and must not undo it.
 rm -f -- "$RUN_ROOT/waiting-evidence"
@@ -439,12 +439,13 @@ equal "a Stop that overtakes a reader's write keeps its own record" \
   "waiting"$'\t'"fixture Stop crossed the probe" \
   "$(tmux show-options -wqv -t "$waitable_id" @gl_waiting)"
 
-# AN UNSTAMPED RECORD IS REFUTED TOO. A retirement that unset the stamp left
-# it reading empty before and after, so a reader that judged the empty stamp
-# stored over the prompt; a retirement sets a fresh stamp instead.
+# A RECORD WITH NO STAMP AND NO COUNT IS REFUTED TOO. A reader of it judges
+# the empty count, and a prompt moves the count from empty, so the reader
+# stores nothing over the prompt.
 tmux set-option -w -t "$waitable_id" @gl_waiting \
   "waiting"$'\t'"a witness recorded before stamps"
 tmux set-option -uw -t "$waitable_id" @gl_waiting_at
+tmux set-option -uw -t "$waitable_id" @gl_waiting_gen
 printf '%s' probe-outlived > "$RUN_ROOT/waiting-evidence"
 : > "$RUN_ROOT/waiting-probe-hold"
 "$GANG" status waitable > "$RUN_ROOT/unstamped.out" 2>&1 &
@@ -460,8 +461,8 @@ equal "a reader of an unstamped record crossed by a prompt exits cleanly" 0 \
 equal "a prompt retires an unstamped record a reader was re-probing" "" \
   "$(tmux show-options -wqv -t "$waitable_id" @gl_waiting)"
 
-# A READER PARKED BETWEEN ITS OWN TWO WRITES leaves a Stop that lands there
-# both its record and its stamp.
+# A READER PARKED BETWEEN ITS OWN WRITES leaves a Stop that lands there both
+# its record and its stamp.
 rm -f -- "$RUN_ROOT/waiting-evidence"
 printf '%s' '{"hook_event_name":"Stop"}' |
   TMUX_PANE="$waitable_pane" "$GANG" hook >/dev/null
@@ -492,10 +493,10 @@ case "$waiting_stamp" in
 esac
 equal "a Stop inside a reader's write keeps its stamp" stamped "$waiting_stamp"
 
-# A PROMPT RETIRES WITH A FRESH STAMP EVEN WHEN NO RECORD IS LEFT. A clearing
-# reader empties the record before it moves the stamp, so a prompt landing
-# between those writes finds no record; if it kept the stamp, a second reader
-# that judged the same stamp would store the reading the prompt refuted.
+# A PROMPT MOVES THE COUNT EVEN WHEN NO RECORD IS LEFT. A clearing reader
+# empties the record before it moves the count, so a prompt landing between
+# those writes finds no record; if it left the count, a second reader that
+# judged the same count would store the reading the prompt refuted.
 tmux set-option -w -t "$waitable_id" @gl_waiting \
   "waiting"$'\t'"a witness older than the re-probe age"
 tmux set-option -w -t "$waitable_id" @gl_waiting_at 1
@@ -531,23 +532,124 @@ printf '%s' '{"hook_event_name":"Stop"}' |
 tmux set-hook -gu after-set-option
 rm -f -- "$RUN_ROOT/waiting-server-hold" "$RUN_ROOT/waiting-server-window"
 
-# A STAMP THAT IS NOT A NUMBER IS STALE AND NEVER ENTERS A FORMAT. Only digits
-# are ever written there, so the reader tests for "still not a number".
+# A RETIREMENT REFUTES A READER EVEN AT THE SECOND THE READER JUDGED. A stamp
+# from the future is due a fresh probe, and the clock reaches it by running
+# forward: a prompt at that second stamps the value the reader judged, so a
+# reader that tested the stamp stored the reading the prompt refuted. The
+# prompt here runs under a clock reading that second.
+waiting_date_bin="$RUN_ROOT/waiting-date-bin"
+waiting_real_date="$(command -v date)"
+mkdir -p "$waiting_date_bin"
+cat > "$waiting_date_bin/date" <<SH
+#!/bin/sh
+. "\$GANG_TEST_PATH_SHIM_GUARD"
+path_shim_guard '$waiting_real_date' "\$0" date || exit \$?
+if [ "\${1:-}" = +%s ] && [ -n "\${GANG_TEST_NOW:-}" ]; then
+  printf '%s\n' "\$GANG_TEST_NOW"
+else
+  exec '$waiting_real_date' "\$@"
+fi
+SH
+chmod +x "$waiting_date_bin/date"
+tmux set-option -w -t "$waitable_id" @gl_waiting \
+  "waiting"$'\t'"a witness stamped at a second still to come"
+tmux set-option -w -t "$waitable_id" @gl_waiting_at 4000000000
+printf '%s' probe-outlived > "$RUN_ROOT/waiting-evidence"
+: > "$RUN_ROOT/waiting-probe-hold"
+"$GANG" status waitable > "$RUN_ROOT/future-stamp.out" 2>&1 &
+probe_reader_pid=$!
+tmux wait-for waiting-probe-held
+waiting_gen_before="$(tmux show-options -wqv -t "$waitable_id" @gl_waiting_gen)"
+printf '%s' '{"hook_event_name":"UserPromptSubmit"}' |
+  PATH="$waiting_date_bin:$PATH" GANG_TEST_NOW=4000000000 \
+  TMUX_PANE="$waitable_pane" "$GANG" hook >/dev/null
+tmux wait-for -S waiting-probe-release
+probe_reader_rc=0
+wait "$probe_reader_pid" || probe_reader_rc=$?
+equal "a reader of a future stamp crossed by a prompt exits cleanly" 0 "$probe_reader_rc"
+equal "a prompt at the second a reader judged retires the record" "" \
+  "$(tmux show-options -wqv -t "$waitable_id" @gl_waiting)"
+equal "the prompt's clock read the second the reader judged" 4000000000 \
+  "$(tmux show-options -wqv -t "$waitable_id" @gl_waiting_at)"
+equal "a prompt from a pane moves its window's count by one" \
+  "$((${waiting_gen_before:-0} + 1))" \
+  "$(tmux show-options -wqv -t "$waitable_id" @gl_waiting_gen)"
+rm -f -- "$RUN_ROOT/waiting-evidence"
+printf '%s' '{"hook_event_name":"Stop"}' |
+  TMUX_PANE="$waitable_pane" "$GANG" hook >/dev/null
+
+# A READER'S WRITE MOVES THE COUNT TOO. Two readers can judge one count, and
+# the one that probes later holds the newer reading; the first to write moves
+# the count, so the other writes nothing. Each reader here is overtaken, parked
+# at its write, by a later one with the opposite reading.
+tmux set-option -w -t "$waitable_id" @gl_waiting \
+  "waiting"$'\t'"a witness older than the re-probe age"
+tmux set-option -w -t "$waitable_id" @gl_waiting_at 1
+printf '%s' probe-outlived > "$RUN_ROOT/waiting-evidence"
+: > "$RUN_ROOT/waiting-probe-hold"
+PATH="$waiting_hold_bin:$PATH" "$GANG" status waitable \
+  > "$RUN_ROOT/overtaken-writer.out" 2>&1 &
+writer_reader_pid=$!
+tmux wait-for waiting-probe-held
+: > "$RUN_ROOT/waiting-write-hold"
+tmux wait-for -S waiting-probe-release
+tmux wait-for waiting-write-held
+rm -f -- "$RUN_ROOT/waiting-evidence"
+contains "a later reader of the same count clears a record whose work is gone" \
+  "$("$GANG" status waitable)" "~idle~"
+tmux wait-for -S waiting-write-release
+writer_reader_rc=0
+wait "$writer_reader_pid" || writer_reader_rc=$?
+equal "a storing reader overtaken by a clearing one exits cleanly" 0 "$writer_reader_rc"
+equal "a storing reader overtaken by a clearing one writes nothing" "" \
+  "$(tmux show-options -wqv -t "$waitable_id" @gl_waiting)"
+
+tmux set-option -w -t "$waitable_id" @gl_waiting \
+  "waiting"$'\t'"a witness older than the re-probe age"
+tmux set-option -w -t "$waitable_id" @gl_waiting_at 1
+printf '%s' probe-crossed > "$RUN_ROOT/waiting-evidence"
+: > "$RUN_ROOT/waiting-probe-hold"
+PATH="$waiting_hold_bin:$PATH" "$GANG" status waitable \
+  > "$RUN_ROOT/overtaken-clearer.out" 2>&1 &
+clearer_reader_pid=$!
+tmux wait-for waiting-probe-held
+: > "$RUN_ROOT/waiting-write-hold"
+tmux wait-for -S waiting-probe-release
+tmux wait-for waiting-write-held
+printf '%s' probe-outlived > "$RUN_ROOT/waiting-evidence"
+contains "a later reader of the same count stores the work it finds held" \
+  "$("$GANG" status waitable)" "~wait~ (fixture probe outlived its refutation)"
+tmux wait-for -S waiting-write-release
+clearer_reader_rc=0
+wait "$clearer_reader_pid" || clearer_reader_rc=$?
+equal "a clearing reader overtaken by a storing one exits cleanly" 0 "$clearer_reader_rc"
+equal "a clearing reader overtaken by a storing one leaves the newer record" \
+  "waiting"$'\t'"fixture probe outlived its refutation" \
+  "$(tmux show-options -wqv -t "$waitable_id" @gl_waiting)"
+rm -f -- "$RUN_ROOT/waiting-evidence"
+printf '%s' '{"hook_event_name":"Stop"}' |
+  TMUX_PANE="$waitable_pane" "$GANG" hook >/dev/null
+
+# A STAMP OR COUNT THAT IS NOT A NUMBER IS STALE AND NEVER ENTERS A FORMAT. A
+# count this file writes is a number or empty, so a reader that judged a
+# garbled one tests for "still not a number".
 tmux set-option -w -t "$waitable_id" @gl_waiting \
   "waiting"$'\t'"a witness older than the re-probe age"
 tmux set-option -w -t "$waitable_id" @gl_waiting_at 'x,}'
+tmux set-option -w -t "$waitable_id" @gl_waiting_gen 'x,}'
 rm -f -- "$RUN_ROOT/waiting-evidence"
 contains "a record under a garbled stamp is re-probed" \
   "$("$GANG" status waitable)" "~idle~"
 equal "the re-probe retires a record under a garbled stamp" "" \
   "$(tmux show-options -wqv -t "$waitable_id" @gl_waiting)"
 
-# A GARBLED STAMP NEVER OVERRIDES A STOP THAT CROSSED ITS READER. Spliced into
-# the reader's condition, this stamp leaves it malformed, and a malformed
+# A GARBLED COUNT NEVER OVERRIDES A STOP THAT CROSSED ITS READER. Spliced into
+# the reader's condition, this count leaves it malformed, and a malformed
 # condition expands empty: the reader would erase the record the Stop wrote.
 tmux set-option -w -t "$waitable_id" @gl_waiting \
   "waiting"$'\t'"a witness older than the re-probe age"
 tmux set-option -w -t "$waitable_id" @gl_waiting_at 'x,}'
+tmux set-option -w -t "$waitable_id" @gl_waiting_gen 'x,}'
 printf '%s' probe-crossed > "$RUN_ROOT/waiting-evidence"
 : > "$RUN_ROOT/waiting-probe-hold"
 "$GANG" status waitable > "$RUN_ROOT/garbled-crossed.out" 2>&1 &
