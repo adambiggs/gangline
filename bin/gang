@@ -4528,12 +4528,13 @@ tick_session_live() { # cleanup/epilogue probe: no diagnostic may replace caller
 }
 
 tick_paths_set() { # resolve the current team to its health/log directory
-  TICK_DIR="" TICK_HEALTH="" TICK_LOG="" TICK_TICKET=""
+  TICK_DIR="" TICK_HEALTH="" TICK_LOG="" TICK_TICKET="" TICK_JOURNAL=""
   tick_team_digest_set || return 1
   TICK_DIR="$(tick_state_root)/$TICK_TEAM_DIGEST"
   TICK_HEALTH="$TICK_DIR/health"
   TICK_LOG="$TICK_DIR/tick.log"
   TICK_TICKET="$TICK_DIR/ticket"
+  TICK_JOURNAL="$TICK_DIR/transitions"
 }
 
 tick_state_prepare() {
@@ -5011,9 +5012,10 @@ tick_health_report() {
   printf '%s\n' "$(colour "$C_BAD" "last tick failed: $note")"
 }
 
-tick_state_forget() { # health is team-scoped and dies with that team
+tick_state_forget() { # health and the transition journal die with their team
   tick_paths_set || return 0
-  rm -f -- "$TICK_HEALTH" "$TICK_LOG" "$TICK_TICKET" 2>/dev/null || true
+  rm -f -- "$TICK_HEALTH" "$TICK_LOG" "$TICK_TICKET" \
+    "$TICK_JOURNAL" "$TICK_JOURNAL.1" 2>/dev/null || true
   rmdir -- "$TICK_DIR" 2>/dev/null || true
 }
 
@@ -5552,7 +5554,7 @@ tick_delivery_release() { # $1 window; clear only this worker's marker
 tick_full_pass_once() {
   local id agent collar special wins rc=0 pass_rc=0 err="" pending="" busy_rc=0
   local compact_note="" compact_rc=0
-  local TICK_PASS=1
+  local TICK_PASS=1 GLYPH_SOURCE=tick
   alert_ui_ensure || { printf 'tick could not install the tmux alert center\n' >&2; rc=1; }
   wins="$(tmux list-windows -t "=$SESSION" \
     -F '#{window_id} #{@gl_agent} #{@gl_collar} #{@gl_tick_alerts}')" \
@@ -8257,7 +8259,8 @@ stall_deliver() { # $1 target id, $2 target name, $3 raising name, $4 body, opti
 # process is recognised as stale rather than wedging every later event.
 #
 # The loser returns without acting. The key is window AND the event's identity:
-# a stall kind, an auto-resume reset, or a self-compaction request token.
+# a stall kind, an auto-resume reset, or a self-compaction request token. The
+# transition journal's rotation belongs to the team, so its key is the team's.
 EVENT_CLAIM=""
 EVENT_CLAIM_ERROR=""
 event_claim() { # $1 family, $2 window, $3 key; 0 = this process owns the decision
@@ -8265,7 +8268,7 @@ event_claim() { # $1 family, $2 window, $3 key; 0 = this process owns the decisi
   EVENT_CLAIM=""
   EVENT_CLAIM_ERROR=""
   case "$family" in
-    stall|auto-resume|self-compact|state-note) ;;
+    stall|auto-resume|self-compact|state-note|journal) ;;
     *) EVENT_CLAIM_ERROR="unknown event-claim family '$family'"
        printf '%s\n' "$EVENT_CLAIM_ERROR" >&2
        return 2 ;;
@@ -13065,26 +13068,121 @@ cmd_wait_limit() { # schedule, clear, or internally fire one provider-reset wake
   usage_wake_arm "$AGENT_ID" "$name" "$resume"
 }
 
+# EVERY GLYPH EDGE LEAVES ONE LINE. A window name shows only the present, so a
+# state that came and went between two looks at the status bar left nothing to
+# ask about afterwards. Each change of state word is appended to the team's
+# transition journal with the path that wrote it: time, agent, previous word,
+# new word, source. Only the fixed word is kept. The parenthetical detail can
+# quote pane text or a native session identity, and a message body never
+# reaches a glyph at all. The previous word is kept on the window rather than
+# read back from its name, which cannot tell ~wait~ from ~idle~ or one ! state
+# from another.
+#
+# THE HISTORY IS NEVER WORTH THE GLYPH. The journal is best effort (law 7): an
+# edge that cannot be written is not retried, and neither the rename nor the
+# command that caused it is refused. The window is marked instead, for the rest
+# of its life, where status, roster and explain report it: a later line that did
+# land does not restore the one that did not. The journal is bounded at two
+# generations and dies with the team's other tick state.
+GLYPH_SOURCE=""
+GLYPH_JOURNAL_BOUND=1048576
+
+# ONE WRITER DECIDES A ROTATION. Hooks and the tick append to the same file, so
+# a size one writer measured is stale by the time it acts on it: two writers
+# that both saw the file over the bound would each move it, and the second move
+# would replace the full generation the first one kept with whatever short file
+# had been started in between. The move is decided under the team's journal
+# claim and measured again there, and a writer that loses the claim leaves the
+# rotation to the holder. Status 3 means the line was written but the bound was
+# not enforced.
+glyph_journal_append() { # $1 agent, $2 previous word, $3 new word, $4 source;
+                         # run in a subshell: tick_state_prepare refuses by exiting
+  local stamp size="" claim_rc=0 rc=0
+  tick_paths_set || { printf 'the team state directory could not be resolved'; return 1; }
+  if [ -L "$TICK_DIR" ] || [ ! -d "$TICK_DIR" ] || [ ! -O "$TICK_DIR" ]; then
+    tick_state_prepare
+  fi
+  stamp="$(date -u +%Y-%m-%dT%H:%M:%SZ)" || return 1
+  printf '%s\t%s\t%s\t%s\t%s\n' "$stamp" "$1" "$2" "$3" "$4" >> "$TICK_JOURNAL" || return 1
+  # Unclaimed, the size only says whether a rotation is worth deciding. A
+  # holder can move the file between the append and this measurement, so a
+  # measurement that fails is settled under the claim too.
+  size="$(wc -c < "$TICK_JOURNAL")" || size=""
+  size="${size//[!0-9]/}"
+  [ -z "$size" ] || [ "$size" -gt "$GLYPH_JOURNAL_BOUND" ] || return 0
+  event_claim journal "$TICK_TEAM_DIGEST" rotate || claim_rc=$?
+  case "$claim_rc" in
+    0) ;;
+    1) return 0 ;;
+    *) return 3 ;;
+  esac
+  # A holder that already moved the file leaves it absent or short here.
+  if [ -e "$TICK_JOURNAL" ]; then
+    if size="$(wc -c < "$TICK_JOURNAL")"; then
+      size="${size//[!0-9]/}"
+      if [ "${size:-0}" -gt "$GLYPH_JOURNAL_BOUND" ]; then
+        mv -f -- "$TICK_JOURNAL" "$TICK_JOURNAL.1" || rc=3
+      fi
+    else
+      rc=3
+    fi
+  fi
+  event_claim_release || rc=3
+  return "$rc"
+}
+
+glyph_transition_note() { # $1 window id, $2 agent, $3 previous word, $4 new word; never fatal
+  local id="$1" src err="" rc=0 gap
+  src="${GLYPH_SOURCE:-${cmd:-}}"
+  case "$src" in ''|*[!a-z-]*) src=unknown ;; esac
+  err="$(glyph_journal_append "$2" "$3" "$4" "$src" 2>&1)" || rc=$?
+  [ "$rc" -ne 0 ] || return 0
+  err="${err##*$'\n'}"
+  err="${err#gang: }"
+  case "$rc" in
+    3) gap="the journal was NOT kept within its bound: ${err:-unknown error}" ;;
+    *) gap="the $3 -> $4 transition was NOT journaled: ${err:-unknown error}" ;;
+  esac
+  tmux set-option -w -t "$id" @gl_journal_failed "$gap" 2>/dev/null || true
+  return 0
+}
+
 glyph_write() { # $1 = window id, $2 = state phrase
-  local id="$1" state="$2" glyph="" bare current target
+  local id="$1" state="$2" glyph="" word="" bare seen prev
   case "$state" in
-    -busy-*) glyph=- ;;
-    '~wait~'*|'~idle~'*) glyph='~' ;;
-    '!occupied!'*) glyph='!' ;;
-    '!dead!'*) glyph='!' ;;
-    '!bricked!'*) glyph='!' ;;
-    '!blocked!'*) glyph='!' ;;
-    '!session-lost!'*) glyph='!' ;;
-    '!harness-lost!'*) glyph='!' ;;
-    '?unknown?'*) glyph='?' ;;
+    -busy-*) glyph=- word=-busy- ;;
+    '~wait~'*) glyph='~' word='~wait~' ;;
+    '~idle~'*) glyph='~' word='~idle~' ;;
+    '!occupied!'*) glyph='!' word='!occupied!' ;;
+    '!dead!'*) glyph='!' word='!dead!' ;;
+    '!bricked!'*) glyph='!' word='!bricked!' ;;
+    '!blocked!'*) glyph='!' word='!blocked!' ;;
+    '!session-lost!'*) glyph='!' word='!session-lost!' ;;
+    '!harness-lost!'*) glyph='!' word='!harness-lost!' ;;
+    '?unknown?'*) glyph='?' word='?unknown?' ;;
     *) return 0 ;;
   esac
   bare="$(tmux show-options -wqv -t "$id" @gl_agent 2>/dev/null)" || bare=""
   [ -n "$bare" ] || return 0
-  current="$(tmux display-message -p -t "$id" '#W' 2>/dev/null)" || return 0
-  target="$glyph$bare$glyph"
-  [ "$current" = "$target" ] && return 0
-  tmux rename-window -t "$id" -- "$target" 2>/dev/null || true
+  # ONE COMMAND LIST IS ONE STEP ON THE SERVER. Hooks and the tick paint the
+  # same window from separate processes. Issued as separate commands, one
+  # writer's read, record and rename could interleave with another's, leaving
+  # the recorded word, the visible glyph and the journal's order in permanent
+  # disagreement. tmux runs one client's command list to its end before it runs
+  # another client's, and a failing command drops the rest of its list, so the
+  # word a writer replaces is exactly the word it journals and the name always
+  # matches the recorded word. Lines from writers racing within one moment can
+  # still reach the file in either order; each names the edge its own swap made.
+  # A window already showing this state is left alone, so a tmux rename hook
+  # fires only on a change; a writer that changes it after this read is itself
+  # the later write.
+  seen="$(tmux display-message -p -t "$id" '#{@gl_glyph_state}' \; \
+    display-message -p -t "$id" '#{window_name}' 2>/dev/null)" || return 0
+  [ "$seen" != "$word"$'\n'"$glyph$bare$glyph" ] || return 0
+  prev="$(tmux display-message -p -t "$id" '#{@gl_glyph_state}' \; \
+    set-option -w -t "$id" @gl_glyph_state "$word" \; \
+    rename-window -t "$id" -- "$glyph$bare$glyph" 2>/dev/null)" || return 0
+  [ "$prev" = "$word" ] || glyph_transition_note "$id" "$bare" "${prev:-none}" "$word"
 }
 
 STATE_NOW_RESULT=""
@@ -13250,6 +13348,41 @@ explain_blocked_report() {
     || printf '  reason: %s\n' "$EXPLAIN_BLOCKED_CAUSE"
 }
 
+EXPLAIN_TRANSITIONS=5
+
+explain_transitions_report() { # $1 = window id; its latest journaled glyph edges
+  local agent failed rows="" awk_rc=0
+  local -a journals=()
+  agent="$(tmux show-options -wqv -t "$1" @gl_agent 2>/dev/null)" || agent=""
+  if ! tick_paths_set; then
+    printf 'transitions: unknown (the team state directory could not be resolved)\n'
+  else
+    [ ! -f "$TICK_JOURNAL.1" ] || journals+=("$TICK_JOURNAL.1")
+    [ ! -f "$TICK_JOURNAL" ] || journals+=("$TICK_JOURNAL")
+    if [ "${#journals[@]}" -eq 0 ]; then
+      printf 'transitions: no journal at %s\n' "$TICK_JOURNAL"
+    else
+      rows="$(GLYPH_AGENT="$agent" GLYPH_KEEP="$EXPLAIN_TRANSITIONS" awk -F '\t' '
+        BEGIN { keep = ENVIRON["GLYPH_KEEP"] + 0 }
+        NF == 5 && $2 == ENVIRON["GLYPH_AGENT"] && ($1 $3 $4 $5) !~ /[[:cntrl:]]/ {
+          row[n++ % keep] = "  " $1 " " $3 " -> " $4 " (" $5 ")"
+        }
+        END { for (i = (n > keep ? n - keep : 0); i < n; i++) print row[i % keep] }
+      ' "${journals[@]}")" || awk_rc=$?
+      if [ "$awk_rc" -ne 0 ]; then
+        printf 'transitions: unknown (the journal at %s could not be read)\n' "$TICK_JOURNAL"
+      elif [ -z "$rows" ]; then
+        printf 'transitions: none recorded for %s\n' "$agent"
+      else
+        printf 'transitions:\n%s\n' "$rows"
+      fi
+    fi
+  fi
+  failed="$(tmux show-options -wqv -t "$1" @gl_journal_failed 2>/dev/null)" || failed=""
+  failed="$(printf '%s' "$failed" | config_sanitize)"
+  [ -z "$failed" ] || printf 'transition journal: %s\n' "$failed"
+}
+
 cmd_explain() {
   local name="${1:-}" pane scope_unit="" harness_identity="" harness_lost="" harness_unreadable="" tick_action=""
   [ $# -le 1 ] || die "explain: unexpected argument '$2'"
@@ -13315,6 +13448,7 @@ cmd_explain() {
     || tick_action=""
   tick_action="$(printf '%s' "$tick_action" | config_sanitize)"
   [ -z "$tick_action" ] || printf 'tick action: %s\n' "$tick_action"
+  explain_transitions_report "$AGENT_ID"
 }
 
 # A WAIT IS A TEMPORARY TMUX BARRIER, NOT TEAM STATE. Each caller owns one
@@ -13810,7 +13944,7 @@ usage_wake_status_report() { # $1 window
 }
 
 cmd_status() {
-  local state self_failed self_pending state_note_failed staged staged_box staged_box_rc parked park_unverified spooled age held held_dir spool_failed stall_failed auto_failed hook_failed mismatch probe_failed skew="" current self_failed_rc parked_rc
+  local state self_failed self_pending state_note_failed staged staged_box staged_box_rc parked park_unverified spooled age held held_dir spool_failed stall_failed auto_failed hook_failed journal_failed mismatch probe_failed skew="" current self_failed_rc parked_rc
   local timed_line hitched hitched_rc status_cost staged_rc
   local name="${1:-}"
   [ $# -le 1 ] || die "status: unexpected argument '$2'"
@@ -13944,6 +14078,10 @@ cmd_status() {
   hook_failed="$OPTION_VALUE"
   [ -z "$hook_failed" ] \
     || printf '%s\n' "$(colour "$C_BAD" "native event NOT interpreted: $hook_failed")"
+  window_option_or_die "$AGENT_ID" @gl_journal_failed "$status_cost"
+  journal_failed="$OPTION_VALUE"
+  [ -z "$journal_failed" ] \
+    || printf '%s\n' "$(colour "$C_BAD" "transition journal: $journal_failed")"
   usage_limit_status_report "$AGENT_ID"
   usage_wake_status_report "$AGENT_ID"
   mismatch="$(identity_mismatch_read "$AGENT_ID")" || mismatch=""
@@ -14308,6 +14446,8 @@ roster_row() { # $1 window, $2 name, $3 current binary id;
     || detail="$detail auto-resume-failed"
   [ -z "$(tmux show-options -wqv -t "$1" @gl_hook_failed)" ] \
     || detail="$detail hook-failed"
+  [ -z "$(tmux show-options -wqv -t "$1" @gl_journal_failed)" ] \
+    || detail="$detail journal-failed"
   idle_notice="$(idle_notice_failed_roster_detail "$1")"
   case "$idle_notice" in
     present) detail="$detail idle-notice-failed" ;;

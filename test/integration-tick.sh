@@ -2028,7 +2028,8 @@ equal "the completed pass retires every tick delivery owner marker" absent \
 # request paints !name! and may be the last event its dialog ever sends: a
 # person who answers or declines it raises nothing further. The composer coming
 # back is the clearing evidence, so the cooperative pass must read it and
-# repaint the window. The startup prompt stays free of hook work, exactly as
+# repaint the window, and the transition journal must name both edges by the
+# path that wrote them. The startup prompt stays free of hook work, exactly as
 # for the fixtures above, until hitch has verified its contract.
 rm -f -- "$tick_prompt_enable"
 "$HITCH" tick-glyph -c tick-native -d /tmp >/dev/null
@@ -2057,6 +2058,101 @@ equal "one cooperative tick repaints the answered window idle" '~tick-glyph~' \
 equal "the same pass retires the raise the live composer answered" "" \
   "$(tmux show-options -wqv -t "$tick_glyph_id" @gl_occupied)"
 
+# The journal holds fixed state words only. A parenthetical detail can quote
+# pane text or a native session identity, so any field outside the grammar is
+# a leak, and the whole team's journal is checked, not only this fixture's.
+tick_glyph_digest="$(python3 -c 'import hashlib,sys; print(hashlib.sha256((sys.argv[1]+"\0"+sys.argv[2]).encode()).hexdigest()[:24])' \
+  "$(tmux display-message -p -t "=$GANG_SESSION" '#{socket_path}')" "$GANG_SESSION")"
+tick_glyph_journal="$XDG_STATE_HOME/gangline/tick/$tick_glyph_digest/transitions"
+tick_glyph_edges="no journal"
+tick_glyph_bad="no journal"
+if [ -f "$tick_glyph_journal" ]; then
+  tick_glyph_edges="$(awk -F '\t' '$2 == "tick-glyph" { print $3, $4, $5 }' \
+    "$tick_glyph_journal" | tail -n 2)"
+  tick_glyph_bad="$(awk -F '\t' '
+    function word(s) {
+      return s ~ /^(none|-busy-|~wait~|~idle~|!occupied!|!dead!|!bricked!|!blocked!|!session-lost!|!harness-lost!|[?]unknown[?])$/
+    }
+    !(NF == 5 \
+      && $1 ~ /^[0-9][0-9][0-9][0-9]-[0-9][0-9]-[0-9][0-9]T[0-9][0-9]:[0-9][0-9]:[0-9][0-9]Z$/ \
+      && $2 ~ /^[A-Za-z0-9._-]+$/ && word($3) && word($4) && $3 != $4 \
+      && $5 ~ /^[a-z-]+$/) { bad++ }
+    END { print bad + 0 }' "$tick_glyph_journal")"
+fi
+equal "the journal records the hook's occupied edge, then the tick's idle edge" \
+  $'~idle~ !occupied! hook\n!occupied! ~idle~ tick' "$tick_glyph_edges"
+equal "every journal line is a five-field record of fixed state words" 0 \
+  "$tick_glyph_bad"
+contains "explain shows the agent's recent transitions with their source" \
+  "$("$GANG" explain tick-glyph)" '!occupied! -> ~idle~ (tick)'
+
+# A JOURNAL AT ITS BOUND ROTATES AND KEEPS ITS OLDER GENERATION READABLE. The
+# bound is read from the script so the fixture crosses exactly the size it
+# enforces, and blank filler lines carry no record for explain to show. The
+# rotation is decided under the team's journal claim: while a live process
+# holds that claim, the writer that crosses the bound appends its line and
+# leaves the move to the holder, and the first edge after the claim is gone
+# makes the move.
+tick_glyph_bound="$(awk -F= '$1 == "GLYPH_JOURNAL_BOUND" { print $2; exit }' "$GANG")"
+tick_glyph_claim="$GANG_LOCK_DIR/journal-${tick_glyph_digest}_rotate.claim"
+head -c "$tick_glyph_bound" /dev/zero | tr '\0' '\n' >> "$tick_glyph_journal"
+ln -s "$$" "$tick_glyph_claim"
+printf '%s' '{"hook_event_name":"UserPromptSubmit"}' \
+  | GANG_TEST_TICK_MODE=manual TMUX_PANE="$tick_glyph_pane" "$GANG" hook >/dev/null
+equal "a writer that finds the journal claim held leaves the rotation to its holder" \
+  'not rotated' \
+  "$([ -f "$tick_glyph_journal.1" ] || [ ! -f "$tick_glyph_journal" ] \
+      && printf rotated || printf 'not rotated')"
+equal "and still appends the edge that crossed the bound" \
+  '~idle~ -busy- hook' \
+  "$(tail -n 1 "$tick_glyph_journal" | awk -F '\t' '{ print $3, $4, $5 }')"
+equal "a rotation left to the claim's holder marks no journal failure" "" \
+  "$(tmux show-options -wqv -t "$tick_glyph_id" @gl_journal_failed)"
+rm -f -- "$tick_glyph_claim"
+printf '%s' '{"hook_event_name":"PermissionRequest"}' \
+  | GANG_TEST_TICK_MODE=manual TMUX_PANE="$tick_glyph_pane" "$GANG" hook >/dev/null
+equal "the first edge after the claim is released moves the journal to its older generation" \
+  rotated \
+  "$([ -f "$tick_glyph_journal.1" ] && [ ! -e "$tick_glyph_journal" ] \
+      && printf rotated || printf 'not rotated')"
+equal "a rotation that completed marks no journal failure" "" \
+  "$(tmux show-options -wqv -t "$tick_glyph_id" @gl_journal_failed)"
+contains "explain reads the crossing edge back from the older generation" \
+  "$("$GANG" explain tick-glyph)" '-busy- -> !occupied! (hook)'
+
+# A LINE THAT COULD NOT BE WRITTEN LEAVES A MARK THAT OUTLIVES LATER LINES. A
+# directory standing where the journal belongs makes the next append fail. The
+# glyph still changes and the window is marked; a later edge that does land must
+# not erase the only evidence of the gap, which status and roster both report.
+# The explain above repaints the window, and a write of the state a window
+# already shows changes nothing, so a hook first paints it occupied and the busy
+# edge below is a real change. Nothing reads state between the hooks, so each
+# edge is exact.
+printf '%s' '{"hook_event_name":"PermissionRequest"}' \
+  | GANG_TEST_TICK_MODE=manual TMUX_PANE="$tick_glyph_pane" "$GANG" hook >/dev/null
+equal "the window shows occupied before the journal is replaced" '!tick-glyph!' \
+  "$(tmux display-message -p -t "$tick_glyph_id" '#{window_name}')"
+rm -f -- "$tick_glyph_journal"
+mkdir -- "$tick_glyph_journal"
+printf '%s' '{"hook_event_name":"UserPromptSubmit"}' \
+  | GANG_TEST_TICK_MODE=manual TMUX_PANE="$tick_glyph_pane" "$GANG" hook >/dev/null
+equal "an edge the journal refused still paints the glyph" '-tick-glyph-' \
+  "$(tmux display-message -p -t "$tick_glyph_id" '#{window_name}')"
+contains "and marks the window with the edge that was lost" \
+  "$(tmux show-options -wqv -t "$tick_glyph_id" @gl_journal_failed)" \
+  '-> -busy- transition was NOT journaled'
+rmdir -- "$tick_glyph_journal"
+printf '%s' '{"hook_event_name":"PermissionRequest"}' \
+  | GANG_TEST_TICK_MODE=manual TMUX_PANE="$tick_glyph_pane" "$GANG" hook >/dev/null
+equal "the next edge starts a fresh journal from the recorded word" \
+  '-busy- !occupied! hook' \
+  "$(awk -F '\t' '$2 == "tick-glyph" { print $3, $4, $5 }' "$tick_glyph_journal")"
+contains "and the mark of the earlier gap survives that success" \
+  "$(tmux show-options -wqv -t "$tick_glyph_id" @gl_journal_failed)" 'NOT journaled'
+contains "roster shows the journal failure in the agent's row" \
+  "$("$GANG" roster | awk 'index($0, "tick-glyph")')" journal-failed
+contains "status reports the journal failure" \
+  "$("$GANG" status tick-glyph)" 'transition journal: '
 "$GANG" drop tick-glyph >/dev/null
 
 # A live holder is dirtied, not joined or piled up. FIFO edges make the exact
@@ -3745,6 +3841,9 @@ equal "tick test teardown ends only its exact disposable session" absent \
   "$(if tmux has-session -t "=$GANG_SESSION" 2>/dev/null; then printf present; else printf absent; fi)"
 equal "team teardown removes its ephemeral tick health file" absent \
   "$([ ! -e "$tick_health_file" ] && printf absent || printf present)"
+equal "team teardown removes both generations of its transition journal" absent \
+  "$([ ! -e "$tick_glyph_journal" ] && [ ! -e "$tick_glyph_journal.1" ] \
+      && printf absent || printf present)"
 
 export GANG_SESSION="$tick_original_session"
 if [ -n "$tick_original_collars" ]; then

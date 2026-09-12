@@ -510,7 +510,7 @@ invocation, `status`, and `roster` report the last failure. The first failed
 transition also updates the alert center and emits one short `display-message`;
 repeated failed passes emit neither another message nor another surface. A later
 clean pass replaces failed health with `ok` and resolves the active alert;
-`down` removes that team's health files.
+`down` removes that team's health files and its transition journal.
 
 ### `gang alerts [--porcelain|--open]`
 
@@ -1113,7 +1113,26 @@ Gangline last witnessed: `-name-`, `~name~`, `!name!`, or `?name?`. This is an
 at-a-glance hint, repainted wherever a state is read, on native hook events, and
 for every window a cooperative tick visits, so a cleared condition leaves the
 name within one tick; between those points it can lag, and `gang roster`
-remains the live-computed truth. Both occupied and
+remains the live-computed truth.
+
+Each change of state word is appended as one tab-separated line to
+`transitions` beside the team's tick health, under
+`${XDG_STATE_HOME:-$HOME/.local/state}/gangline/tick/<team-key>/`: UTC time,
+bare agent name, previous word (`none` for the first), new word, and the command
+that wrote it (`hook`, `roster`, `explain`, `send`, `tick`, `status`, and so
+on). Only the fixed words are recorded, never a state's parenthetical detail, a
+message body, or a session id. Writers that change the same window within one
+moment each record the edge they made, though their lines can reach the file in
+either order. A read that finds the window already showing its state renames
+nothing, so a tmux rename hook fires only on a change. The file moves to `transitions.1` at the fixed size bound
+`GLYPH_JOURNAL_BOUND` in `bin/gang`, keeping one older generation; one writer at
+a time decides that move, so concurrent writers cannot replace a full
+generation with a short one. `down` removes both. A line that cannot be written
+costs neither the glyph nor the command that painted it, and it is not retried.
+The window is marked instead, for the rest of its life: `gang status` and
+`gang explain` print the mark as `transition journal:`, and `gang roster` shows
+`journal-failed`. A journal that could not be kept within its bound is marked
+the same way. Both occupied and
 bricked use the snagged-line `!` glyph because either needs operator attention;
 the live roster word distinguishes them. Addressing always uses the bare name,
 so `gang send --to pii-impl` never changes. tmux appends its own flags after the
@@ -1207,9 +1226,17 @@ The diagnostic instruments the regex evaluations inside that same state read.
 It does not recapture the pane afterward, so a moving TUI cannot make the
 explanation describe a screen different from the one classified. Regex capture
 targets the pinned pane rather than following a later active-pane selection.
-The command writes no diagnostic option or file; ordinary state observation may
-still refresh the window glyph and the transient evidence that `status` itself
-maintains.
+The command writes no diagnostic option or file of its own; its state read, like
+any other, may still refresh the window glyph, append a transition to the team
+journal, and refresh the transient evidence that `status` itself maintains.
+
+Explain ends with `transitions:`, the agent's last five journaled state changes,
+oldest first, as `TIME PREVIOUS -> NEW (SOURCE)`. It says `none recorded` when
+the journal holds none for this agent and `no journal at PATH` when the team has
+none yet. A `transition journal:` line follows when any change of this window's
+state could not be written or the journal could not be kept within its bound.
+It names the most recent such failure and stays for the window's life, because
+the gap it marks does.
 
 When a cooperative tick has successfully dismissed a collar-recognized
 advisory, explain also prints `tick action:` with that action. The record is a

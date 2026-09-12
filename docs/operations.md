@@ -487,9 +487,11 @@ or busy verdict: delivery is blocked until the intended session is re-hitched.
 repeated by the next command and by status/roster until a clean pass replaces
 it.
 
-For the window-name glyph, its staleness, bare addressing, and tmux's appended
-flags, see [Observation](reference.md#observation); `gang roster` remains the
-live-computed truth.
+For the window-name glyph, its staleness, its transition journal, bare
+addressing, and tmux's appended flags, see
+[Observation](reference.md#observation); `gang roster` remains the
+live-computed truth, and `gang explain NAME` lists the agent's recent
+transitions with the command that wrote each one.
 
 An abandoned turn — one stopped by keys typed straight into the pane, which no
 harness reports — decays rather than standing unknown forever: once its bracket
