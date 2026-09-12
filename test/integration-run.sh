@@ -171,15 +171,14 @@ run_kill_record="$(run_record_for MARK_RUN_KILL)" || run_kill_record=""
 run_finalize_direct "$run_kill_record" killed KILL
 contains "a SIGKILL result uses systemd's signal-name status" "$(<"$run_kill_record/result")" $'137\t'
 
-run_term_out="$(run_start sh -c 'trap "printf MARK_RUN_TERM_CHILD; exit 0" TERM; printf MARK_RUN_TERM_READY; while :; do sleep 1; done')"
+run_term_ready="$RUN_ROOT/run-term-ready"
+mkfifo "$run_term_ready"
+run_term_out="$(run_start sh -c 'trap "printf MARK_RUN_TERM_CHILD; exit 0" TERM; printf MARK_RUN_TERM_READY; printf x > "$1"; while :; do :; done' sh "$run_term_ready")"
 contains "a TERM-forwarding run is accepted" "$run_term_out" "started run"
 run_term_record="$(run_record_for MARK_RUN_TERM_READY)" || run_term_record=""
 run_runner_direct "$run_term_record" "$run_term_record" &
 run_term_runner=$!
-for run_term_wait in $(seq 1 20); do
-  grep -F MARK_RUN_TERM_READY "$run_term_record/output" >/dev/null && break
-  sleep 0.05
-done
+IFS= read -r -N 1 _ < "$run_term_ready"
 kill -TERM "$run_term_runner"
 run_term_runner_rc=0
 wait "$run_term_runner" || run_term_runner_rc=$?
