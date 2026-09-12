@@ -105,6 +105,19 @@ contains "completion appends the requester to the durable run audit" "$(<"$run_a
 contains "completion appends its output path to the durable run audit" "$(<"$run_audit")" \
   "$run_small/output"
 
+run_existing_tmpdir="$run_state/requester-existing-tmp"
+mkdir -p "$run_existing_tmpdir"
+chmod 755 "$run_existing_tmpdir"
+run_existing_tmpdir_out="$(TMUX_PANE="$alpha_tmux_pane" XDG_STATE_HOME="$run_state" \
+  TMPDIR="$run_existing_tmpdir" \
+  GANG_TEST_RUN_ARGS="$run_args" GANG_TEST_RUN_STOPS="$run_stops" \
+  PATH="$run_bin:$PATH" "$GANG" run -- sh -c 'printf MARK_RUN_EXISTING_TMPDIR')"
+contains "run accepts an existing requester TMPDIR" "$run_existing_tmpdir_out" "started run"
+run_existing_tmpdir_record="$(run_record_for MARK_RUN_EXISTING_TMPDIR)" || run_existing_tmpdir_record=""
+equal "run preserves an existing requester TMPDIR mode" "755" \
+  "$(stat -c %a "$run_existing_tmpdir")"
+run_finish_direct "$run_existing_tmpdir_record"
+
 run_large_out="$(run_start sh -c 'head -c 1049600 /dev/zero')"
 contains "a second run is accepted while the team has capacity" "$run_large_out" "started run"
 run_large="$(run_record_for 'head -c 1049600 /dev/zero')" || run_large=""

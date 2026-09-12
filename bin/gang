@@ -7551,10 +7551,12 @@ run_environment_prepare() { # $1 = XDG state root; copies the requester's execut
     /*) ;;
     *) die "run: TMPDIR must be an absolute path, got '$RUN_TMPDIR'; no host command was started" ;;
   esac
-  mkdir -p "$RUN_TMPDIR" \
-    || die "run: cannot prepare durable TMPDIR at $RUN_TMPDIR; no host command was started"
-  chmod 700 "$RUN_TMPDIR" \
-    || die "run: cannot secure durable TMPDIR at $RUN_TMPDIR; no host command was started"
+  if [ ! -d "$RUN_TMPDIR" ]; then
+    mkdir -p "$RUN_TMPDIR" \
+      || die "run: cannot prepare durable TMPDIR at $RUN_TMPDIR; no host command was started"
+    chmod 700 "$RUN_TMPDIR" \
+      || die "run: cannot secure durable TMPDIR at $RUN_TMPDIR; no host command was started"
+  fi
 }
 
 run_systemd_exec_quote() { # $1 = one ExecStopPost word, quoted for systemd's unit parser
