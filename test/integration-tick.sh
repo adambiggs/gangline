@@ -1083,6 +1083,17 @@ contains "a rotation between the listing checks reads as unknown" \
   "$alert_ui_rotated" "recent alerts: unknown"
 mv -- "$alert_ui_alerts.1" "$alert_ui_alerts"
 
+# A row with a surplus field is not one this writer produced. It is shown as
+# unreadable rather than as a failure whose summary swallowed the surplus.
+cp -- "$alert_ui_alerts" "$RUN_ROOT/alert-ui-alerts-saved"
+printf '123\tfailed\tnote\textra\n' > "$alert_ui_alerts"
+alert_ui_surplus="$(alert_ui_gang alerts)"
+contains "a history row with a surplus field is unreadable" \
+  "$alert_ui_surplus" "unreadable history row"
+excludes "a surplus field is not read into the failure summary" \
+  "$alert_ui_surplus" "raised: note"
+mv -- "$RUN_ROOT/alert-ui-alerts-saved" "$alert_ui_alerts"
+
 # A pass owns the tick lock through its health commit. Hold a failing pass at
 # that exact seam, request another pass after repairing the condition, and
 # require the same owner to consume the dirty edge before its result returns.
