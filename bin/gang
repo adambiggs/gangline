@@ -9083,8 +9083,13 @@ submit_verify() { # $1 window id, $2 the box the Enter goes against, $3 fragment
           stage_record "$1" "'$3' was $verb here and Enter sent, but neither Enter nor a clear key moved the box reading — it may be sitting there unsent" ""
           unverified "submission unverifiable, and NOT ruled out: '$3' was $verb into the input box of $tname and Enter was pressed against it, but the box ignored both the Enter and a clear key, so its reading is not following the composer and whether the message entered the session is unknown. Gang will not clear or re-send it on a guess; read the screen with 'gang capture $tname' and re-send only if it is not there"
         fi
-        stage_record "$1" "'$3' is staged unsent in this box — it was $verb, never sent" "$posted"
-        die "submit NOT verified: '$3' was $verb into the input box of $tname, never sent — it is staged there now and has to be cleared by hand (gang attach)"
+        # A RECALLED BODY IS NOT GANG'S TO CLEAR, and the clear key is the only
+        # thing that tells a composer still holding its body from a reading that
+        # stopped following the composer. Without it an unchanged reading is
+        # unknown here too: reporting it unsent sends the operator to clear a
+        # box that may be empty while the message is already in the session.
+        stage_record "$1" "'$3' was $verb here and Enter sent, but the box reading never moved — it may be sitting there unsent" ""
+        unverified "submission unverifiable, and NOT ruled out: '$3' was $verb into the input box of $tname and Enter was pressed against it, but the reading never changed, and gang may not clear a recalled body to test whether that reading follows the composer, so whether the message entered the session is unknown. Gang will not clear or re-send it on a guess; read the screen with 'gang capture $tname' and submit it by hand only if it is still in the box (gang attach)"
       fi
     else
       # Counted only where the read FAILED, because an unreadable box is what

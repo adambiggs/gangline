@@ -1154,6 +1154,86 @@ equal "and its recovery evidence remains explicitly unverified" 1 \
 flush_settle
 "$GANG" drop parked >/dev/null
 
+# A RECALLED BODY THE READING NEVER LETS GO OF IS NOT A BODY NEVER SENT. The
+# paste path tells a frozen reading from a composer that kept its body by
+# pressing a clear key; a recalled body is the harness's, so flush may not
+# press one, and an unchanged reading after its Enter proves nothing either
+# way. This collar freezes on the recalled body while the shell underneath
+# takes the Enter and runs the line, the world where "never sent" is false.
+# Not timing-dependent: every reading after the recall is frozen, so the
+# unchanged bound is reached on its count, at the production budget of five
+# 0.4s rereads, about 2s. The parked window is gone, so its fixture files are
+# free and this collar reuses them.
+cat > "$RUN_ROOT/frozenrecall-rc" <<RC
+. "$RUN_ROOT/flush-rc"
+command_not_found_handle() { printf '%s\n' "\$*" >> "$RUN_ROOT/frozenrecall-ran"; return 127; }
+RC
+cat > "$RUN_ROOT/collars/frozenrecall.sh" <<SH
+# shellcheck shell=bash
+# shellcheck disable=SC2034
+. "$RUN_ROOT/collars/flushable.sh"
+GANG_LAUNCH="\${GANG_LAUNCH/flush-rc/frozenrecall-rc}"
+_gl_frozen_real="\$(declare -f collar_input)"
+eval "frozen_real_input \${_gl_frozen_real#collar_input}"
+collar_input() {
+  local box rc=0
+  if [ -s "$RUN_ROOT/frozenrecall-reading" ]; then
+    cat "$RUN_ROOT/frozenrecall-reading"
+    return 0
+  fi
+  box="\$(frozen_real_input "\$1")" || rc=\$?
+  [ "\$rc" -eq 0 ] || return "\$rc"
+  if [ -f "$RUN_ROOT/frozenrecall-arm" ]; then
+    case "\$box" in
+      *MARK_FROZEN_RECALL*) printf '%s' "\$box" > "$RUN_ROOT/frozenrecall-reading" ;;
+    esac
+  fi
+  printf '%s' "\$box"
+}
+SH
+"$HITCH" frozenrecall -c frozenrecall -d /tmp >/dev/null
+frozenrecall_id="$(window_id frozenrecall)"
+: > "$RUN_ROOT/flush-arm"
+if printf 'MARK_FROZEN_RECALL' |
+  "$GANG" send --to frozenrecall --from tester --stdin >/dev/null 2>&1; then
+  fail "the frozen-recall world starts from a message the harness parked" \
+    "send reported success"
+else
+  pass "the frozen-recall world starts from a message the harness parked"
+fi
+: > "$RUN_ROOT/frozenrecall-arm"
+frozenrecall_rc=0
+frozenrecall_out="$("$GANG" flush frozenrecall 2>&1)" || frozenrecall_rc=$?
+equal "the frozen reading holds the recalled body" "held" \
+  "$(if [ -s "$RUN_ROOT/frozenrecall-reading" ]; then printf held; fi)"
+# Ordering barrier, not a wait on the thing under test: the pane consumes its
+# input in order, so the barrier's command runs only after the line flush's
+# Enter submitted has run. C-u goes first and discards whatever is still in the
+# box, so a body flush never submitted cannot run here and satisfy the witness,
+# and cannot become the leading words of the barrier's command either.
+frozenrecall_chan="test-frozenrecall-$$"
+tmux wait-for "$frozenrecall_chan" &
+frozenrecall_waiter=$!
+tmux send-keys -t "$frozenrecall_id" C-u
+tmux send-keys -l -t "$frozenrecall_id" "tmux wait-for -S $frozenrecall_chan"
+tmux send-keys -t "$frozenrecall_id" Enter
+wait "$frozenrecall_waiter"
+equal "the recalled body's Enter reached the shell under the frozen reading" "2" \
+  "$(grep -c MARK_FROZEN_RECALL "$RUN_ROOT/frozenrecall-ran")"
+equal "a recalled body the reading never lets go of leaves submission unknown" \
+  "5" "$frozenrecall_rc"
+contains "and names the recall unverifiable" \
+  "$frozenrecall_out" "submission unverifiable"
+excludes "never reporting the recalled message as unsent" \
+  "$frozenrecall_out" "never sent"
+excludes "nor sending the operator to clear the recalled box by hand" \
+  "$frozenrecall_out" "cleared by hand"
+equal "nor recording a recalled box a later delivery would clear" "" \
+  "$(tmux show-options -wqv -t "$frozenrecall_id" @gl_staged_box)"
+"$GANG" drop frozenrecall >/dev/null
+rm -f "$RUN_ROOT/frozenrecall-reading" "$RUN_ROOT/frozenrecall-arm" \
+  "$RUN_ROOT/flush-strand" "$RUN_ROOT/flush-queue"
+
 # ATTRIBUTION LANDS BEFORE MID-TURN STEERING. A steering-capable collar may
 # accept a claimed spool through a free composer while its turn stays open. A
 # draft, tmux mode, or collar without that declaration still parks without a
