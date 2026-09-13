@@ -51,6 +51,14 @@ run_record_for() { # first argument is a unique command marker
 }
 
 run_runner_direct() { # gang-runner invocation in the same environment as the service fixture
+  if [ "${RUN_RUNNER_EXEC:-0}" = 1 ]; then
+    exec env -u TMUX -u TMUX_PANE \
+      XDG_STATE_HOME="$run_state" GANG_SESSION="$GANG_SESSION" \
+      GANG_CONFIG_DIR="$GANG_CONFIG_DIR" GANG_LOCK_DIR="$GANG_LOCK_DIR" \
+      GANG_ARCHIVE_DIR="${GANG_ARCHIVE_DIR:-$RUN_ROOT/run-archive}" GANG_RUN_TEAM_ROOT="${1%/*}" \
+      GANG_TEST_RUN_ARGS="$run_args" GANG_TEST_RUN_STOPS="$run_stops" \
+      PATH="$run_bin:$PATH" "$ROOT/libexec/gang-runner" "${@:2}"
+  fi
   env -u TMUX -u TMUX_PANE \
     XDG_STATE_HOME="$run_state" GANG_SESSION="$GANG_SESSION" \
     GANG_CONFIG_DIR="$GANG_CONFIG_DIR" GANG_LOCK_DIR="$GANG_LOCK_DIR" \
@@ -175,13 +183,6 @@ contains "the requesting stable identity may cancel its own run" "$run_cancel_re
 run_cancel_unit="$(<"$run_cancel_record/unit")"
 contains "cancellation addresses the service exact to that run" "$(<"$run_stops")" \
   "stop -- $run_cancel_unit"
-run_finalize_direct "$run_cancel_record" killed TERM
-contains "a killed runner receives a fallback completion result" "$(<"$run_cancel_record/result")" $'143\t'
-if [ -f "$run_cancel_record/active" ]; then
-  fail "a killed runner releases its team concurrency slot" "active remained at $run_cancel_record"
-else
-  pass "a killed runner releases its team concurrency slot"
-fi
 
 run_kill_out="$(run_start sh -c 'printf MARK_RUN_KILL')"
 contains "a SIGKILL-shaped run is accepted" "$run_kill_out" "started run"
@@ -194,7 +195,7 @@ mkfifo "$run_term_ready"
 run_term_out="$(run_start sh -c 'trap "printf MARK_RUN_TERM_CHILD; exit 0" TERM; printf MARK_RUN_TERM_READY; printf x > "$1"; while :; do :; done' sh "$run_term_ready")"
 contains "a TERM-forwarding run is accepted" "$run_term_out" "started run"
 run_term_record="$(run_record_for MARK_RUN_TERM_READY)" || run_term_record=""
-run_runner_direct "$run_term_record" "$run_term_record" &
+( RUN_RUNNER_EXEC=1 run_runner_direct "$run_term_record" "$run_term_record" ) &
 run_term_runner=$!
 IFS= read -r -N 1 _ < "$run_term_ready"
 kill -TERM "$run_term_runner"
@@ -218,12 +219,22 @@ else
 fi
 "$GANG" drop run-other
 
+run_finalize_direct "$run_cancel_record" killed TERM
+contains "a killed runner receives a fallback completion result" "$(<"$run_cancel_record/result")" $'143\t'
+if [ -f "$run_cancel_record/active" ]; then
+  fail "a killed runner releases its team concurrency slot" "active remained at $run_cancel_record"
+else
+  pass "a killed runner releases its team concurrency slot"
+fi
+
 run_max_a="$(run_start sh -c 'printf MARK_RUN_MAX_A')"
 run_max_b="$(run_start sh -c 'printf MARK_RUN_MAX_B')"
 run_max_c="$(run_start sh -c 'printf MARK_RUN_MAX_C')"
+run_max_d="$(run_start sh -c 'printf MARK_RUN_MAX_D')"
 contains "the first capacity-filling run is accepted" "$run_max_a" "started run"
 contains "the second capacity-filling run is accepted" "$run_max_b" "started run"
 contains "the third capacity-filling run is accepted" "$run_max_c" "started run"
+contains "the fourth capacity-filling run is accepted" "$run_max_d" "started run"
 run_max_refusal_rc=0
 run_max_refusal="$(run_start sh -c 'printf MARK_RUN_MAX_REFUSAL' 2>&1)" || run_max_refusal_rc=$?
 if [ "$run_max_refusal_rc" -ne 0 ] && [[ "$run_max_refusal" == *"already has 4 active commands"* ]]; then
@@ -231,7 +242,7 @@ if [ "$run_max_refusal_rc" -ne 0 ] && [[ "$run_max_refusal" == *"already has 4 a
 else
   fail "the per-team active-run bound refuses a fifth command" "reply [$run_max_refusal]"
 fi
-for run_max_marker in MARK_RUN_MAX_A MARK_RUN_MAX_B MARK_RUN_MAX_C; do
+for run_max_marker in MARK_RUN_MAX_A MARK_RUN_MAX_B MARK_RUN_MAX_C MARK_RUN_MAX_D; do
   run_max_record="$(run_record_for "$run_max_marker")" || run_max_record=""
   [ -z "$run_max_record" ] || run_finish_direct "$run_max_record"
 done
