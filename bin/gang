@@ -4401,8 +4401,15 @@ sys.stdout.write(match.group(0))
   collar_queued "$1" "$tag" >/dev/null 2>&1
 }
 
-LOCK_PATH=""
-lock_release() { [ -z "$LOCK_PATH" ] || rm -f -- "$LOCK_PATH"; LOCK_PATH=""; }
+LOCK_PATH="" LOCK_OWNER=""
+lock_release() {
+  local recorded=""
+  if [ -n "$LOCK_PATH" ]; then
+    recorded="$(readlink "$LOCK_PATH" 2>/dev/null)" || recorded=""
+    [ "$recorded" != "$LOCK_OWNER" ] || rm -f -- "$LOCK_PATH"
+  fi
+  LOCK_PATH="" LOCK_OWNER=""
+}
 
 lock_base() { # $1 = the lock root; returns with it established as ours, or refuses
   local err
@@ -4440,7 +4447,7 @@ lock_self_pid() { # sets LOCK_SELF_PID to the pid that will actually hold a clai
 }
 
 lock_pane() { # $1 = window id; held until lock_release or this process exits
-  local base holder name path err me read_races=0
+  local base holder again name path reaper err me read_races=0 reaper_fd=""
   lock_self_pid
   me="$LOCK_SELF_PID"
   base="${GANG_LOCK_DIR:-/tmp/gangline-$GANGLINE_PROCESS_UID}"
@@ -4455,7 +4462,7 @@ lock_pane() { # $1 = window id; held until lock_release or this process exits
   # composer concurrently. BASHPID is the process that actually holds it.
   while :; do
     err="$(ln -s "$me" "$path" 2>&1)" \
-      && { LOCK_PATH="$path"; trap 'on_exit' EXIT; return; }
+      && { LOCK_PATH="$path"; LOCK_OWNER="$me"; trap 'on_exit' EXIT; return; }
     [ -L "$path" ] \
       || die "cannot take the delivery lock at $path — ${err:-unknown error}. Nothing holds this lock; the path cannot be created atomically, so retrying will not help. Remove any lock left by an older Gangline, or point GANG_LOCK_DIR at somewhere writable by every Gangline process that delivers to this pane."
     # A valid owner may release between the -L observation and readlink. Its
@@ -4476,10 +4483,44 @@ lock_pane() { # $1 = window id; held until lock_release or this process exits
   esac
   kill -0 "$holder" 2>/dev/null \
     && refuse "another Gangline process is delivering to $name — inspect it with gang capture $name before retrying"
-  rm -f -- "$path"
-  err="$(ln -s "$me" "$path" 2>&1)" \
-    || refuse "the stale delivery lock for $name was cleared, but another sender took it first — inspect with gang capture $name before retrying"
-  LOCK_PATH="$path"
+  # Two contenders can both observe a dead holder.  The symlink itself cannot
+  # compare-and-delete that owner: an unconditional rm after the first
+  # replacement would erase the first contender's live lock.  A kernel-held
+  # reaper guard serializes just this stale-owner transaction.  It is retained
+  # as an empty inode, like the mandatory gate lock, because unlinking it after
+  # release would let a waiter on the old inode and a newcomer on a new inode
+  # both claim to be the sole reaper.
+  reaper="$path.reap"
+  exec {reaper_fd}>>"$reaper" \
+    || die "cannot open the stale delivery reaper guard $reaper — no stale lock was removed"
+  if ! flock -n "$reaper_fd"; then
+    exec {reaper_fd}>&-
+    refuse "another Gangline process is verifying the stale delivery lock for $name — inspect it with gang capture $name before retrying"
+  fi
+  again="$(readlink "$path" 2>/dev/null)" || again=""
+  if [ "$again" != "$holder" ]; then
+    flock -u "$reaper_fd" || die "cannot release the stale delivery reaper guard $reaper"
+    exec {reaper_fd}>&-
+    refuse "the stale delivery lock for $name changed while Gangline was verifying its dead owner — inspect with gang capture $name before retrying"
+  fi
+  if kill -0 "$holder" 2>/dev/null; then
+    flock -u "$reaper_fd" || die "cannot release the stale delivery reaper guard $reaper"
+    exec {reaper_fd}>&-
+    refuse "another Gangline process is delivering to $name — inspect it with gang capture $name before retrying"
+  fi
+  if ! rm -f -- "$path"; then
+    flock -u "$reaper_fd" || die "cannot release the stale delivery reaper guard $reaper"
+    exec {reaper_fd}>&-
+    die "cannot remove the stale delivery lock $path — no delivery started"
+  fi
+  err="$(ln -s "$me" "$path" 2>&1)" || {
+    flock -u "$reaper_fd" || die "cannot release the stale delivery reaper guard $reaper"
+    exec {reaper_fd}>&-
+    refuse "the stale delivery lock for $name was cleared, but another sender took it first — inspect with gang capture $name before retrying"
+  }
+  flock -u "$reaper_fd" || die "cannot release the stale delivery reaper guard $reaper"
+  exec {reaper_fd}>&-
+  LOCK_PATH="$path" LOCK_OWNER="$me"
   trap 'on_exit' EXIT
 }
 
