@@ -4,9 +4,14 @@
 # Real-harness behavior belongs in a separately named disposable team.
 set -euo pipefail
 
-unset TMUX TMUX_PANE
-
 ROOT="$(cd -P "$(dirname "$0")/.." && pwd)"
+# A suite may itself run inside an agent pane. Its fixture owns a fresh tmux
+# server and collar set below, so neither the pane's implicit route nor the
+# explicit return route Gangline supplies to that pane may cross into it. In
+# particular, a fixture-only collar must never become the live team's collar
+# inventory through an inherited tick or hook child.
+unset TMUX TMUX_PANE GANG_TMUX_SOCKET GANG_TMUX_GUARD_AGENT \
+  GANG_TMUX_GUARD_LOG_DIR GANG_COLLARS
 GANG="$ROOT/bin/gang"
 : "${GANG_TEST_PATH_SHIM_GUARD:=$ROOT/test/path-shim-guard.sh}"
 export GANG_TEST_PATH_SHIM_GUARD
