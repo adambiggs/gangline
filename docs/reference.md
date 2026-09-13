@@ -1072,6 +1072,11 @@ compacted.”
 Other deferred collars retain their established Stop-and-composer behavior. A
 later cooperative tick retries a safely unsubmitted request only through the
 collar then installed; an unavailable collar repeats the same pre-Enter refusal.
+A standing request takes a Stop, or a tick that finds the window idle, ahead of
+waiting mail, including the note its own refusal spooled; PostCompact then
+drains the spool into the compacted context. A boundary where the request
+cannot be spent, because its witness binding fails closed or it is retired as
+unsupported, delivers the mail instead.
 `status` and `roster` expose the pending failure. A guarded launch that cannot
 install hooks cannot witness deferred self-compaction requests from inside that
 harness, but tick delivery remains available for requests already recorded.

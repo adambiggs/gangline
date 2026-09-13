@@ -2148,15 +2148,16 @@ tick_cross_rc=0
 TMUX_PANE="$tick_caller_pane" GANG_TEST_TICK_MODE=sync \
   "$GANG" whoami >/dev/null || tick_cross_rc=$?
 equal "a command from another window keeps its own successful result" 0 "$tick_cross_rc"
-equal "that command's tick drains the copy-mode message" 0 \
-  "$("$GANG" roster --porcelain | awk -F '\t' '$1 == "tick-copy" { print $4 }')"
-# source-guard: whole-surface@2b9b8301b2d3: the nonce-marked peer body is unique to this test and verified delivery may render it anywhere in the recipient transcript
-contains "the copy-mode message reached the recipient without its own new boundary" \
-  "$(pane_all tick-copy)" "TICK_COPY_MESSAGE"
-equal "the same tick submits the self-compaction after the delivered turn closes" present \
+# The standing compaction takes the pass ahead of the parked message, and the
+# pass types nothing more into a window it has just compacted: the message
+# waits for the next pass. A pass that delivered the message first opened its
+# turn and found the window busy, leaving the request standing.
+equal "that command's tick submits the standing self-compaction" present \
   "$([ -e "$tick_compacted" ] && printf present || printf absent)"
 excludes "the completed self-compaction no longer reads as pending" \
   "$("$GANG" status tick-copy)" "self-compaction requested"
+equal "and leaves the copy-mode message parked behind it for the next pass" 1 \
+  "$("$GANG" roster --porcelain | awk -F '\t' '$1 == "tick-copy" { print $4 }')"
 equal "one global pass also drains the other hitched window" 0 \
   "$("$GANG" roster --porcelain | awk -F '\t' '$1 == "tick-false" { print $4 }')"
 # source-guard: whole-surface@87a1cbbad112: the nonce-marked peer body is unique to this test and any transcript rendering proves the target consumed it
@@ -2164,6 +2165,15 @@ contains "the closed native turn beats false occupied paint for delivery" \
   "$(pane_all tick-false)" "TICK_FALSE_OCCUPIED_MESSAGE"
 equal "the completed pass retires every tick delivery owner marker" absent \
   "$(if [ -n "$(tmux show-options -wqv -t "$tick_copy_id" @gl_tick_delivery)$(tmux show-options -wqv -t "$tick_false_id" @gl_tick_delivery)" ]; then printf present; else printf absent; fi)"
+tick_cross_rc=0
+TMUX_PANE="$tick_caller_pane" GANG_TEST_TICK_MODE=sync \
+  "$GANG" whoami >/dev/null || tick_cross_rc=$?
+equal "the next command from another window keeps its own successful result" 0 "$tick_cross_rc"
+equal "and its tick drains the copy-mode message" 0 \
+  "$("$GANG" roster --porcelain | awk -F '\t' '$1 == "tick-copy" { print $4 }')"
+# source-guard: whole-surface@2b9b8301b2d3: the nonce-marked peer body is unique to this test and verified delivery may render it anywhere in the recipient transcript
+contains "the copy-mode message reached the recipient without its own new boundary" \
+  "$(pane_all tick-copy)" "TICK_COPY_MESSAGE"
 
 # A CLEARED CONDITION LEAVES THE STATUS BAR WITHIN ONE TICK. A permission
 # request paints !name! and may be the last event its dialog ever sends: a

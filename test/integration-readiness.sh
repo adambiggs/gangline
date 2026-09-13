@@ -900,6 +900,65 @@ else
 fi
 "$GANG" drop selfable >/dev/null 2>&1 || :
 
+# A BOUNDARY THAT MEETS BOTH A STANDING REQUEST AND WAITING MAIL IS JUDGED ON
+# BOTH BARRIERS, ONCE EVERYTHING IT STARTED HAS EXITED. Waiting on the barrier
+# this suite expects would hang, rather than fail, on a gang that chose the
+# other, and reaping whichever waiter finished first cannot tell one worker from
+# two. A signal an earlier boundary left latched on either channel is cleared
+# first. The Stop then runs holding a descriptor on a FIFO that its detached
+# workers inherit, so the reader sees end-of-file only after the last of them
+# has gone and no barrier can fire later. Each waiter is registered before the
+# Stop runs and records its own release in the server from the same command
+# list, which tmux runs on before it reads another client's command; the verdict
+# is read from those records as compaction, drain, both or none, never as a
+# hang. A waiter nothing released is signalled only after that, while it is
+# still waiting, so no signal is left latched for a later wait on its channel.
+boundary_quiet="$RUN_ROOT/boundary-quiet"
+mkfifo "$boundary_quiet"
+boundary_arm() { # $1 self-compaction barrier, $2 spool-drain barrier
+  local armed="boundary-armed-$$"
+  tmux wait-for -S "$1" \; wait-for "$1" \; wait-for -S "$2" \; wait-for "$2" \; \
+    set-option -g @boundary_compaction '' \; set-option -g @boundary_drain ''
+  tmux wait-for -S "$armed" \; wait-for "$1" \; set-option -g @boundary_compaction 1 &
+  boundary_compact_waiter=$!
+  tmux wait-for "$armed"
+  tmux wait-for -S "$armed" \; wait-for "$2" \; set-option -g @boundary_drain 1 &
+  boundary_drain_waiter=$!
+  tmux wait-for "$armed"
+  cat "$boundary_quiet" >/dev/null &
+  boundary_quiet_reader=$!
+  exec 57>"$boundary_quiet"
+}
+boundary_taken() { # $1 self-compaction barrier, $2 spool-drain barrier;
+                   # sets BOUNDARY_TAKEN to compaction, drain, both or none
+  local compaction drain
+  exec 57>&-
+  wait "$boundary_quiet_reader"
+  compaction="$(tmux show-options -gqv @boundary_compaction)"
+  drain="$(tmux show-options -gqv @boundary_drain)"
+  case "$compaction:$drain" in
+    1:1) BOUNDARY_TAKEN=both ;;
+    1:) BOUNDARY_TAKEN=compaction ;;
+    :1) BOUNDARY_TAKEN=drain ;;
+    *) BOUNDARY_TAKEN=none ;;
+  esac
+  [ -n "$compaction" ] || tmux wait-for -S "$1"
+  [ -n "$drain" ] || tmux wait-for -S "$2"
+  wait "$boundary_compact_waiter" "$boundary_drain_waiter" || :
+}
+# PostCompact drains the spool, as closing a turn does. Its barrier is armed only
+# while mail is waiting: an empty spool starts no drain, and a wait armed on it
+# would hang with nothing left to release it.
+post_compact_drain() { # $1 agent name, $2 window id, $3 pane id
+  local waiter
+  case "$("$GANG" status "$1")" in *"spooled:"*) ;; *) return 0 ;; esac
+  tmux wait-for "gang-spool-drain-$2" &
+  waiter=$!
+  printf '%s' '{"hook_event_name":"PostCompact"}' |
+    TMUX_PANE="$3" "$GANG" hook >/dev/null
+  wait "$waiter"
+}
+
 # A COLLAR THAT DECLARES ITS WITNESS UNAVAILABLE. Its Stop callback runs
 # before the harness releases its active turn, and nothing it can read says
 # when that release happens. This fixture makes the historical false-positive
@@ -1052,16 +1111,31 @@ rm -f "$codex_race_claim"
 tmux set-option -w -t "$codex_race_id" @gl_self_compact_witness \
   "$codex_race_token"$'\t'unavailable
 tmux set-option -w -t "$codex_race_id" @gl_self_compact_resume "LEGACY_NEXT_STEP"
-tmux wait-for "gang-self-compact-$codex_race_token" &
-codex_race_waiter=$!
 mv "$RUN_ROOT/collars/codex-stop-race.sh" \
   "$RUN_ROOT/collars/codex-stop-race.sh.away"
+boundary_arm "gang-self-compact-$codex_race_token" "gang-spool-drain-$codex_race_id"
 printf '%s' '{"hook_event_name":"Stop"}' |
   TMUX_PANE="$codex_race_pane" "$GANG" hook >/dev/null
-wait "$codex_race_waiter"
+boundary_taken "gang-self-compact-$codex_race_token" "gang-spool-drain-$codex_race_id"
 mv "$RUN_ROOT/collars/codex-stop-race.sh.away" \
   "$RUN_ROOT/collars/codex-stop-race.sh"
-pass "the still-running Stop hook reaches a no-submission barrier after its collar disappears"
+case "$BOUNDARY_TAKEN" in
+  compaction|both)
+    pass "the still-running Stop hook reaches a no-submission barrier after its collar disappears" ;;
+  *) fail "the still-running Stop hook reaches a no-submission barrier after its collar disappears" \
+       "boundary verdict: $BOUNDARY_TAKEN" ;;
+esac
+# The retirement leaves this boundary no request to spend, so it starts the
+# spool drain for the retirement note it has just spooled. That drain loads the
+# collar this fixture moved away, so it fails on the load and says so, and the
+# note stays spooled for a later boundary.
+equal "the boundary a retirement frees also starts the spool drain" both \
+  "$BOUNDARY_TAKEN"
+contains "and that drain fails on the missing collar rather than delivering" \
+  "$(tmux show-options -wqv -t "$codex_race_id" @gl_spool_failed)" \
+  "unknown collar 'codex-stop-race'"
+contains "and leaves the retirement note spooled" \
+  "$("$GANG" roster | grep '^codex-stop-race ' || :)" "spooled=1"
 equal "Stop retires the pre-rule request" "" \
   "$(tmux show-options -wqv -t "$codex_race_id" @gl_self_compact_requested)"
 equal "its witness binding" "" \
@@ -1585,32 +1659,54 @@ contains "and the record names the missing witness" \
   "has not persisted the end of this turn"
 contains "the agent is told the compaction was put back" \
   "$("$GANG" mail native-idle)" "put back rather than dropped"
-# The note is mail, and mail takes the next boundary ahead of the compaction.
-# That boundary is still false-idle while the rollout says its turn is open,
-# so the note remains spooled too; gang's own envelope gets no exemption from
-# the peer-delivery safety boundary.
-tmux wait-for "gang-spool-drain-$native_idle_id" &
-native_idle_drain_waiter=$!
+# THE NOTE DOES NOT TAKE THE BOUNDARY FROM THE REQUEST IT REPORTS. A Stop that
+# meets both runs the compaction, which refuses again here because the rollout
+# still says this turn is open; the same episode spools no second note, and
+# nothing is typed.
+boundary_arm "gang-self-compact-$native_idle_request" "gang-spool-drain-$native_idle_id"
 printf '%s' '{"hook_event_name":"Stop","turn_id":"turn-two","transcript_path":"'"$native_idle_rollout"'"}' |
-  TMUX_PANE="$native_idle_pane" "$GANG" hook >/dev/null
-wait "$native_idle_drain_waiter"
+  GANG_BOOT_TIMEOUT=2 TMUX_PANE="$native_idle_pane" "$GANG" hook >/dev/null
+boundary_taken "gang-self-compact-$native_idle_request" "gang-spool-drain-$native_idle_id"
+equal "a Stop with the note waiting retries the compaction first" compaction \
+  "$BOUNDARY_TAKEN"
+equal "and at a still-open turn that retry submits nothing" absent \
+  "$([ -e "$native_idle_executed" ] && printf present || printf absent)"
+contains "the note stays spooled, and no second note joins it" \
+  "$("$GANG" roster | grep '^native-idle ' || :)" "spooled=1"
+equal "the refused retry leaves the request standing" "$native_idle_request" \
+  "$(tmux show-options -wqv -t "$native_idle_id" @gl_self_compact_requested)"
+# A tick drains mail whenever a compaction is not what it ran, and the rollout
+# still says this turn is open, so the note stays spooled there too: gang's own
+# envelope gets no exemption from the peer-delivery safety boundary.
+GANG_TEST_TICK_MODE=manual "$GANG" tick >/dev/null
 contains "the note stays spooled while the rollout still says the turn is open" \
   "$("$GANG" roster | grep '^native-idle ' || :)" "spooled=1"
-equal "and the note's boundary does not spend the request" "$native_idle_request" \
+equal "and the tick does not spend the request" "$native_idle_request" \
   "$(tmux show-options -wqv -t "$native_idle_id" @gl_self_compact_requested)"
-# Once the terminal record lands, the next boundary drains the older note and
-# leaves the self-compaction request for one later native opportunity.
+# Once the terminal record lands, the next Stop runs the standing compaction,
+# and the older note is still waiting for the context that compaction produces.
 native_idle_record task_complete turn-two >> "$native_idle_rollout"
-tmux wait-for "gang-spool-drain-$native_idle_id" &
-native_idle_drain_waiter=$!
+boundary_arm "gang-self-compact-$native_idle_request" "gang-spool-drain-$native_idle_id"
 printf '%s' '{"hook_event_name":"Stop","turn_id":"turn-two","transcript_path":"'"$native_idle_rollout"'"}' |
   TMUX_PANE="$native_idle_pane" "$GANG" hook >/dev/null
-wait "$native_idle_drain_waiter"
-excludes "the terminal record lets the older note leave the spool" \
-  "$("$GANG" roster | grep '^native-idle ' || :)" "spooled="
-equal "draining the note still leaves the request for a later boundary" \
-  "$native_idle_request" \
+boundary_taken "gang-self-compact-$native_idle_request" "gang-spool-drain-$native_idle_id"
+equal "the terminal record's Stop runs the compaction ahead of the older note" \
+  compaction "$BOUNDARY_TAKEN"
+equal "and submits the compact command" present \
+  "$([ -e "$native_idle_executed" ] && printf present || printf absent)"
+equal "which consumes the request" "" \
   "$(tmux show-options -wqv -t "$native_idle_id" @gl_self_compact_requested)"
+contains "the older note is still waiting for the compacted context" \
+  "$("$GANG" roster | grep '^native-idle ' || :)" "spooled=1"
+post_compact_drain native-idle "$native_idle_id" "$native_idle_pane"
+excludes "PostCompact delivers the older note into the compacted context" \
+  "$("$GANG" roster | grep '^native-idle ' || :)" "spooled="
+# A fresh request carries the Stops below, which refuse it and then complete it.
+rm -f "$native_idle_executed"
+native_idle_retry="$(TMUX_PANE="$native_idle_pane" "$GANG" compact --resume RETRY_STEP_MARK 2>&1)" || :
+contains "a fresh self-request is scheduled after the compaction" \
+  "$native_idle_retry" "self-compaction scheduled"
+native_idle_request="$(tmux show-options -wqv -t "$native_idle_id" @gl_self_compact_requested)"
 # A Stop whose payload the rollout cannot answer for refuses without waiting
 # out the budget, and leaves the same request standing.
 tmux wait-for "gang-self-compact-$native_idle_request" &
@@ -1625,18 +1721,25 @@ equal "and submits nothing" absent \
 contains "the record says the rollout could not answer" \
   "$(tmux show-options -wqv -t "$native_idle_id" @gl_self_compact_failed)" \
   "cannot witness the end of this turn"
-# The next boundary whose record does land completes the standing request.
-tmux wait-for "gang-self-compact-$native_idle_request" &
-native_idle_waiter=$!
+# The next boundary whose record does land completes the standing request, and
+# does so ahead of the note the unanswerable turn just spooled.
+boundary_arm "gang-self-compact-$native_idle_request" "gang-spool-drain-$native_idle_id"
 printf '%s' '{"hook_event_name":"Stop","turn_id":"turn-two","transcript_path":"'"$native_idle_rollout"'"}' |
   TMUX_PANE="$native_idle_pane" "$GANG" hook >/dev/null
-wait "$native_idle_waiter"
+boundary_taken "gang-self-compact-$native_idle_request" "gang-spool-drain-$native_idle_id"
+equal "the landed record's boundary goes to the compaction, not the new note" \
+  compaction "$BOUNDARY_TAKEN"
+contains "and the new note waits for the compacted context" \
+  "$("$GANG" roster | grep '^native-idle ' || :)" "spooled=1"
 equal "a later boundary with the record completes the standing request" present \
   "$([ -e "$native_idle_executed" ] && printf present || printf absent)"
 equal "and clears it" "" \
   "$(tmux show-options -wqv -t "$native_idle_id" @gl_self_compact_requested)"
 equal "and its failure" "" \
   "$(tmux show-options -wqv -t "$native_idle_id" @gl_self_compact_failed)"
+post_compact_drain native-idle "$native_idle_id" "$native_idle_pane"
+excludes "and PostCompact delivers the note behind it" \
+  "$("$GANG" roster | grep '^native-idle ' || :)" "spooled="
 
 # THE RECORD SPEAKS FOR A TURN, NOT FOR THE COMPOSER. The harness can open its
 # next turn on its own the instant the last one ends — queued input, a
@@ -1670,14 +1773,15 @@ equal "the lock is released with the refusal" absent \
   "$([ -L "$GANG_LOCK_DIR/$(printf '%s' "$native_idle_id" | tr -c 'A-Za-z0-9' '_').lock" ] && printf held || printf absent)"
 contains "and the agent is told once more that the compaction was put back" \
   "$("$GANG" mail native-idle)" "put back rather than dropped"
-# That note is mail, and mail takes the next boundary ahead of the compaction.
-# The later turn is still open there, so it remains spooled until its terminal
-# record arrives just like the earlier timeout note did.
-tmux wait-for "gang-spool-drain-$native_idle_id" &
-native_idle_drain_waiter=$!
+# That note waits behind the compaction too. The later turn is still open at
+# the next boundary, so the retry refuses without typing, and the note stays
+# spooled until a boundary can deliver it.
+boundary_arm "gang-self-compact-$native_idle_request" "gang-spool-drain-$native_idle_id"
 printf '%s' '{"hook_event_name":"Stop","turn_id":"turn-three","transcript_path":"'"$native_idle_rollout"'"}' |
-  TMUX_PANE="$native_idle_pane" "$GANG" hook >/dev/null
-wait "$native_idle_drain_waiter"
+  GANG_BOOT_TIMEOUT=2 TMUX_PANE="$native_idle_pane" "$GANG" hook >/dev/null
+boundary_taken "gang-self-compact-$native_idle_request" "gang-spool-drain-$native_idle_id"
+equal "the later-turn boundary also retries the compaction first" compaction \
+  "$BOUNDARY_TAKEN"
 contains "the later-turn note stays spooled while that turn remains open" \
   "$("$GANG" roster | grep '^native-idle ' || :)" "spooled=1"
 equal "and its boundary leaves the request standing" "$native_idle_request" \
@@ -1690,22 +1794,15 @@ equal "and its boundary leaves the request standing" "$native_idle_request" \
 # boundary refuses before the pane is consulted, leaving the request for a
 # collar that can honour it.
 native_idle_record task_complete turn-three >> "$native_idle_rollout"
-tmux wait-for "gang-spool-drain-$native_idle_id" &
-native_idle_drain_waiter=$!
-printf '%s' '{"hook_event_name":"Stop","turn_id":"turn-three","transcript_path":"'"$native_idle_rollout"'"}' |
-  TMUX_PANE="$native_idle_pane" "$GANG" hook >/dev/null
-wait "$native_idle_drain_waiter"
-excludes "the later terminal record lets its note leave the spool" \
-  "$("$GANG" roster | grep '^native-idle ' || :)" "spooled="
-equal "and leaves the request for the collar-change boundary" \
-  "$native_idle_request" \
-  "$(tmux show-options -wqv -t "$native_idle_id" @gl_self_compact_requested)"
 native_idle_collar unavailable
-tmux wait-for "gang-self-compact-$native_idle_request" &
-native_idle_waiter=$!
+boundary_arm "gang-self-compact-$native_idle_request" "gang-spool-drain-$native_idle_id"
 printf '%s' '{"hook_event_name":"Stop","turn_id":"turn-three","transcript_path":"'"$native_idle_rollout"'"}' |
   TMUX_PANE="$native_idle_pane" "$GANG" hook >/dev/null
-wait "$native_idle_waiter"
+boundary_taken "gang-self-compact-$native_idle_request" "gang-spool-drain-$native_idle_id"
+equal "the collar-change boundary goes to the compaction, not the waiting note" \
+  compaction "$BOUNDARY_TAKEN"
+contains "and the waiting note stays spooled" \
+  "$("$GANG" roster | grep '^native-idle ' || :)" "spooled=1"
 equal "a collar that stops reading the witness submits nothing for a request bound to it" absent \
   "$([ -e "$native_idle_executed" ] && printf present || printf absent)"
 excludes "and types no continuation" "$(pane native-idle)" "THIRD_STEP_MARK"
@@ -1715,17 +1812,23 @@ contains "and the record names the missing reader" \
   "$(tmux show-options -wqv -t "$native_idle_id" @gl_self_compact_failed)" \
   "no longer defines collar_native_idle"
 native_idle_collar native-idle
-tmux wait-for "gang-self-compact-$native_idle_request" &
-native_idle_waiter=$!
+boundary_arm "gang-self-compact-$native_idle_request" "gang-spool-drain-$native_idle_id"
 printf '%s' '{"hook_event_name":"Stop","turn_id":"turn-three","transcript_path":"'"$native_idle_rollout"'"}' |
   TMUX_PANE="$native_idle_pane" "$GANG" hook >/dev/null
-wait "$native_idle_waiter"
+boundary_taken "gang-self-compact-$native_idle_request" "gang-spool-drain-$native_idle_id"
+equal "the reader restored, the next boundary goes to the compaction" compaction \
+  "$BOUNDARY_TAKEN"
+contains "and the note still waits for the compacted context" \
+  "$("$GANG" roster | grep '^native-idle ' || :)" "spooled=1"
 equal "the reader restored, the next boundary completes the request" present \
   "$([ -e "$native_idle_executed" ] && printf present || printf absent)"
 # source-guard: producer@b7a3655c58fa: the typed command never spells this marker; only the recorded --resume continuation gang injects after the compaction carries it
 contains "with its continuation" "$(pane native-idle)" "THIRD_STEP_MARK"
 equal "and clears the request" "" \
   "$(tmux show-options -wqv -t "$native_idle_id" @gl_self_compact_requested)"
+post_compact_drain native-idle "$native_idle_id" "$native_idle_pane"
+excludes "and PostCompact delivers the later-turn note" \
+  "$("$GANG" roster | grep '^native-idle ' || :)" "spooled="
 
 # INTERRUPT RETIRES BOTH TURN FACTS. A Stop payload left above the paint and
 # activity tiers would otherwise recreate the permanent wedge this fix removes.
@@ -2174,7 +2277,7 @@ tmux set-option -uw -t "$compact_race_id" @gl_self_compact_failed
 # token R before dropping its claim. The ln wrapper holds the loser after its
 # failed creation until that release, then makes the confirmation claim and rm
 # observable. The loser must classify the vanished peer as contention and must
-# not clear R; the waiting note then owns the next Stop as usual.
+# not clear R; the next clear boundary then goes to R, ahead of the note.
 compact_release_token="test-compact-release-race-$$"
 rmdir "$compact_race_pair/1" "$compact_race_pair/2" \
   "$compact_race_pair/3" "$compact_race_pair/4"
@@ -2206,36 +2309,26 @@ contains "the refusing winner records that the request still stands" \
 contains "the refusing winner leaves one note for a later boundary" \
   "$("$GANG" status compact-race)" "spooled:"
 
-tmux wait-for "gang-spool-drain-$compact_race_id" &
-compact_release_drain_waiter=$!
-printf '%s' '{"hook_event_name":"Stop"}' |
-  TMUX_PANE="$compact_race_pane" "$GANG" hook >/dev/null
-wait "$compact_release_drain_waiter"
-equal "the failure note's boundary leaves the restored request standing" \
-  "$compact_release_token" \
+# The losing claim removed the draft, so the next Stop finds the composer clear.
+# The first refusing worker already signalled the token-keyed barrier; observe
+# this worker through dispatch cleanup, so that earlier signal cannot satisfy
+# the witness for a later boundary using the same token.
+compact_release_finish_bin="$RUN_ROOT/compact-release-finish-bin"
+mkdir "$compact_release_finish_bin"
+ln -s "$compact_race_bin/tmux" "$compact_release_finish_bin/tmux"
+boundary_arm "$compact_race_channel-done-3" "gang-spool-drain-$compact_race_id"
+printf '%s' '{"hook_event_name":"Stop"}' \
+  | PATH="$compact_release_finish_bin:$PATH" TMUX_PANE="$compact_race_pane" \
+    "$GANG" hook >/dev/null
+boundary_taken "$compact_race_channel-done-3" "gang-spool-drain-$compact_race_id"
+equal "the next clear boundary goes to the restored request, not its note" \
+  compaction "$BOUNDARY_TAKEN"
+equal "which submits the restored request once" \
+  "4" "$(wc -l < "$compact_race_executed" | tr -d ' ')"
+equal "that successful retry consumes the request" "" \
   "$(tmux show-options -wqv -t "$compact_race_id" @gl_self_compact_requested)"
-compact_release_status="$("$GANG" status compact-race)"
-case "$compact_release_status" in
-  *spooled:*) fail "the refusal note drains before a compaction retry is armed" \
-                "status still reports waiting mail" ;;
-  *) pass "the refusal note drains before a compaction retry is armed"
-     # The first refusing worker already signalled the token-keyed barrier.
-     # Observe this worker through dispatch cleanup, so that earlier signal
-     # cannot satisfy the witness for a later boundary using the same token.
-     compact_release_finish_bin="$RUN_ROOT/compact-release-finish-bin"
-     mkdir "$compact_release_finish_bin"
-     ln -s "$compact_race_bin/tmux" "$compact_release_finish_bin/tmux"
-     tmux wait-for "$compact_race_channel-done-3" &
-     compact_release_retry_waiter=$!
-     printf '%s' '{"hook_event_name":"Stop"}' \
-       | PATH="$compact_release_finish_bin:$PATH" TMUX_PANE="$compact_race_pane" \
-         "$GANG" hook >/dev/null
-     wait "$compact_release_retry_waiter"
-     equal "a later mail-free boundary submits the restored request once" \
-       "4" "$(wc -l < "$compact_race_executed" | tr -d ' ')"
-     equal "that successful retry consumes the request" "" \
-       "$(tmux show-options -wqv -t "$compact_race_id" @gl_self_compact_requested)" ;;
-esac
+contains "and the refusal note waits for the compacted context" \
+  "$("$GANG" status compact-race)" "spooled:"
 "$GANG" drop compact-race >/dev/null 2>&1 || :
 
 # A BOUNDARY WHOSE COMPOSER BELONGS TO SOMEBODY ELSE DEFERS, IT DOES NOT DROP.
@@ -2307,39 +2400,26 @@ if [ -n "$drafted_request" ]; then
   contains "status reports the deferred self-compaction as still pending" \
     "$("$GANG" status drafted)" "self-compaction requested"
 
-  # Mail already waiting owns the next boundary. The old path launched its
-  # drain beside the compaction worker and let the pane-lock race decide which
-  # happened; this boundary drains the note and leaves the request untouched.
+  # A STANDING REQUEST TAKES THE FIRST CLEAR BOUNDARY, AHEAD OF ITS OWN NOTE.
+  # The refusal above spooled that note, so mail waits here too. Handing this
+  # boundary to the mail spent the first clear composer of every deferral on
+  # the news of the deferral: delivering the note opened a turn, and the retry
+  # met that turn's Stop, where an operator is again the likeliest to be typing.
+  # The compaction runs here, alone, and PostCompact drains the note into the
+  # context it produced. Its successful episode retires both the failure and
+  # the note id.
   rm -f -- "$drafted_draft"
   drafted_retry="$(tmux show-options -wqv -t "$drafted_id" @gl_self_compact_requested)"
   # A request that was NOT put back leaves nothing to wait on, and a barrier
   # keyed to it would hang instead of failing. The claim above already reports
   # that; this one refuses to arm a wait it cannot satisfy.
   if [ -n "$drafted_retry" ]; then
-    tmux wait-for "gang-spool-drain-$drafted_id" &
-    drafted_drain_waiter=$!
+    boundary_arm "gang-self-compact-$drafted_retry" "gang-spool-drain-$drafted_id"
     printf '%s' '{"hook_event_name":"Stop"}' |
       TMUX_PANE="$drafted_tmux_pane" "$GANG" hook >/dev/null
-    wait "$drafted_drain_waiter"
-    equal "waiting mail leaves the compaction request for another boundary" \
-      "$drafted_retry" \
-      "$(tmux show-options -wqv -t "$drafted_id" @gl_self_compact_requested)"
-    excludes "and that boundary drains the one deferral note" \
-      "$("$GANG" status drafted)" "spooled:"
-    if [ -e "$drafted_executed" ]; then
-      fail "mail-first dispatch does not execute the compaction beside its drain" \
-        "the compact command's execution artifact already exists"
-    else
-      pass "mail-first dispatch does not execute the compaction beside its drain"
-    fi
-
-    # With no mail left, the following boundary has one action and consumes the
-    # same request. Its successful episode retires both the failure and note id.
-    tmux wait-for "gang-self-compact-$drafted_retry" &
-    drafted_retry_waiter=$!
-    printf '%s' '{"hook_event_name":"Stop"}' |
-      TMUX_PANE="$drafted_tmux_pane" "$GANG" hook >/dev/null
-    wait "$drafted_retry_waiter"
+    boundary_taken "gang-self-compact-$drafted_retry" "gang-spool-drain-$drafted_id"
+    equal "the first clear boundary runs the compaction ahead of its deferral note" \
+      compaction "$BOUNDARY_TAKEN"
     if [ -e "$drafted_executed" ]; then
       equal "a submitted retry consumes the request" "" \
         "$(tmux show-options -wqv -t "$drafted_id" @gl_self_compact_requested)"
@@ -2355,6 +2435,11 @@ if [ -n "$drafted_request" ]; then
       fail "and retires the completed episode's note identity" \
         "the mail-free boundary completed without running the compact command"
     fi
+    contains "and the note waits for the context the compaction produces" \
+      "$("$GANG" status drafted)" "spooled: 1"
+    post_compact_drain drafted "$drafted_id" "$drafted_tmux_pane"
+    excludes "PostCompact delivers the deferral note after the compaction" \
+      "$("$GANG" status drafted)" "spooled:"
   else
     fail "a submitted retry consumes the request" \
       "the deferred request was dropped, so no later boundary could run it"
@@ -2365,6 +2450,81 @@ else
   fail "a refused boundary puts the self-compaction request back" \
     "@gl_self_compact_requested was empty before the boundary"
 fi
+
+# A TICK THAT FINDS THE WINDOW IDLE TAKES THE SAME ORDER. It drained first and
+# dispatched only once the spool was empty, so a note it delivered opened a
+# turn and the idle check that followed found the window busy. The compaction
+# runs first now, and the note stays for PostCompact: a drain typed behind a
+# compaction the harness is still running would race it for the composer.
+rm -f -- "$drafted_executed"
+drafted_tick_out="$(TMUX_PANE="$drafted_tmux_pane" "$GANG" compact 2>&1)" || :
+contains "a second self-request is scheduled" "$drafted_tick_out" \
+  "self-compaction scheduled"
+drafted_tick_request="$(tmux show-options -wqv -t "$drafted_id" @gl_self_compact_requested)"
+: > "$drafted_draft"
+if [ -n "$drafted_tick_request" ]; then
+  tmux wait-for "gang-self-compact-$drafted_tick_request" &
+  drafted_tick_waiter=$!
+  printf '%s' '{"hook_event_name":"Stop"}' |
+    TMUX_PANE="$drafted_tmux_pane" "$GANG" hook >/dev/null
+  wait "$drafted_tick_waiter"
+  contains "the second refusal spools that episode's note" \
+    "$("$GANG" status drafted)" "spooled: 1"
+  rm -f -- "$drafted_draft"
+  GANG_TEST_TICK_MODE=manual "$GANG" tick >/dev/null
+  if [ -e "$drafted_executed" ]; then
+    pass "a tick that finds the window idle runs the standing compaction"
+  else
+    fail "a tick that finds the window idle runs the standing compaction" \
+      "the tick completed without running the compact command"
+  fi
+  equal "and consumes the request" "" \
+    "$(tmux show-options -wqv -t "$drafted_id" @gl_self_compact_requested)"
+  contains "the tick leaves the note for the compacted context" \
+    "$("$GANG" status drafted)" "spooled: 1"
+  post_compact_drain drafted "$drafted_id" "$drafted_tmux_pane"
+else
+  rm -f -- "$drafted_draft"
+  fail "a tick that finds the window idle runs the standing compaction" \
+    "@gl_self_compact_requested was empty after the second request"
+fi
+
+# A REQUEST NO BOUNDARY CAN SPEND DOES NOT HOLD THE MAIL BEHIND IT. A witness
+# binding that belongs to another request fails closed before any worker
+# exists and leaves the request standing for status to show. Giving every
+# boundary to that request would starve the spool for as long as the binding
+# stays wrong, so the boundary it declines drains the mail instead.
+drafted_bound_out="$(TMUX_PANE="$drafted_tmux_pane" "$GANG" compact 2>&1)" || :
+contains "a third self-request is scheduled" "$drafted_bound_out" \
+  "self-compaction scheduled"
+drafted_bound_request="$(tmux show-options -wqv -t "$drafted_id" @gl_self_compact_requested)"
+tmux set-option -w -t "$drafted_id" @gl_self_compact_witness \
+  "not-this-request"$'\t'native-idle
+: > "$drafted_draft"
+drafted_bound_mail="$(printf 'MARK_DRAFTED_BEHIND_BINDING' |
+  "$GANG" send --to drafted --from tester --stdin 2>&1)" || :
+contains "the fail-closed fixture first accepts mail into the spool" \
+  "$drafted_bound_mail" "queued for drafted"
+rm -f -- "$drafted_draft"
+boundary_arm "gang-self-compact-$drafted_bound_request" "gang-spool-drain-$drafted_id"
+printf '%s' '{"hook_event_name":"Stop"}' |
+  TMUX_PANE="$drafted_tmux_pane" "$GANG" hook >/dev/null
+boundary_taken "gang-self-compact-$drafted_bound_request" "gang-spool-drain-$drafted_id"
+# The binding fails closed on the request's own barrier before any worker
+# exists, and the drain then takes the boundary.
+equal "a boundary its request cannot spend also starts the spool drain" both \
+  "$BOUNDARY_TAKEN"
+excludes "a boundary its request cannot spend delivers the waiting mail" \
+  "$("$GANG" status drafted)" "spooled:"
+equal "and the request stays standing" "$drafted_bound_request" \
+  "$(tmux show-options -wqv -t "$drafted_id" @gl_self_compact_requested)"
+contains "with the record naming the binding it refused" \
+  "$(tmux show-options -wqv -t "$drafted_id" @gl_self_compact_failed)" \
+  "belongs to another request"
+tmux set-option -uw -t "$drafted_id" @gl_self_compact_requested
+tmux set-option -uw -t "$drafted_id" @gl_self_compact_witness
+tmux set-option -uw -t "$drafted_id" @gl_self_compact_failed
+tmux set-option -uw -t "$drafted_id" @gl_self_compact_noted
 
 # A COMMAND THAT REPORTS NO EFFECT MUST HAVE HAD NONE. A refused boundary puts
 # its request back, so a standing request is an ordinary state and a second
@@ -2399,6 +2559,55 @@ tmux set-option -uw -t "$drafted_id" @gl_self_compact_requested
 tmux set-option -uw -t "$drafted_id" @gl_self_compact_resume
 
 "$GANG" drop drafted >/dev/null 2>&1 || :
+
+# A COLLAR WITHOUT A STOP HOOK LEAVES NOTHING THAT MARKS THE WINDOW BUSY. A
+# tick that submits a compaction through a hook collar opens the turn itself,
+# so a drain behind it refuses; here nothing does, and a drain in the same pass
+# would type the waiting mail behind the compaction the harness is still
+# running. The pass that submits leaves the mail, and the next pass, which is
+# this collar's only boundary, delivers it.
+hookless_executed="$RUN_ROOT/self-hookless-executed"
+hookless_draft="$RUN_ROOT/self-hookless-draft"
+cat > "$RUN_ROOT/collars/hookless.sh" <<SH
+# shellcheck shell=bash
+# shellcheck disable=SC2034
+. "$ROOT/collars/bash.sh"
+GANG_COMPACT_CMD="printf HOOKLESS_COMPACT; : > $hookless_executed"
+GANG_SELF_COMPACT=deferred
+_gl_hookless_input="\$(declare -f collar_input)"
+eval "hookless_real_input \${_gl_hookless_input#collar_input}"
+collar_input() {
+  [ ! -e "$hookless_draft" ] || { printf 'half written operator line'; return; }
+  hookless_real_input "\$1"
+}
+SH
+"$HITCH" hookless -c hookless -d /tmp >/dev/null
+hookless_id="$(window_id hookless)"
+hookless_tmux_pane="$(tmux list-panes -t "$hookless_id" -F '#{pane_id}')"
+hookless_out="$(TMUX_PANE="$hookless_tmux_pane" "$GANG" compact 2>&1)" || :
+contains "a collar without a Stop hook schedules a self-compaction" \
+  "$hookless_out" "self-compaction scheduled"
+: > "$hookless_draft"
+hookless_mail="$(printf 'MARK_HOOKLESS_BEHIND_COMPACTION' |
+  "$GANG" send --to hookless --from tester --stdin 2>&1)" || :
+contains "and mail sent to it waits in the spool" "$hookless_mail" \
+  "queued for hookless"
+rm -f -- "$hookless_draft"
+GANG_TEST_TICK_MODE=manual "$GANG" tick >/dev/null
+if [ -e "$hookless_executed" ]; then
+  pass "a tick runs the hookless collar's standing compaction"
+else
+  fail "a tick runs the hookless collar's standing compaction" \
+    "the tick completed without running the compact command"
+fi
+contains "and leaves the mail rather than typing it behind the compaction" \
+  "$("$GANG" status hookless)" "spooled: 1"
+GANG_TEST_TICK_MODE=manual "$GANG" tick >/dev/null
+excludes "the next tick delivers that mail" \
+  "$("$GANG" status hookless)" "spooled:"
+# source-guard: whole-surface@2c8c4db77185: the nonce-marked peer body is unique to this test and verified delivery may render it anywhere in the recipient transcript
+contains "into the session" "$(pane hookless)" "MARK_HOOKLESS_BEHIND_COMPACTION"
+"$GANG" drop hookless >/dev/null 2>&1 || :
 
 # Without the deferred declaration, the same self-call takes the direct path
 # and puts the native command into the tty while the caller's turn is active.
