@@ -194,3 +194,4 @@ Gangline's durable constraints live in the records below. A record's id is perma
 | [0188](0188-a-sender-marks-the-acknowledgement-that-owes-no-turn.md) | A sender marks the acknowledgement that owes no turn | accepted | 2026-09-13 |
 | [0189](0189-a-tick-pass-stops-at-its-budget-and-resumes-after-a-cursor.md) | A tick pass stops at its budget and resumes after a cursor | accepted | 2026-09-13 |
 | [0190](0190-a-long-command-reports-through-one-transient-host-service.md) | A long command reports through one transient host service | proposed | 2026-09-12 |
+| [0191](0191-context-warnings-are-ordered-bands-settled-at-hitch.md) | Context warnings are ordered bands settled at hitch | proposed | 2026-09-12 |

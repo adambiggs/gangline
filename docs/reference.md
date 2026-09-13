@@ -214,11 +214,11 @@ and the attach recovery above does not apply to it.
 - `-r`, `--role` attaches the named role brief to this hitch only. `gang hitch`
   has no role default and never infers one from the agent name. Role names use
   letters, digits, dot, dash, and underscore and may not begin with dot or dash.
-- `-l`, `--lights` sets context lights for this agent alone: `collar` to take
-  the collar's own default for the chosen model, `off` for none, or explicit
-  `yellow,red` tokens or `yellow%,red%`. It replaces the whole
-  `GANG_CONTEXT_LIGHTS` map, whose own built-in value is `collar`, and the hitch
-  line says `(--lights)`. The collar is sourced already knowing
+- `-l`, `--lights` selects the legacy two context lights for this agent alone:
+  `collar` to take the collar's own default for the chosen model, `off` for
+  none, or explicit `yellow,red` tokens or `yellow%,red%`. It wins over
+  `GANG_CONTEXT_BANDS` as well as replacing the whole `GANG_CONTEXT_LIGHTS`
+  map; the hitch line says `(--lights)`. The collar is sourced already knowing
   this agent's request, because a collar may wire its native context source at
   launch and lights armed over a source nobody painted report a miss on every
   turn.
@@ -314,18 +314,43 @@ that bar and the swap policy selecting nobody where it previously selected the
 team. `oomctl` prints the live policy; `GANG_SCOPE` changes what the victim pool
 looks like, not what the thresholds are.
 
-The thresholds settled at hitch are written to the window on every hitch,
-including a hitch that settles on none, and nothing re-resolves them later. A
-`--resume` respawns the window it is registered to and window options outlive a
-respawn, so the empty write is what stops an earlier launch's thresholds from
-staying armed over a launch that wired no native source to read them. A resume
-that omits `-m` therefore resolves no collar default, exactly as a first hitch
-would; `gang drop` prints no model in its relaunch line, so pass `-m` or `-l`
-again to keep the lights the agent had. Which thresholds those are is
-decided in one pass: `-l`/`--lights` if given, otherwise the `GANG_CONTEXT_LIGHTS`
-entry that matches this hitch most specifically, and where none matches the
-built-in `collar`, which asks the collar for its own default for the hitched
-model.
+The context-warning policy settled at hitch is written to the window on every
+hitch, including a hitch that settles on none, and nothing re-resolves it later.
+A `--resume` respawns the window it is registered to and window options outlive
+a respawn, so the empty write is what stops an earlier policy staying armed over
+a launch that wired no native source to read it. A resume that omits `-m`
+therefore resolves no collar default, exactly as a first hitch would; `gang
+drop` prints no model in its relaunch line, so pass `-m` or `-l` again to keep
+the lights the agent had.
+
+Without `--lights`, a nonempty `GANG_CONTEXT_BANDS` replaces the legacy pair
+with its selected ordered list. An unset `GANG_CONTEXT_BANDS` keeps the legacy
+policy exactly, including its default wording. `off` settles no custom bands or
+legacy lights. Otherwise the bands map selects exact `COLLAR/MODEL`, then
+`COLLAR/*`, then its required `*` global entry. The model is the exact `-m`
+string. A map is validated while configuration loads, then its selected literal
+list is settled at hitch; changing the setting affects only later hitches.
+
+`GANG_CONTEXT_BANDS` is a semicolon-separated
+`SELECTOR=BAND@THRESHOLD:TEMPLATE|...` map. A selector is exact
+`COLLAR/MODEL`, `COLLAR/*`, or `*`; each non-`off` map needs `*`. Band names use
+letters, digits, dots, dashes, or underscores. Thresholds are positive,
+strictly increasing, all tokens or all percentages, and percentage thresholds
+are below 100. `off` may be the whole setting or one selected entry. Templates
+may contain literal text and only `{context_used}`, `{context_size}`,
+`{context_pct}`, `{cache_timeout}`, `{cache_age}`, `{current_time}`, `{agent}`,
+`{harness}`, and `{band}`. The context values are the collar's native reading;
+the cache values are `unavailable` unless the selected cache backstop has a
+usable reader. The shipped Claude Code and Codex collars provide both readers.
+Unknown or malformed placeholders, selectors, delimiters, and threshold order
+refuse under their configuration origin before a hook can run. `gang config`
+prints the effective map in selection order with deterministic rendered samples.
+
+The legacy policy uses `GANG_CONTEXT_LIGHTS`. Which thresholds those are is
+decided in one pass: `-l`/`--lights` if given, otherwise the
+`GANG_CONTEXT_LIGHTS` entry that matches this hitch most specifically, and where
+none matches the built-in `collar`, which asks the collar for its own default
+for the hitched model.
 
 `GANG_CONTEXT_LIGHTS` is a whitespace-separated list of `COLLAR/MODEL=SPEC`
 entries. SPEC is `collar`, `off`, or thresholds, and either half of the selector
@@ -1854,10 +1879,13 @@ a file line. It also reports whether the doctrine file and operator roles
 directory are present, with the terminal-safe path to each slot. It ends with
 the context-light map as `context-lights` lines of selector and SPEC, most
 specific first and closing on the `*` entry that answers when nothing else
-matches, then the cache-compaction map as `cache-compaction` lines. A malformed
-map is refused under its origin after every other line has printed. Dynamic text
-is terminal-safe: control bytes are rendered visibly rather than written raw.
-The command takes no arguments and needs no tmux server.
+matches. It then prints each `context-bands` selector, band name (or `off`),
+threshold, and a deterministic rendered non-live sample; entries are exact
+collar/model, collar wildcard, then global default. The cache-compaction map
+follows as `cache-compaction` lines. A malformed map is refused under its origin
+after every other line has printed. Dynamic text is terminal-safe: control bytes
+are rendered visibly rather than written raw. The command takes no arguments and
+needs no tmux server.
 
 ### `gang hook`
 
@@ -1928,6 +1956,7 @@ Exactly these keys are settable:
 | `GANG_LOCK_DIR` | `/tmp/gangline-$(id -u)` | shared delivery locks and per-target spools |
 | `GANG_ARCHIVE_DIR` | `${XDG_STATE_HOME:-$HOME/.local/state}/gangline/archive` | pending-message archive written before windows die |
 | `GANG_CONTEXT_LIGHTS` | `collar` | whitespace-separated `COLLAR/MODEL=SPEC` entries, either half `*`, the most specific match winning; SPEC is `collar` to take the collar's own default for the hitched model, `off`, `yellow,red` token thresholds, or `yellow%,red%` relative thresholds, and a SPEC with no selector is the deprecated form of `*=SPEC`; `gang hitch -l` overrides the whole map for one agent |
+| `GANG_CONTEXT_BANDS` | unset | `off`, or semicolon-separated `SELECTOR=BAND@THRESHOLD:TEMPLATE|...` entries. `SELECTOR` is exact `COLLAR/MODEL`, then `COLLAR/*`, then required `*`; the most specific match wins. Thresholds are positive, increasing, and all tokens or all percentages below 100. Templates use only documented placeholders and are rendered at the crossing; missing cache-reader values render `unavailable`. A nonempty map replaces legacy lights for later hitches, while `gang hitch -l` explicitly keeps one legacy two-light hitch. |
 | `GANG_CACHE_COMPACTION` | `claude-code=3600:300 codex=1800:180` | `off`, or whitespace-separated `COLLAR=TTL:MARGIN` / `COLLAR=off` entries; TTL and MARGIN are positive whole seconds, an exact collar entry beats `*`, and a collar omitted from the map is off. Gangline validates and settles the selected entry at hitch time, so a later tick never reparses a live map. The tick considers only an idle agent with a readable transcript/rollout mtime inside `[TTL-MARGIN, TTL)`, past its first context-light band, and with no spool delivery or outstanding self-compaction. |
 | `GANG_USAGE_LIGHTS` | `off` | `off` or increasing provider-used thresholds such as `90%,95%` |
 | `GANG_AUTO_RESUME` | `off` | `off` or one provider-used percentage such as `97%` at which a reset wake is armed automatically |
