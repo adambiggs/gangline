@@ -24,6 +24,29 @@ esac
 # this suite becomes runnable before a commit rather than only at pre-push.
 test/gate.sh --assert-owned >/dev/null
 
+# Every executable fixture lane must discard an agent pane's live Gangline
+# route and team selection before it creates private state. A single runner
+# used to do this while direct lanes did not, so an inherited
+# GANG_TMUX_SOCKET let test ticks reach the operator's team. Keep the complete
+# boundary literal and near each entry point: snapshot fixtures copy entry
+# scripts selectively, so a sourced helper would make an omitted copy fail
+# after the test has already started.
+fixture_environment_boundary='unset TMUX TMUX_PANE GANG_TMUX_SOCKET GANG_TMUX_GUARD_AGENT \
+  GANG_TMUX_GUARD_LOG_DIR GANG_CONFIG_DIR GANG_SESSION GANG_COLLARS \
+  GANG_LOCK_DIR GANG_ARCHIVE_DIR GANG_SCOPE GANG_TMUX_GUARD'
+for fixture_entry in test/gate.sh test/integration.sh test/smoke.sh test/e2e.sh \
+  test/leadeval.sh test/role-briefs.sh test/tmux-option-bytes.sh; do
+  fixture_head="$(sed -n '1,140p' "$fixture_entry")"
+  case "$fixture_head" in
+    *"$fixture_environment_boundary"*) ;;
+    *)
+      printf 'lint: %s must clear the parent Gangline route and team selection before fixture setup\n' \
+        "$fixture_entry" >&2
+      exit 1
+      ;;
+  esac
+done
+
 # The source-guard dataflow check is a python program, and the suite has one
 # rule for finding an interpreter rather than one per entry point.
 . test/suite-python.sh

@@ -23,8 +23,12 @@
 set -euo pipefail
 
 # The live server is not the subject. Inside an agent window $TMUX is set and a
-# bare tmux talks to it while TMUX_TMPDIR is ignored without saying so.
-unset TMUX TMUX_PANE
+# bare tmux talks to it while TMUX_TMPDIR is ignored without saying so. Clear
+# the paired Gangline route and selection variables as well; this probe owns
+# only the private socket it creates below.
+unset TMUX TMUX_PANE GANG_TMUX_SOCKET GANG_TMUX_GUARD_AGENT \
+  GANG_TMUX_GUARD_LOG_DIR GANG_CONFIG_DIR GANG_SESSION GANG_COLLARS \
+  GANG_LOCK_DIR GANG_ARCHIVE_DIR GANG_SCOPE GANG_TMUX_GUARD
 
 # A CLASSIFIER THAT WAS NEVER CALIBRATED IS AN OPINION. This probe's whole
 # output is one classification, and the branch that matters most is the one no

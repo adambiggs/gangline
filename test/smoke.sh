@@ -5,6 +5,12 @@
 set -euo pipefail
 
 ROOT="$(cd -P "$(dirname "$0")/.." && pwd)"
+# Smoke is a fixture lane too. Keep an agent pane's route and team-scoped
+# configuration from selecting the live team before this file establishes its
+# own private roots below.
+unset TMUX TMUX_PANE GANG_TMUX_SOCKET GANG_TMUX_GUARD_AGENT \
+  GANG_TMUX_GUARD_LOG_DIR GANG_CONFIG_DIR GANG_SESSION GANG_COLLARS \
+  GANG_LOCK_DIR GANG_ARCHIVE_DIR GANG_SCOPE GANG_TMUX_GUARD
 CONFIG_ROOT="$(mktemp -d "${TMPDIR:-/tmp}/gangline-smoke.XXXXXX")"
 trap 'rm -rf -- "$CONFIG_ROOT"' EXIT HUP INT TERM
 

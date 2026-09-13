@@ -27,9 +27,11 @@ set -euo pipefail
 
 # INSIDE AN AGENT WINDOW $TMUX IS SET, and tmux then ignores TMUX_TMPDIR
 # without saying so, which would put this lane's disposable session on the live
-# server next to a real team. test/integration.sh does the same on its seventh
-# line and for the same reason.
-unset TMUX TMUX_PANE
+# server next to a real team. Clear Gangline's explicit route and team
+# selection as well: this lane establishes every private value it needs below.
+unset TMUX TMUX_PANE GANG_TMUX_SOCKET GANG_TMUX_GUARD_AGENT \
+  GANG_TMUX_GUARD_LOG_DIR GANG_CONFIG_DIR GANG_SESSION GANG_COLLARS \
+  GANG_LOCK_DIR GANG_ARCHIVE_DIR GANG_SCOPE GANG_TMUX_GUARD
 
 ROOT="$(cd -P "$(dirname "$0")/.." && pwd)"
 GANG="$ROOT/bin/gang"

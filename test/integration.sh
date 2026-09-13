@@ -7,11 +7,14 @@ set -euo pipefail
 ROOT="$(cd -P "$(dirname "$0")/.." && pwd)"
 # A suite may itself run inside an agent pane. Its fixture owns a fresh tmux
 # server and collar set below, so neither the pane's implicit route nor the
-# explicit return route Gangline supplies to that pane may cross into it. In
-# particular, a fixture-only collar must never become the live team's collar
+# explicit return route Gangline supplies to that pane may cross into it. The
+# same is true of every selection value: this lane creates its own session,
+# config, locks, archive, scope, guard policy, and collar inventory below.
+# In particular, a fixture-only collar must never become the live team's collar
 # inventory through an inherited tick or hook child.
 unset TMUX TMUX_PANE GANG_TMUX_SOCKET GANG_TMUX_GUARD_AGENT \
-  GANG_TMUX_GUARD_LOG_DIR GANG_COLLARS
+  GANG_TMUX_GUARD_LOG_DIR GANG_CONFIG_DIR GANG_SESSION GANG_COLLARS \
+  GANG_LOCK_DIR GANG_ARCHIVE_DIR GANG_SCOPE GANG_TMUX_GUARD
 GANG="$ROOT/bin/gang"
 : "${GANG_TEST_PATH_SHIM_GUARD:=$ROOT/test/path-shim-guard.sh}"
 export GANG_TEST_PATH_SHIM_GUARD

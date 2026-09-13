@@ -54,6 +54,13 @@ if [ "$#" -eq 0 ] && [ -n "${TMUX_PANE:-}" ] \
   exit 78
 fi
 
+# This launcher itself prepares and runs disposable fixture lanes. Do not let
+# an agent pane's explicit return route or team selection cross that boundary:
+# descendants receive only the private values their suites establish.
+unset TMUX TMUX_PANE GANG_TMUX_SOCKET GANG_TMUX_GUARD_AGENT \
+  GANG_TMUX_GUARD_LOG_DIR GANG_CONFIG_DIR GANG_SESSION GANG_COLLARS \
+  GANG_LOCK_DIR GANG_ARCHIVE_DIR GANG_SCOPE GANG_TMUX_GUARD
+
 # THE ORDINARY GATE OWNS THE HOST'S HEAVY-TEST LOCK. Keeping acquisition here
 # means callers cannot accidentally omit the descriptor rule. `flock -o`
 # retains the lock in its small parent while closing the lock fd in this script,
