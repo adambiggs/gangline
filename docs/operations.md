@@ -390,7 +390,7 @@ The cooperative `gang tick` can compact an otherwise idle, high-context agent
 shortly before its provider prompt cache expires. This preserves a short durable
 summary while the large context is still a warm cache read. It never types into
 a busy or occupied agent, an agent with queued or held spool delivery, or one
-below its first context-light threshold. Each idle gap receives at most one
+below its first context-warning threshold. Each idle gap receives at most one
 automatic submission: after that compaction, a later cold turn rewrites only
 the summary. `gang explain NAME` shows the bounded journal of those submissions.
 

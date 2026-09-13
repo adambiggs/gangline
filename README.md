@@ -228,7 +228,7 @@ operator map chooses exact `COLLAR/MODEL`, then `COLLAR/*`, then the mandatory
 See [the operational guide](docs/operations.md#context-bands) for the template
 grammar, placeholder sources, and journal privacy rule.
 
-For an idle agent already past its first context-light band, the cooperative
+For an idle agent already past its first context-warning band, the cooperative
 tick is also a cache-expiry backstop. By default it submits one native
 compaction shortly before Claude Code's one-hour cache or Codex's thirty-minute
 cache expires, then records the submission for `gang explain`. It never acts on
