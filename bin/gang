@@ -10423,16 +10423,16 @@ context_template_validate() { # $1 template, $2 subject, $3 origin note
 context_bands_parse() { # $1 selected BAND list or off; $2 subject; optional $3 origin note
   local spec="$1" subject="$2" note="${3:-}" raw name threshold template token unit="" next_unit
   local previous=0 previous_display=""
-  local -a bands=()
+  local -a band_items=()
   CONTEXT_BAND_NAMES=() CONTEXT_BAND_THRESHOLDS=() CONTEXT_BAND_TEMPLATES=()
   CONTEXT_BAND_RELATIVE=0
   case "$spec" in off|'') return 1 ;; *'|')
     die "$subject must not end its band list with '|'$note" ;;
   esac
-  IFS='|' read -r -a bands <<<"$spec"
-  [ "${#bands[@]}" -gt 0 ] \
+  IFS='|' read -r -a band_items <<<"$spec"
+  [ "${#band_items[@]}" -gt 0 ] \
     || die "$subject names no context bands$note"
-  for raw in "${bands[@]}"; do
+  for raw in "${band_items[@]}"; do
     case "$raw" in *@*:* ) ;; *)
       die "$subject band '$raw' must be NAME@THRESHOLD:TEMPLATE$note" ;;
     esac
@@ -10926,11 +10926,11 @@ context_bands_fired_count() { # $1 window; 0 count, 1 absent, 2 malformed/non-pr
   raw="$(tmux show-options -wqv -t "$1" @gl_context_bands_fired 2>/dev/null)" || raw=""
   [ -n "$raw" ] || return 1
   case "$raw" in v1:?*) names="${raw#v1:}" ;; *) return 2 ;; esac
-  local -a fired=()
-  IFS=',' read -r -a fired <<<"$names"
-  for i in "${!fired[@]}"; do
+  local -a fired_names=()
+  IFS=',' read -r -a fired_names <<<"$names"
+  for i in "${!fired_names[@]}"; do
     [ "$i" -lt "${#CONTEXT_BAND_NAMES[@]}" ] || return 2
-    [ "${fired[$i]}" = "${CONTEXT_BAND_NAMES[$i]}" ] || return 2
+    [ "${fired_names[$i]}" = "${CONTEXT_BAND_NAMES[$i]}" ] || return 2
     count=$((count + 1))
   done
   printf '%s' "$count"
