@@ -446,9 +446,9 @@ test entry point; ordinary use does not need to call it explicitly.
 
 One pass visits every hitched window. Where a deferred self-compaction request
 is standing and the window reads idle, the pass dispatches that request first.
-A pass that submits it, cannot verify the submission, or cannot read its record
-afterwards leaves the waiting spool to PostCompact or a later pass, because the
-compaction may be running. Otherwise it retries every waiting spool through the
+A pass that submits it, cannot verify the submission, or starts its worker and
+then cannot read its record leaves the waiting spool to PostCompact or a later
+pass, because the compaction may be running. Otherwise it retries every waiting spool through the
 same occupancy, turn, copy-mode, composer and verified-submission gates used by
 `send`. It also asks collars that declare `collar_live_session_id` whether the
 process currently holding the pane is the registered native session. A
