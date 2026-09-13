@@ -8056,6 +8056,25 @@ spool_held_report() { # $1 = window id; one truthful line per held entry
   done
 }
 
+spool_recovery_body_write() { # $1 exact bundle; writes one private durable staging record
+  local file
+  file="$(mktemp "$SPOOL_DIR/.staged-recovery.XXXXXXXX")" || {
+    printf 'cannot create a durable staged recovery body under %s\n' "$SPOOL_DIR" >&2
+    return 1
+  }
+  chmod 600 "$file" || {
+    rm -f -- "$file"
+    printf 'cannot secure the staged recovery body at %s\n' "$file" >&2
+    return 1
+  }
+  if ! printf '%s' "$1" > "$file"; then
+    rm -f -- "$file" || printf 'could not remove incomplete staged recovery body at %s\n' "$file" >&2
+    printf 'cannot write the staged recovery body at %s\n' "$file" >&2
+    return 1
+  fi
+  SPOOL_RECOVERY_BODY_FILE="$file"
+}
+
 spool_recover_claims() { # $1 = window id; pane lock is held by the caller
   # A `sending-` entry normally exists only while this pane lock is held by its
   # delivery worker.  Reaching it after taking that lock proves the old worker
@@ -8063,7 +8082,8 @@ spool_recover_claims() { # $1 = window id; pane lock is held by the caller
   # Preserve that uncertainty in a separate kept state.  A matching composer
   # may be Gangline's abandoned bundle; stage_clear will remove only that exact
   # body, and leaves every other draft untouched.
-  local id="$1" claim dest bundle="" claims="" n=0 recovered=0 nl=$'\n'
+  local id="$1" claim dest bundle="" claims="" note="" n=0 recovered=0 nl=$'\n'
+  SPOOL_RECOVERY_BODY_FILE=""
   for claim in "$SPOOL_DIR"/sending-*; do
     [ -f "$claim" ] || continue
     if ! spool_read_try "$claim"; then
@@ -8082,10 +8102,28 @@ spool_recover_claims() { # $1 = window id; pane lock is held by the caller
     n=$((n + 1))
   done
   [ "$n" -eq 0 ] && return 0
-  stage_record "$id" \
-    "delivery worker ended after claiming this body — it may have reached the composer, so Gangline kept it and will not send it again" \
-    "" "$bundle"
-  stage_clear "$id"
+  note="$(staged_note "$id")" || note=""
+  if [ -n "$note" ]; then
+    # A pre-existing staged record has fresher attribution for this composer.
+    # Do not replace it with an interrupted claim merely because the worker
+    # that held the pane lock died later; the retained entries below still make
+    # every recovered body readable without authorizing a clear.
+    printf "%s\n" "recovered delivery claim(s) were kept without replacing this pane's existing staged input record" >&2
+  elif spool_recovery_body_write "$bundle" \
+       && stage_record "$id" \
+         "delivery worker ended after claiming this body — it may have reached the composer, so Gangline kept it and will not send it again" \
+         "" "$SPOOL_RECOVERY_BODY_FILE"; then
+    stage_clear "$id"
+  else
+    # The claim must still leave the live namespace: it cannot be re-sent just
+    # because Gangline could not persist the optional composer-attribution
+    # record. The later interrupted entry is the durable, readable outcome.
+    [ -z "${SPOOL_RECOVERY_BODY_FILE:-}" ] \
+      || rm -f -- "$SPOOL_RECOVERY_BODY_FILE" \
+           || printf 'could not remove unusable staged recovery body at %s\n' "$SPOOL_RECOVERY_BODY_FILE" >&2
+    SPOOL_RECOVERY_BODY_FILE=""
+    printf 'recovered delivery claim(s) were kept, but their exact composer body could not be staged; no composer text was cleared\n' >&2
+  fi
   while IFS= read -r claim; do
     [ -n "$claim" ] || continue
     dest="$SPOOL_DIR/interrupted-${claim##*/sending-}"
@@ -8110,14 +8148,27 @@ EOF
 SPOOL_SENDER="" SPOOL_FRAG="" SPOOL_BODY="" SPOOL_READ_ERROR=""
 SPOOL_SENDER_TOKEN="-" SPOOL_REPLY_MODE="control" SPOOL_REPLY_TO="-" SPOOL_NONCE=""
 spool_read_try() { # $1 = entry path; 0 loaded, 1 with SPOOL_READ_ERROR
-  local first version extra
+  local first version extra raw
   SPOOL_SENDER=""; SPOOL_FRAG=""; SPOOL_BODY=""
   SPOOL_SENDER_TOKEN="-"; SPOOL_REPLY_MODE="control"; SPOOL_REPLY_TO="-"; SPOOL_NONCE=""
   SPOOL_READ_ERROR=""
-  if ! { IFS= read -r first; IFS= read -r SPOOL_FRAG; SPOOL_BODY="$(cat)"; } < "$1"; then
+  # Read one checked snapshot before touching fields. A redirection failure in
+  # `if ! { read; ...; } < file` can skip the group yet leave its final status
+  # successful, after which `set -u` reports an unbound header instead of the
+  # held record that vanished. A claim can legitimately vanish while a
+  # self-read archives it, so this must return the ordinary fail-closed result.
+  if ! raw="$(cat -- "$1")"; then
     SPOOL_READ_ERROR="cannot read the spooled message $1 — refusing to guess at a message body"
     return 1
   fi
+  case "$raw" in
+    *$'\n'*) first="${raw%%$'\n'*}"; raw="${raw#*$'\n'}" ;;
+    *) SPOOL_READ_ERROR="the spooled message $1 has no complete delivery header"; return 1 ;;
+  esac
+  case "$raw" in
+    *$'\n'*) SPOOL_FRAG="${raw%%$'\n'*}"; SPOOL_BODY="${raw#*$'\n'}" ;;
+    *) SPOOL_READ_ERROR="the spooled message $1 has no body — refusing to send an envelope gang cannot reconstruct"; return 1 ;;
+  esac
   case "$first" in
     v2$'\t'*)
       IFS=$'\t' read -r version SPOOL_SENDER SPOOL_SENDER_TOKEN SPOOL_REPLY_MODE SPOOL_REPLY_TO SPOOL_NONCE extra <<<"$first"
@@ -9539,7 +9590,7 @@ box_class() { # $1 = window id, $2 = the reading refused on, $3 = target name,
     printf 'parked: the harness queued earlier input (gang flush %s)' "$3"
     return
   fi
-  local want want_rc=0
+  local want body_file want_rc=0 body_file_rc=0
   want="$(window_option "$1" @gl_staged_box)" || want_rc=$?
   if [ "$want_rc" -ne 0 ]; then
     printf 'unreadable: the window could not be read, so gang cannot say whose text is in its box (gang roster)'
@@ -9547,6 +9598,16 @@ box_class() { # $1 = window id, $2 = the reading refused on, $3 = target name,
   fi
   if [ -n "$want" ] && [ "$want" = "$2" ]; then
     printf "staged: gang's own undelivered body (gang composer %s)" "$3"
+    return
+  fi
+  body_file="$(window_option "$1" @gl_staged_body_file)" || body_file_rc=$?
+  if [ "$body_file_rc" -ne 0 ]; then
+    printf 'unreadable: the window could not be read, so gang cannot say whose text is in its box (gang roster)'
+    return
+  fi
+  if [ -n "$body_file" ] && stage_body_read "$1" "$body_file" \
+     && [ "$STAGED_BODY" = "$2" ]; then
+    printf "staged: gang's own recovered body (gang composer %s)" "$3"
     return
   fi
   # Human authorship is not the leftover case. The legs that record a paste
@@ -9626,25 +9687,51 @@ parked_current() { # $1 = window id -> the parked body, freshness-checked at rea
   printf '%s' "$rec"
 }
 
-stage_record() { # $1 window, $2 note, $3 rendered box, optional $4 exact staged body
-  local body64=""
+stage_body_path_valid() { # $1 window, $2 path; recovery bodies live beside their spool
+  local dir
+  dir="$(spool_dir_of "$1")" || return 1
+  case "$2" in "$dir"/.staged-recovery.*) ;; *) return 1 ;; esac
+  [ -f "$2" ] && [ ! -L "$2" ] && [ -O "$2" ]
+}
+
+stage_body_read() { # $1 window, $2 path; sets STAGED_BODY from a checked durable record
+  stage_body_path_valid "$1" "$2" || return 1
+  STAGED_BODY="$(cat -- "$2")" || return 1
+}
+
+stage_record() { # $1 window, $2 note, $3 rendered box, optional $4 durable exact-body path
   declare -F collar_input >/dev/null || return 0
-  tmux set-option -w -t "$1" @gl_staged "$2"
-  if [ -n "$3" ]; then tmux set-option -w -t "$1" @gl_staged_box "$3"
-  else tmux set-option -uw -t "$1" @gl_staged_box 2>/dev/null || true; fi
-  # tmux option values do not preserve a multiline argument as one exact
-  # value. Base64 keeps the recovered bytes in the option namespace without
-  # turning its newlines into command syntax; stage_clear encodes its fresh
-  # reading the same way before comparing it.
+  tmux set-option -w -t "$1" @gl_staged "$2" || return 1
+  if [ -n "$3" ]; then
+    tmux set-option -w -t "$1" @gl_staged_box "$3" || return 1
+  else
+    tmux set-option -uw -t "$1" @gl_staged_box || return 1
+  fi
+  # A recovered bundle can exceed tmux's command-length limit.  Its exact
+  # bytes already have a durable private home beside the retained claim, so
+  # keep only that short checked path in tmux state.  stage_clear re-reads the
+  # whole file and compares it byte-for-byte; this is not a hash or a prefix.
   if [ -n "${4:-}" ]; then
-    body64="$(printf '%s' "$4" | base64 | tr -d '\n')" || return 1
-    tmux set-option -w -t "$1" @gl_staged_body64 "$body64"
-  else tmux set-option -uw -t "$1" @gl_staged_body64 2>/dev/null || true; fi
+    stage_body_path_valid "$1" "$4" || return 1
+    tmux set-option -w -t "$1" @gl_staged_body_file "$4" || return 1
+  else
+    tmux set-option -uw -t "$1" @gl_staged_body_file || return 1
+  fi
+  # An interrupted release may have written the earlier short-lived encoding.
+  # It cannot be trusted as a recovery body, and new state never needs it.
+  tmux set-option -uw -t "$1" @gl_staged_body64 || return 1
 }
 
 stage_forget() { # $1 = window id
+  local body_file
+  body_file="$(window_option "$1" @gl_staged_body_file)" || body_file=""
+  if [ -n "$body_file" ] && stage_body_path_valid "$1" "$body_file"; then
+    rm -f -- "$body_file" \
+      || printf 'could not remove the retired staged recovery body at %s\n' "$body_file" >&2
+  fi
   tmux set-option -uw -t "$1" @gl_staged 2>/dev/null || true
   tmux set-option -uw -t "$1" @gl_staged_box 2>/dev/null || true
+  tmux set-option -uw -t "$1" @gl_staged_body_file 2>/dev/null || true
   tmux set-option -uw -t "$1" @gl_staged_body64 2>/dev/null || true
   # The parked-message record belongs to the same obstruction: once there is
   # nothing staged here, there is nothing for `flush` to read a composer back
@@ -9689,7 +9776,7 @@ clear_box() { # $1 = window id, $2 = the box its caller just read (optional seco
 }
 
 stage_clear() { # $1 = window id; drop a recorded paste once it is provably ours and reachable
-  local note box want body64 box64 note_rc=0
+  local note box want body_file note_rc=0
   # A RECORD THAT CANNOT BE READ IS NOT A RECORD THAT IS GONE. Clearing is the
   # one thing this must not do on an unreadable window: the note stands until
   # something can read it.
@@ -9703,11 +9790,11 @@ stage_clear() { # $1 = window id; drop a recorded paste once it is provably ours
     stage_forget "$1"; return 0             # empty box: whoever cleared it, it is gone
   fi
   want="$(window_option "$1" @gl_staged_box)" || return 0
-  body64="$(window_option "$1" @gl_staged_body64)" || return 0
+  body_file="$(window_option "$1" @gl_staged_body_file)" || return 0
   if [ -n "$want" ] && [ "$box" = "$want" ]; then :
-  elif [ -n "$body64" ]; then
-    box64="$(printf '%s' "$box" | base64 | tr -d '\n')" || return 0
-    [ "$box64" = "$body64" ] || return 0
+  elif [ -n "$body_file" ]; then
+    stage_body_read "$1" "$body_file" || return 0
+    [ "$box" = "$STAGED_BODY" ] || return 0
   else return 0
   fi
   clear_box "$1" "$box" || return 0
@@ -15431,7 +15518,7 @@ cmd_status() {
 # either kind of read may retire stale stable-sender ambiguity to an archive.
 cmd_mail() { # read a queue; its own agent's read archives what it consumes
   local name="${1:-}" id rc=0 dir e n=0 held=0 deferred=0
-  local self="" mine=0 claim label heading=waiting mail_archive="" archived_name=""
+  local self="" mine=0 claim label heading=waiting mail_archive="" archived_name="" self_lock=0
   [ $# -le 1 ] || die "mail: unexpected argument '$2'"
   if [ -z "$name" ]; then
     name="$(self_name)" || {
@@ -15452,16 +15539,20 @@ cmd_mail() { # read a queue; its own agent's read archives what it consumes
     printf '%s\n' "$(colour "$C_DIM" "no mail waiting for $name")"
     return 0
   fi
-  # Reading one's own mail is itself a waking turn. Move quiet envelopes into
-  # the ordinary namespace under the pane lock so this read consumes them in
-  # their original global order and their stale timers become harmless no-ops.
-  if [ "$mine" -eq 1 ] && [ "$(deferred_count "$id")" -gt 0 ]; then
+  # Reading one's own mail is itself a waking turn. The lock spans deferred
+  # promotion, each claim rename, and archival: `sending-` means its holder
+  # owns the pane lock. Without that span a drain can recover a live self-read
+  # as a dead delivery worker and turn a readable message into a false kept
+  # outcome. It also makes the read's initial glob a real snapshot.
+  if [ "$mine" -eq 1 ]; then
     lock_pane "$id"
-    if ! deferred_promote_all_locked "$id"; then
-      lock_release
-      die "mail: deferred envelopes could not join this read: $DEFERRED_PROMOTE_ERROR"
+    self_lock=1
+    if [ "$(deferred_count "$id")" -gt 0 ]; then
+      if ! deferred_promote_all_locked "$id"; then
+        lock_release
+        die "mail: deferred envelopes could not join this read: $DEFERRED_PROMOTE_ERROR"
+      fi
     fi
-    lock_release
   fi
   # The glob is taken once, so an entry that lands mid-read is not one this read
   # printed and nothing here retires it.
@@ -15564,6 +15655,7 @@ cmd_mail() { # read a queue; its own agent's read archives what it consumes
     mail_archive="" ARCHIVE_DIR=""
   fi
   if [ "$n" -eq 0 ] && [ "$held" -eq 0 ] && [ "$deferred" -eq 0 ]; then
+    [ "$self_lock" -eq 0 ] || lock_release
     printf '%s\n' "$(colour "$C_DIM" "no mail waiting for $name")"
     return 0
   fi
@@ -15574,6 +15666,7 @@ cmd_mail() { # read a queue; its own agent's read archives what it consumes
   else
     printf '%s\n' "$(colour "$C_DIM" "$n waiting for delivery, $deferred deferred until an ordinary delivery or its deadline, $held kept (not awaiting delivery), in $dir")"
   fi
+  [ "$self_lock" -eq 0 ] || lock_release
 }
 
 cmd_whoami() {

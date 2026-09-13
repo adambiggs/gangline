@@ -1485,5 +1485,9 @@ collar_input() { # $1 = tmux target; prints the composer, 1 = no composer,
     }
     END { if (!length(last)) exit 1; print last }')" || return 1
   case "$line" in '› '[0-9]*'. '*) return 1 ;; esac
-  printf '%s' "${line#›}"
+  line="${line#›}"
+  # `› ` is Codex's prompt chrome.  The reader promises composer bytes, so
+  # retain a second blank as a draft byte but not this separator.
+  line="${line# }"
+  printf '%s' "$line"
 }

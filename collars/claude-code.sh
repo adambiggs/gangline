@@ -853,7 +853,9 @@ collar_input() { # $1 = tmux target; prints what a HUMAN TYPED, 1 = no box,
         if (!seen) {
           if (s ~ /^[[:space:]]*$/) continue
           if (s !~ /^❯/) exit 1                # framed, but not the composer
-          sub(/^❯/, "", s); seen = 1
+          # The first blank after the Claude Code prompt glyph is chrome, not a
+          # composer byte. Keep any second blank as actual person input.
+          sub(/^❯ ?/, "", s); seen = 1
         }
         box[++rows] = s
       }

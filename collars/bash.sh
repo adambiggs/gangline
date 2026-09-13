@@ -17,7 +17,17 @@ collar_input() { # $1 = tmux target; same shape as a real TUI's input box
            if (i > 0 && (i == 1 || substr($0, 1, i - 1) ~ /[^ \t]/)) line = $0 }
          END { print line }')" || return 1
   case "$line" in *❯*) ;; *) return 1 ;; esac
-  printf '%s' "${line#*❯}" | tr -d '\302\240'
+  line="${line#*❯}"
+  # The blank after the prompt glyph belongs to PS1, not to the input line.
+  # Keep a second blank: that is the first byte of a real draft.  Returning
+  # the prompt's separator made a retained delivery body differ from the exact
+  # composer reading even when Gangline had pasted it unchanged.
+  line="${line# }"
+  # capture-pane keeps the unused cells of an active shell line. They are pane
+  # padding, not characters Bash has accepted; retaining them makes an exact
+  # persisted delivery differ from its own visible composer after a long paste.
+  line="${line%"${line##*[![:space:]]}"}"
+  printf '%s' "$line" | tr -d '\302\240'
 }
 
 collar_context() { # $1 = tmux target; reads a beacon the pane was told to print

@@ -1574,6 +1574,110 @@ equal "and an operator outside the team consumes nothing either" \
   "$("$GANG" mail mailer >/dev/null; cd "$mailer_spool" && ls)"
 "$GANG" drop mailer >/dev/null
 
+# A SELF-READ OWNS ITS `sending-` CLAIM UNDER THE PANE LOCK. The mv shim stops
+# just after that atomic rename. A concurrent tick must leave the live reader's
+# claim alone; before the lock span it rewrote this ordinary mail as
+# `interrupted-` and the reader then died before printing it.
+"$HITCH" mail-lock -c spoolable -d /tmp >/dev/null
+mail_lock_id="$(window_id mail-lock)"
+mail_lock_pane="$(tmux list-panes -t "$mail_lock_id" -F '#{pane_id}')"
+mail_lock_spool="$GANG_LOCK_DIR/spool/$(tmux show-options -wqv -t "$mail_lock_id" @gl_spool)"
+tmux send-keys -l -t "$mail_lock_id" 'HUMAN_DRAFT'
+printf 'MARK_SELF_READ_LOCK' |
+  "$GANG" send --to mail-lock --from tester --stdin >/dev/null
+mail_lock_entry=""
+for candidate in "$mail_lock_spool"/[0-9]*; do
+  [ -f "$candidate" ] || continue
+  mail_lock_entry="$candidate"
+  break
+done
+[ -n "$mail_lock_entry" ] \
+  || fail "the self-read lock world starts with one waiting entry" "no numeric spool entry"
+mail_lock_claim="$mail_lock_spool/sending-${mail_lock_entry##*/}"
+mail_lock_ready="mail-lock-ready-$$"
+mail_lock_release="mail-lock-release-$$"
+mail_lock_real_mv="$(command -v mv)"
+cat > "$RUN_ROOT/bin/mv" <<SH
+#!/bin/sh
+. "\$GANG_TEST_PATH_SHIM_GUARD"
+path_shim_guard "$mail_lock_real_mv" "\$0" mv || exit \$?
+source=""; destination=""
+for argument do
+  [ "\$argument" = -- ] && continue
+  if [ -z "\$source" ]; then source="\$argument"
+  else destination="\$argument"; fi
+done
+if [ "\${GANG_MAIL_LOCK_ENTRY:-}" = "\$source" ] && \
+   [ "\${GANG_MAIL_LOCK_CLAIM:-}" = "\$destination" ]; then
+  "$mail_lock_real_mv" "\$@" || exit \$?
+  tmux wait-for -S "\$GANG_MAIL_LOCK_READY" || exit \$?
+  tmux wait-for -L "\$GANG_MAIL_LOCK_RELEASE" || exit \$?
+  tmux wait-for -U "\$GANG_MAIL_LOCK_RELEASE" || exit \$?
+  exit 0
+fi
+exec "$mail_lock_real_mv" "\$@"
+SH
+chmod +x "$RUN_ROOT/bin/mv"
+tmux wait-for -L "$mail_lock_release"
+tmux wait-for "$mail_lock_ready" &
+mail_lock_ready_waiter=$!
+TMUX_PANE="$mail_lock_pane" GANG_MAIL_LOCK_ENTRY="$mail_lock_entry" \
+  GANG_MAIL_LOCK_CLAIM="$mail_lock_claim" GANG_MAIL_LOCK_READY="$mail_lock_ready" \
+  GANG_MAIL_LOCK_RELEASE="$mail_lock_release" "$GANG" mail \
+  >"$RUN_ROOT/mail-lock.out" 2>"$RUN_ROOT/mail-lock.err" &
+mail_lock_reader=$!
+wait "$mail_lock_ready_waiter"
+"$GANG" tick >/dev/null
+contains "a concurrent tick preserves the live self-read claim" \
+  "$(cd "$mail_lock_spool" && ls)" "sending-${mail_lock_entry##*/}"
+excludes "a concurrent tick never recovers the live self-read as interrupted" \
+  "$(cd "$mail_lock_spool" && ls)" "interrupted-"
+tmux wait-for -U "$mail_lock_release"
+mail_lock_rc=0
+wait "$mail_lock_reader" || mail_lock_rc=$?
+equal "the self-read completes after its claim lock releases" "0" "$mail_lock_rc"
+contains "the self-read still prints its claimed message" \
+  "$(<"$RUN_ROOT/mail-lock.out")" "MARK_SELF_READ_LOCK"
+excludes "the self-read leaves no false kept claim" \
+  "$(cd "$mail_lock_spool" && ls)" "sending-"
+rm -f -- "$RUN_ROOT/bin/mv"
+"$GANG" drop mail-lock >/dev/null
+
+# A CLAIM THAT VANISHES BETWEEN THE RECOVERY GLOB AND ITS READ is not an
+# unbound shell variable. The file is gone on purpose here; the useful verdict
+# is that no bytes were reclassified or delivered after that failed read.
+"$HITCH" vanished-claim -c spoolable -d /tmp >/dev/null
+vanished_claim_id="$(window_id vanished-claim)"
+vanished_claim_spool="$GANG_LOCK_DIR/spool/$(tmux show-options -wqv -t "$vanished_claim_id" @gl_spool)"
+vanished_claim="$vanished_claim_spool/sending-00000000000000000007-vanished"
+printf '%s\n%s\n%s\n' tester vanished-claim MARK_VANISHED_CLAIM > "$vanished_claim"
+vanished_claim_real_cat="$(command -v cat)"
+cat > "$RUN_ROOT/bin/cat" <<SH
+#!/bin/sh
+. "\$GANG_TEST_PATH_SHIM_GUARD"
+path_shim_guard "$vanished_claim_real_cat" "\$0" cat || exit \$?
+cat_target=""
+for argument do
+  [ "\$argument" = -- ] && continue
+  cat_target="\$argument"
+  break
+done
+if [ "\${GANG_VANISHED_CLAIM:-}" = "\$cat_target" ]; then
+  rm -f -- "\$cat_target"
+fi
+exec "$vanished_claim_real_cat" "\$@"
+SH
+chmod +x "$RUN_ROOT/bin/cat"
+vanished_claim_tick="$(GANG_VANISHED_CLAIM="$vanished_claim" "$GANG" tick 2>&1)"
+excludes "a vanished recovery claim does not crash on an unbound field" \
+  "$vanished_claim_tick" "unbound variable"
+excludes "a vanished recovery claim is not invented as an interrupted delivery" \
+  "$(cd "$vanished_claim_spool" && ls)" "interrupted-"
+equal "a vanished recovery claim leaves no delivery file behind" "0" \
+  "$(cd "$vanished_claim_spool" && find . -maxdepth 1 -type f -print | wc -l)"
+rm -f -- "$RUN_ROOT/bin/cat"
+"$GANG" drop vanished-claim >/dev/null
+
 "$HITCH" empty-mailbox -c spoolable -d /tmp >/dev/null
 empty_mail_out="$("$GANG" mail empty-mailbox)"
 contains "mail exits cleanly on an empty queue" \
@@ -2195,6 +2299,8 @@ mv -- "$claimlost_entry" "$claimlost_claim"
 # state that formerly became a supposed human draft.
 tmux send-keys -t "$claimlost_id" C-u
 tmux send-keys -l -t "$claimlost_id" "$claimlost_body"
+equal "the private composer reader preserves the claimed envelope bytes" \
+  "$claimlost_body" "$("$GANG" composer claimlost)"
 "$GANG" tick >/dev/null
 claimlost_status="$("$GANG" status claimlost)"
 contains "a dead claim becomes a preserved unknown outcome" \
@@ -2214,6 +2320,81 @@ contains "the recovered composer accepts a later delivery" \
 contains "the later delivery reaches the private session once" \
   "$(pane claimlost)" "MARK_CLAIM_RECOVERED"
 "$GANG" drop claimlost >/dev/null
+
+# Recovery bodies are deliberately kept out of tmux options: a base64 option
+# for an ordinary large bundle exceeded tmux's command ceiling and left its
+# exact composer text behind forever. The private file is short-addressed from
+# the stage record, read back byte-for-byte, and removed once the matching box
+# has been cleared. This collar exposes the complete large composer reading
+# without terminal wrapping; a real terminal could scroll that many bytes out
+# of the visible pane before the reader gets a vote.
+claimlarge_body_file="$RUN_ROOT/claimlarge-body"
+claimlarge_visible="$RUN_ROOT/claimlarge-visible"
+claimlarge_body="MARK_LARGE_RECOVERY_$(printf '%013000d' 0)"
+printf '%s' "$claimlarge_body" > "$claimlarge_body_file"
+: > "$claimlarge_visible"
+cat > "$RUN_ROOT/collars/claimlarge.sh" <<SH
+# shellcheck shell=bash
+# shellcheck disable=SC2034
+. "$ROOT/collars/bash.sh"
+GANG_LAUNCH="sh -c 'PS1=\"❯ \" exec bash --norc' fixture"
+_gl_claimlarge_input="\$(declare -f collar_input)"
+eval "claimlarge_real_input \${_gl_claimlarge_input#collar_input}"
+collar_input() {
+  if [ -e "$claimlarge_visible" ]; then cat "$claimlarge_body_file"; return 0; fi
+  claimlarge_real_input "\$1"
+}
+input_clear() {
+  if [ -e "$claimlarge_visible" ]; then rm -f -- "$claimlarge_visible"; return 1; fi
+  return 0
+}
+SH
+"$HITCH" claimlarge -c claimlarge -d /tmp >/dev/null
+claimlarge_id="$(window_id claimlarge)"
+claimlarge_spool="$GANG_LOCK_DIR/spool/$(tmux show-options -wqv -t "$claimlarge_id" @gl_spool)"
+claimlarge_claim="$claimlarge_spool/sending-00000000000000000008-largebody"
+printf '%s\n%s\n%s\n' tester large-recovery "$claimlarge_body" > "$claimlarge_claim"
+"$GANG" tick >/dev/null
+contains "a large dead claim becomes an interrupted outcome" \
+  "$("$GANG" status claimlarge)" "delivery worker ended after claiming this body"
+excludes "a large exact recovery body is cleared without a tmux option limit" \
+  "$("$GANG" composer claimlarge)" "MARK_LARGE_RECOVERY_"
+claimlarge_sidecars="$(find "$claimlarge_spool" -maxdepth 1 -name '.staged-recovery.*' -print)"
+equal "the consumed large recovery sidecar is removed" "" "$claimlarge_sidecars"
+claimlarge_followup="$(printf 'MARK_LARGE_RECOVERED' |
+  "$GANG" send --to claimlarge --from tester --stdin)"
+contains "the cleared large recovery composer accepts a later delivery" \
+  "$claimlarge_followup" "delivered to claimlarge"
+# source-guard: producer@c5be2944590a: the later large-recovery envelope is the only producer of this unique marker, after the immediately preceding composer assertion proves the prior large body was cleared.
+contains "the later delivery reaches the recovered large private session" \
+  "$(pane claimlarge)" "MARK_LARGE_RECOVERED"
+"$GANG" drop claimlarge >/dev/null
+
+# An interrupted claim does not outrank an already-attributed staged record.
+# The old stage is fresher evidence about this composer, so recovery must keep
+# its note and exact matching draft while recording the claim separately.
+"$HITCH" claimexisting -c spoolable -d /tmp >/dev/null
+claimexisting_id="$(window_id claimexisting)"
+claimexisting_spool="$GANG_LOCK_DIR/spool/$(tmux show-options -wqv -t "$claimexisting_id" @gl_spool)"
+claimexisting_body='MARK_PREEXISTING_STAGED'
+claimexisting_claim="$claimexisting_spool/sending-00000000000000000009-existingstage"
+printf '%s\n%s\n%s\n' tester existing-stage "$claimexisting_body" > "$claimexisting_claim"
+tmux set-option -w -t "$claimexisting_id" @gl_staged 'an earlier staged record owns this composer'
+tmux set-option -w -t "$claimexisting_id" @gl_staged_box "$claimexisting_body"
+tmux send-keys -l -t "$claimexisting_id" "$claimexisting_body"
+"$GANG" tick >/dev/null
+equal "an interrupted recovery preserves the existing staged note" \
+  'an earlier staged record owns this composer' \
+  "$(tmux show-options -wqv -t "$claimexisting_id" @gl_staged)"
+# source-guard: producer@c5be2944590a: the staged-composer assertion consumes the uniquely named existing record after recovery has moved the independent sending claim.
+equal "an interrupted recovery leaves the existing staged composer untouched" \
+  "$claimexisting_body" "$("$GANG" composer claimexisting)"
+contains "an interrupted recovery still records the claimed body separately" \
+  "$("$GANG" status claimexisting)" "delivery worker ended after claiming this body"
+claimexisting_sidecars="$(find "$claimexisting_spool" -maxdepth 1 -name '.staged-recovery.*' -print)"
+equal "an existing staged record is never overwritten with a recovery sidecar" \
+  "" "$claimexisting_sidecars"
+"$GANG" drop claimexisting >/dev/null
 
 # A SPOOL OUTLIVES THE WINDOW THAT NAMED IT whenever the window did not die
 # through drop or down. Every command gang has resolves a spool through

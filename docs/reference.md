@@ -927,7 +927,9 @@ claiming an entry is recovered on the next safe pane-lock pass as an
 `interrupted-` record: Gangline cannot prove whether its paste or Enter reached
 the target, so it never returns the body to the deliverable queue. If the
 settled composer contains the exact abandoned bundle, Gangline clears that
-bundle; any non-matching draft remains untouched. `status` says which outcome
+bundle; the exact bundle is retained in a private recovery record beside the
+spool rather than in a size-limited tmux option. Any non-matching draft remains
+untouched. `status` says which outcome
 was kept, `status` and `roster` report how many are held, the bodies stay
 readable under `GANG_LOCK_DIR`, and Gangline never sends them again. A harness
 may accept a submission into its own queue and drain it later; read the target
