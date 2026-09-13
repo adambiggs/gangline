@@ -1307,9 +1307,9 @@ gang roster
 
   Plain rows say spooled=N for deliverable
   mail and spool-held=N for kept records that
-  will not be delivered. Unverified records
-  retire from that count when their stable
-  sender is gone.
+  will not be delivered. Unverified and
+  interrupted records retire from that count
+  when their stable sender is gone.
 
   With no team running, the plain form says
   so and --porcelain prints no rows; both
@@ -5941,6 +5941,7 @@ tick_full_pass_once() {
     fi
     if [ "$compacted" -eq 0 ] \
        && { [ "$(spool_count "$id")" -gt 0 ] \
+            || [ "$(spool_sending_count "$id")" -gt 0 ] \
             || declare -F collar_dismiss_advisory >/dev/null; }; then
       pass_rc=0 err=""
       if ! tmux set-option -w -t "$id" @gl_tick_delivery "$$" 2>/dev/null; then
@@ -7366,6 +7367,19 @@ spool_count() { # $1 = window id -> how many entries are waiting
   printf '%s' "$n"
 }
 
+spool_sending_count() { # $1 = window id -> claimed entries whose worker is gone
+  # A `sending-` name is intentionally outside spool_count: it is never safe to
+  # submit again.  It still needs a future pane-lock pass so that a killed
+  # worker cannot turn into an invisible, permanent obstruction.
+  local e n=0
+  if spool_existing "$1"; then
+    for e in "$SPOOL_DIR"/sending-*; do
+      [ -f "$e" ] && n=$((n + 1))
+    done
+  fi
+  printf '%s' "$n"
+}
+
 spool_oldest_age() { # $1 = window id -> seconds the oldest waiting entry has waited
   local e stamp now
   spool_existing "$1" || return 1
@@ -7880,7 +7894,7 @@ spool_held() { # $1 = window id -> entries a drain claimed and never retired
   # not name is a message lost quietly.
   local e n=0
   if spool_existing "$1"; then
-    for e in "$SPOOL_DIR"/sending-* "$SPOOL_DIR"/failed-* "$SPOOL_DIR"/unverified-*; do
+    for e in "$SPOOL_DIR"/sending-* "$SPOOL_DIR"/failed-* "$SPOOL_DIR"/unverified-* "$SPOOL_DIR"/interrupted-*; do
       [ -f "$e" ] && n=$((n + 1))
     done
     for e in "$SPOOL_DIR"/.writing-*; do
@@ -7891,8 +7905,8 @@ spool_held() { # $1 = window id -> entries a drain claimed and never retired
 }
 
 SPOOL_RETIRED_COUNT=0 SPOOL_RETIRE_ARCHIVE="" SPOOL_RETIRE_ERROR=""
-spool_retire_gone_unverified() { # $1 = window id; archive ambiguity whose stable sender is gone
-  # AN UNVERIFIED SUBMISSION'S LIFETIME FOLLOWS ITS STABLE SENDER IDENTITY.
+spool_retire_gone_unverified() { # $1 = window id; archive non-repeatable delivery outcomes whose sender is gone
+  # A NON-REPEATABLE DELIVERY OUTCOME FOLLOWS ITS STABLE SENDER IDENTITY.
   # The entry may already have arrived, so Gangline never delivers it again.
   # Once its sender's exact spool token is absent, the contract retires the
   # sender and this record with it. The body stays available in the archive,
@@ -7906,11 +7920,11 @@ spool_retire_gone_unverified() { # $1 = window id; archive ambiguity whose stabl
   # remain held. Only stable_agent_resolve's explicit gone verdict moves bytes.
   # The reply mode distinguishes legacy entries; 00000000 cannot, because it
   # is also one possible four-byte spool-token mint.
-  local id="$1" dir e rc name="" dest="" label sender="" retire_failed=0
+  local id="$1" dir e rc name="" dest="" label sender="" kind="" retire_failed=0
   SPOOL_RETIRED_COUNT=0 SPOOL_RETIRE_ARCHIVE="" SPOOL_RETIRE_ERROR=""
   spool_existing "$id" || return 0
   dir="$SPOOL_DIR"
-  for e in "$dir"/unverified-*; do
+  for e in "$dir"/unverified-* "$dir"/interrupted-*; do
     [ -f "$e" ] || continue
     spool_read_try "$e" || continue
     case "$SPOOL_REPLY_MODE" in request|reply|waived) ;; *) continue ;; esac
@@ -7932,7 +7946,7 @@ spool_retire_gone_unverified() { # $1 = window id; archive ambiguity whose stabl
       valid_name "$name" || name="${id#@}"
       dest="$SPOOL_RETIRE_ARCHIVE/$name"
       if ! mkdir -p "$dest"; then
-        SPOOL_RETIRE_ERROR="cannot create $dest for retired unverified spool records — the live spool is untouched"
+        SPOOL_RETIRE_ERROR="cannot create $dest for retired delivery-outcome records — the live spool is untouched"
         if rmdir -- "$SPOOL_RETIRE_ARCHIVE" 2>/dev/null; then
           SPOOL_RETIRE_ARCHIVE=""
         else
@@ -7942,16 +7956,17 @@ spool_retire_gone_unverified() { # $1 = window id; archive ambiguity whose stabl
       fi
     fi
     label="${e##*/}"
+    kind="${label%%-*}"
     if mv -- "$e" "$dest/$label"; then
       SPOOL_RETIRED_COUNT=$((SPOOL_RETIRED_COUNT + 1))
-      printf 'retired unverified spool record from %s because its stable identity is gone: %s -> %s\n' \
-        "$sender" "$e" "$dest/$label" >&2
+      printf 'retired %s spool record from %s because its stable identity is gone: %s -> %s\n' \
+        "$kind" "$sender" "$e" "$dest/$label" >&2
     else
       # Another observer or teardown may have claimed the same regular file
       # after this scan. Its absence is the completed outcome; anything still
       # present is a failed archival move and must remain loud.
       if [ -e "$e" ]; then
-        SPOOL_RETIRE_ERROR="cannot archive retired unverified spool record $e to $dest"
+        SPOOL_RETIRE_ERROR="cannot archive retired $kind spool record $e to $dest"
         retire_failed=1
         break
       fi
@@ -8002,8 +8017,9 @@ spool_abandoned() { # $1 = a .writing- fragment; 0 = the sender that wrote it is
 
 spool_held_report() { # $1 = window id; one truthful line per held entry
   # ONE LINE PER ENTRY, AND THE LINE SAYS WHICH KIND. An `unverified-` entry
-  # was typed into the recipient's composer and Enter was pressed against it;
-  # a `failed-` or `sending-` one was not, or gang could not see that it was.
+  # was typed into the recipient's composer and Enter was pressed against it.
+  # An `interrupted-` entry belonged to a worker that ended after claiming it,
+  # before Gangline could determine whether its paste or Enter happened.
   # Summing them under one word is what made a sender chase a phantom held
   # message for a body its recipient had already acted on.
   local e
@@ -8026,12 +8042,69 @@ spool_held_report() { # $1 = window id; one truthful line per held entry
     printf 'typed into the composer, submission NOT verified — it may already have been delivered, and gang will not send it again: %s\n' \
       "$SPOOL_FRAG"
   done
+  for e in "$SPOOL_DIR"/interrupted-*; do
+    [ -f "$e" ] || continue
+    spool_read "$e"
+    printf 'delivery worker ended after claiming this body — it may have reached the composer, and gang will not send it again: %s\n' \
+      "$SPOOL_FRAG"
+  done
   for e in "$SPOOL_DIR"/sending-* "$SPOOL_DIR"/failed-*; do
     [ -f "$e" ] || continue
     spool_read "$e"
     printf 'held (delivery NOT verified — it may still have arrived): %s\n' \
       "$SPOOL_FRAG"
   done
+}
+
+spool_recover_claims() { # $1 = window id; pane lock is held by the caller
+  # A `sending-` entry normally exists only while this pane lock is held by its
+  # delivery worker.  Reaching it after taking that lock proves the old worker
+  # ended, but proves neither that its paste nor its Enter did not happen.
+  # Preserve that uncertainty in a separate kept state.  A matching composer
+  # may be Gangline's abandoned bundle; stage_clear will remove only that exact
+  # body, and leaves every other draft untouched.
+  local id="$1" claim dest bundle="" claims="" n=0 recovered=0 nl=$'\n'
+  for claim in "$SPOOL_DIR"/sending-*; do
+    [ -f "$claim" ] || continue
+    if ! spool_read_try "$claim"; then
+      printf 'claimed spool entry remains held because it cannot be read safely: %s\n' \
+        "$SPOOL_READ_ERROR" >&2
+      continue
+    fi
+    dest="$SPOOL_DIR/interrupted-${claim##*/sending-}"
+    if [ -e "$dest" ]; then
+      printf 'claimed spool entry remains held because its interrupted record already exists: %s\n' \
+        "$claim" >&2
+      continue
+    fi
+    bundle="${bundle:+$bundle$nl$nl}$SPOOL_BODY"
+    claims="${claims:+$claims$nl}$claim"
+    n=$((n + 1))
+  done
+  [ "$n" -eq 0 ] && return 0
+  stage_record "$id" \
+    "delivery worker ended after claiming this body — it may have reached the composer, so Gangline kept it and will not send it again" \
+    "" "$bundle"
+  stage_clear "$id"
+  while IFS= read -r claim; do
+    [ -n "$claim" ] || continue
+    dest="$SPOOL_DIR/interrupted-${claim##*/sending-}"
+    if [ -e "$dest" ]; then
+      printf 'claimed spool entry remains held because its interrupted record already exists: %s\n' \
+        "$claim" >&2
+      continue
+    fi
+    if mv -- "$claim" "$dest"; then
+      recovered=$((recovered + 1))
+    else
+      printf 'claimed spool entry could not be recorded as interrupted and remains held: %s\n' \
+        "$claim" >&2
+    fi
+  done <<EOF
+$claims
+EOF
+  [ "$recovered" -eq 0 ] \
+    || printf 'recovered %s interrupted delivery claim(s); none will be sent again\n' "$recovered" >&2
 }
 
 SPOOL_SENDER="" SPOOL_FRAG="" SPOOL_BODY="" SPOOL_READ_ERROR=""
@@ -8820,6 +8893,13 @@ spool_drain() { # $1 window id; whole queue oldest-first; optional $2 = locked
        fi ;;
     *) die "internal: busy returned unknown verdict $busy_rc" ;;
   esac
+  # A worker owns the pane lock from its first rename through retirement. If a
+  # later pass can take that lock while `sending-` files remain, that worker is
+  # gone. The claim might have reached the composer, so recover it as a kept
+  # outcome, never as deliverable mail. Do this only after proving the pane is
+  # safe to inspect: clearing a matching bundle is allowed only in a settled,
+  # idle composer under this same lock.
+  spool_recover_claims "$1"
   # THIS DRAIN IS ALREADY THE WAKE. Promote quiet envelopes only after the
   # landing zone is proved, while the same pane lock still excludes every
   # sender and competing drain. Their original acceptance stamps put them
@@ -9000,7 +9080,8 @@ spool_drain_dispatch() { # $1 window id, $2 collar, optional $3 = midturn,
   # No in-progress flag. The pane lock is taken before any claim, so a crossed
   # worker refuses without touching the queue. A flag would add a state that
   # outlives a killed worker and wedges the spool silently.
-  [ "$(spool_count "$1")" -gt 0 ] || return 0
+  { [ "$(spool_count "$1")" -gt 0 ] \
+    || [ "$(spool_sending_count "$1")" -gt 0 ]; } || return 0
   (
     trap '' HUP INT TERM
     local err="" rc=0
@@ -9545,16 +9626,26 @@ parked_current() { # $1 = window id -> the parked body, freshness-checked at rea
   printf '%s' "$rec"
 }
 
-stage_record() { # $1 = window id, $2 = the note, $3 = box rendering to match (may be empty)
+stage_record() { # $1 window, $2 note, $3 rendered box, optional $4 exact staged body
+  local body64=""
   declare -F collar_input >/dev/null || return 0
   tmux set-option -w -t "$1" @gl_staged "$2"
   if [ -n "$3" ]; then tmux set-option -w -t "$1" @gl_staged_box "$3"
   else tmux set-option -uw -t "$1" @gl_staged_box 2>/dev/null || true; fi
+  # tmux option values do not preserve a multiline argument as one exact
+  # value. Base64 keeps the recovered bytes in the option namespace without
+  # turning its newlines into command syntax; stage_clear encodes its fresh
+  # reading the same way before comparing it.
+  if [ -n "${4:-}" ]; then
+    body64="$(printf '%s' "$4" | base64 | tr -d '\n')" || return 1
+    tmux set-option -w -t "$1" @gl_staged_body64 "$body64"
+  else tmux set-option -uw -t "$1" @gl_staged_body64 2>/dev/null || true; fi
 }
 
 stage_forget() { # $1 = window id
   tmux set-option -uw -t "$1" @gl_staged 2>/dev/null || true
   tmux set-option -uw -t "$1" @gl_staged_box 2>/dev/null || true
+  tmux set-option -uw -t "$1" @gl_staged_body64 2>/dev/null || true
   # The parked-message record belongs to the same obstruction: once there is
   # nothing staged here, there is nothing for `flush` to read a composer back
   # against either.
@@ -9598,7 +9689,7 @@ clear_box() { # $1 = window id, $2 = the box its caller just read (optional seco
 }
 
 stage_clear() { # $1 = window id; drop a recorded paste once it is provably ours and reachable
-  local note box want note_rc=0
+  local note box want body64 box64 note_rc=0
   # A RECORD THAT CANNOT BE READ IS NOT A RECORD THAT IS GONE. Clearing is the
   # one thing this must not do on an unreadable window: the note stands until
   # something can read it.
@@ -9612,7 +9703,13 @@ stage_clear() { # $1 = window id; drop a recorded paste once it is provably ours
     stage_forget "$1"; return 0             # empty box: whoever cleared it, it is gone
   fi
   want="$(window_option "$1" @gl_staged_box)" || return 0
-  [ -n "$want" ] && [ "$box" = "$want" ] || return 0
+  body64="$(window_option "$1" @gl_staged_body64)" || return 0
+  if [ -n "$want" ] && [ "$box" = "$want" ]; then :
+  elif [ -n "$body64" ]; then
+    box64="$(printf '%s' "$box" | base64 | tr -d '\n')" || return 0
+    [ "$box64" = "$body64" ] || return 0
+  else return 0
+  fi
   clear_box "$1" "$box" || return 0
   stage_forget "$1"
 }
@@ -12113,7 +12210,8 @@ hitch_launch() {
                 fi
                 if [ -e "$startup_entry" ] || [ -e "$startup_dir/sending-$startup_base" ] \
                   || [ -e "$startup_dir/failed-$startup_base" ] \
-                  || [ -e "$startup_dir/unverified-$startup_base" ]; then
+                  || [ -e "$startup_dir/unverified-$startup_base" ] \
+                  || [ -e "$startup_dir/interrupted-$startup_base" ]; then
                   fail 1 "startup contract to '$name' is still held in its spool after another delivery worker crossed this hitch"
                 fi
                 break ;;
@@ -12180,7 +12278,8 @@ hitch_launch() {
            fi
            if [ -e "$startup_entry" ] || [ -e "$startup_dir/sending-$startup_base" ] \
              || [ -e "$startup_dir/failed-$startup_base" ] \
-             || [ -e "$startup_dir/unverified-$startup_base" ]; then
+             || [ -e "$startup_dir/unverified-$startup_base" ] \
+             || [ -e "$startup_dir/interrupted-$startup_base" ]; then
              fail 1 "startup contract to '$name' is still held in its spool after another delivery worker crossed this hitch"
            fi
            delivery_done=1
@@ -12202,7 +12301,8 @@ hitch_launch() {
     fi
     if [ -e "$startup_dir/sending-$startup_base" ] \
         || [ -e "$startup_dir/failed-$startup_base" ] \
-        || [ -e "$startup_dir/unverified-$startup_base" ]; then
+        || [ -e "$startup_dir/unverified-$startup_base" ] \
+        || [ -e "$startup_dir/interrupted-$startup_base" ]; then
       fail 1 "startup contract to '$name' is held in a delivery state that cannot be rolled back safely"
     fi
     if [ ! -e "$startup_entry" ]; then
@@ -15443,6 +15543,13 @@ cmd_mail() { # read a queue; its own agent's read archives what it consumes
     spool_read "$e"
     held=$((held + 1))
     printf '%s\n' "$(colour "$C_BAD" "typed into this composer, submission NOT verified — you may have seen this already, from $SPOOL_SENDER — ${e##*/}")"
+    printf '%s\n\n' "$SPOOL_BODY"
+  done
+  for e in "$dir"/interrupted-*; do
+    [ -f "$e" ] || continue
+    spool_read "$e"
+    held=$((held + 1))
+    printf '%s\n' "$(colour "$C_BAD" "delivery worker ended after claiming this body — it may have reached this composer, from $SPOOL_SENDER — ${e##*/}")"
     printf '%s\n\n' "$SPOOL_BODY"
   done
   for e in "$dir"/sending-* "$dir"/failed-*; do

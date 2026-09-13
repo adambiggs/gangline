@@ -922,13 +922,16 @@ opportunity. A
 drain that cannot read a composer after an idle native boundary leaves its
 entries waiting and records a visible drain failure; it never types through
 that uncertainty. A
-drain that cannot verify, or one that dies between the submission and the
-entry's retirement, leaves that entry held: `status` says its delivery was not
-verified and may still have arrived, `status` and `roster` report how many are
-held, the bodies
-stay readable under `GANG_LOCK_DIR`, and Gangline never sends them again. A
-harness may accept a submission into its own queue and drain it later; read the
-target before re-sending by hand.
+drain that cannot verify leaves that entry held. A worker that ends after
+claiming an entry is recovered on the next safe pane-lock pass as an
+`interrupted-` record: Gangline cannot prove whether its paste or Enter reached
+the target, so it never returns the body to the deliverable queue. If the
+settled composer contains the exact abandoned bundle, Gangline clears that
+bundle; any non-matching draft remains untouched. `status` says which outcome
+was kept, `status` and `roster` report how many are held, the bodies stay
+readable under `GANG_LOCK_DIR`, and Gangline never sends them again. A harness
+may accept a submission into its own queue and drain it later; read the target
+before re-sending by hand.
 
 A delivery whose Enter was pressed and whose screen then stopped answering is
 neither of those. It cannot be parked — the body may already be in front of its
@@ -1249,15 +1252,16 @@ no-reply envelope, then every kept record, each with its sender and its entry fi
 exactly as it would go onto the wire. The summary separates messages waiting
 for delivery, active deferred entries, and kept records that Gangline will not deliver. A kept record
 says which kind it is: one Gangline typed and could not confirm warns its reader
-they may have seen the body already. An unverified record with stable peer
-provenance remains kept while that exact sender identity exists. Once its
-sender's spool token no longer belongs to a live window, the record is archived
-and omitted; a newly hitched agent reusing the name has a different token and
-does not revive it. Legacy or unreadable provenance cannot prove retirement and
-remains kept. Another agent's or the operator's read never consumes deliverable
-mail, though any read can perform that stale-sender retirement. Each retired
-record's source, archive destination, and archive deletion command are printed
-on stderr. The addressee's own read is delivery: it consumes each waiting
+they may have seen the body already, while an interrupted record says its
+delivery worker ended after claiming the bundle. An unverified or interrupted
+record with stable peer provenance remains kept while that exact sender identity
+exists. Once its sender's spool token no longer belongs to a live window, the
+record is archived and omitted; a newly hitched agent reusing the name has a
+different token and does not revive it. Legacy or unreadable provenance cannot
+prove retirement and remains kept. Another agent's or the operator's read never
+consumes deliverable mail, though any read can perform that stale-sender
+retirement. Each retired record's source, archive destination, and archive
+deletion command are printed on stderr. The addressee's own read is delivery: it consumes each waiting
 entry so a later native delivery opportunity cannot deliver the same message again. Before
 printing an entry, it moves it into a human-readable directory under
 `GANG_ARCHIVE_DIR`; the path and its explicit deletion command go to stderr, so
@@ -1735,12 +1739,12 @@ comparison runs only for this snapshot. A non-empty delivery queue reports both
 its depth as `spooled=N` and the age of its oldest waiting entry. A separate
 `deferred=N` reports no-reply envelopes waiting to join another wake, while
 `spool-held=N` reports kept records whose delivery will not be retried; neither is
-queue depth. In a plain roster, an unverified record whose exact stable sender
-identity is gone is archived before the row is printed and contributes to
-neither count. A fresh agent using the old sender name has a different identity
-and does not restore the count. If the archive cannot be established, the plain
-row still reports the agent's readable state and retained `spool-held` count,
-while stderr reports the retirement failure.
+queue depth. In a plain roster, an unverified or interrupted record whose exact
+stable sender identity is gone is archived before the row is printed and
+contributes to neither count. A fresh agent using the old sender name has a
+different identity and does not restore the count. If the archive cannot be
+established, the plain row still reports the agent's readable state and retained
+`spool-held` count, while stderr reports the retirement failure.
 
 Every agent in the team is listed, including the ones after an agent whose pane
 would not answer. A state Gangline could not read is that one agent's fact: its

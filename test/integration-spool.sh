@@ -511,8 +511,10 @@ excludes "and a verified drain clears the prior failure" \
   "$("$GANG" status parker)" "spool drain NOT verified"
 
 # An entry a drain claimed and never retired — what a killed worker leaves — is
-# never picked up again, and never hides: the ones behind it still drain.
+# never picked up again. A later safe pass records that interrupted outcome,
+# clears only its exact abandoned composer bundle, and still drains later mail.
 parker_inflight="$parker_spool_dir/sending-00000000000000000001-abadcafe"
+parker_interrupted="$parker_spool_dir/interrupted-00000000000000000001-abadcafe"
 printf '%s\n%s\n%s\n' tester MARK_INTERRUPTED \
   '[gang:tester#abadcafe] MARK_INTERRUPTED [/gang:tester#abadcafe]' \
   > "$parker_inflight"
@@ -530,15 +532,18 @@ excludes "a claimed entry is never delivered by a later drain" \
   "$parker_after_second" "MARK_INTERRUPTED"
 contains "and the messages behind it are not lost with it" \
   "$parker_after_second" "MARK_BEHIND_IT"
-[ -f "$parker_inflight" ] \
-  && pass "it stays on disk where a person can read it" \
-  || fail "it stays on disk where a person can read it" "$parker_inflight is gone"
+[ ! -e "$parker_inflight" ] \
+  && pass "a dead claim is retired from the live worker namespace" \
+  || fail "a dead claim is retired from the live worker namespace" "$parker_inflight remains"
+[ -f "$parker_interrupted" ] \
+  && pass "its unknown outcome stays on disk where a person can read it" \
+  || fail "its unknown outcome stays on disk where a person can read it" "$parker_interrupted is absent"
 parker_held_status="$("$GANG" status parker)"
 contains "and status names it rather than losing it quietly" \
-  "$parker_held_status" "held (delivery NOT verified — it may still have arrived): MARK_INTERRUPTED"
+  "$parker_held_status" "delivery worker ended after claiming this body — it may have reached the composer, and gang will not send it again: MARK_INTERRUPTED"
 contains "naming the directory it is readable in, not an empty one" \
   "$parker_held_status" "read them under $parker_spool_dir"
-rm -f "$parker_inflight"
+rm -f "$parker_interrupted"
 
 # Everything gang parks has a deletion path, and this is it.
 tmux send-keys -l -t "$parker_id" 'HUMAN_DRAFT'
@@ -1633,7 +1638,36 @@ excludes "a fresh agent reusing the sender name does not revive the old record" 
   "$("$GANG" mail held-target)" "MARK_STABLE_HELD"
 excludes "and name reuse does not restore its held roster count" \
   "$("$GANG" roster | grep '^held-target ')" "spool-held="
+held_interrupted_token="$(tmux show-options -wqv -t "$(window_id held-sender)" @gl_spool)"
+held_interrupted_entry="$held_target_spool/interrupted-00000000000000000010-1badb002"
+printf 'v2\theld-sender\t%s\trequest\t-\t1badb0021badb002\n%s\n%s\n' \
+  "$held_interrupted_token" MARK_INTERRUPTED_HELD \
+  '[gang:held-sender#1badb0021badb002] MARK_INTERRUPTED_HELD [/gang:held-sender#1badb0021badb002]' \
+  > "$held_interrupted_entry"
+held_interrupted_mail="$("$GANG" mail held-target)"
+contains "mail names a live sender's interrupted delivery outcome" \
+  "$held_interrupted_mail" "delivery worker ended after claiming this body"
+contains "mail keeps the interrupted body readable" \
+  "$held_interrupted_mail" "MARK_INTERRUPTED_HELD"
+contains "roster counts an interrupted outcome as kept" \
+  "$("$GANG" roster | grep '^held-target ')" "spool-held=1"
 "$GANG" drop held-sender >/dev/null
+held_interrupted_retired="$("$GANG" mail held-target 2>"$RUN_ROOT/held-interrupted-retired.err")"
+excludes "mail retires an interrupted record whose stable sender is gone" \
+  "$held_interrupted_retired" "MARK_INTERRUPTED_HELD"
+contains "interrupted retirement names its distinct outcome" \
+  "$(<"$RUN_ROOT/held-interrupted-retired.err")" \
+  "retired interrupted spool record from held-sender because its stable identity is gone: $held_interrupted_entry ->"
+held_interrupted_archive=""
+for held_archived_entry in "$GANG_ARCHIVE_DIR"/*/held-target/interrupted-*; do
+  [ -f "$held_archived_entry" ] || continue
+  grep -q MARK_INTERRUPTED_HELD "$held_archived_entry" \
+    && held_interrupted_archive="$held_archived_entry"
+done
+[ -n "$held_interrupted_archive" ] \
+  && pass "a retired interrupted record remains readable in the archive" \
+  || fail "a retired interrupted record remains readable in the archive" \
+    "no archived entry contains MARK_INTERRUPTED_HELD"
 
 # A SELF-READ OWNS TWO DIFFERENT RECOVERY LIFETIMES. Consumed waiting mail goes
 # to the read archive the command tells its reader to delete; stale ambiguity
