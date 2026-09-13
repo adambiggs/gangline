@@ -642,7 +642,7 @@ operator outside a Gangline agent window defaults to the clearly claimed sender
 exits non-zero sends nothing and returns its status. The temporary draft is
 removed before delivery begins.
 
-### `gang send --to <name> [--from <sender>] [--live-only] [--supersede] [--no-reply] --stdin`
+### `gang send --to <name> [--from <sender>] [--live-only] [--supersede] [--no-reply] [--ack] --stdin`
 
 Reads the full message body from standard input, which must be a pipe, a file,
 or a heredoc. A terminal is refused before anything is read: it ends a body only
@@ -692,6 +692,12 @@ that read it, and that answer is a reply that owes nothing in return. A
 message that already answers the recipient is a reply either way, so the flag
 then changes only what its envelope says.
 
+`--ack` says this message is a bare acknowledgement of replies read this turn,
+with nothing for its reader to act on. It is held for the reader's next
+ordinary delivery instead of waking them; the hold, its deadline service and
+its refusals are described under reply obligations below. Without it, a
+message sent in the turn that read a reply wakes its reader like any other.
+
 The next verified outbound message to a peer is correlated to every request
 from that peer the sender has read (its native prompt proof stands) and to
 every reply from that peer read in the current turn. A request with delivery
@@ -708,9 +714,14 @@ reply is therefore itself correlated and opens no debt, a thread closes on any
 acknowledgement, and a message sent in a later turn is a new request. The
 close is the last fact a Stop records and fails closed: a boundary that cannot
 write it is refused, so the turn stays open and its replies stay answerable. A
-message correlated only to reply records is a pure acknowledgement and is held outside
-the waking queue after durable spool acceptance. A message answering any request record
-stays immediate because its peer is waiting for the answer. Deferred acknowledgements
+message correlated only to reply records opens no debt but still wakes its peer,
+because the same records carry a ruling sent in the turn that read a report and a
+bare acknowledgement of it, and only the sender can tell which. `gang send --ack`
+declares the bare acknowledgement: it is held outside the waking queue after durable
+spool acceptance. `--ack` is refused before anything is typed on a message that
+answers a request record, because its peer is waiting for the answer, on a message
+that matches no thread, which is a fresh request, and beside `--live-only` or
+`--no-reply`. Deferred acknowledgements
 join the peer's next ordinary composer-verified Gangline drain ahead of current mail.
 The drain promotes them under their original stamps only after it proves a landing
 zone, so an older ordinary request and a held acknowledgement enter one bundle. A
@@ -727,7 +738,9 @@ timer cannot be armed, Gangline preserves immediate delivery instead of acceptin
 unbounded hold. The deferred entry and timer health stay visible to `status`, human
 `roster`, and `mail`. A `--supersede`
 that retires a deferred or ordinary reply hands its correlation to the replacement,
-but any inherited correlation keeps the replacement on the waking path.
+but any inherited correlation keeps the replacement on the waking path; an `--ack`
+on such a replacement is set aside with a stderr line rather than refused, because
+the retirement is already prepared when the inheritance is known.
 
 A correlated reply discharges the request as soon as either arrival witness,
 the exact native prompt proof or positive delivery proof, stands beside it. The
@@ -770,7 +783,7 @@ report, which leaves every record untouched, stamps the release on the window
 for `status` until the next native prompt, and raises a `reply-owed` state
 note to the notify target or, when none is declared, to the agent named
 `lead`. That Gangline-authored stop alert owes no reply, so it uses the same
-deadline-backed deferred path as a pure acknowledgement and joins the notify target's next
+deadline-backed deferred path as an `--ack` acknowledgement and joins the notify target's next
 ordinary composer-verified Gangline delivery. State and input-stall alerts remain immediate because they report a
 condition that may require intervention. The next delivery's first Stop refuses idle again. A query that answers
 nothing inside the adapter's deadline is retried within it and then refused

@@ -3,7 +3,7 @@ id: 0186
 status: accepted
 date: 2026-09-09
 supersedes: []
-superseded-by: []
+superseded-by: [0188]
 tags: [delivery, replies]
 ---
 

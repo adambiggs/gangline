@@ -106,10 +106,12 @@ Every message names its sender in a nonce-bound envelope. Inside the
 team, Gangline reads the sender from the calling window; outside callers name
 themselves with `--from`. Ordinary delivery succeeds only after the target
 composer visibly accepts the paste and submission. An answer to a request still
-wakes its requester. A pure acknowledgement of one or more replies owes no
-reply of its own, so it is held for the recipient's next ordinary verified
-Gangline delivery and visibly joined as accumulated context. A native prompt
-alone does not turn the held acknowledgement into a follow-up turn. After
+wakes its requester. A message sent in the turn that read a reply owes no
+reply of its own but still wakes its reader, because a ruling and a bare
+acknowledgement look alike to Gangline. The sender marks the bare
+acknowledgement with `--ack`: it is held for the recipient's next ordinary
+verified Gangline delivery and visibly joined as accumulated context. A native
+prompt alone does not turn the held acknowledgement into a follow-up turn. After
 thirty minutes its deadline
 service attempts the ordinary verified path even if suspend delayed its first
 invocation, then retries short-lived delivery contention for up to five minutes.

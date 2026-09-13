@@ -684,6 +684,7 @@ gang send
     [--live-only]
     [--supersede]
     [--no-reply]
+    [--ack]
 
   The body is read from stdin:
 
@@ -717,6 +718,14 @@ gang send
                 reads it owing no reply,
                 and may still answer it
                 in the turn that read it.
+  --ack         a bare acknowledgement of
+                replies read this turn,
+                nothing for the reader to
+                act on: held for their next
+                ordinary delivery instead
+                of waking them. Refused on
+                an answer to a request or
+                on a fresh request.
 
   A refused delivery parks by default and
   enters the session when the target next
@@ -733,14 +742,16 @@ gang send
   only in the turn that read it: any
   acknowledgement closes that thread, while
   a later turn's message starts a new request.
-  An answer to a request stays immediate. A
-  reply only acknowledging other replies owes
-  no reply, so default delivery holds it for
-  the target's next ordinary verified Gangline
-  delivery, marked accumulated.
-  Its deadline service starts after 30 minutes
-  and retries contention; --live-only bypasses
-  deferred delivery.
+  A message sent in the turn that read a
+  reply owes no reply but still wakes the
+  target, because only the sender knows
+  whether it carries a ruling or a bare
+  acknowledgement. --ack holds it for the
+  target's next ordinary verified Gangline
+  delivery instead, marked accumulated; its
+  deadline service starts after 30 minutes
+  and retries contention. An answer to a
+  request always wakes.
 
   On exit 1, do not simply send again. The
   body may have been typed, left staged, or
@@ -6691,8 +6702,10 @@ reply_outgoing_classify() { # $1 sender window, $2 target window
     matched="${matched:+$matched,}$nonce"
     # A reply to a REQUEST carries the answer its peer is waiting for. It owes
     # no acknowledgement but it still has to wake that peer. Only a message
-    # closing threads that were themselves replies is a pure acknowledgement
-    # chain that can safely join some later wake.
+    # closing threads that were themselves replies MAY be a bare
+    # acknowledgement that can safely join some later wake; whether it is one
+    # is the sender's call (--ack), because a ruling sent in the turn that
+    # read a reply matches exactly the same records.
     [ "$mode" = reply ] || all_replies=0
   done <<<"$rows"
   [ -n "$matched" ] || return 0
@@ -11759,7 +11772,7 @@ cmd_talk() { # compose with the terminal editor, then hand the bytes to send
   while [ $# -gt 0 ]; do case "$1" in
     --from) [ $# -ge 2 ] || die "talk: --from needs a value"
             from="$2"; from_seen=1; shift 2 ;;
-    --live-only|--supersede) send_args+=("$1"); shift ;;
+    --live-only|--supersede|--ack) send_args+=("$1"); shift ;;
     --stdin) die "talk: the body opens in your editor; --stdin belongs to gang send" ;;
     -*) die "talk: unknown argument '$1'" ;;
     *) die "talk: unknown argument '$1' — name the recipient first: gang talk <name>" ;;
@@ -11930,7 +11943,7 @@ send_live() { # $1 target, $2 locked if caller holds lock, $3 live-only probe;
 cmd_send() {
   local name="" from="" use_stdin=0 body="" live_only=0 supersede=0 rc=0 err="" frag n rest
   local drain_rc=0 drain_err="" commit_err="" next_opportunity="next completes a turn"
-  local promote_warning="" no_reply=0 waiver="" waived_note=""
+  local promote_warning="" no_reply=0 waiver="" waived_note="" ack=0
   while [ $# -gt 0 ]; do case "$1" in
     --to) [ $# -ge 2 ] || die "send: --to needs a value"
           [ -z "$name" ] || die "send: --to may be passed only once"
@@ -11941,6 +11954,7 @@ cmd_send() {
     --live-only) live_only=1; shift ;;
     --supersede) supersede=1; shift ;;
     --no-reply) no_reply=1; waiver=no-reply; shift ;;
+    --ack) ack=1; shift ;;
     # A BODY IS THE LIKELY MISTAKE, so the refusal that catches it names the
     # remedy. Anything not shaped like a flag is what someone typed where the
     # body goes, and the whole body then comes back at them as "unknown
@@ -11952,6 +11966,10 @@ cmd_send() {
   [ "$use_stdin" -eq 1 ] || die "send: message body required on stdin"
   [ "$supersede" -eq 0 ] || [ "$live_only" -eq 0 ] \
     || die "send: --supersede replaces an older message in the spool, and --live-only never parks one"
+  [ "$ack" -eq 0 ] || [ "$live_only" -eq 0 ] \
+    || die "send: --ack holds the message for the target's next delivery, and --live-only never holds one"
+  [ "$ack" -eq 0 ] || [ "$no_reply" -eq 0 ] \
+    || die "send: --ack acknowledges replies you read this turn and already owes nothing; --no-reply waives a request"
   send_sender "$from"
   send_identity_guard
   stdin_body "send"
@@ -11966,6 +11984,19 @@ cmd_send() {
   if [ "$no_reply" -eq 1 ] && [ "$MESSAGE_REPLY_MODE" = request ]; then
     MESSAGE_REPLY_MODE=waived
     waived_note=" $(colour "$C_DIM" "(owes no reply)")"
+  fi
+  # ONLY THE SENDER KNOWS WHETHER A MESSAGE NEEDS ACTING ON. A message sent in
+  # the turn that read a peer's reply correlates only to replies: it owes
+  # nothing, but Gangline cannot tell a ruling from a bare acknowledgement, so
+  # holding it by default left a ruling unseen for thirty minutes while its
+  # reader carried on idle or on stale state. Such a message wakes its target
+  # like any other; the sender opts into the quiet hold with --ack, and only
+  # for a message that answers no request, because an answer is awaited.
+  if [ "$ack" -eq 1 ]; then
+    [ "$MESSAGE_REPLY_MODE" = reply ] \
+      || die "send: --ack acknowledges a reply you read this turn, and this message answers none; it is a fresh request to $name and must wake them, so send it without --ack"
+    [ "$MESSAGE_DEFERABLE" -eq 1 ] \
+      || die "send: --ack refused: this message answers a request $name is waiting on, so it must wake them; send it without --ack"
   fi
   envelope "$SEND_WIRE" "$body" "$([ "$MESSAGE_REPLY_TO" = - ] || printf '%s' "$MESSAGE_REPLY_TO")" "$waiver"
   frag="${body%%$'\n'*}"
@@ -12036,12 +12067,18 @@ cmd_send() {
     waived_note=""
     envelope "$SEND_WIRE" "$body" "$MESSAGE_REPLY_TO" "$waiver"
   fi
-  # A PURE ACKNOWLEDGEMENT CHAIN CREATES NO RECIPROCAL DEBT and carries no
-  # answer its recipient is waiting for, so it earns no turn of its own. Accept the complete attributed envelope into a
-  # hidden, deadline-backed queue and settle the sender's debt at that durable
-  # acceptance. If the host cannot arm the ceiling, preserve the old immediate
+  # A BARE ACKNOWLEDGEMENT THE SENDER MARKED --ack CREATES NO RECIPROCAL DEBT
+  # and carries no answer its recipient is waiting for, so it earns no turn of
+  # its own. Accept the complete attributed envelope into a hidden,
+  # deadline-backed queue and settle the sender's debt at that durable
+  # acceptance. If the host cannot arm the ceiling, preserve the immediate
   # path: an optimization is never allowed to strand or silently accept mail.
-  if [ "$MESSAGE_REPLY_MODE" = reply ] && [ "$MESSAGE_DEFERABLE" -eq 1 ]; then
+  # An --ack whose supersession inherited a request correlation says so and
+  # wakes: the retirement is already prepared under the lock, and waking is
+  # the safe side of the refusal that would otherwise stand here.
+  [ "$ack" -eq 0 ] || [ "$MESSAGE_DEFERABLE" -eq 1 ] \
+    || printf 'gang: --ack set aside: this replacement inherits a request %s is waiting on, so it wakes them\n' "$name" >&2
+  if [ "$ack" -eq 1 ] && [ "$MESSAGE_REPLY_MODE" = reply ] && [ "$MESSAGE_DEFERABLE" -eq 1 ]; then
     if deferred_hold_try "$AGENT_ID" "$name" "$SEND_FROM" "$ENVELOPE" "$frag" \
       "$MESSAGE_SENDER_TOKEN" "$MESSAGE_REPLY_MODE" "$MESSAGE_REPLY_TO" "$ENVELOPE_NONCE"; then
       [ "$supersede" -eq 0 ] || spool_retire_commit \

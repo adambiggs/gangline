@@ -266,11 +266,14 @@ equal "a verified self-declared operator envelope creates no peer debt" \
   $'clear\t-\t-\t-' \
   "$(TMUX_PANE="$reply_b_pane" "$GANG" reply-obligations)"
 
-# A REPLY THAT CREATES NO RECIPROCAL DEBT DOES NOT EARN A TURN OF ITS OWN.
+# A REPLY THAT CREATES NO RECIPROCAL DEBT MAY DECLINE A TURN OF ITS OWN.
 # Requests remain immediate because their native prompt proof is what opens the
-# recipient's obligation; replies wait for the next request that would wake the
-# recipient anyway. The unrelated request already owed by the reply recipient
-# is the safety discriminator: holding must not settle, shadow, or delay it.
+# recipient's obligation. A reply the sender marks --ack waits for the next
+# request that would wake the recipient anyway; an unmarked reply wakes, because
+# Gangline cannot tell a ruling from an acknowledgement and a held ruling left
+# its reader idle on stale state. The unrelated request already owed by the
+# reply recipient is the safety discriminator: holding must not settle, shadow,
+# or delay it.
 "$HITCH" defer-a -c replyable -d "$RUN_ROOT" >/dev/null
 "$HITCH" defer-b -c replyable -d "$RUN_ROOT" >/dev/null
 "$HITCH" defer-c -c replyable -d "$RUN_ROOT" >/dev/null
@@ -335,7 +338,7 @@ equal "ending the recipient's turn preserves its unrelated obligation" \
   "$defer_owed_before" \
   "$(TMUX_PANE="$defer_a_pane" "$GANG" reply-obligations)"
 defer_reply_out="$(printf '%s' DEFERRED_REPLY \
-  | TMUX_PANE="$defer_b_pane" "$GANG" send --to defer-a --stdin)"
+  | TMUX_PANE="$defer_b_pane" "$GANG" send --to defer-a --ack --stdin)"
 excludes "a pure acknowledgement is accepted without waking its recipient" \
   "$(pane_all defer-a)" "DEFERRED_REPLY"
 contains "the accepted reply says it is deliberately deferred" \
@@ -389,13 +392,113 @@ defer_b_stop_why="$(tr '\n' ' ' < "$reply_stop_stderr")"
 equal "the sender can end its turn after its deferred reply is accepted" 0 \
   "$defer_b_stop_rc${defer_b_stop_why:+: $defer_b_stop_why}"
 reply_stop_run "$defer_a_pane" "$reply_stop_active_payload"
+
+# THE SAME RECORDS CARRY A RULING. A message sent in the turn that read a reply
+# correlates only to that reply whether it says "noted" or "approved, go ahead";
+# only the sender can tell them apart. Unmarked, it wakes an idle recipient
+# immediately, opens no debt, and leaves the unrelated obligation untouched.
+prepare_defer_ack_chain DEFER_RULING
+reply_stop_run "$defer_a_pane" "$reply_stop_active_payload"
+# The same all-reply correlation makes a hold eligible, so it is where the
+# --ack/--no-reply contradiction must be refused before anything is parked:
+# a refusal printed after the envelope entered the deferred namespace would
+# leave accepted hidden mail and an armed deadline behind an exit of 1.
+defer_ack_noreply_spool_before="$(find "$defer_a_spool" -maxdepth 1 -type f -printf '%f\n' | sort)"
+defer_ack_noreply_timer_before="$(cat "$reply_timer_args")"
+defer_ack_noreply_rc=0
+defer_ack_noreply_err="$(printf '%s' DEFER_ACK_NOREPLY \
+  | TMUX_PANE="$defer_b_pane" "$GANG" send --to defer-a --ack --no-reply --stdin 2>&1)" \
+  || defer_ack_noreply_rc=$?
+equal "--ack contradicts --no-reply" 1 "$defer_ack_noreply_rc"
+contains "and that contradiction is named" \
+  "$defer_ack_noreply_err" "--no-reply waives a request"
+excludes "the contradictory message was never typed" \
+  "$(pane_all defer-a)" "DEFER_ACK_NOREPLY"
+equal "the contradiction holds nothing and parks nothing" \
+  "$defer_ack_noreply_spool_before" \
+  "$(find "$defer_a_spool" -maxdepth 1 -type f -printf '%f\n' | sort)"
+equal "and arms no deadline" \
+  "$defer_ack_noreply_timer_before" "$(cat "$reply_timer_args")"
+excludes "status names no held envelope after the contradiction" \
+  "$($GANG status defer-a)" "deferred delivery"
+equal "the contradiction changes no obligation" \
+  "$defer_owed_before" \
+  "$(TMUX_PANE="$defer_a_pane" "$GANG" reply-obligations)"
+defer_ruling_out="$(printf '%s' DEFER_RULING_REPLY \
+  | TMUX_PANE="$defer_b_pane" "$GANG" send --to defer-a --stdin)"
+contains "an unmarked message in the turn that read a reply is delivered live" \
+  "$defer_ruling_out" "delivered to defer-a"
+excludes "and is never held" "$defer_ruling_out" "held for defer-a"
+# source-guard: producer@e37d8f96aea5: DEFER_RULING_REPLY is unique to the unmarked correlated send whose live delivery verdict is asserted immediately above
+contains "the ruling wakes its idle recipient" \
+  "$(pane_all defer-a)" "DEFER_RULING_REPLY"
+equal "the waking ruling opens no debt and changes no obligation" \
+  "$defer_owed_before" \
+  "$(TMUX_PANE="$defer_a_pane" "$GANG" reply-obligations)"
+excludes "status names no held envelope for it" \
+  "$($GANG status defer-a)" "deferred delivery"
+defer_ruling_stop_rc=0
+reply_stop_run "$defer_b_pane" || defer_ruling_stop_rc=$?
+defer_ruling_stop_why="$(tr '\n' ' ' < "$reply_stop_stderr")"
+equal "the sender can end its turn after its live ruling is delivered" 0 \
+  "$defer_ruling_stop_rc${defer_ruling_stop_why:+: $defer_ruling_stop_why}"
+reply_stop_run "$defer_a_pane" "$reply_stop_active_payload"
+
+# --ack IS REFUSED WHERE A HOLD WOULD STRAND AN AWAITED ANSWER OR A REQUEST.
+printf '%s' DEFER_ACK_REFUSED_REQUEST \
+  | TMUX_PANE="$defer_b_pane" "$GANG" send --to defer-a --stdin >/dev/null
+defer_ack_refused_request="$(reply_nonce_for_body \
+  "$defer_a_id" defer-b request DEFER_ACK_REFUSED_REQUEST)"
+reply_prompt_event "$defer_a_pane" \
+  "$(reply_request_envelope defer-b "$defer_ack_refused_request" DEFER_ACK_REFUSED_REQUEST)"
+defer_ack_refused_rc=0
+defer_ack_refused_err="$(printf '%s' DEFER_ACK_REFUSED_ANSWER \
+  | TMUX_PANE="$defer_a_pane" "$GANG" send --to defer-b --ack --stdin 2>&1)" \
+  || defer_ack_refused_rc=$?
+equal "--ack on an answer to a request is refused" 1 "$defer_ack_refused_rc"
+contains "the refusal names the peer waiting on the answer" \
+  "$defer_ack_refused_err" "answers a request defer-b is waiting on"
+excludes "the refused answer was never typed" \
+  "$(pane_all defer-b)" "DEFER_ACK_REFUSED_ANSWER"
+contains "the refusal leaves the answer still owed" \
+  "$(TMUX_PANE="$defer_a_pane" "$GANG" reply-obligations)" \
+  $'owed\t'"$defer_ack_refused_request"$'\tdefer-b'
+equal "the refusal holds nothing" "" \
+  "$(printf '%s\n' "$GANG_LOCK_DIR/spool/$(tmux show-options -wqv -t "$defer_b_id" @gl_spool)"/.deferred-* \
+      | grep -v '\*$' || :)"
+defer_ack_fresh_rc=0
+defer_ack_fresh_err="$(printf '%s' DEFER_ACK_FRESH_REQUEST \
+  | TMUX_PANE="$defer_c_pane" "$GANG" send --to defer-b --ack --stdin 2>&1)" \
+  || defer_ack_fresh_rc=$?
+equal "--ack on a fresh request is refused" 1 "$defer_ack_fresh_rc"
+contains "the refusal says the message answers no reply" \
+  "$defer_ack_fresh_err" "this message answers none; it is a fresh request to defer-b"
+excludes "the refused request was never typed" \
+  "$(pane_all defer-b)" "DEFER_ACK_FRESH_REQUEST"
+defer_ack_live_rc=0
+defer_ack_live_err="$(printf '%s' DEFER_ACK_LIVE \
+  | TMUX_PANE="$defer_a_pane" "$GANG" send --to defer-b --ack --live-only --stdin 2>&1)" \
+  || defer_ack_live_rc=$?
+equal "--ack contradicts --live-only" 1 "$defer_ack_live_rc"
+contains "and the contradiction is named" \
+  "$defer_ack_live_err" "--live-only never holds one"
+defer_ack_answer_out="$(printf '%s' DEFER_ACK_REFUSED_ANSWER \
+  | TMUX_PANE="$defer_a_pane" "$GANG" send --to defer-b --stdin)"
+contains "the same answer sent without --ack is delivered" \
+  "$defer_ack_answer_out" "delivered to defer-b"
+defer_ack_answer_nonce="$(reply_nonce_for_body \
+  "$defer_b_id" defer-a reply DEFER_ACK_REFUSED_ANSWER)"
+reply_prompt_event "$defer_b_pane" \
+  "$(reply_response_envelope defer-a "$defer_ack_answer_nonce" "$defer_ack_refused_request" DEFER_ACK_REFUSED_ANSWER)"
+reply_stop_run "$defer_b_pane"
+reply_stop_run "$defer_a_pane" "$reply_stop_active_payload"
 prepare_defer_ack_chain DEFER_NATIVE
 defer_native_older_out="$(printf '%s' DEFER_NATIVE_OLDER_REQUEST \
   | TMUX_PANE="$defer_c_pane" "$GANG" send --to defer-a --stdin)"
 contains "an older request waits while the recipient's turn is live" \
   "$defer_native_older_out" "queued for defer-a"
 printf '%s' DEFER_NATIVE_REPLY \
-  | TMUX_PANE="$defer_b_pane" "$GANG" send --to defer-a --stdin >/dev/null
+  | TMUX_PANE="$defer_b_pane" "$GANG" send --to defer-a --ack --stdin >/dev/null
 defer_native_obligations_before="$(TMUX_PANE="$defer_a_pane" "$GANG" reply-obligations)"
 defer_native_drain_channel="gang-spool-drain-$defer_a_id"
 tmux wait-for "$defer_native_drain_channel" &
@@ -424,7 +527,7 @@ equal "the sender can end its turn after bundled reply delivery" 0 \
   "$defer_b_stop_rc${defer_b_stop_why:+: $defer_b_stop_why}"
 prepare_defer_ack_chain DEFER_SUPERSEDE
 printf '%s' DEFER_SUPERSEDED_REPLY \
-  | TMUX_PANE="$defer_b_pane" "$GANG" send --to defer-a --stdin >/dev/null
+  | TMUX_PANE="$defer_b_pane" "$GANG" send --to defer-a --ack --stdin >/dev/null
 defer_replacement_out="$(printf '%s' DEFER_REPLACEMENT_REPLY \
   | TMUX_PANE="$defer_b_pane" "$GANG" send --to defer-a --supersede --stdin)"
 defer_superseded_mail="$($GANG mail defer-a)"
@@ -455,7 +558,7 @@ reply_stop_run "$defer_a_pane" "$reply_stop_active_payload"
 reply_stop_run "$defer_b_pane"
 prepare_defer_ack_chain DEFER_FRESH_SUPERSEDE
 printf '%s' DEFER_OLD_ACK \
-  | TMUX_PANE="$defer_b_pane" "$GANG" send --to defer-a --stdin >/dev/null
+  | TMUX_PANE="$defer_b_pane" "$GANG" send --to defer-a --ack --stdin >/dev/null
 reply_stop_run "$defer_b_pane"
 reply_stop_run "$defer_a_pane" "$reply_stop_active_payload"
 defer_fresh_supersede_out="$(printf '%s' DEFER_FRESH_REQUEST \
@@ -482,7 +585,7 @@ prepare_defer_ack_chain DEFER_BOUND
 reply_stop_run "$defer_a_pane" "$reply_stop_active_payload"
 defer_bound_before="$(TMUX_PANE="$defer_a_pane" "$GANG" reply-obligations)"
 defer_bound_out="$(printf '%s' DEFER_BOUND_REPLY \
-  | TMUX_PANE="$defer_b_pane" "$GANG" send --to defer-a --stdin)"
+  | TMUX_PANE="$defer_b_pane" "$GANG" send --to defer-a --ack --stdin)"
 contains "the second correlated reply is held behind a forced wake" \
   "$defer_bound_out" "retrying deadline starts in 30m"
 excludes "the bounded hold still creates no immediate recipient turn" \
@@ -533,7 +636,7 @@ prepare_defer_ack_chain DEFER_NOARM
 reply_stop_run "$defer_a_pane" "$reply_stop_active_payload"
 defer_noarm_out="$(printf '%s' DEFER_NOARM_REPLY \
   | GANG_TEST_DEFER_ARM_FAIL=1 TMUX_PANE="$defer_b_pane" \
-    "$GANG" send --to defer-a --stdin 2>&1)"
+    "$GANG" send --to defer-a --ack --stdin 2>&1)"
 contains "a host that cannot arm the bound says deferral is unavailable" \
   "$defer_noarm_out" "preserving immediate delivery"
 contains "and falls back to a verified immediate delivery" \
@@ -552,16 +655,18 @@ reply_stop_run "$defer_a_pane" "$reply_stop_active_payload"
 reply_stop_run "$defer_b_pane"
 prepare_defer_ack_chain DEFER_INHERITED_REQUEST
 printf '%s' DEFER_INHERITED_OLD_ACK \
-  | TMUX_PANE="$defer_b_pane" "$GANG" send --to defer-a --stdin >/dev/null
+  | TMUX_PANE="$defer_b_pane" "$GANG" send --to defer-a --ack --stdin >/dev/null
 defer_inherited_clone=f8f8f8f8f8f8f8f8
 tmux set-option -w -t "$defer_b_id" "@gl_reply_$defer_inherited_clone" \
   "$DEFER_ACK_ANSWER_META"
 tmux set-option -w -t "$defer_b_id" "@gl_rprompt_$defer_inherited_clone" \
   "$DEFER_ACK_ANSWER_PROMPT"
 defer_inherited_out="$(printf '%s' DEFER_INHERITED_REPLACEMENT \
-  | TMUX_PANE="$defer_b_pane" "$GANG" send --to defer-a --supersede --stdin)"
+  | TMUX_PANE="$defer_b_pane" "$GANG" send --to defer-a --supersede --ack --stdin 2>&1)"
 contains "inherited request correlation keeps a superseding acknowledgement waking" \
   "$defer_inherited_out" "queued for defer-a"
+contains "and says why the --ack was set aside" \
+  "$defer_inherited_out" "--ack set aside: this replacement inherits a request defer-a is waiting on"
 excludes "the inherited-request replacement is never accepted as a quiet hold" \
   "$defer_inherited_out" "held for defer-a"
 equal "inherited request correlation leaves no hidden replacement" "" \
@@ -582,7 +687,7 @@ reply_stop_run "$defer_b_pane"
 prepare_defer_ack_chain DEFER_LATE_FIRST
 reply_stop_run "$defer_a_pane" "$reply_stop_active_payload"
 printf '%s' DEFER_LATE_FIRST_REPLY \
-  | TMUX_PANE="$defer_b_pane" "$GANG" send --to defer-a --stdin >/dev/null
+  | TMUX_PANE="$defer_b_pane" "$GANG" send --to defer-a --ack --stdin >/dev/null
 defer_late_entry="$(awk '/^\.deferred-[0-9]/ { print; exit }' "$reply_timer_args")"
 defer_late_unit="$(awk -F= '/^--unit=/ { print $2; exit }' "$reply_timer_args")"
 defer_late_due="${defer_late_entry#.deferred-}"
@@ -605,7 +710,7 @@ reply_stop_run "$defer_b_pane"
 prepare_defer_ack_chain DEFER_RETRY_CAP
 reply_stop_run "$defer_a_pane" "$reply_stop_active_payload"
 printf '%s' DEFER_RETRY_CAP_REPLY \
-  | TMUX_PANE="$defer_b_pane" "$GANG" send --to defer-a --stdin >/dev/null
+  | TMUX_PANE="$defer_b_pane" "$GANG" send --to defer-a --ack --stdin >/dev/null
 defer_cap_entry="$(awk '/^\.deferred-[0-9]/ { print; exit }' "$reply_timer_args")"
 defer_cap_unit="$(awk -F= '/^--unit=/ { print $2; exit }' "$reply_timer_args")"
 defer_cap_due="${defer_cap_entry#.deferred-}"
