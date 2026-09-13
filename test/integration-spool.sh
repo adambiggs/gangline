@@ -1671,12 +1671,17 @@ stale_reap_lock="$GANG_LOCK_DIR/$(printf '%s' "$stale_reap_id" | tr -c 'A-Za-z0-
 ln -s 99999999 "$stale_reap_lock"
 stale_reap_b_ready="$RUN_ROOT/stale-reap-b-ready"
 stale_reap_b_release="$RUN_ROOT/stale-reap-b-release"
+stale_reap_c_ready="$RUN_ROOT/stale-reap-c-ready"
+stale_reap_c_release="$RUN_ROOT/stale-reap-c-release"
 stale_reap_a_event="$RUN_ROOT/stale-reap-a-event"
 stale_reap_a_release="$RUN_ROOT/stale-reap-a-release"
 mkfifo "$stale_reap_b_ready" "$stale_reap_b_release" \
+  "$stale_reap_c_ready" "$stale_reap_c_release" \
   "$stale_reap_a_event" "$stale_reap_a_release"
 exec {stale_reap_b_ready_fd}<>"$stale_reap_b_ready"
 exec {stale_reap_b_release_fd}<>"$stale_reap_b_release"
+exec {stale_reap_c_ready_fd}<>"$stale_reap_c_ready"
+exec {stale_reap_c_release_fd}<>"$stale_reap_c_release"
 exec {stale_reap_a_event_fd}<>"$stale_reap_a_event"
 exec {stale_reap_a_release_fd}<>"$stale_reap_a_release"
 stale_reap_real_rm="$(command -v rm)"
@@ -1686,17 +1691,6 @@ cat > "$RUN_ROOT/bin/rm" <<SH
 #!/bin/sh
 . "\$GANG_TEST_PATH_SHIM_GUARD"
 path_shim_guard "$stale_reap_real_rm" "\$0" rm || exit \$?
-if [ -n "\${GANG_STALE_REAP_B_LOCK:-}" ] && \
-   [ ! -e "\${GANG_STALE_REAP_B_DONE:-}" ]; then
-  for argument do
-    if [ "\$argument" = "\$GANG_STALE_REAP_B_LOCK" ]; then
-      : > "\$GANG_STALE_REAP_B_DONE"
-      printf 'ready\\n' > "\$GANG_STALE_REAP_B_READY" || exit \$?
-      IFS= read -r _ < "\$GANG_STALE_REAP_B_RELEASE" || exit \$?
-      break
-    fi
-  done
-fi
 exec "$stale_reap_real_rm" "\$@"
 SH
 cat > "$RUN_ROOT/bin/mv" <<SH
@@ -1731,9 +1725,19 @@ if not args or args[0] != "-":
 
 source = sys.stdin.buffer.read()
 marker = b"        fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)"
-if (os.environ.get("GANG_STALE_REAP_B_LOCK") == (args[1] if len(args) > 1 else "")
+if (os.environ.get("GANG_STALE_REAP_C_LOCK") == (args[2] if len(args) > 2 else "")
+        and not os.path.exists(os.environ["GANG_STALE_REAP_C_DONE"])):
+    if source.count(marker) != 1:
+        sys.stderr.write("stale-reap fixture did not find the stale-owner helper\\n")
+        raise SystemExit(98)
+    open(os.environ["GANG_STALE_REAP_C_DONE"], "w").close()
+    with open(os.environ["GANG_STALE_REAP_C_READY"], "w") as ready:
+        ready.write("ready\\n")
+    with open(os.environ["GANG_STALE_REAP_C_RELEASE"]) as release:
+        release.readline()
+if (os.environ.get("GANG_STALE_REAP_B_LOCK") == (args[2] if len(args) > 2 else "")
         and not os.path.exists(os.environ["GANG_STALE_REAP_B_DONE"])):
-    injected = marker + b'''\n        open(os.environ["GANG_STALE_REAP_B_DONE"], "w").close()\n        with open(os.environ["GANG_STALE_REAP_B_READY"], "w") as ready:\n            ready.write("ready\\n")\n        with open(os.environ["GANG_STALE_REAP_B_RELEASE"]) as release:\n            release.readline()'''
+    injected = marker + b'''\n        open(os.environ["GANG_STALE_REAP_B_DONE"], "w").close()\n        with open(os.environ["GANG_STALE_REAP_B_READY"], "w") as ready:\n            ready.write("ready\\\\n")\n        with open(os.environ["GANG_STALE_REAP_B_RELEASE"]) as release:\n            release.readline()'''
     if source.count(marker) != 1:
         sys.stderr.write("stale-reap fixture did not find the guarded lock acquisition\\n")
         raise SystemExit(98)
@@ -1751,6 +1755,8 @@ GANG_STALE_REAP_B_LOCK="$stale_reap_lock" \
 stale_reap_b_pid=$!
 IFS= read -r -t 10 -u "$stale_reap_b_ready_fd" _ \
   || fail "the stale reclaimer reaches its guarded unlink" "no stale-lock contender arrived"
+equal "the guarded reclaimer has not replaced the dead owner yet" \
+  99999999 "$(readlink "$stale_reap_lock")"
 TMUX_PANE="$stale_reap_pane" \
   GANG_STALE_REAP_A_ENTRY="$stale_reap_entry" \
   GANG_STALE_REAP_A_CLAIM="$stale_reap_claim" \
@@ -1778,6 +1784,8 @@ wait "$stale_reap_a_pid" || stale_reap_a_rc=$?
 equal "a competing stale reclaimer refuses before a self-read can claim" \
   no "$stale_reap_a_claimed"
 equal "the competing self-read reports delivery contention" 3 "$stale_reap_a_rc"
+contains "the competing self-read names the held stale-reaper guard" \
+  "$(<"$RUN_ROOT/stale-reap-a.err")" "verifying the stale delivery lock"
 equal "the sole stale reclaimer completes its bounded pass" 0 "$stale_reap_b_rc"
 contains "the waiting message never becomes a false interrupted outcome" \
   "$(cd "$stale_reap_spool" && ls)" "${stale_reap_entry##*/}"
@@ -1787,9 +1795,71 @@ tmux send-keys -t "$stale_reap_id" C-u
 stale_reap_mail="$(TMUX_PANE="$stale_reap_pane" "$GANG" mail)"
 contains "the message remains readable after the sole reclaimer releases" \
   "$stale_reap_mail" "MARK_STALE_REAP_EXCLUSIVE"
+
+# THE OWNER RECHECK IS AFTER THE GUARD, NOT BEFORE IT. C has already observed
+# the dead owner when its helper is paused at entry. A then reaps and holds the
+# pane lock while its self-read has claimed the entry. Releasing C must report
+# the changed owner and leave A's live claim lock untouched. Without the helper
+# recheck C deletes A's link and the old double-holder race returns.
+tmux send-keys -l -t "$stale_reap_id" 'HUMAN_DRAFT'
+printf 'MARK_STALE_REAP_RECHECK' |
+  "$GANG" send --to stale-reap --from tester --stdin >/dev/null
+stale_reap_recheck_entry=""
+for candidate in "$stale_reap_spool"/[0-9]*; do
+  [ -f "$candidate" ] || continue
+  [ "$candidate" = "$stale_reap_entry" ] && continue
+  stale_reap_recheck_entry="$candidate"
+  break
+done
+[ -n "$stale_reap_recheck_entry" ] \
+  || fail "the owner-recheck race has its own waiting entry" "no second numeric spool entry"
+stale_reap_recheck_claim="$stale_reap_spool/sending-${stale_reap_recheck_entry##*/}"
+ln -s 99999999 "$stale_reap_lock"
+stale_reap_c_done="$RUN_ROOT/stale-reap-c-done"
+TMUX_PANE="$stale_reap_pane" \
+  GANG_STALE_REAP_C_LOCK="$stale_reap_lock" \
+  GANG_STALE_REAP_C_DONE="$stale_reap_c_done" \
+  GANG_STALE_REAP_C_READY="$stale_reap_c_ready" \
+  GANG_STALE_REAP_C_RELEASE="$stale_reap_c_release" \
+  "$GANG" mail >"$RUN_ROOT/stale-reap-c.out" 2>"$RUN_ROOT/stale-reap-c.err" &
+stale_reap_c_pid=$!
+IFS= read -r -t 10 -u "$stale_reap_c_ready_fd" _ \
+  || fail "the post-check contender reaches the stale-owner helper" "no contender arrived"
+equal "the post-check contender still sees the dead owner" \
+  99999999 "$(readlink "$stale_reap_lock")"
+TMUX_PANE="$stale_reap_pane" \
+  GANG_STALE_REAP_A_ENTRY="$stale_reap_recheck_entry" \
+  GANG_STALE_REAP_A_CLAIM="$stale_reap_recheck_claim" \
+  GANG_STALE_REAP_A_EVENT="$stale_reap_a_event" \
+  GANG_STALE_REAP_A_RELEASE="$stale_reap_a_release" \
+  sh -c 'rc=0; "$@" || rc=$?; printf "exit:%s\\n" "$rc" > "$GANG_STALE_REAP_A_EVENT"; exit "$rc"' \
+  stale-reap-reader "$GANG" mail >"$RUN_ROOT/stale-reap-reader.out" 2>"$RUN_ROOT/stale-reap-reader.err" &
+stale_reap_reader_pid=$!
+stale_reap_reader_event=""
+IFS= read -r -t 10 -u "$stale_reap_a_event_fd" stale_reap_reader_event \
+  || fail "the reaping self-read reaches its atomic claim" "no reader outcome arrived"
+equal "the reaping self-read claims while it owns the pane lock" \
+  claimed "$stale_reap_reader_event"
+stale_reap_reader_owner="$(readlink "$stale_reap_lock")"
+kill -0 "$stale_reap_reader_owner" 2>/dev/null \
+  || fail "the claimed self-read owns a live pane lock" "$stale_reap_reader_owner is not live"
+printf 'release\n' >&"$stale_reap_c_release_fd"
+stale_reap_c_rc=0
+wait "$stale_reap_c_pid" || stale_reap_c_rc=$?
+equal "a post-check contender refuses the changed live owner" 3 "$stale_reap_c_rc"
+contains "the post-check refusal names the changed stale owner" \
+  "$(<"$RUN_ROOT/stale-reap-c.err")" "changed while Gangline was verifying"
+equal "the post-check contender preserves the self-read lock owner" \
+  "$stale_reap_reader_owner" "$(readlink "$stale_reap_lock")"
+printf 'release\n' >&"$stale_reap_a_release_fd"
+stale_reap_reader_rc=0
+wait "$stale_reap_reader_pid" || stale_reap_reader_rc=$?
+equal "the reaping self-read completes after the changed-owner refusal" 0 "$stale_reap_reader_rc"
 rm -f -- "$RUN_ROOT/bin/rm" "$RUN_ROOT/bin/mv" "$RUN_ROOT/bin/python3"
 exec {stale_reap_b_ready_fd}>&-
 exec {stale_reap_b_release_fd}>&-
+exec {stale_reap_c_ready_fd}>&-
+exec {stale_reap_c_release_fd}>&-
 exec {stale_reap_a_event_fd}>&-
 exec {stale_reap_a_release_fd}>&-
 "$GANG" drop stale-reap >/dev/null
