@@ -1671,16 +1671,17 @@ stale_reap_lock="$GANG_LOCK_DIR/$(printf '%s' "$stale_reap_id" | tr -c 'A-Za-z0-
 ln -s 99999999 "$stale_reap_lock"
 stale_reap_b_ready="$RUN_ROOT/stale-reap-b-ready"
 stale_reap_b_release="$RUN_ROOT/stale-reap-b-release"
-stale_reap_a_ready="$RUN_ROOT/stale-reap-a-ready"
+stale_reap_a_event="$RUN_ROOT/stale-reap-a-event"
 stale_reap_a_release="$RUN_ROOT/stale-reap-a-release"
 mkfifo "$stale_reap_b_ready" "$stale_reap_b_release" \
-  "$stale_reap_a_ready" "$stale_reap_a_release"
+  "$stale_reap_a_event" "$stale_reap_a_release"
 exec {stale_reap_b_ready_fd}<>"$stale_reap_b_ready"
 exec {stale_reap_b_release_fd}<>"$stale_reap_b_release"
-exec {stale_reap_a_ready_fd}<>"$stale_reap_a_ready"
+exec {stale_reap_a_event_fd}<>"$stale_reap_a_event"
 exec {stale_reap_a_release_fd}<>"$stale_reap_a_release"
 stale_reap_real_rm="$(command -v rm)"
 stale_reap_real_mv="$(command -v mv)"
+stale_reap_real_python="$(command -v python3)"
 cat > "$RUN_ROOT/bin/rm" <<SH
 #!/bin/sh
 . "\$GANG_TEST_PATH_SHIM_GUARD"
@@ -1711,13 +1712,36 @@ done
 if [ "\${GANG_STALE_REAP_A_ENTRY:-}" = "\$source" ] && \
    [ "\${GANG_STALE_REAP_A_CLAIM:-}" = "\$destination" ]; then
   "$stale_reap_real_mv" "\$@" || exit \$?
-  printf 'ready\\n' > "\$GANG_STALE_REAP_A_READY" || exit \$?
+  printf 'claimed\\n' > "\$GANG_STALE_REAP_A_EVENT" || exit \$?
   IFS= read -r _ < "\$GANG_STALE_REAP_A_RELEASE" || exit \$?
   exit 0
 fi
 exec "$stale_reap_real_mv" "\$@"
 SH
-chmod +x "$RUN_ROOT/bin/rm" "$RUN_ROOT/bin/mv"
+cat > "$RUN_ROOT/bin/python3" <<PY
+#!$stale_reap_real_python
+import os
+import subprocess
+import sys
+
+real = "$stale_reap_real_python"
+args = sys.argv[1:]
+if not args or args[0] != "-":
+    os.execv(real, [real] + args)
+
+source = sys.stdin.buffer.read()
+marker = b"        fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)"
+if (os.environ.get("GANG_STALE_REAP_B_LOCK") == (args[1] if len(args) > 1 else "")
+        and not os.path.exists(os.environ["GANG_STALE_REAP_B_DONE"])):
+    injected = marker + b'''\n        open(os.environ["GANG_STALE_REAP_B_DONE"], "w").close()\n        with open(os.environ["GANG_STALE_REAP_B_READY"], "w") as ready:\n            ready.write("ready\\n")\n        with open(os.environ["GANG_STALE_REAP_B_RELEASE"]) as release:\n            release.readline()'''
+    if source.count(marker) != 1:
+        sys.stderr.write("stale-reap fixture did not find the guarded lock acquisition\\n")
+        raise SystemExit(98)
+    source = source.replace(marker, injected, 1)
+completed = subprocess.run([real] + args, input=source)
+raise SystemExit(completed.returncode)
+PY
+chmod +x "$RUN_ROOT/bin/rm" "$RUN_ROOT/bin/mv" "$RUN_ROOT/bin/python3"
 stale_reap_b_done="$RUN_ROOT/stale-reap-b-done"
 GANG_STALE_REAP_B_LOCK="$stale_reap_lock" \
   GANG_STALE_REAP_B_DONE="$stale_reap_b_done" \
@@ -1730,13 +1754,19 @@ IFS= read -r -t 10 -u "$stale_reap_b_ready_fd" _ \
 TMUX_PANE="$stale_reap_pane" \
   GANG_STALE_REAP_A_ENTRY="$stale_reap_entry" \
   GANG_STALE_REAP_A_CLAIM="$stale_reap_claim" \
-  GANG_STALE_REAP_A_READY="$stale_reap_a_ready" \
+  GANG_STALE_REAP_A_EVENT="$stale_reap_a_event" \
   GANG_STALE_REAP_A_RELEASE="$stale_reap_a_release" \
-  "$GANG" mail >"$RUN_ROOT/stale-reap-a.out" 2>"$RUN_ROOT/stale-reap-a.err" &
+  sh -c 'rc=0; "$@" || rc=$?; printf "exit:%s\\n" "$rc" > "$GANG_STALE_REAP_A_EVENT"; exit "$rc"' \
+  stale-reap-mail "$GANG" mail >"$RUN_ROOT/stale-reap-a.out" 2>"$RUN_ROOT/stale-reap-a.err" &
 stale_reap_a_pid=$!
-stale_reap_a_claimed=no
-IFS= read -r -t 2 -u "$stale_reap_a_ready_fd" _ \
-  && stale_reap_a_claimed=yes
+stale_reap_a_event_line=""
+IFS= read -r -t 10 -u "$stale_reap_a_event_fd" stale_reap_a_event_line \
+  || fail "the competing self-read reaches a settled outcome" "no self-read outcome arrived"
+case "$stale_reap_a_event_line" in
+  claimed) stale_reap_a_claimed=yes ;;
+  exit:3) stale_reap_a_claimed=no ;;
+  *) fail "the competing self-read names its exact outcome" "$stale_reap_a_event_line" ;;
+esac
 printf 'release\n' >&"$stale_reap_b_release_fd"
 stale_reap_b_rc=0
 wait "$stale_reap_b_pid" || stale_reap_b_rc=$?
@@ -1757,10 +1787,10 @@ tmux send-keys -t "$stale_reap_id" C-u
 stale_reap_mail="$(TMUX_PANE="$stale_reap_pane" "$GANG" mail)"
 contains "the message remains readable after the sole reclaimer releases" \
   "$stale_reap_mail" "MARK_STALE_REAP_EXCLUSIVE"
-rm -f -- "$RUN_ROOT/bin/rm" "$RUN_ROOT/bin/mv"
+rm -f -- "$RUN_ROOT/bin/rm" "$RUN_ROOT/bin/mv" "$RUN_ROOT/bin/python3"
 exec {stale_reap_b_ready_fd}>&-
 exec {stale_reap_b_release_fd}>&-
-exec {stale_reap_a_ready_fd}>&-
+exec {stale_reap_a_event_fd}>&-
 exec {stale_reap_a_release_fd}>&-
 "$GANG" drop stale-reap >/dev/null
 

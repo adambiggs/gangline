@@ -4447,7 +4447,7 @@ lock_self_pid() { # sets LOCK_SELF_PID to the pid that will actually hold a clai
 }
 
 lock_pane() { # $1 = window id; held until lock_release or this process exits
-  local base holder again name path reaper err me read_races=0 reaper_fd=""
+  local base holder name path reaper err me read_races=0 reaper_result="" reaper_rc=0
   lock_self_pid
   me="$LOCK_SELF_PID"
   base="${GANG_LOCK_DIR:-/tmp/gangline-$GANGLINE_PROCESS_UID}"
@@ -4483,43 +4483,98 @@ lock_pane() { # $1 = window id; held until lock_release or this process exits
   esac
   kill -0 "$holder" 2>/dev/null \
     && refuse "another Gangline process is delivering to $name — inspect it with gang capture $name before retrying"
-  # Two contenders can both observe a dead holder.  The symlink itself cannot
+  # Two contenders can both observe a dead holder. The symlink itself cannot
   # compare-and-delete that owner: an unconditional rm after the first
-  # replacement would erase the first contender's live lock.  A kernel-held
-  # reaper guard serializes just this stale-owner transaction.  It is retained
-  # as an empty inode, like the mandatory gate lock, because unlinking it after
-  # release would let a waiter on the old inode and a newcomer on a new inode
-  # both claim to be the sole reaper.
+  # replacement would erase the first contender's live lock. A Python process
+  # holds a fcntl guard while it repeats the owner check and replaces the link.
+  # Python is already required by gang, and fcntl is available on the macOS and
+  # Linux userlands gang supports; Bash 3.2 has neither anonymous descriptors
+  # nor a system flock(1). The guard inode remains after every pass: unlinking
+  # it would let old and new waiters lock different inodes concurrently.
   reaper="$path.reap"
-  exec {reaper_fd}>>"$reaper" \
-    || die "cannot open the stale delivery reaper guard $reaper — no stale lock was removed"
-  if ! flock -n "$reaper_fd"; then
-    exec {reaper_fd}>&-
-    refuse "another Gangline process is verifying the stale delivery lock for $name — inspect it with gang capture $name before retrying"
+  if reaper_result="$(python3 - "$reaper" "$path" "$holder" "$me" 2>&1 <<'PY'
+import errno
+import fcntl
+import os
+import sys
+
+reaper, path, expected, replacement = sys.argv[1:]
+
+def outcome(code, text):
+    print(text)
+    raise SystemExit(code)
+
+try:
+    fd = os.open(reaper, os.O_WRONLY | os.O_CREAT, 0o600)
+except OSError as exc:
+    outcome(1, "open guard: %s" % exc)
+
+try:
+    try:
+        fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
+    except OSError as exc:
+        if exc.errno in (errno.EACCES, errno.EAGAIN):
+            outcome(3, "busy")
+        outcome(1, "lock guard: %s" % exc)
+
+    try:
+        current = os.readlink(path)
+    except OSError:
+        current = ""
+    if current != expected:
+        outcome(4, "changed")
+
+    try:
+        os.kill(int(expected), 0)
+    except (OverflowError, ProcessLookupError):
+        pass
+    except PermissionError:
+        outcome(5, "live")
+    except OSError as exc:
+        if exc.errno != errno.ESRCH:
+            outcome(1, "check owner: %s" % exc)
+    else:
+        outcome(5, "live")
+
+    try:
+        os.unlink(path)
+    except FileNotFoundError:
+        outcome(4, "changed")
+    except OSError as exc:
+        outcome(1, "remove stale lock: %s" % exc)
+    try:
+        os.symlink(replacement, path)
+    except FileExistsError:
+        outcome(6, "replaced")
+    except OSError as exc:
+        outcome(1, "replace stale lock: %s" % exc)
+    outcome(0, "reclaimed")
+finally:
+    os.close(fd)
+PY
+)"; then
+    reaper_rc=0
+  else
+    reaper_rc=$?
   fi
-  again="$(readlink "$path" 2>/dev/null)" || again=""
-  if [ "$again" != "$holder" ]; then
-    flock -u "$reaper_fd" || die "cannot release the stale delivery reaper guard $reaper"
-    exec {reaper_fd}>&-
-    refuse "the stale delivery lock for $name changed while Gangline was verifying its dead owner — inspect with gang capture $name before retrying"
-  fi
-  if kill -0 "$holder" 2>/dev/null; then
-    flock -u "$reaper_fd" || die "cannot release the stale delivery reaper guard $reaper"
-    exec {reaper_fd}>&-
-    refuse "another Gangline process is delivering to $name — inspect it with gang capture $name before retrying"
-  fi
-  if ! rm -f -- "$path"; then
-    flock -u "$reaper_fd" || die "cannot release the stale delivery reaper guard $reaper"
-    exec {reaper_fd}>&-
-    die "cannot remove the stale delivery lock $path — no delivery started"
-  fi
-  err="$(ln -s "$me" "$path" 2>&1)" || {
-    flock -u "$reaper_fd" || die "cannot release the stale delivery reaper guard $reaper"
-    exec {reaper_fd}>&-
-    refuse "the stale delivery lock for $name was cleared, but another sender took it first — inspect with gang capture $name before retrying"
-  }
-  flock -u "$reaper_fd" || die "cannot release the stale delivery reaper guard $reaper"
-  exec {reaper_fd}>&-
+  case "$reaper_rc:$reaper_result" in
+    0:reclaimed) ;;
+    3:busy)
+      refuse "another Gangline process is verifying the stale delivery lock for $name — inspect it with gang capture $name before retrying"
+      ;;
+    4:changed)
+      refuse "the stale delivery lock for $name changed while Gangline was verifying its dead owner — inspect with gang capture $name before retrying"
+      ;;
+    5:live)
+      refuse "another Gangline process is delivering to $name — inspect it with gang capture $name before retrying"
+      ;;
+    6:replaced)
+      refuse "the stale delivery lock for $name was cleared, but another sender took it first — inspect with gang capture $name before retrying"
+      ;;
+    *)
+      die "cannot recover the stale delivery lock $path — ${reaper_result:-unknown reaper failure}. No delivery started"
+      ;;
+  esac
   LOCK_PATH="$path" LOCK_OWNER="$me"
   trap 'on_exit' EXIT
 }

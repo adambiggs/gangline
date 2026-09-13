@@ -919,6 +919,9 @@ claimed and held through delivery and claim retirement, so crossed native
 workers cannot split or reorder the queue. Copy-mode and other pre-keystroke
 refusals leave entries live and unclaimed for the next tick or native
 opportunity. A
+worker that dies holding its pane lock is reaped only under a private portable
+guard that rechecks the dead owner before replacing it; a contender that sees
+the lock change refuses before it can claim queue state. A
 drain that cannot read a composer after an idle native boundary leaves its
 entries waiting and records a visible drain failure; it never types through
 that uncertainty. A
