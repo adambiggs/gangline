@@ -1401,7 +1401,7 @@ if [ "${GANG_INTEGRATION_REQUIRE_ALL_PROBE:-0}" != 1 ]; then
     "1" "$require_all_probe_rc"
   contains "the required run names every part cli omitted" \
     "$require_all_probe_out" \
-    "required full run omitted declared parts: substrate,hitch,compose,spool,readiness,hooks,notify,usage,cap,tick"
+    "required full run omitted declared parts: substrate,hitch,compose,spool,readiness,hooks,notify,usage,cap,tick,run"
   excludes "a focused required run never attests every part ran" \
     "$require_all_probe_out" "integration: every declared part ran"
 
