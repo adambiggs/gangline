@@ -282,6 +282,4 @@ contains "a dropped requester leaves a named retained result" "$(<"$run_dropped/
 equal "a dropped requester does not delete its command output" "MARK_RUN_DROPPED" \
   "$(<"$run_dropped/output")"
 
-tmux send-keys -t "$run_requester_id" C-u
-"$GANG" tick
 "$GANG" drop run-requester-renamed
