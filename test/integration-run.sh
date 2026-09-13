@@ -5,8 +5,6 @@
 #
 # A PART IS A FRAGMENT, NOT A SCRIPT. test/integration.sh sources this file in
 # order and it reads that shell's fixtures, helpers and counters.
-: "${alpha_id:?test/integration-run.sh requires alpha_id from test/integration-substrate.sh}"
-: "${alpha_tmux_pane:?test/integration-run.sh requires alpha_tmux_pane from test/integration-substrate.sh}"
 run_bin="$RUN_ROOT/run-bin"
 run_args="$RUN_ROOT/run-systemd-args"
 run_stops="$RUN_ROOT/run-systemd-stops"
@@ -29,8 +27,12 @@ printf '%s\n' \
   'esac' > "$run_bin/systemctl"
 chmod +x "$run_bin/systemd-run" "$run_bin/systemctl"
 
-run_start() { # command words -> start a run as alpha, with an immediate fake service arm
-  TMUX_PANE="$alpha_tmux_pane" XDG_STATE_HOME="$run_state" \
+"$HITCH" run-requester -c bash -d "$run_state"
+run_requester_id="$(window_id run-requester)"
+run_requester_pane="$(tmux list-panes -t "$run_requester_id" -F '#{pane_id}')"
+
+run_start() { # command words -> start a run as the dedicated fixture requester
+  TMUX_PANE="$run_requester_pane" XDG_STATE_HOME="$run_state" \
     TMPDIR="$run_state/requester-tmp" \
     GANG_TEST_RUN_ARGS="$run_args" GANG_TEST_RUN_STOPS="$run_stops" \
     PATH="$run_bin:$PATH" "$GANG" run -- "$@"
@@ -95,23 +97,23 @@ contains "the service arms a post-stop finalizer" "$(<"$run_args")" \
 # A human draft forces completion through the ordinary durable spool, making
 # the completion envelope itself the evidence rather than a later shell error
 # caused by Bash treating that envelope as a command.
-tmux send-keys -l -t "$alpha_id" 'HUMAN_DRAFT'
+tmux send-keys -l -t "$run_requester_id" 'HUMAN_DRAFT'
 run_finish_direct "$run_small"
 contains "the runner records the completed exit code" "$(<"$run_small/result")" $'0\t'
 equal "the runner preserves complete combined output" "MARK_RUN_SMALL" "$(<"$run_small/output")"
-run_small_mail="$(XDG_STATE_HOME="$run_state" "$GANG" mail alpha)"
+run_small_mail="$(XDG_STATE_HOME="$run_state" "$GANG" mail run-requester)"
 contains "completion arrives through an enveloped Gangline delivery" "$run_small_mail" "[gang:self-declared:gang-run"
 contains "the completion carries the durable output path" "$run_small_mail" "$run_small/output"
 contains "the completion carries the command output tail" "$run_small_mail" "MARK_RUN_SMALL"
 run_audit="${run_small%/*}/audit.tsv"
-contains "completion appends the requester to the durable run audit" "$(<"$run_audit")" $'\talpha\t'
+contains "completion appends the requester to the durable run audit" "$(<"$run_audit")" $'\trun-requester\t'
 contains "completion appends its output path to the durable run audit" "$(<"$run_audit")" \
   "$run_small/output"
 
 run_existing_tmpdir="$run_state/requester-existing-tmp"
 mkdir -p "$run_existing_tmpdir"
 chmod 755 "$run_existing_tmpdir"
-run_existing_tmpdir_out="$(TMUX_PANE="$alpha_tmux_pane" XDG_STATE_HOME="$run_state" \
+run_existing_tmpdir_out="$(TMUX_PANE="$run_requester_pane" XDG_STATE_HOME="$run_state" \
   TMPDIR="$run_existing_tmpdir" \
   GANG_TEST_RUN_ARGS="$run_args" GANG_TEST_RUN_STOPS="$run_stops" \
   PATH="$run_bin:$PATH" "$GANG" run -- sh -c 'printf MARK_RUN_EXISTING_TMPDIR')"
@@ -138,16 +140,16 @@ else
   fail "full output above one megabyte remains in the result file" \
     "recorded $run_large_bytes bytes"
 fi
-alpha_spool="$GANG_LOCK_DIR/spool/$(tmux show-options -wqv -t "$alpha_id" @gl_spool)"
+run_requester_spool="$GANG_LOCK_DIR/spool/$(tmux show-options -wqv -t "$run_requester_id" @gl_spool)"
 run_large_envelope=""
-if run_large_envelopes="$(grep -rl "run ${run_large##*/} completed" "$alpha_spool")"; then
+if run_large_envelopes="$(grep -rl "run ${run_large##*/} completed" "$run_requester_spool")"; then
   run_large_envelope="${run_large_envelopes%%$'\n'*}"
 fi
 if [ -n "$run_large_envelope" ]; then
   pass "the large-output completion is retained in the ordinary spool"
 else
   fail "the large-output completion is retained in the ordinary spool" \
-    "no matching completion under $alpha_spool"
+    "no matching completion under $run_requester_spool"
 fi
 if [ -n "$run_large_envelope" ]; then
   run_large_envelope_bytes="$(wc -c < "$run_large_envelope" | tr -d ' ')"
@@ -166,7 +168,7 @@ run_cancel_out="$(run_start sh -c 'printf MARK_RUN_CANCEL')"
 contains "a cancellable run is accepted" "$run_cancel_out" "started run"
 run_cancel_record="$(run_record_for MARK_RUN_CANCEL)" || run_cancel_record=""
 run_cancel_id="${run_cancel_record##*/}"
-run_cancel_reply="$(TMUX_PANE="$alpha_tmux_pane" XDG_STATE_HOME="$run_state" \
+run_cancel_reply="$(TMUX_PANE="$run_requester_pane" XDG_STATE_HOME="$run_state" \
   GANG_TEST_RUN_ARGS="$run_args" GANG_TEST_RUN_STOPS="$run_stops" \
   PATH="$run_bin:$PATH" "$GANG" run --cancel "$run_cancel_id")"
 contains "the requesting stable identity may cancel its own run" "$run_cancel_reply" "cancellation requested"
@@ -235,7 +237,7 @@ for run_max_marker in MARK_RUN_MAX_A MARK_RUN_MAX_B MARK_RUN_MAX_C; do
 done
 
 run_launch_fail_rc=0
-run_launch_fail="$(TMUX_PANE="$alpha_tmux_pane" XDG_STATE_HOME="$run_state" \
+run_launch_fail="$(TMUX_PANE="$run_requester_pane" XDG_STATE_HOME="$run_state" \
   TMPDIR="$run_state/requester-tmp" GANG_TEST_RUN_FAIL=1 \
   GANG_TEST_RUN_ARGS="$run_args" GANG_TEST_RUN_STOPS="$run_stops" \
   PATH="$run_bin:$PATH" "$GANG" run -- sh -c 'printf MARK_RUN_LAUNCH_FAIL' 2>&1)" || run_launch_fail_rc=$?
@@ -248,9 +250,9 @@ fi
 run_rename_out="$(run_start sh -c 'printf MARK_RUN_RENAME')"
 contains "a rename-safe run is accepted" "$run_rename_out" "started run"
 run_rename_record="$(run_record_for MARK_RUN_RENAME)" || run_rename_record=""
-"$GANG" rename alpha alpha-renamed
+"$GANG" rename run-requester run-requester-renamed
 run_finish_direct "$run_rename_record"
-run_rename_mail="$(XDG_STATE_HOME="$run_state" "$GANG" mail alpha-renamed)"
+run_rename_mail="$(XDG_STATE_HOME="$run_state" "$GANG" mail run-requester-renamed)"
 contains "a renamed requester receives its completion by stable token" "$run_rename_mail" \
   "run ${run_rename_record##*/} completed"
 
@@ -269,5 +271,6 @@ contains "a dropped requester leaves a named retained result" "$(<"$run_dropped/
 equal "a dropped requester does not delete its command output" "MARK_RUN_DROPPED" \
   "$(<"$run_dropped/output")"
 
-tmux send-keys -t "$alpha_id" C-u
+tmux send-keys -t "$run_requester_id" C-u
 "$GANG" tick
+"$GANG" drop run-requester-renamed
