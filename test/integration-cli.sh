@@ -531,6 +531,49 @@ refuses "gang config refuses a malformed map under its origin" \
   env GANG_CONFIG_DIR="$CONFIG_CASES/report" GANG_CONTEXT_LIGHTS='codex/*=90,10' \
     "$GANG" config
 
+# CONTEXT BANDS ARE AN OPERATOR MAP JUST LIKE LIGHTS, but one selected entry
+# keeps an ordered list of named threshold/template pairs. Config prints the
+# effective selector, each band, and a rendered fixed sample rather than a
+# template body that needs a live harness to interpret.
+bands_config='*=checkpoint@25%:Checkpoint {agent}: {context_used}/{context_size} ({context_pct}%)|urgent@50%:Urgent {band} for {harness}: cache {cache_age}/{cache_timeout} at {current_time}'
+bands_config_report="$(GANG_CONFIG_DIR="$CONFIG_CASES/report" \
+  GANG_CONTEXT_BANDS="$bands_config" "$GANG" config | grep '^context-bands' || :)"
+equal "gang config renders every configured context band in order" \
+  $'context-bands\t*\tcheckpoint\t25%\tCheckpoint sample-agent: 25000/100000 (25%)\ncontext-bands\t*\turgent\t50%\tUrgent urgent for sample-harness: cache unavailable/unavailable at 1970-01-01T00:00:00Z' \
+  "$bands_config_report"
+bands_precedence='*=global@25%:global {band};codex/*=collar@30%:collar {band};codex/gpt-test=specific@35%:specific {band}'
+equal "gang config makes context-band selector precedence visible" \
+  $'context-bands\tcodex/gpt-test\tspecific\t35%\tspecific specific\ncontext-bands\tcodex/*\tcollar\t30%\tcollar collar\ncontext-bands\t*\tglobal\t25%\tglobal global' \
+  "$(GANG_CONFIG_DIR="$CONFIG_CASES/report" GANG_CONTEXT_BANDS="$bands_precedence" \
+    "$GANG" config | grep '^context-bands' || :)"
+equal "gang config keeps a selector-level context-band opt-out visible" \
+  $'context-bands\tcodex/gpt-test\toff\t\t\ncontext-bands\t*\tglobal\t25%\tglobal global' \
+  "$(GANG_CONFIG_DIR="$CONFIG_CASES/report" \
+    GANG_CONTEXT_BANDS='*=global@25%:global {band};codex/gpt-test=off' \
+    "$GANG" config | grep '^context-bands' || :)"
+refuses "gang config refuses an unknown context-band placeholder under its origin" \
+  "GANG_CONTEXT_BANDS entry '*' band 'bad' has unknown placeholder '{not_measured}' (from the environment)" \
+  env GANG_CONFIG_DIR="$CONFIG_CASES/report" \
+    GANG_CONTEXT_BANDS='*=bad@25%:bad {not_measured}' "$GANG" config
+refuses "gang config refuses a context-band threshold out of order under its origin" \
+  "GANG_CONTEXT_BANDS entry '*' thresholds must strictly increase in their configured order, got '25%' after '50%' (from the environment)" \
+  env GANG_CONFIG_DIR="$CONFIG_CASES/report" \
+    GANG_CONTEXT_BANDS='*=first@50%:first|second@25%:second' "$GANG" config
+refuses "a context-band override without its global default is refused at config load" \
+  "GANG_CONTEXT_BANDS needs a '*' global default alongside any collar override (from the environment)" \
+  env GANG_CONFIG_DIR="$CONFIG_CASES/report" \
+    GANG_CONTEXT_BANDS='codex/*=first@50%:first' "$GANG" config
+refuses "a context-band model-only selector is refused instead of becoming a fourth precedence rule" \
+  "GANG_CONTEXT_BANDS entry '*/gpt-test=first@50%:first' must select COLLAR/MODEL, COLLAR/*, or * (from the environment)" \
+  env GANG_CONFIG_DIR="$CONFIG_CASES/report" \
+    GANG_CONTEXT_BANDS='*/gpt-test=first@50%:first;*=global@25%:global' "$GANG" config
+mkdir -p "$CONFIG_CASES/bands-bad-file"
+printf '%s\n' 'GANG_CONTEXT_BANDS=*=bad@25%:bad {not_measured}' \
+  > "$CONFIG_CASES/bands-bad-file/config"
+refuses "a context-band placeholder is refused while loading its named config line" \
+  "GANG_CONTEXT_BANDS entry '*' band 'bad' has unknown placeholder '{not_measured}' (from $CONFIG_CASES/bands-bad-file/config line 1)" \
+  env -u GANG_CONTEXT_BANDS GANG_CONFIG_DIR="$CONFIG_CASES/bands-bad-file" "$GANG" config
+
 # 2.0 removed the pre-rename config spellings, so there is no second name for
 # one setting to normalize or conflict with. In a config file the old spelling
 # is an unknown key and refuses; in the environment it is a variable Gangline
@@ -2753,10 +2796,11 @@ contains "the original team root receives the sandbox refusal" \
 # AN AGENT CANNOT TURN ITS OWN GUARD OFF. This is a real disposable `-L`
 # server, not the suite's server: before the fix the one invocation below
 # destroys this server; after it, the registered pane survives and proves the
-# override stopped before real tmux ran. The label and root are unique, and
-# cleanup addresses that label with the real tmux after both observations.
+# override stopped before real tmux ran. Keep the label compact: tmux includes
+# it in the Unix-socket pathname below the durable test root. The label and root
+# are unique, and cleanup addresses that label with real tmux afterwards.
 guard_override_root="$guard_home/agent-override"
-guard_override_label="gangline-guard-agent-override-$$"
+guard_override_label="g-$$"
 guard_override_session="guard-agent-override-$$"
 mkdir -p "$guard_override_root"
 env -u TMUX -u TMUX_PANE -u TMUX_TMPDIR \

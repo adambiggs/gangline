@@ -76,7 +76,7 @@ fail() { # $1 = exit status, rest = message
   exit "$code"
 }
 
-GANG_CONFIG_KEYS='GANG_COLLAR GANG_SESSION GANG_COLLARS GANG_LOCK_DIR GANG_ARCHIVE_DIR GANG_CONTEXT_LIGHTS GANG_CACHE_COMPACTION GANG_USAGE_LIGHTS GANG_AUTO_RESUME GANG_SCOPE GANG_TMUX_GUARD GANG_BOOT_TIMEOUT GANG_GATE_LOOKS GANG_CHURN_WAIT GANG_ACTIVITY_WINDOW GANG_TURN_LIMIT GANG_TICK_DEADLINE'
+GANG_CONFIG_KEYS='GANG_COLLAR GANG_SESSION GANG_COLLARS GANG_LOCK_DIR GANG_ARCHIVE_DIR GANG_CONTEXT_LIGHTS GANG_CONTEXT_BANDS GANG_CACHE_COMPACTION GANG_USAGE_LIGHTS GANG_AUTO_RESUME GANG_SCOPE GANG_TMUX_GUARD GANG_BOOT_TIMEOUT GANG_GATE_LOOKS GANG_CHURN_WAIT GANG_ACTIVITY_WINDOW GANG_TURN_LIMIT GANG_TICK_DEADLINE'
 GANG_COLLAR_KEYS='GANG_LAUNCH GANG_RESUME_LAUNCH GANG_MODEL_OPT GANG_MODEL_ALIASES GANG_EFFORT_OPT GANG_EFFORT_CMD GANG_ROLE_PROMPT_OPT GANG_HARNESS_PROMPT GANG_BUSY_REGEX GANG_OCCUPIED_REGEX GANG_QUEUED_REGEX GANG_QUEUE_RECALL_KEY GANG_INTERRUPT_KEY GANG_STOP_HOOK GANG_STALL_TYPES GANG_QUIET_AT_REST GANG_MIDTURN_INPUT GANG_COMPACT_CMD GANG_SELF_COMPACT GANG_SELF_COMPACT_WITNESS GANG_USAGE_LIGHT_INTERVAL GANG_USAGE_LIMIT_MAX_AGE'
 CONFIG_DIR="" CONFIG_FILE="" CONFIG_ORIGINS="" CONFIG_SEEN=""
 
@@ -365,6 +365,7 @@ GANG_ACTIVITY_LIMIT="${GANG_ACTIVITY_LIMIT:-300}"
 GANG_TURN_LIMIT="${GANG_TURN_LIMIT:-300}"
 GANG_TICK_DEADLINE="${GANG_TICK_DEADLINE:-60}"
 GANG_CONTEXT_LIGHTS="${GANG_CONTEXT_LIGHTS:-collar}"
+GANG_CONTEXT_BANDS="${GANG_CONTEXT_BANDS:-}"
 GANG_CACHE_COMPACTION="${GANG_CACHE_COMPACTION:-claude-code=3600:300 codex=1800:180}"
 GANG_USAGE_LIGHTS="${GANG_USAGE_LIGHTS:-off}"
 GANG_AUTO_RESUME="${GANG_AUTO_RESUME:-off}"
@@ -10386,6 +10387,213 @@ context_lights_select() { # $1 collar, $2 model; map read -> the two globals abo
   done
 }
 
+# CONTEXT BANDS KEEP THE COLLAR/MODEL CHOICE THAT LIGHTS ALREADY HAVE, but one
+# selected entry can name more than two rising edges and say what each one
+# means. A single line in Gangline's deliberately literal config must carry
+# spaces in a message, so entries use `;` and bands use `|`; neither delimiter
+# is admitted to a template. The one separator rule is small enough to audit,
+# and avoids turning operator configuration into a second shell language.
+CONTEXT_BAND_SELECTORS=() CONTEXT_BAND_SPECS=() CONTEXT_BANDS_OFF=0
+CONTEXT_BAND_ENTRY="" CONTEXT_BAND_SELECTED=""
+CONTEXT_BAND_NAMES=() CONTEXT_BAND_THRESHOLDS=() CONTEXT_BAND_TEMPLATES=()
+CONTEXT_BAND_RELATIVE=0
+
+context_template_validate() { # $1 template, $2 subject, $3 origin note
+  local rest="$1" before slot
+  case "$rest" in *$'\t'*|*';'*|'|'*)
+    die "$2 template may not contain tabs, ';', or '|'$3" ;;
+  esac
+  while [[ "$rest" == *'{'* ]]; do
+    before="${rest%%\{*}"
+    case "$before" in *'}'*) die "$2 template has an unmatched '}'$3" ;; esac
+    rest="${rest#*\{}"
+    [[ "$rest" == *'}'* ]] \
+      || die "$2 template has an unmatched '{'$3"
+    slot="${rest%%\}*}"
+    case "$slot" in
+      context_used|context_size|context_pct|cache_timeout|cache_age|current_time|agent|harness|band) ;;
+      *) die "$2 has unknown placeholder '{$slot}'$3" ;;
+    esac
+    rest="${rest#*\}}"
+  done
+  case "$rest" in *'}'*) die "$2 template has an unmatched '}'$3" ;; esac
+}
+
+context_bands_parse() { # $1 selected BAND list or off; $2 subject; $3 origin note
+  local spec="$1" subject="$2" note="$3" raw name threshold template token unit="" next_unit
+  local previous=0 previous_display=""
+  local -a bands=()
+  CONTEXT_BAND_NAMES=() CONTEXT_BAND_THRESHOLDS=() CONTEXT_BAND_TEMPLATES=()
+  CONTEXT_BAND_RELATIVE=0
+  case "$spec" in off|'') return 1 ;; esac
+  IFS='|' read -r -a bands <<<"$spec"
+  [ "${#bands[@]}" -gt 0 ] \
+    || die "$subject names no context bands$note"
+  for raw in "${bands[@]}"; do
+    case "$raw" in *@*:* ) ;; *)
+      die "$subject band '$raw' must be NAME@THRESHOLD:TEMPLATE$note" ;;
+    esac
+    name="${raw%%@*}"
+    raw="${raw#*@}"
+    threshold="${raw%%:*}"
+    template="${raw#*:}"
+    case "$name" in ''|*[!A-Za-z0-9._-]*)
+      die "$subject names invalid band '$name' (use letters, digits, dot, dash, or underscore)$note" ;;
+    esac
+    case "$template" in '') die "$subject band '$name' has an empty template$note" ;; esac
+    case " ${CONTEXT_BAND_NAMES[*]} " in *" $name "*)
+      die "$subject names band '$name' twice; keep one band name per entry$note" ;;
+    esac
+    next_unit=tokens token="$threshold"
+    case "$threshold" in
+      *%) next_unit=percent; token="${threshold%\%}" ;;
+    esac
+    case "$token" in ''|*[!0-9]*)
+      die "$subject band '$name' has invalid threshold '$threshold'$note" ;;
+    esac
+    [ "$token" -gt 0 ] \
+      || die "$subject band '$name' needs a positive threshold$note"
+    [ "$next_unit" != percent ] || [ "$token" -lt 100 ] \
+      || die "$subject percentage bands must be below 100%, got '$threshold'$note"
+    [ -z "$unit" ] || [ "$unit" = "$next_unit" ] \
+      || die "$subject must use one threshold unit for every band$note"
+    if [ -n "$unit" ] && [ "$token" -le "$previous" ]; then
+      previous_display="$previous"
+      [ "$unit" != percent ] || previous_display="${previous}%"
+      die "$subject thresholds must strictly increase in their configured order, got '$threshold' after '$previous_display'$note"
+    fi
+    context_template_validate "$template" "$subject band '$name'" "$note"
+    unit="$next_unit" previous="$token"
+    CONTEXT_BAND_NAMES+=("$name")
+    CONTEXT_BAND_THRESHOLDS+=("$token")
+    CONTEXT_BAND_TEMPLATES+=("$template")
+  done
+  [ "$unit" != percent ] || CONTEXT_BAND_RELATIVE=1
+}
+
+context_bands_map() { # $1 semicolon-separated COLLAR/MODEL=BANDS entries
+  local setting="$1" note entry selector spec collar_part model_part rank seen=" " i has_global=0
+  local -a entries=() ranks=() selectors=() specs=()
+  CONTEXT_BAND_SELECTORS=() CONTEXT_BAND_SPECS=() CONTEXT_BANDS_OFF=0
+  case "$setting" in '') return 1 ;; off) CONTEXT_BANDS_OFF=1; return 0 ;; esac
+  note="$(config_origin_note GANG_CONTEXT_BANDS)"
+  IFS=';' read -r -a entries <<<"$setting"
+  [ "${#entries[@]}" -gt 0 ] \
+    || die "GANG_CONTEXT_BANDS names no entry: write off or COLLAR/MODEL=BANDS entries$note"
+  for entry in "${entries[@]}"; do
+    case "$entry" in *=*) selector="${entry%%=*}"; spec="${entry#*=}" ;;
+      *) die "GANG_CONTEXT_BANDS entry '$entry' must select COLLAR/MODEL=BANDS$note" ;;
+    esac
+    case "$selector" in
+      '*'|'*/*') selector='*'; rank=1 ;;
+      */*)
+        collar_part="${selector%%/*}" model_part="${selector#*/}" rank=1
+        case "$collar_part" in '*'|''|*[!A-Za-z0-9._-]*) rank=0 ;; *) rank=$((rank + 2)) ;; esac
+        case "$model_part" in '*') ;; ''|*[!A-Za-z0-9._:/@-]*) rank=0 ;; *) [ "$rank" -eq 0 ] || rank=$((rank + 1)) ;; esac ;;
+      *) rank=0 ;;
+    esac
+    [ "$rank" -gt 0 ] \
+      || die "GANG_CONTEXT_BANDS entry '$entry' must select COLLAR/MODEL, COLLAR/*, or *$note"
+    case "$seen" in *" $selector "*)
+      die "GANG_CONTEXT_BANDS names '$selector' twice; keep one entry for it$note" ;;
+    esac
+    seen="$seen$selector "
+    [ "$selector" != '*' ] || has_global=1
+    context_bands_parse "$spec" "GANG_CONTEXT_BANDS entry '$selector'" "$note" || :
+    ranks+=("$rank") selectors+=("$selector") specs+=("$spec")
+  done
+  for rank in 4 3 2 1; do
+    for i in "${!selectors[@]}"; do
+      [ "${ranks[$i]}" -eq "$rank" ] || continue
+      CONTEXT_BAND_SELECTORS+=("${selectors[$i]}")
+      CONTEXT_BAND_SPECS+=("${specs[$i]}")
+    done
+  done
+  [ "$has_global" -eq 1 ] \
+    || die "GANG_CONTEXT_BANDS needs a '*' global default alongside any collar override$note"
+}
+
+context_bands_select() { # $1 collar, $2 model; map read -> selected globals
+  local i
+  CONTEXT_BAND_ENTRY="" CONTEXT_BAND_SELECTED=""
+  [ "$CONTEXT_BANDS_OFF" -eq 0 ] || { CONTEXT_BAND_SELECTED=off; return 0; }
+  for i in "${!CONTEXT_BAND_SELECTORS[@]}"; do
+    case "${CONTEXT_BAND_SELECTORS[$i]}" in
+      "$1/$2"|"$1/*"|'*')
+        CONTEXT_BAND_ENTRY="${CONTEXT_BAND_SELECTORS[$i]}"
+        CONTEXT_BAND_SELECTED="${CONTEXT_BAND_SPECS[$i]}"
+        return 0 ;;
+    esac
+  done
+}
+
+CONTEXT_RENDER_CONTEXT_USED="" CONTEXT_RENDER_CONTEXT_SIZE="" CONTEXT_RENDER_CONTEXT_PCT=""
+CONTEXT_RENDER_CACHE_TIMEOUT="" CONTEXT_RENDER_CACHE_AGE="" CONTEXT_RENDER_CURRENT_TIME=""
+CONTEXT_RENDER_AGENT="" CONTEXT_RENDER_HARNESS="" CONTEXT_RENDER_BAND=""
+context_template_render() { # $1 template; values are the explicit globals above
+  local rendered="$1"
+  rendered="${rendered//\{context_used\}/$CONTEXT_RENDER_CONTEXT_USED}"
+  rendered="${rendered//\{context_size\}/$CONTEXT_RENDER_CONTEXT_SIZE}"
+  rendered="${rendered//\{context_pct\}/$CONTEXT_RENDER_CONTEXT_PCT}"
+  rendered="${rendered//\{cache_timeout\}/$CONTEXT_RENDER_CACHE_TIMEOUT}"
+  rendered="${rendered//\{cache_age\}/$CONTEXT_RENDER_CACHE_AGE}"
+  rendered="${rendered//\{current_time\}/$CONTEXT_RENDER_CURRENT_TIME}"
+  rendered="${rendered//\{agent\}/$CONTEXT_RENDER_AGENT}"
+  rendered="${rendered//\{harness\}/$CONTEXT_RENDER_HARNESS}"
+  rendered="${rendered//\{band\}/$CONTEXT_RENDER_BAND}"
+  printf '%s' "$rendered"
+}
+
+context_band_sample() { # $1 template, $2 band -> deterministic config rendering
+  CONTEXT_RENDER_CONTEXT_USED=25000 CONTEXT_RENDER_CONTEXT_SIZE=100000 CONTEXT_RENDER_CONTEXT_PCT=25
+  CONTEXT_RENDER_CACHE_TIMEOUT=unavailable CONTEXT_RENDER_CACHE_AGE=unavailable
+  CONTEXT_RENDER_CURRENT_TIME=1970-01-01T00:00:00Z
+  CONTEXT_RENDER_AGENT=sample-agent CONTEXT_RENDER_HARNESS=sample-harness CONTEXT_RENDER_BAND="$2"
+  context_template_render "$1"
+}
+
+CONTEXT_BAND_CUSTOM=0 CONTEXT_LIGHT_INDEX=-1
+CONTEXT_USED=0 CONTEXT_SIZE=0 CONTEXT_PCT=0
+context_bands_for() { # $1 window; load custom hitch registration or legacy pair
+  local spec
+  CONTEXT_BAND_CUSTOM=0
+  spec="$(tmux show-options -wqv -t "$1" @gl_context_bands 2>/dev/null)" || spec=""
+  if [ -n "$spec" ]; then
+    CONTEXT_BAND_CUSTOM=1
+    context_bands_parse "$spec" "the context bands registered on this window"
+    return
+  fi
+  context_lights_for "$1" || return 1
+  CONTEXT_BAND_NAMES=(yellow red)
+  CONTEXT_BAND_THRESHOLDS=("$LIGHT_YELLOW" "$LIGHT_RED")
+  CONTEXT_BAND_TEMPLATES=(
+    'Yellow context light: compact at the next natural checkpoint with gang compact {agent}.'
+    'Red context light: finish the current arc and compact now with gang compact {agent}.'
+  )
+  CONTEXT_BAND_RELATIVE="$LIGHT_RELATIVE"
+}
+
+context_cache_render_values() { # $1 window; reuse the settled cache-compaction readers
+  local rc=0 stamp="" now=""
+  CONTEXT_RENDER_CACHE_TIMEOUT=unavailable CONTEXT_RENDER_CACHE_AGE=unavailable
+  cache_compaction_for "$1" || rc=$?
+  [ "$rc" -eq 0 ] || return 0
+  CONTEXT_RENDER_CACHE_TIMEOUT="$CACHE_COMPACTION_TTL"
+  stamp="$(cache_compaction_stamp_read "$1")" || return 0
+  now="$(date +%s)" || return 0
+  case "$now:$stamp" in *[!0-9:]*|*:|:*) return 0 ;; esac
+  [ "$stamp" -le "$now" ] || return 0
+  CONTEXT_RENDER_CACHE_AGE="$((now - stamp))"
+}
+
+context_render_values() { # $1 window, $2 collar, $3 band; context_light_read measured the context
+  CONTEXT_RENDER_CONTEXT_USED="$CONTEXT_USED" CONTEXT_RENDER_CONTEXT_SIZE="$CONTEXT_SIZE"
+  CONTEXT_RENDER_CONTEXT_PCT="$CONTEXT_PCT"
+  CONTEXT_RENDER_CURRENT_TIME="$(date -u +%Y-%m-%dT%H:%M:%SZ)" || return 1
+  CONTEXT_RENDER_AGENT="$(agent_name_of "$1")" CONTEXT_RENDER_HARNESS="$2" CONTEXT_RENDER_BAND="$3"
+  context_cache_render_values "$1"
+}
+
 # WHICH THRESHOLDS SUIT AN AGENT IS A PER-MODEL QUESTION, and only the collar
 # can answer it: one harness runs models whose native windows differ by more
 # than fourfold, so a fraction leaving useful headroom in the larger one fires
@@ -10431,11 +10639,10 @@ context_lights_for() { # $1 = window; load its hitch-time setting
 
 CONTEXT_LIGHT=""
 CONTEXT_LIGHT_ERROR=""
-context_light_read() { # $1 = window, collar loaded; yellow|red, or 1 below
-  local ctx pair used window yellow red rc=0
-  CONTEXT_LIGHT=""
-  CONTEXT_LIGHT_ERROR=""
-  context_lights_for "$1" || return 1
+context_light_read() { # $1 = window, collar loaded; named band, or 1 below
+  local ctx pair used window threshold i last=0 name="" rc=0
+  CONTEXT_LIGHT="" CONTEXT_LIGHT_ERROR="" CONTEXT_LIGHT_INDEX=-1
+  context_bands_for "$1" || return 1
   ctx="$(context_now "$1" 2>/dev/null)" || {
     rc=$?
     # Status 2 is the collar contract's readable-frame miss. Every other
@@ -10445,25 +10652,31 @@ context_light_read() { # $1 = window, collar loaded; yellow|red, or 1 below
   }
   pair="$(ctx_tokens "${ctx%%$'\n'*}")" || return 4
   read -r used window <<<"$pair"
+  CONTEXT_USED="$used" CONTEXT_SIZE="$window"
   if [ "$window" -eq 0 ]; then
     CONTEXT_LIGHT_ERROR="Context lights invalid: this harness's native context source reported a zero-token window."
     return 3
   fi
-  yellow="$LIGHT_YELLOW" red="$LIGHT_RED"
-  if [ "$LIGHT_RELATIVE" -eq 1 ]; then
-    yellow="$(( (window * yellow + 99) / 100 ))"
-    red="$(( (window * red + 99) / 100 ))"
-  elif [ "$red" -gt "$window" ]; then
-    CONTEXT_LIGHT_ERROR="Context lights invalid: configured red threshold $red cannot fire in this harness's $window-token window. Re-hitch with reachable token thresholds or percentages."
+  CONTEXT_PCT="$(( (used * 100) / window ))"
+  for i in "${!CONTEXT_BAND_THRESHOLDS[@]}"; do
+    threshold="${CONTEXT_BAND_THRESHOLDS[$i]}"
+    if [ "$CONTEXT_BAND_RELATIVE" -eq 1 ]; then
+      threshold="$(( (window * threshold + 99) / 100 ))"
+    fi
+    last="$threshold" name="${CONTEXT_BAND_NAMES[$i]}"
+    if [ "$used" -ge "$threshold" ]; then
+      CONTEXT_LIGHT="$name" CONTEXT_LIGHT_INDEX="$i"
+    fi
+  done
+  if [ "$CONTEXT_BAND_RELATIVE" -eq 0 ] && [ "$last" -gt "$window" ]; then
+    if [ "$name" = red ]; then
+      CONTEXT_LIGHT_ERROR="Context lights invalid: configured red threshold $last cannot fire in this harness's $window-token window. Re-hitch with reachable token thresholds or percentages."
+    else
+      CONTEXT_LIGHT_ERROR="Context bands invalid: configured '$name' threshold $last cannot fire in this harness's $window-token window. Re-hitch with reachable token thresholds or percentages."
+    fi
     return 3
   fi
-  if [ "$used" -ge "$red" ]; then
-    CONTEXT_LIGHT=red
-  elif [ "$used" -ge "$yellow" ]; then
-    CONTEXT_LIGHT=yellow
-  else
-    return 1
-  fi
+  [ "$CONTEXT_LIGHT_INDEX" -ge 0 ] || return 1
 }
 
 # CACHE EXPIRY IS A HARNESS PROPERTY, NOT A PANE PROPERTY. A transcript or
@@ -10696,6 +10909,64 @@ cache_compaction_submit() { # $1 window, $2 agent; caller proved eligibility
 }
 
 ADVISORY_NOTE=""
+context_bands_fired_count() { # $1 window; 0 count, 1 absent, 2 malformed/non-prefix
+  local raw names i count=0
+  raw="$(tmux show-options -wqv -t "$1" @gl_context_bands_fired 2>/dev/null)" || raw=""
+  [ -n "$raw" ] || return 1
+  case "$raw" in v1:?*) names="${raw#v1:}" ;; *) return 2 ;; esac
+  local -a fired=()
+  IFS=',' read -r -a fired <<<"$names"
+  for i in "${!fired[@]}"; do
+    [ "$i" -lt "${#CONTEXT_BAND_NAMES[@]}" ] || return 2
+    [ "${fired[$i]}" = "${CONTEXT_BAND_NAMES[$i]}" ] || return 2
+    count=$((count + 1))
+  done
+  printf '%s' "$count"
+}
+
+context_bands_note() { # $1 collar; context_light_read already measured a custom band
+  local fired="" fired_rc=0 count=0 i names="" rendered bytes="" agent threshold=""
+  local -a rendered_bands=() byte_counts=()
+  fired="$(context_bands_fired_count "$TMUX_PANE")" || fired_rc=$?
+  case "$fired_rc" in 0) count="$fired" ;; 1) count=0 ;;
+    2) return 0 ;;
+    *) die "internal: context_bands_fired_count returned unknown status $fired_rc" ;;
+  esac
+  agent="$(agent_name_of "$TMUX_PANE")"
+  for i in "${!CONTEXT_BAND_NAMES[@]}"; do
+    [ "$i" -le "$CONTEXT_LIGHT_INDEX" ] || break
+    names="${names:+$names,}${CONTEXT_BAND_NAMES[$i]}"
+    [ "$i" -ge "$count" ] || continue
+    context_render_values "$TMUX_PANE" "$1" "${CONTEXT_BAND_NAMES[$i]}" || return 0
+    rendered="$(context_template_render "${CONTEXT_BAND_TEMPLATES[$i]}")"
+    bytes="$(printf '%s' "$rendered" | wc -c)" || return 0
+    bytes="${bytes//[[:space:]]/}"
+    case "$bytes" in ''|*[!0-9]*) return 0 ;; esac
+    rendered_bands[$i]="$rendered"
+    byte_counts[$i]="$bytes"
+  done
+  [ "$count" -gt "$CONTEXT_LIGHT_INDEX" ] && {
+    tmux set-option -w -t "$TMUX_PANE" @gl_context_light "$CONTEXT_LIGHT" \
+      2>/dev/null || true
+    return 0
+  }
+  tmux set-option -w -t "$TMUX_PANE" @gl_context_bands_fired "v1:$names" \; \
+    set-option -w -t "$TMUX_PANE" @gl_context_light "$CONTEXT_LIGHT" \
+    2>/dev/null || return 0
+  for i in "${!CONTEXT_BAND_NAMES[@]}"; do
+    [ "$i" -le "$CONTEXT_LIGHT_INDEX" ] || break
+    [ "$i" -ge "$count" ] || continue
+    rendered="${rendered_bands[$i]}"
+    bytes="${byte_counts[$i]}"
+    threshold="${CONTEXT_BAND_THRESHOLDS[$i]}"
+    [ "$CONTEXT_BAND_RELATIVE" -eq 0 ] || threshold="${threshold}%"
+    context_band_journal_note "$TMUX_PANE" "$agent" "${CONTEXT_BAND_NAMES[$i]}" \
+      "$threshold" "$bytes"
+    ADVISORY_NOTE="${ADVISORY_NOTE:+$ADVISORY_NOTE
+}$rendered"
+  done
+}
+
 context_light_note() { # $1 collar; append an edge to ADVISORY_NOTE
   local previous="" agent note="" ready="" miss="" notified="" rc=0
   load_collar "$1"
@@ -10703,6 +10974,8 @@ context_light_note() { # $1 collar; append an edge to ADVISORY_NOTE
   previous="$(tmux show-options -wqv -t "$TMUX_PANE" @gl_context_light 2>/dev/null)" \
     || previous=""
   if [ "$rc" -eq 1 ]; then
+    [ "$CONTEXT_BAND_CUSTOM" -eq 0 ] \
+      || tmux set-option -uw -t "$TMUX_PANE" @gl_context_bands_fired 2>/dev/null || true
     if [ "$previous" = unavailable ]; then
       tmux set-option -uw -t "$TMUX_PANE" @gl_context_miss \; \
         set-option -uw -t "$TMUX_PANE" @gl_context_miss_notified \; \
@@ -10759,6 +11032,10 @@ context_light_note() { # $1 collar; append an edge to ADVISORY_NOTE
   if [ "$previous" = unavailable ] || [ "$rc" -eq 3 ]; then
     tmux set-option -uw -t "$TMUX_PANE" @gl_context_miss_notified \
       2>/dev/null || true
+  fi
+  if [ "$rc" -eq 0 ] && [ "$CONTEXT_BAND_CUSTOM" -eq 1 ]; then
+    context_bands_note "$1"
+    return 0
   fi
   [ "$CONTEXT_LIGHT" != "$previous" ] || return 0
   if [ "$previous" = red ]; then
@@ -14589,6 +14866,55 @@ cache_compaction_journal_note() { # $1 window, $2 agent, $3 cache stamp, $4 ttl,
   return 0
 }
 
+# A configured message is deliberately not durable evidence: it can carry an
+# operator's prose and would be replayed into every later diagnostic. The
+# context-event ledger keeps only the edge, its threshold, and the rendered
+# byte count, beside transition and cache-compaction ledgers under the same
+# bounded, single-writer discipline.
+CONTEXT_BAND_JOURNAL_BOUND=1048576
+context_band_journal_append() { # $1 agent, $2 band, $3 threshold, $4 rendered bytes
+  local agent="$1" band="$2" threshold="$3" bytes="$4" journal="" stamp size="" claim_rc=0 rc=0
+  tick_paths_set || { printf 'the team state directory could not be resolved'; return 1; }
+  journal="$TICK_DIR/context-events"
+  if [ -L "$TICK_DIR" ] || [ ! -d "$TICK_DIR" ] || [ ! -O "$TICK_DIR" ]; then
+    tick_state_prepare
+  fi
+  stamp="$(date -u +%Y-%m-%dT%H:%M:%SZ)" || return 1
+  printf '%s\t%s\t%s\t%s\t%s\n' "$stamp" "$agent" "$band" "$threshold" "$bytes" >> "$journal" || return 1
+  size="$(wc -c < "$journal")" || size=""
+  size="${size//[!0-9]/}"
+  [ -z "$size" ] || [ "$size" -gt "$CONTEXT_BAND_JOURNAL_BOUND" ] || return 0
+  event_claim journal "$TICK_TEAM_DIGEST" context-bands-rotate || claim_rc=$?
+  case "$claim_rc" in 0) ;; 1) return 0 ;; *) return 3 ;; esac
+  if [ -e "$journal" ]; then
+    if size="$(wc -c < "$journal")"; then
+      size="${size//[!0-9]/}"
+      if [ "${size:-0}" -gt "$CONTEXT_BAND_JOURNAL_BOUND" ]; then
+        mv -f -- "$journal" "$journal.1" || rc=3
+      fi
+    else
+      rc=3
+    fi
+  fi
+  event_claim_release || rc=3
+  return "$rc"
+}
+
+context_band_journal_note() { # $1 window, $2 agent, $3 band, $4 threshold, $5 rendered bytes
+  local id="$1" err="" rc=0 gap
+  err="$(context_band_journal_append "$2" "$3" "$4" "$5" 2>&1)" || rc=$?
+  [ "$rc" -ne 0 ] || return 0
+  err="${err##*$'\n'}"
+  err="${err#gang: }"
+  case "$rc" in
+    3) gap="the context-event ledger was NOT kept within its bound: ${err:-unknown error}" ;;
+    *) gap="the context band was NOT journaled: ${err:-unknown error}" ;;
+  esac
+  tmux set-option -w -t "$id" @gl_context_band_journal_failed "$gap" \
+    2>/dev/null || true
+  return 0
+}
+
 glyph_transition_note() { # $1 window id, $2 agent, $3 previous word, $4 new word; never fatal
   local id="$1" src err="" rc=0 gap
   src="${GLYPH_SOURCE:-${cmd:-}}"
@@ -16742,6 +17068,7 @@ config_effective() { # $1 settable key -> the value its consumers read
     GANG_TMUX_GUARD) printf '%s' "$GANG_TMUX_GUARD" ;;
     GANG_ARCHIVE_DIR) printf '%s' "$(archive_root)" ;;
     GANG_CONTEXT_LIGHTS) printf '%s' "$GANG_CONTEXT_LIGHTS" ;;
+    GANG_CONTEXT_BANDS) printf '%s' "$GANG_CONTEXT_BANDS" ;;
     GANG_CACHE_COMPACTION) printf '%s' "$GANG_CACHE_COMPACTION" ;;
     GANG_USAGE_LIGHTS) printf '%s' "$GANG_USAGE_LIGHTS" ;;
     GANG_AUTO_RESUME) printf '%s' "$GANG_AUTO_RESUME" ;;
@@ -16757,7 +17084,7 @@ config_effective() { # $1 settable key -> the value its consumers read
 }
 
 cmd_config() {
-  local k value record key origin line source file doctrine roles state i
+  local k value record key origin line source file doctrine roles state i spec
   [ $# -eq 0 ] || die "config: takes no arguments"
   for k in $GANG_CONFIG_KEYS; do
     value="$(config_effective "$k" | config_sanitize)"
@@ -16800,6 +17127,28 @@ cmd_config() {
   done
   [ "${CONTEXT_LIGHTS_SELECTORS[${#CONTEXT_LIGHTS_SELECTORS[@]}-1]}" = '*' ] \
     || printf 'context-lights\t*\tcollar\n'
+  context_bands_map "$GANG_CONTEXT_BANDS" || :
+  if [ "$CONTEXT_BANDS_OFF" -eq 1 ]; then
+    printf 'context-bands\t*\toff\t\t\n'
+  else
+    for i in "${!CONTEXT_BAND_SELECTORS[@]}"; do
+      spec="${CONTEXT_BAND_SPECS[$i]}"
+      if [ "$spec" = off ]; then
+        printf 'context-bands\t%s\toff\t\t\n' "${CONTEXT_BAND_SELECTORS[$i]}"
+        continue
+      fi
+      context_bands_parse "$spec" \
+        "GANG_CONTEXT_BANDS entry '${CONTEXT_BAND_SELECTORS[$i]}'" \
+        "$(config_origin_note GANG_CONTEXT_BANDS)" || continue
+      for k in "${!CONTEXT_BAND_NAMES[@]}"; do
+        printf 'context-bands\t%s\t%s\t%s%s\t%s\n' \
+          "${CONTEXT_BAND_SELECTORS[$i]}" "${CONTEXT_BAND_NAMES[$k]}" \
+          "${CONTEXT_BAND_THRESHOLDS[$k]}" \
+          "$([ "$CONTEXT_BAND_RELATIVE" -eq 1 ] && printf '%%')" \
+          "$(context_band_sample "${CONTEXT_BAND_TEMPLATES[$k]}" "${CONTEXT_BAND_NAMES[$k]}")"
+      done
+    done
+  fi
   cache_compaction_map "$GANG_CACHE_COMPACTION"
   for i in "${!CACHE_COMPACTION_SELECTORS[@]}"; do
     printf 'cache-compaction\t%s\t%s\n' \
@@ -16852,6 +17201,10 @@ if [ -n "${TMUX:-}" ]; then
   GANGLINE_CALLER_ATTACHED=1
   GANGLINE_CALLER_SOCKET=${TMUX%%,*}
 fi
+# Validate every configured band before command routing or a native hook can
+# reach fire time. An unset setting is the compatibility path and returns one;
+# a malformed configured entry exits under the line that supplied it.
+context_bands_map "$GANG_CONTEXT_BANDS" || :
 team_route_resolve
 trap 'on_exit' EXIT
 if [ -z "${GANG_TICK_INTERNAL:-}" ] && [ "$cmd" != alerts ]; then

@@ -2267,6 +2267,49 @@ fi
 equal "the mixed-unit refusal opens no window" "" \
   "$(window_id lit-mixed-units)"
 
+# A context jump emits every crossed band in configured order and reset follows
+# a reading below the first threshold. These templates exercise runtime context
+# and identity placeholders; config coverage supplies the cache-backed sample.
+bands_spec='*=checkpoint@100000:Checkpoint {band} for {agent} on {harness}: {context_used}/{context_size} ({context_pct}%) cache {cache_age}/{cache_timeout}|warning@150000:Warning {band} for {agent} on {harness}: {context_used}/{context_size} ({context_pct}%)|urgent@200000:Urgent {band} for {agent} on {harness}: {context_used}/{context_size} ({context_pct}%)'
+GANG_CONTEXT_BANDS="$bands_spec" "$HITCH" bands -c lights -d /tmp >/dev/null
+bands_id="$(window_id bands)"
+bands_pane="$(tmux list-panes -t "$bands_id" -F '#{pane_id}')"
+# The hook reads the settled band list directly so this fixture isolates
+# threshold crossing from launch-time selection.
+tmux set-option -w -t "$bands_id" @gl_context_bands "${bands_spec#*=}"
+printf '%s' '{"hook_event_name":"Stop"}' |
+  TMUX_PANE="$bands_pane" "$GANG" hook >/dev/null
+tmux set-option -w -t "$bands_id" @test_context '225k/300k (75%)'
+bands_crossed="$(printf '%s' '{"hook_event_name":"PostToolUse"}' |
+  TMUX_PANE="$bands_pane" "$GANG" hook | python3 -c 'import json,sys; print(json.load(sys.stdin)["hookSpecificOutput"]["additionalContext"])')"
+equal "a context jump emits every configured band in its configured order" \
+  $'Checkpoint checkpoint for bands on lights: 225000/300000 (75%) cache unavailable/unavailable\nWarning warning for bands on lights: 225000/300000 (75%)\nUrgent urgent for bands on lights: 225000/300000 (75%)' \
+  "$bands_crossed"
+bands_digest="$(python3 -c 'import hashlib,sys; print(hashlib.sha256((sys.argv[1]+"\0"+sys.argv[2]).encode()).hexdigest()[:24])' \
+  "$(tmux display-message -p -t "=$GANG_SESSION" '#{socket_path}')" "$GANG_SESSION")"
+bands_journal="$XDG_STATE_HOME/gangline/tick/$bands_digest/context-events"
+equal "the context-event ledger records one metadata row per fired band, never its body" \
+  "3 0 0" "$(awk -F '\t' '
+    $2 == "bands" {
+      n += 1
+      if ($3 !~ /^(checkpoint|warning|urgent)$/ || $4 !~ /^[0-9]+%?$/ || $5 !~ /^[0-9]+$/) bad = 1
+      if ($0 ~ /Checkpoint|Warning|Urgent/) leaked = 1
+    }
+    END { print n + 0, bad + 0, leaked + 0 }
+  ' "$bands_journal")"
+bands_repeat="$(printf '%s' '{"hook_event_name":"PostToolUse"}' |
+  TMUX_PANE="$bands_pane" "$GANG" hook)"
+equal "configured bands do not repeat within one climb" "" "$bands_repeat"
+tmux set-option -w -t "$bands_id" @test_context '50k/300k (17%)'
+printf '%s' '{"hook_event_name":"PostToolUse"}' |
+  TMUX_PANE="$bands_pane" "$GANG" hook >/dev/null
+tmux set-option -w -t "$bands_id" @test_context '225k/300k (75%)'
+bands_again="$(printf '%s' '{"hook_event_name":"PostToolUse"}' |
+  TMUX_PANE="$bands_pane" "$GANG" hook | python3 -c 'import json,sys; print(json.load(sys.stdin)["hookSpecificOutput"]["additionalContext"])')"
+equal "falling below the first configured band resets the whole climb" \
+  "$bands_crossed" "$bands_again"
+"$GANG" drop bands >/dev/null
+
 # Provider-usage lights use a collar's non-interactive correctness source. The
 # native rows carry their own observation and reset clocks; status and roster
 # only report the last sampled fact and never drive a pane while observing.

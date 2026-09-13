@@ -219,6 +219,15 @@ red. Dropping below yellow starts a new context epoch. Lights are guidance only;
 the agent chooses the natural checkpoint. An absolute red threshold above the
 native window reports itself as invalid when that window is first readable.
 
+`GANG_CONTEXT_BANDS` replaces that fixed yellow/red pair for newly hitched
+agents with an ordered, named list and a short message for each edge. Leave it
+unset to retain the legacy defaults and wording exactly. A band note remains in
+an agent's context and is reread on later turns, so keep templates short. The
+operator map chooses exact `COLLAR/MODEL`, then `COLLAR/*`, then the mandatory
+`*` global default; `gang config` shows that order and a safe rendered sample.
+See [the operational guide](docs/operations.md#context-bands) for the template
+grammar, placeholder sources, and journal privacy rule.
+
 For an idle agent already past its first context-light band, the cooperative
 tick is also a cache-expiry backstop. By default it submits one native
 compaction shortly before Claude Code's one-hour cache or Codex's thirty-minute

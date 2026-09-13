@@ -330,6 +330,56 @@ finish the current arc and compact now. Each is emitted once per context epoch;
 usage falling below yellow resets that epoch. These are advisory native hook
 messages, not patrols or automatic actions.
 
+## Context bands
+
+Leave `GANG_CONTEXT_BANDS` unset to keep the two legacy lights, including their
+threshold defaults and exact yellow/red wording. A configured bands map instead
+settles an ordered named list on each newly hitched agent. It has one or more
+semicolon-separated entries in this form:
+
+```sh
+GANG_CONTEXT_BANDS='*=checkpoint@50%:Checkpoint: compact {agent} soon.|urgent@80%:Urgent: compact {agent} now.;codex/gpt-5.6-terra=checkpoint@45%:Checkpoint {context_pct}%: compact {agent}.|urgent@75%:Urgent {context_pct}%: compact {agent} now.'
+```
+
+An entry is `SELECTOR=BAND@THRESHOLD:TEMPLATE|...`. Names use letters, digits,
+dot, dash, or underscore. Thresholds are positive, strictly increasing, and
+all tokens or all percentages; percentages are below 100. `*` is required as
+the global default for every non-`off` map. A selector is either exact
+`COLLAR/MODEL`, `COLLAR/*`, or `*`; model ids match `-m` exactly. Resolution is
+therefore exact collar/model first, then collar wildcard, then `*`, regardless
+of the order written. The whole setting may be `off`, or an entry may be `off`
+to take only its selected targets out of both custom bands and legacy lights.
+The per-agent `--lights` flag remains the explicit compatibility override for
+one legacy two-light hitch.
+
+Templates are literal except for these placeholders:
+
+| Placeholder | Value at a firing | Availability / missing value |
+|---|---|---|
+| `{context_used}`, `{context_size}`, `{context_pct}` | Native used tokens, window tokens, and floor percentage | Claude Code and Codex provide the shipped native context source. A band cannot fire without this reading. |
+| `{cache_timeout}` | Settled cache-compaction TTL in seconds | Claude Code and Codex have shipped cache-stamp readers; `unavailable` when no cache backstop is selected. |
+| `{cache_age}` | Seconds since the readable cache stamp | `unavailable` if the backstop is off, the harness has no readable stamp, or the stamp is in the future. |
+| `{current_time}` | UTC `YYYY-MM-DDTHH:MM:SSZ` | Every firing. |
+| `{agent}`, `{harness}`, `{band}` | Registered agent name, collar name, and fired band name | Every firing. |
+
+Unknown or unmatched braces, an unsupported placeholder, malformed selectors,
+or unordered thresholds refuse while configuration loads and name the source
+line; they never wait for a native hook. Semicolon, pipe, and tab delimit the
+literal map grammar and are not allowed inside a template. Notes are pasted into
+the recipient's context and reread every turn, so default templates should stay
+short and action-oriented.
+
+If one observation jumps across several thresholds, Gangline emits their
+rendered messages once and in configured order. It does not repeat one during
+the same climb; falling below the first band resets that whole climb. The
+existing busy, occupied, and spool-delivery guards are unchanged. `gang config`
+prints one `context-bands` line per effective map entry, in the resolution
+order above, with a deterministic rendered sample.
+
+Each firing appends only timestamp, agent, band, threshold, and rendered byte
+length to the bounded `context-events` ledger beside the other tick ledgers.
+It never journals the template or rendered body.
+
 ## Cache-expiry compaction backstop
 
 The cooperative `gang tick` can compact an otherwise idle, high-context agent

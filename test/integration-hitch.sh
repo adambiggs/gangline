@@ -2091,6 +2091,46 @@ GANG_CONTEXT_LIGHTS='11%,21% model-lights/exact=14%,24%' "$HITCH" lmflag \
 equal "--lights beats even a collar/model entry, and says so, without a warning" \
   "0|30%,60%|yes|0" \
   "$lmflag_rc|$(lights_stamp lmflag)|$(case "$(<"$RUN_ROOT/lmflag.out")" in *"context lights 30%,60% (--lights) — "*) printf yes ;; *) printf no ;; esac)|$(grep -c 'deprecated' "$RUN_ROOT/lmflag.err" || :)"
+
+# CONTEXT BANDS REPLACE THE FIXED PAIR ONLY WHEN AN OPERATOR CONFIGURES THEM.
+# Their map is deliberately narrower than the older lights map: collar/model,
+# then collar/*, then the global entry. It is settled to a window at hitch so a
+# later hook never reinterprets the operator's live configuration.
+bands_stamp() { # $1 agent -> the exact ordered spec hitch registered
+  tmux show-options -wqv -t "$(window_id "$1")" @gl_context_bands 2>/dev/null || :
+}
+bands_map='*=global@25%:Global {band};model-lights/*=collar@30%:Collar {band};model-lights/exact=specific@35%:Specific {band}'
+bands_map_reversed='model-lights/exact=specific@35%:Specific {band};model-lights/*=collar@30%:Collar {band};*=global@25%:Global {band}'
+GANG_CONTEXT_BANDS="$bands_map" "$HITCH" bmexact -c model-lights -d /tmp \
+  -m exact >"$RUN_ROOT/bmexact.out" 2>&1 || :
+equal "a context-band collar/model entry beats every less-specific entry" \
+  'specific@35%:Specific {band}' "$(bands_stamp bmexact)"
+GANG_CONTEXT_BANDS="$bands_map_reversed" "$HITCH" bmorder -c model-lights -d /tmp \
+  -m exact >/dev/null 2>&1 || :
+equal "context-band specificity does not depend on entry order" \
+  'specific@35%:Specific {band}' "$(bands_stamp bmorder)"
+GANG_CONTEXT_BANDS="$bands_map" "$HITCH" bmcollar -c model-lights -d /tmp \
+  -m neighbor >/dev/null 2>&1 || :
+equal "a context-band collar wildcard beats the global entry" \
+  'collar@30%:Collar {band}' "$(bands_stamp bmcollar)"
+GANG_CONTEXT_BANDS="$bands_map" "$HITCH" bmglobal -c catalog-model -d /tmp \
+  -m exact >/dev/null 2>&1 || :
+equal "the context-band global entry answers every otherwise-unmatched harness" \
+  'global@25%:Global {band}' "$(bands_stamp bmglobal)"
+contains "the hitch line names the context-band entry that won" \
+  "$(<"$RUN_ROOT/bmexact.out")" \
+  "context bands specific@35% (GANG_CONTEXT_BANDS 'model-lights/exact')"
+GANG_CONTEXT_BANDS=off "$HITCH" bmoff -c model-lights -d /tmp -m exact >/dev/null
+equal "an off context-band setting replaces an old context-light registration" \
+  "off" "$(bands_stamp bmoff)"
+GANG_CONTEXT_BANDS="$bands_map" "$HITCH" bmflag -c model-lights -d /tmp \
+  -m exact --lights 30%,60% >/dev/null
+equal "an explicit legacy --lights choice still overrides configured context bands" \
+  "|30%,60%" "$(bands_stamp bmflag)|$(lights_stamp bmflag)"
+for bands_agent in bmexact bmorder bmcollar bmglobal bmoff bmflag; do
+  "$GANG" drop "$bands_agent" >/dev/null
+done
+
 for lights_agent in lmexact lmorder lmcollar lmover lmmodel lmstar lmprefix lmask \
   lmoff lmstarform lmbare lmbarelist lmunset lmflag; do
   if [ -n "$(window_id "$lights_agent")" ]; then

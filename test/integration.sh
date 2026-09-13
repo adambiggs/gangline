@@ -21,10 +21,10 @@ export GANG_TEST_PATH_SHIM_GUARD
 TREE_AT_START="$("$ROOT/test/gate.sh" --assert-owned)"
 
 # tmux's Unix socket path has a 107-byte limit. Keep the fixture root compact:
-# guard fixtures add their own nested names and the host PID namespace can
-# contribute seven digits, so the descriptive former prefix made a valid private
-# TMPDIR unusable before a test could state its result.
-RUN_ROOT="$(mktemp -d "${TMPDIR:-/tmp}/gl.XXXXXX")"
+# Guard fixtures add their own nested names and the host PID namespace can
+# contribute seven digits, so keep this suffix short enough for the canonical
+# durable Gangline state root to remain a valid tmux socket parent.
+RUN_ROOT="$(mktemp -d "${TMPDIR:-/tmp}/g.XXX")"
 # shellcheck disable=SC2034  # read by test/integration-readiness.sh
 TMUX_SOCKET="$RUN_ROOT/tmux-$(id -u)/gangline"
 # An explicit -S path does not create its parent. Keep the directory private,
