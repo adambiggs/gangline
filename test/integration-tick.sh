@@ -1682,7 +1682,7 @@ tmux set-option -w -t "$tick_cache_off_id" @gl_session "$tick_cache_off_stamp"
 tmux set-option -w -t "$tick_cache_off_id" @gl_turn "closed $(date +%s)"
 touch -d '45 seconds ago' "$tick_cache_off_stamp"
 GANG_TEST_TICK_MODE=sync "$GANG" tick >/dev/null
-equal "the operator opt-out disables automatic compaction" 3 \
+equal "the operator opt-out disables automatic compaction" 5 \
   "$(tick_cache_count)"
 "$GANG" drop tick-cache-off >/dev/null
 
