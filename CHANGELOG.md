@@ -1,5 +1,46 @@
 # Changelog
 
+## [2.14.0](https://github.com/adambiggs/gangline/compare/gangline-v2.13.0...gangline-v2.14.0) (2026-09-13)
+
+
+### Features
+
+* **alerts:** record alert transitions and name the open key in roster ([1425ecf](https://github.com/adambiggs/gangline/commit/1425ecf4bb545178b9b2f545183067136dece8e3)), closes [#232](https://github.com/adambiggs/gangline/issues/232)
+* **send:** let a sender declare that a message asks for no reply ([8d84b9d](https://github.com/adambiggs/gangline/commit/8d84b9d6b20ba0c80a816c8f4c43cbb3c462643a)), closes [#214](https://github.com/adambiggs/gangline/issues/214)
+* **site:** add a mushing ASCII hero backdrop ([650427e](https://github.com/adambiggs/gangline/commit/650427e6489eb5ab5a49d826b3e3a75bb464373c))
+* **site:** feature the mushing animation in a full-width hero above a fold ([a1a41c4](https://github.com/adambiggs/gangline/commit/a1a41c46d3cd03323b8cde3b1b3b535f8b278c89))
+
+
+### Bug Fixes
+
+* **alerts:** count history fields before splitting a row ([a876a3a](https://github.com/adambiggs/gangline/commit/a876a3a1b860005a44d75a521b3e15b06fdd85c4))
+* **alerts:** list the current alert journal before its rotation ([2710668](https://github.com/adambiggs/gangline/commit/2710668349eae1ab9e6c0665679fb36283ee7fa1))
+* **alerts:** record no transition over an unreadable health record ([f3723f6](https://github.com/adambiggs/gangline/commit/f3723f647ffd7b62e84eb8cd2db16ef2fb2d9b9c))
+* **alerts:** report a history row with a surplus field as unreadable ([d4dfb55](https://github.com/adambiggs/gangline/commit/d4dfb55b66b4462b01da6527bde60de514cbe001))
+* **alerts:** rotate the alert journal before appending to it ([eaba034](https://github.com/adambiggs/gangline/commit/eaba034b908fb81d5a3a56e60d3cc1f6b7ed7a66))
+* **alerts:** treat an unreadable journal size as a failed rotation ([7948040](https://github.com/adambiggs/gangline/commit/7948040c74622fc78aae302b238e8966a284fc0e))
+* **codex:** report a turn the provider refused as blocked ([17a6ecf](https://github.com/adambiggs/gangline/commit/17a6ecfd97350576fd623fcaa24d12353493e823)), closes [#228](https://github.com/adambiggs/gangline/issues/228)
+* **drop:** forget a surviving scope that exits before its membership is read ([8922ee8](https://github.com/adambiggs/gangline/commit/8922ee8dc31a7a1e8fd2e94a9d478f5439cdaf51)), closes [#230](https://github.com/adambiggs/gangline/issues/230)
+* **drop:** keep a scope's record when its state cannot be re-read ([1df52f9](https://github.com/adambiggs/gangline/commit/1df52f9128e1737bb1864d925296422c43a28de5)), closes [#230](https://github.com/adambiggs/gangline/issues/230)
+* **drop:** name the collar and launch flags in the relaunch line ([98ccc20](https://github.com/adambiggs/gangline/commit/98ccc20f6a19e5b64a0c61b5f9d92075afa3b020)), closes [#227](https://github.com/adambiggs/gangline/issues/227)
+* **flush:** report a recalled body on an unchanged reading as unverifiable ([5f64ae8](https://github.com/adambiggs/gangline/commit/5f64ae8376b0a566f30480fcbbb1495de2864fe2)), closes [#225](https://github.com/adambiggs/gangline/issues/225)
+* **gate:** retire a kept snapshot on the tree's next passing run ([cd2e338](https://github.com/adambiggs/gangline/commit/cd2e33866534dc93bfdcb74a64e0172c252cb1be)), closes [#229](https://github.com/adambiggs/gangline/issues/229)
+* **hitch:** leave the first turn open for a brief that follows the contract ([322af3a](https://github.com/adambiggs/gangline/commit/322af3a69cd2f6bb45aa641f1233f729cc079cfe)), closes [#237](https://github.com/adambiggs/gangline/issues/237)
+* **hitch:** record the absolute directory a relative -d names ([4ed49a9](https://github.com/adambiggs/gangline/commit/4ed49a975eb08021d8341f953e7604b6c5c79a14)), closes [#227](https://github.com/adambiggs/gangline/issues/227)
+* **install:** ignore the usage ledger in the install checkout ([dad98b4](https://github.com/adambiggs/gangline/commit/dad98b4d819d618d235da016d6744d09591ff565)), closes [#217](https://github.com/adambiggs/gangline/issues/217)
+* let a standing self-compaction take a turn boundary ahead of mail ([c2243ac](https://github.com/adambiggs/gangline/commit/c2243ac6c87517a21d6c692b6155d97f9073e5ba)), closes [#203](https://github.com/adambiggs/gangline/issues/203)
+* **send:** report a box that ignores Enter and a clear key as unverifiable ([8031c3d](https://github.com/adambiggs/gangline/commit/8031c3df8c9fdf62d42b1b7053df6db6fd766cc1)), closes [#225](https://github.com/adambiggs/gangline/issues/225)
+* **state:** judge re-probed waiting records by a write count ([ac60a5e](https://github.com/adambiggs/gangline/commit/ac60a5ec9e96553cec00f7e612dc5cacbcae8765))
+* **state:** read the waiting count and stamp before the record ([87f1b6e](https://github.com/adambiggs/gangline/commit/87f1b6e860fd5768efb18b0bb9987a2e9a20616d))
+* **state:** stamp a waiting record first and test the stamp in the write ([678bd8a](https://github.com/adambiggs/gangline/commit/678bd8a46e0ed735e4367bc8983ed70b769218ae))
+* **state:** stamp every retirement of a waiting record ([8556cfb](https://github.com/adambiggs/gangline/commit/8556cfb8cb6f9e9125ec9cd10639dbe7e21b799d))
+* **state:** write a waiting record and its stamp in one tmux command ([25f75ce](https://github.com/adambiggs/gangline/commit/25f75cea36b533167d7027a0b1f65972149ccf40))
+* **status:** discard a re-probe that a hook overtook ([cc34f94](https://github.com/adambiggs/gangline/commit/cc34f949ab97a386a8cd214cafc1c566b51b4064))
+* **status:** re-probe a waiting record once it is a minute old ([24913a1](https://github.com/adambiggs/gangline/commit/24913a1090e10270a149482fa009f0e9a0ececc3)), closes [#233](https://github.com/adambiggs/gangline/issues/233)
+* **tick:** leave mail behind a self-compaction of unknown outcome ([bd881da](https://github.com/adambiggs/gangline/commit/bd881da7e502bc16393d26879750d41a6e81e4ab)), closes [#203](https://github.com/adambiggs/gangline/issues/203)
+* **tick:** leave mail when the compaction record cannot be read ([c3ac5d1](https://github.com/adambiggs/gangline/commit/c3ac5d1c846e9394b3eb98cca19eed5f46623621)), closes [#203](https://github.com/adambiggs/gangline/issues/203)
+* **tick:** say that ticking continues and where a failed tick is read ([10bf2d1](https://github.com/adambiggs/gangline/commit/10bf2d19f73598d5faa686e31cdf6674868bf97f)), closes [#231](https://github.com/adambiggs/gangline/issues/231)
+
 ## [2.13.0](https://github.com/adambiggs/gangline/compare/gangline-v2.12.0...gangline-v2.13.0) (2026-09-12)
 
 
