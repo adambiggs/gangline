@@ -8,6 +8,13 @@ on:
 permissions:
   contents: read
 
+# Keep only the newest pending run for each ref. Pull-request runs have no
+# write-authorized job and can be cancelled immediately; a main run may be in
+# release-please, so let the active one finish while newer pushes coalesce.
+concurrency:
+  group: shell-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
 # Linux and macOS cover the GNU and BSD userlands Gangline supports.
 # Release Please owns release PRs, tags, GitHub Releases, and declared version
 # updates, but only after this same main-push run passes both verification jobs.
