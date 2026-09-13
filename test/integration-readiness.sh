@@ -2661,6 +2661,113 @@ excludes "the next tick delivers the waiting mail" \
 contains "into the session" "$(pane hookless-unknown)" "MARK_HOOKLESS_UNKNOWN_COMPACTION"
 "$GANG" drop hookless-unknown >/dev/null 2>&1 || :
 
+# A RECORD THE PASS CANNOT READ AFTER STARTING THE WORKER LEAVES THE MAIL TOO.
+# The worker ran, so the compaction may be running, and the unread record
+# cannot say otherwise. The wrapper fails this window's first read of the
+# outcome record once the worker has consumed the request; every later read
+# answers, so the drain in the same pass would find an idle, empty composer.
+blind_hookless_executed="$RUN_ROOT/self-hookless-blind-executed"
+blind_hookless_draft="$RUN_ROOT/self-hookless-blind-draft"
+blind_hookless_arm="$RUN_ROOT/self-hookless-blind-arm"
+blind_hookless_bin="$RUN_ROOT/self-hookless-blind-bin"
+cat > "$RUN_ROOT/collars/hookless-blind.sh" <<SH
+# shellcheck shell=bash
+# shellcheck disable=SC2034
+. "$ROOT/collars/bash.sh"
+GANG_COMPACT_CMD=": > '$blind_hookless_executed'"
+GANG_SELF_COMPACT=deferred
+_gl_blind_hookless_input="\$(declare -f collar_input)"
+eval "blind_hookless_real_input \${_gl_blind_hookless_input#collar_input}"
+collar_input() {
+  [ ! -e "$blind_hookless_draft" ] || { printf 'half written operator line'; return; }
+  blind_hookless_real_input "\$1"
+}
+SH
+"$HITCH" hookless-blind -c hookless-blind -d /tmp >/dev/null
+blind_hookless_id="$(window_id hookless-blind)"
+blind_hookless_pane="$(tmux list-panes -t "$blind_hookless_id" -F '#{pane_id}')"
+mkdir "$blind_hookless_bin"
+{
+  printf '#!/usr/bin/env bash\n'
+  printf 'REAL=%q\n' "$(command -v tmux)"
+  printf 'ARM=%q\n' "$blind_hookless_arm"
+  printf 'WIN=%q\n' "$blind_hookless_id"
+  cat <<'SH'
+. "$GANG_TEST_PATH_SHIM_GUARD"
+path_shim_guard "$REAL" "$0" tmux || exit $?
+case " $* " in
+  *' show-options '*" -t $WIN @gl_self_compact_failed ")
+    if [ -e "$ARM" ] \
+       && [ -z "$("$REAL" show-options -wqv -t "$WIN" @gl_self_compact_requested)" ]; then
+      rm -f -- "$ARM"
+      printf 'fixture: outcome record unreadable\n' >&2
+      exit 1
+    fi ;;
+esac
+exec "$REAL" "$@"
+SH
+} > "$blind_hookless_bin/tmux"
+chmod +x "$blind_hookless_bin/tmux"
+blind_hookless_out="$(TMUX_PANE="$blind_hookless_pane" "$GANG" compact 2>&1)" || :
+contains "a hookless collar schedules the compaction whose record goes unread" \
+  "$blind_hookless_out" "self-compaction scheduled"
+: > "$blind_hookless_draft"
+blind_hookless_mail="$(printf 'MARK_HOOKLESS_BLIND_COMPACTION' |
+  "$GANG" send --to hookless-blind --from tester --stdin 2>&1)" || :
+contains "and mail sent to it waits in the spool" "$blind_hookless_mail" \
+  "queued for hookless-blind"
+rm -f -- "$blind_hookless_draft"
+: > "$blind_hookless_arm"
+blind_hookless_tick="$(PATH="$blind_hookless_bin:$PATH" GANG_TEST_TICK_MODE=manual \
+  "$GANG" tick 2>&1)" || :
+equal "the tick ran the compact command" present \
+  "$([ -e "$blind_hookless_executed" ] && printf present || printf absent)"
+equal "and its read of the outcome record failed" absent \
+  "$([ -e "$blind_hookless_arm" ] && printf present || printf absent)"
+contains "which the tick reports" \
+  "$blind_hookless_tick" "could not read the self-compaction record for hookless-blind"
+excludes "that pass types no mail behind the compaction it started" \
+  "$(pane hookless-blind)" "MARK_HOOKLESS_BLIND_COMPACTION"
+contains "and leaves it in the spool" \
+  "$("$GANG" status hookless-blind)" "spooled:"
+GANG_TEST_TICK_MODE=manual "$GANG" tick >/dev/null
+excludes "the next tick delivers the waiting mail" \
+  "$("$GANG" status hookless-blind)" "spooled:"
+# source-guard: whole-surface@55745cc66f05: the nonce-marked peer body is unique to this test and verified delivery may render it anywhere in the recipient transcript
+contains "into the session" "$(pane hookless-blind)" "MARK_HOOKLESS_BLIND_COMPACTION"
+
+# A PASS THAT STARTED NO WORKER STILL DRAINS when the same read fails. A
+# request whose bound witness is unavailable is retired at the boundary and
+# nothing is typed for it, so no compaction can be running behind the mail.
+blind_hookless_token="test-hookless-blind-retired-$$"
+rm -f -- "$blind_hookless_executed"
+tmux set-option -w -t "$blind_hookless_id" @gl_self_compact_requested "$blind_hookless_token"
+tmux set-option -w -t "$blind_hookless_id" @gl_self_compact_witness \
+  "$blind_hookless_token"$'\t'unavailable
+: > "$blind_hookless_draft"
+blind_hookless_mail="$(printf 'MARK_HOOKLESS_BLIND_RETIRED' |
+  "$GANG" send --to hookless-blind --from tester --stdin 2>&1)" || :
+contains "mail behind a request that cannot run waits in the spool" \
+  "$blind_hookless_mail" "queued for hookless-blind"
+rm -f -- "$blind_hookless_draft"
+: > "$blind_hookless_arm"
+blind_hookless_tick="$(PATH="$blind_hookless_bin:$PATH" GANG_TEST_TICK_MODE=manual \
+  "$GANG" tick 2>&1)" || :
+equal "the tick retires that request" "" \
+  "$(tmux show-options -wqv -t "$blind_hookless_id" @gl_self_compact_requested)"
+equal "without running the compact command" absent \
+  "$([ -e "$blind_hookless_executed" ] && printf present || printf absent)"
+equal "and its read of the retired record failed" absent \
+  "$([ -e "$blind_hookless_arm" ] && printf present || printf absent)"
+contains "which the retiring tick reports" \
+  "$blind_hookless_tick" "could not read the self-compaction record for hookless-blind"
+excludes "that pass drains the spool" \
+  "$("$GANG" status hookless-blind)" "spooled:"
+# source-guard: whole-surface@d82b76fdef91: the nonce-marked peer body is unique to this test and verified delivery may render it anywhere in the recipient transcript
+contains "and types the mail into the session" \
+  "$(pane hookless-blind)" "MARK_HOOKLESS_BLIND_RETIRED"
+"$GANG" drop hookless-blind >/dev/null 2>&1 || :
+
 # Without the deferred declaration, the same self-call takes the direct path
 # and puts the native command into the tty while the caller's turn is active.
 nodeferred_busy="$RUN_ROOT/nodeferred-compact-busy"

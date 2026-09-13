@@ -5638,7 +5638,9 @@ tick_full_pass_once() {
     # context; a drain typed behind a compaction the harness is still running
     # would race it for the composer. One whose submission could not be
     # verified leaves the mail too: that compaction may be running as well,
-    # and the composer the drain would read cannot rule it out.
+    # and the composer the drain would read cannot rule it out. So does one
+    # whose record this pass could not read after starting its worker, since
+    # the record is the only thing that could have said nothing was typed.
     compacted=0
     pending="$(tmux show-options -wqv -t "$id" @gl_self_compact_requested 2>/dev/null)" || pending=""
     if [ -n "$pending" ]; then
@@ -5659,6 +5661,7 @@ tick_full_pass_once() {
             printf 'tick could not read the self-compaction record for %s, so whether its dispatch failed is unknown\n' \
               "$agent" >&2
             rc=1
+            case "$SELF_COMPACT_DISPATCHED" in 1) compacted=1 ;; esac
           elif [ -n "$compact_note" ]; then
             printf 'tick self-compaction issue for %s: %s\n' "$agent" "$compact_note" >&2
             rc=1
