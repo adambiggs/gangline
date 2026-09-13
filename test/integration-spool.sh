@@ -1643,6 +1643,127 @@ excludes "the self-read leaves no false kept claim" \
 rm -f -- "$RUN_ROOT/bin/mv"
 "$GANG" drop mail-lock >/dev/null
 
+# A STALE LOCK HAS ONE REAPER, NOT TWO.  The second contender is stopped after
+# it has read the dead owner but before unlinking the old symlink.  A self-read
+# then races for the same stale lock and stops immediately after its claim
+# rename.  Before the reaper guard, both contenders owned the pane: the second
+# unlink removed the reader's live lock and recovered that live claim as
+# `interrupted-`.  The useful fixed outcome is narrower than a successful
+# second takeover: the competing reader refuses before it can claim anything,
+# then reads the original waiting entry after the sole reaper finishes.
+"$HITCH" stale-reap -c spoolable -d /tmp >/dev/null
+stale_reap_id="$(window_id stale-reap)"
+stale_reap_pane="$(tmux list-panes -t "$stale_reap_id" -F '#{pane_id}')"
+stale_reap_spool="$GANG_LOCK_DIR/spool/$(tmux show-options -wqv -t "$stale_reap_id" @gl_spool)"
+tmux send-keys -l -t "$stale_reap_id" 'HUMAN_DRAFT'
+printf 'MARK_STALE_REAP_EXCLUSIVE' |
+  "$GANG" send --to stale-reap --from tester --stdin >/dev/null
+stale_reap_entry=""
+for candidate in "$stale_reap_spool"/[0-9]*; do
+  [ -f "$candidate" ] || continue
+  stale_reap_entry="$candidate"
+  break
+done
+[ -n "$stale_reap_entry" ] \
+  || fail "the stale-reap world starts with one waiting entry" "no numeric spool entry"
+stale_reap_claim="$stale_reap_spool/sending-${stale_reap_entry##*/}"
+stale_reap_lock="$GANG_LOCK_DIR/$(printf '%s' "$stale_reap_id" | tr -c 'A-Za-z0-9' '_').lock"
+ln -s 99999999 "$stale_reap_lock"
+stale_reap_b_ready="$RUN_ROOT/stale-reap-b-ready"
+stale_reap_b_release="$RUN_ROOT/stale-reap-b-release"
+stale_reap_a_ready="$RUN_ROOT/stale-reap-a-ready"
+stale_reap_a_release="$RUN_ROOT/stale-reap-a-release"
+mkfifo "$stale_reap_b_ready" "$stale_reap_b_release" \
+  "$stale_reap_a_ready" "$stale_reap_a_release"
+exec {stale_reap_b_ready_fd}<>"$stale_reap_b_ready"
+exec {stale_reap_b_release_fd}<>"$stale_reap_b_release"
+exec {stale_reap_a_ready_fd}<>"$stale_reap_a_ready"
+exec {stale_reap_a_release_fd}<>"$stale_reap_a_release"
+stale_reap_real_rm="$(command -v rm)"
+stale_reap_real_mv="$(command -v mv)"
+cat > "$RUN_ROOT/bin/rm" <<SH
+#!/bin/sh
+. "\$GANG_TEST_PATH_SHIM_GUARD"
+path_shim_guard "$stale_reap_real_rm" "\$0" rm || exit \$?
+if [ -n "\${GANG_STALE_REAP_B_LOCK:-}" ] && \
+   [ ! -e "\${GANG_STALE_REAP_B_DONE:-}" ]; then
+  for argument do
+    if [ "\$argument" = "\$GANG_STALE_REAP_B_LOCK" ]; then
+      : > "\$GANG_STALE_REAP_B_DONE"
+      printf 'ready\\n' > "\$GANG_STALE_REAP_B_READY" || exit \$?
+      IFS= read -r _ < "\$GANG_STALE_REAP_B_RELEASE" || exit \$?
+      break
+    fi
+  done
+fi
+exec "$stale_reap_real_rm" "\$@"
+SH
+cat > "$RUN_ROOT/bin/mv" <<SH
+#!/bin/sh
+. "\$GANG_TEST_PATH_SHIM_GUARD"
+path_shim_guard "$stale_reap_real_mv" "\$0" mv || exit \$?
+source="" destination=""
+for argument do
+  [ "\$argument" = -- ] && continue
+  if [ -z "\$source" ]; then source="\$argument"
+  else destination="\$argument"; fi
+done
+if [ "\${GANG_STALE_REAP_A_ENTRY:-}" = "\$source" ] && \
+   [ "\${GANG_STALE_REAP_A_CLAIM:-}" = "\$destination" ]; then
+  "$stale_reap_real_mv" "\$@" || exit \$?
+  printf 'ready\\n' > "\$GANG_STALE_REAP_A_READY" || exit \$?
+  IFS= read -r _ < "\$GANG_STALE_REAP_A_RELEASE" || exit \$?
+  exit 0
+fi
+exec "$stale_reap_real_mv" "\$@"
+SH
+chmod +x "$RUN_ROOT/bin/rm" "$RUN_ROOT/bin/mv"
+stale_reap_b_done="$RUN_ROOT/stale-reap-b-done"
+GANG_STALE_REAP_B_LOCK="$stale_reap_lock" \
+  GANG_STALE_REAP_B_DONE="$stale_reap_b_done" \
+  GANG_STALE_REAP_B_READY="$stale_reap_b_ready" \
+  GANG_STALE_REAP_B_RELEASE="$stale_reap_b_release" \
+  "$GANG" tick >"$RUN_ROOT/stale-reap-b.out" 2>"$RUN_ROOT/stale-reap-b.err" &
+stale_reap_b_pid=$!
+IFS= read -r -t 10 -u "$stale_reap_b_ready_fd" _ \
+  || fail "the stale reclaimer reaches its guarded unlink" "no stale-lock contender arrived"
+TMUX_PANE="$stale_reap_pane" \
+  GANG_STALE_REAP_A_ENTRY="$stale_reap_entry" \
+  GANG_STALE_REAP_A_CLAIM="$stale_reap_claim" \
+  GANG_STALE_REAP_A_READY="$stale_reap_a_ready" \
+  GANG_STALE_REAP_A_RELEASE="$stale_reap_a_release" \
+  "$GANG" mail >"$RUN_ROOT/stale-reap-a.out" 2>"$RUN_ROOT/stale-reap-a.err" &
+stale_reap_a_pid=$!
+stale_reap_a_claimed=no
+IFS= read -r -t 2 -u "$stale_reap_a_ready_fd" _ \
+  && stale_reap_a_claimed=yes
+printf 'release\n' >&"$stale_reap_b_release_fd"
+stale_reap_b_rc=0
+wait "$stale_reap_b_pid" || stale_reap_b_rc=$?
+if [ "$stale_reap_a_claimed" = yes ]; then
+  printf 'release\n' >&"$stale_reap_a_release_fd"
+fi
+stale_reap_a_rc=0
+wait "$stale_reap_a_pid" || stale_reap_a_rc=$?
+equal "a competing stale reclaimer refuses before a self-read can claim" \
+  no "$stale_reap_a_claimed"
+equal "the competing self-read reports delivery contention" 3 "$stale_reap_a_rc"
+equal "the sole stale reclaimer completes its bounded pass" 0 "$stale_reap_b_rc"
+contains "the waiting message never becomes a false interrupted outcome" \
+  "$(cd "$stale_reap_spool" && ls)" "${stale_reap_entry##*/}"
+excludes "a stale-reap race never reclassifies a live read" \
+  "$(cd "$stale_reap_spool" && ls)" "interrupted-"
+tmux send-keys -t "$stale_reap_id" C-u
+stale_reap_mail="$(TMUX_PANE="$stale_reap_pane" "$GANG" mail)"
+contains "the message remains readable after the sole reclaimer releases" \
+  "$stale_reap_mail" "MARK_STALE_REAP_EXCLUSIVE"
+rm -f -- "$RUN_ROOT/bin/rm" "$RUN_ROOT/bin/mv"
+exec {stale_reap_b_ready_fd}>&-
+exec {stale_reap_b_release_fd}>&-
+exec {stale_reap_a_ready_fd}>&-
+exec {stale_reap_a_release_fd}>&-
+"$GANG" drop stale-reap >/dev/null
+
 # A CLAIM THAT VANISHES BETWEEN THE RECOVERY GLOB AND ITS READ is not an
 # unbound shell variable. The file is gone on purpose here; the useful verdict
 # is that no bytes were reclassified or delivered after that failed read.
