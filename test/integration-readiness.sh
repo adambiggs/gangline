@@ -2609,6 +2609,58 @@ excludes "the next tick delivers that mail" \
 contains "into the session" "$(pane hookless)" "MARK_HOOKLESS_BEHIND_COMPACTION"
 "$GANG" drop hookless >/dev/null 2>&1 || :
 
+# A SUBMISSION WHOSE OUTCOME IS UNKNOWN LEAVES THE MAIL AS WELL. This collar
+# paints the queue hint after its compact command runs, the post-Enter reading
+# that cannot say whether the compaction started, and stops painting it once
+# that verdict is on record, so the drain in the same pass finds an idle, empty
+# composer. Typing the mail there would put it behind a compaction that may
+# still be running. The next pass delivers it.
+unknown_hookless_executed="$RUN_ROOT/self-hookless-unknown-executed"
+unknown_hookless_draft="$RUN_ROOT/self-hookless-unknown-draft"
+cat > "$RUN_ROOT/collars/hookless-unknown.sh" <<SH
+# shellcheck shell=bash
+# shellcheck disable=SC2034
+. "$ROOT/collars/bash.sh"
+GANG_COMPACT_CMD=": > '$unknown_hookless_executed'"
+GANG_SELF_COMPACT=deferred
+GANG_QUEUED_REGEX='^[[:space:]]*Press up to edit queued messages[[:space:]]*\$'
+_gl_unknown_hookless_input="\$(declare -f collar_input)"
+eval "unknown_hookless_real_input \${_gl_unknown_hookless_input#collar_input}"
+collar_input() {
+  [ ! -e "$unknown_hookless_draft" ] || { printf 'half written operator line'; return; }
+  [ ! -e "$unknown_hookless_executed" ] \
+    || [ -n "\$(tmux show-options -wqv -t "\$1" @gl_self_compact_failed)" ] \
+    || { printf 'Press up to edit queued messages'; return; }
+  unknown_hookless_real_input "\$1"
+}
+SH
+"$HITCH" hookless-unknown -c hookless-unknown -d /tmp >/dev/null
+unknown_hookless_pane="$(tmux list-panes -t "$(window_id hookless-unknown)" -F '#{pane_id}')"
+unknown_hookless_out="$(TMUX_PANE="$unknown_hookless_pane" "$GANG" compact 2>&1)" || :
+contains "a hookless collar schedules the compaction whose outcome goes unknown" \
+  "$unknown_hookless_out" "self-compaction scheduled"
+: > "$unknown_hookless_draft"
+unknown_hookless_mail="$(printf 'MARK_HOOKLESS_UNKNOWN_COMPACTION' |
+  "$GANG" send --to hookless-unknown --from tester --stdin 2>&1)" || :
+contains "and mail sent to it waits in the spool" "$unknown_hookless_mail" \
+  "queued for hookless-unknown"
+rm -f -- "$unknown_hookless_draft"
+unknown_hookless_tick="$(GANG_TEST_TICK_MODE=manual "$GANG" tick 2>&1)" || :
+equal "the tick ran the compact command" present \
+  "$([ -e "$unknown_hookless_executed" ] && printf present || printf absent)"
+contains "and reports its submission outcome as unknown" \
+  "$unknown_hookless_tick" "submission outcome unknown:"
+excludes "that pass types no mail behind the compaction that may be running" \
+  "$(pane hookless-unknown)" "MARK_HOOKLESS_UNKNOWN_COMPACTION"
+contains "and leaves it in the spool" \
+  "$("$GANG" status hookless-unknown)" "spooled:"
+GANG_TEST_TICK_MODE=manual "$GANG" tick >/dev/null
+excludes "the next tick delivers the waiting mail" \
+  "$("$GANG" status hookless-unknown)" "spooled:"
+# source-guard: whole-surface@c41aff295c10: the nonce-marked peer body is unique to this test and verified delivery may render it anywhere in the recipient transcript
+contains "into the session" "$(pane hookless-unknown)" "MARK_HOOKLESS_UNKNOWN_COMPACTION"
+"$GANG" drop hookless-unknown >/dev/null 2>&1 || :
+
 # Without the deferred declaration, the same self-call takes the direct path
 # and puts the native command into the tty while the caller's turn is active.
 nodeferred_busy="$RUN_ROOT/nodeferred-compact-busy"

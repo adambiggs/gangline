@@ -5636,7 +5636,9 @@ tick_full_pass_once() {
     # check after the drain found the window busy. A compaction this pass does
     # submit leaves the mail to PostCompact, which drains into the compacted
     # context; a drain typed behind a compaction the harness is still running
-    # would race it for the composer.
+    # would race it for the composer. One whose submission could not be
+    # verified leaves the mail too: that compaction may be running as well,
+    # and the composer the drain would read cannot rule it out.
     compacted=0
     pending="$(tmux show-options -wqv -t "$id" @gl_self_compact_requested 2>/dev/null)" || pending=""
     if [ -n "$pending" ]; then
@@ -5660,6 +5662,9 @@ tick_full_pass_once() {
           elif [ -n "$compact_note" ]; then
             printf 'tick self-compaction issue for %s: %s\n' "$agent" "$compact_note" >&2
             rc=1
+            case "$compact_note" in
+              'submission outcome unknown:'*) compacted=1 ;;
+            esac
           elif [ "$SELF_COMPACT_DISPATCHED" = 1 ]; then
             compacted=1
           fi
