@@ -1423,7 +1423,7 @@ if [ "${GANG_INTEGRATION_REQUIRE_ALL_PROBE:-0}" != 1 ]; then
   fi
   contains "a focused run carries its scope in the terminal summary" \
     "$(printf '%s\n' "$focused_probe_out" | tail -n 1)" \
-    "focused parts cli (full suite: cli substrate hitch compose spool readiness hooks notify usage cap tick)"
+    "focused parts cli (full suite: cli substrate hitch compose spool readiness hooks notify usage cap tick run)"
 
   readiness_dependency_rc=0
   readiness_dependency_out="$(env -u GANG_INTEGRATION_REQUIRE_ALL \
