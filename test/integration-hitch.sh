@@ -2122,7 +2122,7 @@ contains "the hitch line names the context-band entry that won" \
   "context bands specific@35% (GANG_CONTEXT_BANDS 'model-lights/exact')"
 GANG_CONTEXT_BANDS=off "$HITCH" bmoff -c model-lights -d /tmp -m exact >/dev/null
 equal "an off context-band setting replaces an old context-light registration" \
-  "off" "$(bands_stamp bmoff)"
+  "off|" "$(bands_stamp bmoff)|$(lights_stamp bmoff)"
 GANG_CONTEXT_BANDS="$bands_map" "$HITCH" bmflag -c model-lights -d /tmp \
   -m exact --lights 30%,60% >/dev/null
 equal "an explicit legacy --lights choice still overrides configured context bands" \

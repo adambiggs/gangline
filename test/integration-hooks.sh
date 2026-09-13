@@ -2274,9 +2274,6 @@ bands_spec='*=checkpoint@100000:Checkpoint {band} for {agent} on {harness}: {con
 GANG_CONTEXT_BANDS="$bands_spec" "$HITCH" bands -c lights -d /tmp >/dev/null
 bands_id="$(window_id bands)"
 bands_pane="$(tmux list-panes -t "$bands_id" -F '#{pane_id}')"
-# The hook reads the settled band list directly so this fixture isolates
-# threshold crossing from launch-time selection.
-tmux set-option -w -t "$bands_id" @gl_context_bands "${bands_spec#*=}"
 printf '%s' '{"hook_event_name":"Stop"}' |
   TMUX_PANE="$bands_pane" "$GANG" hook >/dev/null
 tmux set-option -w -t "$bands_id" @test_context '225k/300k (75%)'

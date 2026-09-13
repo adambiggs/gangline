@@ -5331,7 +5331,8 @@ tick_state_forget() { # health and the tick journals die with their team
   if ! err="$(rm -f -- "$TICK_HEALTH" "$TICK_LOG" "$TICK_TICKET" \
          "$TICK_JOURNAL" "$TICK_JOURNAL.1" \
          "$TICK_CACHE_COMPACTION_JOURNAL" "$TICK_CACHE_COMPACTION_JOURNAL.1" \
-         "$TICK_ALERTS" "$TICK_ALERTS.1" 2>&1)"; then
+         "$TICK_ALERTS" "$TICK_ALERTS.1" \
+         "$TICK_DIR/context-events" "$TICK_DIR/context-events.1" 2>&1)"; then
     printf '%s\n' "$(colour "$C_BAD" "tick state files NOT all removed from $TICK_DIR: ${err##*$'\n'}")" >&2
     return 1
   fi
@@ -12241,6 +12242,7 @@ else:
 hitch_launch() {
   local name="" prof="${GANG_COLLAR:-claude-code}" dir="$PWD" model="" effort="" task="" missing="" role="" role_path="" id="" resume=0 resume_id="" resume_stamped="" launch_env collar_arg=0 pane_dead lookup_rc=0 opened_session=0 respawned=0
   local lights="" lights_arg="" lights_given=0 lights_subject="" lights_from="" lights_note="" cache_compaction=off boot="${GANG_BOOT_TIMEOUT:-30}" gate_looks="${GANG_GATE_LOOKS:-60}"
+  local bands="" bands_from="" bands_summary="" band_i bands_custom=0 context_notice="" prior_bands=""
   local hitched_by="" use_stdin=0
   name="${1:-}"; case "$name" in ''|-*) usage_die ;; esac; shift
   valid_name "$name" \
@@ -12299,20 +12301,49 @@ hitch_launch() {
     lights_from="--lights"
   else
     context_lights_map "$GANG_CONTEXT_LIGHTS"
-    context_lights_select "$prof" "$model"
-    # TOLD AT HITCH, NEVER REFUSED: the bare form means exactly what it always
-    # did, and this is where its author is looking.
-    if [ -n "$CONTEXT_LIGHTS_BARE" ] && config_origin GANG_CONTEXT_LIGHTS >/dev/null; then
-      printf "gang: WARNING: GANG_CONTEXT_LIGHTS entry '%s' has no COLLAR/MODEL selector, which is deprecated; write it as '*=%s', which means the same%s\n" \
-        "$CONTEXT_LIGHTS_BARE" "$CONTEXT_LIGHTS_BARE" "$(config_origin_note GANG_CONTEXT_LIGHTS)" >&2
-    fi
-    if [ -n "$CONTEXT_LIGHTS_ENTRY" ] && config_origin GANG_CONTEXT_LIGHTS >/dev/null; then
-      lights_from="GANG_CONTEXT_LIGHTS '$CONTEXT_LIGHTS_ENTRY'"
-      if [ -z "$CONTEXT_LIGHTS_BARE" ] || [ "$CONTEXT_LIGHTS_ENTRY" != '*' ]; then
-        lights_subject="GANG_CONTEXT_LIGHTS entry '$CONTEXT_LIGHTS_ENTRY'"
+    if [ -n "$GANG_CONTEXT_BANDS" ]; then
+      # A custom list takes over the legacy pair for this one hitch. The
+      # harness still needs its native context source before launch, so give
+      # the collar a harmless valid pair solely to request that source; the
+      # persisted custom list below is what Gangline actually evaluates.
+      context_bands_map "$GANG_CONTEXT_BANDS" || :
+      context_bands_select "$prof" "$model"
+      bands="$CONTEXT_BAND_SELECTED"
+      bands_custom=1
+      if [ "$bands" = off ]; then
+        GANG_CONTEXT_LIGHTS=off
+        bands_summary=off
+      else
+        GANG_CONTEXT_LIGHTS=1,2
+        context_bands_parse "$bands" \
+          "GANG_CONTEXT_BANDS entry '$CONTEXT_BAND_ENTRY'" \
+          "$(config_origin_note GANG_CONTEXT_BANDS)" || :
+        for band_i in "${!CONTEXT_BAND_NAMES[@]}"; do
+          bands_summary="${bands_summary:+$bands_summary,}${CONTEXT_BAND_NAMES[$band_i]}@${CONTEXT_BAND_THRESHOLDS[$band_i]}"
+          [ "$CONTEXT_BAND_RELATIVE" -eq 0 ] || bands_summary="${bands_summary}%"
+        done
       fi
+      if [ -n "$CONTEXT_BAND_ENTRY" ]; then
+        bands_from="GANG_CONTEXT_BANDS '$CONTEXT_BAND_ENTRY'"
+      else
+        bands_from=GANG_CONTEXT_BANDS
+      fi
+    else
+      context_lights_select "$prof" "$model"
+      # TOLD AT HITCH, NEVER REFUSED: the bare form means exactly what it always
+      # did, and this is where its author is looking.
+      if [ -n "$CONTEXT_LIGHTS_BARE" ] && config_origin GANG_CONTEXT_LIGHTS >/dev/null; then
+        printf "gang: WARNING: GANG_CONTEXT_LIGHTS entry '%s' has no COLLAR/MODEL selector, which is deprecated; write it as '*=%s', which means the same%s\n" \
+          "$CONTEXT_LIGHTS_BARE" "$CONTEXT_LIGHTS_BARE" "$(config_origin_note GANG_CONTEXT_LIGHTS)" >&2
+      fi
+      if [ -n "$CONTEXT_LIGHTS_ENTRY" ] && config_origin GANG_CONTEXT_LIGHTS >/dev/null; then
+        lights_from="GANG_CONTEXT_LIGHTS '$CONTEXT_LIGHTS_ENTRY'"
+        if [ -z "$CONTEXT_LIGHTS_BARE" ] || [ "$CONTEXT_LIGHTS_ENTRY" != '*' ]; then
+          lights_subject="GANG_CONTEXT_LIGHTS entry '$CONTEXT_LIGHTS_ENTRY'"
+        fi
+      fi
+      GANG_CONTEXT_LIGHTS="$CONTEXT_LIGHTS_SELECTED"
     fi
-    GANG_CONTEXT_LIGHTS="$CONTEXT_LIGHTS_SELECTED"
   fi
   # shellcheck disable=SC2034  # read by the collar sourced on the next line
   GANG_MODEL="$model"
@@ -12446,16 +12477,22 @@ hitch_launch() {
   # answer and an unvalidated model is not one to ask about. Still before the
   # first tmux mutation, so a spec this refuses leaves no registered agent
   # behind.
-  context_lights_resolve "$prof" "$model" "$GANG_CONTEXT_LIGHTS" "$lights_subject"
-  if context_lights_parse "$CONTEXT_LIGHTS_SPEC" "$CONTEXT_LIGHTS_SUBJECT"; then
-    lights="$CONTEXT_LIGHTS_SPEC"
-  fi
-  # THE HITCH LINE SAYS WHICH SETTING WON, because with a map the thresholds
-  # alone no longer tell the operator which of their entries this agent got.
-  if [ "$GANG_CONTEXT_LIGHTS" = collar ]; then
-    lights_note="collar default${lights_from:+, by $lights_from}"
+  if [ "$bands_custom" -eq 1 ]; then
+    context_notice=" — context bands $bands_summary${bands_from:+ ($bands_from)}"
   else
-    lights_note="$lights_from"
+    context_lights_resolve "$prof" "$model" "$GANG_CONTEXT_LIGHTS" "$lights_subject"
+    if context_lights_parse "$CONTEXT_LIGHTS_SPEC" "$CONTEXT_LIGHTS_SUBJECT"; then
+      lights="$CONTEXT_LIGHTS_SPEC"
+    fi
+    # THE HITCH LINE SAYS WHICH SETTING WON, because with a map the thresholds
+    # alone no longer tell the operator which of their entries this agent got.
+    if [ "$GANG_CONTEXT_LIGHTS" = collar ]; then
+      lights_note="collar default${lights_from:+, by $lights_from}"
+    else
+      lights_note="$lights_from"
+    fi
+    [ -z "$lights" ] \
+      || context_notice=" — context lights $lights${lights_note:+ ($lights_note)}"
   fi
 
   require_python3
@@ -12575,6 +12612,11 @@ hitch_launch() {
   # wired no native source for them to read, and every hook would report the
   # reading it could not take. The lights an agent has are the ones its own
   # launch resolved; an empty value is off, exactly as an absent one is.
+  prior_bands="$(tmux show-options -wqv -t "$id" @gl_context_bands 2>/dev/null)" \
+    || prior_bands=""
+  hitch_register "$id" "$name" @gl_context_bands "$bands"
+  [ "$prior_bands" != "$bands" ] \
+    && hitch_register "$id" "$name" @gl_context_bands_fired ""
   hitch_register "$id" "$name" @gl_context_lights "$lights"
   hitch_register "$id" "$name" @gl_cache_compaction "$cache_compaction"
   if [ "$GANG_USAGE_LIGHTS" != off ]; then
@@ -12591,7 +12633,7 @@ hitch_launch() {
   }
   local msg delivery_err="" delivery_rc=0
   msg="$(startup_brief "$name" "$DOCTRINE" "${HITCH_BODY:+body}")"
-  echo "$(colour "$C_OK" "hitched $name") ($prof) in $dir$(colour "$C_DIM" "${lights:+ — context lights $lights${lights_note:+ ($lights_note)}} — watch: gang attach")"
+  echo "$(colour "$C_OK" "hitched $name") ($prof) in $dir$(colour "$C_DIM" "$context_notice — watch: gang attach")"
   printf '%s\n' "$(colour "$C_WORK" "waiting for $name to finish booting...")"
   local ready=0 recovery
   wait_ready "$id" "$boot" "$name" || ready=$?
