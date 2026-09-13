@@ -2132,6 +2132,55 @@ equal "a later native boundary never re-sends an unverified held entry" \
   "$wedged_before_count" "$wedged_after_count"
 "$GANG" drop wedged >/dev/null
 
+# A `sending-` entry is a claim a drain made before it starts typing. The
+# normal owner either removes it, puts it back, or changes it to unverified;
+# this world starts with the fourth state, where that owner died. It is the
+# durable state a private session retains after the process tree is gone, so it
+# is a minimal reproduction without touching a live team.
+"$HITCH" claimlost -c spoolable -d /tmp >/dev/null
+claimlost_id="$(window_id claimlost)"
+claimlost_spool="$GANG_LOCK_DIR/spool/$(tmux show-options -wqv -t "$claimlost_id" @gl_spool)"
+tmux send-keys -l -t "$claimlost_id" 'HUMAN_DRAFT'
+claimlost_out="$(printf 'MARK_CLAIM_LOST' |
+  "$GANG" send --to claimlost --from tester --stdin)"
+contains "the later-lost claim began as ordinary queued mail" \
+  "$claimlost_out" "queued for claimlost"
+claimlost_entry=""
+for candidate in "$claimlost_spool"/[0-9]*; do
+  [ -f "$candidate" ] || continue
+  claimlost_entry="$candidate"
+  break
+done
+[ -n "$claimlost_entry" ] \
+  || fail "the recovery world has a queued entry to claim" "no numeric spool entry"
+claimlost_body="$(sed -n '3,$p' "$claimlost_entry")"
+claimlost_claim="$claimlost_spool/sending-${claimlost_entry##*/}"
+mv -- "$claimlost_entry" "$claimlost_claim"
+# The interrupted worker may have pasted before it died. Leave the exact
+# claimed envelope in the private composer's box, with no staged option, as the
+# state that formerly became a supposed human draft.
+tmux send-keys -t "$claimlost_id" C-u
+tmux send-keys -l -t "$claimlost_id" "$claimlost_body"
+"$GANG" tick >/dev/null
+claimlost_status="$("$GANG" status claimlost)"
+contains "a dead claim becomes a preserved unknown outcome" \
+  "$claimlost_status" "delivery worker ended after claiming this body"
+excludes "the old composer body is withdrawn before another delivery" \
+  "$("$GANG" composer claimlost)" "MARK_CLAIM_LOST"
+claimlost_interrupted=0
+for candidate in "$claimlost_spool"/interrupted-*; do
+  [ -f "$candidate" ] && claimlost_interrupted=$((claimlost_interrupted + 1))
+done
+equal "the dead claim is kept rather than retried" "1" "$claimlost_interrupted"
+claimlost_followup="$(printf 'MARK_CLAIM_RECOVERED' |
+  "$GANG" send --to claimlost --from tester --stdin)"
+contains "the recovered composer accepts a later delivery" \
+  "$claimlost_followup" "delivered to claimlost"
+# source-guard: producer@2b587b5b7b8a: the follow-up envelope is the only producer of this unique marker, while the immediately preceding composer assertion independently proves recovery removed the claimed body before this send.
+contains "the later delivery reaches the private session once" \
+  "$(pane claimlost)" "MARK_CLAIM_RECOVERED"
+"$GANG" drop claimlost >/dev/null
+
 # A SPOOL OUTLIVES THE WINDOW THAT NAMED IT whenever the window did not die
 # through drop or down. Every command gang has resolves a spool through
 # @gl_spool on a live window, so those directories — and any mail in them — are
