@@ -8,7 +8,9 @@ import subprocess
 import sys
 
 
-DEADLINE_SECONDS = 60
+DEFAULT_DEADLINE_SECONDS = 60
+MAX_DEADLINE_SECONDS = 3600
+DEADLINE_SECONDS = DEFAULT_DEADLINE_SECONDS
 NANOSECONDS_PER_SECOND = 1_000_000_000
 CLOCK_HELPER_SECONDS = 1.0
 worker = None
@@ -85,7 +87,7 @@ def reraise(signum: int) -> int:
 
 
 def main() -> int:
-    global clock_path, worker
+    global clock_path, worker, DEADLINE_SECONDS
 
     if len(sys.argv) < 4 or sys.argv[1] != "--clock-helper":
         print("gang tick deadline: no worker command", file=sys.stderr)
@@ -94,6 +96,27 @@ def main() -> int:
     if not os.path.isabs(clock_path) or not os.access(clock_path, os.X_OK):
         print("gang tick deadline: clock helper is not an executable absolute path", file=sys.stderr)
         return 2
+
+    # The budget is the operator's GANG_TICK_DEADLINE, handed down by the
+    # command that validated it; the worker checks the exported number against
+    # the same setting, so no caller can run it under a budget nobody enforces.
+    # The worker's lock arithmetic multiplies these seconds in 64-bit shell
+    # integers, so the ceiling keeps that product in range; a leading zero
+    # would read as octal there and is refused as well.
+    configured = os.environ.get("GANG_TICK_DEADLINE", str(DEFAULT_DEADLINE_SECONDS))
+    if (
+        not configured.isascii()
+        or not configured.isdigit()
+        or configured.startswith("0")
+        or not DEFAULT_DEADLINE_SECONDS <= int(configured, 10) <= MAX_DEADLINE_SECONDS
+    ):
+        print(
+            f"gang tick deadline: GANG_TICK_DEADLINE must be a whole number of seconds"
+            f" from {DEFAULT_DEADLINE_SECONDS} to {MAX_DEADLINE_SECONDS}, got '{configured}'",
+            file=sys.stderr,
+        )
+        return 2
+    DEADLINE_SECONDS = int(configured, 10)
 
     for caught in (signal.SIGHUP, signal.SIGINT, signal.SIGTERM, signal.SIGALRM):
         signal.signal(caught, handle_signal)

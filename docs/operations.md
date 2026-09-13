@@ -603,18 +603,21 @@ pass removes that exact legacy window and installs the static widget. An
 unmarked operator window with the same name is unrelated and remains intact.
 
 For a tick-lock failure, the named age controls the response. Contention inside
-the 60-second worker budget is folded normally. Beyond it, Gangline records
-failed health; at 120 seconds a later Linux invocation may terminate only the
-exact pidfd-bound tick-worker leader and report that no pass ran. Run `gang
+the worker budget (`GANG_TICK_DEADLINE`, 60 seconds unless configured) is folded
+normally. Beyond it, Gangline records failed health; at twice the budget a later
+Linux invocation may terminate only the exact pidfd-bound tick-worker leader and
+report that no pass ran. Run `gang
 tick` once more after a successful retirement. If identity is ambiguous, the
 owner cannot be killed and confirmed within the one-second bound, or no later
 Gangline command runs, the lock remains fail-closed. Inspect the named process
 and lock rather than deleting health state; manual lock removal remains an
 operator decision when exact identity cannot be established.
 A lock `held by pid N in pid namespace X, which this process cannot see` was
-taken by a worker in another pid table, typically a harness sandbox. Run `gang
-tick` from outside that sandbox, where the owner is visible; it then resolves a
-live owner as contention and reclaims one that died with its sandbox. The same
+taken by a worker in another pid table, typically a harness sandbox. The
+contender that printed it stopped without writing health, so the line is not
+an alert: run `gang tick` from outside that sandbox, where the owner is
+visible; it then resolves a live owner as contention and reclaims one that
+died with its sandbox. The same
 line from a contender already on the host means its `/proc` is not a complete
 view of the pid table (a `hidepid=ptraceable` mount, or something other than
 procfs mounted there): absence cannot be proven through it, so remove such a

@@ -192,3 +192,4 @@ Gangline's durable constraints live in the records below. A record's id is perma
 | [0186](0186-no-reply-envelopes-join-the-next-ordinary-delivery.md) | No-reply envelopes join the next ordinary delivery | accepted | 2026-09-09 |
 | [0187](0187-context-lights-resolve-per-collar-and-model-from-operator-configuration.md) | Context lights resolve per collar and model from operator configuration | proposed | 2026-09-10 |
 | [0188](0188-a-sender-marks-the-acknowledgement-that-owes-no-turn.md) | A sender marks the acknowledgement that owes no turn | accepted | 2026-09-13 |
+| [0189](0189-a-tick-pass-stops-at-its-budget-and-resumes-after-a-cursor.md) | A tick pass stops at its budget and resumes after a cursor | accepted | 2026-09-13 |

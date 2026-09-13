@@ -444,7 +444,8 @@ exception: inspecting or opening an alert changes at most its seen state and
 does not also attempt recovery. `tick` exists as the deterministic operator and
 test entry point; ordinary use does not need to call it explicitly.
 
-One pass visits every hitched window. Where a deferred self-compaction request
+One pass visits every hitched window, in roster order, starting after the
+cursor a previous partial pass left. Where a deferred self-compaction request
 is standing and the window reads idle, the pass dispatches that request first.
 A pass that submits it, cannot verify the submission, or starts its worker and
 then cannot read its record leaves the waiting spool to PostCompact or a later
@@ -459,6 +460,18 @@ that window's glyph, so a condition that cleared without a further native event,
 such as a permission dialog answered or declined, leaves the window name within
 one pass. A window whose state cannot be read is painted `?name?` and fails the
 pass. This read offers no delivery of its own; the spool retry above owns that.
+
+A visit costs on the order of a second of tmux round trips, so a large team
+cannot always be visited inside one worker deadline. Once the worker has spent
+two thirds of `GANG_TICK_DEADLINE` the pass stops before its next visit, records
+the last visited window as the team's cursor under its health directory, and
+reports the pass partial: health stays `ok` with a note counting the agents
+visited against the roster, and the worker arms one successor tick, on a fresh
+deadline, that starts after the cursor. That successor is a continuation and
+arms none of its own; a roster too large for two passes is finished by the
+ordinary post-command ticks, each of which starts after the cursor. The first
+visit of a pass is always made, so the cursor always advances. A pass that
+reaches everyone removes the cursor.
 
 One per-team kernel flock serializes generation-lock metadata transactions; the
 generation symlink records worker ownership between them. The guard descriptor
@@ -482,15 +495,19 @@ namespace resolves the owner through `/proc`, so one that died with its
 sandbox is reclaimed and a live one is ordinary contention. Absence counts as
 death only where `/proc` is procfs for the contender's own table and no
 hidepid mode filters this user's entries; a contender in a namespace that
-cannot see the owner, or reading a narrower view, retains the lock and names
-what it cannot see. A record without a namespace is resolved by pid
+cannot see the owner, or reading a narrower view, retains the lock, names what
+it cannot see, and exits with status 77 without touching health: it has not
+learned that a pass failed, only that it cannot read the owner, and a reader in
+the initial namespace resolves the same record on the next candidate.
+`gang tick` reports that outcome as a failure of the command, not of the team.
+A record without a namespace is resolved by pid
 and start token among the namespaces the contender can see. A recorded pid
 whose process now belongs to another user cannot be a tick worker for this
 team and is retired as a reused number.
-The internal worker accepts only the controller's fixed production budget; a
-caller cannot feed shell arithmetic a different deadline. A matching owner
-at least the hard 60-second worker deadline fails health instead of looking
-like clean contention. The lock stamp uses the same monotonic clock domain as
+The internal worker accepts only the budget its controller exported, which is
+the validated `GANG_TICK_DEADLINE`; a caller cannot feed shell arithmetic a
+different deadline. A matching owner at least the hard worker deadline fails
+health instead of looking like clean contention. The lock stamp uses the same monotonic clock domain as
 the controller deadline, so suspend and wall-clock adjustment do not spend
 that budget. At twice the published budget, Linux may reclaim only an exact
 tick-worker leader: it sends one SIGKILL through a generation-bound pidfd,
@@ -504,7 +521,7 @@ cooperative tick, invoked directly or launched by an operational command,
 rather than in a resident watcher.
 
 The worker and its descendants are also killed by their owning deadline
-controller at 60 seconds. HUP, INT, TERM, or ALRM caught by that controller
+controller at `GANG_TICK_DEADLINE` seconds. HUP, INT, TERM, or ALRM caught by that controller
 kills and reaps its still-owned worker group before the controller re-raises the
 signal. A detached failure cannot change the command that spawned it. It writes
 `health` and `tick.log` under
@@ -1872,6 +1889,7 @@ Exactly these keys are settable:
 | `GANG_CHURN_WAIT` | `0.5` | stable-pane observation interval |
 | `GANG_ACTIVITY_WINDOW` | `5` | recent terminal-activity window |
 | `GANG_TURN_LIMIT` | `300` | native turn-fact bound and default `gang wait` boundary timeout |
+| `GANG_TICK_DEADLINE` | `60` | whole seconds, `60` to `3600`: the hard deadline that kills one cooperative tick worker; a pass stops visiting at two thirds of it and hands the rest of the roster to a successor |
 
 Collar declarations are refused because `load_collar` clears them before
 sourcing the selected collar; put those values in a custom collar and point

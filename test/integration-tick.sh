@@ -2493,6 +2493,166 @@ contains "status reports the journal failure" \
   "$("$GANG" status tick-glyph)" 'transition journal: '
 "$GANG" drop tick-glyph >/dev/null
 
+# A PASS THAT SPENDS ITS BUDGET STOPS, RECORDS A CURSOR, AND REPORTS PARTIAL.
+# Three hitched windows and a budget of zero seconds: every pass makes the one
+# visit it always owes, then stops. The manual tick mode arms no successor, so
+# the passes are driven here and the visit order shows the roster rotating from
+# the cursor. The budget under test is the worker's own soft share of its
+# deadline, read once per visit from the shell's whole-second clock, so a zero
+# budget is spent by the first visit and nothing here waits.
+tick_part_ledger="$RUN_ROOT/tick-partial-visits"
+tick_part_digest="$(python3 -c 'import hashlib,sys; print(hashlib.sha256((sys.argv[1]+"\0"+sys.argv[2]).encode()).hexdigest()[:24])' \
+  "$(tmux display-message -p -t "=$GANG_SESSION" '#{socket_path}')" "$GANG_SESSION")"
+tick_part_dir="$XDG_STATE_HOME/gangline/tick/$tick_part_digest"
+for tick_part_n in 1 2 3; do
+  tmux new-window -d -t "=$GANG_SESSION" -n "tick-part-$tick_part_n" "PS1='❯ ' bash --norc"
+  "$GANG" adopt "tick-part-$tick_part_n" -c bash >/dev/null
+done
+tick_part_window_of() { # $1 agent name -> its window id
+  tmux list-windows -t "=$GANG_SESSION" -F '#{window_id} #{@gl_agent}' \
+    | awk -v a="$1" '$2 == a { printf "%s", $1; exit }'
+}
+tick_part_rc=0
+: > "$tick_part_ledger"
+GANG_TEST_TICK_MODE=manual GANG_TEST_TICK_SOFT_BUDGET_S=0 \
+  GANG_TEST_TICK_VISIT_LEDGER="$tick_part_ledger" \
+  "$GANG" tick > "$RUN_ROOT/tick-partial-1.out" 2>&1 || tick_part_rc=$?
+equal "a pass that spends its budget after one visit still returns success" 0 "$tick_part_rc"
+tick_part_first="$(sed -n '1p' "$tick_part_ledger")"
+tick_part_total="$("$GANG" roster --porcelain | wc -l | tr -d ' ')"
+equal "the budgeted pass made exactly the one visit it always owes" 1 \
+  "$(wc -l < "$tick_part_ledger" | tr -d ' ')"
+equal "the partial pass leaves the last visited window as its cursor" \
+  "$(tick_part_window_of "$tick_part_first")" "$(<"$tick_part_dir/cursor")"
+contains "health stays ok and names the partial pass" "$(<"$tick_part_dir/health")" \
+  $'ok\t'
+contains "the ok note counts what the pass visited against the roster" \
+  "$(<"$tick_part_dir/health")" "partial pass: 1 of $tick_part_total agents visited"
+excludes "a partial pass is not a failed tick" "$("$GANG" status 2>&1)" 'last tick failed'
+equal "the partial marker does not outlive the worker that read it" absent \
+  "$([ -e "$tick_part_dir/partial" ] && printf present || printf absent)"
+GANG_TEST_TICK_MODE=manual GANG_TEST_TICK_SOFT_BUDGET_S=0 \
+  GANG_TEST_TICK_VISIT_LEDGER="$tick_part_ledger" "$GANG" tick >/dev/null
+GANG_TEST_TICK_MODE=manual GANG_TEST_TICK_SOFT_BUDGET_S=0 \
+  GANG_TEST_TICK_VISIT_LEDGER="$tick_part_ledger" "$GANG" tick >/dev/null
+equal "three budgeted passes visit three distinct agents in roster order from the cursor" 3 \
+  "$(sort -u "$tick_part_ledger" | wc -l | tr -d ' ')"
+tick_part_third="$(sed -n '3p' "$tick_part_ledger")"
+equal "the cursor follows the latest visit" \
+  "$(tick_part_window_of "$tick_part_third")" "$(<"$tick_part_dir/cursor")"
+# A full pass starts after the cursor and, having reached everyone, removes it.
+: > "$tick_part_ledger"
+GANG_TEST_TICK_MODE=manual GANG_TEST_TICK_VISIT_LEDGER="$tick_part_ledger" \
+  "$GANG" tick >/dev/null
+equal "an unbudgeted pass visits the whole roster" "$tick_part_total" \
+  "$(wc -l < "$tick_part_ledger" | tr -d ' ')"
+equal "the pass after a cursor starts with the agent after it" \
+  "$(tmux list-windows -t "=$GANG_SESSION" -F '#{window_id} #{@gl_agent}' \
+     | awk -v c="$(tick_part_window_of "$tick_part_third")" '$2 != "" { l[++n] = $0; if ($1 == c) at = n } END { split(l[at % n + 1], f, " "); print f[2] }')" \
+  "$(sed -n '1p' "$tick_part_ledger")"
+equal "a complete pass removes the cursor" absent \
+  "$([ -e "$tick_part_dir/cursor" ] && printf present || printf absent)"
+contains "a complete pass records plain ok health" "$(<"$tick_part_dir/health")" $'ok\t'
+excludes "a complete pass leaves no partial note" "$(<"$tick_part_dir/health")" 'partial pass'
+# With successors armed, a partial pass hands the rest to one continuation that
+# arms none of its own: the roster is finished by two workers, not a chain. The
+# done fifo carries the successor's kind, so a successor that was not marked a
+# continuation, and so would arm another, is seen the moment it finishes.
+tick_part_done="$RUN_ROOT/tick-partial-done"
+mkfifo "$tick_part_done"
+exec 12<>"$tick_part_done"
+: > "$tick_part_ledger"
+tick_part_chain_rc=0
+GANG_TEST_TICK_MODE='' GANG_TEST_TICK_SOFT_BUDGET_S=0 \
+  GANG_TEST_TICK_SUCCESSOR_DONE_FIFO="$tick_part_done" \
+  GANG_TEST_TICK_VISIT_LEDGER="$tick_part_ledger" \
+  "$GANG" tick > "$RUN_ROOT/tick-partial-chain.out" 2>&1 || tick_part_chain_rc=$?
+equal "a partial pass with successors enabled returns before its successor runs" 0 "$tick_part_chain_rc"
+IFS= read -r -N 1 tick_part_kind <&12
+equal "the successor of a partial pass ran as a continuation" c "$tick_part_kind"
+equal "the continuation ran one more pass" 2 \
+  "$(wc -l < "$tick_part_ledger" | tr -d ' ')"
+equal "the continuation visits the agent after the cursor its predecessor left" 2 \
+  "$(sort -u "$tick_part_ledger" | wc -l | tr -d ' ')"
+equal "the continuation's own partial pass leaves its cursor for the next ordinary tick" present \
+  "$([ -e "$tick_part_dir/cursor" ] && printf present || printf absent)"
+exec 12<&-
+GANG_TEST_TICK_MODE=manual "$GANG" tick >/dev/null
+for tick_part_n in 1 2 3; do "$GANG" drop "tick-part-$tick_part_n" >/dev/null; done
+unset -f tick_part_window_of
+
+# THE DEADLINE IS AN OPERATOR SETTING, VALIDATED BEFORE THE WORKER STARTS, AND
+# THE WORKER ACCEPTS ONLY THE NUMBER ITS CONTROLLER ENFORCES.
+tick_deadline_rc=0
+GANG_TICK_DEADLINE=abc "$GANG" tick > "$RUN_ROOT/tick-deadline-word.out" 2>&1 || tick_deadline_rc=$?
+equal "a non-numeric GANG_TICK_DEADLINE refuses the tick" 1 "$tick_deadline_rc"
+contains "the refusal names the setting and its unit" "$(<"$RUN_ROOT/tick-deadline-word.out")" \
+  "GANG_TICK_DEADLINE must be a whole number of seconds, got 'abc'"
+tick_deadline_rc=0
+GANG_TICK_DEADLINE=30 "$GANG" tick > "$RUN_ROOT/tick-deadline-short.out" 2>&1 || tick_deadline_rc=$?
+equal "a GANG_TICK_DEADLINE below the shipped budget refuses the tick" 1 "$tick_deadline_rc"
+contains "the refusal names the floor" "$(<"$RUN_ROOT/tick-deadline-short.out")" \
+  "GANG_TICK_DEADLINE must be at least 60 seconds, got 30"
+excludes "a refused deadline writes no failed health" "$(<"$tick_part_dir/health")" $'failed\t'
+tick_deadline_rc=0
+GANG_TICK_DEADLINE=3601 "$GANG" tick > "$RUN_ROOT/tick-deadline-ceiling.out" 2>&1 || tick_deadline_rc=$?
+equal "a GANG_TICK_DEADLINE above an hour refuses the tick" 1 "$tick_deadline_rc"
+contains "the refusal names the ceiling" "$(<"$RUN_ROOT/tick-deadline-ceiling.out")" \
+  "GANG_TICK_DEADLINE must be at most 3600 seconds, got 3601"
+tick_deadline_rc=0
+GANG_TICK_DEADLINE=9223372037 "$GANG" tick > "$RUN_ROOT/tick-deadline-overflow.out" 2>&1 \
+  || tick_deadline_rc=$?
+equal "a deadline that would overflow the lock arithmetic refuses the tick" 1 "$tick_deadline_rc"
+contains "the overflowing value is refused by the ceiling" \
+  "$(<"$RUN_ROOT/tick-deadline-overflow.out")" \
+  "GANG_TICK_DEADLINE must be at most 3600 seconds, got 9223372037"
+tick_deadline_rc=0
+GANG_TICK_DEADLINE=99999999999999999999 "$GANG" tick > "$RUN_ROOT/tick-deadline-wide.out" 2>&1 \
+  || tick_deadline_rc=$?
+equal "a deadline wider than a machine word refuses the tick" 1 "$tick_deadline_rc"
+contains "the wide value is refused by the ceiling, not by the shell" \
+  "$(<"$RUN_ROOT/tick-deadline-wide.out")" \
+  "GANG_TICK_DEADLINE must be at most 3600 seconds, got 99999999999999999999"
+excludes "the shell never saw the wide value as a number" \
+  "$(<"$RUN_ROOT/tick-deadline-wide.out")" "integer expression expected"
+tick_deadline_rc=0
+GANG_TICK_DEADLINE=0090 "$GANG" tick > "$RUN_ROOT/tick-deadline-octal.out" 2>&1 || tick_deadline_rc=$?
+equal "a deadline with a leading zero refuses the tick" 1 "$tick_deadline_rc"
+contains "the leading zero is refused as not a whole number" \
+  "$(<"$RUN_ROOT/tick-deadline-octal.out")" \
+  "GANG_TICK_DEADLINE must be a whole number of seconds, got '0090'"
+tick_deadline_rc=0
+GANG_TICK_DEADLINE=90 GANG_TEST_TICK_MODE=manual "$GANG" tick \
+  > "$RUN_ROOT/tick-deadline-long.out" 2>&1 || tick_deadline_rc=$?
+equal "a longer GANG_TICK_DEADLINE reaches the worker through its controller" 0 "$tick_deadline_rc"
+equal "the longer deadline's tick prints nothing" "" "$(<"$RUN_ROOT/tick-deadline-long.out")"
+tick_deadline_rc=0
+GANG_TICK_DEADLINE=90 GANG_TICK_INTERNAL=1 "$GANG" __tick-worker \
+  > "$RUN_ROOT/tick-deadline-mismatch.out" 2>&1 || tick_deadline_rc=$?
+equal "a worker whose exported budget is not the configured deadline refuses" 1 "$tick_deadline_rc"
+contains "the worker names both numbers" "$(<"$RUN_ROOT/tick-deadline-mismatch.out")" \
+  "tick worker deadline budget 60 is not the configured GANG_TICK_DEADLINE of 90s"
+tick_deadline_rc=0
+GANG_TICK_DEADLINE=90 GANG_TICK_INTERNAL=1 GANG_TICK_TICKET=1 \
+  "$ROOT/libexec/gang-tick-deadline" --clock-helper "$ROOT/libexec/gang-clock" \
+  sh -c 'printf "%s\n" "$GANG_TICK_DEADLINE_SECONDS"' > "$RUN_ROOT/tick-deadline-export.out" 2>&1 \
+  || tick_deadline_rc=$?
+equal "the controller exports the configured deadline to its worker" 90 \
+  "$(<"$RUN_ROOT/tick-deadline-export.out")"
+tick_deadline_rc=0
+GANG_TICK_DEADLINE=abc "$ROOT/libexec/gang-tick-deadline" --clock-helper "$ROOT/libexec/gang-clock" \
+  true > "$RUN_ROOT/tick-deadline-controller.out" 2>&1 || tick_deadline_rc=$?
+equal "the controller refuses a malformed deadline on its own" 2 "$tick_deadline_rc"
+contains "the controller's refusal names the setting" "$(<"$RUN_ROOT/tick-deadline-controller.out")" \
+  "GANG_TICK_DEADLINE must be a whole number of seconds from 60 to 3600, got 'abc'"
+tick_deadline_rc=0
+GANG_TICK_DEADLINE=9223372037 "$ROOT/libexec/gang-tick-deadline" --clock-helper "$ROOT/libexec/gang-clock" \
+  true > "$RUN_ROOT/tick-deadline-controller-ceiling.out" 2>&1 || tick_deadline_rc=$?
+equal "the controller refuses a deadline above the ceiling on its own" 2 "$tick_deadline_rc"
+contains "the controller's refusal names the ceiling" \
+  "$(<"$RUN_ROOT/tick-deadline-controller-ceiling.out")" \
+  "GANG_TICK_DEADLINE must be a whole number of seconds from 60 to 3600, got '9223372037'"
+
 # A live holder is dirtied, not joined or piled up. FIFO edges make the exact
 # crossing deterministic: the contender runs only after the holder owns its
 # symlink and the holder cannot finish its first pass until released.
@@ -3200,6 +3360,7 @@ PY
   "$ROOT/libexec/gang-process-identity" --tick "$tick_ns_inner" "$GANG_SESSION" \
     "$tick_ns_namespace" >/dev/null 2>&1 || tick_ns_dead_rc=$?
   tick_ns_reclaim_rc=0
+  tick_ns_health_before="$(cat "$tick_part_dir/health" 2>/dev/null)"
   "$GANG" tick > "$RUN_ROOT/tick-ns-dead.out" 2>&1 || tick_ns_reclaim_rc=$?
   if [ "$tick_reader_at_root" -eq 1 ]; then
     equal "no process remains in the dead namespace, which the host reads as death" \
@@ -3219,6 +3380,8 @@ PY
       4 "$tick_ns_dead_rc"
     equal "a non-initial contender fails closed on the unseen namespace" \
       1 "$tick_ns_reclaim_rc"
+    equal "an owner the contender cannot see leaves health exactly as it was" \
+      "$tick_ns_health_before" "$(cat "$tick_part_dir/health" 2>/dev/null)"
     contains "the non-initial contender names the namespace it cannot see" \
       "$(<"$RUN_ROOT/tick-ns-dead.out")" \
       "in pid namespace $tick_ns_namespace, which this process cannot see; lock was retained"
@@ -3232,12 +3395,15 @@ PY
   ln -s "v3:$$:$tick_shell_token:$tick_shell_pgrp:$(tick_monotonic_ns):$tick_host_namespace" \
     "$tick_lock_path"
   tick_ns_blind_rc=0
+  tick_ns_health_before="$(cat "$tick_part_dir/health" 2>/dev/null)"
   tick_namespace_run env GANG_TICK_INTERNAL=1 "$GANG" __tick-worker \
     > "$RUN_ROOT/tick-ns-blind.out" 2>&1 || tick_ns_blind_rc=$?
-  equal "a contender that cannot see the owner's namespace fails closed" 1 "$tick_ns_blind_rc"
+  equal "a contender that cannot see the owner's namespace stops with the unseen-owner status" 77 "$tick_ns_blind_rc"
   contains "the blind contender names the namespace it cannot see" \
     "$(<"$RUN_ROOT/tick-ns-blind.out")" \
     "in pid namespace $tick_host_namespace, which this process cannot see; lock was retained"
+  equal "the blind contender leaves health exactly as it was" \
+    "$tick_ns_health_before" "$(cat "$tick_part_dir/health" 2>/dev/null)"
   equal "the host-owned lock survives a blind contender" present \
     "$([ -L "$tick_lock_path" ] && printf present || printf absent)"
   rm -f -- "$tick_lock_path" "${tick_lock_path%.lock}.dirty"
@@ -3417,16 +3583,17 @@ fi
 exec "$REAL" "$@"'
 
 # THE DEADLINE IS AN INTERNAL CONTROLLER CONTRACT, NOT ARITHMETIC INPUT. The
-# public controller always publishes 60; noncanonical, invalid-octal, and
-# overflowing direct-worker values must fail before they can age a live lock.
+# public controller publishes the validated GANG_TICK_DEADLINE, here its default
+# of 60; noncanonical, invalid-octal, and overflowing direct-worker values must
+# fail before they can age a live lock.
 tick_bad_budget_probe() { # $1 value
   local value="$1" rc=0 output="$RUN_ROOT/tick-budget-$1.out"
   ln -s "v2:$$:$tick_shell_token:$tick_shell_pgrp:1" "$tick_lock_path"
   GANG_TICK_DEADLINE_SECONDS="$value" GANG_TICK_INTERNAL=1 \
     "$GANG" __tick-worker > "$output" 2>&1 || rc=$?
   equal "deadline value $value is rejected before lock arithmetic" 1 "$rc"
-  contains "deadline value $value names the fixed production contract" \
-    "$(<"$output")" "production 60-second deadline budget"
+  contains "deadline value $value names the configured contract it missed" \
+    "$(<"$output")" "tick worker deadline budget $value is not the configured GANG_TICK_DEADLINE of 60s"
   equal "deadline value $value retains the observed live lock" present \
     "$([ -L "$tick_lock_path" ] && printf present || printf absent)"
   rm -f -- "$tick_lock_path" "${tick_lock_path%.lock}.dirty"

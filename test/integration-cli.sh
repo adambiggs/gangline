@@ -479,6 +479,8 @@ contains "gang config attributes a file-layer value to its line" \
   $'GANG_COLLAR=codex\t'"$CONFIG_CASES/report/config line 2"
 contains "gang config attributes an untouched built-in value to the default" \
   "$config_report" $'GANG_TURN_LIMIT=300\tdefault'
+contains "gang config publishes the tick deadline with its shipped default" \
+  "$config_report" $'GANG_TICK_DEADLINE=60\tdefault'
 excludes "gang config no longer publishes an occupancy timer" \
   "$config_report" "GANG_OCCUPIED_LIMIT="
 for environment_only in GANG_ACTIVITY_LIMIT GANG_CLEAR_PRESSES; do

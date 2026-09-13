@@ -76,7 +76,7 @@ fail() { # $1 = exit status, rest = message
   exit "$code"
 }
 
-GANG_CONFIG_KEYS='GANG_COLLAR GANG_SESSION GANG_COLLARS GANG_LOCK_DIR GANG_ARCHIVE_DIR GANG_CONTEXT_LIGHTS GANG_CACHE_COMPACTION GANG_USAGE_LIGHTS GANG_AUTO_RESUME GANG_SCOPE GANG_TMUX_GUARD GANG_BOOT_TIMEOUT GANG_GATE_LOOKS GANG_CHURN_WAIT GANG_ACTIVITY_WINDOW GANG_TURN_LIMIT'
+GANG_CONFIG_KEYS='GANG_COLLAR GANG_SESSION GANG_COLLARS GANG_LOCK_DIR GANG_ARCHIVE_DIR GANG_CONTEXT_LIGHTS GANG_CACHE_COMPACTION GANG_USAGE_LIGHTS GANG_AUTO_RESUME GANG_SCOPE GANG_TMUX_GUARD GANG_BOOT_TIMEOUT GANG_GATE_LOOKS GANG_CHURN_WAIT GANG_ACTIVITY_WINDOW GANG_TURN_LIMIT GANG_TICK_DEADLINE'
 GANG_COLLAR_KEYS='GANG_LAUNCH GANG_RESUME_LAUNCH GANG_MODEL_OPT GANG_MODEL_ALIASES GANG_EFFORT_OPT GANG_EFFORT_CMD GANG_ROLE_PROMPT_OPT GANG_HARNESS_PROMPT GANG_BUSY_REGEX GANG_OCCUPIED_REGEX GANG_QUEUED_REGEX GANG_QUEUE_RECALL_KEY GANG_INTERRUPT_KEY GANG_STOP_HOOK GANG_STALL_TYPES GANG_QUIET_AT_REST GANG_MIDTURN_INPUT GANG_COMPACT_CMD GANG_SELF_COMPACT GANG_SELF_COMPACT_WITNESS GANG_USAGE_LIGHT_INTERVAL GANG_USAGE_LIMIT_MAX_AGE'
 CONFIG_DIR="" CONFIG_FILE="" CONFIG_ORIGINS="" CONFIG_SEEN=""
 
@@ -363,6 +363,7 @@ GANG_CHURN_WAIT="${GANG_CHURN_WAIT:-0.5}"
 GANG_ACTIVITY_WINDOW="${GANG_ACTIVITY_WINDOW:-5}"
 GANG_ACTIVITY_LIMIT="${GANG_ACTIVITY_LIMIT:-300}"
 GANG_TURN_LIMIT="${GANG_TURN_LIMIT:-300}"
+GANG_TICK_DEADLINE="${GANG_TICK_DEADLINE:-60}"
 GANG_CONTEXT_LIGHTS="${GANG_CONTEXT_LIGHTS:-collar}"
 GANG_CACHE_COMPACTION="${GANG_CACHE_COMPACTION:-claude-code=3600:300 codex=1800:180}"
 GANG_USAGE_LIGHTS="${GANG_USAGE_LIGHTS:-off}"
@@ -1195,7 +1196,12 @@ gang tick
   turn-boundary safety gates. A singleton lock
   folds concurrent candidates into one dirty
   rerun, and a hard deadline kills the one-shot
-  worker rather than leaving a resident process.
+  worker rather than leaving a resident process;
+  GANG_TICK_DEADLINE sets it, 60 seconds unless
+  configured. A pass that has spent two thirds
+  of the deadline stops visiting, records a
+  cursor, and hands the rest of the roster to a
+  successor tick that starts after the cursor.
 EOF
       ;;
     alerts) cat <<'EOF'
@@ -4605,7 +4611,7 @@ cmd_teams() { # every team gang wrote down, and whether its server still answers
 # exits immediately; the holder consumes that marker with another complete
 # pass before it releases the lock. There is no resident process: the deadline
 # controller and its worker exist only to finish this invocation's bounded pass.
-TICK_DIR="" TICK_HEALTH="" TICK_LOG="" TICK_TICKET=""
+TICK_DIR="" TICK_HEALTH="" TICK_LOG="" TICK_TICKET="" TICK_CURSOR="" TICK_PARTIAL=""
 TICK_LOCK_PATH="" TICK_DIRTY_PATH="" TICK_LOCK_RECORD=""
 TICK_TEAM_DIGEST=""
 
@@ -4656,6 +4662,8 @@ tick_paths_set() { # resolve the current team to its health/log directory
   TICK_JOURNAL="$TICK_DIR/transitions"
   TICK_CACHE_COMPACTION_JOURNAL="$TICK_DIR/cache-compactions"
   TICK_ALERTS="$TICK_DIR/alerts"
+  TICK_CURSOR="$TICK_DIR/cursor"
+  TICK_PARTIAL="$TICK_DIR/partial"
 }
 
 tick_state_prepare() {
@@ -4862,11 +4870,11 @@ tick_result_claim() { # hold the result guard unless a newer ticket committed
 
 tick_result_release() { tick_result_guard_drop; }
 
-tick_health_ok() {
-  local rc=0
+tick_health_ok() { # optional $1 note for a pass that completed short of the roster
+  local rc=0 note="${1:-}"
   tick_result_claim || return $?
-  tick_log_store ok "tick completed for $SESSION" || rc=$?
-  [ "$rc" -ne 0 ] || tick_health_store ok "" || rc=$?
+  tick_log_store ok "tick completed for $SESSION${note:+: $note}" || rc=$?
+  [ "$rc" -ne 0 ] || tick_health_store ok "$note" || rc=$?
   [ "$rc" -ne 0 ] || alert_state_refresh || rc=$?
   tick_result_release
   return "$rc"
@@ -5360,6 +5368,31 @@ tick_lock_recovered() { # $1 diagnostic; lock already retired, no pass ran
   return 1
 }
 
+tick_deadline_valid() { # $1 GANG_TICK_DEADLINE value; whole seconds, 60 to 3600
+  # The bound is checked by string length before any numeric test: the shell's
+  # `[` rejects a number wider than a machine word, and the lock arithmetic
+  # multiplies the seconds by two thousand million, so an unbounded value would
+  # overflow lock expiry and reclaim ages into negative numbers. Leading zeros
+  # are refused because shell arithmetic reads them as octal.
+  case "$1" in
+    ''|*[!0-9]*|0*)
+      printf 'GANG_TICK_DEADLINE must be a whole number of seconds, got %s%s\n' \
+        "'$1'" "$(config_origin_note GANG_TICK_DEADLINE)" >&2
+      return 1 ;;
+  esac
+  [ "${#1}" -le 4 ] && [ "$1" -le 3600 ] || {
+    printf 'GANG_TICK_DEADLINE must be at most 3600 seconds, got %s%s\n' \
+      "$1" "$(config_origin_note GANG_TICK_DEADLINE)" >&2
+    return 1
+  }
+  [ "$1" -ge 60 ] || {
+    printf 'GANG_TICK_DEADLINE must be at least 60 seconds, got %s%s\n' \
+      "$1" "$(config_origin_note GANG_TICK_DEADLINE)" >&2
+    return 1
+  }
+  return 0
+}
+
 tick_lock_expired() { # holder pid token pgrp acquired age_ns format [mtime_ns legacy_age namespace]
   local holder="$1" pid="$2" token="$3" pgrp="$4"
   local acquired="$5" age_ns="$6" format="$7"
@@ -5459,14 +5492,20 @@ tick_lock_expired() { # holder pid token pgrp acquired age_ns format [mtime_ns l
   return 0
 }
 
-tick_lock_acquire() { # 0 owner, 75 live owner was marked dirty, other = fault
+tick_lock_acquire() { # 0 owner, 75 live owner was marked dirty, 77 owner unseen, other = fault
   local holder="" again="" err="" read_rc=0 read_races=0 guard_rc=0
   local pid="" token="" pgrp="" acquired="" namespace="" extra="" age_ns=0 now_ns=0 mtime_ns=0 legacy_age=0 now=0
   local format="" expired_rc=0 self_namespace=""
   tick_lock_paths_set || return 1
+  # THE WORKER'S BUDGET IS THE CONFIGURED ONE, HANDED DOWN BY ITS CONTROLLER.
+  # The deadline controller exports the budget it enforces; the lock arithmetic
+  # below spends that same number, so a worker started with any other value
+  # would age locks against a deadline nobody is enforcing.
+  tick_deadline_valid "$GANG_TICK_DEADLINE" || return 1
   case "${GANG_TICK_DEADLINE_SECONDS:-}" in
-    60) ;;
-    *) printf 'tick worker has no production 60-second deadline budget\n' >&2; return 1 ;;
+    "$GANG_TICK_DEADLINE") ;;
+    *) printf 'tick worker deadline budget %s is not the configured GANG_TICK_DEADLINE of %ss\n' \
+         "${GANG_TICK_DEADLINE_SECONDS:-unset}" "$GANG_TICK_DEADLINE" >&2; return 1 ;;
   esac
   lock_self_pid
   tick_process_read "$LOCK_SELF_PID"
@@ -5563,7 +5602,13 @@ tick_lock_acquire() { # 0 owner, 75 live owner was marked dirty, other = fault
         printf 'tick lock %s names pid %s without a pid namespace, and this process cannot see every namespace; lock was retained\n' \
           "$TICK_LOCK_PATH" "$pid" >&2
       fi
-      return 1
+      # AN OWNER THIS READER CANNOT SEE IS NOT A FAILED TICK. A contender in a
+      # sandbox with its own pid table cannot tell a live host owner from a
+      # dead one, so it retains the lock and stops; a reader in the initial
+      # namespace resolves the same record on the next candidate. Committing
+      # failed health here made every sandboxed agent's post-command tick
+      # raise "last tick failed" against a team whose passes were running.
+      return 77
     fi
     if [ "$TICK_PROCESS_STATE" = unknown ]; then
       printf 'tick lock %s held by pid %s has unreadable process identity; lock was retained\n' "$TICK_LOCK_PATH" "$pid" >&2
@@ -5744,18 +5789,60 @@ tick_delivery_release() { # $1 window; clear only this worker's marker
     || tmux set-option -uw -t "$1" @gl_tick_delivery 2>/dev/null || true
 }
 
+tick_soft_budget_spent() { # 0 once the pass has used its share of the worker's deadline
+  [ -n "${TICK_SOFT_BUDGET_S:-}" ] && [ -n "${TICK_STARTED_S:-}" ] || return 1
+  [ $((SECONDS - TICK_STARTED_S)) -ge "$TICK_SOFT_BUDGET_S" ]
+}
+
+tick_roster_rotate() { # stdin roster lines, $1 cursor window id: the lines after it, then the rest
+  awk -v cursor="$1" '
+    { line[NR] = $0; if ($1 == cursor) at = NR }
+    END {
+      if (!at) { for (i = 1; i <= NR; i++) print line[i]; exit }
+      for (i = at + 1; i <= NR; i++) print line[i]
+      for (i = 1; i <= at; i++) print line[i]
+    }'
+}
+
 tick_full_pass_once() {
   local id agent collar special wins rc=0 pass_rc=0 err="" pending="" busy_rc=0
   local compact_note="" compact_rc=0 cache_rc=0 compacted=0
+  local cursor="" last="" visited=0 total=0 partial=0
   local TICK_PASS=1 GLYPH_SOURCE=tick
   alert_ui_ensure || { printf 'tick could not install the tmux alert center\n' >&2; rc=1; }
   wins="$(tmux list-windows -t "=$SESSION" \
     -F '#{window_id} #{@gl_agent} #{@gl_collar} #{@gl_tick_alerts}')" \
     || { printf "tick could not list windows in session '%s'\n" "$SESSION" >&2; return 1; }
+  # A PASS THAT CANNOT FINISH THE ROSTER INSIDE ITS BUDGET STOPS AND SAYS WHERE.
+  # One visit costs on the order of a second of tmux round trips, so a large
+  # team overran the fixed deadline, the controller killed the worker, and
+  # health failed with nothing visited to show for it. The pass now stops
+  # visiting once the worker has spent its soft share of that deadline, leaves
+  # the last visited window as a cursor, and reports the pass partial; the
+  # next pass starts after the cursor, so every agent is reached within a few
+  # passes and no single pass is ever killed for being thorough. A complete
+  # pass removes the cursor. The soft share leaves the deadline room for the
+  # visit in flight and for committing the result.
+  if [ -n "$TICK_CURSOR" ] && [ -r "$TICK_CURSOR" ]; then
+    IFS= read -r cursor < "$TICK_CURSOR" || cursor=""
+  fi
+  [ -z "$cursor" ] || wins="$(printf '%s\n' "$wins" | tick_roster_rotate "$cursor")"
+  total="$(printf '%s\n' "$wins" | awk '$1 != "" && $2 != "" && $3 != "" && $4 != 1 { n++ } END { print n + 0 }')"
   while read -r id agent collar special; do
     [ -n "$id" ] || continue
     [ "$special" != 1 ] || continue
     [ -n "$agent" ] && [ -n "$collar" ] || continue
+    # The first visit is always made: a budget the pass cannot fit one visit in
+    # would otherwise make progress zero and the cursor stationary.
+    if [ "$visited" -gt 0 ] && tick_soft_budget_spent; then
+      partial=1
+      break
+    fi
+    last="$id"
+    visited=$((visited + 1))
+    if [ "${GANG_TEST_COLLARS:-}" = 1 ] && [ -n "${GANG_TEST_TICK_VISIT_LEDGER:-}" ]; then
+      printf '%s\n' "$agent" >> "$GANG_TEST_TICK_VISIT_LEDGER"
+    fi
     if ! load_collar "$collar"; then
       printf "tick could not load collar '%s' for %s\n" "$collar" "$agent" >&2
       rc=1
@@ -5880,6 +5967,19 @@ tick_full_pass_once() {
       rc=1
     fi
   done <<<"$wins"
+  if [ -n "$TICK_CURSOR" ]; then
+    if [ "$partial" -eq 1 ]; then
+      tick_state_prepare
+      if ! { printf '%s\n' "$last" > "$TICK_CURSOR" \
+             && printf '%s of %s\n' "$visited" "$total" > "$TICK_PARTIAL"; }; then
+        printf 'tick visited %s of %s agents within its budget but could not record where to resume\n' \
+          "$visited" "$total" >&2
+        rc=1
+      fi
+    else
+      rm -f -- "$TICK_CURSOR" "$TICK_PARTIAL"
+    fi
+  fi
   return "$rc"
 }
 
@@ -5902,21 +6002,24 @@ tick_successor_arm() { # establish the successor before letting go of the tick l
   # could fail to wait, and nothing is left on disk. A launcher that does not
   # return success is this owner's failure rather than a marker quietly left
   # for whoever ticks next. Nothing is armed under the manual test tick mode,
-  # which tests use to run the successor themselves.
-  local done_fifo="" launcher=""
+  # which tests use to run the successor themselves. A successor armed for a
+  # partial pass is marked a continuation and arms no continuation of its own;
+  # the suite's done fifo reads c for one and d for an ordinary successor.
+  local done_fifo="" launcher="" continuation=0
+  [ "${1:-}" != continuation ] || continuation=1
   if [ "${GANG_TEST_COLLARS:-}" = 1 ]; then
     [ "${GANG_TEST_TICK_MODE:-}" != manual ] || return 0
     done_fifo="${GANG_TEST_TICK_SUCCESSOR_DONE_FIFO:-}"
   fi
   tick_successor_release
-  { exec {TICK_HANDOVER_FD}> >(GANG_TICK_INTERNAL=1 python3 -c '
+  { exec {TICK_HANDOVER_FD}> >(GANG_TICK_INTERNAL=1 GANG_TICK_CONTINUATION="$continuation" python3 -c '
 import subprocess, sys
 subprocess.Popen(sys.argv[1:], stdin=0, stdout=subprocess.DEVNULL,
                  stderr=subprocess.DEVNULL, start_new_session=True)
 ' bash -c 'IFS= read -r _ || :
 exec </dev/null >/dev/null 2>&1
 "$1" tick
-[ -z "$2" ] || printf d > "$2"' _ "$ROOT/bin/gang" "$done_fifo" >/dev/null 2>&1); } 2>/dev/null \
+[ -z "$2" ] || printf %s "$3" > "$2"' _ "$ROOT/bin/gang" "$done_fifo" "$([ "$continuation" -eq 1 ] && printf c || printf d)" >/dev/null 2>&1); } 2>/dev/null \
     || { TICK_HANDOVER_FD=""; return 1; }
   launcher=$!
   wait "$launcher" || { tick_successor_release; return 1; }
@@ -5930,19 +6033,26 @@ tick_successor_release() { # let an armed successor start; nothing when none is 
   return 0
 }
 
-cmd_tick_worker() { # internal owner; 75 contention, 76 committed failed pass
+cmd_tick_worker() { # internal owner; 75 contention, 76 committed failed pass, 77 owner unseen
   local rc=0 lock_rc=0 pass=0 pass_output="" output="" committed=0 handover=0
-  local dirty_path=""
+  local dirty_path="" partial="" TICK_STARTED_S="$SECONDS" TICK_SOFT_BUDGET_S=""
   [ $# -eq 0 ] || die "internal tick worker takes no arguments"
   session_live || return 0
   tick_team_digest_set || return 1
+  tick_paths_set || return 1
   if [ -z "${GANG_TICK_TICKET:-}" ]; then
     GANG_TICK_TICKET="$(tick_ticket_mint)" || return 1
   fi
   tick_lock_acquire || lock_rc=$?
   [ "$lock_rc" -eq 0 ] || return "$lock_rc"
+  # The budget arithmetic follows acquisition, which admitted only the
+  # configured deadline; a rejected value never reaches the shell's parser.
+  TICK_SOFT_BUDGET_S=$((GANG_TICK_DEADLINE_SECONDS * 2 / 3))
+  if [ "${GANG_TEST_COLLARS:-}" = 1 ] && [ -n "${GANG_TEST_TICK_SOFT_BUDGET_S:-}" ]; then
+    TICK_SOFT_BUDGET_S="$GANG_TEST_TICK_SOFT_BUDGET_S"
+  fi
   while :; do
-    rm -f -- "$TICK_DIRTY_PATH"
+    rm -f -- "$TICK_DIRTY_PATH" "$TICK_PARTIAL"
     pass=$((pass + 1))
     if [ "${GANG_TEST_COLLARS:-}" = 1 ] && [ -n "${GANG_TEST_TICK_LEDGER:-}" ]; then
       printf '%s\n' "$pass" >> "$GANG_TEST_TICK_LEDGER"
@@ -5953,10 +6063,14 @@ cmd_tick_worker() { # internal owner; 75 contention, 76 committed failed pass
       printf x > "$GANG_TEST_TICK_READY_FIFO"
       IFS= read -r _ < "$GANG_TEST_TICK_RELEASE_FIFO" || true
     fi
-    rc=0 pass_output=""
+    rc=0 pass_output="" partial=""
     pass_output="$(tick_full_pass_once 2>&1)" || rc=$?
     if [ -n "$pass_output" ]; then
       output="${output:+$output$'\n'}$pass_output"
+    fi
+    if [ -r "$TICK_PARTIAL" ]; then
+      IFS= read -r partial < "$TICK_PARTIAL" || partial=""
+      rm -f -- "$TICK_PARTIAL"
     fi
     # ONE RERUN CONSUMES THE EDGE; A SECOND EDGE GETS A FRESH WORKER. Every
     # contender that finds a live owner marks it dirty and exits, trusting the
@@ -5969,7 +6083,22 @@ cmd_tick_worker() { # internal owner; 75 contention, 76 committed failed pass
     # bound is what the contract already promised. The marker is not dropped:
     # the released lock and a detached successor carry it to a pass that starts
     # after the edge, which is all a contender was ever owed.
-    if [ -e "$TICK_DIRTY_PATH" ]; then
+    if [ -n "$partial" ] && { [ "${GANG_TICK_CONTINUATION:-0}" != 1 ] || [ -e "$TICK_DIRTY_PATH" ]; }; then
+      # A PARTIAL PASS HANDS THE REST OF THE ROSTER TO A SUCCESSOR ON A FRESH
+      # CLOCK. Rerunning in this worker would spend the remainder of a deadline
+      # the pass already declared short; the successor starts after the cursor
+      # and consumes any dirty marker set meanwhile the way it always has. The
+      # successor is marked a continuation and arms no continuation of its own,
+      # so a roster too large for two passes is finished by the ordinary
+      # post-command ticks rather than by a chain that never ends; a marker set
+      # during a continuation's pass is still owed its successor.
+      if tick_successor_arm continuation; then
+        handover=1
+      else
+        rc=1
+        output="${output:+$output$'\n'}the pass stopped at $partial agents and the successor tick for the rest could not be armed"
+      fi
+    elif [ -e "$TICK_DIRTY_PATH" ]; then
       [ "$pass" -ge "$TICK_PASS_BOUND" ] || continue
       if tick_successor_arm; then
         handover=1
@@ -5988,7 +6117,7 @@ cmd_tick_worker() { # internal owner; 75 contention, 76 committed failed pass
     fi
     committed=0
     if [ "$rc" -eq 0 ]; then
-      if tick_health_ok; then
+      if tick_health_ok "${partial:+partial pass: $partial agents visited within the tick budget; a successor tick continues after the cursor}"; then
         committed=1
       else
         output="${output:+$output$'\n'}the tick completed but its health or alert state could not be written"
@@ -6036,9 +6165,11 @@ cmd_tick() { # public synchronous seam; its worker is always self-deadlined
   [ $# -eq 0 ] || die "tick: takes no arguments"
   session_live || return 0
   require_python3
+  tick_deadline_valid "$GANG_TICK_DEADLINE" || exit 1
   tick_team_digest_set || return 1
   GANG_TICK_TICKET="$(tick_ticket_mint)" || return 1
   out="$(GANG_TICK_INTERNAL=1 GANG_TICK_TICKET="$GANG_TICK_TICKET" \
+    GANG_TICK_DEADLINE="$GANG_TICK_DEADLINE" \
     "$ROOT/libexec/gang-tick-deadline" \
     --clock-helper "$GANGLINE_CLOCK_HELPER" \
     "$ROOT/bin/gang" __tick-worker 2>&1)" || rc=$?
@@ -6046,6 +6177,8 @@ cmd_tick() { # public synchronous seam; its worker is always self-deadlined
     0) return 0 ;;
     75) return 0 ;;
     76) [ -z "$out" ] || printf '%s\n' "$out" >&2
+        return 1 ;;
+    77) [ -z "$out" ] || printf '%s\n' "$out" >&2
         return 1 ;;
     *) [ -z "$out" ] || printf '%s\n' "$out" >&2
        if [ "${GANG_TEST_COLLARS:-}" = 1 ] \
@@ -15937,6 +16070,7 @@ config_effective() { # $1 settable key -> the value its consumers read
     GANG_CHURN_WAIT) printf '%s' "$GANG_CHURN_WAIT" ;;
     GANG_ACTIVITY_WINDOW) printf '%s' "$GANG_ACTIVITY_WINDOW" ;;
     GANG_TURN_LIMIT) printf '%s' "$GANG_TURN_LIMIT" ;;
+    GANG_TICK_DEADLINE) printf '%s' "$GANG_TICK_DEADLINE" ;;
     *) die "internal: no effective config value for $1" ;;
   esac
 }
