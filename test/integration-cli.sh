@@ -559,6 +559,33 @@ refuses "gang config refuses a context-band threshold out of order under its ori
   "GANG_CONTEXT_BANDS entry '*' thresholds must strictly increase in their configured order, got '25%' after '50%' (from the environment)" \
   env GANG_CONFIG_DIR="$CONFIG_CASES/report" \
     GANG_CONTEXT_BANDS='*=first@50%:first|second@25%:second' "$GANG" config
+refuses "gang config refuses a leading-zero context-band percentage before it can fire" \
+  "GANG_CONTEXT_BANDS entry '*' band 'first' has invalid threshold '08%' (from the environment)" \
+  env GANG_CONFIG_DIR="$CONFIG_CASES/report" \
+    GANG_CONTEXT_BANDS='*=first@08%:first' "$GANG" config
+refuses "gang config refuses an empty global context-band entry instead of disabling lights" \
+  "GANG_CONTEXT_BANDS entry '*' is empty: write off or NAME@THRESHOLD:TEMPLATE (from the environment)" \
+  env GANG_CONFIG_DIR="$CONFIG_CASES/report" GANG_CONTEXT_BANDS='*=' "$GANG" config
+refuses "gang config refuses an empty collar context-band entry instead of disabling only that collar" \
+  "GANG_CONTEXT_BANDS entry 'codex/*' is empty: write off or NAME@THRESHOLD:TEMPLATE (from the environment)" \
+  env GANG_CONFIG_DIR="$CONFIG_CASES/report" \
+    GANG_CONTEXT_BANDS='*=global@25%:global;codex/*=' "$GANG" config
+refuses "gang config refuses a context-band map whose final entry was dropped by its delimiter" \
+  "GANG_CONTEXT_BANDS must not end with ';' (from the environment)" \
+  env GANG_CONFIG_DIR="$CONFIG_CASES/report" \
+    GANG_CONTEXT_BANDS='*=first@25%:first;' "$GANG" config
+refuses "gang config refuses a context-band list whose final band was dropped by its delimiter" \
+  "GANG_CONTEXT_BANDS entry '*' must not end its band list with '|' (from the environment)" \
+  env GANG_CONFIG_DIR="$CONFIG_CASES/report" \
+    GANG_CONTEXT_BANDS='*=first@25%:first|' "$GANG" config
+refuses "gang config refuses a context-band map split across environment lines" \
+  "GANG_CONTEXT_BANDS must stay on one line (from the environment)" \
+  env GANG_CONFIG_DIR="$CONFIG_CASES/report" \
+    GANG_CONTEXT_BANDS=$'*=first@25%:first\ncodex/*=ignored' "$GANG" config
+refuses "gang config recognizes no fourth wildcard context-band selector" \
+  "GANG_CONTEXT_BANDS entry '*/*=first@25%:first' must select COLLAR/MODEL, COLLAR/*, or * (from the environment)" \
+  env GANG_CONFIG_DIR="$CONFIG_CASES/report" \
+    GANG_CONTEXT_BANDS='*/*=first@25%:first;*=global@50%:global' "$GANG" config
 refuses "a context-band override without its global default is refused at config load" \
   "GANG_CONTEXT_BANDS needs a '*' global default alongside any collar override (from the environment)" \
   env GANG_CONFIG_DIR="$CONFIG_CASES/report" \

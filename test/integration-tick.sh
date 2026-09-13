@@ -1540,8 +1540,9 @@ printf '%s' '{"hook_event_name":"Stop"}' \
 # its native context source is over the first configured light. Each negative
 # case changes exactly one eligibility fact from that ready state.
 : > "$tick_cache_stamp"
-GANG_CACHE_COMPACTION='tick-cache=120:90' "$HITCH" tick-cache -c tick-cache \
-  -l 50000,75000 -d /tmp >/dev/null
+GANG_CONTEXT_BANDS='*=checkpoint@50%:Checkpoint {band}' \
+  GANG_CACHE_COMPACTION='tick-cache=120:90' "$HITCH" tick-cache -c tick-cache \
+  -d /tmp >/dev/null
 tick_cache_id="$(window_id tick-cache)"
 tmux set-option -w -t "$tick_cache_id" @gl_session "$tick_cache_stamp"
 tick_cache_ready() {
@@ -1556,6 +1557,8 @@ tick_cache_ready
 GANG_CACHE_COMPACTION='tick-cache=120:90' GANG_TEST_TICK_MODE=sync \
   "$GANG" tick >/dev/null
 equal "an idle context inside its cache-expiry margin is compacted" 1 \
+  "$(tick_cache_count)"
+equal "a tick reads an idle custom-band agent without aborting its pass" 1 \
   "$(tick_cache_count)"
 tick_cache_digest="$(python3 -c 'import hashlib,sys; print(hashlib.sha256((sys.argv[1]+"\0"+sys.argv[2]).encode()).hexdigest()[:24])' \
   "$(tmux display-message -p -t "=$GANG_SESSION" '#{socket_path}')" "$GANG_SESSION")"
@@ -1616,7 +1619,8 @@ equal "a malformed marker never submits another automatic compaction" 3 \
 tmux set-option -uw -t "$tick_cache_id" @gl_cache_compact_gap
 
 tick_cache_ready
-tmux set-option -w -t "$tick_cache_id" @gl_context_lights 95000,99000
+tmux set-option -w -t "$tick_cache_id" @gl_context_bands \
+  'checkpoint@95%:Checkpoint {band}'
 GANG_CACHE_COMPACTION='tick-cache=120:90' GANG_TEST_TICK_MODE=sync \
   "$GANG" tick >/dev/null
 equal "context below the first band is not compacted" 3 "$(tick_cache_count)"

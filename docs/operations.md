@@ -341,6 +341,9 @@ semicolon-separated entries in this form:
 GANG_CONTEXT_BANDS='*=checkpoint@50%:Checkpoint: compact {agent} soon.|urgent@80%:Urgent: compact {agent} now.;codex/gpt-5.6-terra=checkpoint@45%:Checkpoint {context_pct}%: compact {agent}.|urgent@75%:Urgent {context_pct}%: compact {agent} now.'
 ```
 
+That is a shell assignment, so its outer single quotes are not part of the
+value. Omit them in the literal `config` file.
+
 An entry is `SELECTOR=BAND@THRESHOLD:TEMPLATE|...`. Names use letters, digits,
 dot, dash, or underscore. Thresholds are positive, strictly increasing, and
 all tokens or all percentages; percentages are below 100. `*` is required as
@@ -363,11 +366,12 @@ Templates are literal except for these placeholders:
 | `{agent}`, `{harness}`, `{band}` | Registered agent name, collar name, and fired band name | Every firing. |
 
 Unknown or unmatched braces, an unsupported placeholder, malformed selectors,
-or unordered thresholds refuse while configuration loads and name the source
-line; they never wait for a native hook. Semicolon, pipe, and tab delimit the
-literal map grammar and are not allowed inside a template. Notes are pasted into
-the recipient's context and reread every turn, so default templates should stay
-short and action-oriented.
+empty entries, delimiter-truncated lists, or unordered thresholds refuse while
+configuration loads and name the source line; they never wait for a native hook.
+Semicolon, pipe, and tab delimit the literal map grammar and are not allowed
+inside a template. Notes are pasted into the recipient's context and reread
+every turn, so the shipped legacy defaults and operator templates stay short and
+action-oriented.
 
 If one observation jumps across several thresholds, Gangline emits their
 rendered messages once and in configured order. It does not repeat one during
