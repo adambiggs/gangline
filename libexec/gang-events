@@ -1,0 +1,146 @@
+#!/usr/bin/env python3
+# SPDX-License-Identifier: Apache-2.0
+"""Append and read Gangline's durable diagnostic event stream."""
+
+import argparse
+import fcntl
+import json
+import os
+import sys
+import time
+
+
+class EventError(Exception):
+    pass
+
+
+# Two complete generations put a fixed ceiling on diagnostic storage while a
+# lock spans only one append and possible rename.  The reader takes the same
+# lock, so it never calls an interleaved/partial JSON line evidence.
+GENERATION_BYTES = 8 * 1024 * 1024
+
+
+def whole(value, field):
+    if not isinstance(value, int) or isinstance(value, bool) or value < 0:
+        raise EventError(f"{field} must be a non-negative whole number")
+    return value
+
+
+def facts(value):
+    try:
+        parsed = json.loads(value)
+    except ValueError as err:
+        raise EventError(f"facts are not JSON: {err}") from err
+    if not isinstance(parsed, dict):
+        raise EventError("facts must be a JSON object")
+    return parsed
+
+
+def event(args):
+    if not args.team or not args.agent or not args.kind:
+        raise EventError("team, agent, and kind are required")
+    row = {
+        "v": 2,
+        "monotonic_ns": time.monotonic_ns(),
+        "team": args.team,
+        "team_created": whole(args.team_created, "team_created"),
+        "agent": args.agent,
+        "kind": args.kind,
+        "facts": facts(args.facts),
+    }
+    data = (json.dumps(row, sort_keys=True, ensure_ascii=False, separators=(",", ":")) + "\n").encode()
+    try:
+        os.makedirs(os.path.dirname(args.events), exist_ok=True)
+        lock = os.open(args.events + ".lock", os.O_CREAT | os.O_RDWR, 0o600)
+        try:
+            fcntl.flock(lock, fcntl.LOCK_EX)
+            if os.path.exists(args.events) and os.path.getsize(args.events) + len(data) > GENERATION_BYTES:
+                os.replace(args.events, args.events + ".1")
+            fd = os.open(args.events, os.O_APPEND | os.O_CREAT | os.O_WRONLY, 0o600)
+            try:
+                written = os.write(fd, data)
+            finally:
+                os.close(fd)
+        finally:
+            fcntl.flock(lock, fcntl.LOCK_UN)
+            os.close(lock)
+    except OSError as err:
+        raise EventError(f"cannot append {args.events}: {err}") from err
+    if written != len(data):
+        raise EventError(f"short append to {args.events}")
+
+
+def matching(row, args):
+    if row.get("team") != args.team:
+        return False
+    if args.agent and row.get("agent") != args.agent:
+        return False
+    if args.kind and row.get("kind") != args.kind:
+        return False
+    if args.since is not None and row.get("monotonic_ns", -1) < args.since:
+        return False
+    return True
+
+
+def read(args):
+    try:
+        lock = os.open(args.events + ".lock", os.O_CREAT | os.O_RDWR, 0o600)
+        fcntl.flock(lock, fcntl.LOCK_SH)
+    except OSError as err:
+        raise EventError(f"cannot lock {args.events}: {err}") from err
+    try:
+        for path in (args.events + ".1", args.events):
+            try:
+                source = open(path, encoding="utf-8")
+            except FileNotFoundError:
+                continue
+            except OSError as err:
+                raise EventError(f"cannot read {path}: {err}") from err
+            with source:
+                for number, raw in enumerate(source, 1):
+                    if not raw.strip():
+                        continue
+                    try:
+                        row = json.loads(raw)
+                    except ValueError as err:
+                        raise EventError(f"{path} line {number} is not JSON: {err}") from err
+                    if not isinstance(row, dict):
+                        raise EventError(f"{path} line {number} is not an object")
+                    if row.get("v") != 2:
+                        continue  # Legacy usage rows are intentionally read only by gang usage.
+                    if matching(row, args):
+                        print(json.dumps(row, sort_keys=True, ensure_ascii=False))
+    finally:
+        fcntl.flock(lock, fcntl.LOCK_UN)
+        os.close(lock)
+
+
+def main():
+    parser = argparse.ArgumentParser(prog="gang-events")
+    commands = parser.add_subparsers(dest="command", required=True)
+    append = commands.add_parser("append")
+    append.add_argument("--events", required=True)
+    append.add_argument("--team", required=True)
+    append.add_argument("--team-created", type=int, required=True)
+    append.add_argument("--agent", required=True)
+    append.add_argument("--kind", required=True)
+    append.add_argument("--facts", required=True)
+    query = commands.add_parser("read")
+    query.add_argument("--events", required=True)
+    query.add_argument("--team", required=True)
+    query.add_argument("--agent")
+    query.add_argument("--kind")
+    query.add_argument("--since", type=int)
+    args = parser.parse_args()
+    if args.command == "append":
+        event(args)
+    else:
+        read(args)
+
+
+if __name__ == "__main__":
+    try:
+        main()
+    except EventError as err:
+        print(f"gang-events: {err}", file=sys.stderr)
+        raise SystemExit(1)

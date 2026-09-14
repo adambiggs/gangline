@@ -319,6 +319,7 @@ GANGLINE_TEAM_ROUTE=new
 
 GANGLINE_CLOCK_HELPER="$ROOT/libexec/gang-clock"
 GANGLINE_USAGE_HELPER="$ROOT/libexec/gang-usage"
+GANGLINE_EVENTS_HELPER="$ROOT/libexec/gang-events"
 GANGLINE_CAP_HELPER="$ROOT/libexec/gang-cap"
 if [ "${GANG_TEST_COLLARS:-}" = 1 ] && [ -n "${GANG_TEST_CLOCK:-}" ]; then
   case "$GANG_TEST_CLOCK" in
@@ -500,6 +501,7 @@ watch agents
   capture   read an agent's pane
   composer  read an agent's input box
   context   read an agent's context
+  log       read durable team event evidence
   limits    read provider usage limits
   usage     read token consumption per agent
   cap       read provider window history
@@ -1018,6 +1020,17 @@ gang context
   gang compact. Where a harness offers no
   readable source this fails loudly instead
   of inventing a number.
+EOF
+      ;;
+    log) cat <<'EOF'
+gang log
+  Read the durable event stream for this live team.
+
+  gang log [name] [--since <monotonic-ns>] [--kind <event-kind>]
+
+  With a name, prints only that agent's JSONL events.  The stream records
+  observations and decisions, not message bodies; use it to answer what an
+  agent saw and what Gangline did next.
 EOF
       ;;
     limits) cat <<'EOF'
@@ -3289,8 +3302,13 @@ recap_continuation_observe() { # $1 window; 0 pending, 1 no current recap, 2 unr
 SELF_COMPACT_STANDING='(still scheduled; gang retries at the next turn boundary)'
 
 self_compact_failed_pending_write() { # $1 window, $2 token, $3 reason
+  local reason
   tmux set-option -w -t "$1" @gl_self_compact_failed \
     "[request:$2] $3 $SELF_COMPACT_STANDING" 2>/dev/null || true
+  reason="$(json_text "$3")"
+  event_log_record "$1" compaction.self-failed \
+    "{\"request_id\":\"$2\",\"reason\":$reason}" \
+    || die 'compaction: failure record could not be appended'
 }
 
 # A NATIVE STOP IS NOT NATIVE IDLE. Some harnesses run Stop hooks before their
@@ -3491,10 +3509,15 @@ self_compact_run() ( # $1 window, $2 collar, $3 exact request token, optional $4
     tmux set-option -uw -t "$win" @gl_self_compact_requested 2>/dev/null || true
     local err="" rc=0 noted=""
     load_collar "$2" || true
+    event_log_record "$win" compaction.dispatched \
+      "{\"mode\":\"self\",\"request_id\":\"$request\"}" \
+      || exit 1
     err="$(self_compact_after_stop "$win" "$2" "${4:-}" "${5:-}" 2>&1)" || rc=$?
     err="${err##*$'\n'}"
     case "$rc" in
       0) tmux set-option -uw -t "$win" @gl_self_compact_failed 2>/dev/null || true
+         event_log_record "$win" compaction.self-completed \
+           "{\"request_id\":\"$request\"}" || exit 1
          tmux set-option -uw -t "$win" @gl_self_compact_noted 2>/dev/null || true ;;
       # A REFUSAL IS "NOT AT THIS BOUNDARY", NEVER "NOT AT ALL" — the same
       # reading spool_drain_dispatch already gives status 3. The composer
@@ -5140,6 +5163,12 @@ tick_alert_history_note() { # guard held; $1 prior state, $2 prior note, $3 stat
     ok:ok|:ok) return 0 ;;
     failed:failed) [ "$2" != "$4" ] || return 0 ;;
   esac
+  case "$1:$3" in
+    failed:ok) event_log_team_record alert.cleared '{"source":"tick-health"}' \
+                 || return 1 ;;
+    *:failed) event_log_team_record alert.raised '{"source":"tick-health"}' \
+                 || return 1 ;;
+  esac
   # ROTATE BEFORE THE APPEND, AND ONLY ONTO A FILE. mv onto a directory moves
   # the journal inside it, where no reader looks. A rotation that cannot land
   # appends nothing: every row stays in place, the bound holds, and the history
@@ -6527,8 +6556,12 @@ cmd_tick() { # public synchronous seam; its worker is always self-deadlined
     --clock-helper "$GANGLINE_CLOCK_HELPER" \
     "$ROOT/bin/gang" __tick-worker 2>&1)" || rc=$?
   case "$rc" in
-    0) return 0 ;;
-    75) return 0 ;;
+    0) event_log_team_record tick.passed '{"outcome":"complete"}' \
+         || die 'tick: successful pass could not be recorded'
+       return 0 ;;
+    75) event_log_team_record tick.held '{"outcome":"another-worker"}' \
+          || die 'tick: contention outcome could not be recorded'
+        return 0 ;;
     76) [ -z "$out" ] || printf '%s\n' "$out" >&2
         return 1 ;;
     77) [ -z "$out" ] || printf '%s\n' "$out" >&2
@@ -6540,6 +6573,8 @@ cmd_tick() { # public synchronous seam; its worker is always self-deadlined
          printf x > "$GANG_TEST_TICK_PARENT_COMMIT_READY_FIFO"
          IFS= read -r _ < "$GANG_TEST_TICK_PARENT_COMMIT_RELEASE_FIFO" || true
        fi
+       event_log_team_record tick.failed '{"outcome":"deadline-or-worker-failure"}' \
+         || printf 'gang: tick failure could not be added to the event stream\n' >&2
        tick_health_fail "$out" || true
        return 1 ;;
   esac
@@ -8684,6 +8719,9 @@ spool_recover_claims() { # $1 = window id; pane lock is held by the caller
     fi
     if mv -- "$claim" "$dest"; then
       recovered=$((recovered + 1))
+      event_log_record "$id" delivery.interrupted \
+        "{\"message_id\":\"${claim##*/sending-}\",\"reason\":\"claim-owner-ended\"}" \
+        || die 'delivery: interrupted claim could not be recorded'
     else
       printf 'claimed spool entry could not be recorded as interrupted and remains held: %s\n' \
         "$claim" >&2
@@ -8944,6 +8982,9 @@ spool_commit() { spool_commit_try || die "$SPOOL_COMMIT_ERROR"; }
 spool_write() { # $1 window, $2 sender, $3 envelope, $4 fragment; sets SPOOL_ENTRY
   spool_stage "$@"
   spool_commit
+  event_log_record "$1" delivery.queued \
+    "{\"message_id\":\"${SPOOL_ENTRY##*/}\",\"sender\":\"$2\"}" \
+    || die 'delivery: the accepted spool entry could not be recorded'
 }
 
 DEFERRED_ERROR=""
@@ -9213,6 +9254,8 @@ spool_archive() { # $1 = window id; move every entry somewhere a person can read
   name="$(agent_name_of "$1" 2>/dev/null)" || name=""
   valid_name "$name" || name="${1#@}"
   spool_dir_archive "$SPOOL_DIR" "$name"
+  event_log_record "$1" delivery.archived '{"reason":"teardown"}' \
+    || die 'delivery: archive outcome could not be recorded'
 }
 
 spool_dir_archive() { # $1 = a spool directory, $2 = the name it archives under
@@ -9517,6 +9560,9 @@ spool_drain() { # $1 window id; whole queue oldest-first; optional $2 = locked
     [ -f "$e" ] || continue
     claim="$SPOOL_DIR/sending-${e##*/}"
     mv -- "$e" "$claim" 2>/dev/null || continue
+    event_log_record "$1" delivery.sending \
+      "{\"message_id\":\"${claim##*/sending-}\"}" \
+      || die 'delivery: the claim could not be recorded'
     spool_read "$claim"
     bundle="${bundle:+$bundle$nl$nl}$SPOOL_BODY"
     frags="${frags:+$frags, }$SPOOL_FRAG"
@@ -9552,6 +9598,9 @@ spool_drain() { # $1 window id; whole queue oldest-first; optional $2 = locked
          [ -n "$claim" ] || continue
          rm -f -- "$claim" \
            || die "delivered $n spooled message(s) and could not remove $claim — it stays claimed rather than live, so nothing will deliver it twice, but the file has to go by hand"
+         event_log_record "$1" delivery.verified \
+           "{\"message_id\":\"${claim##*/sending-}\"}" \
+           || die 'delivery: verification could not be recorded'
        done <<EOF
 $claims
 EOF
@@ -9589,6 +9638,9 @@ EOF
          [ -n "$claim" ] || continue
          unver="$SPOOL_DIR/unverified-${claim##*/sending-}"
          mv -- "$claim" "$unver" || unver="$claim"
+         event_log_record "$1" delivery.held \
+           "{\"message_id\":\"${claim##*/sending-}\",\"reason\":\"submission-unverified\"}" \
+           || die 'delivery: held outcome could not be recorded'
        done <<EOF
 $claims
 EOF
@@ -9603,6 +9655,9 @@ EOF
          [ -n "$claim" ] || continue
          failed="$SPOOL_DIR/failed-${claim##*/sending-}"
          mv -- "$claim" "$failed" || failed="$claim"
+         event_log_record "$1" delivery.held \
+           "{\"message_id\":\"${claim##*/sending-}\",\"reason\":\"verification-failed\"}" \
+           || die 'delivery: held outcome could not be recorded'
        done <<EOF
 $claims
 EOF
@@ -11199,7 +11254,7 @@ context_measure() { # $1 window, collar loaded -> CONTEXT_USED/SIZE/PCT
 CONTEXT_LIGHT=""
 CONTEXT_LIGHT_ERROR=""
 context_light_read() { # $1 = window, collar loaded; named band, or 1 below
-  local threshold i last=0 name="" rc=0
+  local threshold i last=0 name="" armed="" rc=0
   CONTEXT_LIGHT="" CONTEXT_LIGHT_ERROR="" CONTEXT_LIGHT_INDEX=-1
   context_bands_for "$1" || return 1
   context_measure "$1" || rc=$?
@@ -11213,6 +11268,7 @@ context_light_read() { # $1 = window, collar loaded; named band, or 1 below
       threshold="$(( (CONTEXT_SIZE * threshold + 99) / 100 ))"
     fi
     last="$threshold" name="${CONTEXT_BAND_NAMES[$i]}"
+    armed="${armed:+$armed,}$name@$threshold"
     if [ "$CONTEXT_USED" -ge "$threshold" ]; then
       CONTEXT_LIGHT="$name" CONTEXT_LIGHT_INDEX="$i"
     fi
@@ -11225,6 +11281,9 @@ context_light_read() { # $1 = window, collar loaded; named band, or 1 below
     fi
     return 3
   fi
+  event_log_record "$1" context.read \
+    "{\"reading\":\"$CONTEXT_USED/$CONTEXT_SIZE\",\"armed\":\"$armed\",\"band\":\"${CONTEXT_LIGHT:-below}\"}" \
+    || die 'context: the native reading was made but could not be recorded'
   [ "$CONTEXT_LIGHT_INDEX" -ge 0 ] || return 1
 }
 
@@ -11592,6 +11651,11 @@ context_light_note() { # $1 collar; append an edge to ADVISORY_NOTE
   if [ "$rc" -eq 1 ]; then
     [ "$CONTEXT_BAND_CUSTOM" -eq 0 ] \
       || tmux set-option -uw -t "$TMUX_PANE" @gl_context_bands_fired 2>/dev/null || true
+    if [ -n "$previous" ]; then
+      event_log_record "$TMUX_PANE" context.band-changed \
+        "{\"from\":\"$previous\",\"to\":\"below\",\"reading_status\":1}" \
+        || die 'context: a light edge was decided but could not be recorded'
+    fi
     if [ "$previous" = unavailable ]; then
       tmux set-option -uw -t "$TMUX_PANE" @gl_context_miss \; \
         set-option -uw -t "$TMUX_PANE" @gl_context_miss_notified \; \
@@ -11679,6 +11743,9 @@ context_light_note() { # $1 collar; append an edge to ADVISORY_NOTE
   fi
   ADVISORY_NOTE="${ADVISORY_NOTE:+$ADVISORY_NOTE
 }$note"
+  event_log_record "$TMUX_PANE" context.band-changed \
+    "{\"from\":\"${previous:-below}\",\"to\":\"$CONTEXT_LIGHT\",\"reading_status\":$rc}" \
+    || die 'context: a light edge was decided but could not be recorded'
 }
 
 USAGE_YELLOW=0
@@ -13316,6 +13383,9 @@ hitch_launch() {
   hitch_register "$id" "$name" @gl_dir "$dir"
   hitch_register "$id" "$name" @gl_task "$task"
   hitch_register "$id" "$name" @gl_hitched_at "$(date +%s)"
+  event_log_record "$id" agent.hitched \
+    "{\"collar\":\"$prof\",\"resume\":$resume,\"scope\":\"${SCOPE_UNIT:-off}\"}" \
+    || die 'hitch: launch evidence could not be recorded'
   # An explain action belongs to one native process. A resumed window retains
   # its options, so every hitch explicitly retires the prior launch's record.
   hitch_register "$id" "$name" @gl_tick_action ""
@@ -14795,6 +14865,9 @@ cmd_compact() {
       die "self-compaction $self_reason"
     fi
     self_request="$(self_compact_request "$AGENT_ID")"
+    event_log_record "$AGENT_ID" compaction.self-requested \
+      "{\"request_id\":\"$self_request\"}" \
+      || die 'compaction: self request could not be appended'
     if [ -n "$resume" ]; then
       tmux set-option -w -t "$AGENT_ID" @gl_self_compact_resume "$resume" \
         || { tmux set-option -uw -t "$AGENT_ID" @gl_self_compact_requested 2>/dev/null || true
@@ -14835,6 +14908,8 @@ cmd_compact() {
     event_claim_release
     return "$submit_rc"
   fi
+  event_log_record "$AGENT_ID" compaction.dispatched \
+    '{"mode":"peer"}' || die 'compaction: a submitted dispatch could not be appended'
   compact_continue "$AGENT_ID" "$resume"
   lock_release
   for option in @gl_self_compact_failed @gl_self_compact_requested \
@@ -14966,6 +15041,70 @@ launch_record_check() { # $1 = task label; refuse what a record line cannot carr
 }
 
 usage_events_path() { printf '%s' "${XDG_DATA_HOME:-$HOME/.local/share}/gangline/usage/events.jsonl"; }
+
+json_text() { # one JSON string; event facts never interpolate unescaped diagnostics
+  local value="$1"
+  value="${value//\\/\\\\}"
+  value="${value//\"/\\\"}"
+  value="${value//$'\n'/\\n}"
+  value="${value//$'\r'/\\r}"
+  value="${value//$'\t'/\\t}"
+  printf '"%s"' "$value"
+}
+
+# One event stream supersedes a pile of mutable tmux options as the diagnostic
+# record.  The append is deliberately small: it writes one JSON line and never
+# reads, rotates, or retries from a tick path.  A failed append is loud; hiding
+# that fact would recreate the very evidentiary gap this stream exists to close.
+event_log_record() { # $1 window/pane, $2 kind, $3 JSON facts
+  local created agent
+  created="$(usage_team_created)" || return 1
+  case "$created" in ''|*[!0-9]*)
+    printf 'gang: event %s was not recorded: the live team creation epoch is unreadable\n' "$2" >&2
+    return 1 ;;
+  esac
+  agent="$(agent_name_of "$1" 2>/dev/null)" || agent="$1"
+  "$GANGLINE_EVENTS_HELPER" append --events "$(usage_events_path)" \
+    --team "$SESSION" --team-created "$created" --agent "$agent" \
+    --kind "$2" --facts "$3" || {
+      printf 'gang: event %s for %s was not recorded\n' "$2" "$agent" >&2
+      return 1
+    }
+}
+
+event_log_team_record() { # $1 kind, $2 JSON facts
+  local created
+  created="$(usage_team_created)" || return 1
+  case "$created" in ''|*[!0-9]*) return 1 ;; esac
+  "$GANGLINE_EVENTS_HELPER" append --events "$(usage_events_path)" \
+    --team "$SESSION" --team-created "$created" --agent '@team' \
+    --kind "$1" --facts "$2" || {
+      printf 'gang: team event %s was not recorded\n' "$1" >&2
+      return 1
+    }
+}
+
+cmd_log() { # durable evidence for the live team, optionally one agent
+  local name="" since="" kind="" created
+  local -a args=()
+  case "${1:-}" in ''|--*) ;; *) name="$1"; shift ;; esac
+  while [ $# -gt 0 ]; do case "$1" in
+    --since) [ $# -ge 2 ] || die 'log: --since needs a monotonic timestamp'
+             since="$2"; shift 2 ;;
+    --kind) [ $# -ge 2 ] || die 'log: --kind needs an event kind'
+            kind="$2"; shift 2 ;;
+    *) die "log: unexpected argument '$1'" ;;
+  esac; done
+  case "$since" in ''|*[!0-9]*) [ -z "$since" ] || die 'log: --since must be a monotonic whole-number timestamp' ;; esac
+  session_live || die "log: no live team (session '$SESSION' is not running)"
+  if [ -n "$name" ]; then resolve "$name"; name="$(agent_name_of "$AGENT_ID")"; fi
+  created="$(usage_team_created)" || die 'log: could not read the live team creation epoch'
+  [ -z "$name" ] || args+=(--agent "$name")
+  [ -z "$kind" ] || args+=(--kind "$kind")
+  [ -z "$since" ] || args+=(--since "$since")
+  "$GANGLINE_EVENTS_HELPER" read --events "$(usage_events_path)" --team "$SESSION" \
+    "${args[@]}" || die 'log: the event stream could not be read'
+}
 
 usage_team_created() { # print the live session's creation epoch, or nothing
   # READ THROUGH THE SESSION'S WINDOWS, not display-message: display-message
@@ -15690,6 +15829,9 @@ glyph_transition_note() { # $1 window id, $2 agent, $3 previous word, $4 new wor
   local id="$1" src err="" rc=0 gap
   src="${GLYPH_SOURCE:-${cmd:-}}"
   case "$src" in ''|*[!a-z-]*) src=unknown ;; esac
+  event_log_record "$id" state.classified \
+    "{\"from\":\"$3\",\"to\":\"$4\",\"evidence\":\"$src\"}" \
+    || die 'state: a classification transition could not be recorded'
   err="$(glyph_journal_append "$2" "$3" "$4" "$src" 2>&1)" || rc=$?
   [ "$rc" -ne 0 ] || return 0
   err="${err##*$'\n'}"
@@ -17425,7 +17567,9 @@ sys.stdout.write(value)' \
           # close that fails refuses the boundary itself, so the turn stays
           # open and its replies stay answerable.
           reply_threads_close "$window" || exit 1 ;;
-    PreCompact) compaction_state_write "$TMUX_PANE" open
+    PreCompact) event_log_record "$TMUX_PANE" compaction.native-witnessed \
+                  '{"phase":"pre"}' || exit 1
+                compaction_state_write "$TMUX_PANE" open
                 if [ -n "$(tmux show-options -wqv -t "$TMUX_PANE" @gl_compaction_issued 2>/dev/null)" ]; then
                   # Gangline already queued this command's continuation.
                   tmux set-option -w -t "$TMUX_PANE" @gl_recap_handled 1 2>/dev/null || true
@@ -17436,7 +17580,9 @@ sys.stdout.write(value)' \
                   tmux set-option -uw -t "$TMUX_PANE" @gl_recap_handled 2>/dev/null || true
                 fi
                 glyph_write "$TMUX_PANE" "-busy-" ;;
-    PostCompact) compaction_state_write "$TMUX_PANE" closed
+    PostCompact) event_log_record "$TMUX_PANE" compaction.completed \
+                   '{"phase":"post"}' || exit 1
+                 compaction_state_write "$TMUX_PANE" closed
                  # A native implementation that sends only the closing event
                  # still consumes a Gangline-issued ownership marker.
                  if [ -n "$(tmux show-options -wqv -t "$TMUX_PANE" @gl_compaction_issued 2>/dev/null)" ]; then
@@ -17723,6 +17869,8 @@ cmd_drop() {
   spool_archive "$id"
   idle_notice_archive "$id"
   spool_forget "$id"
+  event_log_record "$id" agent.dropped '{"scope":"single"}' \
+    || die 'drop: teardown evidence could not be recorded'
   usage_events_record drop "$id"
   tmux kill-window -t "$id"
   # kill-window does not promise pane-exited on every supported tmux. Any
@@ -17811,6 +17959,8 @@ cmd_down() { # inverse of up: end the whole team's session
     spool_archive "$id"
     idle_notice_archive "$id"
     spool_forget "$id"
+    event_log_record "$id" agent.dropped '{"scope":"team"}' \
+      || die 'down: teardown evidence could not be recorded'
   done <<<"$ids"
   # ONE READING FOR THE WHOLE TEAM: every window ended here gets the same
   # ccusage snapshot, and the teardown pays ccusage's bound once, not per window.
@@ -18169,6 +18319,7 @@ case "$cmd" in
   interrupt) cmd_interrupt "$@" ;;
   compact)  cmd_compact "$@" ;;
   context)  cmd_context "$@" ;;
+  log)      cmd_log "$@" ;;
   usage)    cmd_usage "$@" ;;
   cap)      cmd_cap "$@" ;;
   limits)   cmd_limits "$@" ;;

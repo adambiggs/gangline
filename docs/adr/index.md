@@ -195,6 +195,7 @@ Gangline's durable constraints live in the records below. A record's id is perma
 | [0189](0189-a-tick-pass-stops-at-its-budget-and-resumes-after-a-cursor.md) | A tick pass stops at its budget and resumes after a cursor | accepted | 2026-09-13 |
 | [0190](0190-a-long-command-reports-through-one-transient-host-service.md) | A long command reports through one transient host service | proposed | 2026-09-12 |
 | [0191](0191-context-warnings-are-ordered-bands-settled-at-hitch.md) | Context warnings are ordered bands settled at hitch | proposed | 2026-09-12 |
+| [0192](0192-a-team-event-stream-retains-observations-and-decisions.md) | A team event stream retains observations and decisions | proposed | 2026-09-13 |
 | [0193](0193-a-hook-trust-recovery-is-an-attended-native-launch.md) | A hook-trust recovery is an attended native launch | proposed | 2026-09-13 |
 | [0194](0194-active-host-runs-remain-visible-to-their-stable-owner.md) | Active host runs remain visible to their stable owner | proposed | 2026-09-13 |
 | [0195](0195-cache-bands-select-preservation-before-cache-expiry.md) | Cache bands select preservation before cache expiry | proposed | 2026-09-14 |

@@ -718,7 +718,7 @@ start_parallel_instruments() {
 # below names that closure before any fragment sources: a partial request that
 # omits one refuses with the exact parts to add, rather than failing later on a
 # raw tmux or missing-fixture read.
-integration_parts="cli substrate hitch compose spool readiness hooks notify usage cap tick friction run"
+integration_parts="cli substrate hitch compose spool readiness hooks notify usage events cap tick friction run"
 integration_declared_parts="$integration_parts"
 integration_selector="${GANG_INTEGRATION_PARTS:-all}"
 IFS=, read -r -a integration_selected_parts <<< "$integration_selector"
@@ -739,7 +739,7 @@ integration_part_dependencies() { # $1 = selectable fragment, stdout = explicit 
     cli) printf '\n' ;;
     substrate|spool|notify|cap|tick|friction) printf 'cli\n' ;;
     run) printf 'cli substrate\n' ;;
-    hitch|compose|usage) printf 'cli substrate\n' ;;
+    hitch|compose|usage|events) printf 'cli substrate\n' ;;
     readiness) printf 'cli substrate compose\n' ;;
     hooks) printf 'cli substrate spool\n' ;;
     *) return 2 ;;
@@ -792,6 +792,7 @@ integration_part hooks && { integration_ran_parts="${integration_ran_parts:+$int
 integration_part hooks && . "$ROOT/test/integration-hooks.sh"
 integration_part notify && { integration_ran_parts="${integration_ran_parts:+$integration_ran_parts }notify"; . "$ROOT/test/integration-notify.sh"; }
 integration_part usage && { integration_ran_parts="${integration_ran_parts:+$integration_ran_parts }usage"; . "$ROOT/test/integration-usage.sh"; }
+integration_part events && { integration_ran_parts="${integration_ran_parts:+$integration_ran_parts }events"; . "$ROOT/test/integration-events.sh"; }
 integration_part cap && { integration_ran_parts="${integration_ran_parts:+$integration_ran_parts }cap"; . "$ROOT/test/integration-cap.sh"; }
 integration_part tick && { integration_ran_parts="${integration_ran_parts:+$integration_ran_parts }tick"; . "$ROOT/test/integration-tick.sh"; }
 integration_part friction && { integration_ran_parts="${integration_ran_parts:+$integration_ran_parts }friction"; . "$ROOT/test/integration-friction.sh"; }

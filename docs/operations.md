@@ -89,6 +89,15 @@ Use a stable `GANG_SESSION`, `GANG_COLLARS`, `GANG_LOCK_DIR`, and absolute
 resolved config root into its agent so nested hitches read the same file and
 doctrine.
 
+## Retained event evidence
+
+Use `gang log NAME` when an investigation needs the chronological facts behind a state row.
+It retains observations and decisions, not message bodies, in the existing Gangline event
+file. Two 8 MiB generations are kept; the next rotation removes the older one. This is a
+bounded diagnostic aid, not a watcher or recovery loop. If an event append fails, Gangline
+refuses the action and names the missing record rather than continuing with an unprovable
+timeline. Copy the event file before its retention window if an incident needs a longer record.
+
 ## Forwarding native stall witnesses
 
 Declare one optional receiver with `gang notify <name>`. Gangline forwards only

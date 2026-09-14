@@ -1608,6 +1608,23 @@ A successful read records the most constrained native window on the target's
 tmux window. `status` and `roster` report that ephemeral evidence without
 sampling again; it dies with the agent window.
 
+### `gang log [name] [--since MONOTONIC_NS] [--kind KIND]`
+
+Reads the live team's durable diagnostic JSONL stream, optionally narrowed to one agent,
+one event kind, or a monotonic timestamp. It is the lead-facing answer to “what did this
+agent see and what did Gangline do?” Context readings and light edges, native and deferred
+compaction, delivery claim outcomes, state transitions, tick outcomes, alert transitions,
+and lifecycle events carry the team, agent, kind, and event-specific facts. Message bodies
+are deliberately excluded.
+
+The stream shares `${XDG_DATA_HOME:-$HOME/.local/share}/gangline/usage/events.jsonl` with
+the pre-existing terminal usage rows; new diagnostic rows use version 2 and do not duplicate
+those version-1 usage records. Gangline retains the current and one prior 8 MiB generation;
+rotation removes the older generation. Appends take one short file lock and perform no scan,
+so a tick cannot grow the log without bound or perform retention work proportional to history.
+An append failure is loud and the event-producing action refuses rather than claiming evidence
+that was not kept.
+
 ### `gang usage [--all]`
 
 Prints token consumption per agent and per model. Gangline supplies the agent,
