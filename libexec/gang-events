@@ -6,8 +6,8 @@ import argparse
 import fcntl
 import json
 import os
+import subprocess
 import sys
-import time
 
 
 class EventError(Exception):
@@ -18,12 +18,31 @@ class EventError(Exception):
 # lock spans only one append and possible rename.  The reader takes the same
 # lock, so it never calls an interleaved/partial JSON line evidence.
 GENERATION_BYTES = 8 * 1024 * 1024
+CLOCK_HELPER = os.path.join(os.path.dirname(os.path.abspath(__file__)), "gang-clock")
 
 
 def whole(value, field):
     if not isinstance(value, int) or isinstance(value, bool) or value < 0:
         raise EventError(f"{field} must be a non-negative whole number")
     return value
+
+
+def monotonic_ns():
+    """Read the one shared clock seam instead of selecting a local domain."""
+    try:
+        result = subprocess.run(
+            [CLOCK_HELPER, "now"],
+            check=False,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            text=True,
+        )
+    except OSError as err:
+        raise EventError(f"cannot read the shared monotonic clock: {err}") from err
+    value = result.stdout.strip()
+    if result.returncode != 0 or not value.isascii() or not value.isdigit():
+        raise EventError("the shared monotonic clock is unreadable")
+    return int(value, 10)
 
 
 def facts(value):
@@ -41,7 +60,7 @@ def prepared_event(args):
         raise EventError("team, agent, and kind are required")
     return {
         "v": 2,
-        "monotonic_ns": time.monotonic_ns(),
+        "monotonic_ns": monotonic_ns(),
         "team": args.team,
         "team_created": whole(args.team_created, "team_created"),
         "agent": args.agent,
