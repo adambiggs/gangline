@@ -1621,11 +1621,11 @@ When the team is live, the reader selects its exact creation epoch. After teardo
 still reads the retained rows for that team name, including a requested recorded agent,
 and says that multiple historical incarnations may be present.
 
-The stream shares `${XDG_DATA_HOME:-$HOME/.local/share}/gangline/usage/events.jsonl` with
-the pre-existing terminal usage rows; new diagnostic rows use version 2 and do not duplicate
-those version-1 usage records. Gangline retains the current and one prior 8 MiB generation;
-rotation removes the older generation, including old terminal-usage rows. Appends take one
-short file lock and perform no scan,
+The stream is `${XDG_DATA_HOME:-$HOME/.local/share}/gangline/events/events.jsonl`.
+It is separate from the unpruned usage and cost record: `gang log` answers what an agent
+saw and what Gangline did, while `gang usage` answers token and teardown history. Gangline
+retains the current and one prior 8 MiB event generation; rotation removes the older one.
+Appends take one short file lock and perform no scan,
 so a tick cannot grow the log without bound or perform retention work proportional to history.
 The caller stages a validated row in tmux and a host-side `run-shell` child performs the
 append, so a sandboxed caller cannot write a private event stream. An append failure is loud
@@ -1656,7 +1656,7 @@ Codex rows carry a standing note that ccusage documents its Codex reader as
 experimental. Live rows are read fresh; ended rows print what was recorded
 when they ended, so a session resumed after that shows in its live row only.
 
-`--all` reads every retained record on this host regardless of team or time. With no
+`--all` reads every record on this host regardless of team or time. With no
 live team the command says so and prints the records for that team name.
 
 Records live in `${XDG_DATA_HOME:-$HOME/.local/share}/gangline/usage/events.jsonl`,
@@ -1666,10 +1666,9 @@ one JSON object per line, appended by `drop` and `down`. Each carries `v` (1),
 `usage_status` and `usage_note`, and where matched ccusage's `usage_agent`,
 `models` (per-model breakdown), `input`, `output`, `cache_read`,
 `cache_write`, and `last_activity`. Fields Gangline did not have are `null`.
-The shared stream retains two 8 MiB generations for all record versions; its
-older generation is replaced at rotation. `gang usage` prints its path, skips
-version 2 diagnostic rows, counts a malformed version 1 row in `not covered`,
-and nothing of it is printed. The caller measures and
+The file is never rewritten or pruned by Gangline; `gang usage` prints its
+path, a line it cannot read as a version 1 record is counted in `not covered`
+and nothing of it is printed, and removing it is `rm`. The caller measures and
 prepares the JSON, then a synchronous tmux `run-shell` child appends it from the
 server's host mount namespace. If that append fails, the prepared JSON is saved
 under the effective archive root's `usage-unrecorded/` directory and its exact path is printed; append

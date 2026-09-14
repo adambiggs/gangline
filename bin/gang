@@ -15084,6 +15084,7 @@ launch_record_check() { # $1 = task label; refuse what a record line cannot carr
 }
 
 usage_events_path() { printf '%s' "${XDG_DATA_HOME:-$HOME/.local/share}/gangline/usage/events.jsonl"; }
+event_log_path() { printf '%s' "${XDG_DATA_HOME:-$HOME/.local/share}/gangline/events/events.jsonl"; }
 
 json_text() { # one JSON string; event facts never interpolate unescaped diagnostics
   local value="$1"
@@ -15176,7 +15177,7 @@ event_log_record() { # $1 window/pane, $2 kind, $3 JSON facts
       printf 'gang: event %s for %s could not be prepared: %s\n' "$2" "$agent" "$prepared" >&2
       return 1
     }
-  event_log_append_prepared "$prepared" "$(usage_events_path)" || {
+  event_log_append_prepared "$prepared" "$(event_log_path)" || {
       printf 'gang: event %s for %s was not recorded\n' "$2" "$agent" >&2
       return 1
     }
@@ -15192,7 +15193,7 @@ event_log_team_record() { # $1 kind, $2 JSON facts
       printf 'gang: team event %s could not be prepared: %s\n' "$1" "$prepared" >&2
       return 1
     }
-  event_log_append_prepared "$prepared" "$(usage_events_path)" || {
+  event_log_append_prepared "$prepared" "$(event_log_path)" || {
       printf 'gang: team event %s was not recorded\n' "$1" >&2
       return 1
     }
@@ -15250,7 +15251,7 @@ cmd_log() { # durable evidence for this team, optionally one agent
   [ -z "$name" ] || args+=(--agent "$name")
   [ -z "$kind" ] || args+=(--kind "$kind")
   [ -z "$since" ] || args+=(--since "$since")
-  "$GANGLINE_EVENTS_HELPER" read --events "$(usage_events_path)" --team "$SESSION" \
+  "$GANGLINE_EVENTS_HELPER" read --events "$(event_log_path)" --team "$SESSION" \
     "${args[@]}" || die 'log: the event stream could not be read'
 }
 

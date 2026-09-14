@@ -19,15 +19,18 @@ remain a small CLI artifact, not a watcher, database, or second transport.
 
 ## Decision
 
-Gangline appends structured, monotonic event lines to its existing event file
-and exposes the current team's filtered stream through `gang log`. Events
-carry the team, agent, kind, and event-specific facts; message bodies are not
-recorded. Two fixed-size generations bound retained diagnostic evidence.
+Gangline appends structured, monotonic event lines to its own event file and
+exposes the current team's filtered stream through `gang log`. Events carry
+the team, agent, kind, and event-specific facts; message bodies are not
+recorded. Two fixed-size generations bound retained diagnostic evidence. The
+separate unpruned usage and cost record remains `gang usage`'s only history.
 
 ## Consequences
 
 The stream gives a lead a causal timeline without retaining private message
-bodies, but older evidence expires on rotation. An append failure is loud and
+bodies, but older event evidence expires on rotation. It does not duplicate
+the long-lived usage record, so investigations use `gang log` for decisions
+and `gang usage` for costs and teardown history. An append failure is loud and
 refuses the event-producing action. The decision is falsified if the stream
 cannot account for a future observed Gangline decision or becomes a polling or
 coordination component.
