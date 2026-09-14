@@ -851,6 +851,8 @@ contains "a green gate says which gates were green" \
   "$gate_default_out" "passed lint and smoke"
 contains "a green gate reports its total wall time" \
   "$gate_default_out" "gate: TIMING total_seconds="
+contains "a green gate reports its lock queue time" \
+  "$gate_default_out" "gate: TIMING queue_seconds="
 contains "a green gate reports snapshot timing" \
   "$gate_default_out" "gate: TIMING part=snapshot seconds="
 contains "a green gate reports lint timing" \

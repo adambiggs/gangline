@@ -36,7 +36,7 @@
 set -euo pipefail
 
 unset GIT_DIR GIT_WORK_TREE GIT_INDEX_FILE GIT_OBJECT_DIRECTORY GIT_COMMON_DIR GIT_PREFIX
-unset GATE_TIMING_STARTED
+unset GATE_QUEUE_STARTED GATE_TIMING_STARTED
 
 # A direct gate from an agent pane can outlive the turn that started it while
 # waiting on the host-wide heavy lock. That leaves a successor sandbox with no
@@ -133,7 +133,7 @@ gate_report_lock_holder() {
 }
 
 if [ $# -eq 0 ] && [ "${_GANGLINE_GATE_LOCKED:-}" != 1 ]; then
-  GATE_TIMING_STARTED="$EPOCHREALTIME"
+  GATE_QUEUE_STARTED="$EPOCHREALTIME"
   command -v flock >/dev/null 2>&1 \
     || { echo "gate: flock is required to serialize the mandatory suite" >&2; exit 1; }
   exec {GATE_HEAVY_LOCK_FD}>> "$GATE_HEAVY_LOCK"
@@ -151,6 +151,7 @@ if [ $# -eq 0 ] && [ "${_GANGLINE_GATE_LOCKED:-}" != 1 ]; then
   elif [ "$lock_rc" -ne 0 ]; then
     exit "$lock_rc"
   fi
+  GATE_TIMING_STARTED="$EPOCHREALTIME"
 
   # Primary ownership makes any surviving owner lock an invariant violation,
   # not something to wait behind silently.
@@ -574,9 +575,14 @@ gate_record_part_timing() { # $1 part name, $2 EPOCHREALTIME start
 }
 
 gate_report_timings() {
-  local ended total part seconds
+  local ended queue total part seconds
   [ -n "${GATE_TIMING_STARTED:-}" ] || return 0
   ended="$EPOCHREALTIME"
+  if [ -n "${GATE_QUEUE_STARTED:-}" ]; then
+    queue="$(awk -v started="$GATE_QUEUE_STARTED" -v ended="$GATE_TIMING_STARTED" \
+      'BEGIN { printf "%.3f", ended - started }')"
+    printf 'gate: TIMING queue_seconds=%s\n' "$queue"
+  fi
   total="$(awk -v started="$GATE_TIMING_STARTED" -v ended="$ended" \
     'BEGIN { printf "%.3f", ended - started }')"
   printf 'gate: TIMING total_seconds=%s\n' "$total"

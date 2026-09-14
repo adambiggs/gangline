@@ -150,11 +150,12 @@ Lint runs concurrently with smoke so lint's full runtime is not added to the
 mandatory critical path. A normal failure does not skip the other mandatory
 evidence; a watchdog expiry cancels the concurrent branch so the gate can
 release the host lock promptly. At its end, the gate prints a `TIMING` line for
-its total wall time and one for each measured part: snapshot, lint, and smoke.
-The five-minute rule is enforced by that observation: a healthy mandatory run
-must stay below five minutes. Record those lines in the change's durable
-`MEASURE.md` evidence, not in standing documentation. If a part cannot meet
-the policy, keep its assertions and move it to the pre-release lane.
+its queue time, total suite wall time, and each measured part: snapshot, lint,
+and smoke. The five-minute rule is enforced by the suite total: a healthy
+mandatory run must stay below five minutes after acquiring the heavy lock.
+Record those lines in the change's durable `MEASURE.md` evidence, not in
+standing documentation. If a part cannot meet the policy, keep its assertions
+and move it to the pre-release lane.
 
 ### The pre-release integration lane
 
