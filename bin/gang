@@ -3466,7 +3466,7 @@ self_compact_claim_failed() { # $1 window, $2 request token, $3 claim diagnostic
 # deferred self-compaction with the bracket wired and watching what each one
 # contributes, not by reading this comment and agreeing with it.
 self_compact_run() ( # $1 window, $2 collar, $3 exact request token, optional $4 the Stop payload,
-                     # optional $5 the witness state the request was bound to
+                     # optional $5 the witness state the request was bound to, $6 retry fact
   local win="$1" request="$3"
   # The compaction delivers, and delivery serializes on the WINDOW's lock, for
   # the same reason spool_event receives the resolved window before draining:
@@ -3520,10 +3520,9 @@ self_compact_run() ( # $1 window, $2 collar, $3 exact request token, optional $4
     tmux set-option -w -t "$win" @gl_self_compact_dispatching "$request" 2>/dev/null \
       || exit 0
     tmux set-option -uw -t "$win" @gl_self_compact_requested 2>/dev/null || true
-    local err="" rc=0 noted="" prior="" reason=""
-    prior="$(tmux show-options -wqv -t "$win" @gl_self_compact_failed 2>/dev/null)" || prior=""
-    case "$prior" in
-      "[request:$request] "*"$SELF_COMPACT_STANDING")
+    local err="" rc=0 noted="" reason=""
+    case "${6:-0}" in
+      1)
         event_log_record "$win" compaction.self-retried \
           "{\"request_id\":\"$request\"}" || exit 1 ;;
     esac
@@ -3627,7 +3626,7 @@ self_compact_witness_verdict() { # $1 window, $2 collar, $3 request token;
 SELF_COMPACT_DISPATCHED=0
 
 self_compact_dispatch() { # $1 window, $2 collar, optional $3 = sync, optional $4 the Stop payload
-  local win="$1" request witness_state=""
+  local win="$1" request witness_state="" prior="" retry=0
   SELF_COMPACT_DISPATCHED=0
   [ -n "$win" ] || return 0
   request="$(tmux show-options -wqv -t "$win" @gl_self_compact_requested 2>/dev/null)" \
@@ -3645,16 +3644,24 @@ self_compact_dispatch() { # $1 window, $2 collar, optional $3 = sync, optional $
     tmux wait-for -S "gang-self-compact-$request" 2>/dev/null || true
     return 0
   fi
+  # A retry belongs to the request while it is still standing. The worker
+  # consumes that request before it dispatches, so reading the prior failure
+  # there races a one-read outcome witness with the event instrumentation.
+  # Carry the already-decided retry fact to the worker instead.
+  prior="$(tmux show-options -wqv -t "$win" @gl_self_compact_failed 2>/dev/null)" || prior=""
+  case "$prior" in
+    "[request:$request] "*"$SELF_COMPACT_STANDING") retry=1 ;;
+  esac
   SELF_COMPACT_DISPATCHED=1
   if [ "${3:-}" = sync ]; then
-    self_compact_run "$win" "$2" "$request" "${4:-}" "$witness_state" </dev/null >/dev/null 2>&1
+    self_compact_run "$win" "$2" "$request" "${4:-}" "$witness_state" "$retry" </dev/null >/dev/null 2>&1
     return 0
   fi
   # THE PAYLOAD TRAVELS WITH THE WORKER. A native-idle witness is read for the
   # turn the Stop named, not for whichever turn is newest by the time the
   # detached worker runs; a tick dispatch carries none and asks about the
   # newest turn instead.
-  ( self_compact_run "$win" "$2" "$request" "${4:-}" "$witness_state" ) </dev/null >/dev/null 2>&1 &
+  ( self_compact_run "$win" "$2" "$request" "${4:-}" "$witness_state" "$retry" ) </dev/null >/dev/null 2>&1 &
   disown
 }
 
