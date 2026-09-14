@@ -1736,7 +1736,8 @@ load_collar() { # $1 = collar name; sets the GANG_* strategy surface
   unset -f collar_context collar_context_lights collar_input collar_overlay \
     collar_session_id collar_live_session_id collar_harness_identity collar_models collar_model_check collar_bricked collar_blocked collar_waiting collar_queued collar_advisory collar_dismiss_advisory \
     collar_last_action collar_cache_stamp collar_usage_limits collar_usage_limits_error \
-    collar_auto_resume_record collar_submitted_prompt collar_native_idle 2>/dev/null || true
+    collar_auto_resume_record collar_submitted_prompt collar_native_idle \
+    collar_recap_boundary 2>/dev/null || true
   # shellcheck source=/dev/null
   . "$f"
   case "$GANG_USAGE_LIGHT_INTERVAL" in
@@ -2986,9 +2987,28 @@ busy() { # $1 = window id; 0 = busy, 1 = not busy, 2 = could not determine
   return 0
 }
 
+compaction_submit() { # $1 window, $2 command; caller holds the pane lock
+  local rc=0
+  tmux set-option -w -t "$1" @gl_compaction_issued 1 \
+    || die "could not record this Gangline-issued compaction before typing it"
+  # `refuse` exits the current shell. The outer shell owns the marker transaction,
+  # so make inject's proved-no-Enter status observable here rather than letting
+  # that exit strand the marker before this rollback can run.
+  ( inject "$1" "$2" head locked ) || rc=$?
+  # Status 3 is inject's proved pre-Enter refusal: no paste or command could
+  # have reached the harness, so retaining ownership would make the next
+  # native recap look Gangline-issued and suppress its required continuation.
+  # Status 5 is deliberately different: Enter may already have acted.
+  if [ "$rc" -eq 3 ]; then
+    tmux set-option -uw -t "$1" @gl_compaction_issued \
+      || die "could not retire the unsubmitted Gangline-compaction marker"
+  fi
+  return "$rc"
+}
+
 self_compact_after_stop() { # $1 window id, $2 collar, optional $3 the Stop payload,
                             # optional $4 the witness state the request was bound to
-  local ready=0 boot="${GANG_BOOT_TIMEOUT:-30}" resume native=0 busy_rc=0
+  local ready=0 boot="${GANG_BOOT_TIMEOUT:-30}" resume native=0 busy_rc=0 submit_rc=0
   load_collar "$2"
   [ "$GANG_SELF_COMPACT" = deferred ] \
     || die "collar '$2' no longer declares deferred self-compaction"
@@ -2997,10 +3017,10 @@ self_compact_after_stop() { # $1 window id, $2 collar, optional $3 the Stop payl
   require_whole GANG_BOOT_TIMEOUT "$boot" seconds
   # A tmux mode routes a paste or Enter to the operator's selection rather
   # than the harness pty. Confirm its current ownership before any readiness
-  # wait: copy-mode cannot become a safe composer by waiting, and this refusal
-  # is the visible retry reason the next native boundary must carry.
+  # wait: a pane mode cannot become a safe composer by waiting, and this
+  # refusal is the visible retry reason the next native boundary must carry.
   pane_mode_free "$1" \
-    || refuse "tmux copy-mode owns the screen after the turn ended (leave with: tmux send-keys -t $1 -X cancel)"
+    || refuse "tmux pane mode owns the screen after the turn ended (attach and leave the mode before retrying)"
   # THE HARNESS'S OWN RECORD OUTRANKS THE PANE. A collar that declares a
   # native-idle witness is one whose composer paints idle before its task has
   # let go of the turn — the Stop hook that dispatched this worker is still
@@ -3048,9 +3068,11 @@ self_compact_after_stop() { # $1 window id, $2 collar, optional $3 the Stop payl
     [ "$busy_rc" -eq 1 ] \
       || { lock_release; refuse "the pane does not read idle after the end of this turn was witnessed"; }
   fi
-  tmux set-option -w -t "$1" @gl_compaction_issued 1 \
-    || { lock_release; die "could not record this Gangline-issued compaction before typing it"; }
-  inject "$1" "$(compact_command)" head locked
+  compaction_submit "$1" "$(compact_command)" || submit_rc=$?
+  if [ "$submit_rc" -ne 0 ]; then
+    lock_release
+    return "$submit_rc"
+  fi
   # Only a collar that can recognise its native recap boundary needs the
   # continuation to survive in the spool. Other deferred collars have no such
   # boundary to drain it and retain their established immediate continuation.
@@ -3197,7 +3219,7 @@ recap_pending_read() { # $1 window; 0 pending, 1 absent, 2 unreadable/malformed
   return 2
 }
 
-recap_continuation_observe() { # $1 window; 0 pending, 1 no current recap, 2 unreadable/unarmable
+recap_continuation_observe_claimed() { # $1 window; caller owns its recap arm claim
   local rc=0 pending_rc=1 issued="" handled="" fragment="post-compaction continuation"
   RECAP_CONTINUATION_WHAT=""
   recap_pending_read "$1" || pending_rc=$?
@@ -3230,6 +3252,26 @@ recap_continuation_observe() { # $1 window; 0 pending, 1 no current recap, 2 unr
   tmux set-option -w -t "$1" @gl_recap_handled 1 2>/dev/null || true
   spool_event "$1" "$(collar_read "$1")"
   return 0
+}
+
+recap_continuation_observe() { # $1 window; 0 pending, 1 no current recap, 2 unreadable/unarmable
+  local claim_rc=0 rc=0
+  # The observation creates durable work. Claim it before the first read rather
+  # than after its spool write: two concurrent state readers may otherwise
+  # each see the same recap, commit distinct continuations, then race only on
+  # the cosmetic marker. A losing observer reports unknown while the owner is
+  # still deciding, never an idle absence.
+  event_claim recap "$1" arm || claim_rc=$?
+  case "$claim_rc" in
+    0) ;;
+    1) RECAP_CONTINUATION_WHAT="another observer is arming this post-compaction continuation"
+       return 2 ;;
+    *) RECAP_CONTINUATION_WHAT="the post-compaction continuation claim could not be established: ${EVENT_CLAIM_ERROR:-unknown claim failure}"
+       return 2 ;;
+  esac
+  recap_continuation_observe_claimed "$1" || rc=$?
+  event_claim_release
+  return "$rc"
 }
 
 # THE AGENT ASKED, SO THE AGENT IS TOLD. cmd_compact prints a promise into the
@@ -4473,7 +4515,7 @@ pane_mode_free() { # $1 = window id; 0 only when tmux will route keys to the pty
     1)
       # MODE CAN END BETWEEN OBSERVATION AND REFUSAL. Confirm the owned state
       # once at the decision edge: a current zero is safe to type into, while
-      # two ones preserve copy-mode byte-for-byte. This also keeps decorative
+      # two ones preserve the operator-owned pane mode byte-for-byte. This also keeps decorative
       # window glyphs out of the verdict; only pane_in_mode is consulted.
       mode="$(tmux display-message -p -t "$pane" '#{pane_in_mode}' 2>/dev/null)" \
         || die "cannot confirm tmux mode state for pane $1 — refusing to send a key whose recipient is unknown"
@@ -4486,21 +4528,21 @@ pane_mode_free() { # $1 = window id; 0 only when tmux will route keys to the pty
   esac
 }
 
-# REPORT ONLY, NEVER CANCEL. Copy-mode is an operator-owned tmux overlay, so
-# Gangline preserves its selection and names the exact key-table escape on the
-# same target. A wait verdict beside this detail is therefore visibly parked
-# work, not a claim that the harness is simply thinking.
+# REPORT ONLY, NEVER CANCEL. tmux exposes only the portable boolean
+# pane_in_mode here: it does not reliably name which operator-owned mode is
+# active, and different modes do not share an escape key. A wait verdict beside
+# this detail is therefore visibly parked work, not a claim that the harness is
+# simply thinking.
 pane_mode_recovery() { # $1 window; 0 + recovery text when a mode owns it, 1 free, 2 unreadable
   local owned="" pane=""
   pane="$(pane_active_id "$1")" || return 2
   owned="$(tmux display-message -p -t "$pane" '#{pane_in_mode}' 2>/dev/null)" || return 2
   case "$owned" in
     0) return 1 ;;
-    # tmux exposes pane_in_mode across supported releases, while pane_mode is
-    # not a portable format. The only pane mode Gangline can leave idle is
-    # copy-mode, so name that stable recovery rather than calling a known mode
-    # unreadable just because its optional label is absent.
-    1) printf 'pane-mode=copy-mode (leave with: tmux send-keys -t %s -X cancel)' "$1" ;;
+    # pane_mode is not a portable format. Do not guess a key from the boolean:
+    # copy-mode and clock-mode both set it, but cancel is not a clock-mode
+    # escape.
+    1) printf 'pane-mode=active (attach and leave it before continuing)' ;;
     *) return 2 ;;
   esac
 }
@@ -7915,6 +7957,47 @@ run_manager_prepare() { # host manager is the boundary that lets a service outli
     || die "run: the local host user manager is unreachable through $RUN_MANAGER_MACHINE; no command was started"
 }
 
+run_manager_recovery_prepare() { # non-dying manager probe for an interrupted launch
+  local manager_user
+  command -v systemctl >/dev/null 2>&1 || return 1
+  manager_user="$(id -un)" || return 1
+  [ -n "$manager_user" ] || return 1
+  RUN_MANAGER_MACHINE="$manager_user@.host"
+  RUN_SYSTEMCTL=(systemctl --user --machine="$RUN_MANAGER_MACHINE")
+  "${RUN_SYSTEMCTL[@]}" show --property=Version --value >/dev/null 2>&1
+}
+
+run_launching_unit_state() { # $1 unit; 0 accepted, 1 absent before acceptance, 2 manager unreadable
+  local unit="$1" out="" rc=0
+  out="$("${RUN_SYSTEMCTL[@]}" show --property=LoadState --value -- "$unit" 2>&1)" || rc=$?
+  # systemctl's not-found spelling differs across releases and transports. It
+  # is the one affirmative absent result; an arbitrary manager error remains
+  # unknown so recovery cannot erase a live host command on a bad read.
+  case "$out" in
+    not-found|not-found$'\n'*|*'could not be found'*|*'not found'*) return 1 ;;
+  esac
+  [ "$rc" -eq 0 ] || return 2
+  case "$out" in
+    loaded|loaded$'\n'*|masked|masked$'\n'*) return 0 ;;
+    *) return 2 ;;
+  esac
+}
+
+run_launching_settle() { # $1 record, $2 unit; caller holds RUN_TEAM_ROOT/.lock
+  local state=0
+  if [ -f "$1/result" ] && [ ! -L "$1/result" ]; then
+    rm -f -- "$1/active" || die "run: could not settle completed launch record $1"
+    return 1
+  fi
+  run_launching_unit_state "$2" || state=$?
+  case "$state" in
+    0) run_record_accepted "$1"; return 0 ;;
+    1) run_record_remove "$1" || die "run: could not retire unaccepted launch record $1"; return 1 ;;
+    2) return 2 ;;
+    *) die "run: internal launch-state reader returned $state" ;;
+  esac
+}
+
 run_file_read() { # $1 run directory, $2 fixed one-line field -> its byte-exact value
   local file="$1/$2" value marked sentinel=$'\034'
   [ -f "$file" ] && [ ! -L "$file" ] \
@@ -7932,6 +8015,31 @@ run_file_read() { # $1 run directory, $2 fixed one-line field -> its byte-exact 
   case "$value" in *$'\n') value="${value%$'\n'}" ;; esac
   case "$value" in *$'\n'*) die "run: result record $1/$2 is not one line" ;; esac
   printf '%s' "$value"
+}
+
+RUN_ACTIVE_STAGE=""
+run_active_stage_read() { # $1 record directory -> RUN_ACTIVE_STAGE launching|active
+  local stage=""
+  stage="$(run_file_read "$1" active)" || return 1
+  # Empty was the original active marker. Keep old durable records recoverable
+  # while every newly written one records whether systemd-run accepted it.
+  case "$stage" in
+    ''|active) RUN_ACTIVE_STAGE=active ;;
+    launching) RUN_ACTIVE_STAGE=launching ;;
+    *) die "run: active declaration $1 has an unknown launch stage '$stage'" ;;
+  esac
+}
+
+run_record_accepted() { # $1 record directory; systemd-run returned success under the team lock
+  # A very short service can finish before its requester regains the lock. Its
+  # finalizer has then written result and removed active; do not recreate a
+  # phantom declaration after that terminal fact.
+  if [ -f "$1/result" ] && [ ! -L "$1/result" ]; then
+    rm -f -- "$1/active" || die "run: could not settle a completed launch record at $1"
+    return 0
+  fi
+  printf 'active\n' > "$1/active" \
+    || die "run: systemd accepted the host service, but its declaration could not be promoted"
 }
 
 run_record_remove() { # $1 exact new record directory after an unarmed launch
@@ -7967,6 +8075,7 @@ run_active_count() { # $1 team root -> current durable active declarations
     [ -e "$dir/active" ] || [ -L "$dir/active" ] || continue
     [ -f "$dir/active" ] && [ ! -L "$dir/active" ] \
       || die "run: active declaration $dir has an unreadable active marker"
+    run_active_stage_read "$dir"
     n=$((n + 1))
   done
   printf '%s' "$n"
@@ -7984,6 +8093,7 @@ run_active_owned_rows() { # $1 stable spool token; RUN_TEAM_ROOT already set
     [ -e "$dir/active" ] || [ -L "$dir/active" ] || continue
     [ -f "$dir/active" ] && [ ! -L "$dir/active" ] \
       || { printf 'run: active declaration under %s has an unreadable active marker\n' "$RUN_TEAM_ROOT" >&2; return 2; }
+    run_active_stage_read "$dir" || return 2
     id="${dir##*/}"
     run_id_valid "$id" \
       || { printf 'run: active declaration has an invalid record id under %s\n' "$RUN_TEAM_ROOT" >&2; return 2; }
@@ -7999,7 +8109,7 @@ run_active_owned_rows() { # $1 stable spool token; RUN_TEAM_ROOT already set
     esac
     [ -n "$unit" ] \
       || { printf 'run: active declaration %s has no service identity\n' "$id" >&2; return 2; }
-    printf '%s\t%s\t%s\n' "$id" "$created" "$unit"
+    printf '%s\t%s\t%s\t%s\n' "$id" "$created" "$unit" "$RUN_ACTIVE_STAGE"
   done
 }
 
@@ -8008,18 +8118,23 @@ run_active_owned_rows() { # $1 stable spool token; RUN_TEAM_ROOT already set
 # a successor's status make an interrupted host request visible without a
 # system-manager probe or an implicit cancellation.
 RUN_ACTIVE_IDS=""
-run_active_window_read() { # $1 window id; sets RUN_ACTIVE_IDS; 2 = unreadable
-  local window="$1" token rows id created unit
+RUN_LAUNCHING_IDS=""
+run_active_window_read() { # $1 window id; sets RUN_ACTIVE_IDS/RUN_LAUNCHING_IDS; 2 = unreadable
+  local window="$1" token rows id created unit stage
   token="$(tmux show-options -wqv -t "$window" @gl_spool)" || return 2
   run_requester_token_valid "$token" || return 2
   run_state_read || return 2
   rows="$(run_active_owned_rows "$token")" || return 2
-  RUN_ACTIVE_IDS=""
-  while IFS=$'\t' read -r id created unit; do
+  RUN_ACTIVE_IDS="" RUN_LAUNCHING_IDS=""
+  while IFS=$'\t' read -r id created unit stage; do
     [ -n "$id" ] || continue
-    if [ -n "$RUN_ACTIVE_IDS" ]; then RUN_ACTIVE_IDS="$RUN_ACTIVE_IDS,$id"
-    else RUN_ACTIVE_IDS="$id"
-    fi
+    case "$stage" in
+      active) if [ -n "$RUN_ACTIVE_IDS" ]; then RUN_ACTIVE_IDS="$RUN_ACTIVE_IDS,$id"
+              else RUN_ACTIVE_IDS="$id"; fi ;;
+      launching) if [ -n "$RUN_LAUNCHING_IDS" ]; then RUN_LAUNCHING_IDS="$RUN_LAUNCHING_IDS,$id"
+                 else RUN_LAUNCHING_IDS="$id"; fi ;;
+      *) return 2 ;;
+    esac
   done <<<"$rows"
 }
 
@@ -8042,7 +8157,7 @@ run_record_create() { # caller holds RUN_TEAM_ROOT/.lock; argv follows --
     && printf '%s\n' "$now" > "$dir/created" \
     && printf '%s\0' "$@" > "$dir/argv" \
     && : > "$dir/output" \
-    && : > "$dir/active" \
+    && printf 'launching\n' > "$dir/active" \
     || { run_record_remove "$dir"; die "run: could not write durable result record under $dir"; }
   RUN_ID="$id"
   RUN_DIR="$dir"
@@ -8092,6 +8207,7 @@ run_start() { # argv follows --
     [ -z "$out" ] || printf '%s\n' "$out" >&2
     die "run: the host service could not be started, so no command was accepted"
   fi
+  run_record_accepted "$RUN_DIR"
   flock -u "$RUN_LOCK_FD"
   [ -z "$out" ] || printf '%s\n' "$out" >&2
   printf '%s\n' "started run $RUN_ID for $RUN_REQUESTER; completion will be delivered with output at $RUN_DIR/output"
@@ -8195,7 +8311,7 @@ run_finish() { # invoked by the service's ExecStopPost finalizer: --finish ID --
 }
 
 run_cancel() { # --cancel ID; agent owners cancel their own stable run identity
-  local id="$1" dir token unit current="" current_token="" rc=0 out=""
+  local id="$1" dir token unit current="" current_token="" rc=0 out="" stage="" settle_rc=0
   run_id_valid "$id" || die "run: '$id' is not a run id"
   session_live || refuse "run: no Gangline team is running"
   run_state_prepare
@@ -8211,32 +8327,84 @@ run_cancel() { # --cancel ID; agent owners cancel their own stable run identity
   [ "$current_token" = "$token" ] \
     || refuse "run: only the stable identity that requested $id may cancel it"
   unit="$(run_file_read "$dir" unit)"
-  printf '%s\n' 'cancellation requested' > "$dir/cancel-requested" \
-    || die "run: could not record the cancellation request at $dir"
+  exec {RUN_LOCK_FD}>"$RUN_TEAM_ROOT/.lock" \
+    || die "run: cannot open the durable result lock at $RUN_TEAM_ROOT/.lock"
+  flock -x "$RUN_LOCK_FD" \
+    || die "run: cannot lock the durable result directory"
+  run_active_stage_read "$dir" || { flock -u "$RUN_LOCK_FD"; die "run: could not read launch state for $id"; }
   run_manager_prepare
+  if [ "$RUN_ACTIVE_STAGE" = launching ]; then
+    run_launching_settle "$dir" "$unit" || settle_rc=$?
+    case "$settle_rc" in
+      0) ;;
+      1) flock -u "$RUN_LOCK_FD"
+         printf 'settled unaccepted run %s; no host service was accepted\n' "$id"
+         return 0 ;;
+      2) flock -u "$RUN_LOCK_FD"
+         die "run: cannot determine whether launching service $unit was accepted; its declaration remains at $dir" ;;
+      *) flock -u "$RUN_LOCK_FD"; die "run: internal launch settlement returned $settle_rc" ;;
+    esac
+  fi
+  printf '%s\n' 'cancellation requested' > "$dir/cancel-requested" \
+    || { flock -u "$RUN_LOCK_FD"; die "run: could not record the cancellation request at $dir"; }
   out="$("${RUN_SYSTEMCTL[@]}" stop -- "$unit" 2>&1)" || rc=$?
   if [ "$rc" -ne 0 ]; then
+    flock -u "$RUN_LOCK_FD"
     [ -z "$out" ] || printf '%s\n' "$out" >&2
     die "run: could not stop service $unit; its result record remains at $dir"
   fi
+  flock -u "$RUN_LOCK_FD"
   printf 'cancellation requested for run %s; its completion message will report the command exit\n' "$id"
 }
 
 run_active() { # --active; show the caller's durable declarations after an interrupted turn
-  local rows id created unit
+  local rows id created unit stage manager_ready=0 settle_rc=0 shown=0
   session_live || refuse "run: no Gangline team is running"
   run_requester_read
   run_state_read || die "run: $RUN_STATE_WHAT"
+  [ -d "$RUN_TEAM_ROOT" ] || { printf 'no active host runs for %s\n' "$RUN_REQUESTER"; return 0; }
+  exec {RUN_LOCK_FD}>"$RUN_TEAM_ROOT/.lock" \
+    || die "run: cannot open the durable result lock at $RUN_TEAM_ROOT/.lock"
+  flock -x "$RUN_LOCK_FD" \
+    || die "run: cannot lock the durable result directory"
   rows="$(run_active_owned_rows "$RUN_REQUESTER_TOKEN")" || die "run: could not read active host-run declarations safely"
+  run_manager_recovery_prepare && manager_ready=1
   if [ -z "$rows" ]; then
+    flock -u "$RUN_LOCK_FD"
     printf 'no active host runs for %s\n' "$RUN_REQUESTER"
     return 0
   fi
-  while IFS=$'\t' read -r id created unit; do
+  while IFS=$'\t' read -r id created unit stage; do
     [ -n "$id" ] || continue
-    printf 'active host run %s (started %s; service %s) — cancel: gang run --cancel %s\n' \
-      "$id" "$created" "$unit" "$id"
+    case "$stage" in
+      active)
+        printf 'active host run %s (started %s; service %s) — cancel: gang run --cancel %s\n' \
+          "$id" "$created" "$unit" "$id"
+        shown=1 ;;
+      launching)
+        if [ "$manager_ready" -eq 0 ]; then
+          printf 'launching host run %s (service %s) is unconfirmed: the host manager is unreadable; its declaration remains at %s\n' \
+            "$id" "$unit" "$RUN_TEAM_ROOT/$id"
+          shown=1
+          continue
+        fi
+        run_launching_settle "$RUN_TEAM_ROOT/$id" "$unit" || settle_rc=$?
+        case "$settle_rc" in
+          0) printf 'active host run %s (started %s; service %s) — cancel: gang run --cancel %s\n' \
+               "$id" "$created" "$unit" "$id"
+             shown=1 ;;
+          1) printf 'settled unaccepted run %s; no host service was accepted\n' "$id"
+             shown=1 ;;
+          2) printf 'launching host run %s (service %s) is unconfirmed: the host manager could not read it; its declaration remains at %s\n' \
+               "$id" "$unit" "$RUN_TEAM_ROOT/$id"
+             shown=1 ;;
+          *) flock -u "$RUN_LOCK_FD"; die "run: internal launch settlement returned $settle_rc" ;;
+        esac ;;
+      *) flock -u "$RUN_LOCK_FD"; die "run: unreadable launch state for $id" ;;
+    esac
   done <<<"$rows"
+  flock -u "$RUN_LOCK_FD"
+  [ "$shown" -eq 1 ] || printf 'no active host runs for %s\n' "$RUN_REQUESTER"
 }
 
 cmd_run() {
@@ -9603,7 +9771,7 @@ event_claim() { # $1 family, $2 window, $3 key; 0 = this process owns the decisi
   EVENT_CLAIM=""
   EVENT_CLAIM_ERROR=""
   case "$family" in
-    stall|auto-resume|self-compact|state-note|journal) ;;
+    stall|auto-resume|self-compact|state-note|journal|recap) ;;
     *) EVENT_CLAIM_ERROR="unknown event-claim family '$family'"
        printf '%s\n' "$EVENT_CLAIM_ERROR" >&2
        return 2 ;;
@@ -10201,7 +10369,7 @@ inject() { # $1 window, $2 text, $3 head, $4 locked,
   [ -z "$(tmux show-options -wqv -t "$1" @gl_harness_lost 2>/dev/null)" ] \
     || refuse "refusing to deliver '$frag': $tname is harness-lost — its recorded harness root is gone or replaced. Nothing was typed; re-hitch this agent before delivering to this pane"
   pane_mode_free "$1" \
-    || refuse "refusing to deliver '$frag': tmux mode owns the pane of $tname, so paste and Enter would act on operator-owned mode state instead of the composer. Nothing was typed and the body is still the sender's — leave copy-mode, then try again"
+    || refuse "refusing to deliver '$frag': tmux mode owns the pane of $tname, so paste and Enter would act on operator-owned mode state instead of the composer. Nothing was typed and the body is still the sender's — attach and leave the mode, then try again"
   # A collar may sharpen the occupied paint while taking the read occupancy
   # already needs. Carry that name out rather than taking an extra look: some
   # collars report a moving surface across successive observations.
@@ -10299,7 +10467,7 @@ inject() { # $1 window, $2 text, $3 head, $4 locked,
   fi
   pane_mode_free "$1" || {
     stage_record "$1" "'$frag' is staged unsent in this box — tmux mode took the pane before Enter could be sent" "$after"
-    die "refusing to submit '$frag': tmux mode took the pane of $tname after the paste landed. Enter was NOT sent into operator-owned mode state; the paste is staged in the composer underneath (leave copy-mode, then gang attach)"
+    die "refusing to submit '$frag': tmux mode took the pane of $tname after the paste landed. Enter was NOT sent into operator-owned mode state; the paste is staged in the composer underneath (attach, leave the mode, then gang attach)"
   }
   case "${5:-}" in
     # A continuation is typed at a harness that is compacting, so the harness's
@@ -10348,7 +10516,7 @@ submit_verify() { # $1 window id, $2 the box the Enter goes against, $3 fragment
   esac
   pane_mode_free "$1" || {
     stage_record "$1" "'$3' is staged unsent in this box — tmux mode took the pane before Enter could be sent" "$2"
-    die "submit NOT performed: tmux mode owns the pane of $tname, so Enter was NOT sent; the $noun is staged in the composer underneath (leave copy-mode, then gang attach)"
+    die "submit NOT performed: tmux mode owns the pane of $tname, so Enter was NOT sent; the $noun is staged in the composer underneath (attach, leave the mode, then gang attach)"
   }
   # This Enter is Gangline's own positive turn edge. Stamp it before the key so
   # a native UserPromptSubmit/Stop pair can overwrite it even when a tiny turn
@@ -12574,8 +12742,24 @@ cmd_trust() { # an attended native hooks-review window; it never sends an answer
   printf 'answer the native menu yourself, quit the harness, then re-run the refused hitch\n'
 }
 
+hook_trust_held_recovery() { # $1 dead window, $2 requested collar, $3 canonical directory, $4 requested name
+  local pending="" registered=""
+  # This is intentionally narrower than a generic dead-window cleanup. The
+  # preflight writes this exact tuple immediately before it holds its own
+  # pane; only that attributable refusal may be respawned by the ordinary
+  # re-hitch printed to the operator after an attended trust review.
+  pending="$(tmux show-options -wqv -t "$1" @gl_hook_trust_pending 2>/dev/null)" || pending=""
+  registered="$(tmux show-options -wqv -t "$1" @gl_agent 2>/dev/null)" || registered=""
+  # A preflight can die just before or just after hitch records the same
+  # requested name. Either is safe to resume only on this dead pane with the
+  # exact marker, collar, directory, and identity; a different registration is
+  # never a trust recovery. Optional collar/session diagnostics add no proof.
+  [ "$pending" = "$2"$'\t'"$3" ] \
+    && { [ -z "$registered" ] || [ "$registered" = "$4" ]; }
+}
+
 hitch_launch() {
-  local name="" prof="${GANG_COLLAR:-claude-code}" dir="$PWD" model="" effort="" task="" missing="" role="" role_path="" id="" resume=0 resume_id="" resume_stamped="" launch_env collar_arg=0 pane_dead lookup_rc=0 opened_session=0 respawned=0
+  local name="" prof="${GANG_COLLAR:-claude-code}" dir="$PWD" model="" effort="" task="" missing="" role="" role_path="" id="" resume=0 resume_id="" resume_stamped="" launch_env collar_arg=0 pane_dead lookup_rc=0 opened_session=0 respawned=0 trust_recovery=0
   local lights="" lights_arg="" lights_given=0 lights_subject="" lights_from="" lights_note="" cache_compaction=off boot="${GANG_BOOT_TIMEOUT:-30}" gate_looks="${GANG_GATE_LOOKS:-60}"
   local bands="" bands_from="" bands_summary="" band_i bands_custom=0 context_notice="" prior_bands=""
   local hitched_by="" use_stdin=0
@@ -12726,9 +12910,13 @@ hitch_launch() {
     # A HELD CORPSE IS WHAT A LAUNCH THAT DIED LEAVES BEHIND where the operator
     # keeps remain-on-exit, so this refusal sits on the way out of one. "Already
     # exists" alone reads as a working agent and names no repair.
-    ! launch_dead "$id" \
-      || die "agent '$name' already exists and nothing is running in its window: clear it with 'gang drop $name', or relaunch the harness session it is stamped for with 'gang hitch $name --resume'"
-    die "agent '$name' already exists"
+    if launch_dead "$id"; then
+      hook_trust_held_recovery "$id" "$prof" "$dir" "$name" \
+        || die "agent '$name' already exists and nothing is running in its window: clear it with 'gang drop $name', or relaunch the harness session it is stamped for with 'gang hitch $name --resume'"
+      trust_recovery=1
+    else
+      die "agent '$name' already exists"
+    fi
   fi
   # THE MESSAGE IS READ BEFORE ANYTHING IS LAUNCHED and sent after the contract
   # by cmd_hitch. It goes out as an ordinary send from the calling window, so a
@@ -12885,10 +13073,10 @@ hitch_launch() {
     opened_session=1
   elif [ -n "$id" ]; then
     pane_dead="$(tmux display-message -p -t "$id" '#{pane_dead}' 2>/dev/null)" || pane_dead=""
-    [ "$resume" -eq 1 ] && [ "$pane_dead" = 1 ] \
+    { [ "$resume" -eq 1 ] || [ "$trust_recovery" -eq 1 ]; } && [ "$pane_dead" = 1 ] \
       || die "agent '$name' already exists and its pane is live; refusing to replace it with a resumed harness"
     tmux respawn-window -k -t "$id" -c "$dir" "$GANG_LAUNCH" \
-      || die "could not resume '$name' in its registered window"
+      || die "could not relaunch '$name' in its held window"
     respawned=1
   else
     id="$(tmux new-window -d -P -F '#{window_id}' -t "=$SESSION" -n "$name" -c "$dir" "$GANG_LAUNCH")" \
@@ -14203,7 +14391,7 @@ cmd_flush() {
   [ "$flush_queued_rc" -eq 0 ] \
     || refuse "flush: '$name' shows none of the parked-queue evidence its collar recognizes, so there is nothing to recover and gang will not press $GANG_QUEUE_RECALL_KEY blindly (gang capture $name)"
   pane_mode_free "$AGENT_ID" \
-    || refuse "flush: tmux mode owns the pane of '$name', so $GANG_QUEUE_RECALL_KEY would act on operator-owned mode state instead of recalling the parked message; leave copy-mode, then retry"
+    || refuse "flush: tmux mode owns the pane of '$name', so $GANG_QUEUE_RECALL_KEY would act on operator-owned mode state instead of recalling the parked message; attach and leave the mode, then retry"
   tmux send-keys -t "$AGENT_ID" "$GANG_QUEUE_RECALL_KEY"
   # The recall key has to visibly load something before there is anything to
   # read back. A composer that never changed is not a mismatch and not a
@@ -14297,7 +14485,7 @@ cmd_interrupt() {
   ! occupied "$AGENT_ID" \
     || refuse "interrupt: '$name' is occupied (authority unknown) — a UI owns its input box, so $GANG_INTERRUPT_KEY would answer that UI rather than stop a turn (gang attach)"
   pane_mode_free "$AGENT_ID" \
-    || refuse "interrupt: tmux mode owns the pane of '$name', so $GANG_INTERRUPT_KEY would act on operator-owned mode state instead of the harness; leave copy-mode, then retry"
+    || refuse "interrupt: tmux mode owns the pane of '$name', so $GANG_INTERRUPT_KEY would act on operator-owned mode state instead of the harness; attach and leave the mode, then retry"
   tmux send-keys -t "$AGENT_ID" "$GANG_INTERRUPT_KEY" \
     || die "interrupt: could not send $GANG_INTERRUPT_KEY to $name"
   # CLEARED, NOT CLOSED. The interrupted turn is one the harness will never
@@ -14344,7 +14532,7 @@ cmd_interrupt() {
 }
 
 cmd_compact() {
-  local name="" self="" mine=0 busy_rc=0 resume="" self_request="" self_reason="" self_witness="" option="" self_claim_rc=0
+  local name="" self="" mine=0 busy_rc=0 resume="" self_request="" self_reason="" self_witness="" option="" self_claim_rc=0 submit_rc=0
   while [ $# -gt 0 ]; do case "$1" in
     --resume) [ $# -ge 2 ] || die "compact: --resume needs the turn to take after the compaction"
               [ -z "$resume" ] || die "compact: --resume may be passed only once"
@@ -14443,9 +14631,12 @@ cmd_compact() {
     *) die "cannot claim the self-compaction record of '$name': $EVENT_CLAIM_ERROR" ;;
   esac
   lock_pane "$AGENT_ID"
-  tmux set-option -w -t "$AGENT_ID" @gl_compaction_issued 1 \
-    || { lock_release; event_claim_release; die "could not record this Gangline-issued compaction before typing it"; }
-  inject "$AGENT_ID" "$(compact_command)" head locked
+  compaction_submit "$AGENT_ID" "$(compact_command)" || submit_rc=$?
+  if [ "$submit_rc" -ne 0 ]; then
+    lock_release
+    event_claim_release
+    return "$submit_rc"
+  fi
   compact_continue "$AGENT_ID" "$resume"
   lock_release
   for option in @gl_self_compact_failed @gl_self_compact_requested \
@@ -16236,6 +16427,8 @@ cmd_status() {
     2) printf '%s\n' "$(colour "$C_BAD" "active host runs are unreadable — Gangline will not report their absence")" ;;
     *) die "internal: run_active_window_read returned unknown verdict $run_rc" ;;
   esac
+  [ -z "$RUN_LAUNCHING_IDS" ] \
+    || printf '%s\n' "$(colour "$C_BAD" "launching host run(s): $RUN_LAUNCHING_IDS — acceptance is unconfirmed; owner recovery: gang run --active")"
   # PROVENANCE, RESOLVED RATHER THAN REMEMBERED. The stamp is a spool identity,
   # so the name printed here is the hitcher's CURRENT name; only a hitcher whose
   # window is gone is reported under the name it had when it hitched, and it is
@@ -16675,24 +16868,27 @@ roster_row() { # $1 window, $2 name, $3 current binary id;
                # exit 4 = the row printed with a state it could not read
   local prof state detail="" spooled timed deferred age held skew="" mismatch probe_failed idle_notice reply_obligation usage_record usage_rc=0 usage_state usage_observed wake_record wake_rc=0 wake_reset now unread=0 staged staged_rc=0 parked_note parked_rc=0 compact_note compact_rc=0 mode_note mode_rc=1 run_rc=0 trust_pending trust_collar trust_dir trust_dir_word
   prof="$(collar_read "$1")" || exit 1
+  # This marker belongs to the preflight, which can terminate before or just
+  # after hitch records its same requested identity. It is the recovery fact,
+  # so show it before treating that short-lived registration as an agent row.
+  trust_pending="$(tmux show-options -wqv -t "$1" @gl_hook_trust_pending 2>/dev/null)" || trust_pending=""
+  if [ -n "$trust_pending" ]; then
+    IFS=$'\t' read -r trust_collar trust_dir <<<"$trust_pending"
+    case "$trust_collar" in ''|*[!A-Za-z0-9._-]*) trust_collar="<unreadable>" ;; esac
+    case "$trust_dir" in
+      /*)
+        case "$trust_dir" in
+          *[[:cntrl:]]*) trust_dir_word="<unreadable>" ;;
+          *[!A-Za-z0-9_./:-]*) trust_dir_word="$(shell_quote "$trust_dir")" ;;
+          *) trust_dir_word="$trust_dir" ;;
+        esac ;;
+      *) trust_dir_word="<unreadable>" ;;
+    esac
+    printf '%-16s %-12s %s\n' "$2" "$trust_collar" \
+      "$(colour "$C_BAD" "!hook-trust! (run gang trust $trust_collar -d $trust_dir_word; no trust key was sent)")"
+    return
+  fi
   if [ -z "$prof" ]; then
-    trust_pending="$(tmux show-options -wqv -t "$1" @gl_hook_trust_pending 2>/dev/null)" || trust_pending=""
-    if [ -n "$trust_pending" ]; then
-      IFS=$'\t' read -r trust_collar trust_dir <<<"$trust_pending"
-      case "$trust_collar" in ''|*[!A-Za-z0-9._-]*) trust_collar="<unreadable>" ;; esac
-      case "$trust_dir" in
-        /*)
-          case "$trust_dir" in
-            *[[:cntrl:]]*) trust_dir_word="<unreadable>" ;;
-            *[!A-Za-z0-9_./:-]*) trust_dir_word="$(shell_quote "$trust_dir")" ;;
-            *) trust_dir_word="$trust_dir" ;;
-          esac ;;
-        *) trust_dir_word="<unreadable>" ;;
-      esac
-      printf '%-16s %-12s %s\n' "$2" "$trust_collar" \
-        "$(colour "$C_BAD" "!hook-trust! (run gang trust $trust_collar -d $trust_dir_word; no trust key was sent)")"
-      return
-    fi
     printf '%-16s %-12s %s\n' "$2" "-" "$(colour "$C_DIM" "unadopted")"
     return
   fi
@@ -16751,6 +16947,7 @@ roster_row() { # $1 window, $2 name, $3 current binary id;
     2) detail="$detail host-run-unreadable" ;;
     *) die "internal: run_active_window_read returned unknown verdict $run_rc" ;;
   esac
+  [ -z "$RUN_LAUNCHING_IDS" ] || detail="$detail host-run-launching=$RUN_LAUNCHING_IDS"
   detail="$detail $(action_detail "$1")"
   spool_retire_gone_unverified_report "$1"
   spooled="$(spool_count "$1")"

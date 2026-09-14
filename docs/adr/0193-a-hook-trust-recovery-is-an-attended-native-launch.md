@@ -22,9 +22,10 @@ terminal.
 `gang trust codex -d DIR` opens a disposable, unregistered window in the
 current team with the collar's exact hook configuration and no preflight. It
 prints the window selector and sends no native-menu key. The preflight marks
-its held refusal, and roster prints the same command. The operator selects the
-review window, answers Codex's native trust choice, quits it, and re-runs the
-refused hitch.
+its held refusal, and roster prints the same command. After the operator
+selects the review window, answers Codex's native trust choice, and quits it,
+the exact re-run of the refused hitch safely reuses only that marked,
+dead pane.
 
 ## Consequences
 

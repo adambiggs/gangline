@@ -15,6 +15,11 @@ mkdir -p "$run_bin" "$run_state"
 printf '%s\n' \
   '#!/bin/sh' \
   'printf '\''%s\n'\'' "$*" > "$GANG_TEST_RUN_ARGS"' \
+  'if [ -n "${GANG_TEST_RUN_HOLD:-}" ]; then' \
+  '  printf '\''%s\n'\'' "$$" > "$GANG_TEST_RUN_MANAGER_PID"' \
+  '  printf x > "$GANG_TEST_RUN_READY"' \
+  '  IFS= read -r _ < "$GANG_TEST_RUN_HOLD"' \
+  'fi' \
   'test "${GANG_TEST_RUN_FAIL:-0}" != 1 || exit 1' \
   'exit 0' > "$run_bin/systemd-run"
 printf '%s\n' \
@@ -22,6 +27,12 @@ printf '%s\n' \
   'printf '\''%s\n'\'' "$*" >> "$GANG_TEST_RUN_STOPS"' \
   'case "$*" in' \
   '  *'\''show --property=Version --value'\''*) printf '\''test-manager\n'\''; exit 0 ;;' \
+  '  *'\''show --property=LoadState --value'\''*)' \
+  '    case "${GANG_TEST_RUN_UNIT_STATE:-live}" in' \
+  '      live) printf '\''loaded\n'\''; exit 0 ;;' \
+  '      absent) printf '\''not-found\n'\''; exit 0 ;;' \
+  '      unreadable) printf '\''fixture manager unreadable\n'\'' >&2; exit 1 ;;' \
+  '    esac ;;' \
   '  *'\''stop --'\''*) exit 0 ;;' \
   '  *) printf '\''inactive\n'\''; exit 3 ;;' \
   'esac' > "$run_bin/systemctl"
@@ -36,6 +47,12 @@ run_start() { # command words -> start a run as the dedicated fixture requester
     TMPDIR="$run_state/requester-tmp" \
     GANG_TEST_RUN_ARGS="$run_args" GANG_TEST_RUN_STOPS="$run_stops" \
     PATH="$run_bin:$PATH" "$GANG" run -- "$@"
+}
+
+run_recover() { # requester successor reads a prior launch declaration
+  TMUX_PANE="$run_requester_pane" XDG_STATE_HOME="$run_state" \
+    GANG_TEST_RUN_ARGS="$run_args" GANG_TEST_RUN_STOPS="$run_stops" \
+    PATH="$run_bin:$PATH" "$GANG" run --active
 }
 
 run_record_for() { # first argument is a unique command marker
@@ -208,6 +225,58 @@ contains "status makes an interrupted host run visible" \
   "$run_successor_status" "active host run(s):"
 contains "status names the interrupted host run" \
   "$run_successor_status" "$run_successor_id"
+
+# There is a separate lifecycle edge before systemd-run accepts a service. Hold
+# the fixture manager at that point, terminate the requester, then let a fresh
+# shell prove that the durable declaration is visibly *launching*, not falsely
+# active. An unreadable manager must preserve it; a positive not-found answer
+# may settle it without attempting a cancellation against a unit that never
+# existed.
+run_launch_hold="$RUN_ROOT/run-launch-hold"
+run_launch_ready="$RUN_ROOT/run-launch-ready"
+run_launch_manager_pid="$RUN_ROOT/run-launch-manager-pid"
+run_launch_output="$RUN_ROOT/run-launch-output"
+mkfifo "$run_launch_hold" "$run_launch_ready"
+TMUX_PANE="$run_requester_pane" XDG_STATE_HOME="$run_state" \
+  TMPDIR="$run_state/requester-tmp" \
+  GANG_TEST_RUN_ARGS="$run_args" GANG_TEST_RUN_STOPS="$run_stops" \
+  GANG_TEST_RUN_HOLD="$run_launch_hold" GANG_TEST_RUN_READY="$run_launch_ready" \
+  GANG_TEST_RUN_MANAGER_PID="$run_launch_manager_pid" \
+  PATH="$run_bin:$PATH" "$GANG" run -- sh -c 'printf MARK_RUN_UNACCEPTED' \
+  > "$run_launch_output" 2>&1 &
+run_launch_pid=$!
+IFS= read -r -N 1 _ < "$run_launch_ready"
+run_launch_manager="$(<"$run_launch_manager_pid")"
+kill -TERM "$run_launch_pid"
+kill -TERM "$run_launch_manager"
+run_launch_rc=0
+wait "$run_launch_pid" || run_launch_rc=$?
+if [ "$run_launch_rc" -ne 0 ]; then
+  pass "an interrupted requester leaves its pre-acceptance declaration behind"
+else
+  fail "an interrupted requester leaves its pre-acceptance declaration behind" \
+    "the held requester unexpectedly returned success"
+fi
+run_unaccepted_record="$(run_record_for MARK_RUN_UNACCEPTED)" || run_unaccepted_record=""
+equal "the interrupted declaration records launching rather than active" launching \
+  "$(<"$run_unaccepted_record/active")"
+run_unaccepted_roster="$(XDG_STATE_HOME="$run_state" "$GANG" roster)"
+contains "roster exposes an interrupted pre-acceptance host launch" \
+  "$run_unaccepted_roster" "host-run-launching=${run_unaccepted_record##*/}"
+run_unaccepted_unknown="$(GANG_TEST_RUN_UNIT_STATE=unreadable run_recover)"
+contains "an unreadable manager preserves a launching declaration as unknown" \
+  "$run_unaccepted_unknown" "is unconfirmed"
+equal "an unreadable manager does not erase the launching declaration" launching \
+  "$(<"$run_unaccepted_record/active")"
+run_unaccepted_settled="$(GANG_TEST_RUN_UNIT_STATE=absent run_recover)"
+contains "an absent manager settles the unaccepted request without cancellation" \
+  "$run_unaccepted_settled" "settled unaccepted run ${run_unaccepted_record##*/}"
+if [ -e "$run_unaccepted_record/active" ]; then
+  fail "settling an unaccepted request releases its active slot" "active remained at $run_unaccepted_record"
+else
+  pass "settling an unaccepted request releases its active slot"
+fi
+rm -f -- "$run_launch_hold" "$run_launch_ready"
 
 run_kill_out="$(run_start sh -c 'printf MARK_RUN_KILL')"
 contains "a SIGKILL-shaped run is accepted" "$run_kill_out" "started run"

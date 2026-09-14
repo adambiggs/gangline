@@ -846,10 +846,11 @@ correlation. Known Gangline control authors remain control mail. A peer-shaped
 legacy entry is delivered but retained as `reply-unknown`; Gangline will not
 invent correlation evidence to clear it.
 
-Gangline refuses a missing or occupied composer, a human draft, tmux copy-mode,
-unknown state, and unsafe mid-turn input. Copy-mode is operator-owned: Gangline
-does not cancel it, and checks `#{pane_in_mode}` before every paste, submit,
-queue-recall, clear, and interrupt key. A positive mode read is confirmed once
+Gangline refuses a missing or occupied composer, a human draft, tmux pane mode,
+unknown state, and unsafe mid-turn input. Pane mode is operator-owned: Gangline
+does not cancel it or guess its type from `#{pane_in_mode}`, and checks that
+portable ownership bit before every paste, submit, queue-recall, clear, and
+interrupt key. A positive mode read is confirmed once
 before refusal, so a mode that ended between reads does not strand an idle
 recipient; window-name state glyphs never enter this decision. A collar may
 declare that its native harness accepts ordinary mid-turn input, or that a free
@@ -1089,17 +1090,20 @@ through the existing push delivery path, without a tool continuation. A
 completion accepted while the agent is busy is spooled by the ordinary delivery
 rules and drains at its next safe boundary.
 
-At most four records may be active for one team. The limit is checked while
-creating the durable declaration, before systemd is asked to launch anything.
-There is no resident runner: each transient service owns only its command and
+At most four records may be active for one team. A new record is first marked
+`launching`, then becomes active only after systemd accepts its service. There
+is no resident runner: each transient service owns only its command and
 completion. `--active` is the recovery path when an interrupted turn leaves a
 host service running or waiting on a shared lock: it reads the caller's stable
 spool identity, lists only its active durable declarations, and prints the
-exact `--cancel` command for each. Roster and status show the same IDs. It does
-not cancel a service just because the initiating turn ended. `--cancel`
-addresses the exact recorded service and makes a courtesy check that the
-calling live pane carries the requester's stable spool identity. Cancellation
-asks the service to stop and the finalizer reports the resulting exit status.
+exact `--cancel` command for each. A `launching` record is visibly unconfirmed;
+the recovery probe promotes one with a live unit, retires one the manager
+positively reports absent, and retains it when the manager cannot be read.
+Roster and status distinguish the same state. It does not cancel a service just
+because the initiating turn ended. `--cancel` addresses the exact recorded
+service and makes a courtesy check that the calling live pane carries the
+requester's stable spool identity. Cancellation asks the service to stop and
+the finalizer reports the resulting exit status.
 
 If the requesting window has been dropped or replaced before exit, Gangline
 does not send the result to a same-named replacement and does not recreate a
@@ -2139,8 +2143,9 @@ disposable window, select it, and choose Codex's native **Trust all and
 continue**. The command opens the collar's exact hook configuration without
 the preflight that would otherwise refuse before the menu; it sends no trust
 key and does not register the review window as an agent. Quit Codex, then
-re-run `gang hitch`. The held refusal's unregistered roster row also prints
-this exact command as `!hook-trust!`. The native menu requires a person;
+re-run `gang hitch`. The held refusal's roster row also prints this exact
+command as `!hook-trust!`, even if the preflight ended just after recording the
+requested identity. The native menu requires a person;
 Gangline deliberately cannot grant trust. An edit that changes the configured
 command or path can therefore cause every later Codex hitch on that machine to
 refuse until a person completes those steps.

@@ -2371,12 +2371,35 @@ contains "a gone registered scope retires the stale wait verdict" \
   "$tick_copy_scope_roster" "tick-copy        tick-native  ~idle~"
 excludes "a gone registered scope does not retain its leaked process witness" \
   "$tick_copy_scope_roster" "stale bwrap witness"
-contains "copy-mode is surfaced with its exact non-destructive exit" \
-  "$tick_copy_scope_roster" "tmux send-keys -t $tick_copy_id -X cancel"
+contains "copy-mode is surfaced as generic operator-owned pane state" \
+  "$tick_copy_scope_roster" "pane-mode=active (attach and leave it before continuing)"
+excludes "copy-mode is not prescribed a mode-specific recovery key" \
+  "$tick_copy_scope_roster" "send-keys -X cancel"
 tmux set-option -uw -t "$tick_copy_id" @gl_scope
 rm -f -- "$tick_scope_stale"
 equal "neither copy-mode action typed before a later invocation" absent \
   "$([ ! -e "$tick_compacted" ] && printf absent || printf present)"
+
+# pane_in_mode is intentionally only a portable ownership bit. clock-mode sets
+# the same bit as copy-mode but rejects copy-mode's cancel command, so roster
+# must not invent either a mode name or a keystroke it cannot prove. The
+# independent tick-mode window lets this proof end by removing its disposable
+# window; the product deliberately gives no mode-specific exit command.
+tmux clock-mode -t "$tick_mode_id"
+equal "clock-mode also exposes tmux pane ownership" 1 \
+  "$(tmux display-message -p -t "$tick_mode_id" '#{pane_in_mode}')"
+tick_clock_roster="$("$GANG" roster)"
+contains "clock-mode receives the same generic pane-mode report" \
+  "$tick_clock_roster" "pane-mode=active (attach and leave it before continuing)"
+excludes "clock-mode is never mislabelled as copy-mode" \
+  "$tick_clock_roster" "pane-mode=copy-mode"
+excludes "clock-mode is never given copy-mode's cancel key" \
+  "$tick_clock_roster" "send-keys -X cancel"
+"$GANG" drop tick-mode >/dev/null
+tick_clock_removed="$(tmux list-windows -F '#{window_id}\t#{@gl_agent}' \
+  | awk -F '\t' '$2 == "tick-mode" { found=1 } END { print found ? "present" : "absent" }')"
+equal "the disposable clock-mode proof is removed before later work" absent \
+  "$tick_clock_removed"
 
 # PostCompact is the first boundary after a deferred request, but copy-mode is
 # still a dialog owned by tmux. The request must survive that failed attempt,
@@ -2442,6 +2465,38 @@ equal "the completed pass retires every tick delivery owner marker" absent \
 # source-guard: whole-surface@bfade6c1fd0a: the nonce-marked peer body is unique to this test and verified delivery may render it anywhere in the recipient transcript
 contains "the copy-mode message reached the recipient after native retry" \
   "$(pane_all tick-copy)" "TICK_COPY_MESSAGE"
+
+# tick visits collars in one shell. A preceding recap-aware collar must not
+# lend its optional callback to the following deferred collar, or the latter
+# strands its continuation in a spool for a recap boundary it cannot raise.
+tick_follow_compacted="$RUN_ROOT/tick-follow-compacted"
+cat > "$RUN_ROOT/collars/tick-recap-first.sh" <<SH
+# shellcheck shell=bash
+# shellcheck disable=SC2034
+. "$ROOT/collars/bash.sh"
+collar_recap_boundary() { return 1; }
+SH
+cat > "$RUN_ROOT/collars/tick-recap-follow.sh" <<SH
+# shellcheck shell=bash
+# shellcheck disable=SC2034
+. "$RUN_ROOT/collars/tick-native.sh"
+GANG_COMPACT_CMD=": > '$tick_follow_compacted'"
+SH
+"$HITCH" tick-recap-first -c tick-recap-first -d /tmp >/dev/null
+"$HITCH" tick-recap-follow -c tick-recap-follow -d /tmp >/dev/null
+tick_follow_id="$(window_id tick-recap-follow)"
+tick_follow_pane="$(tmux list-panes -t "$tick_follow_id" -F '#{pane_id}')"
+TMUX_PANE="$tick_follow_pane" "$GANG" compact --resume 'TICK_FOLLOW_CONTINUATION' >/dev/null
+"$GANG" tick >/dev/null
+equal "a non-recap collar compacts after a recap-aware collar in one tick" present \
+  "$([ -e "$tick_follow_compacted" ] && printf present || printf absent)"
+equal "the following non-recap collar takes its immediate continuation path" 0 \
+  "$("$GANG" roster --porcelain | awk -F '\t' '$1 == "tick-recap-follow" { print $4 }')"
+# source-guard: producer@682932d22cdd: the unique continuation is injected only by the preceding same-tick deferred compact, so its visible echo binds the callback-scoping path
+contains "the following non-recap collar receives its continuation without a recap" \
+  "$(pane_all tick-recap-follow)" "TICK_FOLLOW_CONTINUATION"
+"$GANG" drop tick-recap-first >/dev/null
+"$GANG" drop tick-recap-follow >/dev/null
 
 # A CLEARED CONDITION LEAVES THE STATUS BAR WITHIN ONE TICK. A permission
 # request paints !name! and may be the last event its dialog ever sends: a
