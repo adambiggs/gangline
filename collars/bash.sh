@@ -6,7 +6,7 @@ GANG_LAUNCH="PS1='❯ ' bash --norc"
 GANG_BUSY_REGEX=""
 
 collar_input() { # $1 = tmux target; same shape as a real TUI's input box
-  local pane line
+  local pane line prompt_tail
   # A PANE THAT COULD NOT BE READ IS NOT A PANE WITH NO BOX. The capture is
   # taken into a variable before awk sees it, because awk's verdict on empty
   # input reads exactly like its verdict on a pane carrying no composer.
@@ -17,7 +17,15 @@ collar_input() { # $1 = tmux target; same shape as a real TUI's input box
            if (i > 0 && (i == 1 || substr($0, 1, i - 1) ~ /[^ \t]/)) line = $0 }
          END { print line }')" || return 1
   case "$line" in *❯*) ;; *) return 1 ;; esac
-  line="${line#*❯}"
+  # capture-pane -J joins an unterminated command's output to the next prompt.
+  # When that fresh prompt is still empty, its suffix is the composer we need;
+  # taking the first prompt instead turns the completed command and its output
+  # into a fictitious human draft.
+  prompt_tail="${line##*❯}"
+  case "$prompt_tail" in
+    *[![:space:]]*) line="${line#*❯}" ;;
+    *) line="$prompt_tail" ;;
+  esac
   # The blank after the prompt glyph belongs to PS1, not to the input line.
   # Keep a second blank: that is the first byte of a real draft.  Returning
   # the prompt's separator made a retained delivery body differ from the exact
