@@ -23,7 +23,6 @@ emit_event_fixture() { # $1 path; GANG_TEST_EVENT_MUTANT may omit one exact kind
       || return 1
   done
   for kind in "${event_kinds[@]}"; do
-    [ "${GANG_TEST_EVENT_MUTANT:-}" != "$kind" ] || continue
     "$ROOT/libexec/gang-events" read --events "$path" --team proof --agent alpha \
       --kind "$kind" | grep -F '"kind": "' >/dev/null || return 1
   done

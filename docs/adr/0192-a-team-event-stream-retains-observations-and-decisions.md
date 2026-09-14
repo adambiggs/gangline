@@ -31,6 +31,6 @@ The stream gives a lead a causal timeline without retaining private message
 bodies, but older event evidence expires on rotation. It does not duplicate
 the long-lived usage record, so investigations use `gang log` for decisions
 and `gang usage` for costs and teardown history. An append failure is loud and
-refuses the event-producing action. The decision is falsified if the stream
-cannot account for a future observed Gangline decision or becomes a polling or
-coordination component.
+leaves an explicit diagnostic gap without stranding the lifecycle action. The
+decision is falsified if the stream cannot account for a future observed
+Gangline decision or becomes a polling or coordination component.

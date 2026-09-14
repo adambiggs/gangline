@@ -397,6 +397,10 @@ usage_blocked_archive="$RUN_ROOT/usage archive-##-literal"
 usage_drop_blocked_out="$(GANG_ARCHIVE_DIR="$usage_blocked_archive" \
   XDG_DATA_HOME="$usage_blocked_data" PATH="$usage_present" "$GANG" drop usage-gamma 2>&1)" \
   || fail "drop succeeds when the record cannot be written" "status $?: [$usage_drop_blocked_out]"
+contains "an unwritable diagnostic record is reported on the drop" \
+  "$usage_drop_blocked_out" "event record was not appended"
+contains "an unwritable diagnostic record does not block the drop" \
+  "$usage_drop_blocked_out" "continuing after the delivery.archived diagnostic event could not be recorded"
 contains "an unwritable record is reported on the drop" \
   "$usage_drop_blocked_out" "usage record not written"
 contains "an unwritable record names the path it could not append to" \

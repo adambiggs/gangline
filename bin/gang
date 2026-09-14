@@ -15142,7 +15142,10 @@ event_log_append_prepared() { # $1 complete prepared JSON line, $2 event path
     printf 'gang: event record could not be staged; durable destination was %s\n' "$events" >&2
     return 1
   fi
-  command="GANG_EVENT_RECORD_INTERNAL=1 GANG_SESSION=$(option_shell_quote "$SESSION")"
+  # The host append is bookkeeping for the current command, not fresh team
+  # activity. Mark it internal so it cannot recalculate a tick team identity
+  # or run a health warning while recording that warning's event.
+  command="GANG_EVENT_RECORD_INTERNAL=1 GANG_TICK_INTERNAL=1 GANG_SESSION=$(option_shell_quote "$SESSION")"
   command+=" GANG_CONFIG_DIR=$(option_shell_quote "$CONFIG_DIR")"
   command+=" PATH=$(option_shell_quote "$PATH") HOME=$(option_shell_quote "${HOME:-}")"
   command+=" GANG_EVENT_RECORD_SOCKET=$(option_shell_quote "$socket") TMUX= TMUX_PANE="
@@ -15179,13 +15182,25 @@ event_log_append_prepared() { # $1 complete prepared JSON line, $2 event path
   esac
 }
 
-event_log_record() { # $1 window/pane, $2 kind, $3 JSON facts
-  local created agent prepared
+EVENT_LOG_TEAM_CREATED=""
+EVENT_LOG_TEAM_CREATED_READY=0
+
+event_log_team_created_set() { # cache the one live team incarnation for this command
+  local created
+  [ "$EVENT_LOG_TEAM_CREATED_READY" -eq 0 ] || return 0
   created="$(usage_team_created)" || return 1
-  case "$created" in ''|*[!0-9]*)
+  case "$created" in ''|*[!0-9]*) return 1 ;; esac
+  EVENT_LOG_TEAM_CREATED="$created"
+  EVENT_LOG_TEAM_CREATED_READY=1
+}
+
+event_log_record_required() { # $1 window/pane, $2 kind, $3 JSON facts
+  local created agent prepared
+  event_log_team_created_set || {
     printf 'gang: event %s was not recorded: the live team creation epoch is unreadable\n' "$2" >&2
-    return 1 ;;
-  esac
+    return 1
+  }
+  created="$EVENT_LOG_TEAM_CREATED"
   agent="$(agent_name_of "$1" 2>/dev/null)" || agent="$1"
   [ "${GANG_TEST_EVENT_MUTANT:-}" != "$2" ] || return 0
   prepared="$("$GANGLINE_EVENTS_HELPER" prepare --team "$SESSION" --team-created "$created" --agent "$agent" \
@@ -15199,10 +15214,19 @@ event_log_record() { # $1 window/pane, $2 kind, $3 JSON facts
     }
 }
 
-event_log_team_record() { # $1 kind, $2 JSON facts
+event_log_record() { # best-effort diagnostic record; lifecycle work remains authoritative
+  if event_log_record_required "$@"; then return 0; fi
+  printf 'gang: continuing after the %s diagnostic event could not be recorded\n' "$2" >&2
+  return 0
+}
+
+event_log_team_record_required() { # $1 kind, $2 JSON facts
   local created prepared
-  created="$(usage_team_created)" || return 1
-  case "$created" in ''|*[!0-9]*) return 1 ;; esac
+  event_log_team_created_set || {
+    printf 'gang: team event %s was not recorded: the live team creation epoch is unreadable\n' "$1" >&2
+    return 1
+  }
+  created="$EVENT_LOG_TEAM_CREATED"
   [ "${GANG_TEST_EVENT_MUTANT:-}" != "$1" ] || return 0
   prepared="$("$GANGLINE_EVENTS_HELPER" prepare --team "$SESSION" --team-created "$created" --agent '@team' \
     --kind "$1" --facts "$2" 2>&1)" || {
@@ -15213,6 +15237,12 @@ event_log_team_record() { # $1 kind, $2 JSON facts
       printf 'gang: team event %s was not recorded\n' "$1" >&2
       return 1
     }
+}
+
+event_log_team_record() { # best-effort diagnostic record; lifecycle work remains authoritative
+  if event_log_team_record_required "$@"; then return 0; fi
+  printf 'gang: continuing after the %s diagnostic event could not be recorded\n' "$1" >&2
+  return 0
 }
 
 cmd_event_proof() { # test-only driver for the production staging, host append, and reader path
@@ -15230,11 +15260,11 @@ cmd_event_proof() { # test-only driver for the production staging, host append, 
     compaction.self-completed compaction.completed delivery.queued delivery.sending \
     delivery.verified delivery.held delivery.interrupted delivery.archived \
     state.classified agent.hitched agent.dropped; do
-    event_log_record "$id" "$kind" "{\"fixture\":\"$kind\"}" \
+    event_log_record_required "$id" "$kind" "{\"fixture\":\"$kind\"}" \
       || die "__event-proof could not append $kind"
   done
   for kind in tick.passed tick.held tick.failed tick.deadline-killed alert.raised alert.cleared; do
-    event_log_team_record "$kind" "{\"fixture\":\"$kind\"}" \
+    event_log_team_record_required "$kind" "{\"fixture\":\"$kind\"}" \
       || die "__event-proof could not append $kind"
   done
 }
