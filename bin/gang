@@ -2894,15 +2894,15 @@ busy() { # $1 = window id; 0 = busy, 1 = not busy, 2 = could not determine
   BUSY_MOVED=0
   BUSY_NATIVE_UNKNOWN=0
   BUSY_NATIVE_HOLD=0
-  BUSY_EVIDENCE=busy-reader
+  BUSY_EVIDENCE="busy-reader"
   # Asked FIRST, because it answers the question delivery actually has. An open
   # turn and an open compaction both mean "will not accept input now"; only the
   # second is invisible to @gl_turn, which stays closed for the whole of it.
   compaction_witness "$1" || compaction_rc=$?
-  if [ "$compaction_rc" -eq 0 ]; then BUSY_EVIDENCE=compaction-witness; activity_hold_clear "$1"; return 0; fi
+  if [ "$compaction_rc" -eq 0 ]; then BUSY_EVIDENCE="compaction-witness"; activity_hold_clear "$1"; return 0; fi
   turn_witness "$1" || turn_rc=$?
   case "$turn_rc" in
-    0) BUSY_EVIDENCE=turn-bracket; activity_hold_clear "$1"; return 0 ;;
+    0) BUSY_EVIDENCE="turn-bracket"; activity_hold_clear "$1"; return 0 ;;
     1)
       # Only a closed, usable bracket can expose Codex's false-idle Stop
       # interval. An open, expired, malformed or absent bracket keeps its own
@@ -2910,11 +2910,11 @@ busy() { # $1 = window id; 0 = busy, 1 = not busy, 2 = could not determine
       # that path's verdict.
       native_idle_boundary "$1" || native_rc=$?
       case "$native_rc" in
-        0) BUSY_EVIDENCE=native-idle-reader; activity_hold_clear "$1"; return 1 ;;
-        1) BUSY_EVIDENCE=native-idle-reader; BUSY_NATIVE_HOLD=1; activity_hold_clear "$1"; return 0 ;;
+        0) BUSY_EVIDENCE="native-idle-reader"; activity_hold_clear "$1"; return 1 ;;
+        1) BUSY_EVIDENCE="native-idle-reader"; BUSY_NATIVE_HOLD=1; activity_hold_clear "$1"; return 0 ;;
         2) undetermined=1; BUSY_NATIVE_UNKNOWN=1
            BUSY_EXPIRED_WHAT="native Stop idleness is unproved${NATIVE_IDLE_WHAT:+: $NATIVE_IDLE_WHAT}" ;;
-        3) BUSY_EVIDENCE=turn-bracket; activity_hold_clear "$1"; return 1 ;;
+        3) BUSY_EVIDENCE="turn-bracket"; activity_hold_clear "$1"; return 1 ;;
         *) die "internal: native_idle_boundary returned unknown verdict $native_rc" ;;
       esac ;;
     2) undetermined=1; stale_turn="$TURN_ABANDONED" ;;
@@ -2922,7 +2922,7 @@ busy() { # $1 = window id; 0 = busy, 1 = not busy, 2 = could not determine
     *) die "internal: turn_witness returned unknown verdict $turn_rc" ;;
   esac
   if busy_painted "$1"; then
-    BUSY_EVIDENCE=busy-regex
+    BUSY_EVIDENCE="busy-regex"
     # A busy marker on the pane witnesses a live turn only while something
     # keeps it alive: a real turn repaints — spinners pulse, timers count.
     # When the turn bracket has EXPIRED, a matching line can be a fossil: an
@@ -2956,7 +2956,7 @@ busy() { # $1 = window id; 0 = busy, 1 = not busy, 2 = could not determine
     || die "cannot read pane $1 — refusing to witness a decay against a reading that was never taken"
   recently_active "$1" || activity_rc=$?
   case "$activity_rc" in
-    0) BUSY_EVIDENCE=pty-activity; return 0 ;;
+    0) BUSY_EVIDENCE="pty-activity"; return 0 ;;
     1) ;;
     2) undetermined=1 ;;
     3) undetermined=1 ;;
@@ -16074,7 +16074,7 @@ state_now() { # $1 = window id, collar loaded -> the state, in words
   # dead active pane beside a live split never condemns the live pane behind
   # it; launch_dead answers only when every pane has exited.
   if launch_dead "$1"; then
-    STATE_CLASSIFICATION_EVIDENCE=launch-dead
+    STATE_CLASSIFICATION_EVIDENCE="launch-dead"
     activity_hold_clear "$1"
     state="!dead! (nothing is running in this window)"
     glyph_write "$1" "$state"
@@ -16084,7 +16084,7 @@ state_now() { # $1 = window id, collar loaded -> the state, in words
   fi
   mismatch="$(identity_mismatch_read "$1")" || mismatch=""
   if [ -n "$mismatch" ]; then
-    STATE_CLASSIFICATION_EVIDENCE=session-identity
+    STATE_CLASSIFICATION_EVIDENCE="session-identity"
     activity_hold_clear "$1"
     state="!session-lost! ($mismatch)"
     glyph_write "$1" "$state"
@@ -16094,7 +16094,7 @@ state_now() { # $1 = window id, collar loaded -> the state, in words
   fi
   harness_lost="$(tmux show-options -wqv -t "$1" @gl_harness_lost 2>/dev/null)" || harness_lost=""
   if [ -n "$harness_lost" ]; then
-    STATE_CLASSIFICATION_EVIDENCE=harness-identity
+    STATE_CLASSIFICATION_EVIDENCE="harness-identity"
     activity_hold_clear "$1"
     state="!harness-lost! ($harness_lost)"
     glyph_write "$1" "$state"
@@ -16103,7 +16103,7 @@ state_now() { # $1 = window id, collar loaded -> the state, in words
     return 0
   fi
   if occupied "$1"; then
-    STATE_CLASSIFICATION_EVIDENCE=dialog-or-composer
+    STATE_CLASSIFICATION_EVIDENCE="dialog-or-composer"
     activity_hold_clear "$1"
     if occupied_advisory "$1"; then
       state="!occupied! (advisory: $OCCUPIED_ADVISORY)"
@@ -16118,7 +16118,7 @@ state_now() { # $1 = window id, collar loaded -> the state, in words
   bricked "$1" || bricked_rc=$?
   case "$bricked_rc" in
     0)
-      STATE_CLASSIFICATION_EVIDENCE=fatal-reader
+      STATE_CLASSIFICATION_EVIDENCE="fatal-reader"
       activity_hold_clear "$1"
       state="!bricked! ($BRICKED_WHAT)"
       glyph_write "$1" "$state"
@@ -16127,7 +16127,7 @@ state_now() { # $1 = window id, collar loaded -> the state, in words
       return 0 ;;
     1) ;;
     2)
-      STATE_CLASSIFICATION_EVIDENCE=fatal-reader
+      STATE_CLASSIFICATION_EVIDENCE="fatal-reader"
       state="?unknown? ($BRICKED_WHAT)"
       glyph_write "$1" "$state"
       STATE_NOW_RESULT="$state"
@@ -16143,7 +16143,7 @@ state_now() { # $1 = window id, collar loaded -> the state, in words
   blocked "$1" || blocked_rc=$?
   case "$blocked_rc" in
     0)
-      STATE_CLASSIFICATION_EVIDENCE=blocked-reader
+      STATE_CLASSIFICATION_EVIDENCE="blocked-reader"
       activity_hold_clear "$1"
       state="!blocked! ($BLOCKED_WHAT)"
       glyph_write "$1" "$state"
@@ -16152,7 +16152,7 @@ state_now() { # $1 = window id, collar loaded -> the state, in words
       return 0 ;;
     1) ;;
     2)
-      STATE_CLASSIFICATION_EVIDENCE=blocked-reader
+      STATE_CLASSIFICATION_EVIDENCE="blocked-reader"
       state="?unknown? ($BLOCKED_WHAT)"
       glyph_write "$1" "$state"
       STATE_NOW_RESULT="$state"
@@ -16220,9 +16220,9 @@ state_now() { # $1 = window id, collar loaded -> the state, in words
          waiting_read "$1" || waiting_rc=$?
        fi
        case "$waiting_rc" in
-         0) STATE_CLASSIFICATION_EVIDENCE=waiting-reader; state="~wait~ ($WAITING_WHAT)" ;;
+         0) STATE_CLASSIFICATION_EVIDENCE="waiting-reader"; state="~wait~ ($WAITING_WHAT)" ;;
          1) STATE_CLASSIFICATION_EVIDENCE="$BUSY_EVIDENCE"; state="~idle~" ;;
-         2) STATE_CLASSIFICATION_EVIDENCE=waiting-reader; state="?unknown? ($WAITING_WHAT)" ;;
+         2) STATE_CLASSIFICATION_EVIDENCE="waiting-reader"; state="?unknown? ($WAITING_WHAT)" ;;
          *) die "internal: waiting_read returned unknown verdict $waiting_rc" ;;
        esac ;;
     2) STATE_CLASSIFICATION_EVIDENCE="$BUSY_EVIDENCE"; state="?unknown? ($BUSY_EXPIRED_WHAT)" ;;
