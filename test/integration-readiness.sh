@@ -2594,6 +2594,8 @@ contains "and mail sent to it waits in the spool" "$hookless_mail" \
   "queued for hookless"
 rm -f -- "$hookless_draft"
 GANG_TEST_TICK_MODE=manual "$GANG" tick >/dev/null
+equal "the completed hookless compaction leaves no failure record" "" \
+  "$(tmux show-options -wqv -t "$hookless_id" @gl_self_compact_failed)"
 if [ -e "$hookless_executed" ]; then
   pass "a tick runs the hookless collar's standing compaction"
 else
