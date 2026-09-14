@@ -1024,13 +1024,13 @@ EOF
       ;;
     log) cat <<'EOF'
 gang log
-  Read the durable event stream for this live team.
+  Read durable evidence for this team.
 
-  gang log [name] [--since <monotonic-ns>] [--kind <event-kind>]
+  gang log [name] [--since N] [--kind KIND]
 
-  With a name, prints only that agent's JSONL events.  The stream records
-  observations and decisions, not message bodies; use it to answer what an
-  agent saw and what Gangline did next.
+  A name selects an agent's JSONL events.
+  It records observations and decisions, not bodies.
+  Use it to answer what an agent saw and did.
 EOF
       ;;
     limits) cat <<'EOF'
@@ -2805,6 +2805,7 @@ BUSY_EXPIRED_WHAT="pty activity bound reached"
 BUSY_MOVED=0
 BUSY_NATIVE_UNKNOWN=0
 BUSY_NATIVE_HOLD=0
+BUSY_EVIDENCE=unknown
 NATIVE_IDLE_WHAT=""
 
 # A NATIVE STOP CAN CLOSE THE TURN BRACKET BEFORE THE HARNESS HAS RELEASED
@@ -2892,14 +2893,15 @@ busy() { # $1 = window id; 0 = busy, 1 = not busy, 2 = could not determine
   BUSY_MOVED=0
   BUSY_NATIVE_UNKNOWN=0
   BUSY_NATIVE_HOLD=0
+  BUSY_EVIDENCE=busy-reader
   # Asked FIRST, because it answers the question delivery actually has. An open
   # turn and an open compaction both mean "will not accept input now"; only the
   # second is invisible to @gl_turn, which stays closed for the whole of it.
   compaction_witness "$1" || compaction_rc=$?
-  if [ "$compaction_rc" -eq 0 ]; then activity_hold_clear "$1"; return 0; fi
+  if [ "$compaction_rc" -eq 0 ]; then BUSY_EVIDENCE=compaction-witness; activity_hold_clear "$1"; return 0; fi
   turn_witness "$1" || turn_rc=$?
   case "$turn_rc" in
-    0) activity_hold_clear "$1"; return 0 ;;
+    0) BUSY_EVIDENCE=turn-bracket; activity_hold_clear "$1"; return 0 ;;
     1)
       # Only a closed, usable bracket can expose Codex's false-idle Stop
       # interval. An open, expired, malformed or absent bracket keeps its own
@@ -2907,11 +2909,11 @@ busy() { # $1 = window id; 0 = busy, 1 = not busy, 2 = could not determine
       # that path's verdict.
       native_idle_boundary "$1" || native_rc=$?
       case "$native_rc" in
-        0) activity_hold_clear "$1"; return 1 ;;
-        1) BUSY_NATIVE_HOLD=1; activity_hold_clear "$1"; return 0 ;;
+        0) BUSY_EVIDENCE=native-idle-reader; activity_hold_clear "$1"; return 1 ;;
+        1) BUSY_EVIDENCE=native-idle-reader; BUSY_NATIVE_HOLD=1; activity_hold_clear "$1"; return 0 ;;
         2) undetermined=1; BUSY_NATIVE_UNKNOWN=1
            BUSY_EXPIRED_WHAT="native Stop idleness is unproved${NATIVE_IDLE_WHAT:+: $NATIVE_IDLE_WHAT}" ;;
-        3) activity_hold_clear "$1"; return 1 ;;
+        3) BUSY_EVIDENCE=turn-bracket; activity_hold_clear "$1"; return 1 ;;
         *) die "internal: native_idle_boundary returned unknown verdict $native_rc" ;;
       esac ;;
     2) undetermined=1; stale_turn="$TURN_ABANDONED" ;;
@@ -2919,6 +2921,7 @@ busy() { # $1 = window id; 0 = busy, 1 = not busy, 2 = could not determine
     *) die "internal: turn_witness returned unknown verdict $turn_rc" ;;
   esac
   if busy_painted "$1"; then
+    BUSY_EVIDENCE=busy-regex
     # A busy marker on the pane witnesses a live turn only while something
     # keeps it alive: a real turn repaints — spinners pulse, timers count.
     # When the turn bracket has EXPIRED, a matching line can be a fossil: an
@@ -2952,7 +2955,7 @@ busy() { # $1 = window id; 0 = busy, 1 = not busy, 2 = could not determine
     || die "cannot read pane $1 — refusing to witness a decay against a reading that was never taken"
   recently_active "$1" || activity_rc=$?
   case "$activity_rc" in
-    0) return 0 ;;
+    0) BUSY_EVIDENCE=pty-activity; return 0 ;;
     1) ;;
     2) undetermined=1 ;;
     3) undetermined=1 ;;
@@ -3330,7 +3333,12 @@ self_compact_unsupported_reason() { # $1 agent name, $2 collar
 }
 
 self_compact_unsupported_record() { # $1 window, $2 reason
+  local reason
   tmux set-option -w -t "$1" @gl_self_compact_failed "$2" 2>/dev/null || true
+  reason="$(json_text "$2")"
+  event_log_record "$1" compaction.self-failed \
+    "{\"reason\":$reason,\"retry\":false}" \
+    || die 'compaction: unsupported failure record could not be appended'
 }
 
 # ONE CLAIM FOR EVERY WRITER OF THE REFUSAL RECORD. A retirement reads the
@@ -3507,7 +3515,13 @@ self_compact_run() ( # $1 window, $2 collar, $3 exact request token, optional $4
     tmux set-option -w -t "$win" @gl_self_compact_dispatching "$request" 2>/dev/null \
       || exit 0
     tmux set-option -uw -t "$win" @gl_self_compact_requested 2>/dev/null || true
-    local err="" rc=0 noted=""
+    local err="" rc=0 noted="" prior="" reason=""
+    prior="$(tmux show-options -wqv -t "$win" @gl_self_compact_failed 2>/dev/null)" || prior=""
+    case "$prior" in
+      "[request:$request] "*"$SELF_COMPACT_STANDING")
+        event_log_record "$win" compaction.self-retried \
+          "{\"request_id\":\"$request\"}" || exit 1 ;;
+    esac
     load_collar "$2" || true
     event_log_record "$win" compaction.dispatched \
       "{\"mode\":\"self\",\"request_id\":\"$request\"}" \
@@ -3549,10 +3563,16 @@ self_compact_run() ( # $1 window, $2 collar, $3 exact request token, optional $4
       5) [ -n "$err" ] || err="the command was entered, but its submission could not be verified."
          tmux set-option -w -t "$win" @gl_self_compact_failed \
            "submission outcome unknown: $err No retry was scheduled because the compaction may already have run." 2>/dev/null || true
+         reason="$(json_text "$err")"
+         event_log_record "$win" compaction.self-failed \
+           "{\"request_id\":\"$request\",\"reason\":$reason,\"retry\":false}" || exit 1
          tmux set-option -uw -t "$win" @gl_self_compact_noted 2>/dev/null || true
          self_compact_note "$win" "$err" unverified || true ;;
       *) [ -n "$err" ] || err="self-compaction dispatcher failed"
          tmux set-option -w -t "$win" @gl_self_compact_failed "$err" 2>/dev/null || true
+         reason="$(json_text "$err")"
+         event_log_record "$win" compaction.self-failed \
+           "{\"request_id\":\"$request\",\"reason\":$reason,\"retry\":false}" || exit 1
          tmux set-option -uw -t "$win" @gl_self_compact_noted 2>/dev/null || true
          self_compact_note "$win" "$err" dropped || true ;;
     esac
@@ -6563,9 +6583,21 @@ cmd_tick() { # public synchronous seam; its worker is always self-deadlined
           || die 'tick: contention outcome could not be recorded'
         return 0 ;;
     76) [ -z "$out" ] || printf '%s\n' "$out" >&2
+        event_log_team_record tick.failed '{"outcome":"committed-worker-failure"}' \
+          || printf 'gang: tick failure could not be added to the event stream\n' >&2
         return 1 ;;
     77) [ -z "$out" ] || printf '%s\n' "$out" >&2
+        event_log_team_record tick.failed '{"outcome":"worker-owner-unseen"}' \
+          || printf 'gang: tick failure could not be added to the event stream\n' >&2
         return 1 ;;
+    124) [ -z "$out" ] || printf '%s\n' "$out" >&2
+         event_log_team_record tick.deadline-killed \
+           "{\"deadline_seconds\":$GANG_TICK_DEADLINE}" \
+           || printf 'gang: tick deadline kill could not be added to the event stream\n' >&2
+         event_log_team_record tick.failed '{"outcome":"deadline-killed"}' \
+           || printf 'gang: tick failure could not be added to the event stream\n' >&2
+         tick_health_fail "$out" || true
+         return 1 ;;
     *) [ -z "$out" ] || printf '%s\n' "$out" >&2
        if [ "${GANG_TEST_COLLARS:-}" = 1 ] \
           && [ -n "${GANG_TEST_TICK_PARENT_COMMIT_READY_FIFO:-}" ] \
@@ -9222,7 +9254,7 @@ spool_archive_preflight() { # $1 = window id; refuse before any teardown mutates
 }
 
 spool_archive() { # $1 = window id; move every entry somewhere a person can read it
-  local name waiting deferred held spool_archive_held
+  local name waiting deferred held spool_archive_held entry message_id message_ids="" quoted
   spool_archive_preflight "$1"
   [ -n "$SPOOL_DIR" ] && [ -d "$SPOOL_DIR" ] || return 0
   # SAID BEFORE THE MOVE, AND SAID SEPARATELY. The count printed after the
@@ -9253,8 +9285,19 @@ spool_archive() { # $1 = window id; move every entry somewhere a person can read
   # window id is a destination gang always owns.
   name="$(agent_name_of "$1" 2>/dev/null)" || name=""
   valid_name "$name" || name="${1#@}"
+  for entry in "$SPOOL_DIR"/* "$SPOOL_DIR"/.[!.]* "$SPOOL_DIR"/..?*; do
+    [ -f "$entry" ] || continue
+    message_id="${entry##*/}"
+    case "$message_id" in
+      sending-*|failed-*|unverified-*|interrupted-*) message_id="${message_id#*-}" ;;
+      .deferred-*-*) message_id="${message_id#.deferred-}"; message_id="${message_id#*-}" ;;
+      .writing-*) continue ;;
+    esac
+    quoted="$(json_text "$message_id")"
+    message_ids="${message_ids:+$message_ids,}$quoted"
+  done
   spool_dir_archive "$SPOOL_DIR" "$name"
-  event_log_record "$1" delivery.archived '{"reason":"teardown"}' \
+  event_log_record "$1" delivery.archived "{\"reason\":\"teardown\",\"message_ids\":[${message_ids}]}" \
     || die 'delivery: archive outcome could not be recorded'
 }
 
@@ -15053,39 +15096,134 @@ json_text() { # one JSON string; event facts never interpolate unescaped diagnos
 }
 
 # One event stream supersedes a pile of mutable tmux options as the diagnostic
-# record.  The append is deliberately small: it writes one JSON line and never
-# reads, rotates, or retries from a tick path.  A failed append is loud; hiding
-# that fact would recreate the very evidentiary gap this stream exists to close.
+# record. The caller prepares a validated JSON line, then a tmux run-shell
+# child appends it in the server's host mount namespace. That crossing is the
+# same one used by usage records: an agent's sandbox can observe the team but
+# cannot be assumed to share the host's durable data filesystem.
+event_log_append_worker() { # $1 staging buffer, $2 event path
+  tmux save-buffer -b "$1" - \
+    | "$GANGLINE_EVENTS_HELPER" append-record --events "$2"
+}
+
+cmd_event_record_worker() { # internal host-side append reached only through tmux run-shell
+  local out="" rc=0
+  [ "${GANG_EVENT_RECORD_INTERNAL:-}" = 1 ] \
+    || die '__event-record-worker is internal; run gang log'
+  [ $# -eq 4 ] \
+    || die 'internal event record worker needs a staging buffer, event path, report buffer, and token'
+  out="$(event_log_append_worker "$1" "$2" 2>&1)" || rc=$?
+  case "$rc" in
+    0) printf 'gang-event-report %s recorded\n%s\n' "$4" "$out" ;;
+    *) printf 'gang-event-report %s kept\n%s\n' "$4" "$out" ;;
+  esac | tmux load-buffer -b "$3" -
+}
+
+event_log_append_prepared() { # $1 complete prepared JSON line, $2 event path
+  local prepared="$1" events="$2" token buffer report command out="" head
+  token="$(mint_message_nonce)$(mint_message_nonce)"
+  buffer="gang-event-$token"
+  report="gang-event-report-$token"
+  if ! printf '%s\n' "$prepared" | tmux load-buffer -b "$buffer" -; then
+    printf 'gang: event record could not be staged; durable destination was %s\n' "$events" >&2
+    return 1
+  fi
+  command="GANG_EVENT_RECORD_INTERNAL=1 GANG_SESSION=$(option_shell_quote "$SESSION")"
+  command+=" GANG_CONFIG_DIR=$(option_shell_quote "$CONFIG_DIR")"
+  command+=" PATH=$(option_shell_quote "$PATH") HOME=$(option_shell_quote "${HOME:-}") TMUX_PANE="
+  command+=" \"$(option_shell_quote "$ROOT/bin/gang")\" __event-record-worker"
+  command+=" \"$(option_shell_quote "$buffer")\" \"$(option_shell_quote "$events")\""
+  command+=" \"$(option_shell_quote "$report")\" \"$(option_shell_quote "$token")\" >/dev/null 2>&1 || :"
+  if ! tmux run-shell "$command" >/dev/null; then
+    printf 'gang: event record could not start a host-side append; durable destination was %s and the prepared line remains in tmux buffer %s\n' \
+      "$events" "$buffer" >&2
+    return 1
+  fi
+  if ! out="$(tmux save-buffer -b "$report" -)"; then
+    printf 'gang: event record left no host-side report; whether %s was appended is unknown and the prepared line remains in tmux buffer %s while this server lives\n' \
+      "$events" "$buffer" >&2
+    return 1
+  fi
+  head="${out%%$'\n'*}"
+  tmux delete-buffer -b "$report" \
+    || printf 'gang: event record report buffer %s could not be removed; it dies with the tmux server\n' "$report" >&2
+  case "$head" in
+    "gang-event-report $token recorded")
+      tmux delete-buffer -b "$buffer" \
+        || printf 'gang: event record was appended, but staging buffer %s could not be removed; it dies with the tmux server\n' "$buffer" >&2
+      return 0 ;;
+    "gang-event-report $token kept")
+      printf 'gang: event record was not appended to %s; the prepared line remains in tmux buffer %s while this server lives\n' \
+        "$events" "$buffer" >&2
+      return 1 ;;
+    *)
+      printf 'gang: event record report buffer %s did not identify this append; whether %s was appended is unknown and staging buffer %s remains\n' \
+        "$report" "$events" "$buffer" >&2
+      return 1 ;;
+  esac
+}
+
 event_log_record() { # $1 window/pane, $2 kind, $3 JSON facts
-  local created agent
+  local created agent prepared
   created="$(usage_team_created)" || return 1
   case "$created" in ''|*[!0-9]*)
     printf 'gang: event %s was not recorded: the live team creation epoch is unreadable\n' "$2" >&2
     return 1 ;;
   esac
   agent="$(agent_name_of "$1" 2>/dev/null)" || agent="$1"
-  "$GANGLINE_EVENTS_HELPER" append --events "$(usage_events_path)" \
-    --team "$SESSION" --team-created "$created" --agent "$agent" \
-    --kind "$2" --facts "$3" || {
+  [ "${GANG_TEST_EVENT_MUTANT:-}" != "$2" ] || return 0
+  prepared="$("$GANGLINE_EVENTS_HELPER" prepare --team "$SESSION" --team-created "$created" --agent "$agent" \
+    --kind "$2" --facts "$3" 2>&1)" || {
+      printf 'gang: event %s for %s could not be prepared: %s\n' "$2" "$agent" "$prepared" >&2
+      return 1
+    }
+  event_log_append_prepared "$prepared" "$(usage_events_path)" || {
       printf 'gang: event %s for %s was not recorded\n' "$2" "$agent" >&2
       return 1
     }
 }
 
 event_log_team_record() { # $1 kind, $2 JSON facts
-  local created
+  local created prepared
   created="$(usage_team_created)" || return 1
   case "$created" in ''|*[!0-9]*) return 1 ;; esac
-  "$GANGLINE_EVENTS_HELPER" append --events "$(usage_events_path)" \
-    --team "$SESSION" --team-created "$created" --agent '@team' \
-    --kind "$1" --facts "$2" || {
+  [ "${GANG_TEST_EVENT_MUTANT:-}" != "$1" ] || return 0
+  prepared="$("$GANGLINE_EVENTS_HELPER" prepare --team "$SESSION" --team-created "$created" --agent '@team' \
+    --kind "$1" --facts "$2" 2>&1)" || {
+      printf 'gang: team event %s could not be prepared: %s\n' "$1" "$prepared" >&2
+      return 1
+    }
+  event_log_append_prepared "$prepared" "$(usage_events_path)" || {
       printf 'gang: team event %s was not recorded\n' "$1" >&2
       return 1
     }
 }
 
-cmd_log() { # durable evidence for the live team, optionally one agent
-  local name="" since="" kind="" created
+cmd_event_proof() { # test-only driver for the production staging, host append, and reader path
+  local id kind
+  [ "${GANG_TEST_COLLARS:-}" = 1 ] \
+    || die '__event-proof is test-only'
+  [ $# -eq 0 ] || die '__event-proof takes no arguments'
+  session_live || die '__event-proof needs a live disposable team'
+  id="$(tmux list-windows -t "=$SESSION" -F '#{window_id} #{@gl_agent} #{@gl_tick_alerts}' \
+    | awk '$2 != "" && $3 != 1 { print $1; exit }')" || id=""
+  [ -n "$id" ] || die '__event-proof found no ordinary agent window'
+  for kind in \
+    context.read context.band-changed compaction.native-witnessed \
+    compaction.self-requested compaction.dispatched compaction.self-failed compaction.self-retried \
+    compaction.self-completed compaction.completed delivery.queued delivery.sending \
+    delivery.verified delivery.held delivery.interrupted delivery.archived \
+    state.classified agent.hitched agent.dropped; do
+    event_log_record "$id" "$kind" "{\"fixture\":\"$kind\"}" \
+      || die "__event-proof could not append $kind"
+  done
+  for kind in tick.passed tick.held tick.failed tick.deadline-killed alert.raised alert.cleared; do
+    event_log_team_record "$kind" "{\"fixture\":\"$kind\"}" \
+      || die "__event-proof could not append $kind"
+  done
+}
+
+cmd_log() { # durable evidence for this team, optionally one agent
+  local name="" since="" kind="" created provided=$#
   local -a args=()
   case "${1:-}" in ''|--*) ;; *) name="$1"; shift ;; esac
   while [ $# -gt 0 ]; do case "$1" in
@@ -15096,9 +15234,19 @@ cmd_log() { # durable evidence for the live team, optionally one agent
     *) die "log: unexpected argument '$1'" ;;
   esac; done
   case "$since" in ''|*[!0-9]*) [ -z "$since" ] || die 'log: --since must be a monotonic whole-number timestamp' ;; esac
-  session_live || die "log: no live team (session '$SESSION' is not running)"
-  if [ -n "$name" ]; then resolve "$name"; name="$(agent_name_of "$AGENT_ID")"; fi
-  created="$(usage_team_created)" || die 'log: could not read the live team creation epoch'
+  if [ "$provided" -eq 0 ] && ! session_live; then
+    cmd_help log
+    return 1
+  fi
+  if session_live; then
+    if [ -n "$name" ]; then resolve "$name"; name="$(agent_name_of "$AGENT_ID")"; fi
+    created="$(usage_team_created)" || die 'log: could not read the live team creation epoch'
+    args+=(--team-created "$created")
+  else
+    printf '%s\n' "$(colour "$C_DIM" "no live team (session '$SESSION' is not running); showing recorded incarnations by that name")"
+    [ -z "$name" ] || valid_name "$name" \
+      || die "log: '$name' is not a valid recorded agent name"
+  fi
   [ -z "$name" ] || args+=(--agent "$name")
   [ -z "$kind" ] || args+=(--kind "$kind")
   [ -z "$since" ] || args+=(--since "$since")
@@ -15676,6 +15824,7 @@ cmd_wait_limit() { # schedule, clear, or internally fire one provider-reset wake
 # land does not restore the one that did not. The journal is bounded at two
 # generations and dies with the team's other tick state.
 GLYPH_SOURCE=""
+STATE_CLASSIFICATION_EVIDENCE=unknown
 GLYPH_JOURNAL_BOUND=1048576
 
 # ONE WRITER DECIDES A ROTATION. Hooks and the tick append to the same file, so
@@ -15826,11 +15975,13 @@ context_band_journal_note() { # $1 window, $2 agent, $3 band, $4 threshold, $5 r
 }
 
 glyph_transition_note() { # $1 window id, $2 agent, $3 previous word, $4 new word; never fatal
-  local id="$1" src err="" rc=0 gap
+  local id="$1" src evidence err="" rc=0 gap
   src="${GLYPH_SOURCE:-${cmd:-}}"
   case "$src" in ''|*[!a-z-]*) src=unknown ;; esac
+  evidence="${STATE_CLASSIFICATION_EVIDENCE:-unknown}"
+  case "$evidence" in ''|*[!a-z-]*) evidence=unknown ;; esac
   event_log_record "$id" state.classified \
-    "{\"from\":\"$3\",\"to\":\"$4\",\"evidence\":\"$src\"}" \
+    "{\"from\":\"$3\",\"to\":\"$4\",\"evidence\":\"$evidence\",\"source\":\"$src\"}" \
     || die 'state: a classification transition could not be recorded'
   err="$(glyph_journal_append "$2" "$3" "$4" "$src" 2>&1)" || rc=$?
   [ "$rc" -ne 0 ] || return 0
@@ -15914,12 +16065,14 @@ turn_abandoned_event() { # $1 = window id, $2 = the fact turn_witness recorded
 state_now() { # $1 = window id, collar loaded -> the state, in words
   local state busy_rc=0 bricked_rc=0 blocked_rc=0 waiting_rc=1 recap_rc=1 recap_pending_rc=1 abandoned=0 mismatch="" harness_lost=""
   STATE_NOW_RESULT=""
+  STATE_CLASSIFICATION_EVIDENCE=unknown
   # PANE DEATH IS TMUX'S DIRECT ANSWER, not a screen classification. A held
   # corpse can preserve its last composer or any transcript marker, but none
   # of those bytes has a process behind it. Ask the whole window first so a
   # dead active pane beside a live split never condemns the live pane behind
   # it; launch_dead answers only when every pane has exited.
   if launch_dead "$1"; then
+    STATE_CLASSIFICATION_EVIDENCE=launch-dead
     activity_hold_clear "$1"
     state="!dead! (nothing is running in this window)"
     glyph_write "$1" "$state"
@@ -15929,6 +16082,7 @@ state_now() { # $1 = window id, collar loaded -> the state, in words
   fi
   mismatch="$(identity_mismatch_read "$1")" || mismatch=""
   if [ -n "$mismatch" ]; then
+    STATE_CLASSIFICATION_EVIDENCE=session-identity
     activity_hold_clear "$1"
     state="!session-lost! ($mismatch)"
     glyph_write "$1" "$state"
@@ -15938,6 +16092,7 @@ state_now() { # $1 = window id, collar loaded -> the state, in words
   fi
   harness_lost="$(tmux show-options -wqv -t "$1" @gl_harness_lost 2>/dev/null)" || harness_lost=""
   if [ -n "$harness_lost" ]; then
+    STATE_CLASSIFICATION_EVIDENCE=harness-identity
     activity_hold_clear "$1"
     state="!harness-lost! ($harness_lost)"
     glyph_write "$1" "$state"
@@ -15946,6 +16101,7 @@ state_now() { # $1 = window id, collar loaded -> the state, in words
     return 0
   fi
   if occupied "$1"; then
+    STATE_CLASSIFICATION_EVIDENCE=dialog-or-composer
     activity_hold_clear "$1"
     if occupied_advisory "$1"; then
       state="!occupied! (advisory: $OCCUPIED_ADVISORY)"
@@ -15960,6 +16116,7 @@ state_now() { # $1 = window id, collar loaded -> the state, in words
   bricked "$1" || bricked_rc=$?
   case "$bricked_rc" in
     0)
+      STATE_CLASSIFICATION_EVIDENCE=fatal-reader
       activity_hold_clear "$1"
       state="!bricked! ($BRICKED_WHAT)"
       glyph_write "$1" "$state"
@@ -15968,6 +16125,7 @@ state_now() { # $1 = window id, collar loaded -> the state, in words
       return 0 ;;
     1) ;;
     2)
+      STATE_CLASSIFICATION_EVIDENCE=fatal-reader
       state="?unknown? ($BRICKED_WHAT)"
       glyph_write "$1" "$state"
       STATE_NOW_RESULT="$state"
@@ -15983,6 +16141,7 @@ state_now() { # $1 = window id, collar loaded -> the state, in words
   blocked "$1" || blocked_rc=$?
   case "$blocked_rc" in
     0)
+      STATE_CLASSIFICATION_EVIDENCE=blocked-reader
       activity_hold_clear "$1"
       state="!blocked! ($BLOCKED_WHAT)"
       glyph_write "$1" "$state"
@@ -15991,6 +16150,7 @@ state_now() { # $1 = window id, collar loaded -> the state, in words
       return 0 ;;
     1) ;;
     2)
+      STATE_CLASSIFICATION_EVIDENCE=blocked-reader
       state="?unknown? ($BLOCKED_WHAT)"
       glyph_write "$1" "$state"
       STATE_NOW_RESULT="$state"
@@ -16028,13 +16188,13 @@ state_now() { # $1 = window id, collar loaded -> the state, in words
   # window a waiting message can be delivered to.
   abandoned="$TURN_ABANDONED"
   case "$busy_rc" in
-    0) state="-busy-" ;;
+    0) STATE_CLASSIFICATION_EVIDENCE="$BUSY_EVIDENCE"; state="-busy-" ;;
     1) recap_rc=0
        recap_continuation_observe "$1" || recap_rc=$?
        case "$recap_rc" in
-         0) state="~wait~ (post-compaction continuation pending)" ;;
+         0) STATE_CLASSIFICATION_EVIDENCE=post-compaction-continuation; state="~wait~ (post-compaction continuation pending)" ;;
          1) ;;
-         2) state="?unknown? ($RECAP_CONTINUATION_WHAT)" ;;
+         2) STATE_CLASSIFICATION_EVIDENCE=post-compaction-continuation; state="?unknown? ($RECAP_CONTINUATION_WHAT)" ;;
          *) die "internal: recap_continuation_observe returned unknown verdict $recap_rc" ;;
        esac
        if [ "$recap_rc" -eq 0 ] || [ "$recap_rc" -eq 2 ]; then
@@ -16058,12 +16218,12 @@ state_now() { # $1 = window id, collar loaded -> the state, in words
          waiting_read "$1" || waiting_rc=$?
        fi
        case "$waiting_rc" in
-         0) state="~wait~ ($WAITING_WHAT)" ;;
-         1) state="~idle~" ;;
-         2) state="?unknown? ($WAITING_WHAT)" ;;
+         0) STATE_CLASSIFICATION_EVIDENCE=waiting-reader; state="~wait~ ($WAITING_WHAT)" ;;
+         1) STATE_CLASSIFICATION_EVIDENCE="$BUSY_EVIDENCE"; state="~idle~" ;;
+         2) STATE_CLASSIFICATION_EVIDENCE=waiting-reader; state="?unknown? ($WAITING_WHAT)" ;;
          *) die "internal: waiting_read returned unknown verdict $waiting_rc" ;;
        esac ;;
-    2) state="?unknown? ($BUSY_EXPIRED_WHAT)" ;;
+    2) STATE_CLASSIFICATION_EVIDENCE="$BUSY_EVIDENCE"; state="?unknown? ($BUSY_EXPIRED_WHAT)" ;;
     *) die "internal: busy returned unknown verdict $busy_rc" ;;
   esac
   glyph_write "$1" "$state"
@@ -18346,6 +18506,10 @@ case "$cmd" in
             cmd_tick_worker "$@" ;;
   __usage-record-worker)
             cmd_usage_record_worker "$@" ;;
+  __event-record-worker)
+            cmd_event_record_worker "$@" ;;
+  __event-proof)
+            cmd_event_proof "$@" ;;
   drop)     cmd_drop "$@" ;;
   down)     cmd_down "$@" ;;
   collars)  cmd_collars "$@" ;;

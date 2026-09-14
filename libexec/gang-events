@@ -36,10 +36,10 @@ def facts(value):
     return parsed
 
 
-def event(args):
+def prepared_event(args):
     if not args.team or not args.agent or not args.kind:
         raise EventError("team, agent, and kind are required")
-    row = {
+    return {
         "v": 2,
         "monotonic_ns": time.monotonic_ns(),
         "team": args.team,
@@ -48,30 +48,83 @@ def event(args):
         "kind": args.kind,
         "facts": facts(args.facts),
     }
-    data = (json.dumps(row, sort_keys=True, ensure_ascii=False, separators=(",", ":")) + "\n").encode()
+
+
+def encoded(row):
+    return (json.dumps(row, sort_keys=True, ensure_ascii=False, separators=(",", ":")) + "\n").encode()
+
+
+def append_bytes(fd, data):
+    remaining = memoryview(data)
+    while remaining:
+        written = os.write(fd, remaining)
+        if written <= 0:
+            raise OSError("append wrote no bytes")
+        remaining = remaining[written:]
+
+
+def write_record(events, data):
+    """Append one complete record while retaining two bounded generations."""
+    if len(data) > GENERATION_BYTES:
+        raise EventError(f"event exceeds the {GENERATION_BYTES}-byte generation bound")
     try:
-        os.makedirs(os.path.dirname(args.events), exist_ok=True)
-        lock = os.open(args.events + ".lock", os.O_CREAT | os.O_RDWR, 0o600)
+        os.makedirs(os.path.dirname(events), exist_ok=True)
+        lock = os.open(events + ".lock", os.O_CREAT | os.O_RDWR, 0o600)
         try:
             fcntl.flock(lock, fcntl.LOCK_EX)
-            if os.path.exists(args.events) and os.path.getsize(args.events) + len(data) > GENERATION_BYTES:
-                os.replace(args.events, args.events + ".1")
-            fd = os.open(args.events, os.O_APPEND | os.O_CREAT | os.O_WRONLY, 0o600)
+            if os.path.exists(events) and os.path.getsize(events) + len(data) > GENERATION_BYTES:
+                os.replace(events, events + ".1")
+            fd = os.open(events, os.O_APPEND | os.O_CREAT | os.O_WRONLY, 0o600)
             try:
-                written = os.write(fd, data)
+                append_bytes(fd, data)
             finally:
                 os.close(fd)
         finally:
             fcntl.flock(lock, fcntl.LOCK_UN)
             os.close(lock)
     except OSError as err:
-        raise EventError(f"cannot append {args.events}: {err}") from err
-    if written != len(data):
-        raise EventError(f"short append to {args.events}")
+        raise EventError(f"cannot append {events}: {err}") from err
+
+
+def event(args):
+    write_record(args.events, encoded(prepared_event(args)))
+
+
+def prepare(args):
+    print(encoded(prepared_event(args)).decode(), end="")
+
+
+def recorded(raw):
+    try:
+        row = json.loads(raw)
+    except ValueError as err:
+        raise EventError(f"prepared event is not JSON: {err}") from err
+    if not isinstance(row, dict) or row.get("v") != 2:
+        raise EventError("prepared event is not a version 2 record")
+    if not isinstance(row.get("team"), str) or not row["team"]:
+        raise EventError("prepared event has no team")
+    if not isinstance(row.get("agent"), str) or not row["agent"]:
+        raise EventError("prepared event has no agent")
+    if not isinstance(row.get("kind"), str) or not row["kind"]:
+        raise EventError("prepared event has no kind")
+    whole(row.get("team_created"), "prepared event team_created")
+    whole(row.get("monotonic_ns"), "prepared event monotonic_ns")
+    if not isinstance(row.get("facts"), dict):
+        raise EventError("prepared event facts are not an object")
+    return row
+
+
+def append_record(args):
+    raw = sys.stdin.read()
+    if raw.count("\n") != 1 or not raw.endswith("\n"):
+        raise EventError("prepared event must be one newline-terminated JSON line")
+    write_record(args.events, encoded(recorded(raw)))
 
 
 def matching(row, args):
     if row.get("team") != args.team:
+        return False
+    if args.team_created is not None and row.get("team_created") != args.team_created:
         return False
     if args.agent and row.get("agent") != args.agent:
         return False
@@ -103,9 +156,11 @@ def read(args):
                     try:
                         row = json.loads(raw)
                     except ValueError as err:
-                        raise EventError(f"{path} line {number} is not JSON: {err}") from err
+                        print(f"gang-events: skipped malformed {path} line {number}: {err}", file=sys.stderr)
+                        continue
                     if not isinstance(row, dict):
-                        raise EventError(f"{path} line {number} is not an object")
+                        print(f"gang-events: skipped non-object {path} line {number}", file=sys.stderr)
+                        continue
                     if row.get("v") != 2:
                         continue  # Legacy usage rows are intentionally read only by gang usage.
                     if matching(row, args):
@@ -118,22 +173,30 @@ def read(args):
 def main():
     parser = argparse.ArgumentParser(prog="gang-events")
     commands = parser.add_subparsers(dest="command", required=True)
-    append = commands.add_parser("append")
-    append.add_argument("--events", required=True)
-    append.add_argument("--team", required=True)
-    append.add_argument("--team-created", type=int, required=True)
-    append.add_argument("--agent", required=True)
-    append.add_argument("--kind", required=True)
-    append.add_argument("--facts", required=True)
+    for name in ("append", "prepare"):
+        append = commands.add_parser(name)
+        append.add_argument("--events", required=name == "append")
+        append.add_argument("--team", required=True)
+        append.add_argument("--team-created", type=int, required=True)
+        append.add_argument("--agent", required=True)
+        append.add_argument("--kind", required=True)
+        append.add_argument("--facts", required=True)
+    append_record_parser = commands.add_parser("append-record")
+    append_record_parser.add_argument("--events", required=True)
     query = commands.add_parser("read")
     query.add_argument("--events", required=True)
     query.add_argument("--team", required=True)
+    query.add_argument("--team-created", type=int)
     query.add_argument("--agent")
     query.add_argument("--kind")
     query.add_argument("--since", type=int)
     args = parser.parse_args()
     if args.command == "append":
         event(args)
+    elif args.command == "prepare":
+        prepare(args)
+    elif args.command == "append-record":
+        append_record(args)
     else:
         read(args)
 

@@ -96,7 +96,8 @@ It retains observations and decisions, not message bodies, in the existing Gangl
 file. Two 8 MiB generations are kept; the next rotation removes the older one. This is a
 bounded diagnostic aid, not a watcher or recovery loop. If an event append fails, Gangline
 refuses the action and names the missing record rather than continuing with an unprovable
-timeline. Copy the event file before its retention window if an incident needs a longer record.
+timeline. Copy both generations of the event file before its retention window if an incident
+needs a longer record.
 
 ## Forwarding native stall witnesses
 
@@ -1008,8 +1009,9 @@ relaunch, not a claim that Gangline reconstructed the old team.
 ### Mail was left behind by a window that died without a teardown
 
 `drop` and `down` also append one line per agent to the usage record under
-`${XDG_DATA_HOME:-$HOME/.local/share}/gangline/usage/events.jsonl`. Gangline
-never prunes it; remove it when its history is no longer wanted. The caller
+`${XDG_DATA_HOME:-$HOME/.local/share}/gangline/usage/events.jsonl`. That
+shared usage and diagnostic stream retains the current and one prior 8 MiB
+generation; copy needed incident evidence before the next rotation. The caller
 prepares each event, while the tmux server performs the append from its host
 mount namespace so a read-only agent sandbox does not lose it. If the primary
 append fails, Gangline prints the fallback file it wrote under the effective
