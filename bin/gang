@@ -246,13 +246,11 @@ require_python3() {
 }
 
 shell_quote() { # one POSIX-shell word
-  local value marked sentinel=$'\034'
-  marked="$(printf '%s\034' "$1" | sed "s/'/'\\\\''/g")"
-  case "$marked" in
-    *"$sentinel") value="${marked%"$sentinel"}" ;;
-    *) die "internal: the shell-quote sentinel was lost" ;;
-  esac
-  printf "'%s'" "$value"
+  # This is deliberately a Bash parameter substitution rather than a sed
+  # pipeline. Callers use it to construct tmux server commands, including at
+  # lifecycle edges where an agent's PATH may contain a test or collar shim.
+  # Quoting must describe the value, not consume a byte from a same-named tool.
+  printf "'%s'" "${1//\'/\'\\\'\'}"
 }
 
 option_shell_quote() { # one POSIX-shell word without a dollar for tmux option storage
@@ -260,9 +258,15 @@ option_shell_quote() { # one POSIX-shell word without a dollar for tmux option s
   # shell-quoted session or path before the popup's shell can interpret it.
   # Make the shell recreate every byte through printf instead; the emitted
   # word contains no dollar for tmux to rewrite.
-  local escaped
-  escaped="$(LC_ALL=C printf '%s' "$1" | od -An -v -tu1 \
-    | awk '{ for (i = 1; i <= NF; i++) printf "\\\\0%03o", $i }')" || return 1
+  # Do the byte walk in Bash for the same reason shell_quote is pure: this
+  # construction is itself part of the host-crossing boundary, so a caller's
+  # PATH must not turn an unrelated entropy fixture into its input.
+  local value="$1" escaped='' code i
+  local LC_ALL=C
+  for ((i = 0; i < ${#value}; i++)); do
+    printf -v code '%d' "'${value:i:1}"
+    printf -v escaped '%s\\0%03o' "$escaped" "$code"
+  done
   printf '`printf %%b %s`' "$(shell_quote "$escaped")"
 }
 
