@@ -15102,8 +15102,15 @@ json_text() { # one JSON string; event facts never interpolate unescaped diagnos
 # child appends it in the server's host mount namespace. That crossing is the
 # same one used by usage records: an agent's sandbox can observe the team but
 # cannot be assumed to share the host's durable data filesystem.
+event_record_tmux() { # host worker only: target the socket handed across at the lifecycle edge
+  case "${GANG_EVENT_RECORD_SOCKET:-}" in
+    /*) tmux -S "$GANG_EVENT_RECORD_SOCKET" "$@" ;;
+    *) tmux "$@" ;;
+  esac
+}
+
 event_log_append_worker() { # $1 staging buffer, $2 event path
-  tmux save-buffer -b "$1" - \
+  event_record_tmux save-buffer -b "$1" - \
     | "$GANGLINE_EVENTS_HELPER" append-record --events "$2"
 }
 
@@ -15117,14 +15124,16 @@ cmd_event_record_worker() { # internal host-side append reached only through tmu
   case "$rc" in
     0) printf 'gang-event-report %s recorded\n%s\n' "$4" "$out" ;;
     *) printf 'gang-event-report %s kept\n%s\n' "$4" "$out" ;;
-  esac | tmux load-buffer -b "$3" -
+  esac | event_record_tmux load-buffer -b "$3" -
 }
 
 event_log_append_prepared() { # $1 complete prepared JSON line, $2 event path
-  local prepared="$1" events="$2" token buffer report command out="" head
+  local prepared="$1" events="$2" token buffer report command out="" head socket=""
   token="$(mint_message_nonce)$(mint_message_nonce)"
   buffer="gang-event-$token"
   report="gang-event-report-$token"
+  socket="${TMUX%%,*}"
+  case "$socket" in /*) ;; *) socket="" ;; esac
   if ! printf '%s\n' "$prepared" | tmux load-buffer -b "$buffer" -; then
     printf 'gang: event record could not be staged; durable destination was %s\n' "$events" >&2
     return 1
@@ -15132,7 +15141,7 @@ event_log_append_prepared() { # $1 complete prepared JSON line, $2 event path
   command="GANG_EVENT_RECORD_INTERNAL=1 GANG_SESSION=$(option_shell_quote "$SESSION")"
   command+=" GANG_CONFIG_DIR=$(option_shell_quote "$CONFIG_DIR")"
   command+=" PATH=$(option_shell_quote "$PATH") HOME=$(option_shell_quote "${HOME:-}")"
-  command+=" TMUX=$(option_shell_quote "${TMUX:-}") TMUX_PANE="
+  command+=" GANG_EVENT_RECORD_SOCKET=$(option_shell_quote "$socket") TMUX= TMUX_PANE="
   command+=" \"$(option_shell_quote "$ROOT/bin/gang")\" __event-record-worker"
   command+=" \"$(option_shell_quote "$buffer")\" \"$(option_shell_quote "$events")\""
   command+=" \"$(option_shell_quote "$report")\" \"$(option_shell_quote "$token")\""
