@@ -3309,10 +3309,18 @@ recap_continuation_observe() { # $1 window; 0 pending, 1 no current recap, 2 unr
 # is the episode identity; wording is not state.
 SELF_COMPACT_STANDING='(still scheduled; gang retries at the next turn boundary)'
 
+# The retry marker is an episode fact, not a second failure record.  The
+# dispatcher needs it only to say that a later successful worker retried this
+# exact request; reading @gl_self_compact_failed after a worker consumes the
+# request races tick's one-read outcome witness.  Keep the token beside the
+# request lifecycle instead, and clear it whenever that lifecycle ends.
+SELF_COMPACT_RETRY_OPTION=@gl_self_compact_retry
+
 self_compact_failed_pending_write() { # $1 window, $2 token, $3 reason
   local reason
   tmux set-option -w -t "$1" @gl_self_compact_failed \
     "[request:$2] $3 $SELF_COMPACT_STANDING" 2>/dev/null || true
+  tmux set-option -w -t "$1" "$SELF_COMPACT_RETRY_OPTION" "$2" 2>/dev/null || true
   reason="$(json_text "$3")"
   event_log_record "$1" compaction.self-failed \
     "{\"request_id\":\"$2\",\"reason\":$reason}" \
@@ -3385,6 +3393,7 @@ self_compact_retire_claimed() { # $1 window, $2 collar, $3 request token; the
   tmux set-option -uw -t "$1" @gl_self_compact_requested 2>/dev/null || true
   tmux set-option -uw -t "$1" @gl_self_compact_witness 2>/dev/null || true
   tmux set-option -uw -t "$1" @gl_self_compact_resume 2>/dev/null || true
+  tmux set-option -uw -t "$1" "$SELF_COMPACT_RETRY_OPTION" 2>/dev/null || true
   self_compact_unsupported_record "$1" "$reason"
   noted="$(tmux show-options -wqv -t "$1" @gl_self_compact_noted 2>/dev/null)" || noted=""
   if [ "$noted" != "$3" ] && self_compact_note "$1" "self-compaction $reason" unsupported; then
@@ -3536,6 +3545,7 @@ self_compact_run() ( # $1 window, $2 collar, $3 exact request token, optional $4
       0) tmux set-option -uw -t "$win" @gl_self_compact_failed 2>/dev/null || true
          event_log_record "$win" compaction.self-completed \
            "{\"request_id\":\"$request\"}" || exit 1
+         tmux set-option -uw -t "$win" "$SELF_COMPACT_RETRY_OPTION" 2>/dev/null || true
          tmux set-option -uw -t "$win" @gl_self_compact_noted 2>/dev/null || true ;;
       # A REFUSAL IS "NOT AT THIS BOUNDARY", NEVER "NOT AT ALL" — the same
       # reading spool_drain_dispatch already gives status 3. The composer
@@ -3570,6 +3580,7 @@ self_compact_run() ( # $1 window, $2 collar, $3 exact request token, optional $4
          reason="$(json_text "$err")"
          event_log_record "$win" compaction.self-failed \
            "{\"request_id\":\"$request\",\"reason\":$reason,\"retry\":false}" || exit 1
+         tmux set-option -uw -t "$win" "$SELF_COMPACT_RETRY_OPTION" 2>/dev/null || true
          tmux set-option -uw -t "$win" @gl_self_compact_noted 2>/dev/null || true
          self_compact_note "$win" "$err" unverified || true ;;
       *) [ -n "$err" ] || err="self-compaction dispatcher failed"
@@ -3577,6 +3588,7 @@ self_compact_run() ( # $1 window, $2 collar, $3 exact request token, optional $4
          reason="$(json_text "$err")"
          event_log_record "$win" compaction.self-failed \
            "{\"request_id\":\"$request\",\"reason\":$reason,\"retry\":false}" || exit 1
+         tmux set-option -uw -t "$win" "$SELF_COMPACT_RETRY_OPTION" 2>/dev/null || true
          tmux set-option -uw -t "$win" @gl_self_compact_noted 2>/dev/null || true
          self_compact_note "$win" "$err" dropped || true ;;
     esac
@@ -3626,7 +3638,7 @@ self_compact_witness_verdict() { # $1 window, $2 collar, $3 request token;
 SELF_COMPACT_DISPATCHED=0
 
 self_compact_dispatch() { # $1 window, $2 collar, optional $3 = sync, optional $4 the Stop payload
-  local win="$1" request witness_state="" prior="" retry=0
+  local win="$1" request witness_state="" retry_marker="" retry=0
   SELF_COMPACT_DISPATCHED=0
   [ -n "$win" ] || return 0
   request="$(tmux show-options -wqv -t "$win" @gl_self_compact_requested 2>/dev/null)" \
@@ -3644,13 +3656,13 @@ self_compact_dispatch() { # $1 window, $2 collar, optional $3 = sync, optional $
     tmux wait-for -S "gang-self-compact-$request" 2>/dev/null || true
     return 0
   fi
-  # A retry belongs to the request while it is still standing. The worker
-  # consumes that request before it dispatches, so reading the prior failure
-  # there races a one-read outcome witness with the event instrumentation.
-  # Carry the already-decided retry fact to the worker instead.
-  prior="$(tmux show-options -wqv -t "$win" @gl_self_compact_failed 2>/dev/null)" || prior=""
-  case "$prior" in
-    "[request:$request] "*"$SELF_COMPACT_STANDING") retry=1 ;;
+  # A retry belongs to the request while it is still standing.  Its marker was
+  # written with the retryable failure, so the worker need not read the
+  # outcome record after consuming that request and steal tick's one-read
+  # witness.  Carry the already-decided fact to the worker instead.
+  retry_marker="$(tmux show-options -wqv -t "$win" "$SELF_COMPACT_RETRY_OPTION" 2>/dev/null)" || retry_marker=""
+  case "$retry_marker" in
+    "$request") retry=1 ;;
   esac
   SELF_COMPACT_DISPATCHED=1
   if [ "${3:-}" = sync ]; then
@@ -3676,6 +3688,7 @@ self_compact_request() { # $1 window id -> request token
   token="$(mint_nonce)"
   tmux set-option -uw -t "$1" @gl_self_compact_failed 2>/dev/null || true
   tmux set-option -uw -t "$1" @gl_self_compact_noted 2>/dev/null || true
+  tmux set-option -uw -t "$1" "$SELF_COMPACT_RETRY_OPTION" 2>/dev/null || true
   tmux set-option -w -t "$1" @gl_self_compact_requested "$token" \
     || die "could not record the self-compaction request"
   if [ -n "$GANG_SELF_COMPACT_WITNESS" ]; then
@@ -14968,7 +14981,8 @@ cmd_compact() {
   compact_continue "$AGENT_ID" "$resume"
   lock_release
   for option in @gl_self_compact_failed @gl_self_compact_requested \
-      @gl_self_compact_witness @gl_self_compact_resume @gl_self_compact_noted; do
+      @gl_self_compact_witness @gl_self_compact_resume @gl_self_compact_noted \
+      "$SELF_COMPACT_RETRY_OPTION"; do
     tmux set-option -uw -t "$AGENT_ID" "$option" 2>/dev/null || true
   done
   event_claim_release
