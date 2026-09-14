@@ -15132,13 +15132,29 @@ cmd_event_record_worker() { # internal host-side append reached only through tmu
 }
 
 event_log_append_prepared() { # $1 complete prepared JSON line, $2 event path
-  local prepared="$1" events="$2" token buffer report command out="" head socket="" run_err=""
+  local prepared="$1" events="$2" token buffer report command out="" head detail="" socket="" run_err=""
   token="$(mint_message_nonce)$(mint_message_nonce)"
   buffer="gang-event-$token"
   report="gang-event-report-$token"
   socket="${TMUX%%,*}"
-  case "$socket" in /*) ;; *) socket="" ;; esac
-  if ! printf '%s\n' "$prepared" | tmux load-buffer -b "$buffer" -; then
+  if [[ "$socket" != /* ]]; then
+    # A caller outside tmux can still address a private server through
+    # TMUX_TMPDIR or its team route. The worker must receive that resolved
+    # socket explicitly: run-shell's host environment has neither guarantee.
+    if ! socket="$(tmux display-message -p -t "=$SESSION" '#{socket_path}')"; then
+      printf 'gang: event record could not resolve the live team socket for %s\n' "$SESSION" >&2
+      return 1
+    fi
+  fi
+  case "$socket" in /*) ;; *)
+    printf 'gang: event record received no absolute socket for live team %s\n' "$SESSION" >&2
+    return 1 ;;
+  esac
+  # `set-buffer` carries this already-validated one-line JSON directly. A
+  # staging pipe through `load-buffer` is a second composition boundary: a
+  # harness can observe it as the startup delivery itself and refuse the real
+  # envelope before it reaches the pane.
+  if ! tmux set-buffer -b "$buffer" -- "$prepared"$'\n'; then
     printf 'gang: event record could not be staged; durable destination was %s\n' "$events" >&2
     return 1
   fi
@@ -15174,6 +15190,9 @@ event_log_append_prepared() { # $1 complete prepared JSON line, $2 event path
     "gang-event-report $token kept")
       printf 'gang: event record was not appended to %s; the prepared line remains in tmux buffer %s while this server lives\n' \
         "$events" "$buffer" >&2
+      [ "$out" = "$head" ] || detail="${out#*$'\n'}"
+      [ -z "$detail" ] || printf 'gang: event record host append detail: %s\n' \
+        "$(printf '%s' "$detail" | config_sanitize)" >&2
       return 1 ;;
     *)
       printf 'gang: event record report buffer %s did not identify this append; whether %s was appended is unknown and staging buffer %s remains\n' \
