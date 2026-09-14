@@ -16268,9 +16268,9 @@ state_now() { # $1 = window id, collar loaded -> the state, in words
     1) recap_rc=0
        recap_continuation_observe "$1" || recap_rc=$?
        case "$recap_rc" in
-         0) STATE_CLASSIFICATION_EVIDENCE=post-compaction-continuation; state="~wait~ (post-compaction continuation pending)" ;;
+         0) STATE_CLASSIFICATION_EVIDENCE='post-compaction-continuation'; state="~wait~ (post-compaction continuation pending)" ;;
          1) ;;
-         2) STATE_CLASSIFICATION_EVIDENCE=post-compaction-continuation; state="?unknown? ($RECAP_CONTINUATION_WHAT)" ;;
+         2) STATE_CLASSIFICATION_EVIDENCE='post-compaction-continuation'; state="?unknown? ($RECAP_CONTINUATION_WHAT)" ;;
          *) die "internal: recap_continuation_observe returned unknown verdict $recap_rc" ;;
        esac
        if [ "$recap_rc" -eq 0 ] || [ "$recap_rc" -eq 2 ]; then
