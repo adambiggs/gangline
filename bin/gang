@@ -15131,11 +15131,12 @@ event_log_append_prepared() { # $1 complete prepared JSON line, $2 event path
   fi
   command="GANG_EVENT_RECORD_INTERNAL=1 GANG_SESSION=$(option_shell_quote "$SESSION")"
   command+=" GANG_CONFIG_DIR=$(option_shell_quote "$CONFIG_DIR")"
-  command+=" PATH=$(option_shell_quote "$PATH") HOME=$(option_shell_quote "${HOME:-}") TMUX_PANE="
+  command+=" PATH=$(option_shell_quote "$PATH") HOME=$(option_shell_quote "${HOME:-}")"
+  command+=" TMUX=$(option_shell_quote "${TMUX:-}") TMUX_PANE="
   command+=" \"$(option_shell_quote "$ROOT/bin/gang")\" __event-record-worker"
   command+=" \"$(option_shell_quote "$buffer")\" \"$(option_shell_quote "$events")\""
-  command+=" \"$(option_shell_quote "$report")\" \"$(option_shell_quote "$token")\" >/dev/null 2>&1 || :"
-  if ! tmux run-shell "$command" >/dev/null; then
+  command+=" \"$(option_shell_quote "$report")\" \"$(option_shell_quote "$token")\""
+  if ! tmux run-shell "$command"; then
     printf 'gang: event record could not start a host-side append; durable destination was %s and the prepared line remains in tmux buffer %s\n' \
       "$events" "$buffer" >&2
     return 1
