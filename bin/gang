@@ -3309,14 +3309,22 @@ recap_continuation_observe() { # $1 window; 0 pending, 1 no current recap, 2 unr
 # is the episode identity; wording is not state.
 SELF_COMPACT_STANDING='(still scheduled; gang retries at the next turn boundary)'
 
-self_compact_failed_pending_write() { # $1 window, $2 token, $3 reason
-  local reason
+self_compact_failed_pending_state_write() { # $1 window, $2 token, $3 reason
   tmux set-option -w -t "$1" @gl_self_compact_failed \
     "[request:$2] $3 $SELF_COMPACT_STANDING" 2>/dev/null || true
+}
+
+self_compact_failed_pending_record() { # $1 window, $2 token, $3 reason
+  local reason
   reason="$(json_text "$3")"
   event_log_record "$1" compaction.self-failed \
-    "{\"request_id\":\"$2\",\"reason\":$reason}" \
+    "{\"request_id\":\"$2\",\"reason\":$reason,\"retry\":true}" \
     || die 'compaction: failure record could not be appended'
+}
+
+self_compact_failed_pending_write() { # $1 window, $2 token, $3 reason
+  self_compact_failed_pending_state_write "$@"
+  self_compact_failed_pending_record "$@"
 }
 
 # A NATIVE STOP IS NOT NATIVE IDLE. Some harnesses run Stop hooks before their
@@ -3519,17 +3527,12 @@ self_compact_run() ( # $1 window, $2 collar, $3 exact request token, optional $4
           tmux wait-for -S "gang-self-compact-$request" 2>/dev/null || true' EXIT
     tmux set-option -w -t "$win" @gl_self_compact_dispatching "$request" 2>/dev/null \
       || exit 0
-    # Capture the retry fact while the request still stands. The tick owns the
-    # one post-consumption read of this outcome, so reading it after removing
-    # the request would consume the only evidence that it must report.
-    local err="" rc=0 noted="" prior="" reason=""
-    prior="$(tmux show-options -wqv -t "$win" @gl_self_compact_failed 2>/dev/null)" || prior=""
+    # A retryable refusal records retry=true with its failure. A later dispatch
+    # for the same request_id is the retry, so this worker never probes mutable
+    # failure state merely to decorate its diagnostic history. In particular,
+    # tick owns the one post-consumption outcome read that controls this pass.
+    local err="" rc=0 noted="" reason=""
     tmux set-option -uw -t "$win" @gl_self_compact_requested 2>/dev/null || true
-    case "$prior" in
-      "[request:$request] "*"$SELF_COMPACT_STANDING")
-        event_log_record "$win" compaction.self-retried \
-          "{\"request_id\":\"$request\"}" || exit 1 ;;
-    esac
     load_collar "$2" || true
     event_log_record "$win" compaction.dispatched \
       "{\"mode\":\"self\",\"request_id\":\"$request\"}" \
@@ -3559,11 +3562,15 @@ self_compact_run() ( # $1 window, $2 collar, $3 exact request token, optional $4
          # is what the agent needs; the retries after it are gang's business.
          noted="$(tmux show-options -wqv -t "$win" @gl_self_compact_noted 2>/dev/null)" \
            || noted=""
-         self_compact_failed_pending_write "$win" "$request" "$err"
+         # Commit the note before its durable failure record. The failure option
+         # still lands first, but its host-side append must not hold the claim
+         # across a crossed loser and hide an already accepted deferred note.
+         self_compact_failed_pending_state_write "$win" "$request" "$err"
          if [ "$noted" != "$request" ] \
             && self_compact_note "$win" "$err" rescheduled; then
            tmux set-option -w -t "$win" @gl_self_compact_noted "$request" 2>/dev/null || true
-         fi ;;
+         fi
+         self_compact_failed_pending_record "$win" "$request" "$err" ;;
       # A POST-ENTER QUEUE HINT DOES NOT SETTLE THE COMMAND'S FATE. The
       # compaction may already have run before the next composer frame painted
       # that hint. Restoring the request here can compact twice, so preserve
@@ -15278,7 +15285,7 @@ cmd_event_proof() { # test-only driver for the production staging, host append, 
   [ -n "$id" ] || die '__event-proof found no ordinary agent window'
   for kind in \
     context.read context.band-changed compaction.native-witnessed \
-    compaction.self-requested compaction.dispatched compaction.self-failed compaction.self-retried \
+    compaction.self-requested compaction.dispatched compaction.self-failed \
     compaction.self-completed compaction.completed delivery.queued delivery.sending \
     delivery.verified delivery.held delivery.interrupted delivery.archived \
     state.classified agent.hitched agent.dropped; do

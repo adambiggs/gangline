@@ -7,7 +7,7 @@
 events_path="$RUN_ROOT/events.jsonl"
 event_kinds=(
   context.read context.band-changed compaction.native-witnessed
-  compaction.self-requested compaction.dispatched compaction.self-failed compaction.self-retried
+  compaction.self-requested compaction.dispatched compaction.self-failed
   compaction.self-completed compaction.completed delivery.queued delivery.sending
   delivery.verified delivery.held delivery.interrupted delivery.archived
   state.classified tick.passed tick.held tick.failed tick.deadline-killed alert.raised alert.cleared

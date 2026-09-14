@@ -1617,6 +1617,10 @@ compaction, delivery claim outcomes, state transitions, tick outcomes, alert tra
 and lifecycle events carry the team, agent, kind, and event-specific facts. Message bodies
 are deliberately excluded.
 
+A retryable self-compaction failure carries `retry: true`; the next
+`compaction.dispatched` row with the same request id is its recorded retry. Recording that
+fact never adds an extra read of mutable lifecycle state.
+
 When the team is live, the reader selects its exact creation epoch. After teardown it
 still reads the retained rows for that team name, including a requested recorded agent,
 and says that multiple historical incarnations may be present.
