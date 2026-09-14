@@ -876,6 +876,9 @@ release_run="$RUN_ROOT/release-lane"
 release_lock="$RUN_ROOT/release-lane.lock"
 release_order="$RUN_ROOT/release-lane-order"
 release_scope="$RUN_ROOT/release-lane-scope"
+release_flock_bin="$RUN_ROOT/release-lane-flock-bin"
+release_flock_args="$RUN_ROOT/release-lane-flock-args"
+release_real_flock="$(command -v flock)"
 mkdir -p "$release_run/test"
 cp "$ROOT/test/release.sh" "$ROOT/test/gate.sh" "$release_run/test/"
 for release_step in lint smoke integration; do
@@ -901,8 +904,18 @@ git -C "$release_run" init -q
 git -C "$release_run" add -A
 git -C "$release_run" -c user.name=fixture -c user.email=fixture@example.invalid \
   commit -qm 'test: release lane fixture'
+mkdir -p "$release_flock_bin"
+export RELEASE_FLOCK_ARGS="$release_flock_args" RELEASE_REAL_FLOCK="$release_real_flock"
+cat > "$release_flock_bin/flock" <<'SH'
+#!/bin/sh
+for argument in "$@"; do
+  printf '<%s>\n' "$argument" >> "$RELEASE_FLOCK_ARGS"
+done
+exec "$RELEASE_REAL_FLOCK" "$@"
+SH
+chmod +x "$release_flock_bin/flock"
 : > "$release_order"
-release_out="$(GANG_RELEASE_LOCK="$release_lock" GANG_INTEGRATION_PARTS=cli \
+release_out="$(PATH="$release_flock_bin:$PATH" GANG_RELEASE_LOCK="$release_lock" GANG_INTEGRATION_PARTS=cli \
   GANG_INTEGRATION_REQUIRE_ALL=0 \
   "$release_run/test/release.sh")"
 equal "the release lane runs lint, smoke, and integration in order" \
@@ -911,6 +924,8 @@ contains "the release lane reports its complete green proof" \
   "$release_out" "passed lint, smoke, and full integration"
 equal "the release lane clears a focused selector and requires every part" \
   "parts=<> require=<1>" "$(<"$release_scope")"
+excludes "the release lane lock acquisition has no wait deadline" \
+  "$(<"$release_flock_args")" "<-w>"
 if [ ! -s "$release_lock" ]; then
   pass "the release lane clears its owner record before releasing"
 else
@@ -919,7 +934,7 @@ else
 fi
 : > "$release_order"
 release_failed_rc=0
-GANG_RELEASE_LOCK="$release_lock" RELEASE_FAIL_INTEGRATION=7 \
+PATH="$release_flock_bin:$PATH" GANG_RELEASE_LOCK="$release_lock" RELEASE_FAIL_INTEGRATION=7 \
   "$release_run/test/release.sh" >/dev/null 2>&1 || release_failed_rc=$?
 equal "a failed release integration keeps its status" 7 "$release_failed_rc"
 equal "a failed release integration still follows lint and smoke" \

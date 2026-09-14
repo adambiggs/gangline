@@ -620,10 +620,9 @@ gate_step_tree() { # $1 process-group id
 }
 
 # Output is a lease, not a total-duration budget. Every complete line renews it.
-# The file remains the exact trailing transcript used in a stall report and by
-# the integration all-parts attestation below. A partial final line is retained
-# at EOF, but a program that never completes that line has not made new terminal
-# output visible and does not renew the lease.
+# The file remains the exact trailing transcript used in a stall report. A
+# partial final line is retained at EOF, but a program that never completes that
+# line has not made new terminal output visible and does not renew the lease.
 gate_monitored_step() { # $1 name, $2 output, $3 live, $4 cwd, rest = argv
   local name="$1" output="$2" live="$3" cwd="$4"
   local fifo pidfile pid parent fd line read_rc rc started

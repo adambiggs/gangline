@@ -88,10 +88,13 @@ terminates the gate: move a healthy part that exceeds it intact to
 
 `test/release.sh` is the separate pre-release lane. It serializes on the same
 lock, requires one settled tree throughout lint, smoke, and the unchanged full
-integration suite, and is run by the `release` workflow job for Release Please
-pull requests. Before merging such a pull request, its passing release job is a
-required merger procedure; repository rules and branch protection remain an
-operator configuration choice.
+integration suite. The `release` workflow job selects pull requests whose head
+branch begins `release-please--`; that predicate does not establish a Release
+Please origin. Before merging a Release Please pull request, confirm its origin,
+approve its `action_required` workflow run when the default `GITHUB_TOKEN`
+created it, then verify the `release` job passed on the current head SHA. The
+repository adds no aggregate runtime deadline to this lane; repository rules and
+branch protection remain an operator configuration choice.
 
 ## Installation
 

@@ -11,10 +11,10 @@ tags: [gates, release]
 
 ## Context
 
-The contribution gate must be observed under five minutes. Full serial
-integration takes much longer; terminating it would refuse contributions.
-Deleting assertions would misreport coverage. Releases still need the complete
-proof.
+Accepted ADR-0167 runs full integration in the contribution gate. Serial
+integration cannot meet the five-minute policy; terminating it would refuse
+contributions and deleting assertions would misreport coverage. This proposed
+successor keeps the complete release proof.
 
 ## Decision
 
@@ -23,9 +23,10 @@ time, total wall time after heavy-lock acquisition, and per-part timing at its
 end. The unchanged full integration suite runs in `test/release.sh` with lint
 and smoke on one settled tree under the same lock. A check stays mandatory only
 when its healthy aggregate is observed under five minutes; otherwise it moves
-intact to this pre-release lane. The `release` job runs it for Release Please
-pull requests. A merger must confirm its passing result; remote enforcement
-remains the operator's configuration choice.
+intact to this pre-release lane. The `release` job selects a
+`release-please--` head branch; the merger confirms Release Please origin,
+approves an `action_required` run, and verifies the release job on the current
+head SHA. Remote enforcement remains the operator's configuration choice.
 
 ## Consequences
 

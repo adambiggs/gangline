@@ -166,10 +166,15 @@ test/release.sh
 `test/release.sh` takes the same heavy-test lock and runs lint, smoke, and the
 unchanged full integration suite against one settled tree. It is the required
 pre-release proof: before merging a Release Please pull request, the merger
-must confirm that its `release` workflow job ran this command and passed. The
-workflow runs the job only for Release Please pull requests; repository rules
-or branch protection are an operator configuration choice, so this merger
-procedure remains required unless the operator installs matching enforcement.
+must confirm that the pull request is Release Please-created. The workflow's
+`release-please--` head-branch predicate merely selects a candidate; it does
+not prove that origin. Because the configured action uses the default
+`GITHUB_TOKEN`, the merger must select **Approve workflows to run** when the
+pull-request run is `action_required`, then verify that the `release` job ran
+this command and passed on the current pull-request head SHA. The repository
+adds no aggregate runtime deadline to that lane. Repository rules or branch
+protection are an operator configuration choice, so this merger procedure
+remains required unless the operator installs matching enforcement.
 
 Each mandatory step must complete an output line within 300 seconds. A quiet
 step is reported with its process tree and last 30 lines, then its private
@@ -366,9 +371,11 @@ command's status.
 - The npm and PyPI stubs are not published packages. Install with `install.sh`.
 - Keep GitHub Actions permission to create pull requests enabled so Release
   Please can maintain its release PR.
-- Before merging a Release Please pull request, require its passing `release`
-  workflow job. That job runs `test/release.sh`, which preserves the full
-  integration assertions outside the five-minute contribution gate.
+- Before merging a Release Please pull request, follow the pre-release procedure
+  above: confirm the PR's origin, approve an `action_required` run, then require
+  its `release` workflow job to pass on the current head SHA. That job runs
+  `test/release.sh`, preserving the full integration assertions outside the
+  five-minute contribution gate.
 
 ## Documentation and measurement
 
