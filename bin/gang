@@ -15128,7 +15128,7 @@ cmd_event_record_worker() { # internal host-side append reached only through tmu
 }
 
 event_log_append_prepared() { # $1 complete prepared JSON line, $2 event path
-  local prepared="$1" events="$2" token buffer report command out="" head socket=""
+  local prepared="$1" events="$2" token buffer report command out="" head socket="" run_err=""
   token="$(mint_message_nonce)$(mint_message_nonce)"
   buffer="gang-event-$token"
   report="gang-event-report-$token"
@@ -15145,9 +15145,10 @@ event_log_append_prepared() { # $1 complete prepared JSON line, $2 event path
   command+=" \"$(option_shell_quote "$ROOT/bin/gang")\" __event-record-worker"
   command+=" \"$(option_shell_quote "$buffer")\" \"$(option_shell_quote "$events")\""
   command+=" \"$(option_shell_quote "$report")\" \"$(option_shell_quote "$token")\""
-  if ! tmux run-shell "$command"; then
+  if ! run_err="$(tmux run-shell "$command" 2>&1)"; then
     printf 'gang: event record could not start a host-side append; durable destination was %s and the prepared line remains in tmux buffer %s\n' \
       "$events" "$buffer" >&2
+    [ -z "$run_err" ] || printf 'gang: event record host append detail: %s\n' "$run_err" >&2
     return 1
   fi
   if ! out="$(tmux save-buffer -b "$report" -)"; then
