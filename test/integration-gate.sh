@@ -136,6 +136,20 @@ refuses "the refusal hands over the command that does own a tree" \
   "test/gate.sh" "$gate_fix/test/gate.sh" --assert-owned
 git -C "$gate_fix" checkout -q -- bin/gang
 
+# A gate started directly from an agent pane can survive the turn that asked
+# for it while blocked on the shared heavy lock. It must refuse before that
+# lock, leaving the durable `gang run` route as the successor-visible owner.
+gate_agent_rc=0
+gate_agent_out="$(TMUX_PANE=%fixture GANG_TMUX_GUARD_AGENT=1 \
+  "$gate_fix/test/gate.sh" 2>&1)" \
+  || gate_agent_rc=$?
+equal "a direct agent-pane gate refuses before it can strand on the heavy lock" \
+  78 "$gate_agent_rc"
+contains "the direct gate refusal names the durable host-run route" \
+  "$gate_agent_out" "gang run -- test/gate.sh"
+contains "the direct gate refusal names successor recovery" \
+  "$gate_agent_out" "gang run --active"
+
 # An operator who has turned untracked reporting off must not thereby turn this
 # check off: a new collar or role file is exactly the kind of untracked file
 # that changes what a run executes, and inheriting `status.showUntrackedFiles`
@@ -1401,7 +1415,7 @@ if [ "${GANG_INTEGRATION_REQUIRE_ALL_PROBE:-0}" != 1 ]; then
     "1" "$require_all_probe_rc"
   contains "the required run names every part cli omitted" \
     "$require_all_probe_out" \
-    "required full run omitted declared parts: substrate,hitch,compose,spool,readiness,hooks,notify,usage,cap,tick,run"
+    "required full run omitted declared parts: substrate,hitch,compose,spool,readiness,hooks,notify,usage,cap,tick,friction,run"
   excludes "a focused required run never attests every part ran" \
     "$require_all_probe_out" "integration: every declared part ran"
 
@@ -1423,7 +1437,7 @@ if [ "${GANG_INTEGRATION_REQUIRE_ALL_PROBE:-0}" != 1 ]; then
   fi
   contains "a focused run carries its scope in the terminal summary" \
     "$(printf '%s\n' "$focused_probe_out" | tail -n 1)" \
-    "focused parts cli (full suite: cli substrate hitch compose spool readiness hooks notify usage cap tick run)"
+    "focused parts cli (full suite: cli substrate hitch compose spool readiness hooks notify usage cap tick friction run)"
 
   readiness_dependency_rc=0
   readiness_dependency_out="$(env -u GANG_INTEGRATION_REQUIRE_ALL \

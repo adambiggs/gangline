@@ -118,6 +118,30 @@ def hold_corpse():
               file=sys.stderr)
 
 
+def mark_trust_pending(cwd):
+    """Leave a roster-readable fact beside the held launch; grant nothing."""
+    pane = os.environ.get("TMUX_PANE")
+    if not pane:
+        return
+    argv = ["tmux"]
+    socket = os.environ.get("GANG_TMUX_SOCKET")
+    if socket:
+        argv += ["-S", socket]
+    argv += ["set-option", "-w", "-t", pane, "@gl_hook_trust_pending",
+             "codex\t" + cwd]
+    try:
+        marked = subprocess.run(argv, stdout=subprocess.DEVNULL,
+                                stderr=subprocess.PIPE, text=True, timeout=10)
+    except (OSError, subprocess.SubprocessError) as exc:
+        print("gang: could not mark this held hook-trust pane (%s)" % exc,
+              file=sys.stderr)
+        return
+    if marked.returncode != 0:
+        print("gang: could not mark this held hook-trust pane: %s"
+              % (marked.stderr.strip() or "tmux exited %d" % marked.returncode),
+              file=sys.stderr)
+
+
 def refuse(detail, last_line) -> NoReturn:
     # THE REFUSAL IS A DIAGNOSTIC, so it goes to stderr. The pane shows both, so
     # `hitch` still quotes the last line and `gang capture` still shows the
@@ -398,18 +422,20 @@ def main():
         "same run answer this directory's folder-trust prompt, which codex records",
         "per path.",
         "",
-        "Trusting is yours to grant, not Gangline's. Run this line once, answer",
-        "'Trust all and continue', quit codex, then re-hitch:",
+        "Trusting is yours to grant, not Gangline's. Open the attended native",
+        "review window below, answer 'Trust all and continue', quit codex, then",
+        "re-hitch. Gangline sends no trust-menu key:",
         "",
-        "  cd %s && %s" % (shlex.quote(cwd),
-                           " ".join(shlex.quote(word) for word in command)),
+        "  gang trust codex -d %s" % shlex.quote(cwd),
         "",
     ]
+    mark_trust_pending(cwd)
     refuse(
         detail,
-        "gang: %d codex hook(s) are untrusted — run the cd && codex line above "
-        "once, answer 'Trust all and continue', quit codex, then re-hitch (this held "
-        "window carries the full list: gang capture <name> 40)." % len(pending))
+        "gang: %d codex hook(s) are untrusted — run gang trust codex -d %s, answer "
+        "'Trust all and continue', quit codex, then re-hitch (this held window "
+        "carries the full list: gang capture <name> 40)." % (len(pending),
+                                                              shlex.quote(cwd)))
 
 
 if __name__ == "__main__":

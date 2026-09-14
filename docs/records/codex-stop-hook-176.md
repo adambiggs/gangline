@@ -89,16 +89,16 @@ When Codex reports untrusted hooks, the collar preflight refuses and holds the
 window rather than leaving an agent at a dialog. Its final refusal line is:
 
 ```
-gang: N codex hook(s) are untrusted here — run the codex line above in CWD once, answer 'Trust all and continue', then re-hitch (this held window carries the full list: gang capture <name> 40).
+gang: N codex hook(s) are untrusted — run gang trust codex -d CWD, answer 'Trust all and continue', quit codex, then re-hitch (this held window carries the full list: gang capture <name> 40).
 ```
 
-The full held-window diagnostic prints the exact `codex` command above that
-line. The operator must, from a terminal in that same working directory, run
-the printed command, choose Codex's native **Trust all and continue**, then
-run `gang hitch` again. Gangline cannot answer the menu or grant trust. There
-is intentionally no pre-hitch provisioning surface; the first loud refusal is
-the once-per-machine recovery path. A changed configured command/path means
-every later Codex hitch on that machine refuses until a person completes it.
+The held-window diagnostic names `gang trust codex -d CWD`. It opens one
+disposable native review window with the exact hook configuration but without
+the preflight, so a person can choose Codex's native **Trust all and continue**.
+Gangline sends no trust-menu key, never registers that window as an agent, and
+cannot grant trust. Quit Codex after the decision, then run `gang hitch`
+again. A changed configured command/path means every later Codex hitch on that
+machine refuses until a person completes this attended recovery.
 
 Two alternatives were considered and not added. A changing command-version
 token would make every helper edit mint a new hash and impose a recurring

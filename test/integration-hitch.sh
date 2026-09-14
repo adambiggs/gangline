@@ -3231,9 +3231,9 @@ else
   # source-guard: producer@ac3781031fd5: the preflight is the only process this pane ever ran and the only source of this line; the stub answers it over pipes and prints nothing to the terminal on this path
   contains "and the held corpse carries the refusal's last line" \
     "$codexheld_capture" "codex hook(s) are untrusted"
-  # source-guard: producer@c26570109d3e: only the preflight's refusal composes this cd-and-codex line, from the pane's start directory and its argv; tmux runs the launch command without echoing it into the pane
-  contains "and the remediation as one line that runs from any directory" \
-    "$codexheld_capture" "  cd $(cd -P "$RUN_ROOT" && pwd) && codex -c "
+  # source-guard: producer@8dac01d7abd7: only the preflight's refusal composes this attended recovery line from the pane's start directory; tmux runs the launch command without echoing it into the pane
+  contains "and the remediation opens one attended native review" \
+    "$codexheld_capture" "  gang trust codex -d $RUN_ROOT"
   excludes "and holding it met no refusal" \
     "$codexheld_capture" "could not hold this pane"
   tmux kill-window -t "$codexheld_window"

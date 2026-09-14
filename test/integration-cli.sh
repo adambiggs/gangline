@@ -18,7 +18,7 @@ dispatch_commands="$({
       }
     '
 } | awk '$0 != "hook" && $0 != "reply-obligations" && $0 != "reply-released" && $0 != "__tick-worker" && $0 != "__usage-record-worker" && $0 != "-h" && $0 != "--help" && $0 != "help"' | sort -u)"
-bare_error_commands="hitch adopt rename talk send at run flush mail interrupt compact context limits wait-limit wait status explain capture composer whoami drop down"
+bare_error_commands="hitch trust adopt rename talk send at run flush mail interrupt compact context limits wait-limit wait status explain capture composer whoami drop down"
 meaningful_bare_commands="up roster attach teams alerts tick collars models roles config curfew notify usage cap upgrade"
 classified_commands="$(printf '%s\n' $bare_error_commands $meaningful_bare_commands | sort -u)"
 
@@ -219,7 +219,8 @@ arity_probes=(
   "send|--to ghost --stdin STRAY|send: unknown argument 'STRAY'"
   "flush|ghost STRAY|flush: unexpected argument 'STRAY'"
   "at|--to ghost STRAY|at: unknown argument 'STRAY' — a message body is not an argument"
-  "run|STRAY|run: expected -- <command>, or --cancel <run-id>"
+  "run|STRAY|run: expected -- <command>, --active, or --cancel <run-id>"
+  "trust|codex -d . STRAY|trust: unknown argument 'STRAY'"
   "mail|ghost STRAY|mail: unexpected argument 'STRAY'"
   "interrupt|ghost STRAY|interrupt: unexpected argument 'STRAY'"
   "compact|ghost STRAY|compact: unexpected argument 'STRAY'"
@@ -2827,8 +2828,12 @@ contains "the original team root receives the sandbox refusal" \
 # it in the Unix-socket pathname below the durable test root. The label and root
 # are unique, and cleanup addresses that label with real tmux afterwards.
 guard_override_root="$guard_home/agent-override"
+# tmux's Unix socket path has a hard byte limit. `guard_home` is deliberately
+# under the suite's durable scratch root, so keep this private `-L` label
+# short enough for the documented state-root TMPDIR as well as a short local
+# scratch root.
 guard_override_label="g-$$"
-guard_override_session="guard-agent-override-$$"
+guard_override_session="g-$$"
 mkdir -p "$guard_override_root"
 env -u TMUX -u TMUX_PANE -u TMUX_TMPDIR \
   TMUX_TMPDIR="$guard_override_root" "$REAL_TMUX" -L "$guard_override_label" \

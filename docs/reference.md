@@ -71,6 +71,13 @@ third-party lock owners.
 positive number of seconds. Every completed output line renews the budget, so
 the variable does not cap the total duration of a healthy, talkative step.
 
+From a Gangline agent pane, invoke the mandatory gate as `gang run --
+test/gate.sh`, then wait for its ordinary terminal completion. A direct
+agent-pane `test/gate.sh` invocation refuses before it can queue invisibly on
+the heavy lock. The host-service record carries the stable requester identity,
+so an interrupted successor can use `gang run --active` to see it and `gang
+run --cancel <id>` to stop only its own gate.
+
 ## Installation
 
 The bootstrap command in `README.md` downloads `install.sh` from `main`, but the
@@ -1059,7 +1066,7 @@ the entry is archived with the rest of its mail and arrives under a visible name
 because a spool archives every child. `--clear` cancels every timed send parked
 for a target, stopping each timer before removing the message it would deliver.
 
-### `gang run -- <command> [argument ...]` / `gang run --cancel <run-id>`
+### `gang run -- <command> [argument ...]` / `gang run --active` / `gang run --cancel <run-id>`
 
 Starts one command on behalf of the calling registered agent, then returns as
 soon as the host accepted the transient service. The command runs through the
@@ -1085,10 +1092,14 @@ rules and drains at its next safe boundary.
 At most four records may be active for one team. The limit is checked while
 creating the durable declaration, before systemd is asked to launch anything.
 There is no resident runner: each transient service owns only its command and
-completion. `--cancel` addresses the exact recorded service and makes a
-courtesy check that the calling live pane carries the requester's stable spool
-identity. Cancellation asks the service to stop and the finalizer reports the
-resulting exit status.
+completion. `--active` is the recovery path when an interrupted turn leaves a
+host service running or waiting on a shared lock: it reads the caller's stable
+spool identity, lists only its active durable declarations, and prints the
+exact `--cancel` command for each. Roster and status show the same IDs. It does
+not cancel a service just because the initiating turn ended. `--cancel`
+addresses the exact recorded service and makes a courtesy check that the
+calling live pane carries the requester's stable spool identity. Cancellation
+asks the service to stop and the finalizer reports the resulting exit status.
 
 If the requesting window has been dropped or replaced before exit, Gangline
 does not send the result to a same-named replacement and does not recreate a
@@ -2120,17 +2131,19 @@ before opening a composer and holds the window with this final line (with its
 live count and directory substituted):
 
 ```
-gang: N codex hook(s) are untrusted here — run the codex line above in CWD once, answer 'Trust all and continue', then re-hitch (this held window carries the full list: gang capture <name> 40).
+gang: N codex hook(s) are untrusted — run gang trust codex -d CWD, answer 'Trust all and continue', quit codex, then re-hitch (this held window carries the full list: gang capture <name> 40).
 ```
 
-The refusal prints the exact `codex` command above that line. From a terminal
-in that same working directory, run that command, choose Codex's native
-**Trust all and continue**, then re-run `gang hitch`. The native menu requires
-a terminal; Gangline deliberately cannot grant trust. There is no Gangline
-pre-hitch provisioning command: the held refusal is the once-per-machine,
-operator-visible recovery path. An edit that changes the configured command or
-path can therefore cause every later Codex hitch on that machine to refuse
-until a person completes those steps.
+From the affected team, run `gang trust codex -d CWD`, attach to the printed
+disposable window, select it, and choose Codex's native **Trust all and
+continue**. The command opens the collar's exact hook configuration without
+the preflight that would otherwise refuse before the menu; it sends no trust
+key and does not register the review window as an agent. Quit Codex, then
+re-run `gang hitch`. The held refusal's unregistered roster row also prints
+this exact command as `!hook-trust!`. The native menu requires a person;
+Gangline deliberately cannot grant trust. An edit that changes the configured
+command or path can therefore cause every later Codex hitch on that machine to
+refuse until a person completes those steps.
 
 The preflight asks `hooks/list` under the launch's `-c`/`--config`, `--enable`,
 `--disable`, and `--strict-config` layers in their original order. It requires

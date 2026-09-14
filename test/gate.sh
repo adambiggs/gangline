@@ -37,6 +37,22 @@ set -euo pipefail
 
 unset GIT_DIR GIT_WORK_TREE GIT_INDEX_FILE GIT_OBJECT_DIRECTORY GIT_COMMON_DIR GIT_PREFIX
 
+# A direct gate from an agent pane can outlive the turn that started it while
+# waiting on the host-wide heavy lock. That leaves a successor sandbox with no
+# owner record and no safe cancellation handle. `gang run` starts the same gate
+# as a durable host service instead: it records the stable pane identity before
+# the lock wait, delivers the terminal result, and gives a successor --active
+# and --cancel recovery. This is a workflow guard, not a way to alter a gate
+# already executing outside an agent.
+if [ "$#" -eq 0 ] && [ -n "${TMUX_PANE:-}" ] \
+   && [ "${GANG_TMUX_GUARD_AGENT:-}" = 1 ]; then
+  printf '%s\n' \
+    'gate: direct invocation from a Gangline agent is refused because a turn interruption can strand it behind the heavy lock.' \
+    '      Run: gang run -- test/gate.sh' \
+    '      Wait for Gangline to deliver the terminal result; recover with gang run --active or cancel with gang run --cancel <id>.' >&2
+  exit 78
+fi
+
 # THE ORDINARY GATE OWNS THE HOST'S HEAVY-TEST LOCK. Keeping acquisition here
 # means callers cannot accidentally omit the descriptor rule. `flock -o`
 # retains the lock in its small parent while closing the lock fd in this script,

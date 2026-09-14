@@ -1452,6 +1452,7 @@ SH
 tick_compacted="$RUN_ROOT/tick-compacted"
 tick_cache_ledger="$RUN_ROOT/tick-cache-compactions"
 tick_cache_stamp="$RUN_ROOT/tick-cache-transcript"
+tick_scope_stale="$RUN_ROOT/tick-scope-stale"
 mkdir -p "$RUN_ROOT/collars"
 export GANG_COLLARS="$RUN_ROOT/collars"
 cat > "$RUN_ROOT/collars/tick-native.sh" <<SH
@@ -1461,7 +1462,11 @@ cat > "$RUN_ROOT/collars/tick-native.sh" <<SH
 GANG_LAUNCH="ENV='$RUN_ROOT/tick-bashrc' bash --posix"
 GANG_STOP_HOOK=1
 GANG_SELF_COMPACT=deferred
-GANG_COMPACT_CMD="printf TICK_COMPACT; : > '$tick_compacted'"
+GANG_COMPACT_CMD="printf 'TICK_COMPACT\\n'; : > '$tick_compacted'"
+collar_waiting() {
+  [ -e "$tick_scope_stale" ] || return 1
+  printf 'stale bwrap witness'
+}
 SH
 cat > "$RUN_ROOT/collars/tick-cache.sh" <<SH
 # shellcheck shell=bash
@@ -2338,8 +2343,54 @@ equal "copy-mode leaves the peer message parked" 1 \
   "$("$GANG" roster --porcelain | awk -F '\t' '$1 == "tick-copy" { print $4 }')"
 contains "copy-mode leaves the self-compaction request standing" \
   "$("$GANG" status tick-copy)" "self-compaction requested"
+tick_scope_bin="$RUN_ROOT/tick-scope-bin"
+tick_real_systemctl="$(command -v systemctl)"
+mkdir -p "$tick_scope_bin"
+cat > "$tick_scope_bin/systemctl" <<SH
+#!/bin/sh
+. "\$GANG_TEST_PATH_SHIM_GUARD"
+path_shim_guard '$tick_real_systemctl' "\$0" systemctl || exit \$?
+case " \$* " in
+  *' show --property=Version --value '*) printf 'fixture-manager\n' ;;
+  *' is-active '*) printf 'inactive\n'; exit 3 ;;
+  *) exit 1 ;;
+esac
+SH
+chmod +x "$tick_scope_bin/systemctl"
+# The original incident left a process witness after its cgroup was collected.
+# Make that one stale record explicit: a fresh manager read must retire it even
+# while copy-mode keeps the pane operator-owned.
+tmux set-option -w -t "$tick_copy_id" @gl_scope \
+  "gangline-$GANG_SESSION-tick-copy-0123456789abcdef.scope"
+tmux set-option -w -t "$tick_copy_id" @gl_waiting $'waiting\tstale bwrap witness'
+tmux set-option -w -t "$tick_copy_id" @gl_waiting_at 0
+tmux set-option -w -t "$tick_copy_id" @gl_waiting_gen 1
+: > "$tick_scope_stale"
+tick_copy_scope_roster="$(PATH="$tick_scope_bin:$PATH" "$GANG" roster)"
+contains "a gone registered scope retires the stale wait verdict" \
+  "$tick_copy_scope_roster" "tick-copy        tick-native  ~idle~"
+excludes "a gone registered scope does not retain its leaked process witness" \
+  "$tick_copy_scope_roster" "stale bwrap witness"
+contains "copy-mode is surfaced with its exact non-destructive exit" \
+  "$tick_copy_scope_roster" "tmux send-keys -t $tick_copy_id -X cancel"
+tmux set-option -uw -t "$tick_copy_id" @gl_scope
+rm -f -- "$tick_scope_stale"
 equal "neither copy-mode action typed before a later invocation" absent \
   "$([ ! -e "$tick_compacted" ] && printf absent || printf present)"
+
+# PostCompact is the first boundary after a deferred request, but copy-mode is
+# still a dialog owned by tmux. The request must survive that failed attempt,
+# name the dialog on roster, and need no fresh Stop before the next boundary
+# retries it.
+tick_copy_request="$(tmux show-options -wqv -t "$tick_copy_id" @gl_self_compact_requested)"
+printf '%s' '{"hook_event_name":"PostCompact"}' \
+  | GANG_TEST_TICK_MODE=manual TMUX_PANE="$tick_copy_pane" "$GANG" hook >/dev/null
+tmux wait-for "gang-self-compact-$tick_copy_request"
+equal "a dialog-blocked PostCompact keeps the same self-compaction request" \
+  "$tick_copy_request" \
+  "$(tmux show-options -wqv -t "$tick_copy_id" @gl_self_compact_requested)"
+contains "roster identifies the dialog blocking the deferred self-compaction" \
+  "$("$GANG" roster)" "self-compact-blocked=dialog"
 
 # A readable native Stop is stronger than a stale numbered menu line during a
 # tick. The one-shot collar probe makes the ordinary send take the old painted
@@ -2358,19 +2409,28 @@ equal "the painted false occupied reading parks before the cooperative pass" 1 \
   "$("$GANG" roster --porcelain | awk -F '\t' '$1 == "tick-false" { print $4 }')"
 
 tmux send-keys -t "$tick_copy_id" -X cancel
+# A deferred compact that met copy-mode has no new Stop to rescue it. The
+# native PostCompact boundary below is the next directly witnessed opportunity:
+# it must retry the standing request before peer mail, without waiting for a
+# cooperative patrol or an operator paste.
+printf '%s' '{"hook_event_name":"PostCompact"}' \
+  | GANG_TEST_TICK_MODE=manual TMUX_PANE="$tick_copy_pane" "$GANG" hook >/dev/null
+# The worker's own completion event lands after its lock and dispatching marker
+# are released. It proves the native retry reached a terminal decision, unlike
+# a command-local marker that could fire before the worker's cleanup.
+tmux wait-for "gang-self-compact-$tick_copy_request"
+equal "PostCompact retries the compact deferred behind copy-mode" present \
+  "$([ -e "$tick_compacted" ] && printf present || printf absent)"
+excludes "the native retry clears its standing self-compaction request" \
+  "$("$GANG" status tick-copy)" "self-compaction requested"
 tick_cross_rc=0
 TMUX_PANE="$tick_caller_pane" GANG_TEST_TICK_MODE=sync \
   "$GANG" whoami >/dev/null || tick_cross_rc=$?
 equal "a command from another window keeps its own successful result" 0 "$tick_cross_rc"
-# The standing compaction takes the pass ahead of the parked message, and the
-# pass types nothing more into a window it has just compacted: the message
-# waits for the next pass. A pass that delivered the message first opened its
-# turn and found the window busy, leaving the request standing.
-equal "that command's tick submits the standing self-compaction" present \
-  "$([ -e "$tick_compacted" ] && printf present || printf absent)"
-excludes "the completed self-compaction no longer reads as pending" \
-  "$("$GANG" status tick-copy)" "self-compaction requested"
-equal "and leaves the copy-mode message parked behind it for the next pass" 1 \
+# The native boundary owned the compaction. The next cooperative pass may now
+# spend the older peer message; it must not rediscover a request that boundary
+# already completed.
+equal "the post-compaction pass drains the formerly copy-mode-held message" 0 \
   "$("$GANG" roster --porcelain | awk -F '\t' '$1 == "tick-copy" { print $4 }')"
 equal "one global pass also drains the other hitched window" 0 \
   "$("$GANG" roster --porcelain | awk -F '\t' '$1 == "tick-false" { print $4 }')"
@@ -2379,14 +2439,8 @@ contains "the closed native turn beats false occupied paint for delivery" \
   "$(pane_all tick-false)" "TICK_FALSE_OCCUPIED_MESSAGE"
 equal "the completed pass retires every tick delivery owner marker" absent \
   "$(if [ -n "$(tmux show-options -wqv -t "$tick_copy_id" @gl_tick_delivery)$(tmux show-options -wqv -t "$tick_false_id" @gl_tick_delivery)" ]; then printf present; else printf absent; fi)"
-tick_cross_rc=0
-TMUX_PANE="$tick_caller_pane" GANG_TEST_TICK_MODE=sync \
-  "$GANG" whoami >/dev/null || tick_cross_rc=$?
-equal "the next command from another window keeps its own successful result" 0 "$tick_cross_rc"
-equal "and its tick drains the copy-mode message" 0 \
-  "$("$GANG" roster --porcelain | awk -F '\t' '$1 == "tick-copy" { print $4 }')"
-# source-guard: whole-surface@2b9b8301b2d3: the nonce-marked peer body is unique to this test and verified delivery may render it anywhere in the recipient transcript
-contains "the copy-mode message reached the recipient without its own new boundary" \
+# source-guard: whole-surface@bfade6c1fd0a: the nonce-marked peer body is unique to this test and verified delivery may render it anywhere in the recipient transcript
+contains "the copy-mode message reached the recipient after native retry" \
   "$(pane_all tick-copy)" "TICK_COPY_MESSAGE"
 
 # A CLEARED CONDITION LEAVES THE STATUS BAR WITHIN ONE TICK. A permission

@@ -184,6 +184,31 @@ run_cancel_unit="$(<"$run_cancel_record/unit")"
 contains "cancellation addresses the service exact to that run" "$(<"$run_stops")" \
   "stop -- $run_cancel_unit"
 
+# A host command can outlive the sandbox that asked for it. The next shell in
+# this pane has only the stable spool identity, not the predecessor's run-id
+# output, so it must recover both the declaration and a usable cancellation.
+run_successor_out="$(run_start sh -c 'printf MARK_RUN_SUCCESSOR')"
+contains "an interrupt-shaped host run is accepted" "$run_successor_out" "started run"
+run_successor_record="$(run_record_for MARK_RUN_SUCCESSOR)" || run_successor_record=""
+run_successor_id="${run_successor_record##*/}"
+run_successor_active="$(TMUX_PANE="$run_requester_pane" XDG_STATE_HOME="$run_state" \
+  GANG_TEST_RUN_ARGS="$run_args" GANG_TEST_RUN_STOPS="$run_stops" \
+  PATH="$run_bin:$PATH" "$GANG" run --active)"
+contains "a successor sandbox discovers its predecessor's host run" \
+  "$run_successor_active" "active host run $run_successor_id"
+contains "the successor receives an exact cancellation command" \
+  "$run_successor_active" "gang run --cancel $run_successor_id"
+run_successor_roster="$(XDG_STATE_HOME="$run_state" "$GANG" roster)"
+contains "roster makes an interrupted host run visible" \
+  "$run_successor_roster" "host-run="
+contains "roster names the interrupted host run" \
+  "$run_successor_roster" "$run_successor_id"
+run_successor_status="$(XDG_STATE_HOME="$run_state" "$GANG" status run-requester)"
+contains "status makes an interrupted host run visible" \
+  "$run_successor_status" "active host run(s):"
+contains "status names the interrupted host run" \
+  "$run_successor_status" "$run_successor_id"
+
 run_kill_out="$(run_start sh -c 'printf MARK_RUN_KILL')"
 contains "a SIGKILL-shaped run is accepted" "$run_kill_out" "started run"
 run_kill_record="$(run_record_for MARK_RUN_KILL)" || run_kill_record=""
@@ -217,7 +242,22 @@ if [ "$run_other_cancel_rc" -ne 0 ] && [[ "$run_other_cancel" == *"only the stab
 else
   fail "a different live agent cannot cancel another request" "reply [$run_other_cancel]"
 fi
+run_other_active="$(TMUX_PANE="$run_other_pane" XDG_STATE_HOME="$run_state" \
+  GANG_TEST_RUN_ARGS="$run_args" GANG_TEST_RUN_STOPS="$run_stops" \
+  PATH="$run_bin:$PATH" "$GANG" run --active)"
+excludes "a different agent cannot list another owner's host run" \
+  "$run_other_active" "$run_successor_id"
 "$GANG" drop run-other
+
+run_successor_cancel="$(TMUX_PANE="$run_requester_pane" XDG_STATE_HOME="$run_state" \
+  GANG_TEST_RUN_ARGS="$run_args" GANG_TEST_RUN_STOPS="$run_stops" \
+  PATH="$run_bin:$PATH" "$GANG" run --cancel "$run_successor_id")"
+contains "the successor may cancel its predecessor's host run" \
+  "$run_successor_cancel" "cancellation requested"
+run_successor_unit="$(<"$run_successor_record/unit")"
+contains "successor cancellation reaches the recovered exact service" \
+  "$(<"$run_stops")" "stop -- $run_successor_unit"
+run_finalize_direct "$run_successor_record" killed TERM
 
 run_finalize_direct "$run_cancel_record" killed TERM
 contains "a killed runner receives a fallback completion result" "$(<"$run_cancel_record/result")" $'143\t'

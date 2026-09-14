@@ -126,6 +126,19 @@ Run the repository gate:
 test/gate.sh
 ```
 
+From a Gangline agent pane, run the same gate through the recoverable host
+service instead:
+
+```sh
+gang run -- test/gate.sh
+```
+
+Do not commit until Gangline delivers that run's terminal result. If the turn
+ends first, `gang run --active` shows the owned gate and its exact cancellation
+command; `gang run --cancel <id>` stops only that owned service. A direct agent
+invocation of `test/gate.sh` refuses before it can wait invisibly on the heavy
+lock.
+
 It snapshots the working tree, uncommitted work included, into a private copy,
 commits it there, and runs `test/lint.sh`, `test/smoke.sh`, and
 `test/integration.sh` from that

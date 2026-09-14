@@ -61,6 +61,13 @@ if [ -n "${ROOT:-}" ] && [ -x "$ROOT/bin/gang" ]; then
       _gl_codex_hook_flags+=" -c 'hooks.Stop=$_gl_codex_stop_hook'"
       GANG_LAUNCH="$GANG_LAUNCH$_gl_codex_hook_flags"
       GANG_RESUME_LAUNCH="$GANG_RESUME_LAUNCH$_gl_codex_hook_flags"
+      # THIS IS THE ATTENDED FORM of the exact native launch whose hooks the
+      # preflight verifies. `gang trust codex -d DIR` opens it in a disposable
+      # window when a changed install root needs the operator to answer Codex's
+      # review menu. It deliberately has no preflight prefix: a preflight would
+      # refuse before the native menu is drawn, and no Gangline path presses a
+      # trust choice on the operator's behalf.
+      GANG_TRUST_LAUNCH="$GANG_LAUNCH"
       # THE HOOKS INSTALLED ABOVE ARE WHAT CODEX ASKS ABOUT. Their command
       # carries this install root, so a new install, an upgrade or a worktree
       # presents hashes codex has never seen and it opens its hooks-review menu
@@ -1490,4 +1497,45 @@ collar_input() { # $1 = tmux target; prints the composer, 1 = no composer,
   # retain a second blank as a draft byte but not this separator.
   line="${line# }"
   printf '%s' "$line"
+}
+
+# A NATIVE CONTEXT COMPACTION RETURNS TO THIS CURRENT-SCREEN FRAME with an
+# empty composer. The history itself is not enough: an older recap can remain
+# in scrollback, so require the final visible Codex prompt to be empty through
+# collar_input and require the last recap heading to sit above it in the same
+# capture. Numbered prompts are excluded by collar_input, which makes a hooks
+# review or any other selected menu a non-match rather than a continuation
+# target. This reader names a boundary only; bin/gang owns its one continuation.
+collar_recap_boundary() { # $1 = tmux target; 0 current empty recap, 1 otherwise, 3 unreadable
+  local box pane
+  box="$(collar_input "$1")" || return $?
+  if grep -q '[^[:space:]]' <<<"$box"; then
+    return 1
+  fi
+  pane="$(tmux capture-pane -pJ -e -t "$1")" || return 3
+  printf '%s\n' "$pane" | python3 -c '
+import re
+import sys
+
+lines = sys.stdin.read().splitlines()
+strip = re.compile(r"\x1b\[[0-9;]*[A-Za-z]")
+plain = [strip.sub("", line).rstrip() for line in lines]
+heads = [i for i, line in enumerate(plain) if line == "─ Conversation recap ─"]
+prompts = [i for i, line in enumerate(plain) if line.startswith("›")]
+if not heads or not prompts:
+    raise SystemExit(1)
+head = heads[-1]
+prompt = prompts[-1]
+if head >= prompt:
+    raise SystemExit(1)
+# A later transcript row is a newer screen state, not the recap landing. The
+# Codex footer below a current composer names a model and cwd; it is allowed,
+# but a second assistant row or another heading is not.
+for line in plain[prompt + 1:]:
+    if not line.strip():
+        continue
+    if " · " in line:
+        continue
+    raise SystemExit(1)
+' || return 1
 }
