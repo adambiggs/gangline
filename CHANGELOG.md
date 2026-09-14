@@ -1,5 +1,25 @@
 # Changelog
 
+## [2.15.0](https://github.com/adambiggs/gangline/compare/gangline-v2.14.0...gangline-v2.15.0) (2026-09-14)
+
+
+### Features
+
+* configure ordered context bands ([5f68964](https://github.com/adambiggs/gangline/commit/5f68964c04628a301c73b1aab5faa2e292fc2015))
+* settle custom context bands at hitch ([9b06b89](https://github.com/adambiggs/gangline/commit/9b06b8960b1a21612978fbb71e2f00fcc09c5eca))
+
+
+### Bug Fixes
+
+* **delivery:** make abandoned claims recoverable ([8beea10](https://github.com/adambiggs/gangline/commit/8beea10e2a5387a025445730d7e87d97388c85cd))
+* **delivery:** recover abandoned spool claims ([c73d053](https://github.com/adambiggs/gangline/commit/c73d053c70595dbcfc072f8068a3481062c488f8))
+* **delivery:** serialize stale delivery lock recovery ([872e081](https://github.com/adambiggs/gangline/commit/872e08141fb92e3cb3a9651e50ec2a6ca9f1a102))
+* keep context bands lintable and tick-safe ([d775a98](https://github.com/adambiggs/gangline/commit/d775a98349186304d4d11da448d943f1f277d7ca))
+* preserve unattended recovery boundaries ([89c115b](https://github.com/adambiggs/gangline/commit/89c115b7a456975005ab0d5b57dec76991981a47))
+* recover stale pane locks on supported shells ([2ff8f5b](https://github.com/adambiggs/gangline/commit/2ff8f5b1035677eab801e8c9856f185bfa42c679))
+* recover work at native boundaries ([e174e3e](https://github.com/adambiggs/gangline/commit/e174e3e0351ab0b2584df6a04a2ef3f2636f7cf3))
+* validate context band registrations before hooks ([5875ff0](https://github.com/adambiggs/gangline/commit/5875ff01e268af6c0585c624f33c1389c586663e))
+
 ## [2.14.0](https://github.com/adambiggs/gangline/compare/gangline-v2.13.0...gangline-v2.14.0) (2026-09-13)
 
 
