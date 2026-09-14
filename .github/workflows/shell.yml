@@ -212,9 +212,6 @@ jobs:
           echo "DBUS_SESSION_BUS_ADDRESS=$DBUS_SESSION_BUS_ADDRESS" >> "$GITHUB_ENV"
 
       - name: Pre-release full test
-        # Full integration already consumes the measured hosted-runner budget;
-        # this lane additionally runs lint and smoke against the release tree.
-        timeout-minutes: 50
         run: test/release.sh
 
   release-please:

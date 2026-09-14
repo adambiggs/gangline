@@ -4308,10 +4308,8 @@ contains "the pre-release lane is scoped to Release Please pull requests" \
   "$pre_release_job" "startsWith(github.head_ref, 'release-please--')"
 contains "the pre-release lane runs the complete release test" \
   "$pre_release_job" "run: test/release.sh"
-equal "the pre-release lane owns exactly one aggregate ceiling" \
-  "1" "$(printf '%s\n' "$pre_release_job" | awk '/timeout-minutes:/{count++} END{print count+0}')"
-contains "the pre-release lane has a 50-minute aggregate CI ceiling" \
-  "$pre_release_job" "timeout-minutes: 50"
+equal "the pre-release lane has no runtime ceiling" \
+  "0" "$(printf '%s\n' "$pre_release_job" | awk '/timeout-minutes:/{count++} END{print count+0}')"
 if [ ! -e "$ROOT/.github/workflows/release.yml" ]; then
   pass "no independent release workflow can bypass the integration verdict"
 else

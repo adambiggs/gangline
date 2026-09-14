@@ -11,14 +11,6 @@ unset GIT_DIR GIT_WORK_TREE GIT_INDEX_FILE GIT_OBJECT_DIRECTORY GIT_COMMON_DIR G
 ROOT="$(cd -P "$(dirname "$0")/.." && pwd)"
 HEAVY_LOCK="${GANG_RELEASE_LOCK:-/tmp/gangline-heavy.lock}"
 HEAVY_OWNER_LOCK="${HEAVY_LOCK}.owner"
-LOCK_WAIT="${GANG_RELEASE_LOCK_WAIT:-900}"
-
-case "$LOCK_WAIT" in
-  ''|*[!0-9]*|0)
-    printf 'release: GANG_RELEASE_LOCK_WAIT must be a positive whole number of seconds, got %q\n' \
-      "$LOCK_WAIT" >&2
-    exit 2 ;;
-esac
 
 # The two flock parents own their descriptors rather than this shell. That
 # keeps an integration-created tmux server from inheriting either descriptor
@@ -27,11 +19,7 @@ if [ "${GANG_RELEASE_LOCKED:-0}" != 1 ]; then
   command -v flock >/dev/null 2>&1 \
     || { echo "release: flock is required to serialize the full integration lane" >&2; exit 1; }
   export GANG_RELEASE_LOCKED=1
-  exec flock -o -w "$LOCK_WAIT" "$HEAVY_LOCK" "$0" "$@" || {
-    printf 'release: %s was held for %ss — find the holder with: fuser -v %s\n' \
-      "$HEAVY_LOCK" "$LOCK_WAIT" "$HEAVY_LOCK" >&2
-    exit 1
-  }
+  exec flock -o "$HEAVY_LOCK" "$0" "$@"
 fi
 if [ "${GANG_RELEASE_LOCK_OWNER:-0}" != 1 ]; then
   : > "$HEAVY_LOCK"

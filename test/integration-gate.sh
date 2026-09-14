@@ -902,8 +902,8 @@ git -C "$release_run" add -A
 git -C "$release_run" -c user.name=fixture -c user.email=fixture@example.invalid \
   commit -qm 'test: release lane fixture'
 : > "$release_order"
-release_out="$(GANG_RELEASE_LOCK="$release_lock" GANG_RELEASE_LOCK_WAIT=1 \
-  GANG_INTEGRATION_PARTS=cli GANG_INTEGRATION_REQUIRE_ALL=0 \
+release_out="$(GANG_RELEASE_LOCK="$release_lock" GANG_INTEGRATION_PARTS=cli \
+  GANG_INTEGRATION_REQUIRE_ALL=0 \
   "$release_run/test/release.sh")"
 equal "the release lane runs lint, smoke, and integration in order" \
   "$(printf 'lint\nsmoke\nintegration')" "$(<"$release_order")"
@@ -919,7 +919,7 @@ else
 fi
 : > "$release_order"
 release_failed_rc=0
-GANG_RELEASE_LOCK="$release_lock" GANG_RELEASE_LOCK_WAIT=1 RELEASE_FAIL_INTEGRATION=7 \
+GANG_RELEASE_LOCK="$release_lock" RELEASE_FAIL_INTEGRATION=7 \
   "$release_run/test/release.sh" >/dev/null 2>&1 || release_failed_rc=$?
 equal "a failed release integration keeps its status" 7 "$release_failed_rc"
 equal "a failed release integration still follows lint and smoke" \
