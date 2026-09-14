@@ -36,6 +36,7 @@
 set -euo pipefail
 
 unset GIT_DIR GIT_WORK_TREE GIT_INDEX_FILE GIT_OBJECT_DIRECTORY GIT_COMMON_DIR GIT_PREFIX
+unset GATE_TIMING_STARTED
 
 # A direct gate from an agent pane can outlive the turn that started it while
 # waiting on the host-wide heavy lock. That leaves a successor sandbox with no
@@ -132,6 +133,7 @@ gate_report_lock_holder() {
 }
 
 if [ $# -eq 0 ] && [ "${_GANGLINE_GATE_LOCKED:-}" != 1 ]; then
+  GATE_TIMING_STARTED="$EPOCHREALTIME"
   command -v flock >/dev/null 2>&1 \
     || { echo "gate: flock is required to serialize the mandatory suite" >&2; exit 1; }
   exec {GATE_HEAVY_LOCK_FD}>> "$GATE_HEAVY_LOCK"
@@ -139,7 +141,13 @@ if [ $# -eq 0 ] && [ "${_GANGLINE_GATE_LOCKED:-}" != 1 ]; then
   flock -E 200 -n "$GATE_HEAVY_LOCK_FD" || lock_rc=$?
   if [ "$lock_rc" -eq 200 ]; then
     gate_report_lock_holder
-    flock "$GATE_HEAVY_LOCK_FD"
+    # The predecessor owns the queue; this run waits for that owner rather than
+    # claiming that a runtime limit can decide work it has not begun.
+    lock_wait_rc=0
+    flock "$GATE_HEAVY_LOCK_FD" || lock_wait_rc=$?
+    if [ "$lock_wait_rc" -ne 0 ]; then
+      exit "$lock_wait_rc"
+    fi
   elif [ "$lock_rc" -ne 0 ]; then
     exit "$lock_rc"
   fi
@@ -553,6 +561,32 @@ gate_verdict() { # $1 = exit status, $2 = 1 if the gate reached a decision
   printf 'gate: VERDICT %s (status %s)\n' "$word" "$1"
 }
 
+# Every mandatory invocation reports the observation that enforces the
+# five-minute suite policy. A report does not kill work: slow evidence remains
+# visible and is moved to the pre-release lane instead of being suppressed.
+gate_record_part_timing() { # $1 part name, $2 EPOCHREALTIME start
+  local name="$1" started="$2" ended elapsed
+  ended="$EPOCHREALTIME"
+  elapsed="$(awk -v started="$started" -v ended="$ended" \
+    'BEGIN { printf "%.3f", ended - started }')"
+  printf '%s\n' "$elapsed" > "$WORK/$name.seconds.next"
+  mv -f -- "$WORK/$name.seconds.next" "$WORK/$name.seconds"
+}
+
+gate_report_timings() {
+  local ended total part seconds
+  [ -n "${GATE_TIMING_STARTED:-}" ] || return 0
+  ended="$EPOCHREALTIME"
+  total="$(awk -v started="$GATE_TIMING_STARTED" -v ended="$ended" \
+    'BEGIN { printf "%.3f", ended - started }')"
+  printf 'gate: TIMING total_seconds=%s\n' "$total"
+  for part in snapshot lint smoke; do
+    [ -r "$WORK/$part.seconds" ] || continue
+    IFS= read -r seconds < "$WORK/$part.seconds" || seconds=unknown
+    printf 'gate: TIMING part=%s seconds=%s\n' "$part" "$seconds"
+  done
+}
+
 # EACH HEAVY STEP RUNS IN A SESSION THIS GATE CREATED. That gives teardown one
 # exact process group: descendants remain inside it, while the flock parent and
 # unrelated gates do not. Before any signal, both the recorded parent and the
@@ -586,8 +620,9 @@ gate_step_tree() { # $1 process-group id
 # output visible and does not renew the lease.
 gate_monitored_step() { # $1 name, $2 output, $3 live, $4 cwd, rest = argv
   local name="$1" output="$2" live="$3" cwd="$4"
-  local fifo pidfile pid parent fd line read_rc rc
+  local fifo pidfile pid parent fd line read_rc rc started
   shift 4
+  started="$EPOCHREALTIME"
   fifo="$WORK/$name.fifo"
   pidfile="$WORK/$name.pid"
   mkfifo "$fifo"
@@ -634,17 +669,20 @@ gate_monitored_step() { # $1 name, $2 output, $3 live, $4 cwd, rest = argv
       mv -f -- "$WORK/$name.stalled.next" "$WORK/$name.stalled"
       exec {fd}<&-
       rm -f -- "$pidfile" "$fifo"
+      gate_record_part_timing "$name" "$started"
       return 125
     fi
     wait "$pid" 2>/dev/null || true
     exec {fd}<&-
     rm -f -- "$pidfile" "$fifo"
+    gate_record_part_timing "$name" "$started"
     return 124
   done
   exec {fd}<&-
   rc=0
   wait "$pid" || rc=$?
   rm -f -- "$pidfile" "$fifo"
+  gate_record_part_timing "$name" "$started"
   return "$rc"
 }
 
@@ -676,6 +714,24 @@ gate_cancel_branch() { # $1 branch pid, $2 step names it may currently own
   fi
 }
 
+# A STALL MARKER IS WRITTEN BEFORE ITS MONITOR REPORTS ITS STATUS. Consult it
+# after every branch event, rather than waiting for a healthy sibling that may
+# legitimately run forever while the gate already has a decisive failure.
+gate_recorded_stall_status() {
+  GATE_STALL_STATUS=""
+  if [ -e "$WORK/lint.stalled" ]; then
+    GATE_STALL_STATUS="$(cat "$WORK/lint.stalled" 2>/dev/null || printf 124)"
+  elif [ -e "$WORK/smoke.stalled" ]; then
+    GATE_STALL_STATUS="$(cat "$WORK/smoke.stalled" 2>/dev/null || printf 124)"
+  else
+    return 1
+  fi
+  case "$GATE_STALL_STATUS" in
+    ''|*[!0-9]*) GATE_STALL_STATUS=124 ;;
+  esac
+  return 0
+}
+
 gate_lint_branch() {
   local rc=0
   gate_close_inherited_locks
@@ -685,21 +741,11 @@ gate_lint_branch() {
 }
 
 gate_suite_branch() {
-  local smoke_rc=0 integration_rc=0 rc
+  local smoke_rc=0
   gate_close_inherited_locks
   gate_monitored_step smoke "$WORK/smoke.out" 1 "$SNAP" ./test/smoke.sh || smoke_rc=$?
   printf '%s\n' "$smoke_rc" > "$WORK/smoke.status"
-  if [ -e "$WORK/smoke.stalled" ]; then
-    printf '%s\n' cancelled > "$WORK/integration.status"
-    return "$smoke_rc"
-  fi
-  gate_monitored_step integration "$WORK/integration.out" 1 "$SNAP" \
-    env -u GANG_INTEGRATION_PARTS -u GANG_INTEGRATION_REQUIRE_ALL_PROBE \
-    GANG_INTEGRATION_REQUIRE_ALL=1 ./test/integration.sh || integration_rc=$?
-  printf '%s\n' "$integration_rc" > "$WORK/integration.status"
-  rc="$smoke_rc"
-  [ "$rc" -ne 0 ] || rc="$integration_rc"
-  return "$rc"
+  return "$smoke_rc"
 }
 
 # BASH READS A SCRIPT WHILE IT RUNS IT, so an edit that lands during a run is
@@ -749,7 +795,7 @@ main() {
     -h|--help)
       printf '%s\n' \
         'usage: test/gate.sh [--snapshot DIR | --assert-owned | --assert-unmoved IDENTITY]' \
-        '  (no argument)     snapshot this tree and run lint + smoke + integration there' \
+        '  (no argument)     snapshot this tree and run lint + smoke there' \
         '  --snapshot DIR    build that snapshot in DIR and stop' \
         '  --assert-owned    print this tree'"'"'s identity, or refuse a tree that is moving' \
         '  --assert-unmoved  refuse if the identity is no longer the one given'
@@ -790,21 +836,16 @@ main() {
     for step_pidfile in "$WORK"/*.pid; do
       [ -f "$step_pidfile" ] || continue
       read -r step_pid step_parent step_name < "$step_pidfile" || continue
-      if gate_stop_step "$step_pid" "$step_parent" "$step_name"; then
-        wait "$step_pid" 2>/dev/null || true
-      fi
+      gate_stop_step "$step_pid" "$step_parent" "$step_name" || true
       rm -f -- "$step_pidfile"
     done
     if [ -n "$lint_monitor_pid" ]; then
-      if gate_cancel_branch "$lint_monitor_pid" lint; then
-        wait "$lint_monitor_pid" 2>/dev/null || true
-      fi
+      gate_cancel_branch "$lint_monitor_pid" lint || true
     fi
     if [ -n "$suite_monitor_pid" ]; then
-      if gate_cancel_branch "$suite_monitor_pid" smoke integration; then
-        wait "$suite_monitor_pid" 2>/dev/null || true
-      fi
+      gate_cancel_branch "$suite_monitor_pid" smoke || true
     fi
+    gate_report_timings
     if [ "$keep" -eq 1 ]; then
       # The source it was taken from, so only a later run of that tree retires it.
       printf '%s\n' "$ROOT" > "$WORK/kept" || true
@@ -843,13 +884,18 @@ main() {
 
   snapshot_rc=0
   gate_monitored_step snapshot "$WORK/snapshot.out" 1 "$ROOT" \
-    "$ROOT/test/gate.sh" --snapshot "$SNAP" || snapshot_rc=$?
+    "$ROOT/test/gate.sh" --snapshot "$SNAP" &
+  snapshot_monitor_pid=$!
+  snapshot_join_rc=0
+  wait "$snapshot_monitor_pid" || snapshot_join_rc=$?
+  snapshot_rc=$snapshot_join_rc
   if [ "$snapshot_rc" -ne 0 ]; then
     keep=1
     decided=1
     printf '\ngate: REFUSED (status %s)\n' "$snapshot_rc" >&2
     exit "$snapshot_rc"
   fi
+  snapshot_monitor_pid=""
 
   # Read the same way the ownership check reads, so an untracked-only tree is not
   # announced as settled by a diagnostic that only looks at tracked files.
@@ -857,47 +903,58 @@ main() {
   printf 'gate: testing a snapshot of %s\n' "$ROOT"
   printf 'gate: source tree %s\n' "$source_state"
 
-  # LINT OVERLAPS THE BEHAVIOURAL PATH. They read the same immutable snapshot
+  # LINT OVERLAPS SMOKE. They read the same immutable snapshot
   # and write separate roots, so serialising them spends lint's entire runtime
   # without ordering evidence. Each branch is monitored independently; the
   # first stalled branch cancels its sibling before the verdict releases the
   # lock, while an ordinary failure still allows every mandatory step to run.
   lint_out="$WORK/lint.out"
-  integration_out="$WORK/integration.out"
-  if [ -n "${GANG_INTEGRATION_PARTS+x}" ]; then
-    printf 'gate: ignoring GANG_INTEGRATION_PARTS=%q; mandatory gate runs every declared integration part.\n' \
-      "$GANG_INTEGRATION_PARTS"
-  fi
   gate_lint_branch &
   lint_monitor_pid=$!
   gate_suite_branch &
   suite_monitor_pid=$!
-  wait -n "$lint_monitor_pid" "$suite_monitor_pid" 2>/dev/null || true
-  lint_stalled=0
-  suite_stalled=0
-  [ ! -e "$WORK/lint.stalled" ] || lint_stalled=1
-  if [ -e "$WORK/smoke.stalled" ] || [ -e "$WORK/integration.stalled" ]; then
-    suite_stalled=1
+  # Each branch owns its progress watchdog. A branch that finishes first does
+  # not cancel its sibling, because ordinary evidence still belongs in the
+  # final verdict.
+  while [ -n "$lint_monitor_pid" ] || [ -n "$suite_monitor_pid" ]; do
+    gate_waited_pid=""
+    if [ -n "$lint_monitor_pid" ] && [ -n "$suite_monitor_pid" ]; then
+      wait -n -p gate_waited_pid "$lint_monitor_pid" "$suite_monitor_pid" 2>/dev/null || true
+    elif [ -n "$lint_monitor_pid" ]; then
+      wait -n -p gate_waited_pid "$lint_monitor_pid" 2>/dev/null || true
+    else
+      wait -n -p gate_waited_pid "$suite_monitor_pid" 2>/dev/null || true
+    fi
+    if [ "$gate_waited_pid" = "$lint_monitor_pid" ]; then
+      lint_monitor_pid=""
+    elif [ "$gate_waited_pid" = "$suite_monitor_pid" ]; then
+      suite_monitor_pid=""
+    else
+      printf 'gate: deadline join returned no known branch pid; refusing.\n' >&2
+      keep=1
+      decided=1
+      exit 123
+    fi
+    if gate_recorded_stall_status; then
+      if [ -n "$lint_monitor_pid" ]; then
+        gate_cancel_branch "$lint_monitor_pid" lint || true
+      fi
+      if [ -n "$suite_monitor_pid" ]; then
+        gate_cancel_branch "$suite_monitor_pid" smoke || true
+      fi
+      keep=1
+      decided=1
+      exit "$GATE_STALL_STATUS"
+    fi
+  done
+  if gate_recorded_stall_status; then
+    keep=1
+    decided=1
+    exit "$GATE_STALL_STATUS"
   fi
-  if [ "$lint_stalled" -eq 1 ] && [ "$suite_stalled" -eq 0 ]; then
-    gate_cancel_branch "$suite_monitor_pid" smoke integration || true
-  elif [ "$suite_stalled" -eq 1 ] && [ "$lint_stalled" -eq 0 ]; then
-    gate_cancel_branch "$lint_monitor_pid" lint || true
-  fi
-  wait "$lint_monitor_pid" 2>/dev/null || true
-  wait "$suite_monitor_pid" 2>/dev/null || true
-  lint_monitor_pid=""
-  suite_monitor_pid=""
   lint_rc="$(cat "$WORK/lint.status" 2>/dev/null || printf cancelled)"
   smoke_rc="$(cat "$WORK/smoke.status" 2>/dev/null || printf cancelled)"
-  integration_rc="$(cat "$WORK/integration.status" 2>/dev/null || printf cancelled)"
   cat "$lint_out"
-  if [ "$lint_rc" = 0 ] && [ "$smoke_rc" = 0 ] \
-      && [ "$integration_rc" = 0 ] \
-      && ! grep -Fx 'integration: every declared part ran' "$integration_out" >/dev/null; then
-    integration_rc=1
-    printf 'gate: integration did not attest that every declared part ran.\n' >&2
-  fi
   # A watchdog result is the cause of its sibling's cancellation, not the
   # other way around. Select that result before ordinary branch order so the
   # internal cancellation sentinel cannot turn a 124 timeout into a 125
@@ -908,16 +965,12 @@ main() {
     rc="$(cat "$WORK/lint.stalled" 2>/dev/null || printf 124)"
   elif [ -e "$WORK/smoke.stalled" ]; then
     rc="$(cat "$WORK/smoke.stalled" 2>/dev/null || printf 124)"
-  elif [ -e "$WORK/integration.stalled" ]; then
-    rc="$(cat "$WORK/integration.stalled" 2>/dev/null || printf 124)"
-  elif [ "$lint_rc" = cancelled ] || [ "$smoke_rc" = cancelled ] \
-      || [ "$integration_rc" = cancelled ]; then
+  elif [ "$lint_rc" = cancelled ] || [ "$smoke_rc" = cancelled ]; then
     rc=123
     printf 'gate: a mandatory branch ended without status outside watchdog cancellation.\n' >&2
   else
     rc="$lint_rc"
     [ "$rc" -ne 0 ] || rc="$smoke_rc"
-    [ "$rc" -ne 0 ] || rc="$integration_rc"
   fi
   case "$rc" in
     ''|*[!0-9]*)
@@ -931,7 +984,7 @@ main() {
     exit "$rc"
   fi
   decided=1
-  printf '\ngate: the snapshot passed lint, smoke, and the integration suite.\n'
+  printf '\ngate: the snapshot passed lint and smoke.\n'
   gate_retire_kept
 }
 

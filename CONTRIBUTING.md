@@ -140,19 +140,35 @@ invocation of `test/gate.sh` refuses before it can wait invisibly on the heavy
 lock.
 
 It snapshots the working tree, uncommitted work included, into a private copy,
-commits it there, and runs `test/lint.sh`, `test/smoke.sh`, and
-`test/integration.sh` from that
-copy. The complete gate is therefore runnable before a commit, and no edit
-landing mid-run can change what executes. `test/lint.sh` and
-`test/integration.sh` still run directly against an already-settled tree, and
-refuse one they would not own.
+commits it there, and runs `test/lint.sh` and `test/smoke.sh` from that copy.
+The complete gate is therefore runnable before a commit, and no edit landing
+mid-run can change what executes. `test/lint.sh` and `test/integration.sh`
+still run directly against an already-settled tree, and refuse one they would
+not own.
 
-Lint runs concurrently with the ordered smoke-and-integration path so lint's
-full runtime is not added to the mandatory critical path. A normal failure does
-not skip the other mandatory evidence; a watchdog expiry cancels the concurrent
-branch so the gate can release the host lock promptly. Local wall time remains
-dependent on the complete integration path and host load, not a five-minute
-guarantee.
+Lint runs concurrently with smoke so lint's full runtime is not added to the
+mandatory critical path. A normal failure does not skip the other mandatory
+evidence; a watchdog expiry cancels the concurrent branch so the gate can
+release the host lock promptly. At its end, the gate prints a `TIMING` line for
+its total wall time and one for each measured part: snapshot, lint, and smoke.
+The five-minute rule is enforced by that observation: a healthy mandatory run
+must stay below five minutes. Record those lines in the change's durable
+`MEASURE.md` evidence, not in standing documentation. If a part cannot meet
+the policy, keep its assertions and move it to the pre-release lane.
+
+### The pre-release integration lane
+
+```sh
+test/release.sh
+```
+
+`test/release.sh` takes the same heavy-test lock and runs lint, smoke, and the
+unchanged full integration suite against one settled tree. It is the required
+pre-release proof: before merging a Release Please pull request, the merger
+must confirm that its `release` workflow job ran this command and passed. The
+workflow runs the job only for Release Please pull requests; repository rules
+or branch protection are an operator configuration choice, so this merger
+procedure remains required unless the operator installs matching enforcement.
 
 Each mandatory step must complete an output line within 300 seconds. A quiet
 step is reported with its process tree and last 30 lines, then its private
@@ -349,6 +365,9 @@ command's status.
 - The npm and PyPI stubs are not published packages. Install with `install.sh`.
 - Keep GitHub Actions permission to create pull requests enabled so Release
   Please can maintain its release PR.
+- Before merging a Release Please pull request, require its passing `release`
+  workflow job. That job runs `test/release.sh`, which preserves the full
+  integration assertions outside the five-minute contribution gate.
 
 ## Documentation and measurement
 

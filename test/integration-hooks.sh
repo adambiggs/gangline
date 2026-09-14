@@ -4287,7 +4287,8 @@ with open(sys.argv[1], encoding="utf-8") as config_file:
 print(str(config["packages"]["."].get("force-tag-creation", "absent")).lower())
 ' "$ROOT/release-please-config.json")" || :
 integration_job="$(printf '%s\n' "$shell_workflow" | sed -n '/^  integration:/,/^  raw-option-bytes:/p')"
-raw_option_job="$(printf '%s\n' "$shell_workflow" | sed -n '/^  raw-option-bytes:/,/^  release-please:/p')"
+raw_option_job="$(printf '%s\n' "$shell_workflow" | sed -n '/^  raw-option-bytes:/,/^  release:/p')"
+pre_release_job="$(printf '%s\n' "$shell_workflow" | sed -n '/^  release:/,/^  release-please:/p')"
 release_job="$(printf '%s\n' "$shell_workflow" | sed -n '/^  release-please:/,$p')"
 equal "Release Please holds no tag-creation override" \
   "absent" "$release_force_tag"
@@ -4303,6 +4304,14 @@ equal "raw-option integration owns exactly one aggregate ceiling" \
   "1" "$(printf '%s\n' "$raw_option_job" | awk '/timeout-minutes:/{count++} END{print count+0}')"
 contains "raw-option integration has a measured 45-minute CI ceiling" \
   "$raw_option_job" "timeout-minutes: 45"
+contains "the pre-release lane is scoped to Release Please pull requests" \
+  "$pre_release_job" "startsWith(github.head_ref, 'release-please--')"
+contains "the pre-release lane runs the complete release test" \
+  "$pre_release_job" "run: test/release.sh"
+equal "the pre-release lane owns exactly one aggregate ceiling" \
+  "1" "$(printf '%s\n' "$pre_release_job" | awk '/timeout-minutes:/{count++} END{print count+0}')"
+contains "the pre-release lane has a 50-minute aggregate CI ceiling" \
+  "$pre_release_job" "timeout-minutes: 50"
 if [ ! -e "$ROOT/.github/workflows/release.yml" ]; then
   pass "no independent release workflow can bypass the integration verdict"
 else

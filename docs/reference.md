@@ -51,11 +51,11 @@ because its caller is a harness configuration rather than a person; see below.
 `test/gate.sh` serializes the heavy suite on `/tmp/gangline-heavy.lock`. When the
 lock is occupied it reports the holder's PID, working directory, and elapsed
 lifetime only when a second kernel lock corroborates the stable record written
-into that inode; otherwise each field is `unknown`. Gate and end-to-end owners
+into that inode; otherwise each field is `unknown`. Gate, release, and end-to-end owners
 clear the record before release. Once acquired, the gate monitors the snapshot
-copy and runs lint alongside the ordered smoke-and-integration branch, each in
-an isolated process group. An ordinary failure still lets every mandatory step
-run. A step that completes no output line for 300 seconds is failed with status
+copy and runs lint alongside smoke, each in an isolated process group. An
+ordinary failure still lets every mandatory step run. A step that completes no
+output line for 300 seconds is failed with status
 124 after the gate prints its process tree and last 30 lines; the gate ends that
 process group, cancels its sibling branch, and releases the host lock.
 The gate preserves the stalled step's 124 result when that cancellation leaves
@@ -77,6 +77,20 @@ agent-pane `test/gate.sh` invocation refuses before it can queue invisibly on
 the heavy lock. The host-service record carries the stable requester identity,
 so an interrupted successor can use `gang run --active` to see it and `gang
 run --cancel <id>` to stop only its own gate.
+
+At the end of each mandatory invocation, `test/gate.sh` prints its total wall
+time and the measured snapshot, lint, and smoke parts as `gate: TIMING` lines,
+before its final verdict. Capture those lines in the change's durable
+`MEASURE.md` evidence. The five-minute rule is a suite policy verified from
+that observation, not a deadline that terminates the gate: move a healthy part
+that exceeds the policy intact to `test/release.sh`.
+
+`test/release.sh` is the separate pre-release lane. It serializes on the same
+lock, requires one settled tree throughout lint, smoke, and the unchanged full
+integration suite, and is run by the `release` workflow job for Release Please
+pull requests. Before merging such a pull request, its passing release job is a
+required merger procedure; repository rules and branch protection remain an
+operator configuration choice.
 
 ## Installation
 

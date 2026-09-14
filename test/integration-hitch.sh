@@ -753,24 +753,28 @@ submitted "the raced startup contract was submitted" startup-delivery-race
 "$GANG" drop startup-delivery-race >/dev/null
 
 # The same race may reveal a first-run prompt rather than the next composer.
-# The collar paints its marker from inject's second protected composer read,
-# after initial readiness has already accepted the empty box. It waits until
-# the pane actually carries that marker before returning the conflicting read,
-# so the first-run verdict can only come from the new startup-delivery retry.
+# The fixture shell owns a two-way event pair: its marker is written to the
+# pane before it signals the collar, so the second protected composer read
+# returns only after the marker's producer has reached the pty. This replaces
+# the old capture-and-sleep poll; no timing or retry count is the evidence.
 # One gate observation spends the existing gate budget immediately, proving
 # this path preserves the established live-window-plus-durable-contract
 # recovery rather than treating the prompt as repeated composer churn and
 # rolling the agent back.
+startup_gate_trigger="$RUN_ROOT/startup-gate-trigger"
+startup_gate_painted="$RUN_ROOT/startup-gate-painted"
+mkfifo "$startup_gate_trigger" "$startup_gate_painted"
+exec 6<> "$startup_gate_trigger"
+exec 7<> "$startup_gate_painted"
 cat > "$RUN_ROOT/collars/startup-delivery-gate.sh" <<SH
 # shellcheck shell=bash
 # shellcheck disable=SC2034
 . "$ROOT/collars/bash.sh"
-GANG_LAUNCH="sh -c 'PS1=\"❯ \" exec bash --norc' fixture"
+GANG_LAUNCH="sh -c 'IFS= read -r _ < \"$startup_gate_trigger\"; printf \"LATE_STARTUP_GATE\\n\"; printf x > \"$startup_gate_painted\"; PS1=\"❯ \" exec bash --norc' fixture"
 GANG_OCCUPIED_REGEX='LATE_STARTUP_GATE'
 _gl_startup_gate_real="\$(declare -f collar_input)"
 eval "startup_gate_real_input \${_gl_startup_gate_real#collar_input}"
 collar_input() {
-  local startup_gate_pane startup_gate_try
   case " \${FUNCNAME[*]} " in
     *" composer_settled "*)
       if [ ! -e "$RUN_ROOT/startup-gate-first" ]; then
@@ -780,21 +784,8 @@ collar_input() {
       fi
       if [ ! -e "$RUN_ROOT/startup-gate-second" ]; then
         : > "$RUN_ROOT/startup-gate-second"
-        tmux send-keys -t "\$1" "printf 'LATE_STARTUP_GATE\\n'" Enter \
-          || return 3
-        startup_gate_pane=""
-        for startup_gate_try in {1..100}; do
-          startup_gate_pane="\$(tmux capture-pane -pJ -t "\$1")" \
-            || return 3
-          case "\$startup_gate_pane" in
-            *LATE_STARTUP_GATE*) break ;;
-          esac
-          /bin/sleep 0.01
-        done
-        case "\$startup_gate_pane" in
-          *LATE_STARTUP_GATE*) ;;
-          *) return 3 ;;
-        esac
+        printf x > "$startup_gate_trigger" || return 3
+        IFS= read -r -n 1 -u 7 || return 3
         printf 'HARNESS_STARTUP_DRAFT'
         return 0
       fi
@@ -817,6 +808,7 @@ contains "the late gate retains its attributed startup contract" \
 excludes "the late gate receives none of the startup contract" \
   "$(pane startup-delivery-gate)" "You are startup-delivery-gate in Gangline"
 "$GANG" drop startup-delivery-gate >/dev/null
+exec 6>&- 7>&-
 
 # A MESSAGE HANDED TO HITCH FOLLOWS THE CONTRACT. Hitch read no stdin, so a
 # heredoc given to it was dropped in every outcome, first-run prompt or not.

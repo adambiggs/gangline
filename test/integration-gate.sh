@@ -713,10 +713,10 @@ refuses "a commit that does touch one is movement in the subtree" \
   "$gate_nest/project/test/gate.sh" --assert-unmoved "$gate_nest_identity"
 
 # THE GATE'S OWN ORCHESTRATION, which every check above leaves untouched: they
-# drive --assert-owned, --assert-unmoved and --snapshot, so dropping the suite
-# from the no-argument run would leave all of them green. Stand-in gates record
-# that they all ran from inside the copy. Their order is deliberately not a
-# claim: lint and integration read the same immutable snapshot and their private
+# drive --assert-owned, --assert-unmoved and --snapshot, so dropping smoke from
+# the no-argument run would leave all of them green. Stand-in gates record that
+# both mandatory checks ran from inside the copy. Their order is deliberately
+# not a claim: lint and smoke read the same immutable snapshot and their private
 # outputs cannot change each other's evidence, so serial order was only wall
 # time and was wrong to preserve once it broke the mandatory ceiling.
 gate_run="$RUN_ROOT/gate-default"
@@ -728,7 +728,6 @@ chmod +x "$gate_run/test/gate.sh"
 gate_run="$(cd -P "$gate_run" && pwd)"
 gate_order="$RUN_ROOT/gate-default-order"
 gate_where="$RUN_ROOT/gate-default-where"
-gate_parts="$RUN_ROOT/gate-default-parts"
 gate_overlap="$RUN_ROOT/gate-default-overlap"
 gate_overlap_ready="$RUN_ROOT/gate-default-overlap-ready"
 gate_overlap_release="$RUN_ROOT/gate-default-overlap-release"
@@ -747,25 +746,23 @@ fi
 exit "\${GATE_FAIL_LINT:-0}"
 SH
 cat > "$gate_run/test/integration.sh" <<SH
-#!/bin/sh
+#!/usr/bin/env bash
 # SPDX-License-Identifier: Apache-2.0
 printf 'integration\n' >> "$gate_order"
 printf 'integration %s\n' "\$PWD" >> "$gate_where"
-printf 'parts=<%s> require=<%s>\n' "\${GANG_INTEGRATION_PARTS-}" \
-  "\${GANG_INTEGRATION_REQUIRE_ALL-}" > "$gate_parts"
+printf 'integration: every declared part ran\n'
+SH
+cat > "$gate_run/test/smoke.sh" <<SH
+#!/usr/bin/env bash
+# SPDX-License-Identifier: Apache-2.0
+printf 'smoke\n' >> "$gate_order"
+printf 'smoke %s\n' "\$PWD" >> "$gate_where"
 if [ "\${GATE_PROVE_OVERLAP:-0}" = 1 ]; then
   IFS= read -r overlap_state <&7
   [ "\$overlap_state" = lint-ready ]
   : > "$gate_overlap"
   printf 'release\n' >&8
 fi
-printf 'integration: every declared part ran\n'
-SH
-cat > "$gate_run/test/smoke.sh" <<SH
-#!/bin/sh
-# SPDX-License-Identifier: Apache-2.0
-printf 'smoke\n' >> "$gate_order"
-printf 'smoke %s\n' "\$PWD" >> "$gate_where"
 SH
 chmod +x "$gate_run/test/lint.sh" "$gate_run/test/smoke.sh" \
   "$gate_run/test/integration.sh"
@@ -814,8 +811,8 @@ else
   fail "a gate fixture inherits the nested-gate marker outside an ordinary gate" \
     "fixture flock was invoked with [$(cat "$gate_fixture_flock_calls")]"
 fi
-contains "the marked fixture still runs its declared suite" \
-  "$gate_fixture_out" "integration: every declared part ran"
+contains "the marked fixture still runs smoke" \
+  "$gate_fixture_out" "passed lint and smoke"
 # The nested-marker probe is another stand-in gate over the same instruments.
 # Its evidence proves only that it did not take flock, so it must not join the
 # ordinary gate's exactly-once counters below.
@@ -827,22 +824,20 @@ gate_default_out="$(env -u _GANGLINE_GATE_LOCKED GANG_INTEGRATION_PARTS=cli \
 equal "the ordinary gate probes and owns both heavy-test locks" \
   "$(printf 'primary-probe\nowner-probe\nunlock\nunlock')" \
   "$(<"$gate_flock_args")"
-equal "the no-argument gate runs lint, smoke, and the suite exactly once" \
-  "$(printf 'integration\nlint\nsmoke')" "$(sort "$gate_order")"
+equal "the no-argument gate runs lint and smoke exactly once" \
+  "$(printf 'lint\nsmoke')" "$(sort "$gate_order")"
 if [ -e "$gate_overlap" ]; then
-  pass "lint overlaps the smoke-and-integration branch"
+  pass "lint overlaps smoke"
 else
-  fail "lint overlaps the smoke-and-integration branch" \
-    "integration did not receive lint's live handoff"
+  fail "lint overlaps smoke" "smoke did not receive lint's live handoff"
 fi
 exec 7>&- 8>&-
 # WHERE they ran is the claim, and the gate's own report cannot witness it: that
 # line prints the SOURCE path whatever directory the gates were run from.
 gate_lint_where="$(awk '$1 == "lint" { print $2; exit }' "$gate_where")"
 gate_smoke_where="$(awk '$1 == "smoke" { print $2; exit }' "$gate_where")"
-gate_suite_where="$(awk '$1 == "integration" { print $2; exit }' "$gate_where")"
-equal "and runs all three from one and the same directory" \
-  "$gate_lint_where $gate_lint_where" "$gate_smoke_where $gate_suite_where"
+equal "and runs both from one and the same directory" \
+  "$gate_lint_where" "$gate_smoke_where"
 if [ -n "$gate_lint_where" ] && [ "$gate_lint_where" != "$gate_run" ]; then
   pass "and that directory is the copy, not the tree it was copied from"
 else
@@ -853,17 +848,80 @@ contains "the gate names the tree it copied" "$gate_default_out" "$gate_run"
 contains "an uncommitted tree is announced as one" \
   "$gate_default_out" "unsettled"
 contains "a green gate says which gates were green" \
-  "$gate_default_out" "passed lint, smoke, and the integration suite"
-contains "the mandatory gate names a selector it ignored" \
-  "$gate_default_out" "ignoring GANG_INTEGRATION_PARTS=cli"
-equal "the mandatory gate does not pass a focused selector to integration" \
-  "parts=<> require=<1>" "$(<"$gate_parts")"
+  "$gate_default_out" "passed lint and smoke"
+contains "a green gate reports its total wall time" \
+  "$gate_default_out" "gate: TIMING total_seconds="
+contains "a green gate reports snapshot timing" \
+  "$gate_default_out" "gate: TIMING part=snapshot seconds="
+contains "a green gate reports lint timing" \
+  "$gate_default_out" "gate: TIMING part=lint seconds="
+contains "a green gate reports smoke timing" \
+  "$gate_default_out" "gate: TIMING part=smoke seconds="
+excludes "the mandatory gate does not invoke integration" \
+  "$(<"$gate_order")" "integration"
 if [ ! -s "$gate_run_lock" ]; then
   pass "the ordinary gate clears its owner record before releasing"
 else
   fail "the ordinary gate clears its owner record before releasing" \
     "the released inode still contains [$(<"$gate_run_lock")]"
 fi
+
+# THE PRE-RELEASE LANE CARRIES THE ASSERTIONS THE FIVE-MINUTE GATE CANNOT. Its
+# fixture proves that it invokes all three checks in order from one settled tree
+# and that a failed integration remains the lane's result instead of becoming a
+# green contribution verdict.
+release_run="$RUN_ROOT/release-lane"
+release_lock="$RUN_ROOT/release-lane.lock"
+release_order="$RUN_ROOT/release-lane-order"
+release_scope="$RUN_ROOT/release-lane-scope"
+mkdir -p "$release_run/test"
+cp "$ROOT/test/release.sh" "$ROOT/test/gate.sh" "$release_run/test/"
+for release_step in lint smoke integration; do
+  cat > "$release_run/test/$release_step.sh" <<SH
+#!/bin/sh
+# SPDX-License-Identifier: Apache-2.0
+printf '$release_step\\n' >> "$release_order"
+exit "\${RELEASE_FAIL_${release_step^^}:-0}"
+SH
+  chmod +x "$release_run/test/$release_step.sh"
+done
+cat > "$release_run/test/integration.sh" <<SH
+#!/bin/sh
+# SPDX-License-Identifier: Apache-2.0
+printf 'integration\n' >> "$release_order"
+printf 'parts=<%s> require=<%s>\n' "\${GANG_INTEGRATION_PARTS-}" \
+  "\${GANG_INTEGRATION_REQUIRE_ALL-}" > "$release_scope"
+exit "\${RELEASE_FAIL_INTEGRATION:-0}"
+SH
+chmod +x "$release_run/test/integration.sh"
+release_run="$(cd -P "$release_run" && pwd)"
+git -C "$release_run" init -q
+git -C "$release_run" add -A
+git -C "$release_run" -c user.name=fixture -c user.email=fixture@example.invalid \
+  commit -qm 'test: release lane fixture'
+: > "$release_order"
+release_out="$(GANG_RELEASE_LOCK="$release_lock" GANG_RELEASE_LOCK_WAIT=1 \
+  GANG_INTEGRATION_PARTS=cli GANG_INTEGRATION_REQUIRE_ALL=0 \
+  "$release_run/test/release.sh")"
+equal "the release lane runs lint, smoke, and integration in order" \
+  "$(printf 'lint\nsmoke\nintegration')" "$(<"$release_order")"
+contains "the release lane reports its complete green proof" \
+  "$release_out" "passed lint, smoke, and full integration"
+equal "the release lane clears a focused selector and requires every part" \
+  "parts=<> require=<1>" "$(<"$release_scope")"
+if [ ! -s "$release_lock" ]; then
+  pass "the release lane clears its owner record before releasing"
+else
+  fail "the release lane clears its owner record before releasing" \
+    "the released inode still contains [$(<"$release_lock")]"
+fi
+: > "$release_order"
+release_failed_rc=0
+GANG_RELEASE_LOCK="$release_lock" GANG_RELEASE_LOCK_WAIT=1 RELEASE_FAIL_INTEGRATION=7 \
+  "$release_run/test/release.sh" >/dev/null 2>&1 || release_failed_rc=$?
+equal "a failed release integration keeps its status" 7 "$release_failed_rc"
+equal "a failed release integration still follows lint and smoke" \
+  "$(printf 'lint\nsmoke\nintegration')" "$(<"$release_order")"
 
 # A relative invocation remains relative to the caller, but snapshot creation
 # changes to the repository root before re-executing the helper mode. The gate
@@ -876,7 +934,7 @@ gate_subdir_out="$(
 equal "a gate invoked from its test directory can snapshot itself" \
   "0" "$gate_subdir_rc"
 contains "the subdirectory invocation completes the mandatory suite" \
-  "$gate_subdir_out" "passed lint, smoke, and the integration suite"
+  "$gate_subdir_out" "passed lint and smoke"
 
 # A failed lint is one result, not permission to omit the behavioural evidence.
 : > "$gate_order"
@@ -886,8 +944,8 @@ gate_failed_lint_rc=0
 GATE_FAIL_LINT=1 env -u _GANGLINE_GATE_LOCKED \
   PATH="$gate_flock_bin:$PATH" "$gate_run/test/gate.sh" >/dev/null 2>&1 \
   || gate_failed_lint_rc=$?
-equal "a failed lint still runs smoke and integration" \
-  "$(printf 'integration\nlint\nsmoke')" "$(sort "$gate_order")"
+equal "a failed lint still runs smoke" \
+  "$(printf 'lint\nsmoke')" "$(sort "$gate_order")"
 equal "the failed lint remains the gate status" "1" "$gate_failed_lint_rc"
 
 # A step status is never also the lock probe's private conflict status.
@@ -900,7 +958,7 @@ GATE_FAIL_LINT=75 env -u _GANGLINE_GATE_LOCKED \
 equal "a step status of 75 is returned without rerunning the gate" \
   "75" "$gate_status_75_rc"
 equal "a step status of 75 still runs each mandatory step once" \
-  "$(printf 'integration\nlint\nsmoke')" "$(sort "$gate_order")"
+  "$(printf 'lint\nsmoke')" "$(sort "$gate_order")"
 # THE LAST LINE IS THE ONLY PART OF A RUN A PIPED READER IS SURE TO SEE, and
 # the status is the part it is sure to lose: `test/gate.sh 2>&1 | tail -30` is
 # how this is invoked whenever the output will not fit, and `$?` is then tail's.
@@ -909,10 +967,11 @@ equal "a step status of 75 still runs each mandatory step once" \
 # off, and the reader is left concluding green from the absence of a FAIL.
 equal "a green gate ends on a verdict a truncated read still carries" \
   "gate: VERDICT PASS (status 0)" "$(printf '%s\n' "$gate_default_out" | tail -n 1)"
-
 # A WAITER NEEDS TO DISTINGUISH A QUEUE FROM A HANG before it joins the queue.
-# This copy differs only in its lock path, so the fixture can own the inode
-# without reading or changing the host-wide lock used by the gate around it.
+# This event proof releases the predecessor without a timing retry and requires
+# the waiting gate to finish. This copy differs only in its lock path, so the
+# fixture can own the inode without reading or changing the host-wide lock used
+# by the gate around it.
 gate_wait="$RUN_ROOT/gate-wait"
 cp -R "$gate_run" "$gate_wait"
 gate_wait_lock="$RUN_ROOT/gate-wait.lock"
@@ -1132,19 +1191,19 @@ while :; do
   printf 'lint pulse\n'
 done
 SH
-cat > "$gate_stall/test/integration.sh" <<SH
+cat > "$gate_stall/test/smoke.sh" <<SH
 #!/usr/bin/env bash
 # SPDX-License-Identifier: Apache-2.0
-printf 'integration last line one\n'
-printf 'integration last line two\n'
+printf 'smoke last line one\n'
+printf 'smoke last line two\n'
 printf '%s\n' "\$\$" > "$gate_stall_pidfile"
 exec 7<> "$gate_stall_block"
 IFS= read -r -u 7
 SH
-chmod +x "$gate_stall/test/lint.sh" "$gate_stall/test/integration.sh"
-git -C "$gate_stall" add test/lint.sh test/integration.sh
+chmod +x "$gate_stall/test/lint.sh" "$gate_stall/test/smoke.sh"
+git -C "$gate_stall" add test/lint.sh test/smoke.sh
 git -C "$gate_stall" -c user.name=fixture -c user.email=fixture@example.invalid \
-  commit -qm 'test: blocked integration with live lint sibling'
+  commit -qm 'test: blocked smoke with live lint sibling'
 sed "s|GATE_HEAVY_LOCK=$gate_run_lock|GATE_HEAVY_LOCK=$gate_stall_lock|" \
   "$gate_stall/test/gate.sh" > "$gate_stall/test/gate.sh.new"
 mv "$gate_stall/test/gate.sh.new" "$gate_stall/test/gate.sh"
@@ -1186,16 +1245,16 @@ gate_fixture_event 9 gate_stall_outcome gate_stall_state \
   "$RUN_ROOT/gate-stall-completion"
 case "$gate_stall_outcome:$gate_stall_state" in
   event:complete)
-    pass "a quiet integration step fails within the scaled watchdog budget"
+    pass "a quiet smoke step fails within the scaled watchdog budget"
     printf 'release\n' >&10
     ;;
   deadline:*)
-    fail "a quiet integration step fails within the scaled watchdog budget" \
+    fail "a quiet smoke step fails within the scaled watchdog budget" \
       "the nested gate emitted no completion event within the ${GATE_FIXTURE_EVENT_CEILING}s fixture ceiling"
     gate_fixture_stop_session "$gate_stall_gate_pid" "the stalled fixture" || true
     ;;
   *)
-    fail "a quiet integration step fails within the scaled watchdog budget" \
+    fail "a quiet smoke step fails within the scaled watchdog budget" \
       "the nested gate's completion channel closed without an event"
     gate_fixture_stop_session "$gate_stall_gate_pid" "the stalled fixture" || true
     ;;
@@ -1219,14 +1278,14 @@ if [ -n "$gate_stall_child_pid" ] && \
 fi
 gate_stall_lock_rc_after_gate=0
 flock -n "$gate_stall_lock" true || gate_stall_lock_rc_after_gate=$?
-equal "a stalled integration is the gate's quiet-expiry status" "124" "$gate_stall_rc"
+equal "a stalled smoke is the gate's quiet-expiry status" "124" "$gate_stall_rc"
 contains "the stall names the step and quiet budget" \
-  "$gate_stall_out" "STALLED: integration produced no output for 1s"
+  "$gate_stall_out" "STALLED: smoke produced no output for 1s"
 contains "the stall prints its process tree" "$gate_stall_out" "PROCESS TREE"
 contains "the stall keeps the first trailing line" \
-  "$gate_stall_out" "integration last line one"
+  "$gate_stall_out" "smoke last line one"
 contains "the stall keeps the last trailing line" \
-  "$gate_stall_out" "integration last line two"
+  "$gate_stall_out" "smoke last line two"
 if [ -n "$gate_stall_child_pid" ] && \
     [ "$gate_stall_child_alive_after_gate" -eq 0 ]; then
   pass "the stalled step leaves no descendant process"
@@ -1287,14 +1346,14 @@ exec 9<> "$gate_refusal_ready"
 exec 10<> "$gate_refusal_release"
 sed -e "s|$gate_stall_block|$gate_refusal_block|g" \
   -e "s|$gate_stall_pidfile|$gate_refusal_pidfile|g" \
-  "$gate_refusal/test/integration.sh" > "$gate_refusal/test/integration.sh.new"
-mv "$gate_refusal/test/integration.sh.new" "$gate_refusal/test/integration.sh"
+  "$gate_refusal/test/smoke.sh" > "$gate_refusal/test/smoke.sh.new"
+mv "$gate_refusal/test/smoke.sh.new" "$gate_refusal/test/smoke.sh"
 sed -e "s|GATE_HEAVY_LOCK=$gate_stall_lock|GATE_HEAVY_LOCK=$gate_refusal_lock|" \
   -e 's/parent=\$BASHPID/parent=$((BASHPID + 100000))/' \
   "$gate_refusal/test/gate.sh" > "$gate_refusal/test/gate.sh.new"
 mv "$gate_refusal/test/gate.sh.new" "$gate_refusal/test/gate.sh"
-chmod +x "$gate_refusal/test/gate.sh" "$gate_refusal/test/integration.sh"
-git -C "$gate_refusal" add test/gate.sh test/integration.sh
+chmod +x "$gate_refusal/test/gate.sh" "$gate_refusal/test/smoke.sh"
+git -C "$gate_refusal" add test/gate.sh test/smoke.sh
 git -C "$gate_refusal" -c user.name=fixture -c user.email=fixture@example.invalid \
   commit -qm 'test: force watchdog ownership refusal'
 cat > "$gate_refusal_wrapper" <<SH
@@ -1356,7 +1415,7 @@ flock -n "$gate_refusal_lock" true || gate_refusal_lock_rc=$?
 equal "an ownership refusal keeps its distinct gate status" "125" "$gate_refusal_rc"
 equal "an ownership refusal releases the heavy-test lock" "0" "$gate_refusal_lock_rc"
 contains "an ownership refusal says why the child was not killed" \
-  "$gate_refusal_out" "refusing to kill integration"
+  "$gate_refusal_out" "refusing to kill smoke"
 if [ -s "$gate_refusal_pidfile" ]; then
   gate_refusal_child_pid="$(<"$gate_refusal_pidfile")"
   gate_refusal_sid="$(ps -o sid= -p "$gate_refusal_child_pid" 2>/dev/null \
@@ -1382,7 +1441,7 @@ gate_pulse="$RUN_ROOT/gate-pulse"
 cp -R "$gate_run" "$gate_pulse"
 gate_pulse_wait="$RUN_ROOT/gate-pulse-wait"
 mkfifo "$gate_pulse_wait"
-cat > "$gate_pulse/test/integration.sh" <<SH
+cat > "$gate_pulse/test/smoke.sh" <<SH
 #!/usr/bin/env bash
 # SPDX-License-Identifier: Apache-2.0
 exec 7<> "$gate_pulse_wait"
@@ -1390,12 +1449,11 @@ for n in 1 2 3 4 5 6; do
   IFS= read -r -t 0.3 -u 7 || true
   printf 'pulse %s\n' "\$n"
 done
-printf 'integration: every declared part ran\n'
 SH
-chmod +x "$gate_pulse/test/integration.sh"
-git -C "$gate_pulse" add test/integration.sh
+chmod +x "$gate_pulse/test/smoke.sh"
+git -C "$gate_pulse" add test/smoke.sh
 git -C "$gate_pulse" -c user.name=fixture -c user.email=fixture@example.invalid \
-  commit -qm 'test: pulsing integration fixture'
+  commit -qm 'test: pulsing smoke fixture'
 gate_pulse_rc=0
 gate_pulse_out="$(GANG_GATE_QUIET_SECONDS=1 \
   "$gate_pulse/test/gate.sh" 2>&1)" || gate_pulse_rc=$?
@@ -1453,17 +1511,6 @@ if [ "${GANG_INTEGRATION_REQUIRE_ALL_PROBE:-0}" != 1 ]; then
     "run GANG_INTEGRATION_PARTS=cli,substrate,compose,readiness"
 fi
 
-cat > "$gate_run/test/integration.sh" <<SH
-#!/bin/sh
-# SPDX-License-Identifier: Apache-2.0
-printf 'integration\n' >> "$gate_order"
-exit 0
-SH
-chmod +x "$gate_run/test/integration.sh"
-refuses "the gate refuses a suite without every-part attestation" \
-  "integration did not attest that every declared part ran" \
-  "$gate_run/test/gate.sh"
-
 # THE GATE IS THE ONE FILE A TEAMMATE'S SAVE CAN STILL CORRUPT. Bash reads a
 # script while it runs it, so an edit landing mid-run is read from a stale byte
 # offset and executed as whatever now sits there. Every other file under test
@@ -1518,16 +1565,16 @@ else
 fi
 
 # A failed gate owes the verdict's evidence AND that evidence's deletion path.
-cat > "$gate_run/test/integration.sh" <<SH
+cat > "$gate_run/test/smoke.sh" <<SH
 #!/bin/sh
 # SPDX-License-Identifier: Apache-2.0
-printf 'integration\n' >> "$gate_order"
+printf 'smoke\n' >> "$gate_order"
 exit 3
 SH
-chmod +x "$gate_run/test/integration.sh"
+chmod +x "$gate_run/test/smoke.sh"
 gate_fail_rc=0
 gate_fail_out="$("$gate_run/test/gate.sh" 2>&1)" || gate_fail_rc=$?
-equal "a failing suite is the gate's own exit status" "3" "$gate_fail_rc"
+equal "a failing smoke is the gate's own exit status" "3" "$gate_fail_rc"
 # The refusal ends on the same line in the same place, after the kept-snapshot
 # notes rather than before them, and it carries a status the gate never chose
 # for itself — so the word is decided by whether this run reached a verdict,
@@ -1566,7 +1613,7 @@ fi
 # refusal's evidence history. A pinned snapshot is evidence someone is still
 # reading, and a snapshot of another tree is not this run's to judge.
 gate_retain_failing="$RUN_ROOT/gate-retain-failing.sh"
-cp "$gate_run/test/integration.sh" "$gate_retain_failing"
+cp "$gate_run/test/smoke.sh" "$gate_retain_failing"
 gate_retain_pinned_out="$("$gate_run/test/gate.sh" 2>&1)" || true
 gate_retain_pinned="$(printf '%s\n' "$gate_retain_pinned_out" | awk '/^  \// { print $1; exit }')"
 gate_retain_pin="$(printf '%s\n' "$gate_retain_pinned_out" |
@@ -1578,10 +1625,9 @@ gate_retain_stale="$(printf '%s\n' "$gate_retain_stale_out" | awk '/^  \// { pri
 gate_retain_foreign="$(mktemp -d "${TMPDIR:-/tmp}/gangline-gate.XXXXXX")"
 mkdir "$gate_retain_foreign/tree"
 printf '%s\n' "$RUN_ROOT/another-tree" > "$gate_retain_foreign/kept"
-cat > "$gate_run/test/integration.sh" <<'SH'
+cat > "$gate_run/test/smoke.sh" <<'SH'
 #!/bin/sh
 # SPDX-License-Identifier: Apache-2.0
-printf 'integration: every declared part ran\n'
 exit 0
 SH
 gate_retain_rc=0
@@ -1597,7 +1643,7 @@ equal "a snapshot of another tree survives the pass" "kept" \
 [ -z "$gate_retain_pinned" ] || rm -rf -- "${gate_retain_pinned%/tree}"
 [ -z "$gate_retain_stale" ] || rm -rf -- "${gate_retain_stale%/tree}"
 rm -rf -- "$gate_retain_foreign"
-cp "$gate_retain_failing" "$gate_run/test/integration.sh"
+cp "$gate_retain_failing" "$gate_run/test/smoke.sh"
 
 # A SIGNALLED GATE STOPS AT THE SIGNAL. One handler for the exit and for the
 # signals does not end a run — a bash signal handler returns to the interrupted
@@ -1632,7 +1678,7 @@ for gate_signal_stub in lint smoke; do
 exit 0
 SH
 done
-cat > "$gate_signal/test/integration.sh" <<SH
+cat > "$gate_signal/test/smoke.sh" <<SH
 #!/bin/sh
 # SPDX-License-Identifier: Apache-2.0
 target=""
@@ -1647,12 +1693,12 @@ while [ -n "\$p" ] && [ "\$p" != 1 ]; do
   p=\$2
 done
 printf '%s\\n' "\${target:-no-gate-in-ancestry}" > "$gate_signal_found"
-printf '%s\\n' 'integration output before the gate signal'
+printf '%s\\n' 'smoke output before the gate signal'
 [ -n "\$target" ] && kill -TERM "\$target"
 exit 0
 SH
 chmod +x "$gate_signal/test/lint.sh" "$gate_signal/test/smoke.sh" \
-  "$gate_signal/test/integration.sh"
+  "$gate_signal/test/smoke.sh"
 git -C "$gate_signal" init -q
 git -C "$gate_signal" add -A
 git -C "$gate_signal" -c user.name=fixture -c user.email=fixture@example.invalid \
@@ -1676,8 +1722,8 @@ equal "a signalled gate ends on the signal rather than on a status it computed" 
 # their requested output is read back; their counters never join this parent's
 # verdict. The outer run owns this assertion once, where its failure is visible.
 if [ "${GANG_INTEGRATION_REQUIRE_ALL_PROBE:-0}" != 1 ]; then
-  contains "and preserves integration output produced before the signal" \
-    "$gate_signal_out" "integration output before the gate signal"
+  contains "and preserves smoke output produced before the signal" \
+    "$gate_signal_out" "smoke output before the gate signal"
 fi
 if printf '%s\n' "$gate_signal_out" | grep -q 'No such file or directory'; then
   fail "and nothing below the teardown reads the snapshot it deleted" \
@@ -1687,7 +1733,7 @@ else
   pass "and nothing below the teardown reads the snapshot it deleted"
 fi
 
-# THE WIRING, not a restatement of it: both mandatory entry points are run
+# THE WIRING, not a restatement of it: both direct suite entry points are run
 # against a tree they would not own and must refuse before doing any work.
 gate_wire="$RUN_ROOT/gate-wiring"
 mkdir -p "$gate_wire/test"

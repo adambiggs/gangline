@@ -1824,7 +1824,8 @@ case "$1" in
                   [ -z "${FAKE_RELEASE_HOLD:-}" ] || exec cat "$FAKE_RELEASE_HOLD"
                   exit "${FAKE_RELEASE_RC:-0}" ;;
   hook) printf 'hook\n' >> "$FAKE_REPLY_LOG"; cat >/dev/null
-        [ -z "${FAKE_HOOK_DELAY:-}" ] || /bin/sleep "$FAKE_HOOK_DELAY"
+        # The caller fixes this to integration.sh's ledger-writing clock shim.
+        [ -z "${FAKE_HOOK_DELAY:-}" ] || "$FAKE_CLOCK_SLEEP" "$FAKE_HOOK_DELAY"
         [ -z "${FAKE_HOOK_HOLD:-}" ] || exec cat "$FAKE_HOOK_HOLD"
         exit "${FAKE_HOOK_RC:-0}" ;;
   *) exit 99 ;;
@@ -1992,23 +1993,27 @@ contains "a failed boundary after a timed-out query names the timeout" \
 excludes "a timed-out query is not called clear provenance" \
   "$reply_fake_out" "provenance is clear"
 
-# THE BOUNDARY SPENDS WHAT THE QUERY LEFT, ON A REAL CLOCK. A boundary slower
-# than a few seconds but well inside the native fuse must close, and the number
-# the adapter carried was near the idle cost of one Gangline call, so this case
-# is measured against the wall clock the collars bound rather than a scaled one.
-# It therefore names /bin/sleep: the suite's own `sleep` on PATH is the counting
-# stub that returns at once, which would leave this fixture holding nothing.
-# Measured margin: the fake answers a quiet box in well under 50 ms, the fixture
-# holds the boundary for 4 s, and production leaves the boundary everything the
-# 15 s fuse has left after a 1 s reserve.
+# THE BOUNDARY SPENDS WHAT THE QUERY LEFT. This is a time-semantic case, so its
+# fake clock records a 0.4-second requested boundary while completing in the
+# suite's 0.01-second clock scale. The 1.5-second fixture fuse preserves the
+# production 4-second-inside-15-second ratio. Measured fixture margin is 1.0
+# seconds after its 0.1-second reserve; the fake command's physical turnaround
+# remains under 50 ms. Production retains a 4-second request and a 15-second
+# fuse with a 1-second reserve.
 reply_fake_hook_hold="$reply_fake_root/hook-hold"
 mkfifo "$reply_fake_hook_hold"
 : > "$reply_fake_log"
-# source-guard: whole-surface@9bfe5b4dba00: the complete fake-adapter stdout is the slow-boundary verdict, so any producer is valid evidence
+reply_slow_ledger="$(clock_ledger slow-boundary)"
+# source-guard: whole-surface@5b19ecbde692: the complete fake-adapter stdout is the slow-boundary verdict, so any producer is valid evidence
 equal "a boundary slower than a few seconds still closes inside the native fuse" \
   "{}" "$(printf '%s' "$reply_stop_payload" \
     | FAKE_REPLY_QUERY='clear\t-\t-\t-\n' FAKE_REPLY_LOG="$reply_fake_log" \
-      FAKE_HOOK_DELAY=4 python3 "$reply_stop_hook" "$reply_fake_root/gang" 2>/dev/null)"
+      GANG_TEST_CLOCK_LEDGER="$reply_slow_ledger" \
+      FAKE_CLOCK_SLEEP="$RUN_ROOT/bin/sleep" \
+      GANG_STOP_HOOK_BUDGET_SEC=1.5 FAKE_HOOK_DELAY=0.4 \
+      python3 "$reply_stop_hook" "$reply_fake_root/gang" 2>/dev/null)"
+equal "the slow-boundary fixture spends its scaled fake-clock duration" \
+  1 "$(clock_naps "$reply_slow_ledger" 0.4)"
 # source-guard: whole-surface@ababcc619f93: the complete fake hook log records every boundary this invocation attempted, so any producer is valid evidence
 equal "a slow boundary is delegated once and not retried" "hook" \
   "$(cat "$reply_fake_log")"

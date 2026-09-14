@@ -188,6 +188,35 @@ jobs:
           export PATH="$TMUX_RAW_PREFIX/bin:$PATH"
           test/integration.sh
 
+  release:
+    if: github.event_name == 'pull_request' && startsWith(github.head_ref, 'release-please--')
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+
+      - name: Dependencies
+        run: |
+          set -eu
+          command -v tmux >/dev/null || sudo apt-get install -y tmux
+
+      - name: User service manager
+        run: |
+          set -eu
+          runner_uid="$(id -u)"
+          sudo loginctl enable-linger "$USER"
+          sudo systemctl start "user@$runner_uid.service"
+          export XDG_RUNTIME_DIR="/run/user/$runner_uid"
+          export DBUS_SESSION_BUS_ADDRESS="unix:path=/run/user/$runner_uid/bus"
+          systemd-run --user --wait --pipe --collect --service-type=exec /bin/true
+          echo "XDG_RUNTIME_DIR=$XDG_RUNTIME_DIR" >> "$GITHUB_ENV"
+          echo "DBUS_SESSION_BUS_ADDRESS=$DBUS_SESSION_BUS_ADDRESS" >> "$GITHUB_ENV"
+
+      - name: Pre-release full test
+        # Full integration already consumes the measured hosted-runner budget;
+        # this lane additionally runs lint and smoke against the release tree.
+        timeout-minutes: 50
+        run: test/release.sh
+
   release-please:
     if: github.event_name == 'push' && github.ref == 'refs/heads/main'
     needs: [check, integration]
