@@ -1474,7 +1474,7 @@ cat > "$RUN_ROOT/collars/tick-cache.sh" <<SH
 . "$ROOT/collars/bash.sh"
 GANG_LAUNCH="ENV='$RUN_ROOT/tick-bashrc' bash --posix"
 GANG_STOP_HOOK=1
-GANG_COMPACT_CMD="printf 'TICK_CACHE_COMPACT\\n'; printf 'x\\n' >> '$tick_cache_ledger'"
+GANG_COMPACT_CMD="printf '%s\\n' 'TICK_CACHE_COMPACT {{instructions}}' >> '$tick_cache_ledger'"
 collar_context() { printf '80k/100k\\n'; }
 collar_cache_stamp() {
   local file
@@ -1562,6 +1562,9 @@ GANG_CACHE_COMPACTION='tick-cache=120:90' GANG_TEST_TICK_MODE=sync \
   "$GANG" tick >/dev/null
 equal "an idle context inside its cache-expiry margin is compacted" 1 \
   "$(tick_cache_count)"
+contains "without cache bands automatic compaction keeps its built-in instruction" \
+  "$(sed -n '1p' "$tick_cache_ledger")" \
+  'TICK_CACHE_COMPACT Keep the brief you were given, the durable state you have already written down, and what is still outstanding in your lane, including anything you were asked to report.'
 tick_cache_digest="$(python3 -c 'import hashlib,sys; print(hashlib.sha256((sys.argv[1]+"\0"+sys.argv[2]).encode()).hexdigest()[:24])' \
   "$(tmux display-message -p -t "=$GANG_SESSION" '#{socket_path}')" "$GANG_SESSION")"
 tick_cache_journal="$XDG_STATE_HOME/gangline/tick/$tick_cache_digest/cache-compactions"
@@ -1690,6 +1693,112 @@ GANG_TEST_TICK_MODE=sync "$GANG" tick >/dev/null
 equal "the operator opt-out disables automatic compaction" 5 \
   "$(tick_cache_count)"
 "$GANG" drop tick-cache-off >/dev/null
+
+# CACHE BANDS CHANGE ONLY THE PRE-CACHE-EXPIRY DECISION. The first fixture is
+# over the legacy context threshold but below its selected cache band; the
+# second is below legacy context warnings but crosses two cache bands, so it
+# both flips eligibility and proves that the highest crossed template replaces
+# the built-in compaction instruction.
+tick_cache_bands_low_stamp="$RUN_ROOT/tick-cache-bands-low-transcript"
+tick_cache_bands_high_stamp="$RUN_ROOT/tick-cache-bands-high-transcript"
+: > "$tick_cache_bands_low_stamp"
+: > "$tick_cache_bands_high_stamp"
+GANG_CACHE_BANDS='*=preserve@90%:Keep only the durable state.' \
+  GANG_CACHE_COMPACTION='tick-cache=120:90' "$HITCH" tick-cache-bands-low \
+  -c tick-cache -l 50000,75000 -d /tmp >/dev/null
+tick_cache_bands_low_id="$(window_id tick-cache-bands-low)"
+tmux set-option -w -t "$tick_cache_bands_low_id" @gl_session "$tick_cache_bands_low_stamp"
+tmux set-option -w -t "$tick_cache_bands_low_id" @gl_turn "closed $(date +%s)"
+touch -d '45 seconds ago' "$tick_cache_bands_low_stamp"
+GANG_TEST_TICK_MODE=sync "$GANG" tick >/dev/null
+equal "an active cache-band map does not fall back to a crossed context warning" 5 \
+  "$(tick_cache_count)"
+
+GANG_CACHE_BANDS='*=checkpoint@50%:Keep checkpoint state.|urgent@75%:Keep urgent state.' \
+  GANG_CACHE_COMPACTION='tick-cache=120:90' "$HITCH" tick-cache-bands-high \
+  -c tick-cache -l 95000,99000 -d /tmp >/dev/null
+tick_cache_bands_high_id="$(window_id tick-cache-bands-high)"
+tmux set-option -w -t "$tick_cache_bands_high_id" @gl_session "$tick_cache_bands_high_stamp"
+tmux set-option -w -t "$tick_cache_bands_high_id" @gl_turn "closed $(date +%s)"
+touch -d '45 seconds ago' "$tick_cache_bands_high_stamp"
+GANG_TEST_TICK_MODE=sync "$GANG" tick >/dev/null
+equal "a crossed cache band can compact below the first context warning" 6 \
+  "$(tick_cache_count)"
+equal "the highest crossed cache band supplies the compaction instruction" \
+  'TICK_CACHE_COMPACT Keep urgent state.' "$(sed -n '6p' "$tick_cache_ledger")"
+"$GANG" drop tick-cache-bands-low >/dev/null
+"$GANG" drop tick-cache-bands-high >/dev/null
+
+# A CACHE POLICY THAT CANNOT BE READ IS NOT AN ORDINARY BELOW-THRESHOLD
+# result. The operator explicitly selected it for a cache-expiry decision, so
+# each broken native reading fails the cooperative pass loudly and leaves the
+# reason in `gang explain`; none may silently disable preservation forever.
+cat > "$RUN_ROOT/collars/tick-cache-diagnostic.sh" <<SH
+# shellcheck shell=bash
+# shellcheck disable=SC2034
+. "$ROOT/collars/bash.sh"
+GANG_LAUNCH="ENV='$RUN_ROOT/tick-bashrc' bash --posix"
+GANG_STOP_HOOK=1
+GANG_COMPACT_CMD="printf '%s\\n' 'TICK_CACHE_DIAGNOSTIC {{instructions}}' >> '$tick_cache_ledger'"
+collar_context() { tmux show-options -wqv -t "\$1" @gl_test_context; }
+collar_cache_stamp() {
+  local file
+  file="\$(tmux show-options -wqv -t "\$1" @gl_session)" || return 1
+  [ -f "\$file" ] || return 1
+  stat -c %Y -- "\$file"
+}
+SH
+tick_cache_zero_stamp="$RUN_ROOT/tick-cache-zero-transcript"
+tick_cache_unreachable_stamp="$RUN_ROOT/tick-cache-unreachable-transcript"
+tick_cache_unreadable_stamp="$RUN_ROOT/tick-cache-unreadable-transcript"
+: > "$tick_cache_zero_stamp"
+: > "$tick_cache_unreachable_stamp"
+: > "$tick_cache_unreadable_stamp"
+GANG_CACHE_BANDS='*=zero@50%:Keep zero-window state.' \
+  GANG_CACHE_COMPACTION='tick-cache-diagnostic=120:90' "$HITCH" tick-cache-zero \
+  -c tick-cache-diagnostic -l off -d /tmp >/dev/null
+GANG_CACHE_BANDS='*=unreachable@120000:Keep unreachable state.' \
+  GANG_CACHE_COMPACTION='tick-cache-diagnostic=120:90' "$HITCH" tick-cache-unreachable \
+  -c tick-cache-diagnostic -l off -d /tmp >/dev/null
+GANG_CACHE_BANDS='*=unreadable@50%:Keep unreadable state.' \
+  GANG_CACHE_COMPACTION='tick-cache-diagnostic=120:90' "$HITCH" tick-cache-unreadable \
+  -c tick-cache-diagnostic -l off -d /tmp >/dev/null
+tick_cache_zero_id="$(window_id tick-cache-zero)"
+tick_cache_unreachable_id="$(window_id tick-cache-unreachable)"
+tick_cache_unreadable_id="$(window_id tick-cache-unreadable)"
+tmux set-option -w -t "$tick_cache_zero_id" @gl_session "$tick_cache_zero_stamp"
+tmux set-option -w -t "$tick_cache_unreachable_id" @gl_session "$tick_cache_unreachable_stamp"
+tmux set-option -w -t "$tick_cache_unreadable_id" @gl_session "$tick_cache_unreadable_stamp"
+tmux set-option -w -t "$tick_cache_zero_id" @gl_test_context '80k/0k'
+tmux set-option -w -t "$tick_cache_unreachable_id" @gl_test_context '80k/100k'
+tmux set-option -uw -t "$tick_cache_unreadable_id" @gl_test_context
+tmux set-option -w -t "$tick_cache_zero_id" @gl_turn "closed $(date +%s)"
+tmux set-option -w -t "$tick_cache_unreachable_id" @gl_turn "closed $(date +%s)"
+tmux set-option -w -t "$tick_cache_unreadable_id" @gl_turn "closed $(date +%s)"
+touch -d '45 seconds ago' "$tick_cache_zero_stamp" "$tick_cache_unreachable_stamp" \
+  "$tick_cache_unreadable_stamp"
+tick_cache_diagnostic_rc=0
+tick_cache_diagnostic_out="$(GANG_TEST_TICK_MODE=sync "$GANG" tick 2>&1)" \
+  || tick_cache_diagnostic_rc=$?
+equal "an invalid selected cache band fails the cooperative tick" 1 \
+  "$tick_cache_diagnostic_rc"
+contains "a zero native context window names the cache-band failure" \
+  "$tick_cache_diagnostic_out" \
+  "tick cache bands for tick-cache-zero: Cache bands invalid: this harness's native context source reported a zero-token window.; refusing automatic compaction"
+contains "an unreachable absolute cache band names its threshold" \
+  "$tick_cache_diagnostic_out" \
+  "tick cache bands for tick-cache-unreachable: Cache bands invalid: configured 'unreachable' threshold 120000 cannot fire in this harness's 100000-token window. Re-hitch with reachable token thresholds or percentages.; refusing automatic compaction"
+contains "an unreadable native cache source fails loud" \
+  "$tick_cache_diagnostic_out" \
+  "tick cache bands for tick-cache-unreadable: Gangline cannot read or interpret this harness's native context source; refusing automatic compaction"
+contains "explain preserves a cache-band decision failure" \
+  "$("$GANG" explain tick-cache-unreadable)" \
+  "tick action: automatic cache compaction refused: cache bands Gangline cannot read or interpret this harness's native context source"
+equal "invalid cache-band policies never submit a compaction" 6 \
+  "$(tick_cache_count)"
+for tick_cache_diagnostic_agent in tick-cache-zero tick-cache-unreachable tick-cache-unreadable; do
+  "$GANG" drop "$tick_cache_diagnostic_agent" >/dev/null
+done
 
 # Codex 0.151.0 draws the provider wait chooser over its composer while the
 # turn itself remains live. This stand-in speaks the same terminal contract:

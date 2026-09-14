@@ -2131,6 +2131,79 @@ for bands_agent in bmexact bmorder bmcollar bmglobal bmoff bmflag; do
   "$GANG" drop "$bands_agent" >/dev/null
 done
 
+# CACHE BANDS USE THE SAME COLLAR/MODEL PRECEDENCE, but their registration is
+# intentionally separate from context warnings. A later tick reads only this
+# selected literal list; it never revisits the operator's ambient map.
+cache_bands_stamp() { # $1 agent -> the exact ordered spec hitch registered
+  tmux show-options -wqv -t "$(window_id "$1")" @gl_cache_bands 2>/dev/null || :
+}
+cache_bands_map='*=global@25%:Keep global {band};model-lights/*=collar@30%:Keep collar {band};model-lights/exact=specific@35%:Keep specific {band}'
+cache_bands_map_reversed='model-lights/exact=specific@35%:Keep specific {band};model-lights/*=collar@30%:Keep collar {band};*=global@25%:Keep global {band}'
+GANG_CACHE_BANDS="$cache_bands_map" "$HITCH" cbexact -c model-lights -d /tmp \
+  -m exact >"$RUN_ROOT/cbexact.out"
+equal "a cache-band collar/model entry beats every less-specific entry" \
+  'specific@35%:Keep specific {band}' "$(cache_bands_stamp cbexact)"
+GANG_CACHE_BANDS="$cache_bands_map_reversed" "$HITCH" cborder -c model-lights -d /tmp \
+  -m exact >/dev/null
+equal "cache-band specificity does not depend on entry order" \
+  'specific@35%:Keep specific {band}' "$(cache_bands_stamp cborder)"
+GANG_CACHE_BANDS="$cache_bands_map" "$HITCH" cbcollar -c model-lights -d /tmp \
+  -m neighbor >/dev/null
+equal "a cache-band collar wildcard beats the global entry" \
+  'collar@30%:Keep collar {band}' "$(cache_bands_stamp cbcollar)"
+GANG_CACHE_BANDS="$cache_bands_map" "$HITCH" cbglobal -c catalog-model -d /tmp \
+  -m exact >/dev/null
+equal "the cache-band global entry answers every otherwise-unmatched harness" \
+  'global@25%:Keep global {band}' "$(cache_bands_stamp cbglobal)"
+GANG_CACHE_BANDS='*=global@25%:Keep global {band};model-lights/exact=off' \
+  "$HITCH" cboff -c model-lights -d /tmp -m exact >/dev/null
+equal "an off cache-band entry restores the built-in compaction policy" \
+  "" "$(cache_bands_stamp cboff)"
+
+# A CACHE MAP IS INERT WHILE THE BACKSTOP IS OFF: it must not ask a collar to
+# replace its UI with a native context reader. Once an active backstop will use
+# it, the reader is armed and the original context-light explanation remains
+# truthful. A bare compact command is refused because it has no proven channel
+# for the selected preservation template.
+cache_slot_lights="$RUN_ROOT/cache-slot-lights"
+cat > "$RUN_ROOT/collars/cache-band-slot.sh" <<SH
+# shellcheck shell=bash
+# shellcheck disable=SC2034
+. "$ROOT/collars/bash.sh"
+printf '%s' "\${GANG_CONTEXT_LIGHTS:-}" > '$cache_slot_lights'
+GANG_COMPACT_CMD="printf 'CACHE_SLOT {{instructions}}'"
+collar_context() { printf '80k/100k\\n'; }
+collar_context_lights() { printf '40%%,70%%\\n'; }
+SH
+GANG_CONTEXT_LIGHTS=off GANG_CACHE_BANDS='*=preserve@50%:Keep preservation state.' \
+  GANG_CACHE_COMPACTION=off "$HITCH" cbdisabled -c cache-band-slot -d /tmp >/dev/null
+equal "an inert cache-band map does not wire a native context reader" \
+  off "$(<"$cache_slot_lights")"
+GANG_CONTEXT_LIGHTS=collar GANG_CACHE_BANDS='*=preserve@50%:Keep preservation state.' \
+  GANG_CACHE_COMPACTION='cache-band-slot=120:90' "$HITCH" cbactive \
+  -c cache-band-slot -d /tmp >"$RUN_ROOT/cbactive.out"
+equal "an active cache-band map wires the reader without arming a warning" \
+  '1,2|40%,70%' "$(<"$cache_slot_lights")|$(lights_stamp cbactive)"
+contains "cache bands preserve the existing context-light source in the hitch line" \
+  "$(<"$RUN_ROOT/cbactive.out")" "context lights 40%,70% (collar default"
+cat > "$RUN_ROOT/collars/cache-band-bare.sh" <<SH
+# shellcheck shell=bash
+# shellcheck disable=SC2034
+. "$ROOT/collars/bash.sh"
+GANG_COMPACT_CMD='/compact'
+SH
+refuses "an active cache-band map refuses a collar without an instruction slot" \
+  "GANG_CACHE_BANDS selects a preservation template, but collar 'cache-band-bare' declares no {{instructions}} compact-command slot" \
+  env GANG_CACHE_BANDS='*=preserve@50%:Keep preservation state.' \
+    GANG_CACHE_COMPACTION='cache-band-bare=120:90' "$GANG" hitch cbbare \
+    -c cache-band-bare -d /tmp
+equal "a collar without a cache-template channel leaves no hitch behind" \
+  "" "$(window_id cbbare)"
+
+for cache_bands_agent in cbexact cborder cbcollar cbglobal cboff cbdisabled cbactive; do
+  "$GANG" drop "$cache_bands_agent" >/dev/null
+done
+
 for lights_agent in lmexact lmorder lmcollar lmover lmmodel lmstar lmprefix lmask \
   lmoff lmstarform lmbare lmbarelist lmunset lmflag; do
   if [ -n "$(window_id "$lights_agent")" ]; then

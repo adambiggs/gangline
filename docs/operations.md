@@ -384,15 +384,48 @@ Each firing appends only timestamp, agent, band, threshold, and rendered byte
 length to the bounded `context-events` ledger beside the other tick ledgers.
 It never journals the template or rendered body.
 
+## Cache bands
+
+Cache bands are not context warnings. They answer whether an idle warm context
+contains enough state to preserve before its provider cache expires, and are
+read only by automatic cache compaction. Configure them with the same grammar
+as context bands:
+
+```sh
+GANG_CACHE_BANDS='*=preserve@50%:Keep the brief, durable state, and remaining work.|urgent@75%:Keep the urgent state needed after compaction.'
+```
+
+The map resolves exact `COLLAR/MODEL`, then `COLLAR/*`, then `*`, validates and
+settles at hitch, and `gang config` prints deterministic rendered samples. The
+first crossed cache band makes cache compaction eligible; when several are
+crossed, the highest template replaces the built-in preservation instruction in
+the native compaction command. No notification is delivered just for crossing a
+cache band.
+
+The selected collar must declare the `{{instructions}}` compact-command slot
+when its cache-compaction backstop is active; otherwise hitch refuses rather
+than accepting a template it cannot deliver. A configured map is inert while
+cache compaction is off, so it does not alter the harness UI. A selected reader
+that is unreadable, reports a zero window, or cannot reach an absolute band
+makes `gang tick` fail loudly and leaves the refusal in `gang explain`.
+
+Leave `GANG_CACHE_BANDS` unset, set it to `off`, or select an `off` entry to
+retain the existing first-context-warning eligibility and the built-in
+instruction. A selected map with an active backstop needs a native context
+reading even if context warnings are disabled.
+
 ## Cache-expiry compaction backstop
 
-The cooperative `gang tick` can compact an otherwise idle, high-context agent
+The cooperative `gang tick` can compact an otherwise idle agent with state worth
+preserving
 shortly before its provider prompt cache expires. This preserves a short durable
 summary while the large context is still a warm cache read. It never types into
 a busy or occupied agent, an agent with queued or held spool delivery, or one
-below its first context-warning threshold. Each idle gap receives at most one
-automatic submission: after that compaction, a later cold turn rewrites only
-the summary. `gang explain NAME` shows the bounded journal of those submissions.
+below its configured eligibility band. Without cache bands that is the first
+context-warning band; with a selected map it is the first cache band. Each idle
+gap receives at most one automatic submission: after that compaction, a later
+cold turn rewrites only the summary. `gang explain NAME` shows the bounded
+journal of those submissions.
 
 The default map enables Claude Code at one hour with a five-minute margin and
 Codex at thirty minutes with a three-minute margin. A collar that is not named

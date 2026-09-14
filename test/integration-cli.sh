@@ -602,6 +602,38 @@ refuses "a context-band placeholder is refused while loading its named config li
   "GANG_CONTEXT_BANDS entry '*' band 'bad' has unknown placeholder '{not_measured}' (from $CONFIG_CASES/bands-bad-file/config line 1)" \
   env -u GANG_CONTEXT_BANDS GANG_CONFIG_DIR="$CONFIG_CASES/bands-bad-file" "$GANG" config
 
+# CACHE BANDS ARE A SEPARATE, HITCH-SETTLED MAP. They share the context-band
+# grammar, but config must show their own effective entries so an operator
+# never mistakes a preservation policy for a warning policy.
+cache_bands_config='*=warm@25%:Keep {agent}: {context_used}/{context_size} ({context_pct}%)|critical@50%:Keep {band} for {harness}: cache {cache_age}/{cache_timeout} at {current_time}'
+cache_bands_config_report="$(GANG_CONFIG_DIR="$CONFIG_CASES/report" \
+  GANG_CACHE_BANDS="$cache_bands_config" "$GANG" config | grep '^cache-bands')"
+equal "gang config renders every configured cache band in order" \
+  $'cache-bands\t*\twarm\t25%\tKeep sample-agent: 25000/100000 (25%)\ncache-bands\t*\tcritical\t50%\tKeep critical for sample-harness: cache unavailable/unavailable at 1970-01-01T00:00:00Z' \
+  "$cache_bands_config_report"
+cache_bands_precedence='*=global@25%:global {band};codex/*=collar@30%:collar {band};codex/gpt-test=specific@35%:specific {band}'
+equal "gang config makes cache-band selector precedence visible" \
+  $'cache-bands\tcodex/gpt-test\tspecific\t35%\tspecific specific\ncache-bands\tcodex/*\tcollar\t30%\tcollar collar\ncache-bands\t*\tglobal\t25%\tglobal global' \
+  "$(GANG_CONFIG_DIR="$CONFIG_CASES/report" GANG_CACHE_BANDS="$cache_bands_precedence" \
+    "$GANG" config | grep '^cache-bands')"
+equal "gang config keeps a selector-level cache-band opt-out visible" \
+  $'cache-bands\tcodex/gpt-test\toff\t\t\ncache-bands\t*\tglobal\t25%\tglobal global' \
+  "$(GANG_CONFIG_DIR="$CONFIG_CASES/report" \
+    GANG_CACHE_BANDS='*=global@25%:global {band};codex/gpt-test=off' \
+    "$GANG" config | grep '^cache-bands')"
+refuses "gang config refuses an unknown cache-band placeholder under its origin" \
+  "GANG_CACHE_BANDS entry '*' band 'bad' has unknown placeholder '{not_measured}' (from the environment)" \
+  env GANG_CONFIG_DIR="$CONFIG_CASES/report" \
+    GANG_CACHE_BANDS='*=bad@25%:bad {not_measured}' "$GANG" config
+refuses "gang config refuses cache-band thresholds out of order under its origin" \
+  "GANG_CACHE_BANDS entry '*' thresholds must strictly increase in their configured order, got '25%' after '50%' (from the environment)" \
+  env GANG_CONFIG_DIR="$CONFIG_CASES/report" \
+    GANG_CACHE_BANDS='*=first@50%:first|second@25%:second' "$GANG" config
+refuses "a cache-band override without its global default is refused at config load" \
+  "GANG_CACHE_BANDS needs a '*' global default alongside any collar override (from the environment)" \
+  env GANG_CONFIG_DIR="$CONFIG_CASES/report" \
+    GANG_CACHE_BANDS='codex/*=first@50%:first' "$GANG" config
+
 # 2.0 removed the pre-rename config spellings, so there is no second name for
 # one setting to normalize or conflict with. In a config file the old spelling
 # is an unknown key and refuses; in the environment it is a variable Gangline

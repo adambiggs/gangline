@@ -353,6 +353,36 @@ Unknown or malformed placeholders, selectors, delimiters, and threshold order
 refuse under their configuration origin before a hook can run. `gang config`
 prints the effective map in selection order with deterministic rendered samples.
 
+### Cache bands
+
+`GANG_CACHE_BANDS` is a separate optional map with the same grammar, selector
+order, validation, hitch settlement, placeholders, and `gang config` samples as
+`GANG_CONTEXT_BANDS`:
+
+```sh
+GANG_CACHE_BANDS='*=preserve@50%:Keep the brief, durable state, and remaining work.|urgent@75%:Keep the urgent state needed after compaction.'
+```
+
+It answers whether a warm context contains enough state to preserve before its
+cache expires; it does not replace context warnings. Crossing a cache band
+emits no warning, context event, or other delivery. When selected, the first
+crossed cache band replaces the automatic cache-compaction backstop's first
+context-warning eligibility, and the highest crossed band's rendered template
+replaces the built-in preservation instruction in the native compact command.
+
+That instruction requires a collar whose compact command declares the proven
+`{{instructions}}` slot. A selected map with an active cache-compaction policy
+refuses at hitch for a collar without that slot, rather than silently dropping
+the template. A map is inert while cache compaction is off and does not alter
+the harness's context-reader UI.
+
+Leave it unset, set it to `off`, or select an `off` entry to retain both the
+existing context-warning eligibility and the built-in instruction. A selected
+map with an active backstop requires the collar's native context reader even
+with context warnings off; Gangline enables that reader at hitch without arming
+a warning. An unreadable or impossible reading fails the tick loudly and is
+recorded in `gang explain` rather than quietly disabling compaction.
+
 The legacy policy uses `GANG_CONTEXT_LIGHTS`. Which thresholds those are is
 decided in one pass: `-l`/`--lights` if given, otherwise the
 `GANG_CONTEXT_LIGHTS` entry that matches this hitch most specifically, and where
@@ -1972,7 +2002,8 @@ Exactly these keys are settable:
 | `GANG_ARCHIVE_DIR` | `${XDG_STATE_HOME:-$HOME/.local/state}/gangline/archive` | pending-message archive written before windows die |
 | `GANG_CONTEXT_LIGHTS` | `collar` | whitespace-separated `COLLAR/MODEL=SPEC` entries, either half `*`, the most specific match winning; SPEC is `collar` to take the collar's own default for the hitched model, `off`, `yellow,red` token thresholds, or `yellow%,red%` relative thresholds, and a SPEC with no selector is the deprecated form of `*=SPEC`; `gang hitch -l` overrides the whole map for one agent |
 | `GANG_CONTEXT_BANDS` | unset | `off`, or semicolon-separated `SELECTOR=BAND@THRESHOLD:TEMPLATE|...` entries. `SELECTOR` is exact `COLLAR/MODEL`, then `COLLAR/*`, then required `*`; the most specific match wins. Thresholds are positive, increasing, and all tokens or all percentages below 100. Templates use only documented placeholders and are rendered at the crossing; missing cache-reader values render `unavailable`. A nonempty map replaces legacy lights for later hitches, while `gang hitch -l` explicitly keeps one legacy two-light hitch. |
-| `GANG_CACHE_COMPACTION` | `claude-code=3600:300 codex=1800:180` | `off`, or whitespace-separated `COLLAR=TTL:MARGIN` / `COLLAR=off` entries; TTL and MARGIN are positive whole seconds, an exact collar entry beats `*`, and a collar omitted from the map is off. Gangline validates and settles the selected entry at hitch time, so a later tick never reparses a live map. The tick considers only an idle agent with a readable transcript/rollout mtime inside `[TTL-MARGIN, TTL)`, past its first context-warning band, and with no spool delivery or outstanding self-compaction. |
+| `GANG_CACHE_BANDS` | unset | `off`, or the same semicolon-separated `SELECTOR=BAND@THRESHOLD:TEMPLATE|...` grammar as `GANG_CONTEXT_BANDS`. It is settled at hitch and selects whether automatic cache-expiry compaction is worthwhile: the first crossed band replaces context-warning eligibility and the highest crossed band supplies the native compaction instruction. An active map requires the collar's proven `{{instructions}}` slot and a readable native context source; otherwise hitch or tick refuses rather than losing the selected policy. It never emits a warning. Unset or `off`, including a selected `off` entry, keeps the existing context-warning eligibility and built-in instruction. |
+| `GANG_CACHE_COMPACTION` | `claude-code=3600:300 codex=1800:180` | `off`, or whitespace-separated `COLLAR=TTL:MARGIN` / `COLLAR=off` entries; TTL and MARGIN are positive whole seconds, an exact collar entry beats `*`, and a collar omitted from the map is off. Gangline validates and settles the selected entry at hitch time, so a later tick never reparses a live map. The tick considers only an idle agent with a readable transcript/rollout mtime inside `[TTL-MARGIN, TTL)`, past its configured eligibility band, and with no spool delivery or outstanding self-compaction. |
 | `GANG_USAGE_LIGHTS` | `off` | `off` or increasing provider-used thresholds such as `90%,95%` |
 | `GANG_AUTO_RESUME` | `off` | `off` or one provider-used percentage such as `97%` at which a reset wake is armed automatically |
 | `GANG_SCOPE` | `off` | `off`, or `on` to launch each hitched harness, and the tmux server gang forks, in its own transient systemd user scope |
