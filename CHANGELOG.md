@@ -1,5 +1,12 @@
 # Changelog
 
+## [2.16.0](https://github.com/adambiggs/gangline/compare/gangline-v2.15.0...gangline-v2.16.0) (2026-09-14)
+
+
+### Features
+
+* **cache:** separate cache bands from context bands ([a6d26d8](https://github.com/adambiggs/gangline/commit/a6d26d8a5bd8cbd6ce2d83d817d89771d607dca9))
+
 ## [2.15.0](https://github.com/adambiggs/gangline/compare/gangline-v2.14.0...gangline-v2.15.0) (2026-09-14)
 
 
