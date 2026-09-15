@@ -81,7 +81,12 @@ jobs:
       - name: Dependencies
         run: |
           set -eu
-          command -v tmux >/dev/null || sudo apt-get install -y tmux
+          have_all=yes
+          for t in tmux rg; do
+            command -v "$t" >/dev/null || have_all=no
+          done
+          [ "$have_all" = no ] || exit 0
+          sudo apt-get install -y tmux ripgrep
 
       - name: User service manager
         run: |
@@ -141,7 +146,7 @@ jobs:
         run: |
           set -eu
           sudo apt-get update
-          sudo apt-get install -y libevent-dev libncurses-dev bison pkg-config
+          sudo apt-get install -y libevent-dev libncurses-dev bison pkg-config ripgrep
 
       - name: User service manager
         run: |
