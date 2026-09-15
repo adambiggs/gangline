@@ -197,7 +197,12 @@ jobs:
       - name: Dependencies
         run: |
           set -eu
-          command -v tmux >/dev/null || sudo apt-get install -y tmux
+          have_all=yes
+          for t in tmux rg flock; do
+            command -v "$t" >/dev/null || have_all=no
+          done
+          [ "$have_all" = no ] || exit 0
+          sudo apt-get install -y tmux ripgrep util-linux
 
       - name: User service manager
         run: |

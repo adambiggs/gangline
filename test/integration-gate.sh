@@ -5,7 +5,10 @@
 # server if display-message targets the adopted pane.  Pane facts use the
 # list/format reader; keep this structural guard so the dangerous form cannot
 # return with a future refactor.
-if rg -Fq "display-message -p -t \"\$id\" '#{pane_current_path}'" "$ROOT/bin/gang"; then
+if ! command -v rg >/dev/null; then
+  fail "adoption guard has its ripgrep dependency" \
+    "rg is required to inspect the dangerous display-message form"
+elif rg -Fq "display-message -p -t \"\$id\" '#{pane_current_path}'" "$ROOT/bin/gang"; then
   fail "adoption never reads pane path through display-message" \
     "bin/gang targets pane_current_path through display-message"
 else
@@ -872,6 +875,17 @@ fi
 # fixture proves that it invokes all three checks in order from one settled tree
 # and that a failed integration remains the lane's result instead of becoming a
 # green contribution verdict.
+release_dependencies="$(awk '
+  $0 == "  release:" { in_release = 1; next }
+  in_release && /^  [[:alnum:]_-]+:/ { exit }
+  in_release && /^      - name: Dependencies$/ { in_dependencies = 1; next }
+  in_dependencies && /^      - name:/ { exit }
+  in_dependencies { print }
+' "$ROOT/.github/workflows/shell.yml")"
+contains "the release job installs ripgrep for the integration guard" \
+  "$release_dependencies" "ripgrep"
+contains "the release job installs util-linux for the release lock" \
+  "$release_dependencies" "util-linux"
 release_run="$RUN_ROOT/release-lane"
 release_lock="$RUN_ROOT/release-lane.lock"
 release_order="$RUN_ROOT/release-lane-order"
@@ -924,8 +938,15 @@ contains "the release lane reports its complete green proof" \
   "$release_out" "passed lint, smoke, and full integration"
 equal "the release lane clears a focused selector and requires every part" \
   "parts=<> require=<1>" "$(<"$release_scope")"
-excludes "the release lane lock acquisition has no wait deadline" \
-  "$(<"$release_flock_args")" "<-w>"
+if [ -s "$release_flock_args" ]; then
+  contains "the release lane records its flock acquisition" \
+    "$(<"$release_flock_args")" "<-o>"
+  excludes "the release lane lock acquisition has no wait deadline" \
+    "$(<"$release_flock_args")" "<-w>"
+else
+  fail "the release lane records its flock acquisition" \
+    "the release fixture wrote no readable flock capture at $release_flock_args"
+fi
 if [ ! -s "$release_lock" ]; then
   pass "the release lane clears its owner record before releasing"
 else
