@@ -6157,6 +6157,36 @@ harness_identity_hook_retry() { # $1 pane/window; only the first native boundary
   harness_identity_establish "$1" hook
 }
 
+# A QUIET HOOKLESS HARNESS HAS NO NATIVE BOUNDARY TO RETRY. One ordinary tick
+# may therefore take the collar's already-declared read, but never through
+# harness_identity_establish: that helper deliberately retires every old root
+# verdict before reading, which would erase the very state that makes this
+# attempt unsafe. Persist before the read so an interrupted tick cannot become
+# polling; 3 tells the caller the new witness needs no second read this visit.
+harness_identity_tick_backfill() { # $1 window; 0 no/new non-positive result, 3 positive witness recorded
+  local recorded="" lost="" attempted="" observed="" rc=0
+  recorded="$(tmux show-options -wqv -t "$1" @gl_harness_identity 2>/dev/null)" || recorded=""
+  lost="$(tmux show-options -wqv -t "$1" @gl_harness_lost 2>/dev/null)" || lost=""
+  attempted="$(tmux show-options -wqv -t "$1" @gl_harness_identity_tick_attempted 2>/dev/null)" || attempted=""
+  [ -z "$recorded" ] && [ -z "$lost" ] && [ -z "$attempted" ] || return 0
+  declare -F collar_harness_identity >/dev/null || return 0
+  tmux set-option -w -t "$1" @gl_harness_identity_tick_attempted started 2>/dev/null || return 0
+  observed="$(collar_harness_identity "$1")" || rc=$?
+  case "$rc" in
+    0)
+      [[ "$observed" =~ ^[0-9]+$'\t'[0-9]+$ ]] \
+        || die "collar_harness_identity in $GANG_COLLAR_FILE returned an invalid process identity"
+      tmux set-option -w -t "$1" @gl_harness_identity "$observed" 2>/dev/null || true
+      tmux set-option -w -t "$1" @gl_harness_identity_tick_attempted recorded 2>/dev/null || true
+      return 3 ;;
+    1) tmux set-option -w -t "$1" @gl_harness_identity_tick_attempted absent 2>/dev/null || true ;;
+    2)
+      tmux set-option -w -t "$1" @gl_harness_identity_unreadable "$observed" 2>/dev/null || true
+      tmux set-option -w -t "$1" @gl_harness_identity_tick_attempted unreadable 2>/dev/null || true ;;
+    *) die "collar_harness_identity in $GANG_COLLAR_FILE returned unknown verdict $rc" ;;
+  esac
+}
+
 harness_identity_verify() { # $1 window; 0 match/not-recorded, 1 unreadable, 2 lost
   local recorded="" observed="" rc=0
   recorded="$(tmux show-options -wqv -t "$1" @gl_harness_identity 2>/dev/null)" || recorded=""
@@ -6280,12 +6310,19 @@ tick_full_pass_once() {
       continue
     fi
     pass_rc=0
-    harness_identity_verify "$id" || pass_rc=$?
-    if [ "$pass_rc" -eq 2 ]; then
-      glyph_write "$id" "!harness-lost! (the recorded pane-root process is gone or replaced)"
-      state_note "$id" harness-lost tick
-      continue
-    fi
+    harness_identity_tick_backfill "$id" || pass_rc=$?
+    case "$pass_rc" in
+      0)
+        pass_rc=0
+        harness_identity_verify "$id" || pass_rc=$?
+        if [ "$pass_rc" -eq 2 ]; then
+          glyph_write "$id" "!harness-lost! (the recorded pane-root process is gone or replaced)"
+          state_note "$id" harness-lost tick
+          continue
+        fi ;;
+      3) ;;
+      *) die "tick root-witness backfill returned unknown status $pass_rc" ;;
+    esac
     # A STANDING SELF-COMPACTION REQUEST GOES FIRST, and the drain follows only
     # when this pass did not submit it. The pass used to drain first and
     # dispatch only against an empty spool, so the note a refusal spools about

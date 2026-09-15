@@ -4591,6 +4591,107 @@ equal "and a silent probe miss does not fail the tick" 0 \
 "$GANG" drop tick-wrong >/dev/null 2>&1
 "$GANG" drop tick-bare >/dev/null 2>&1
 
+# A QUIET HOOKLESS HARNESS MAY APPEAR AFTER ADOPTION. The native hook retry
+# cannot cover it, so one ordinary tick may read the declared root witness.
+# The fixture's reader ledger distinguishes that bounded backfill from the
+# normal verification of an already-recorded root: an absent or unreadable
+# result must never make later ticks read again.
+tick_root_backfill_reads="$RUN_ROOT/tick-root-backfill-reads"
+cat > "$RUN_ROOT/collars/tick-root-backfill.sh" <<SH
+# shellcheck shell=bash
+# shellcheck disable=SC2034
+. "$ROOT/collars/bash.sh"
+GANG_STOP_HOOK=
+collar_harness_identity() {
+  local mode=""
+  mode="\$(tmux show-options -wqv -t "\$1" @gl_tick_backfill_fixture_mode 2>/dev/null)" \
+    || mode=""
+  printf '%s\\n' "\$1" >> '$tick_root_backfill_reads'
+  case "\$mode" in
+    positive) printf '4242\\t7'; return 0 ;;
+    unreadable) printf 'fixture root reading is unreadable'; return 2 ;;
+    *) return 1 ;;
+  esac
+}
+SH
+tick_root_backfill_read_count() {
+  awk -v id="$1" '$0 == id { count++ } END { print count + 0 }' \
+    "$tick_root_backfill_reads"
+}
+
+tick_root_absent_id="$(tmux new-window -d -P -F '#{window_id}' \
+  -t "=$GANG_SESSION" -n tick-root-absent "PS1='❯ ' exec bash --norc")"
+"$GANG" adopt tick-root-absent -c tick-root-backfill >/dev/null
+equal "the hookless root fixture starts with exactly its adoption read" 1 \
+  "$(tick_root_backfill_read_count "$tick_root_absent_id")"
+"$GANG" tick >/dev/null
+equal "a quiet absent root records its one tick attempt" absent \
+  "$(tmux show-options -wqv -t "$tick_root_absent_id" @gl_harness_identity_tick_attempted)"
+equal "a quiet absent root leaves no invented witness" "" \
+  "$(tmux show-options -wqv -t "$tick_root_absent_id" @gl_harness_identity)"
+equal "the first quiet tick reads the declared root once" 2 \
+  "$(tick_root_backfill_read_count "$tick_root_absent_id")"
+"$GANG" tick >/dev/null
+equal "a quiet absent root is not polled by later ticks" 2 \
+  "$(tick_root_backfill_read_count "$tick_root_absent_id")"
+
+tick_root_positive_id="$(tmux new-window -d -P -F '#{window_id}' \
+  -t "=$GANG_SESSION" -n tick-root-positive "PS1='❯ ' exec bash --norc")"
+"$GANG" adopt tick-root-positive -c tick-root-backfill >/dev/null
+tmux set-option -w -t "$tick_root_positive_id" @gl_harness_identity_unreadable \
+  'the hitch-time reader was unreadable'
+tmux set-option -w -t "$tick_root_positive_id" @gl_tick_backfill_fixture_mode positive
+"$GANG" tick >/dev/null
+equal "a quiet positive root is recorded by its one tick attempt" $'4242\t7' \
+  "$(tmux show-options -wqv -t "$tick_root_positive_id" @gl_harness_identity)"
+equal "a positive root records the completed tick attempt" recorded \
+  "$(tmux show-options -wqv -t "$tick_root_positive_id" @gl_harness_identity_tick_attempted)"
+equal "a tick backfill never clears an existing unreadable verdict" \
+  'the hitch-time reader was unreadable' \
+  "$(tmux show-options -wqv -t "$tick_root_positive_id" @gl_harness_identity_unreadable)"
+
+tick_root_recorded_id="$(tmux new-window -d -P -F '#{window_id}' \
+  -t "=$GANG_SESSION" -n tick-root-recorded "PS1='❯ ' exec bash --norc")"
+"$GANG" adopt tick-root-recorded -c tick-root-backfill >/dev/null
+tmux set-option -w -t "$tick_root_recorded_id" @gl_harness_identity $'4242\t7'
+tmux set-option -w -t "$tick_root_recorded_id" @gl_tick_backfill_fixture_mode positive
+"$GANG" tick >/dev/null
+equal "a recorded root is preserved instead of backfilled" $'4242\t7' \
+  "$(tmux show-options -wqv -t "$tick_root_recorded_id" @gl_harness_identity)"
+equal "a recorded root never gains a tick-backfill attempt" "" \
+  "$(tmux show-options -wqv -t "$tick_root_recorded_id" @gl_harness_identity_tick_attempted)"
+
+tick_root_lost_id="$(tmux new-window -d -P -F '#{window_id}' \
+  -t "=$GANG_SESSION" -n tick-root-lost "PS1='❯ ' exec bash --norc")"
+"$GANG" adopt tick-root-lost -c tick-root-backfill >/dev/null
+tmux set-option -w -t "$tick_root_lost_id" @gl_harness_lost 'the prior root was lost'
+tmux set-option -w -t "$tick_root_lost_id" @gl_tick_backfill_fixture_mode positive
+tick_root_lost_reads="$(tick_root_backfill_read_count "$tick_root_lost_id")"
+"$GANG" tick >/dev/null
+equal "a lost root verdict is preserved instead of backfilled" \
+  'the prior root was lost' \
+  "$(tmux show-options -wqv -t "$tick_root_lost_id" @gl_harness_lost)"
+equal "a lost root never gains a tick-backfill attempt" "" \
+  "$(tmux show-options -wqv -t "$tick_root_lost_id" @gl_harness_identity_tick_attempted)"
+equal "a lost root skips the declared reader entirely" "$tick_root_lost_reads" \
+  "$(tick_root_backfill_read_count "$tick_root_lost_id")"
+
+tick_root_unreadable_id="$(tmux new-window -d -P -F '#{window_id}' \
+  -t "=$GANG_SESSION" -n tick-root-unreadable "PS1='❯ ' exec bash --norc")"
+"$GANG" adopt tick-root-unreadable -c tick-root-backfill >/dev/null
+tmux set-option -w -t "$tick_root_unreadable_id" @gl_tick_backfill_fixture_mode unreadable
+"$GANG" tick >/dev/null
+equal "an unreadable quiet root records the failed tick attempt" unreadable \
+  "$(tmux show-options -wqv -t "$tick_root_unreadable_id" @gl_harness_identity_tick_attempted)"
+equal "an unreadable quiet root preserves its diagnostic" \
+  'fixture root reading is unreadable' \
+  "$(tmux show-options -wqv -t "$tick_root_unreadable_id" @gl_harness_identity_unreadable)"
+equal "the unreadable quiet root is read once by tick" 2 \
+  "$(tick_root_backfill_read_count "$tick_root_unreadable_id")"
+"$GANG" tick >/dev/null
+equal "an unreadable quiet root is not retried by later ticks" 2 \
+  "$(tick_root_backfill_read_count "$tick_root_unreadable_id")"
+
 # Team teardown uninstalls the session's alert-center options and retires the
 # ephemeral health files with the session that gave them meaning. A file down
 # does not own keeps their directory in place: the team still ends, and the
