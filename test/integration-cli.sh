@@ -75,7 +75,7 @@ excludes "the welcome page has no stale orphaned A fragment" \
   "$welcome" "input box, and never interrupts a turn. A"
 source_version="$(<"$ROOT/version.txt")"
 equal "source gang reports the release-owned version" \
-  "gang $source_version" "$(env GANG_CONFIG_DIR="$RUN_ROOT/no-config" "$GANG" --version)"
+  "gangline $source_version" "$(env GANG_CONFIG_DIR="$RUN_ROOT/no-config" "$GANG" --version)"
 version_install="$RUN_ROOT/version-install"
 version_install_bin="$RUN_ROOT/version-install-bin"
 mkdir -p "$version_install/bin" "$version_install/collars" "$version_install_bin"
@@ -86,7 +86,7 @@ ln -s "$version_install/bin/gang" "$version_install_bin/gang"
 installed_version="$(env GANG_CONFIG_DIR="$RUN_ROOT/no-config" \
   "$version_install_bin/gang" --version)"
 equal "an installed gang reports its adjacent release version" \
-  "gang 9.8.7" "$installed_version"
+  "gangline 9.8.7" "$installed_version"
 version_malformed_source="$RUN_ROOT/version-malformed-source"
 version_malformed_bin="$RUN_ROOT/version-malformed-bin"
 mkdir -p "$version_malformed_source/bin" "$version_malformed_source/collars" \

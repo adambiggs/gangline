@@ -294,7 +294,7 @@ if [ "${1:-}" = --version ]; then
           && ! printf '%s' "$version" | cmp -s - "$ROOT/version.txt"; }; then
     die "the release version at $ROOT/version.txt is malformed; expected exactly one MAJOR.MINOR.PATCH value"
   fi
-  printf 'gang %s\n' "$version"
+  printf 'gangline %s\n' "$version"
   exit 0
 fi
 
