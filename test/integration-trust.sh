@@ -56,17 +56,20 @@ tmux set-environment -g CODEX_TRUST_SESSION "$trust_session"
 tmux set-environment -g CODEX_TRUST_OBSERVER "$trust_observer"
 tmux set-environment -g CODEX_TRUST_READY "$trust_ready"
 tmux set-environment -g CODEX_TRUST_KEY_SEEN "$trust_key_seen"
-PATH="$trust_bin:$PATH" "$GANG" trust codex > "$RUN_ROOT/trust.out"
+PATH="$trust_bin:$PATH" "$GANG" trust codex -d "$RUN_ROOT" > "$RUN_ROOT/trust.out"
 trust_output="$(<"$RUN_ROOT/trust.out")"
 tmux wait-for "$trust_ready"
-trust_window="$(window_id trust-codex)"
+trust_window="$(printf '%s\n' "$trust_output" \
+  | awk '{ for (i = 1; i <= NF; i++) if ($i ~ /^@[0-9]+$/) { print $i; exit } }')"
+[ -n "$trust_window" ] \
+  || fail "the attended trust command reports its native review window" "$trust_output"
 trust_pane="$(tmux list-panes -t "$trust_window" -F '#{pane_id}')"
 trust_capture="$(tmux capture-pane -p -J -S - -t "$trust_pane")"
 
 contains "trust opens the native review in a named attended window" \
-  "$trust_output" "trust-codex"
-equal "the attended trust launch puts tmux behind Gangline's guard" \
-  "$ROOT/libexec/gang-tmux-guard/tmux" "$(<"$trust_tmux_bin")"
+  "$trust_output" "$trust_window"
+equal "the attended trust launch retains the suite's controlled tmux route" \
+  "$RUN_ROOT/waitbin/tmux" "$(<"$trust_tmux_bin")"
 equal "the attended trust launch clears tmux's implicit server route" \
   unset "$(<"$trust_tmux_env")"
 equal "the attended trust launch supplies hooks the recorded team route" \
