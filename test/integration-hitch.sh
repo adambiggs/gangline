@@ -770,7 +770,10 @@ cat > "$RUN_ROOT/collars/startup-delivery-gate.sh" <<SH
 # shellcheck shell=bash
 # shellcheck disable=SC2034
 . "$ROOT/collars/bash.sh"
-GANG_LAUNCH="sh -c 'IFS= read -r _ < \"$startup_gate_trigger\"; printf \"LATE_STARTUP_GATE\\n\"; printf x > \"$startup_gate_painted\"; PS1=\"❯ \" exec bash --norc' fixture"
+# The initial composer must be ready before this event is sent. The reader
+# stays in the pane as a background waiter, then paints the gate only after
+# the second protected composer read has triggered it.
+GANG_LAUNCH="sh -c '{ IFS= read -r _ < \"$startup_gate_trigger\"; printf \"LATE_STARTUP_GATE\\n\"; printf x > \"$startup_gate_painted\"; } & PS1=\"❯ \" exec bash --norc' fixture"
 GANG_OCCUPIED_REGEX='LATE_STARTUP_GATE'
 _gl_startup_gate_real="\$(declare -f collar_input)"
 eval "startup_gate_real_input \${_gl_startup_gate_real#collar_input}"
@@ -784,7 +787,11 @@ collar_input() {
       fi
       if [ ! -e "$RUN_ROOT/startup-gate-second" ]; then
         : > "$RUN_ROOT/startup-gate-second"
-        printf x > "$startup_gate_trigger" || return 3
+        # The fixture launch reads one line. Keep the event self-contained:
+        # the parent holds its FIFO descriptor open so it can observe both
+        # sides, and a byte without its newline would leave that reader
+        # waiting instead of painting the gate this branch must witness.
+        printf 'x\n' > "$startup_gate_trigger" || return 3
         IFS= read -r -n 1 -u 7 || return 3
         printf 'HARNESS_STARTUP_DRAFT'
         return 0

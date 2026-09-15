@@ -21,8 +21,14 @@ cap_session() { # $1 = file, $2 = limit id, $3 = used percent, $4 = reset epoch,
 JSON
 }
 
-cap_reset_one=1789435568
-cap_reset_two=1790045568
+# `cap check` judges a provider window against its real current epoch. These
+# are the live weekly windows exercised below, so give this run two successive
+# provider-plausible future resets rather than letting a dated fixture age into
+# the intentionally-closed case. The explicit historical closed-window cases
+# below retain their fixed past epochs.
+cap_now="$(date +%s)"
+cap_reset_one=$((cap_now + 7 * 24 * 60 * 60))
+cap_reset_two=$((cap_reset_one + 7 * 24 * 60 * 60))
 cap_session "$cap_sessions/rollout-one.jsonl" codex 22 "$cap_reset_one" "2026-09-09T18:00:00.000Z"
 
 cap_env=(env "GANG_CAP_DIR=$cap_root" "GANG_CAP_CODEX_SESSIONS=$RUN_ROOT/cap-sessions")
