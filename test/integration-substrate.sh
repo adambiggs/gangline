@@ -407,6 +407,13 @@ equal "a registration made outside an agent window records the operator" \
   operator "$(tmux show-options -wqv -t "$adopted_id" @gl_hitched_by)"
 contains "and status says so rather than naming an agent" \
   "$("$GANG" status adopted)" "hitched by the operator"
+contains "roster tags the operator sentinel rather than naming an agent" \
+  "$("$GANG" roster)" "hitcher=operator"
+contains "explain reports the operator sentinel too" \
+  "$("$GANG" explain adopted)" "hitched by the operator"
+equal "porcelain roster reports the operator hitcher state with no invented name" \
+  "operator	-" \
+  "$("$GANG" roster --porcelain | awk -F'\t' '$1=="adopted"{print $7"\t"$8}')"
 "$GANG" drop adopted >/dev/null
 
 # A CLOSED TURN FOLLOWED BY NORMAL TUI CHROME IS STILL A CLOSED TURN. Once an
@@ -491,13 +498,99 @@ equal "and witnesses the name it had at the time" "hitch-origin" \
   "$(tmux show-options -wqv -t "$helper_id" @gl_hitched_by_name)"
 contains "status resolves the identity to a name" \
   "$("$GANG" status hitch-helper)" "hitched by hitch-origin"
+contains "roster resolves the same live identity" \
+  "$("$GANG" roster)" "hitcher=hitch-origin"
+contains "explain resolves the same live identity" \
+  "$("$GANG" explain hitch-helper)" "hitched by hitch-origin"
+equal "porcelain roster reports the live hitcher state and current name" \
+  "live	hitch-origin" \
+  "$("$GANG" roster --porcelain | awk -F'\t' '$1=="hitch-helper"{print $7"\t"$8}')"
+
+# A FAILED LIVENESS CHECK IS NOT EVIDENCE OF ABSENCE. hitch-origin is still the
+# exact live window it was above; only the tmux call that enumerates live
+# windows is made to fail. Reading "gone" here would be inventing a departure
+# nothing established, so this must read "unknown" instead.
+mkdir -p "$RUN_ROOT/no-window-listing"
+cat > "$RUN_ROOT/no-window-listing/tmux" <<SH
+#!/bin/sh
+if [ "\$1" = list-windows ] && [ "\$2" = -a ] && [ "\$3" = -F ] && \\
+   [ "\$4" = '#{@gl_spool} #{@gl_agent}' ]; then
+  exit 1
+fi
+exec "$RUN_ROOT/waitbin/tmux" "\$@"
+SH
+chmod +x "$RUN_ROOT/no-window-listing/tmux"
+unreadable_status="$(PATH="$RUN_ROOT/no-window-listing:$PATH" "$GANG" status hitch-helper)"
+contains "a failed liveness check reads as unknown, not gone" \
+  "$unreadable_status" "hitcher unknown"
+excludes "and never claims the still-live parent has departed" \
+  "$unreadable_status" "whose window is gone"
+contains "roster renders the same unknown rather than inventing gone" \
+  "$(PATH="$RUN_ROOT/no-window-listing:$PATH" "$GANG" roster)" "hitcher=unknown"
+contains "explain renders the same unknown too" \
+  "$(PATH="$RUN_ROOT/no-window-listing:$PATH" "$GANG" explain hitch-helper)" \
+  "hitcher unknown"
+equal "porcelain roster reports unknown with the witnessed name, not gone" \
+  "unknown	hitch-origin" \
+  "$(PATH="$RUN_ROOT/no-window-listing:$PATH" "$GANG" roster --porcelain \
+    | awk -F'\t' '$1=="hitch-helper"{print $7"\t"$8}')"
+
 "$GANG" rename hitch-origin hitch-renamed >/dev/null
 contains "which is the hitcher's CURRENT name after a rename, not the stale one" \
   "$("$GANG" status hitch-helper)" "hitched by hitch-renamed"
+contains "roster follows the same rename, by token rather than by remembered name" \
+  "$("$GANG" roster)" "hitcher=hitch-renamed"
+equal "porcelain roster follows the rename too" \
+  "live	hitch-renamed" \
+  "$("$GANG" roster --porcelain | awk -F'\t' '$1=="hitch-helper"{print $7"\t"$8}')"
 "$GANG" drop hitch-renamed >/dev/null
 contains "and falls back to the name last witnessed once that window is gone" \
   "$("$GANG" status hitch-helper)" "hitched by hitch-origin, whose window is gone"
+contains "roster renders the gone parent explicitly rather than dropping the tag" \
+  "$("$GANG" roster)" "hitcher=hitch-origin(gone)"
+contains "explain renders the gone parent explicitly too" \
+  "$("$GANG" explain hitch-helper)" "hitched by hitch-origin, whose window is gone"
+equal "porcelain roster reports the gone hitcher state with the witnessed name" \
+  "gone	hitch-origin" \
+  "$("$GANG" roster --porcelain | awk -F'\t' '$1=="hitch-helper"{print $7"\t"$8}')"
+
+# SAME NAME, DIFFERENT LINEAGE. A hitcher's window is gone, and a fresh, unrelated
+# agent is later hitched under the exact same display name. Resolution reads the
+# witnessed spool token, so the old child must keep reporting its true, gone
+# parent rather than being silently reattached to the new live window that
+# happens to answer to the same name.
+lineage_impostor_id="$(tmux new-window -d -P -F '#{window_id}' -t "=$GANG_SESSION" \
+  -n hitch-origin "PS1='❯ ' bash --norc")"
+"$GANG" adopt hitch-origin -c bash >/dev/null
+excludes "the impostor is a fresh spool identity, not the old one" \
+  "$(tmux show-options -wqv -t "$lineage_impostor_id" @gl_spool)" "$origin_token"
+contains "the old child still reports its true, gone parent" \
+  "$("$GANG" status hitch-helper)" "hitched by hitch-origin, whose window is gone"
+contains "roster does not reattach the child to the new same-named window" \
+  "$("$GANG" roster)" "hitcher=hitch-origin(gone)"
+equal "porcelain roster agrees: gone, not the impostor's live token" \
+  "gone	hitch-origin" \
+  "$("$GANG" roster --porcelain | awk -F'\t' '$1=="hitch-helper"{print $7"\t"$8}')"
+"$GANG" drop hitch-origin >/dev/null
 "$GANG" drop hitch-helper >/dev/null
+
+# NOTHING STAMPED AT ALL — a pre-provenance or otherwise unrecorded agent. This
+# must read as its own honest word, never as though it had no hitcher (which
+# would look identical to the operator sentinel) and never by inventing one.
+"$GANG" hitch legacy -c bash -d /tmp >/dev/null
+legacy_id="$(window_id legacy)"
+tmux set-option -wu -t "$legacy_id" @gl_hitched_by
+tmux set-option -wu -t "$legacy_id" @gl_hitched_by_name
+contains "status is explicit about an unrecorded hitcher rather than silent" \
+  "$("$GANG" status legacy)" "hitcher not recorded"
+contains "roster tags the unrecorded hitcher rather than guessing" \
+  "$("$GANG" roster)" "hitcher=unrecorded"
+contains "explain reports the same unrecorded provenance" \
+  "$("$GANG" explain legacy)" "hitcher not recorded"
+equal "porcelain roster reports unrecorded with no invented name" \
+  "unrecorded	-" \
+  "$("$GANG" roster --porcelain | awk -F'\t' '$1=="legacy"{print $7"\t"$8}')"
+"$GANG" drop legacy >/dev/null
 
 # ADOPTION NAMES A HARNESS ALREADY RUNNING IN THE WINDOW. A held corpse still
 # has a window name, and before this precondition adopt registered that empty

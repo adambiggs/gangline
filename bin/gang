@@ -7000,26 +7000,91 @@ hitched_by_of() { # -> the stamp this process should leave: token TAB name
   printf '%s\t%s' "$token" "$name"
 }
 
-hitched_by_read() { # $1 window -> the hitcher's name; 1 = nothing recorded,
+hitched_by_read() { # $1 window -> the hitcher's name (empty for the operator);
+                    # 1 = nothing recorded (root, legacy, or an unrecorded write),
                     # 0 = a live window still claims that identity,
-                    # 3 = the identity is gone and this is the name last witnessed
-  local token witnessed wtok wagent
+                    # 2 = the registration did not come from an agent's window,
+                    # 3 = the identity is gone and this is the name last witnessed,
+                    # 4 = live-window enumeration itself failed, so liveness could
+                    #     not be checked; this is not evidence the window is gone
+  local token witnessed wtok wagent windows_listing
   token="$(tmux show-options -wqv -t "$1" @gl_hitched_by 2>/dev/null)" || token=""
   [ -n "$token" ] || return 1
-  [ "$token" != "$HITCHED_BY_OPERATOR" ] || { printf 'the operator'; return 0; }
-  while read -r wtok wagent; do
-    [ -n "$wtok" ] && [ -n "$wagent" ] || continue
-    [ "$wtok" = "$token" ] || continue
-    printf '%s' "$wagent"
-    return 0
-  done <<EOF
-$(tmux list-windows -a -F '#{@gl_spool} #{@gl_agent}' 2>/dev/null || :)
+  [ "$token" != "$HITCHED_BY_OPERATOR" ] || return 2
+  if windows_listing="$(tmux list-windows -a -F '#{@gl_spool} #{@gl_agent}' 2>/dev/null)"; then
+    while read -r wtok wagent; do
+      [ -n "$wtok" ] && [ -n "$wagent" ] || continue
+      [ "$wtok" = "$token" ] || continue
+      printf '%s' "$wagent"
+      return 0
+    done <<EOF
+$windows_listing
 EOF
+  else
+    witnessed="$(tmux show-options -wqv -t "$1" @gl_hitched_by_name 2>/dev/null)" \
+      || witnessed=""
+    [ -n "$witnessed" ] && printf '%s' "$witnessed"
+    return 4
+  fi
   witnessed="$(tmux show-options -wqv -t "$1" @gl_hitched_by_name 2>/dev/null)" \
     || witnessed=""
   [ -n "$witnessed" ] || return 1
   printf '%s' "$witnessed"
   return 3
+}
+
+# ONE VOCABULARY FOR EVERY INSPECTION SURFACE. status, roster, and explain each
+# render hitch provenance in their own shape (a sentence, a row tag, a porcelain
+# column), but all three must read the same window the same way: a live parent,
+# a gone one, the operator sentinel, or nothing stamped at all. Deciding that
+# once here keeps a future inspection surface from drifting into its own guess,
+# and keeps "unrecorded" from being silently rendered as though it were "root" —
+# both are honest, but they are not the same claim.
+HITCHER_STATE="" HITCHER_NAME=""
+hitcher_describe() { # $1 window -> sets HITCHER_STATE (live|gone|operator|unrecorded|unknown)
+                     # and HITCHER_NAME (empty unless live, gone, or an unknown read that
+                     # still carries a witnessed name); always exits 0
+  local rc=0 name
+  HITCHER_STATE="" HITCHER_NAME=""
+  name="$(hitched_by_read "$1")" || rc=$?
+  case "$rc" in
+    0) HITCHER_STATE=live HITCHER_NAME="$name" ;;
+    1) HITCHER_STATE=unrecorded ;;
+    2) HITCHER_STATE=operator ;;
+    3) HITCHER_STATE=gone HITCHER_NAME="$name" ;;
+    4) HITCHER_STATE=unknown HITCHER_NAME="$name" ;;
+    *) die "internal: hitched_by_read returned unknown verdict $rc" ;;
+  esac
+}
+
+hitcher_phrase() { # $1 window -> one sentence fragment, no leading/trailing text
+  hitcher_describe "$1"
+  case "$HITCHER_STATE" in
+    live) printf 'hitched by %s' "$HITCHER_NAME" ;;
+    gone) printf 'hitched by %s, whose window is gone' "$HITCHER_NAME" ;;
+    operator) printf 'hitched by the operator' ;;
+    unrecorded) printf 'hitcher not recorded (root, a pre-provenance agent, or a lost stamp)' ;;
+    unknown)
+      if [ -n "$HITCHER_NAME" ]; then
+        printf 'hitcher unknown (last witnessed as %s, but liveness could not be checked)' \
+          "$HITCHER_NAME"
+      else
+        printf 'hitcher unknown (liveness could not be checked)'
+      fi
+      ;;
+  esac
+}
+
+hitcher_tag() { # $1 window -> one compact roster/explain token: hitcher=NAME,
+               # hitcher=NAME(gone), hitcher=operator, hitcher=unrecorded, or hitcher=unknown
+  hitcher_describe "$1"
+  case "$HITCHER_STATE" in
+    live) printf 'hitcher=%s' "$HITCHER_NAME" ;;
+    gone) printf 'hitcher=%s(gone)' "$HITCHER_NAME" ;;
+    operator) printf 'hitcher=operator' ;;
+    unrecorded) printf 'hitcher=unrecorded' ;;
+    unknown) printf 'hitcher=unknown' ;;
+  esac
 }
 
 # REPLY OBLIGATIONS ARE MESSAGE PROVENANCE, NOT LIFECYCLE PROVENANCE. Hitch and
@@ -16525,6 +16590,7 @@ cmd_explain() {
     "$name" "$pane" "$AGENT_COLLAR" "$STATE_NOW_RESULT"
   scope_unit="$(tmux show-options -wqv -t "$AGENT_ID" @gl_scope 2>/dev/null)" || scope_unit=""
   printf 'scope: %s\n' "${scope_unit:-not recorded}"
+  printf '%s\n' "$(hitcher_phrase "$AGENT_ID")"
   harness_identity="$(tmux show-options -wqv -t "$AGENT_ID" @gl_harness_identity 2>/dev/null)" || harness_identity=""
   harness_lost="$(tmux show-options -wqv -t "$AGENT_ID" @gl_harness_lost 2>/dev/null)" || harness_lost=""
   harness_unreadable="$(tmux show-options -wqv -t "$AGENT_ID" @gl_harness_identity_unreadable 2>/dev/null)" || harness_unreadable=""
@@ -17048,7 +17114,7 @@ usage_wake_status_report() { # $1 window
 
 cmd_status() {
   local state self_failed self_pending state_note_failed staged staged_box staged_box_rc parked park_unverified spooled age held held_dir spool_failed stall_failed auto_failed hook_failed journal_failed mismatch probe_failed skew="" current self_failed_rc parked_rc mode_note mode_rc=1 run_rc=0
-  local timed_line hitched hitched_rc status_cost staged_rc
+  local timed_line status_cost staged_rc
   local name="${1:-}"
   [ $# -le 1 ] || die "status: unexpected argument '$2'"
   if [ -z "$name" ]; then
@@ -17088,12 +17154,7 @@ cmd_status() {
   # so the name printed here is the hitcher's CURRENT name; only a hitcher whose
   # window is gone is reported under the name it had when it hitched, and it is
   # said that it is gone rather than printed as though it were still there.
-  hitched_rc=0
-  hitched="$(hitched_by_read "$AGENT_ID")" || hitched_rc=$?
-  case "$hitched_rc" in
-    0) printf '%s\n' "$(colour "$C_DIM" "hitched by $hitched")" ;;
-    3) printf '%s\n' "$(colour "$C_DIM" "hitched by $hitched, whose window is gone")" ;;
-  esac
+  printf '%s\n' "$(colour "$C_DIM" "$(hitcher_phrase "$AGENT_ID")")"
   reply_obligation_status_report "$AGENT_ID"
   reply_released_status_report "$AGENT_ID"
   tick_health_report
@@ -17465,7 +17526,7 @@ roster_row_unread() { # $1 window, $2 name, $3 porcelain; the row for a row that
   prof="$(collar_read "$1")"
   [ -n "$prof" ] || prof="-"
   if [ "$3" -eq 1 ]; then
-    printf '%s\t%s\t%s\t%s\t%s\t%s\n' "$2" "$prof" unknown - - -
+    printf '%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\n' "$2" "$prof" unknown - - - unknown -
   else
     printf '%-16s %-12s %s\n' "$2" "$prof" \
       "$(paint_state "$(printf '%-18s' '?unknown?')")"
@@ -17488,7 +17549,8 @@ roster_state_word() { # $1 decorated state -> one stable porcelain word
   esac
 }
 
-roster_row_porcelain() { # name, collar, state, spooled, age seconds, session id;
+roster_row_porcelain() { # name, collar, state, spooled, age seconds, session id,
+                        # hitcher state, hitcher name;
                         # exit 4 = the row printed with a state it could not read
   local prof state spooled age="-" stamped unread=0
   prof="$(collar_read "$1")" || exit 1
@@ -17514,8 +17576,10 @@ roster_row_porcelain() { # name, collar, state, spooled, age seconds, session id
   fi
   stamped="$(tmux show-options -wqv -t "$1" @gl_session_id 2>/dev/null)" \
     || stamped=""
-  printf '%s\t%s\t%s\t%s\t%s\t%s\n' \
-    "$2" "$prof" "$state" "$spooled" "$age" "${stamped:-UNSTAMPED}"
+  hitcher_describe "$1"
+  printf '%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\n' \
+    "$2" "$prof" "$state" "$spooled" "$age" "${stamped:-UNSTAMPED}" \
+    "$HITCHER_STATE" "${HITCHER_NAME:--}"
   [ "$unread" -eq 0 ] || exit 4
 }
 
@@ -17551,6 +17615,10 @@ roster_row() { # $1 window, $2 name, $3 current binary id;
     || { printf '%-16s %-12s %s\n' "$2" "$prof" "$(colour "$C_BAD" "collar not found")"; return; }
   load_collar "$prof"
   state="$(state_now "$1" snapshot)" || { state="?unknown?" unread=1; }
+  # WITNESSED PROVENANCE ON EVERY ROW, not only when something is wrong with it:
+  # the same four-state vocabulary status and explain use, so a lineage question
+  # never depends on which command happened to be run.
+  detail="$detail $(hitcher_tag "$1")"
   mode_rc=0
   mode_note="$(pane_mode_recovery "$1")" || mode_rc=$?
   case "$mode_rc" in
