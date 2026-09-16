@@ -363,15 +363,19 @@ contains "a window whose reset has passed is shown as closed, not as standing" \
 
 # THE NEWEST READING IS THE ONE THE PROVIDER PUBLISHED LAST, not the one in the
 # file the filesystem touched last. Sessions run concurrently, so a file can be
-# appended to after another file has recorded a later snapshot.
+# appended to after another file has recorded a later snapshot. Keep both fake
+# writes inside the real current weekly bound so this ordering fixture cannot
+# age out on a runner whose timezone differs from the author's.
+cap_written_earlier=$((cap_now - 2 * 60 * 60))
+cap_written_later=$((cap_now - 1 * 60 * 60))
 cap_order_sessions="$RUN_ROOT/cap-order-sessions/2026/09/09"
 mkdir -p "$cap_order_sessions"
 cap_session "$cap_order_sessions/rollout-late.jsonl" codex 88 "$cap_reset_one" \
   "2026-09-09T19:00:00.000Z"
 cap_session "$cap_order_sessions/rollout-early.jsonl" codex 11 "$cap_reset_one" \
   "2026-09-09T18:00:00.000Z"
-touch -d '2026-09-09 11:00:00' "$cap_order_sessions/rollout-late.jsonl"
-touch -d '2026-09-09 12:00:00' "$cap_order_sessions/rollout-early.jsonl"
+touch -d "@$cap_written_earlier" "$cap_order_sessions/rollout-late.jsonl"
+touch -d "@$cap_written_later" "$cap_order_sessions/rollout-early.jsonl"
 cap_order_root="$RUN_ROOT/cap-order"
 cap_pass "reading a tree of concurrent sessions is an ordinary pass" 0 \
   env "GANG_CAP_DIR=$cap_order_root" \
@@ -392,11 +396,11 @@ cap_deep_sessions="$RUN_ROOT/cap-deep-sessions/2026/09/09"
 mkdir -p "$cap_deep_sessions"
 cap_session "$cap_deep_sessions/rollout-account.jsonl" codex 44 "$cap_reset_one" \
   "2026-09-09T10:00:00.000Z"
-touch -d '2026-09-09 10:00:00' "$cap_deep_sessions/rollout-account.jsonl"
+touch -d "@$cap_written_earlier" "$cap_deep_sessions/rollout-account.jsonl"
 for n in $(seq -w 1 30); do
   cap_session "$cap_deep_sessions/rollout-pool-$n.jsonl" codex_bengalfox 3 \
     "$cap_reset_one" "2026-09-09T11:00:00.000Z"
-  touch -d '2026-09-09 11:00:00' "$cap_deep_sessions/rollout-pool-$n.jsonl"
+  touch -d "@$cap_written_later" "$cap_deep_sessions/rollout-pool-$n.jsonl"
 done
 cap_deep_root="$RUN_ROOT/cap-deep"
 cap_pass "reading past thirty other-pool sessions is an ordinary pass" 0 \
