@@ -12,26 +12,34 @@ tags: [worktrees, trust, security]
 ## Context
 
 Native workspace trust belongs to a repository identity, not a directory
-prefix. Fresh clones under a trusted parent remain new projects and can stop an
-unattended hitch at security prompts. Linked worktrees isolate files while
-retaining the canonical checkout's repository identity and native approvals.
+prefix, and both native harnesses document only exact-path trust. Fresh clones
+under a trusted parent remain new projects and stop an unattended hitch at
+security prompts. Linked worktrees isolate files while retaining the canonical
+checkout's identity and native approvals. Some canonical checkouts live in a
+tree another security domain can write, such as a directory shared into a VM,
+and cannot host arc workspaces beneath themselves.
 
 ## Decision
 
-If accepted, an arc workspace is a linked Git worktree at
-`<canonical-checkout>/.worktrees/<arc>/`. The repository root ignores only
-`/.worktrees/`. Hitches use the physical worktree path, and the agent can write
-the parent Git metadata that owns its HEAD, index, refs, and logs. Gangline adds
-no dialog answer, trust configuration, permission override, or application
-state edit.
+If accepted, an arc workspace is a linked Git worktree of the canonical
+checkout, never a clone, at `<canonical-checkout>/.worktrees/<arc>/` or outside
+the checkout. A checkout hosting worktrees ignores only `/.worktrees/`. A
+checkout in a tree another domain can write hosts none: its worktrees live
+outside that tree, are registered locked, and land only by reviewed commit id.
+Hitches use the physical worktree path, and the agent can write the parent Git
+metadata that owns its HEAD, index, refs, and logs. Gangline adds no dialog
+answer, trust configuration, permission override, or application state edit,
+and predicts no prompt before a hitch.
 
 ## Consequences
 
-The canonical checkout must first be trusted through each native harness.
-Repositories adopting the convention add the same root-anchored ignore. A
+The canonical checkout must first be trusted through each native harness. A
 clone remains a separate trust decision, and a symlink is not a trust boundary.
-Cleanup identifies and removes one exact registered worktree rather than
-pruning globally. The live tree follows the operator directive, not this
-proposal. This decision is falsified if a fresh linked worktree of a trusted
-checkout prompts anew, gains unrelated permissions, cannot write its own Git
-metadata, or appears in the parent's status.
+A shared checkout's other domain can rewrite an arc's branch, as it can already
+rewrite the checkout and code the host runs from it; the reviewed commit id is
+what keeps a rewrite from landing. A prompt Gangline does not predict is still
+observed at boot and parks the contract. Cleanup removes one exact registered
+worktree rather than pruning globally. This decision is falsified if a fresh
+linked worktree of a trusted checkout prompts anew, gains unrelated
+permissions, cannot write its own Git metadata, appears in the parent's status,
+or loses a locked registration to routine maintenance.

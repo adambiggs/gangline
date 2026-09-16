@@ -40,41 +40,59 @@ evidence. Who the target is and what its state allows are separate answers.
 Outside a Gangline window, a bare self-targeting command prints its synopsis and
 states that no target or Gangline agent window was available.
 
-## Repository-local arc worktrees
+## Arc worktrees
 
-When a trusted canonical checkout needs an isolated arc workspace, create a
-linked Git worktree beneath that checkout at `.worktrees/<arc>/` and hitch both
-Claude Code and Codex by its physical path:
+An arc workspace is a linked Git worktree of the repository's trusted canonical
+checkout, never a clone. Claude Code and Codex both carry the canonical
+checkout's workspace trust to its linked worktrees, and both document only
+exact-path trust entries, so no configuration trusts a family of
+clone paths and each fresh clone raises its own native prompt. Gangline neither
+answers those prompts nor edits either harness's application state. Trust the
+canonical checkout through the native harness once, then create worktrees from
+its physical path and hitch by the worktree's physical path:
 
 ```sh
-repo=/absolute/path/to/repository
+repo=/absolute/physical/path/to/repository
+ws=/absolute/path/to/arc-workspace
 arc=arc-name
-git -C "$repo" worktree add -b "$arc" "$repo/.worktrees/$arc" origin/main
-gang hitch worker -d "$repo/.worktrees/$arc"
+git -C "$repo" worktree add -b "$arc" "$ws" origin/main
+gang hitch worker -d "$ws"
 ```
 
-The repository carries a root-anchored `/.worktrees/` ignore so the container
-directory does not appear in its own status. Repositories adopting the same
-convention need the same root-anchored rule; a recursive `**/.worktrees/` rule
-would hide unrelated nested content.
+The workspace may sit beneath the checkout at `.worktrees/<arc>/` or anywhere
+outside it; the location does not change trust. A checkout that hosts
+worktrees beneath itself carries a root-anchored `/.worktrees/` ignore so the
+container directory does not appear in its own status; a recursive
+`**/.worktrees/` rule would hide unrelated nested content.
 
-A linked worktree retains the canonical repository identity that the native
-harnesses trust, while a fresh clone or nested repository has its own identity
-and can raise the ordinary workspace-trust prompt and, in Claude Code, the
-instruction-import prompt.
-Gangline neither answers those prompts nor edits either harness's application
-state. Trust the canonical checkout through the native harness first. Keep its
-parent repository reachable and writable: the worktree's HEAD, index, refs, and
-logs live in the parent's Git metadata.
-
-Use the real worktree path in the hitch and in evidence. A symlink is not a
-trust boundary; a harness may canonicalize it before selecting project state.
-At cleanup, first establish that the exact worktree is clean, then remove only
-that registered path:
+When the canonical checkout lives in a tree another security domain can write,
+such as a directory shared into a VM, place the workspace outside that tree and
+lock the registration:
 
 ```sh
-git -C "$repo/.worktrees/$arc" status --short
-git -C "$repo" worktree remove "$repo/.worktrees/$arc"
+git -C "$repo" worktree add --lock --reason "arc $arc" -b "$arc" "$ws" origin/main
+```
+
+The worktree's HEAD, index, refs, and logs still live in the shared Git
+metadata. The other domain can already rewrite that metadata and any code the
+host runs from the share, so the worktree adds no capability, but it can
+rewrite the arc's branch. The lock keeps routine pruning, which cannot see the
+host path, from deleting the registration; it does not stop a deliberate
+unlock. Land such an arc by the commit id that was reviewed, never by its branch
+name.
+
+Keep the parent repository reachable and writable: the worktree's HEAD, index,
+refs, and logs live in the parent's Git metadata. Use the real worktree path in
+the hitch and in evidence. A symlink is not a trust boundary; a harness may
+canonicalize it before selecting project state.
+
+At cleanup, first establish that the exact worktree is clean, then remove only
+that registered path. Run `git -C "$repo" worktree unlock "$ws"` first when
+the registration is locked.
+
+```sh
+git -C "$ws" status --short
+git -C "$repo" worktree remove "$ws"
 ```
 
 Do not use repository-wide pruning as a substitute for identifying the exact
