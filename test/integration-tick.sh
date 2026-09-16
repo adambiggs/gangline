@@ -2826,6 +2826,47 @@ GANG_TEST_TICK_MODE=manual "$GANG" tick >/dev/null
 for tick_part_n in 1 2 3; do "$GANG" drop "tick-part-$tick_part_n" >/dev/null; done
 unset -f tick_part_window_of
 
+# ISSUE #254: A ROSTER SNAPSHOT CAN NAME A WINDOW `gang drop` REMOVES WHILE THE
+# PASS IS STILL WALKING IT. The seam sits right after tick_full_pass_once has
+# read a roster entry as present (past launch_dead) and before any of its
+# later pane reads/writes, so the drop lands deterministically inside that
+# window rather than racing a real clock. The pass must treat the vanished
+# entry as gone — no unreadable-pane alert, no activity or delivery-ownership
+# write against it — and must still finish the rest of its roster normally.
+"$HITCH" tick-stale-victim -c tick-native -d /tmp >/dev/null
+"$HITCH" tick-stale-live -c tick-native -d /tmp >/dev/null
+tick_stale_ready_fifo="$RUN_ROOT/tick-stale-ready"
+tick_stale_release_fifo="$RUN_ROOT/tick-stale-release"
+tick_stale_ledger="$RUN_ROOT/tick-stale-ledger"
+mkfifo "$tick_stale_ready_fifo" "$tick_stale_release_fifo"
+GANG_TEST_TICK_VICTIM=tick-stale-victim \
+GANG_TEST_TICK_VICTIM_READY_FIFO="$tick_stale_ready_fifo" \
+GANG_TEST_TICK_VICTIM_RELEASE_FIFO="$tick_stale_release_fifo" \
+GANG_TEST_TICK_VISIT_LEDGER="$tick_stale_ledger" \
+  "$GANG" tick > "$RUN_ROOT/tick-stale.out" 2> "$RUN_ROOT/tick-stale.err" &
+tick_stale_pid=$!
+IFS= read -r -N 1 _ < "$tick_stale_ready_fifo"
+tick_stale_drop_rc=0
+"$GANG" drop tick-stale-victim > "$RUN_ROOT/tick-stale-drop.out" 2>&1 || tick_stale_drop_rc=$?
+printf '\n' > "$tick_stale_release_fifo"
+tick_stale_rc=0
+wait "$tick_stale_pid" || tick_stale_rc=$?
+equal "the normal drop path still succeeds while a pass is mid-walk on it" 0 "$tick_stale_drop_rc"
+equal "the pass carrying the vanished entry still completes cleanly" 0 "$tick_stale_rc"
+excludes "no unreadable-pane alert names the vanished entry" \
+  "$(<"$RUN_ROOT/tick-stale.err")" "cannot read pane"
+excludes "no activity-bound alert names the vanished entry" \
+  "$(<"$RUN_ROOT/tick-stale.err")" "cannot clear the activity-only bound"
+excludes "no delivery-ownership alert names the vanished entry" \
+  "$(<"$RUN_ROOT/tick-stale.err")" "could not mark delivery ownership"
+contains "the still-live roster entry is visited in the same pass" \
+  "$(<"$tick_stale_ledger")" "tick-stale-live"
+"$GANG" drop tick-stale-live >/dev/null
+# The fail-closed path for a pane that stays unreadable on a window that
+# still exists is unchanged code (window_gone must return false there and
+# fall through to the original `die`); it is not independently re-exercised
+# here. See test/evidence/tick254/NOTES.md.
+
 # THE DEADLINE IS AN OPERATOR SETTING, VALIDATED BEFORE THE WORKER STARTS, AND
 # THE WORKER ACCEPTS ONLY THE NUMBER ITS CONTROLLER ENFORCES.
 tick_deadline_rc=0

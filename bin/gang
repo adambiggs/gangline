@@ -2488,16 +2488,39 @@ composer_live() { # $1 = window id; 0 = the harness's own input box is on screen
   esac
 }
 
+# A ROSTER SNAPSHOT NAMES A WINDOW THAT CAN BE GONE BY THE TIME IT IS USED.
+# `gang drop` runs concurrently with a cooperative tick's walk of its own
+# roster snapshot, so a saved window id can outlive the window it named. That
+# is a different fact from "this window exists but its pane cannot be read":
+# the latter stays fail-closed (issue #254), the former must not reach a
+# busy/idle guess, an activity write, or a delivery-ownership write at all.
+# list-panes, NOT display-message: display-message expands an unresolvable
+# target to an empty string and still exits 0 (see launch_dead above), so it
+# cannot tell "gone" from "resolved to nothing yet printed nothing."
+# list-panes fails on a target that is gone, which is exactly the signal
+# wanted here.
+window_gone() { # $1 = window id; 0 = the window no longer exists in this session
+  ! tmux list-panes -t "$1" -F '#{window_id}' >/dev/null 2>&1
+}
+
+# Bound from script start, under set -u, for every caller that checks it right
+# after a busy() call — busy() itself only assigns it once actually invoked.
+WINDOW_GONE=""
+
 busy_painted() { # $1 = window id, collar loaded; exit 0 if a turn is visibly in flight
   [ -n "$GANG_BUSY_REGEX" ] || return 1
   local pane
-  pane="$(capture_joined "$1")" || die "cannot read pane $1 — refusing to guess busy/idle"
+  pane="$(capture_joined "$1")" || {
+    if window_gone "$1"; then WINDOW_GONE=1; return 1; fi
+    die "cannot read pane $1 — refusing to guess busy/idle"
+  }
   re_match GANG_BUSY_REGEX "$pane"
 }
 
 activity_hold_clear() { # $1 = window id; end any activity-only busy episode
-  tmux set-option -uw -t "$1" @gl_activity_only_since 2>/dev/null \
-    || die "cannot clear the activity-only bound on pane $1 — refusing to fabricate its state"
+  tmux set-option -uw -t "$1" @gl_activity_only_since 2>/dev/null && return 0
+  if window_gone "$1"; then WINDOW_GONE=1; return 0; fi
+  die "cannot clear the activity-only bound on pane $1 — refusing to fabricate its state"
 }
 
 # A TIME FORMAT IS READ ONLY THROUGH A WINDOW TMUX HAS FOUND. tmux 3.2a expands
@@ -2899,6 +2922,11 @@ busy() { # $1 = window id; 0 = busy, 1 = not busy, 2 = could not determine
   BUSY_NATIVE_UNKNOWN=0
   BUSY_NATIVE_HOLD=0
   BUSY_EVIDENCE="busy-reader"
+  # WINDOW_GONE is a global out-of-band signal, not a return code: a caller
+  # walking a roster snapshot checks it right after this call to decide
+  # whether to stop touching this window id entirely, without every other
+  # caller of busy() needing to learn a fourth return status.
+  WINDOW_GONE=""
   # Asked FIRST, because it answers the question delivery actually has. An open
   # turn and an open compaction both mean "will not accept input now"; only the
   # second is invisible to @gl_turn, which stays closed for the whole of it.
@@ -6300,6 +6328,16 @@ tick_full_pass_once() {
       state_note "$id" dead tick
       continue
     fi
+    # A DETERMINISTIC SEAM FOR ISSUE #254: this window has just been read as
+    # present, so a test can drop it right here, between that liveness read
+    # and every pane operation still to come this iteration, without racing
+    # a real clock.
+    if [ "${GANG_TEST_COLLARS:-}" = 1 ] && [ "$agent" = "${GANG_TEST_TICK_VICTIM:-}" ] \
+       && [ -n "${GANG_TEST_TICK_VICTIM_READY_FIFO:-}" ] \
+       && [ -n "${GANG_TEST_TICK_VICTIM_RELEASE_FIFO:-}" ]; then
+      printf x > "$GANG_TEST_TICK_VICTIM_READY_FIFO"
+      IFS= read -r _ < "$GANG_TEST_TICK_VICTIM_RELEASE_FIFO" || true
+    fi
     pass_rc=0
     tick_identity_verify "$id" "$collar" || pass_rc=$?
     if [ "$pass_rc" -eq 2 ]; then
@@ -6340,6 +6378,7 @@ tick_full_pass_once() {
     if [ -n "$pending" ]; then
       busy_rc=0
       busy "$id" || busy_rc=$?
+      [ -z "$WINDOW_GONE" ] || continue
       if [ "$busy_rc" -eq 1 ]; then
         self_compact_dispatch "$id" "$collar" sync
         pending="$(tmux show-options -wqv -t "$id" @gl_self_compact_requested 2>/dev/null)" || pending=""
@@ -6374,6 +6413,7 @@ tick_full_pass_once() {
             || declare -F collar_dismiss_advisory >/dev/null; }; then
       pass_rc=0 err=""
       if ! tmux set-option -w -t "$id" @gl_tick_delivery "$$" 2>/dev/null; then
+        if window_gone "$id"; then continue; fi
         printf 'tick could not mark delivery ownership for %s\n' "$agent" >&2
         rc=1
         continue
@@ -6391,6 +6431,7 @@ tick_full_pass_once() {
     fi
     cache_rc=0
     cache_compaction_candidate "$id" "$collar" || cache_rc=$?
+    [ -z "$WINDOW_GONE" ] || continue
     case "$cache_rc" in
       0)
         if ! cache_compaction_submit "$id" "$agent"; then
@@ -11618,6 +11659,7 @@ cache_compaction_candidate() { # $1 window, $2 collar; 0 ready, 1 no, 2 diagnost
   tick_delivery_active "$1" && return 1
   occupied "$1" && return 1
   busy "$1" || busy_rc=$?
+  [ -z "$WINDOW_GONE" ] || return 1
   [ "$busy_rc" -eq 1 ] || return 1
   cache_bands_read "$1" || cache_bands_rc=$?
   if [ "$CACHE_BAND_CUSTOM" -eq 1 ]; then
