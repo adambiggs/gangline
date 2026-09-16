@@ -52,8 +52,13 @@ git config --global core.sshCommand \
 ## Decision records
 
 An ADR records one durable constraint. Read the
-[decision-record index](docs/adr/index.md) before changing one. An ADR is written
-to this template and to nothing else:
+[decision-record index](docs/adr/index.md) before changing one.
+
+Before drafting an ADR that introduces or interprets coordination or
+task-accounting state, read ADR-0001 and ADR-0005 and explain in the record how
+the decision remains compatible with both.
+
+An ADR is written to this template and to nothing else:
 
 ```text
 ---
