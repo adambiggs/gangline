@@ -4544,6 +4544,164 @@ contains "and that refusal is recorded where status and roster read it" \
   "$(tmux show-options -wqv -t "$tick_wrong_id" @gl_session_probe_failed)" \
   "live harness session id could not be read"
 
+# A SESSION'S OWN SUB-THREADS ARE NOT A SECOND SESSION. Codex 0.151.0 runs each
+# sub-agent as a thread in the same process, holding that thread's lock and
+# rollout open beside the primary's while it is live, and each child rollout's
+# session_meta names its parent in parent_thread_id. Counting pairs left a
+# healthy session unverified whenever it had a sub-agent open. The one
+# thread with no parent is the session; every other pair must reach it through
+# witnessed parents, or the reading stays refused.
+tick_tree_meta() { # $1 rollout path, $2 id, $3 parent id, empty or EMPTY, $4 session id, none or null
+  python3 - "$@" <<'PY'
+import json
+import sys
+
+path, thread, parent, session = sys.argv[1:5]
+payload = {"id": thread, "thread_source": "user"}
+if session != "none":
+    payload["session_id"] = None if session == "null" else session
+if parent:
+    payload.update(parent_thread_id="" if parent == "EMPTY" else parent,
+                   thread_source="subagent")
+with open(path, "w") as out:
+    out.write(json.dumps({"type": "session_meta", "payload": payload}) + "\n")
+    out.write(json.dumps({"type": "turn_context", "payload": {}}) + "\n")
+PY
+}
+tick_tree_root="$RUN_ROOT/tick-codex-tree"
+mkdir -p "$tick_tree_root/thread-writer-locks" "$tick_tree_root/sessions"
+# A pair spec is id:parent:session[:metadata id]; session "lock" holds the lock
+# alone and "-" an empty rollout.
+tick_tree_hold() { # $1 name, then pair specs; prints "window pid"
+  local name="$1" ready="$RUN_ROOT/tick-tree-$1-ready" spec id parent session meta
+  local rollout held="" window
+  shift
+  for spec in "$@"; do
+    IFS=: read -r id parent session meta <<< "$spec"
+    rollout="$tick_tree_root/sessions/rollout-2026-09-16T00-00-00-$id.jsonl"
+    : > "$tick_tree_root/thread-writer-locks/$id.lock"
+    held="$held $(printf '%q' "$tick_tree_root/thread-writer-locks/$id.lock")"
+    [ "$session" != lock ] || continue
+    if [ "$session" = - ]; then
+      : > "$rollout"
+    else
+      tick_tree_meta "$rollout" "${meta:-$id}" "$parent" "$session"
+    fi
+    held="$held $(printf '%q' "$rollout")"
+  done
+  mkfifo "$ready"
+  window="$(tmux new-window -d -P -F '#{window_id}' -t "=$GANG_SESSION" \
+    -n "tick-tree-$name" \
+    "exec python3 $(printf '%q %q' "$RUN_ROOT/tick-codex-holder.py" "$ready")$held")"
+  IFS= read -r -N 1 _ < "$ready"
+  printf '%s %s' "$window" "$(tmux display-message -p -t "$window" '#{pane_pid}')"
+}
+tick_tree_probe() { # $1 name, then pair specs; prints rc and the id read
+  local held out rc=0
+  held="$(tick_tree_hold "$@")"
+  out="$("$ROOT/libexec/gang-codex-live-id" "${held#* }")" || rc=$?
+  tmux kill-window -t "${held%% *}"
+  printf '%s %s' "$rc" "$out"
+}
+
+equal "a primary with nested sub-threads reads as the primary" "0 tree-primary-600" \
+  "$(tick_tree_probe nested \
+    tree-primary-600::tree-primary-600 \
+    tree-child-601:tree-primary-600:tree-primary-600 \
+    tree-grandchild-602:tree-child-601:tree-primary-600)"
+equal "the witness order does not choose the session" "0 tree-primary-610" \
+  "$(tick_tree_probe reordered \
+    tree-grandchild-612:tree-child-611:tree-primary-610 \
+    tree-child-611:tree-primary-610:tree-primary-610 \
+    tree-primary-610::tree-primary-610)"
+equal "two parentless threads in one process stay ambiguous" "1 " \
+  "$(tick_tree_probe two-roots \
+    tree-primary-620::tree-primary-620 tree-other-621::tree-other-621)"
+equal "a thread whose parent is not witnessed is not proven a descendant" "1 " \
+  "$(tick_tree_probe orphan \
+    tree-primary-630::tree-primary-630 \
+    tree-stray-631:tree-absent-639:tree-primary-630)"
+equal "a parent cycle beside a root is not a descendant of it" "1 " \
+  "$(tick_tree_probe cycle \
+    tree-primary-640::tree-primary-640 \
+    tree-loop-641:tree-loop-642:tree-primary-640 \
+    tree-loop-642:tree-loop-641:tree-primary-640)"
+equal "a child carrying another session's id is not this session's child" "1 " \
+  "$(tick_tree_probe foreign-child \
+    tree-primary-650::tree-primary-650 \
+    tree-child-651:tree-primary-650:tree-elsewhere-659)"
+equal "a rollout whose metadata names another thread contradicts its pair" "1 " \
+  "$(tick_tree_probe renamed \
+    tree-primary-660::tree-primary-660 \
+    tree-child-661:tree-primary-660:tree-primary-660:tree-impostor-669)"
+equal "a sibling pair without readable metadata settles nothing" "1 " \
+  "$(tick_tree_probe unreadable \
+    tree-primary-670::tree-primary-670 tree-child-671::-)"
+equal "an unreadable primary is not settled by its readable child" "1 " \
+  "$(tick_tree_probe unreadable-root \
+    tree-primary-675::- tree-child-676:tree-primary-675:tree-primary-675)"
+# The held set changes as threads open and close, so the pairs present are not
+# the whole evidence: a lock without its rollout leaves the reading open.
+equal "a child pair beside its root's bare lock is not the session" "1 " \
+  "$(tick_tree_probe bare-root \
+    tree-primary-700::lock tree-child-701:tree-primary-700:tree-primary-700)"
+equal "a root pair beside an unexplained lock is not settled" "1 " \
+  "$(tick_tree_probe extra-lock \
+    tree-primary-710::tree-primary-710 tree-other-711::lock)"
+# The root's session_id is its own id and every descendant carries it.
+equal "threads naming no session settle nothing" "1 " \
+  "$(tick_tree_probe no-session \
+    tree-primary-720::none tree-child-721:tree-primary-720:none)"
+equal "a root with a null session settles nothing" "1 " \
+  "$(tick_tree_probe null-session \
+    tree-primary-725::null tree-child-726:tree-primary-725:tree-primary-725)"
+equal "a tree naming another session is not this one" "1 " \
+  "$(tick_tree_probe foreign-tree \
+    tree-primary-730::tree-elsewhere-739 \
+    tree-child-731:tree-primary-730:tree-elsewhere-739)"
+equal "an empty parent id does not make a root" "1 " \
+  "$(tick_tree_probe empty-parent \
+    tree-primary-740:EMPTY:tree-primary-740 \
+    tree-child-741:tree-primary-740:tree-primary-740)"
+
+# The same shape seen through the tick: roster, status and explain carry no
+# identity-unverified verdict, while a root other than the registered session
+# is still the contradiction that blocks delivery.
+tick_tree_id="$(tick_tree_hold healthy \
+  tree-primary-680::tree-primary-680 \
+  tree-child-681:tree-primary-680:tree-primary-680)"
+tick_tree_id="${tick_tree_id%% *}"
+"$GANG" adopt tick-tree-healthy -c tick-codex-adopt >/dev/null
+tmux set-option -w -t "$tick_tree_id" @gl_session_id tree-primary-680
+"$GANG" tick > "$RUN_ROOT/tick-tree.out" 2>&1 || :
+equal "the tick records the primary behind its sub-threads" tree-primary-680 \
+  "$(tmux show-options -wqv -t "$tick_tree_id" @gl_session_live_id)"
+equal "and leaves no unread-identity verdict behind" "" \
+  "$(tmux show-options -wqv -t "$tick_tree_id" @gl_session_probe_failed)"
+excludes "status does not call a sub-threaded session unverified" \
+  "$("$GANG" status tick-tree-healthy 2>&1)" "identity-unverified"
+excludes "explain does not call a sub-threaded session unverified" \
+  "$("$GANG" explain tick-tree-healthy 2>&1)" "identity-unverified"
+tick_tree_roster="$("$GANG" roster 2>&1 | grep -F tick-tree-healthy || :)"
+contains "roster lists the sub-threaded session" "$tick_tree_roster" tick-tree-healthy
+excludes "roster does not call a sub-threaded session unverified" \
+  "$tick_tree_roster" "identity-unverified"
+
+tick_tree_lost_id="$(tick_tree_hold lost \
+  tree-primary-690::tree-primary-690 \
+  tree-child-691:tree-primary-690:tree-primary-690)"
+tick_tree_lost_id="${tick_tree_lost_id%% *}"
+"$GANG" adopt tick-tree-lost -c tick-codex-adopt >/dev/null
+tmux set-option -w -t "$tick_tree_lost_id" @gl_session_id tree-registered-699
+"$GANG" tick > "$RUN_ROOT/tick-tree.out" 2>&1 || :
+equal "a sub-threaded root that is not the registered session is read exactly" \
+  tree-primary-690 \
+  "$(tmux show-options -wqv -t "$tick_tree_lost_id" @gl_session_live_id)"
+contains "and is session-lost rather than unverified" \
+  "$("$GANG" status tick-tree-lost 2>&1)" "!session-lost!"
+"$GANG" drop tick-tree-lost > "$RUN_ROOT/tick-tree-drop.out" 2>&1
+"$GANG" drop tick-tree-healthy >> "$RUN_ROOT/tick-tree-drop.out" 2>&1
+
 # AN EXPECTED MISS MUST NOT LAND ON THE AGENT'S SCREEN. tmux renders a
 # run-shell that exits nonzero into the target pane: it drops that pane into
 # view-mode over the harness TUI and prints "'<command>' returned 1" there,

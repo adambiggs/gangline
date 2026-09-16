@@ -2225,8 +2225,14 @@ there, never in a harness-name branch in the core script.
 
 The shipped Codex live-id probe asks tmux to run in the server's host namespace,
 then inspects the active pane process's open descriptors through `/proc`. It
-accepts an id only when exactly one value is shared by a
-`thread-writer-locks/<id>.lock` descriptor and that process's rollout JSONL.
+accepts an id shared by a `thread-writer-locks/<id>.lock` descriptor and that
+process's rollout JSONL when that is the only lock it holds. Where it holds
+several because the session has native sub-agents open, it reads each rollout's
+`session_meta` and accepts the one thread without a `parent_thread_id`,
+provided every held lock has its rollout open, every rollout names its own
+thread and a `session_id` equal to that root's id, and every thread reaches
+the root through held parents. A second root, a bare lock, an unheld parent, a
+cycle, or missing or unreadable metadata refuses.
 The bounded helper writes through a cleanup-owned temporary file because the
 calling agent's sandbox may be unable to read host `/proc` directly. Ambiguous,
 missing, or unreadable evidence is a loud probe failure, never a guessed id.

@@ -2,6 +2,9 @@
 # SPDX-License-Identifier: Apache-2.0
 """Read the exact Codex session id from one harness process's open files."""
 
+from __future__ import annotations
+
+import json
 import os
 import re
 import sys
@@ -9,6 +12,57 @@ import sys
 
 ID = r"[A-Za-z0-9._:-]+"
 LOCK = re.compile(rf"/thread-writer-locks/({ID})\.lock$")
+META_LIMIT = 1 << 20
+
+
+def session_meta(path: str) -> dict | None:
+    """The payload of a rollout's first record, or None when it is unreadable."""
+    try:
+        with open(path, "rb") as rollout:
+            head = rollout.readline(META_LIMIT)
+    except OSError:
+        return None
+    if not head.endswith(b"\n"):
+        return None
+    try:
+        record = json.loads(head)
+    except ValueError:
+        return None
+    if not isinstance(record, dict) or record.get("type") != "session_meta":
+        return None
+    payload = record.get("payload")
+    return payload if isinstance(payload, dict) else None
+
+
+def session_root(witnessed: dict[str, str]) -> str | None:
+    """The one thread that every other witnessed thread descends from."""
+    parents: dict[str, str | None] = {}
+    sessions: dict[str, object] = {}
+    for thread, path in witnessed.items():
+        meta = session_meta(path)
+        if meta is None or meta.get("id") != thread:
+            return None
+        parent = meta.get("parent_thread_id")
+        if parent is not None and not isinstance(parent, str):
+            return None
+        parents[thread] = parent
+        sessions[thread] = meta.get("session_id")
+    roots = [thread for thread, parent in parents.items() if parent is None]
+    if len(roots) != 1:
+        return None
+    root = roots[0]
+    for thread in parents:
+        # The root's session id is its own; a missing one matches nothing.
+        if sessions[thread] != root:
+            return None
+        seen = {thread}
+        cursor: str | None = thread
+        while cursor != root:
+            cursor = parents.get(cursor)
+            if cursor is None or cursor in seen:
+                return None
+            seen.add(cursor)
+    return root
 
 
 def main() -> int:
@@ -17,7 +71,7 @@ def main() -> int:
 
     fd_root = f"/proc/{sys.argv[1]}/fd"
     locks: set[str] = set()
-    rollouts: list[str] = []
+    rollouts: dict[str, str] = {}
     try:
         entries = list(os.scandir(fd_root))
     except OSError:
@@ -32,12 +86,13 @@ def main() -> int:
         if match:
             locks.add(match.group(1))
         if "/sessions/" in target and target.endswith(".jsonl"):
-            rollouts.append(os.path.basename(target))
+            rollouts.setdefault(os.path.basename(target), entry.path)
 
     witnessed = {
-        session_id
+        session_id: path
         for session_id in locks
-        if any(name.endswith(f"-{session_id}.jsonl") for name in rollouts)
+        for name, path in rollouts.items()
+        if name.endswith(f"-{session_id}.jsonl")
     }
     # A SESSION BEFORE ITS FIRST TURN HAS ONLY ITS LOCK TO OFFER. Codex takes
     # the thread-writer lock as the session opens, but it creates the rollout
@@ -49,14 +104,36 @@ def main() -> int:
     #
     # Corroboration is still required wherever it can exist. A rollout naming
     # some other thread contradicts the lock rather than being merely absent,
-    # and one process holding two locks is ambiguous with nothing to break the
-    # tie; both keep refusing. Only the case with no rollout evidence at all
-    # falls back, and only when a single lock makes the answer unambiguous.
+    # and keeps refusing; several locks are settled only by the thread
+    # metadata below. Only the case with no rollout evidence at all falls
+    # back, and only when a single lock makes the answer unambiguous.
     if not witnessed and not rollouts and len(locks) == 1:
-        witnessed = set(locks)
-    if len(witnessed) != 1:
+        print(next(iter(locks)))
+        return 0
+    if len(locks) == 1 and len(witnessed) == 1:
+        print(next(iter(witnessed)))
+        return 0
+    # A SESSION'S OWN SUB-AGENTS ARE WITNESSES OF THE SAME SESSION. Codex
+    # 0.151.0 runs each sub-agent as a thread of the same process, which holds
+    # that thread's lock and rollout while the thread is live, and records the
+    # spawning thread in the child's session_meta as parent_thread_id; the root
+    # thread's session_id is its own id and every descendant carries it.
+    # Counting pairs left a session that had sub-agents open unreadable. With
+    # several locks held, the answer is the one parentless thread, and only
+    # when every held lock has its rollout, every rollout's metadata names its
+    # own thread and that root's session, and every thread reaches the root
+    # through parents this process also holds. The held set changes as threads
+    # open and close, so a lock whose rollout is not open -- a thread not yet
+    # written, or a rollout being reopened -- leaves the reading unavailable
+    # rather than promoting whichever pair remains. A second root, an unheld
+    # parent, a cycle, or missing, empty, renamed or unreadable metadata refuse
+    # the same way.
+    if len(locks) < 2 or set(witnessed) != locks:
         return 1
-    print(next(iter(witnessed)))
+    root = session_root(witnessed)
+    if root is None:
+        return 1
+    print(root)
     return 0
 
 
