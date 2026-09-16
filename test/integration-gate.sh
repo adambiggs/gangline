@@ -252,11 +252,16 @@ fi
 rm -f "$gate_fix/tree-one-wip.txt"
 rm -rf -- "$gate_twin"
 
-# MATCHING TEXT IS NOT PROOF OF A BINDING WHEN NEITHER READING ESTABLISHED
-# ONE. An index told not to look at a file reads as the same unverifiable
-# line before and after the snapshot copy, which would satisfy a check that
-# only compared the two readings for equality. The run must still refuse,
-# since nothing here confirmed which tree the snapshot actually holds.
+# AN INDEX TOLD NOT TO LOOK AT A FILE IS ALREADY REFUSED BY THE SNAPSHOT
+# STEP'S OWN PREFLIGHT (snapshot_into()'s index_conceals check, above the
+# copy this fixture cannot see from here) before the verdict path's own
+# post-copy check ever runs — so this exercises that earlier guard, not the
+# newer one. It still proves the property that guard exists for: an
+# unverifiable tree never reaches lint or smoke. The post-copy check exists
+# for the narrower window the earlier guard cannot close — the tree
+# becoming unverifiable AFTER the copy completes but before the report is
+# finalized — which needs fault injection to trigger deterministically and
+# is not exercised by this fixture.
 git -C "$gate_fix" update-index --assume-unchanged bin/gang
 gate_unverifiable_rc=0
 gate_unverifiable_out="$(env -u TMUX -u TMUX_PANE "$gate_fix/test/gate.sh" 2>&1)" \
@@ -269,7 +274,7 @@ else
     "status 0; output was [$gate_unverifiable_out]"
 fi
 contains "the refusal names what could not be verified" \
-  "$gate_unverifiable_out" "the index is told not to look at some files"
+  "$gate_unverifiable_out" "under standing orders not to look at some"
 excludes "an unverifiable binding never reaches lint or smoke" \
   "$gate_unverifiable_out" "passed lint and smoke"
 
