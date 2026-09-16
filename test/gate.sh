@@ -901,6 +901,16 @@ main() {
   trap 'gate_on_signal 2' INT
   trap 'gate_on_signal 15' TERM
 
+  # Read before the copy starts, so it can be compared against the same
+  # reading taken after the copy finishes. An edit landing mid-run, once
+  # lint or smoke are already reading the snapshot, cannot touch bytes the
+  # copy already took and is a survived edit, not a corruption (see the
+  # mid-run-edit fixture in test/integration-gate.sh). An edit landing
+  # DURING the copy is different: the snapshot may then hold neither the
+  # before state nor the after state, so nothing downstream can be said to
+  # describe one tree, and this is the one window worth refusing over.
+  pre_snapshot_state="$(tree_identity)" || true
+
   snapshot_rc=0
   gate_monitored_step snapshot "$WORK/snapshot.out" 1 "$ROOT" \
     "$ROOT/test/gate.sh" --snapshot "$SNAP" &
@@ -919,6 +929,12 @@ main() {
   # Read the same way the ownership check reads, so an untracked-only tree is not
   # announced as settled by a diagnostic that only looks at tracked files.
   source_state="$(tree_identity)" || true
+  if [ "$source_state" != "$pre_snapshot_state" ]; then
+    keep=1
+    decided=1
+    tree_moved_refusal "$pre_snapshot_state" "$source_state"
+    exit 1
+  fi
   printf 'gate: testing a snapshot of %s\n' "$ROOT"
   printf 'gate: source tree %s\n' "$source_state"
 
@@ -996,19 +1012,6 @@ main() {
       printf 'gate: a stall verdict was unreadable; refusing as quiet expiry.\n' >&2
       rc=124 ;;
   esac
-  # The report already NAMED the source tree (source_state, printed above as
-  # "gate: source tree"). Naming it is not binding it: nothing until here has
-  # checked that the tree the report describes is still the tree the verdict
-  # is about. Re-read it now, at the last point before any verdict — pass or
-  # refusal — leaves this function, so no exit below can emit a verdict for a
-  # report whose binding was never verified.
-  verdict_state="$(tree_identity)" || true
-  if [ "$verdict_state" != "$source_state" ]; then
-    keep=1
-    decided=1
-    tree_moved_refusal "$source_state" "$verdict_state"
-    exit 1
-  fi
   if [ "$rc" -ne 0 ]; then
     keep=1
     decided=1
