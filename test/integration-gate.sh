@@ -929,7 +929,17 @@ exec "$RELEASE_REAL_FLOCK" "$@"
 SH
 chmod +x "$release_flock_bin/flock"
 : > "$release_order"
-release_out="$(PATH="$release_flock_bin:$PATH" GANG_RELEASE_LOCK="$release_lock" GANG_INTEGRATION_PARTS=cli \
+# When this fixture itself runs nested inside a real test/release.sh (as the
+# hosted release lane does, since integration-gate.sh is sourced from
+# test/integration.sh which release.sh invokes), GANG_RELEASE_LOCKED and
+# GANG_RELEASE_LOCK_OWNER are already exported =1 by that outer lane. Left
+# ambient, the fixture's own nested release.sh would see both guards already
+# satisfied and skip both flock acquisitions entirely, so no capture is ever
+# written even though the run still completes and reports success. Clearing
+# them makes this invocation exercise the real guarded flock path regardless
+# of whether an outer release lane is already holding it.
+release_out="$(env -u GANG_RELEASE_LOCKED -u GANG_RELEASE_LOCK_OWNER \
+  PATH="$release_flock_bin:$PATH" GANG_RELEASE_LOCK="$release_lock" GANG_INTEGRATION_PARTS=cli \
   GANG_INTEGRATION_REQUIRE_ALL=0 \
   "$release_run/test/release.sh")"
 equal "the release lane runs lint, smoke, and integration in order" \
@@ -955,7 +965,8 @@ else
 fi
 : > "$release_order"
 release_failed_rc=0
-PATH="$release_flock_bin:$PATH" GANG_RELEASE_LOCK="$release_lock" RELEASE_FAIL_INTEGRATION=7 \
+env -u GANG_RELEASE_LOCKED -u GANG_RELEASE_LOCK_OWNER \
+  PATH="$release_flock_bin:$PATH" GANG_RELEASE_LOCK="$release_lock" RELEASE_FAIL_INTEGRATION=7 \
   "$release_run/test/release.sh" >/dev/null 2>&1 || release_failed_rc=$?
 equal "a failed release integration keeps its status" 7 "$release_failed_rc"
 equal "a failed release integration still follows lint and smoke" \
