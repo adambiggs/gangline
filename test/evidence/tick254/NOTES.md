@@ -83,6 +83,37 @@ died with "unbound variable" partway through the green confirmation run; that
 surfaced from the same scoped integration run, not from `gate.sh` (lint/smoke
 alone would not have exercised this path).
 
+## Cross-provider review (codex, `tick254review`, reviewing 2c76ae6/17ad745)
+
+Verdict: CONCERNS. Confirmed sound: `window_gone`'s use of `list-panes` for
+window IDs (server-global, no cross-session ambiguity), the WINDOW_GONE
+same-call freshness (busy() resets it at entry, no reentrancy found), the
+fail-closed branch (window_gone false still reaches the original `die`), and
+that the regression test is non-vacuous (proved the victim passed
+`launch_dead`, then a real `gang drop`, then the roster continued).
+
+Real bug found: `busy_painted` returning 1 (its "not painted" value) means
+either "genuinely idle" or "gone" — `WINDOW_GONE=1` is set in the latter case,
+but `busy()` did not check the flag before falling through to
+`decay_witness`/`recently_active`/`composer_live`, which could still die on
+the same gone window (`decay_witness`'s own die, and `composer_live`'s
+`live_rc -eq 3` die in the `snapshot` branch `state_now` uses). Fixed by
+returning immediately (`[ -z "$WINDOW_GONE" ] || return 1`) right after the
+`busy_painted` if-block, and by adding the same window_gone-before-die guard
+to the `decay_witness` and `composer_live` die sites inside `busy()` — the
+two the reviewer named as still reachable. Every OTHER call in `busy()` that
+can set `WINDOW_GONE` (via `activity_hold_clear`) already returns
+immediately afterward, so this closes the one live gap the review found in
+`busy()` itself.
+
+Not fixed, and still flagged by the review as open: `window_gone`'s
+"list-panes failed" boolean does not distinguish "window resolved to
+nothing" from "tmux itself failed" (transport/socket error) — a genuinely
+present-but-unreadable window could misclassify as gone under that narrower
+failure mode. Accepted as a residual gap alongside the ones below rather
+than fixed, given the evidenced reproduction only exercises the
+"target no longer resolves" case.
+
 ## Unproven / residual risk
 
 - `tick_identity_verify`, `harness_identity_tick_backfill`,

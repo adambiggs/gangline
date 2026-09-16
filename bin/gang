@@ -2976,6 +2976,11 @@ busy() { # $1 = window id; 0 = busy, 1 = not busy, 2 = could not determine
     activity_hold_clear "$1"
     return 0
   fi
+  # busy_painted's "not painted" and "gone" share the same return value, so
+  # this checks for the latter before spending any of the remaining tiers —
+  # decay_witness, recently_active, composer_live — on a target that just
+  # proved unreadable because it no longer exists, not because it is idle.
+  [ -z "$WINDOW_GONE" ] || return 1
   local activity_rc=0 moved=""
   # BEFORE the activity tier, not after it. The quiet stamp recently_active
   # reads is itself one of the readings a decay is assembled from, so it has to
@@ -2983,9 +2988,10 @@ busy() { # $1 = window id; 0 = busy, 1 = not busy, 2 = could not determine
   # capture would otherwise be present in both witnesses, agree with itself, and
   # pass as if nothing had moved — the pty observed quiet at the instant it was
   # not.
-  [ "$undetermined" -eq 0 ] \
-    || moved="$(decay_witness "$1")" \
-    || die "cannot read pane $1 — refusing to witness a decay against a reading that was never taken"
+  if [ "$undetermined" -ne 0 ] && ! moved="$(decay_witness "$1")"; then
+    if window_gone "$1"; then WINDOW_GONE=1; return 1; fi
+    die "cannot read pane $1 — refusing to witness a decay against a reading that was never taken"
+  fi
   recently_active "$1" || activity_rc=$?
   case "$activity_rc" in
     0) BUSY_EVIDENCE="pty-activity"; return 0 ;;
@@ -3008,8 +3014,10 @@ busy() { # $1 = window id; 0 = busy, 1 = not busy, 2 = could not determine
     snapshot)
       local live_rc=0
       composer_live "$1" || live_rc=$?
-      [ "$live_rc" -ne 3 ] \
-        || die "cannot read the composer in pane $1 — refusing to guess busy/idle"
+      if [ "$live_rc" -eq 3 ]; then
+        if window_gone "$1"; then WINDOW_GONE=1; return 1; fi
+        die "cannot read the composer in pane $1 — refusing to guess busy/idle"
+      fi
       if [ "$live_rc" -eq 0 ]; then
         if [ "$undetermined" -eq 1 ]; then
           if [ "$stale_turn" -eq 1 ] && [ "$activity_rc" -eq 1 ] && input_clear "$1"; then
