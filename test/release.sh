@@ -32,15 +32,24 @@ release_clear_lock_record() {
 }
 trap release_clear_lock_record EXIT
 
+# See test/gate.sh's own lock-owner block for why this reads the full NSpid
+# field list rather than only its first entry, and what the scope field means.
 lock_owner_pid=$$
+lock_owner_scope=host
 if [ -r /proc/self/status ]; then
-  lock_owner_pid="$(awk '/^NSpid:/ { print $2; exit }' /proc/self/status)"
-  [ -n "$lock_owner_pid" ] || lock_owner_pid=$$
+  lock_owner_ns_pids="$(awk '/^NSpid:/ { $1=""; print; exit }' /proc/self/status)"
+  read -r -a lock_owner_ns_pid_fields <<<"$lock_owner_ns_pids"
+  if [ "${#lock_owner_ns_pid_fields[@]}" -gt 1 ]; then
+    lock_owner_pid="${lock_owner_ns_pid_fields[-1]}"
+  fi
+else
+  lock_owner_scope="$(readlink /proc/self/ns/pid 2>/dev/null)"
+  [ -n "$lock_owner_scope" ] || lock_owner_scope=unknown
 fi
 lock_started="$(date +%s)"
 lock_lease="${lock_owner_pid}-${lock_started}-${RANDOM}-${BASHPID}"
-printf 'pid=%s\tstarted=%s\tcwd=%q\tlease=%s\n' \
-  "$lock_owner_pid" "$lock_started" "$ROOT" "$lock_lease" > "$HEAVY_LOCK"
+printf 'pid=%s\tstarted=%s\tcwd=%q\tlease=%s\tscope=%s\n' \
+  "$lock_owner_pid" "$lock_started" "$ROOT" "$lock_lease" "$lock_owner_scope" > "$HEAVY_LOCK"
 
 # Direct suites require a settled tree. Record that identity before the first
 # assertion and re-read it after each stage, so a release verdict never joins

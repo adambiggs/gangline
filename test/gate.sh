@@ -103,7 +103,7 @@ gate_close_inherited_locks() {
 gate_report_lock_holder() {
   local before after verify_fd verify_rc=0
   local lock_pid_field lock_started_field lock_cwd_field lock_lease_field lock_scope_field
-  local lock_pid="" lock_started="" lock_cwd="" lock_scope=host lock_age=unknown lock_now
+  local lock_pid="" lock_started="" lock_cwd="" lock_scope=unknown lock_age=unknown lock_now
   IFS= read -r before < "$GATE_HEAVY_LOCK" || before=""
   exec {verify_fd}>> "$GATE_HEAVY_OWNER_LOCK"
   flock -E 201 -n "$verify_fd" || verify_rc=$?
@@ -119,7 +119,13 @@ gate_report_lock_holder() {
     case "${lock_pid_field:-}" in pid=[0-9]*) lock_pid="${lock_pid_field#pid=}" ;; esac
     case "${lock_started_field:-}" in started=[0-9]*) lock_started="${lock_started_field#started=}" ;; esac
     case "${lock_cwd_field:-}" in cwd=?*) lock_cwd="${lock_cwd_field#cwd=}" ;; esac
-    case "${lock_scope_field:-}" in scope=?*) lock_scope="${lock_scope_field#scope=}" ;; esac
+    # Absent (a legacy writer that predates this field) and malformed alike
+    # default to unknown, never to host: a record this run cannot vouch for
+    # must not be upgraded to the trusting answer by omission.
+    case "${lock_scope_field:-}" in
+      scope=host) lock_scope=host ;;
+      scope=pid:\[*\]) lock_scope="${lock_scope_field#scope=}" ;;
+    esac
     case "${lock_lease_field:-}" in lease=?*) ;; *) lock_pid="" ;; esac
   fi
   if ! [[ "$lock_pid" =~ ^[0-9]+$ && "$lock_started" =~ ^[0-9]+$ ]] \
@@ -955,7 +961,19 @@ main() {
 
   # Read the same way the ownership check reads, so an untracked-only tree is not
   # announced as settled by a diagnostic that only looks at tracked files.
-  source_state="$(tree_identity)" || true
+  source_rc=0
+  source_state="$(tree_identity)" || source_rc=$?
+  # An unverifiable reading that happens to read the SAME two unverifiable
+  # texts before and after the copy would otherwise slip past the equality
+  # check below unrefused — matching text is not proof of a binding when
+  # neither reading could establish one in the first place. Checked before
+  # the comparison, not folded into it, so this is refused for what it is.
+  if [ "$source_rc" -eq 2 ]; then
+    keep=1
+    decided=1
+    unverifiable_refusal "$source_state"
+    exit 1
+  fi
   if [ "$source_state" != "$pre_snapshot_state" ]; then
     keep=1
     decided=1

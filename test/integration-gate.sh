@@ -252,6 +252,27 @@ fi
 rm -f "$gate_fix/tree-one-wip.txt"
 rm -rf -- "$gate_twin"
 
+# MATCHING TEXT IS NOT PROOF OF A BINDING WHEN NEITHER READING ESTABLISHED
+# ONE. An index told not to look at a file reads as the same unverifiable
+# line before and after the snapshot copy, which would satisfy a check that
+# only compared the two readings for equality. The run must still refuse,
+# since nothing here confirmed which tree the snapshot actually holds.
+git -C "$gate_fix" update-index --assume-unchanged bin/gang
+gate_unverifiable_rc=0
+gate_unverifiable_out="$(env -u TMUX -u TMUX_PANE "$gate_fix/test/gate.sh" 2>&1)" \
+  || gate_unverifiable_rc=$?
+git -C "$gate_fix" update-index --no-assume-unchanged bin/gang
+if [ "$gate_unverifiable_rc" -ne 0 ]; then
+  pass "a run that can never verify its binding refuses rather than passing"
+else
+  fail "a run that can never verify its binding refuses rather than passing" \
+    "status 0; output was [$gate_unverifiable_out]"
+fi
+contains "the refusal names what could not be verified" \
+  "$gate_unverifiable_out" "the index is told not to look at some files"
+excludes "an unverifiable binding never reaches lint or smoke" \
+  "$gate_unverifiable_out" "passed lint and smoke"
+
 # A COMMIT IS ALSO MOVEMENT. A tree that is settled at the start and settled at
 # the end has still changed if the commit under it changed, and that reading is
 # the one a teammate landing work mid-run produces.
@@ -1265,6 +1286,60 @@ contains "the waiter warns the pid is not confirmed host-visible" \
   "$gate_ns_warning" "pid=848484 is not confirmed host-visible (scope=pid:[4026539999])"
 excludes "a namespace-scoped holder is never reported as scope=host" \
   "$gate_ns_line" "scope=host"
+exec 7>&- 8>&- 9>&-
+
+# A RECORD FROM BEFORE THIS FIELD EXISTED MUST NOT BE UPGRADED TO "HOST" BY
+# ITS OWN ABSENCE. test/e2e.sh and test/release.sh write this same record;
+# an older or unpatched writer omits the 5th field entirely, and the missing
+# field must read as unknown, not as the trusting default.
+gate_legacy_ready="$RUN_ROOT/gate-legacy-ready"
+gate_legacy_release="$RUN_ROOT/gate-legacy-release"
+gate_legacy_stream="$RUN_ROOT/gate-legacy-stream"
+mkfifo "$gate_legacy_ready" "$gate_legacy_release" "$gate_legacy_stream"
+exec 7<> "$gate_legacy_ready"
+exec 8<> "$gate_legacy_release"
+: > "$gate_wait_lock"
+(
+  exec 6>> "$gate_wait_lock"
+  flock 6
+  exec 10>> "${gate_wait_lock}.owner"
+  flock 10
+  printf 'pid=737373\tstarted=%s\tcwd=%s\tlease=legacy-fixture\n' \
+    "$(date +%s)" "$gate_wait" > "$gate_wait_lock"
+  printf 'ready\n' >&7
+  IFS= read -r -u 8
+) &
+gate_legacy_holder=$!
+gate_legacy_ready_outcome=""
+gate_legacy_state=""
+gate_fixture_event 7 gate_legacy_ready_outcome gate_legacy_state \
+  "$RUN_ROOT/gate-legacy-ready-event"
+equal "the legacy-format holder publishes its readiness event" \
+  "event" "$gate_legacy_ready_outcome"
+equal "the legacy-format holder acquired its lock before the waiter starts" \
+  "ready" "$gate_legacy_state"
+env -u _GANGLINE_GATE_LOCKED "$gate_wait/test/gate.sh" > "$gate_legacy_stream" 2>&1 &
+gate_legacy_waiter=$!
+exec 9< "$gate_legacy_stream"
+gate_legacy_line=""
+gate_legacy_line_outcome=""
+gate_fixture_event 9 gate_legacy_line_outcome gate_legacy_line \
+  "$RUN_ROOT/gate-legacy-line-event"
+equal "the legacy-format waiter publishes its holder report event" \
+  "event" "$gate_legacy_line_outcome"
+printf 'release\n' >&8
+gate_legacy_holder_rc=0
+wait "$gate_legacy_holder" || gate_legacy_holder_rc=$?
+gate_legacy_waiter_rc=0
+wait "$gate_legacy_waiter" || gate_legacy_waiter_rc=$?
+equal "the legacy-format holder exits after release" "0" "$gate_legacy_holder_rc"
+equal "the legacy-format waiter exits after acquiring the lock" "0" "$gate_legacy_waiter_rc"
+contains "a record with no scope field still names its pid" \
+  "$gate_legacy_line" "pid=737373"
+contains "a record with no scope field is read as unknown, not host" \
+  "$gate_legacy_line" "scope=unknown"
+excludes "a missing scope field is never upgraded to host by its own absence" \
+  "$gate_legacy_line" "scope=host"
 exec 7>&- 8>&- 9>&-
 
 # The optional real-harness lane shares the same inode, so its wrapper must

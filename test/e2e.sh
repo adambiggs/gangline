@@ -89,16 +89,25 @@ e2e_clear_lock_record() {
   : > "$HEAVY_LOCK"
 }
 trap e2e_clear_lock_record EXIT
+# See test/gate.sh's own lock-owner block for why this reads the full NSpid
+# field list rather than only its first entry, and what the scope field means.
 e2e_lock_pid=$$
+e2e_lock_scope=host
 if [ -r /proc/self/status ]; then
-  e2e_lock_pid="$(awk '/^NSpid:/ { print $2; exit }' /proc/self/status)"
-  [ -n "$e2e_lock_pid" ] || e2e_lock_pid=$$
+  e2e_lock_ns_pids="$(awk '/^NSpid:/ { $1=""; print; exit }' /proc/self/status)"
+  read -r -a e2e_lock_ns_pid_fields <<<"$e2e_lock_ns_pids"
+  if [ "${#e2e_lock_ns_pid_fields[@]}" -gt 1 ]; then
+    e2e_lock_pid="${e2e_lock_ns_pid_fields[-1]}"
+  fi
+else
+  e2e_lock_scope="$(readlink /proc/self/ns/pid 2>/dev/null)"
+  [ -n "$e2e_lock_scope" ] || e2e_lock_scope=unknown
 fi
 e2e_lock_started="$(date +%s)"
 e2e_lock_cwd="$(cd -P "$(dirname "$0")/.." && pwd)"
 e2e_lock_lease="${e2e_lock_pid}-${e2e_lock_started}-${RANDOM}-${BASHPID}"
-printf 'pid=%s\tstarted=%s\tcwd=%q\tlease=%s\n' \
-  "$e2e_lock_pid" "$e2e_lock_started" "$e2e_lock_cwd" "$e2e_lock_lease" \
+printf 'pid=%s\tstarted=%s\tcwd=%q\tlease=%s\tscope=%s\n' \
+  "$e2e_lock_pid" "$e2e_lock_started" "$e2e_lock_cwd" "$e2e_lock_lease" "$e2e_lock_scope" \
   > "$HEAVY_LOCK"
 
 command -v claude >/dev/null 2>&1 \
