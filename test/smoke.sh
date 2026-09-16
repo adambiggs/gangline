@@ -32,6 +32,16 @@ export GANG_ARCHIVE_DIR="$CONFIG_ROOT/archive"
 export GANG_TEST_COLLARS=1
 export GANG_TEST_TICK_MODE=manual
 
+# ARC WORKTREES LIVE INSIDE THEIR CANONICAL CHECKOUT so both supported
+# harnesses retain native repository trust and the shared Git metadata stays
+# reachable. The convention is root-scoped: ignoring every nested .worktrees
+# directory would hide an unrelated project's content from this repository.
+worktree_ignores="$(grep -E '^[^#]*[.]worktrees/' "$ROOT/.gitignore" || :)"
+[ "$worktree_ignores" = '/.worktrees/' ] || {
+  echo "smoke: .gitignore must exclude only the root .worktrees directory" >&2
+  exit 1
+}
+
 GANG_CONFIG_DIR="$CONFIG_ROOT" "$ROOT/bin/gang" help >/dev/null
 GANG_CONFIG_DIR="$CONFIG_ROOT" "$ROOT/bin/gang" collars >/dev/null
 GANG_CONFIG_DIR="$CONFIG_ROOT" "$ROOT/bin/gang" models -c claude-code \

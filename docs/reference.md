@@ -40,6 +40,46 @@ evidence. Who the target is and what its state allows are separate answers.
 Outside a Gangline window, a bare self-targeting command prints its synopsis and
 states that no target or Gangline agent window was available.
 
+## Repository-local arc worktrees
+
+When a trusted canonical checkout needs an isolated arc workspace, create a
+linked Git worktree beneath that checkout at `.worktrees/<arc>/` and hitch both
+Claude Code and Codex by its physical path:
+
+```sh
+repo=/absolute/path/to/repository
+arc=arc-name
+git -C "$repo" worktree add -b "$arc" "$repo/.worktrees/$arc" origin/main
+gang hitch worker -d "$repo/.worktrees/$arc"
+```
+
+The repository carries a root-anchored `/.worktrees/` ignore so the container
+directory does not appear in its own status. Repositories adopting the same
+convention need the same root-anchored rule; a recursive `**/.worktrees/` rule
+would hide unrelated nested content.
+
+A linked worktree retains the canonical repository identity that the native
+harnesses trust, while a fresh clone or nested repository has its own identity
+and can raise the ordinary workspace-trust prompt and, in Claude Code, the
+instruction-import prompt.
+Gangline neither answers those prompts nor edits either harness's application
+state. Trust the canonical checkout through the native harness first. Keep its
+parent repository reachable and writable: the worktree's HEAD, index, refs, and
+logs live in the parent's Git metadata.
+
+Use the real worktree path in the hitch and in evidence. A symlink is not a
+trust boundary; a harness may canonicalize it before selecting project state.
+At cleanup, first establish that the exact worktree is clean, then remove only
+that registered path:
+
+```sh
+git -C "$repo/.worktrees/$arc" status --short
+git -C "$repo" worktree remove "$repo/.worktrees/$arc"
+```
+
+Do not use repository-wide pruning as a substitute for identifying the exact
+arc workspace. Another worktree may belong to another running agent.
+
 Every command names an argument it does not consume, and refuses. Nothing is
 accepted and discarded: a word Gangline drops silently has told its caller that
 the word was understood, and the reading that comes back is then of something

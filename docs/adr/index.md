@@ -200,3 +200,4 @@ Gangline's durable constraints live in the records below. A record's id is perma
 | [0194](0194-active-host-runs-remain-visible-to-their-stable-owner.md) | Active host runs remain visible to their stable owner | proposed | 2026-09-13 |
 | [0195](0195-cache-bands-select-preservation-before-cache-expiry.md) | Cache bands select preservation before cache expiry | accepted | 2026-09-14 |
 | [0196](0196-the-mandatory-gate-measures-contributions-and-preserves-release-integration.md) | The mandatory gate measures contributions and preserves release integration | proposed | 2026-09-13 |
+| [0197](0197-arc-workspaces-preserve-native-trust-as-linked-worktrees-of-the-canonical-checkout.md) | Arc workspaces preserve native trust as linked worktrees of the canonical checkout | proposed | 2026-09-16 |
