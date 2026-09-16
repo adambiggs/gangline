@@ -102,8 +102,8 @@ gate_close_inherited_locks() {
 
 gate_report_lock_holder() {
   local before after verify_fd verify_rc=0
-  local lock_pid_field lock_started_field lock_cwd_field lock_lease_field
-  local lock_pid="" lock_started="" lock_cwd="" lock_age=unknown lock_now
+  local lock_pid_field lock_started_field lock_cwd_field lock_lease_field lock_scope_field
+  local lock_pid="" lock_started="" lock_cwd="" lock_scope=host lock_age=unknown lock_now
   IFS= read -r before < "$GATE_HEAVY_LOCK" || before=""
   exec {verify_fd}>> "$GATE_HEAVY_OWNER_LOCK"
   flock -E 201 -n "$verify_fd" || verify_rc=$?
@@ -115,27 +115,37 @@ gate_report_lock_holder() {
 
   if [ "$verify_rc" -eq 201 ] && [ -n "$before" ] && [ "$before" = "$after" ]; then
     IFS=$'\t' read -r lock_pid_field lock_started_field lock_cwd_field lock_lease_field \
-      <<<"$before"
+      lock_scope_field <<<"$before"
     case "${lock_pid_field:-}" in pid=[0-9]*) lock_pid="${lock_pid_field#pid=}" ;; esac
     case "${lock_started_field:-}" in started=[0-9]*) lock_started="${lock_started_field#started=}" ;; esac
     case "${lock_cwd_field:-}" in cwd=?*) lock_cwd="${lock_cwd_field#cwd=}" ;; esac
+    case "${lock_scope_field:-}" in scope=?*) lock_scope="${lock_scope_field#scope=}" ;; esac
     case "${lock_lease_field:-}" in lease=?*) ;; *) lock_pid="" ;; esac
   fi
   if ! [[ "$lock_pid" =~ ^[0-9]+$ && "$lock_started" =~ ^[0-9]+$ ]] \
       || [ -z "$lock_cwd" ]; then
     lock_pid=unknown
     lock_cwd=unknown
+    lock_scope=unknown
   else
     lock_now="$(date +%s)"
     if [ "$lock_now" -ge "$lock_started" ]; then
       lock_age=$((lock_now - lock_started))
     fi
   fi
-  printf 'gate: waiting on %s (pid=%s cwd=%s held_for=%ss)\n' \
-    "$GATE_HEAVY_LOCK" "$lock_pid" "$lock_cwd" "$lock_age" >&2
+  printf 'gate: waiting on %s (pid=%s cwd=%s held_for=%ss scope=%s)\n' \
+    "$GATE_HEAVY_LOCK" "$lock_pid" "$lock_cwd" "$lock_age" "$lock_scope" >&2
   if [ "$lock_pid" = unknown ]; then
     printf 'gate: find the holder with: fuser -v %q\n' \
       "$GATE_HEAVY_LOCK" >&2
+  elif [ "$lock_scope" != host ]; then
+    # This pid was written by a holder that could not confirm it was
+    # reporting a host-visible pid (scope=unknown), or that named the
+    # namespace it belongs to instead (scope=pid:[...]) because that
+    # namespace's pid may not identify anything on the host at all. Either
+    # way, printing it bare would let an operator kill the wrong process.
+    printf 'gate: pid=%s is not confirmed host-visible (scope=%s); find the holder with: fuser -v %q\n' \
+      "$lock_pid" "$lock_scope" "$GATE_HEAVY_LOCK" >&2
   fi
 }
 
@@ -172,16 +182,33 @@ if [ $# -eq 0 ] && [ "${_GANGLINE_GATE_LOCKED:-}" != 1 ]; then
   fi
   GATE_LOCK_OWNED=1
   trap gate_release_heavy_lock EXIT
+  # NSpid lists this process's pid in every PID namespace it belongs to,
+  # innermost first: one entry means no nesting was recorded, so $$ is
+  # already host-visible; more than one means the LAST entry is the pid in
+  # the outermost namespace /proc can see, and $$ (the first) is only
+  # meaningful inside this process's own, possibly sandboxed, namespace.
+  # This reads only this process's own /proc/self/status, which needs no
+  # special permission — unlike comparing against /proc/1/ns/pid, which a
+  # sandboxed non-root process commonly cannot read at all (confirmed on
+  # this host: EACCES), and an unreadable comparison must not be mistaken
+  # for "not sandboxed."
   lock_owner_pid=$$
+  lock_owner_scope=host
   if [ -r /proc/self/status ]; then
-    lock_owner_pid="$(awk '/^NSpid:/ { print $2; exit }' /proc/self/status)"
-    [ -n "$lock_owner_pid" ] || lock_owner_pid=$$
+    lock_owner_ns_pids="$(awk '/^NSpid:/ { $1=""; print; exit }' /proc/self/status)"
+    read -r -a lock_owner_ns_pid_fields <<<"$lock_owner_ns_pids"
+    if [ "${#lock_owner_ns_pid_fields[@]}" -gt 1 ]; then
+      lock_owner_pid="${lock_owner_ns_pid_fields[-1]}"
+    fi
+  else
+    lock_owner_scope="$(readlink /proc/self/ns/pid 2>/dev/null)"
+    [ -n "$lock_owner_scope" ] || lock_owner_scope=unknown
   fi
   lock_owner_cwd="$(cd -P "$(dirname "$0")/.." && pwd)"
   lock_started="$(date +%s)"
   lock_lease="${lock_owner_pid}-${lock_started}-${RANDOM}-${BASHPID}"
-  printf 'pid=%s\tstarted=%s\tcwd=%q\tlease=%s\n' \
-    "$lock_owner_pid" "$lock_started" "$lock_owner_cwd" "$lock_lease" \
+  printf 'pid=%s\tstarted=%s\tcwd=%q\tlease=%s\tscope=%s\n' \
+    "$lock_owner_pid" "$lock_started" "$lock_owner_cwd" "$lock_lease" "$lock_owner_scope" \
     > "$GATE_HEAVY_LOCK"
   export _GANGLINE_GATE_LOCKED=1
 fi

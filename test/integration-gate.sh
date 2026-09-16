@@ -1115,6 +1115,8 @@ contains "the gate itself writes its working directory into the owner record" \
   "$gate_wait_record" "cwd=$gate_wait"
 contains "the gate itself writes an acquisition epoch into the owner record" \
   "$gate_wait_record" "started="
+contains "an unnested gate writes a host-visible pid namespace scope" \
+  "$gate_wait_record" "scope=host"
 env -u _GANGLINE_GATE_LOCKED "$gate_wait/test/gate.sh" > "$gate_wait_stream" 2>&1 &
 gate_wait_pid=$!
 exec 9< "$gate_wait_stream"
@@ -1198,6 +1200,71 @@ contains "an unknown holder report gives a local recovery hint" \
   "$gate_stale_hint" "find the holder with: fuser -v $gate_wait_lock"
 excludes "an uncorroborated predecessor is never named as the holder" \
   "$gate_stale_line" "/dead/predecessor"
+exec 7>&- 8>&- 9>&-
+
+# LOCK-HOLDER EVIDENCE MUST BE HOST-DIAGNOSTIC. A pid read inside a sandbox
+# is only meaningful in the namespace that read it; reporting it bare would
+# let an operator try to kill a host pid that is not the holder at all, or
+# names an unrelated process. This drives the read side with a corroborated
+# record whose holder could not confirm host visibility, the same shape the
+# gate itself now writes when /proc/self/status is unreadable.
+gate_ns_ready="$RUN_ROOT/gate-ns-ready"
+gate_ns_release="$RUN_ROOT/gate-ns-release"
+gate_ns_stream="$RUN_ROOT/gate-ns-stream"
+mkfifo "$gate_ns_ready" "$gate_ns_release" "$gate_ns_stream"
+exec 7<> "$gate_ns_ready"
+exec 8<> "$gate_ns_release"
+: > "$gate_wait_lock"
+(
+  exec 6>> "$gate_wait_lock"
+  flock 6
+  exec 10>> "${gate_wait_lock}.owner"
+  flock 10
+  printf 'pid=848484\tstarted=%s\tcwd=%s\tlease=ns-fixture\tscope=pid:[4026539999]\n' \
+    "$(date +%s)" "$gate_wait" > "$gate_wait_lock"
+  printf 'ready\n' >&7
+  IFS= read -r -u 8
+) &
+gate_ns_holder=$!
+gate_ns_ready_outcome=""
+gate_ns_state=""
+gate_fixture_event 7 gate_ns_ready_outcome gate_ns_state \
+  "$RUN_ROOT/gate-ns-ready-event"
+equal "the namespace-scoped holder publishes its readiness event" \
+  "event" "$gate_ns_ready_outcome"
+equal "the namespace-scoped holder acquired its lock before the waiter starts" \
+  "ready" "$gate_ns_state"
+env -u _GANGLINE_GATE_LOCKED "$gate_wait/test/gate.sh" > "$gate_ns_stream" 2>&1 &
+gate_ns_waiter=$!
+exec 9< "$gate_ns_stream"
+gate_ns_line=""
+gate_ns_warning=""
+gate_ns_line_outcome=""
+gate_ns_warning_outcome=""
+gate_fixture_event 9 gate_ns_line_outcome gate_ns_line "$RUN_ROOT/gate-ns-line-event"
+if [ "$gate_ns_line_outcome" = event ]; then
+  gate_fixture_event 9 gate_ns_warning_outcome gate_ns_warning \
+    "$RUN_ROOT/gate-ns-warning-event"
+fi
+equal "the namespace-scoped waiter publishes its holder report event" \
+  "event" "$gate_ns_line_outcome"
+equal "the namespace-scoped waiter publishes its host-visibility warning event" \
+  "event" "$gate_ns_warning_outcome"
+printf 'release\n' >&8
+gate_ns_holder_rc=0
+wait "$gate_ns_holder" || gate_ns_holder_rc=$?
+gate_ns_waiter_rc=0
+wait "$gate_ns_waiter" || gate_ns_waiter_rc=$?
+equal "the namespace-scoped holder exits after release" "0" "$gate_ns_holder_rc"
+equal "the namespace-scoped waiter exits after acquiring the lock" "0" "$gate_ns_waiter_rc"
+contains "a namespace-scoped pid is still named in the ordinary report" \
+  "$gate_ns_line" "pid=848484"
+contains "the report names the pid namespace instead of claiming the host" \
+  "$gate_ns_line" "scope=pid:[4026539999]"
+contains "the waiter warns the pid is not confirmed host-visible" \
+  "$gate_ns_warning" "pid=848484 is not confirmed host-visible (scope=pid:[4026539999])"
+excludes "a namespace-scoped holder is never reported as scope=host" \
+  "$gate_ns_line" "scope=host"
 exec 7>&- 8>&- 9>&-
 
 # The optional real-harness lane shares the same inode, so its wrapper must
