@@ -1,5 +1,14 @@
 # Changelog
 
+## [2.16.1](https://github.com/adambiggs/gangline/compare/gangline-v2.16.0...gangline-v2.16.1) (2026-09-16)
+
+
+### Bug Fixes
+
+* **ci:** install ripgrep for main integration ([8679079](https://github.com/adambiggs/gangline/commit/8679079d69c6a472056dd14904af1b21f84c2480))
+* declare release lane dependencies ([576d459](https://github.com/adambiggs/gangline/commit/576d459b08ab1a1a785b2b86abee39d0f8fc7068))
+* **tick:** backfill root witness once ([da53a94](https://github.com/adambiggs/gangline/commit/da53a94081409b07d46a2357b729958b4d43803f))
+
 ## [2.16.0](https://github.com/adambiggs/gangline/compare/gangline-v2.15.0...gangline-v2.16.0) (2026-09-14)
 
 
