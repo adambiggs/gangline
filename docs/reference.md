@@ -494,9 +494,13 @@ Re-hitch it under Gangline control; the refusal changes no window option.
 Both hitch and adopt also stamp provenance: `@gl_hitched_by` holds the `@gl_spool`
 token of the agent window the command ran in, or `operator` when it did not run in
 one, and `@gl_hitched_by_name` holds the hitcher's name as witnessed at that moment.
-`gang status` resolves the token back to whatever that window is called now, so a
-later `gang rename` of the hitcher does not rot the record; the witnessed name is
-printed, and said to be gone, only when no live window claims the token.
+`gang status`, `gang roster` (both forms), and `gang explain` all resolve the token
+back to whatever that window is called now, so a later `gang rename` of the
+hitcher does not rot the record and a later, unrelated agent hitched under the
+hitcher's old name is never mistaken for it; the witnessed name is printed, and
+said to be gone, only when no live window claims the token. See `gang roster
+--porcelain` above for the full four-state vocabulary (`live`, `gone`,
+`operator`, `unrecorded`) every one of these commands shares.
 
 Both hitch and adopt stamp the agent name in `@gl_agent` and the executable
 identity in `@gl_binary_id`. Reusing a window whose recorded identity names
@@ -1453,8 +1457,12 @@ long as the foreground command.
 
 Runs the ordinary live state classification once and prints the agent, pinned
 active pane, collar, resulting state, and exact launch scope recorded on the
-window (`not recorded` for an unscoped or newly adopted agent). It then reports
-the optional collar fatal-turn reader and both collar-owned state rules,
+window (`not recorded` for an unscoped or newly adopted agent). It then prints
+one line of hitch provenance in the same words `gang status` uses: `hitched by
+NAME`, `hitched by NAME, whose window is gone`, `hitched by the operator`, or
+`hitcher not recorded (root, a pre-provenance agent, or a lost stamp)` — see
+`gang roster --porcelain` above for the shared four-state vocabulary. It then
+reports the optional collar fatal-turn reader and both collar-owned state rules,
 `GANG_OCCUPIED_REGEX` and `GANG_BUSY_REGEX`, as matched, did not match, not
 declared, not evaluated because higher-priority evidence settled that part of
 the classification first, or could not determine. Matched fatal evidence
@@ -1924,7 +1932,8 @@ is deciding: read the rows, not the status.
 
 `gang roster --porcelain` is the scripting interface. It prints one unpadded,
 uncoloured TSV row per window with these columns in order: `name`, `collar`,
-`state`, `spooled`, `oldest_age_s`, and `session_id`. State is one lowercase
+`state`, `spooled`, `oldest_age_s`, `session_id`, `hitcher_state`, and
+`hitcher_name`. State is one lowercase
 word: `busy`, `waiting`, `idle`, `occupied`, `dead`, `bricked`, `session-lost`, or
 `unknown` for the human states. `unknown` covers both a state Gangline determined it could not
 settle and one it could not read at all; the human row separates them and the
@@ -1936,9 +1945,35 @@ absent from the fixed porcelain shape and remain visible as `deferred=N` and
 shape without the plain roster's archival side effect. `oldest_age_s` is integer
 seconds or `-` for an empty queue or an unreadable age. A row Gangline could not
 produce at all falls back
-to the name, the collar, `unknown`, and `-` in every remaining field. `session_id` is the exact stamp or `UNSTAMPED`.
+to the name, the collar, `unknown` for both `state` and `hitcher_state`, and `-`
+in every other field. `session_id` is the exact stamp or `UNSTAMPED`.
 With no running session it prints no rows and exits successfully, like the human
 roster.
+
+`hitcher_state` is one of `live` (the hitcher's window is still registered and
+`hitcher_name` is its current name, resolved by the witnessed spool identity
+rather than by matching a display name — a rename or a later, unrelated agent
+reusing the old name does not change which parent this is), `gone` (the live
+windows were enumerated and none claims that identity; `hitcher_name` is the
+name witnessed at hitch time), `operator` (the registration did not come from
+an agent's own window; `hitcher_name` is `-`), `unrecorded` (nothing was
+stamped — a pre-provenance agent, or a lost write; `hitcher_name` is `-`), or
+`unknown` (a hitcher token was stamped but the live-window enumeration itself
+failed, so liveness could not be checked; `hitcher_name` is the name last
+witnessed if one was, otherwise `-`). Gangline never infers a parent for
+`unrecorded`, and never reports `gone` on an enumeration it could not
+complete: a witness it failed to read is `unknown`, not a claim that the
+window is absent. The human roster carries the same five states as a
+`hitcher=NAME`, `hitcher=NAME(gone)`, `hitcher=operator`, `hitcher=unrecorded`,
+or `hitcher=unknown` tag on every agent row, and `gang status` and `gang
+explain` render the same five states as a sentence: "hitched by NAME",
+"hitched by NAME, whose window is gone", "hitched by the operator", "hitcher
+not recorded (root, a pre-provenance agent, or a lost stamp)", or "hitcher
+unknown (liveness could not be checked)", with the witnessed name folded in
+when one exists. This `unknown` sits beside the whole-row `unknown` fallback
+used when a row could not be produced at all — the same distinction the
+`state` column already draws between a settled unknown and one gang never got
+to ask, now drawn a second time for the hitcher reading specifically.
 
 ### `gang capture [name] [lines]`
 
