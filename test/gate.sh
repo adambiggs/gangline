@@ -254,8 +254,13 @@ operation_in_progress() { # prints the operation's name, 0 = one is under way
 
 tree_identity() { # prints one line; 0 = settled, 1 = unsettled, 2 = cannot tell
   local status head operation
+  # $ROOT names the worktree this reading is about. Two worktrees can share a
+  # base commit while carrying different uncommitted edits — the ordinary
+  # shape of concurrent WIP — so a reading that omits $ROOT collides between
+  # them: every branch below states which tree it read, not only the settled
+  # one, so no two distinct worktrees can ever produce the same line.
   git -C "$ROOT" rev-parse --show-toplevel >/dev/null 2>&1 || {
-    printf 'unverifiable (not a git checkout)\n'
+    printf 'unverifiable (not a git checkout) %s\n' "$ROOT"
     return 2
   }
   # Scoped to ROOT with a pathspec: where ROOT is a subdirectory of a larger
@@ -268,11 +273,11 @@ tree_identity() { # prints one line; 0 = settled, 1 = unsettled, 2 = cannot tell
   # resting on a side effect of scoping.
   status="$(git -C "$ROOT" -c core.fsmonitor=false status --porcelain \
     --untracked-files=normal --ignore-submodules=none -- . 2>/dev/null)" || {
-    printf 'unverifiable (git status failed)\n'
+    printf 'unverifiable (git status failed) %s\n' "$ROOT"
     return 2
   }
   git -C "$ROOT" ls-files -v -- . >/dev/null 2>&1 || {
-    printf 'unverifiable (git ls-files failed)\n'
+    printf 'unverifiable (git ls-files failed) %s\n' "$ROOT"
     return 2
   }
   # The identity of a SUBTREE is its own tree object, not the containing
@@ -283,18 +288,19 @@ tree_identity() { # prints one line; 0 = settled, 1 = unsettled, 2 = cannot tell
   # The bit proves only that git was TOLD not to look. It is not evidence that
   # anything changed, so it belongs with the readings that could not be taken.
   if index_conceals; then
-    printf 'unverifiable (the index is told not to look at some files)\n'
+    printf 'unverifiable (the index is told not to look at some files) %s %s\n' \
+      "$head" "$ROOT"
     return 2
   fi
   # Settled bytes under a half-finished operation are settled for one more
   # moment: the commit that ends it moves HEAD, and the snapshot carries none of
   # that state anyway.
   if operation="$(operation_in_progress)"; then
-    printf 'unsettled %s (%s is still in progress)\n' "$head" "$operation"
+    printf 'unsettled %s %s (%s is still in progress)\n' "$head" "$ROOT" "$operation"
     return 1
   fi
   if [ -n "$status" ]; then
-    printf 'unsettled %s\n' "$head"
+    printf 'unsettled %s %s\n' "$head" "$ROOT"
     return 1
   fi
   printf 'settled %s %s\n' "$head" "$ROOT"
@@ -314,6 +320,15 @@ owned_refusal() { # $1 = the reading taken, so the refusal says which one it was
     "" \
     "          test/gate.sh" \
     "" >&2
+}
+
+tree_moved_refusal() { # $1 = identity recorded at the start, $2 = identity now
+  printf '%s\n' \
+    "gate: THE SOURCE TREE MOVED DURING THIS RUN. It was [$1] at the start" \
+    "      and [$2] now, so the checks were not all taken against one" \
+    "      tree and no count over them is a verdict on either. Run" \
+    "      test/gate.sh, which copies the working tree first and cannot be" \
+    "      edited out from under itself." >&2
 }
 
 unverifiable_refusal() { # $1 = the reading that could not be taken
@@ -787,15 +802,7 @@ main() {
     --assert-unmoved)
       [ $# -eq 2 ] || { echo "gate: --assert-unmoved takes one identity" >&2; exit 2; }
       now="$(tree_identity)" || true
-      [ "$now" = "$2" ] || {
-        printf '%s\n' \
-          "gate: THE SOURCE TREE MOVED DURING THIS RUN. It was [$2] at the start" \
-          "      and [$now] now, so the checks were not all taken against one" \
-          "      tree and no count over them is a verdict on either. Run" \
-          "      test/gate.sh, which copies the working tree first and cannot be" \
-          "      edited out from under itself." >&2
-        exit 1
-      }
+      [ "$now" = "$2" ] || { tree_moved_refusal "$2" "$now"; exit 1; }
       exit 0 ;;
     --snapshot)
       [ $# -eq 2 ] || { echo "gate: --snapshot takes one directory" >&2; exit 2; }
@@ -989,6 +996,19 @@ main() {
       printf 'gate: a stall verdict was unreadable; refusing as quiet expiry.\n' >&2
       rc=124 ;;
   esac
+  # The report already NAMED the source tree (source_state, printed above as
+  # "gate: source tree"). Naming it is not binding it: nothing until here has
+  # checked that the tree the report describes is still the tree the verdict
+  # is about. Re-read it now, at the last point before any verdict — pass or
+  # refusal — leaves this function, so no exit below can emit a verdict for a
+  # report whose binding was never verified.
+  verdict_state="$(tree_identity)" || true
+  if [ "$verdict_state" != "$source_state" ]; then
+    keep=1
+    decided=1
+    tree_moved_refusal "$source_state" "$verdict_state"
+    exit 1
+  fi
   if [ "$rc" -ne 0 ]; then
     keep=1
     decided=1

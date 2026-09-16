@@ -212,6 +212,45 @@ printf '\n# fixture dirt\n' >> "$gate_fix/bin/gang"
 refuses "a tree that moved mid-run voids the verdict rather than passing it" \
   "THE SOURCE TREE MOVED DURING THIS RUN" \
   "$gate_fix/test/gate.sh" --assert-unmoved "$gate_identity"
+git -C "$gate_fix" checkout -q -- bin/gang
+
+# TWO WORKTREES CAN SHARE A COMMIT. An identity reading that names only the
+# committed tree object, and not which working tree it was taken from,
+# collides between them whenever both are dirty — the ordinary shape of two
+# agents' concurrent WIP. Issue #250 names exactly that collision: a report
+# that could equally describe either tree is bound to neither.
+gate_twin="$RUN_ROOT/gate-fixture-twin"
+mkdir -p "$gate_twin/bin" "$gate_twin/test"
+cp "$ROOT/test/gate.sh" "$gate_twin/test/gate.sh"
+cp "$GANG" "$gate_twin/bin/gang"
+cp -R "$ROOT/collars" "$gate_twin/collars"
+printf 'ignored.txt\n' > "$gate_twin/.gitignore"
+printf 'DOOMED\n' > "$gate_twin/doomed.txt"
+gate_twin="$(cd -P "$gate_twin" && pwd)"
+git -C "$gate_twin" init -q
+git -C "$gate_twin" add -A
+git -C "$gate_twin" -c user.name=fixture -c user.email=fixture@example.invalid \
+  commit -qm 'test: gate fixture'
+twin_head="$(git -C "$gate_twin" rev-parse 'HEAD^{tree}')"
+equal "the twin fixture starts from the same committed bytes as the first" \
+  "$gate_head" "$twin_head"
+printf 'wip from tree one\n' > "$gate_fix/tree-one-wip.txt"
+printf 'wip from tree two, not one\n' > "$gate_twin/tree-two-wip.txt"
+gate_fix_read="$("$gate_fix/test/gate.sh" --assert-owned 2>&1)" || true
+gate_twin_read="$("$gate_twin/test/gate.sh" --assert-owned 2>&1)" || true
+gate_fix_reading="$(printf '%s\n' "$gate_fix_read" | \
+  awk -F'reading: ' '/reading:/ { print $2; exit }')"
+gate_twin_reading="$(printf '%s\n' "$gate_twin_read" | \
+  awk -F'reading: ' '/reading:/ { print $2; exit }')"
+if [ -n "$gate_fix_reading" ] && [ -n "$gate_twin_reading" ] \
+    && [ "$gate_fix_reading" != "$gate_twin_reading" ]; then
+  pass "two distinct dirty trees sharing a commit report distinct identities"
+else
+  fail "two distinct dirty trees sharing a commit report distinct identities" \
+    "tree one read [$gate_fix_reading], tree two read [$gate_twin_reading]"
+fi
+rm -f "$gate_fix/tree-one-wip.txt"
+rm -rf -- "$gate_twin"
 
 # A COMMIT IS ALSO MOVEMENT. A tree that is settled at the start and settled at
 # the end has still changed if the commit under it changed, and that reading is
