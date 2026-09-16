@@ -2548,6 +2548,120 @@ contains "the later delivery reaches the private session once" \
   "$(pane claimlost)" "MARK_CLAIM_RECOVERED"
 "$GANG" drop claimlost >/dev/null
 
+# A VERIFIED WORKER MAY LOSE ITS CLAIM TO RECOVERY before it retires the file.
+# The rm/mv seam runs the real recovery pass after inject has returned success
+# and before the original cleanup acts. The recovery pass takes the pane lock,
+# moves the exact sending entry to interrupted, and records that outcome. The
+# original worker must then refuse to assert a second terminal fact for the
+# same message id.
+"$HITCH" claimrace -c spoolable -d /tmp >/dev/null
+claimrace_id="$(window_id claimrace)"
+claimrace_spool="$GANG_LOCK_DIR/spool/$(tmux show-options -wqv -t "$claimrace_id" @gl_spool)"
+tmux send-keys -l -t "$claimrace_id" 'HUMAN_DRAFT'
+claimrace_out="$(printf 'MARK_CLAIM_RACE' |
+  "$GANG" send --to claimrace --from tester --stdin)"
+contains "the terminal-outcome race begins with queued mail" \
+  "$claimrace_out" "queued for claimrace"
+claimrace_entry=""
+for candidate in "$claimrace_spool"/[0-9]*; do
+  [ -f "$candidate" ] || continue
+  claimrace_entry="$candidate"
+  break
+done
+[ -n "$claimrace_entry" ] \
+  || fail "the terminal-outcome race has a queued entry" "no numeric spool entry"
+claimrace_message_id="${claimrace_entry##*/}"
+claimrace_timed="$claimrace_spool/.timed-0000000000-$claimrace_message_id"
+mv -- "$claimrace_entry" "$claimrace_timed"
+claimrace_unit_sum="$(printf '%s:%s:%s\n' "$GANG_SESSION" "$claimrace_id" \
+  "${claimrace_timed##*/}" | cksum)"
+claimrace_unit="gangline-at-$(id -u)-${claimrace_unit_sum%% *}"
+claimrace_lock="$GANG_LOCK_DIR/$(printf '%s' "$claimrace_id" | tr -c 'A-Za-z0-9' '_').lock"
+claimrace_bin="$RUN_ROOT/claimrace-bin"
+claimrace_done="$RUN_ROOT/claimrace-done"
+claimrace_recovery_out="$RUN_ROOT/claimrace-recovery.out"
+claimrace_recovery_err="$RUN_ROOT/claimrace-recovery.err"
+claimrace_real_rm="$(command -v rm)"
+claimrace_real_mv="$(command -v mv)"
+claimrace_base_path="$PATH"
+mkdir -p "$claimrace_bin"
+for claimrace_tool in rm mv; do
+  claimrace_real="$claimrace_real_rm"
+  [ "$claimrace_tool" != mv ] || claimrace_real="$claimrace_real_mv"
+  {
+    printf '#!/bin/sh\n'
+    printf 'REAL=%q\n' "$claimrace_real"
+    cat <<'SH'
+. "$GANG_TEST_PATH_SHIM_GUARD"
+path_shim_guard "$REAL" "$0" claim-race || exit $?
+source_path=""
+for argument do
+  case "$argument" in --|-*) continue ;; esac
+  [ -n "$source_path" ] || source_path="$argument"
+done
+case "$source_path" in "$GANG_CLAIM_RACE_SPOOL"/sending-*) claim_cleanup=1 ;; *) claim_cleanup=0 ;; esac
+if [ "$claim_cleanup" -eq 1 ] && [ ! -e "$GANG_CLAIM_RACE_DONE" ]; then
+  : > "$GANG_CLAIM_RACE_DONE" || exit $?
+  "$GANG_CLAIM_RACE_REAL_RM" -f -- "$GANG_CLAIM_RACE_LOCK" || exit $?
+  if ! PATH="$GANG_CLAIM_RACE_BASE_PATH" "$GANG_CLAIM_RACE_GANG" tick \
+      >"$GANG_CLAIM_RACE_RECOVERY_OUT" 2>"$GANG_CLAIM_RACE_RECOVERY_ERR"; then
+    printf 'claim-race recovery failed:\n' >&2
+    cat "$GANG_CLAIM_RACE_RECOVERY_ERR" >&2
+    exit 97
+  fi
+fi
+exec "$REAL" "$@"
+SH
+  } > "$claimrace_bin/$claimrace_tool"
+  chmod +x "$claimrace_bin/$claimrace_tool"
+done
+tmux send-keys -t "$claimrace_id" C-u
+claimrace_tick_rc=0
+claimrace_tick_out="$(PATH="$claimrace_bin:$PATH" \
+  GANG_CLAIM_RACE_SPOOL="$claimrace_spool" \
+  GANG_CLAIM_RACE_DONE="$claimrace_done" \
+  GANG_CLAIM_RACE_REAL_RM="$claimrace_real_rm" \
+  GANG_CLAIM_RACE_LOCK="$claimrace_lock" \
+  GANG_CLAIM_RACE_BASE_PATH="$claimrace_base_path" \
+  GANG_CLAIM_RACE_GANG="$GANG" \
+  GANG_CLAIM_RACE_RECOVERY_OUT="$claimrace_recovery_out" \
+  GANG_CLAIM_RACE_RECOVERY_ERR="$claimrace_recovery_err" \
+  "$GANG" at --fire "${claimrace_timed##*/}" --to claimrace \
+    --unit "$claimrace_unit" 2>&1)" || claimrace_tick_rc=$?
+equal "the timer callback completes after preserving the delivery failure" \
+  0 "$claimrace_tick_rc"
+contains "the original worker names its lost terminal claim" \
+  "$claimrace_tick_out" "changed before verified retirement"
+claimrace_interrupted=""
+for candidate in "$claimrace_spool"/interrupted-*; do
+  [ -f "$candidate" ] || continue
+  claimrace_interrupted="$candidate"
+  break
+done
+if [ -n "$claimrace_interrupted" ]; then
+  pass "recovery retains the exact interrupted message"
+else
+  fail "recovery retains the exact interrupted message" \
+    "no interrupted entry is present"
+fi
+claimrace_message_id="${claimrace_interrupted##*/interrupted-}"
+claimrace_interrupted_log="$("$GANG" log claimrace --kind delivery.interrupted)"
+claimrace_verified_log="$("$GANG" log claimrace --kind delivery.verified)"
+claimrace_interrupted_count="$(printf '%s\n' "$claimrace_interrupted_log" |
+  grep -Fc "\"message_id\": \"$claimrace_message_id\"" || :)"
+claimrace_verified_count="$(printf '%s\n' "$claimrace_verified_log" |
+  grep -Fc "\"message_id\": \"$claimrace_message_id\"" || :)"
+# source-guard: producer@5bbff6411e10: the exact interrupted spool filename independently proves this message id was reclassified, while the filtered log count proves its one durable interrupted event.
+equal "the recovered message has one interrupted terminal event" \
+  1 "$claimrace_interrupted_count"
+# source-guard: whole-surface@e759630cc032: the complete delivery.verified log is filtered for this exact unique message id, so zero matches is the terminal-event absence under test.
+equal "the recovered message has no verified terminal event" \
+  0 "$claimrace_verified_count"
+contains "status agrees that the recovered message is not deliverable" \
+  "$("$GANG" status claimrace)" "delivery worker ended after claiming this body"
+rm -f -- "$claimrace_bin/rm" "$claimrace_bin/mv"
+"$GANG" drop claimrace >/dev/null
+
 # Recovery bodies are deliberately kept out of tmux options: a base64 option
 # for an ordinary large bundle exceeded tmux's command ceiling and left its
 # exact composer text behind forever. The private file is short-addressed from

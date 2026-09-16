@@ -135,6 +135,92 @@ contains "completion appends the requester to the durable run audit" "$(<"$run_a
 contains "completion appends its output path to the durable run audit" "$(<"$run_audit")" \
   "$run_small/output"
 
+# A COMPLETED RUN MEETS A LIVE DELIVERY LOCK after its result and audit are
+# durable. The lock is owned by this fixture process, so the finalizer gets an
+# immediate, deterministic contention answer without waiting on a clock. Its
+# completion still has to enter the requester's ordinary spool exactly once;
+# releasing the lock then gives the next cooperative tick a normal delivery
+# opportunity.
+tmux send-keys -t "$run_requester_id" C-u
+run_locked_out="$(run_start sh -c 'printf MARK_RUN_DELIVERY_LOCK')"
+contains "a delivery-lock run is accepted" "$run_locked_out" "started run"
+run_locked="$(run_record_for MARK_RUN_DELIVERY_LOCK)" || run_locked=""
+run_requester_lock="$GANG_LOCK_DIR/$(printf '%s' "$run_requester_id" | tr -c 'A-Za-z0-9' '_').lock"
+run_locked_spool="$GANG_LOCK_DIR/spool/$(tmux show-options -wqv -t "$run_requester_id" @gl_spool)"
+run_locked_spool_before=0
+for run_locked_candidate in "$run_locked_spool"/[0-9]*; do
+  [ -f "$run_locked_candidate" ] || continue
+  run_locked_spool_before=$((run_locked_spool_before + 1))
+done
+run_locked_spool_expected=$((run_locked_spool_before + 1))
+ln -s "$$" "$run_requester_lock"
+run_locked_finish_rc=0
+run_finish_direct "$run_locked" \
+  >"$RUN_ROOT/run-locked-finish.out" 2>"$RUN_ROOT/run-locked-finish.err" \
+  || run_locked_finish_rc=$?
+equal "a competing delivery lock does not reject a durable completion" \
+  0 "$run_locked_finish_rc"
+contains "the contended completion enters the requester delivery path" \
+  "$(<"$run_locked/delivery")" "accepted into requester delivery path"
+run_finalize_direct "$run_locked" exited 0
+run_locked_envelopes="$(grep -rl "run ${run_locked##*/} completed" "$run_locked_spool" 2>/dev/null || :)"
+run_locked_envelope=""
+run_locked_envelope_count=0
+while IFS= read -r run_locked_candidate; do
+  [ -n "$run_locked_candidate" ] || continue
+  run_locked_envelope_count=$((run_locked_envelope_count + 1))
+  [ -n "$run_locked_envelope" ] || run_locked_envelope="$run_locked_candidate"
+done <<< "$run_locked_envelopes"
+equal "a repeated finalizer leaves exactly one eligible completion" \
+  1 "$run_locked_envelope_count"
+run_locked_spool_after=0
+for run_locked_candidate in "$run_locked_spool"/[0-9]*; do
+  [ -f "$run_locked_candidate" ] || continue
+  run_locked_spool_after=$((run_locked_spool_after + 1))
+done
+equal "the contended completion adds exactly one deliverable spool entry" \
+  "$run_locked_spool_expected" "$run_locked_spool_after"
+run_locked_message_id="${run_locked_envelope##*/}"
+run_locked_queued="$(XDG_STATE_HOME="$run_state" "$GANG" log run-requester \
+  --kind delivery.queued 2>&1)"
+run_locked_queued_count="$(printf '%s\n' "$run_locked_queued" |
+  grep -Fc "\"message_id\": \"$run_locked_message_id\"" || :)"
+run_locked_verified_before="$(XDG_STATE_HOME="$run_state" "$GANG" log run-requester \
+  --kind delivery.verified 2>&1)"
+run_locked_verified_before_count="$(printf '%s\n' "$run_locked_verified_before" |
+  grep -Fc "\"message_id\": \"$run_locked_message_id\"" || :)"
+equal "the contended completion has one queued event" \
+  1 "$run_locked_queued_count"
+equal "the contended completion does not fabricate verification" \
+  0 "$run_locked_verified_before_count"
+run_locked_status="$(XDG_STATE_HOME="$run_state" "$GANG" status run-requester)"
+run_locked_status_count="$(printf '%s\n' "$run_locked_status" |
+  sed -n 's/.*spooled: \([0-9][0-9]*\).*/\1/p')"
+equal "status exposes the exact unsettled completion count" \
+  "$run_locked_spool_expected" "$run_locked_status_count"
+contains "status names the unsettled completion recovery action" \
+  "$run_locked_status" "retry now with gang tick"
+run_locked_roster="$(XDG_STATE_HOME="$run_state" "$GANG" roster |
+  grep '^run-requester ' || :)"
+run_locked_roster_count="$(printf '%s\n' "$run_locked_roster" |
+  sed -n 's/.* spooled=\([0-9][0-9]*\).*/\1/p')"
+equal "roster exposes the same unsettled completion count" \
+  "$run_locked_spool_expected" "$run_locked_roster_count"
+rm -f -- "$run_requester_lock"
+run_locked_tick_rc=0
+XDG_STATE_HOME="$run_state" "$GANG" tick \
+  >"$RUN_ROOT/run-locked-tick.out" 2>"$RUN_ROOT/run-locked-tick.err" \
+  || run_locked_tick_rc=$?
+equal "the released completion delivery settles at the next opportunity" \
+  0 "$run_locked_tick_rc"
+run_locked_verified="$(XDG_STATE_HOME="$run_state" "$GANG" log run-requester \
+  --kind delivery.verified 2>&1)"
+run_locked_verified_count="$(printf '%s\n' "$run_locked_verified" |
+  grep -Fc "\"message_id\": \"$run_locked_message_id\"" || :)"
+equal "the released completion is verified exactly once" \
+  1 "$run_locked_verified_count"
+tmux send-keys -l -t "$run_requester_id" 'HUMAN_DRAFT'
+
 run_existing_tmpdir="$run_state/requester-existing-tmp"
 mkdir -p "$run_existing_tmpdir"
 chmod 755 "$run_existing_tmpdir"

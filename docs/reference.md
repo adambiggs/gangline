@@ -1194,6 +1194,11 @@ readable under `GANG_LOCK_DIR`, and Gangline never sends them again. A harness
 may accept a submission into its own queue and drain it later; read the target
 before re-sending by hand.
 
+`gang status <name>` reports a deliverable queue as `spooled` and names
+`gang tick` as the immediate cooperative retry. `gang roster` reports the same
+queue as `spooled=N`; neither surface calls accepted mail unconfirmed merely
+because its first drain met a live delivery lock.
+
 A delivery whose Enter was pressed and whose screen then stopped answering is
 neither of those. It cannot be parked — the body may already be in front of its
 recipient — and it is not a plain failure, which would invite a second copy sent
@@ -1305,13 +1310,15 @@ The service writes combined stdout and stderr to a private durable record under
 `${XDG_STATE_HOME:-$HOME/.local/state}/gangline/runs/`, keyed to the live team.
 On every service stop—including cancellation, timeout, and a killed
 runner—an `ExecStopPost` finalizer records an exit result if the runner could
-not. It then sends one ordinary enveloped completion from
-`self-declared:gang-run` to the requesting agent. The completion carries the
-result-file path and a terminal-safe tail of the final 2,048 output bytes; the
-full output is only in the named file. It therefore reaches a Codex requester
-through the existing push delivery path, without a tool continuation. A
-completion accepted while the agent is busy is spooled by the ordinary delivery
-rules and drains at its next safe boundary.
+not. It commits one ordinary enveloped completion from
+`self-declared:gang-run` to the requesting agent's spool, then attempts the
+ordinary verified drain. The completion carries the result-file path and a
+terminal-safe tail of the final 2,048 output bytes; the full output is only in
+the named file. It therefore reaches a Codex requester through the existing
+push delivery path, without a tool continuation. A busy agent or competing
+delivery lock leaves the accepted completion visible in that spool for the next
+safe delivery opportunity; neither condition turns the completed run into an
+unconfirmed one-shot transport failure.
 
 At most four records may be active for one team. A new record is first marked
 `launching`, then becomes active only after systemd accepts its service. There
@@ -1331,11 +1338,13 @@ the finalizer reports the resulting exit status.
 If the requesting window has been dropped or replaced before exit, Gangline
 does not send the result to a same-named replacement and does not recreate a
 spool. A rename retains the stable identity and receives the completion under
-its new name. Gangline records a discarded or unconfirmed delivery beside the
-retained result file. The per-team `audit.tsv` appends one tab-separated entry
-per completed run: timestamp, run id, requester, NUL-argv encoded as base64,
-exit, duration, and output path. The state directory is the recovery path;
-remove its record after the output is no longer needed.
+its new name. Gangline records the accepted, discarded, or unconfirmed delivery
+state beside the retained result file; acceptance means the completion entered
+the ordinary spool even when its first drain met contention. The per-team
+`audit.tsv` appends one tab-separated entry per completed run: timestamp, run
+id, requester, NUL-argv encoded as base64, exit, duration, and output path. The
+state directory is the recovery path; remove its record after the output is no
+longer needed.
 
 ### `gang flush [name]`
 
