@@ -114,6 +114,7 @@ collar_input() { # once per armed drain, report what the spool and the lock look
     dir="$GANG_LOCK_DIR/spool/\$(tmux show-options -wqv -t "\$1" @gl_spool)"
     for f in "\$dir"/sending-*; do [ -f "\$f" ] && waiting=\$((waiting + 1)); done
     holder="\$(readlink "\$lock" 2>/dev/null)" || holder=""
+    case "\$holder" in v1:*) holder="\${holder#v1:}"; holder="\${holder%%:*}" ;; esac
     [ -n "\$holder" ] && kill -0 "\$holder" 2>/dev/null && live=yes
     printf 'holder-alive=%s claimed=%s\n' "\$live" "\$waiting" \
       > "$RUN_ROOT/claim-observed"
@@ -1840,9 +1841,11 @@ IFS= read -r -t 10 -u "$stale_reap_a_event_fd" stale_reap_reader_event \
   || fail "the reaping self-read reaches its atomic claim" "no reader outcome arrived"
 equal "the reaping self-read claims while it owns the pane lock" \
   claimed "$stale_reap_reader_event"
-stale_reap_reader_owner="$(readlink "$stale_reap_lock")"
+stale_reap_reader_record="$(readlink "$stale_reap_lock")"
+stale_reap_reader_owner="${stale_reap_reader_record#v1:}"
+stale_reap_reader_owner="${stale_reap_reader_owner%%:*}"
 kill -0 "$stale_reap_reader_owner" 2>/dev/null \
-  || fail "the claimed self-read owns a live pane lock" "$stale_reap_reader_owner is not live"
+  || fail "the claimed self-read owns a live pane lock" "$stale_reap_reader_record is not live"
 printf 'release\n' >&"$stale_reap_c_release_fd"
 stale_reap_c_rc=0
 wait "$stale_reap_c_pid" || stale_reap_c_rc=$?
@@ -1850,7 +1853,7 @@ equal "a post-check contender refuses the changed live owner" 3 "$stale_reap_c_r
 contains "the post-check refusal names the changed stale owner" \
   "$(<"$RUN_ROOT/stale-reap-c.err")" "changed while Gangline was verifying"
 equal "the post-check contender preserves the self-read lock owner" \
-  "$stale_reap_reader_owner" "$(readlink "$stale_reap_lock")"
+  "$stale_reap_reader_record" "$(readlink "$stale_reap_lock")"
 printf 'release\n' >&"$stale_reap_a_release_fd"
 stale_reap_reader_rc=0
 wait "$stale_reap_reader_pid" || stale_reap_reader_rc=$?

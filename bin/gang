@@ -4777,6 +4777,41 @@ sys.stdout.write(match.group(0))
   collar_queued "$1" "$tag" >/dev/null 2>&1
 }
 
+PROCESS_ID_PID="" PROCESS_ID_TOKEN="" PROCESS_ID_PGRP=""
+PROCESS_ID_SESSION="" PROCESS_ID_BORN_NS="" PROCESS_ID_ROLE=""
+PROCESS_ID_SIGNAL_SAFE="" PROCESS_ID_NAMESPACE="" PROCESS_ID_STATE=""
+process_identity_read() { # $1 pid, $2 its pid namespace ('' = unrecorded), $3 its
+  # recorded start token ('' = none); live/dead/foreign/unresolvable/unknown in
+  # PROCESS_ID_STATE. A pid names a process only inside one pid namespace: a
+  # worker in a sandbox records the number it sees, and the same number is an
+  # unrelated process on the host. The helper resolves a recorded namespace
+  # through the reader's own /proc, and a record without one by pid and start
+  # token among the namespaces it can see. Foreign is a process that exists
+  # here but belongs to another user; unresolvable is an owner this reader's
+  # namespace cannot see.
+  local out="" rc=0 extra=""
+  PROCESS_ID_PID="" PROCESS_ID_TOKEN="" PROCESS_ID_PGRP=""
+  PROCESS_ID_SESSION="" PROCESS_ID_BORN_NS="" PROCESS_ID_ROLE=""
+  PROCESS_ID_SIGNAL_SAFE="" PROCESS_ID_NAMESPACE="" PROCESS_ID_STATE=unknown
+  out="$("$ROOT/libexec/gang-process-identity" --tick "$1" "$SESSION" "${2:-}" "${3:-}" 2>/dev/null)" || rc=$?
+  case "$rc" in
+    0)
+      IFS=$'\t' read -r PROCESS_ID_PID PROCESS_ID_TOKEN PROCESS_ID_PGRP \
+        PROCESS_ID_SESSION PROCESS_ID_BORN_NS PROCESS_ID_ROLE \
+        PROCESS_ID_SIGNAL_SAFE PROCESS_ID_NAMESPACE extra <<<"$out"$'\t__end'
+      if [ "$extra" = __end ] && [ "$PROCESS_ID_PID" = "$1" ]; then
+        case "$PROCESS_ID_TOKEN:$PROCESS_ID_PGRP:$PROCESS_ID_SESSION:$PROCESS_ID_BORN_NS:$PROCESS_ID_ROLE:$PROCESS_ID_SIGNAL_SAFE:$PROCESS_ID_NAMESPACE" in
+          *[!A-Za-z0-9:]*|*::*|:*|*:) return 0 ;;
+          *) PROCESS_ID_STATE=live; return 0 ;;
+        esac
+      fi ;;
+    1) PROCESS_ID_STATE=dead; return 0 ;;
+    2) return 0 ;;
+    3) PROCESS_ID_STATE=foreign; return 0 ;;
+    4) PROCESS_ID_STATE=unresolvable; return 0 ;;
+  esac
+}
+
 LOCK_PATH="" LOCK_OWNER=""
 lock_release() {
   local recorded=""
@@ -4880,9 +4915,14 @@ lock_self_pid() { # sets LOCK_SELF_PID to the pid that will actually hold a clai
 }
 
 lock_pane() { # $1 = window id; held until lock_release or this process exits
-  local base holder name path reaper err me read_races=0 reaper_result="" reaper_rc=0
+  local base holder name path reaper err me owner format pid token namespace extra
+  local read_races=0 reaper_result="" reaper_rc=0
   lock_self_pid
   me="$LOCK_SELF_PID"
+  process_identity_read "$me"
+  [ "$PROCESS_ID_STATE" = live ] \
+    || die "cannot establish the process identity that will hold a delivery lock — pid $me is $PROCESS_ID_STATE"
+  owner="v1:$me:$PROCESS_ID_TOKEN:$PROCESS_ID_NAMESPACE"
   base="${GANG_LOCK_DIR:-$GANGLINE_STATE_DEFAULT}"
   lock_base "$base"
   name="$(agent_name_of "$1")"
@@ -4894,10 +4934,15 @@ lock_pane() { # $1 = window id; held until lock_release or this process exits
   # process would read the lock as stale, delete it, and paste into the same
   # composer concurrently. BASHPID is the process that actually holds it.
   while :; do
-    err="$(ln -s "$me" "$path" 2>&1)" \
-      && { LOCK_PATH="$path"; LOCK_OWNER="$me"; trap 'on_exit' EXIT; return; }
-    [ -L "$path" ] \
-      || die "cannot take the delivery lock at $path — ${err:-unknown error}. Nothing holds this lock; the path cannot be created atomically, so retrying will not help. Remove any lock left by an older Gangline, or point GANG_LOCK_DIR at somewhere writable by every Gangline process that delivers to this pane."
+    err="$(ln -s "$owner" "$path" 2>&1)" \
+      && { LOCK_PATH="$path"; LOCK_OWNER="$owner"; trap 'on_exit' EXIT; return; }
+    if [ ! -L "$path" ]; then
+      [ ! -e "$path" ] || die "cannot take the delivery lock at $path — ${err:-unknown error}. Nothing holds this lock; the path cannot be created atomically, so retrying will not help. Remove any lock left by an older Gangline, or point GANG_LOCK_DIR at somewhere writable by every Gangline process that delivers to this pane."
+      read_races=$((read_races + 1))
+      [ "$read_races" -le 1 ] \
+        || refuse "the delivery lock for $name disappeared twice while Gangline was resolving contention — inspect it with gang capture $name before retrying"
+      continue
+    fi
     # A valid owner may release between the -L observation and readlink. Its
     # absence is ordinary resolved contention, so reattempt the atomic claim.
     # A replacement can appear between those reads too: read it once more
@@ -4911,11 +4956,29 @@ lock_pane() { # $1 = window id; held until lock_release or this process exits
     [ "$read_races" -le 1 ] \
       || refuse "the delivery lock for $name disappeared twice while Gangline was resolving contention — inspect it with gang capture $name before retrying"
   done
+  format=legacy pid="" token="" namespace="" extra=""
   case "$holder" in
+    v1:*)
+      IFS=: read -r format pid token namespace extra <<<"$holder:__end"
+      [ "$extra" = __end ] || format=""
+      case "$pid" in ''|*[!0-9]*) format="" ;; esac
+      case "$token" in ''|*[!A-Za-z0-9]*) format="" ;; esac
+      case "$namespace" in ''|*[!0-9]*) format="" ;; esac
+      [ "$format" = v1 ] \
+        || die "delivery lock $path has an unreadable owner '$holder' — refusing to delete state Gangline cannot identify"
+      ;;
     ''|*[!0-9]*) die "delivery lock $path has an unreadable owner '$holder' — refusing to delete state Gangline cannot identify" ;;
+    *) pid="$holder" ;;
   esac
-  kill -0 "$holder" 2>/dev/null \
-    && refuse "another Gangline process is delivering to $name — inspect it with gang capture $name before retrying"
+  process_identity_read "$pid" "$namespace" "$token"
+  case "$PROCESS_ID_STATE" in
+    live) refuse "another Gangline process is delivering to $name — inspect it with gang capture $name before retrying" ;;
+    dead|foreign) ;;
+    unresolvable)
+      refuse "the delivery lock for $name is held by pid $pid in a process namespace this command cannot see — retry from the host before removing it"
+      ;;
+    *) die "cannot classify the owner of delivery lock $path — pid $pid has unreadable process identity; the lock was retained" ;;
+  esac
   # Two contenders can both observe a dead holder. The symlink itself cannot
   # compare-and-delete that owner: an unconditional rm after the first
   # replacement would erase the first contender's live lock. A Python process
@@ -4925,13 +4988,15 @@ lock_pane() { # $1 = window id; held until lock_release or this process exits
   # nor a system flock(1). The guard inode remains after every pass: unlinking
   # it would let old and new waiters lock different inodes concurrently.
   reaper="$path.reap"
-  if reaper_result="$(python3 - "$reaper" "$path" "$holder" "$me" 2>&1 <<'PY'
+  if reaper_result="$(python3 - "$reaper" "$path" "$holder" "$owner" \
+    "$ROOT/libexec/gang-process-identity" "$SESSION" "$pid" "$namespace" "$token" 2>&1 <<'PY'
 import errno
 import fcntl
 import os
+import subprocess
 import sys
 
-reaper, path, expected, replacement = sys.argv[1:]
+reaper, path, expected, replacement, helper, session, pid, namespace, token = sys.argv[1:]
 
 def outcome(code, text):
     print(text)
@@ -4958,16 +5023,20 @@ try:
         outcome(4, "changed")
 
     try:
-        os.kill(int(expected), 0)
-    except (OverflowError, ProcessLookupError):
-        pass
-    except PermissionError:
-        outcome(5, "live")
+        identity = subprocess.run(
+            [helper, "--tick", pid, session, namespace, token],
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+            check=False,
+        )
     except OSError as exc:
-        if exc.errno != errno.ESRCH:
-            outcome(1, "check owner: %s" % exc)
-    else:
+        outcome(1, "check owner identity: %s" % exc)
+    if identity.returncode == 0:
         outcome(5, "live")
+    if identity.returncode == 4:
+        outcome(7, "unresolvable")
+    if identity.returncode not in (1, 3):
+        outcome(1, "check owner identity: helper exit %s" % identity.returncode)
 
     try:
         os.unlink(path)
@@ -5004,11 +5073,14 @@ PY
     6:replaced)
       refuse "the stale delivery lock for $name was cleared, but another sender took it first — inspect with gang capture $name before retrying"
       ;;
+    7:unresolvable)
+      refuse "the delivery lock for $name names pid $pid in a process namespace this command can no longer see — retry from the host before removing it"
+      ;;
     *)
       die "cannot recover the stale delivery lock $path — ${reaper_result:-unknown reaper failure}. No delivery started"
       ;;
   esac
-  LOCK_PATH="$path" LOCK_OWNER="$me"
+  LOCK_PATH="$path" LOCK_OWNER="$owner"
   trap 'on_exit' EXIT
 }
 
@@ -6001,41 +6073,6 @@ tick_lock_release() {
   tick_guard_drop
 }
 
-TICK_PROCESS_PID="" TICK_PROCESS_TOKEN="" TICK_PROCESS_PGRP=""
-TICK_PROCESS_SESSION="" TICK_PROCESS_BORN_NS="" TICK_PROCESS_ROLE=""
-TICK_PROCESS_SIGNAL_SAFE="" TICK_PROCESS_NAMESPACE="" TICK_PROCESS_STATE=""
-tick_process_read() { # $1 pid, $2 its pid namespace ('' = unrecorded), $3 its
-  # recorded start token ('' = none); live/dead/foreign/unresolvable/unknown in
-  # TICK_PROCESS_STATE. A pid names a process only inside one pid namespace: a
-  # worker in a sandbox records the number it sees, and the same number is an
-  # unrelated process on the host. The helper resolves a recorded namespace
-  # through the reader's own /proc, and a record without one by pid and start
-  # token among the namespaces it can see. Foreign is a process that exists
-  # here but belongs to another user, so it can never be one of this team's
-  # tick workers; unresolvable is an owner this reader's namespace cannot see.
-  local out="" rc=0 extra=""
-  TICK_PROCESS_PID="" TICK_PROCESS_TOKEN="" TICK_PROCESS_PGRP=""
-  TICK_PROCESS_SESSION="" TICK_PROCESS_BORN_NS="" TICK_PROCESS_ROLE=""
-  TICK_PROCESS_SIGNAL_SAFE="" TICK_PROCESS_NAMESPACE="" TICK_PROCESS_STATE=unknown
-  out="$("$ROOT/libexec/gang-process-identity" --tick "$1" "$SESSION" "${2:-}" "${3:-}" 2>/dev/null)" || rc=$?
-  case "$rc" in
-    0)
-      IFS=$'\t' read -r TICK_PROCESS_PID TICK_PROCESS_TOKEN TICK_PROCESS_PGRP \
-        TICK_PROCESS_SESSION TICK_PROCESS_BORN_NS TICK_PROCESS_ROLE \
-        TICK_PROCESS_SIGNAL_SAFE TICK_PROCESS_NAMESPACE extra <<<"$out"$'\t__end'
-      if [ "$extra" = __end ] && [ "$TICK_PROCESS_PID" = "$1" ]; then
-        case "$TICK_PROCESS_TOKEN:$TICK_PROCESS_PGRP:$TICK_PROCESS_SESSION:$TICK_PROCESS_BORN_NS:$TICK_PROCESS_ROLE:$TICK_PROCESS_SIGNAL_SAFE:$TICK_PROCESS_NAMESPACE" in
-          *[!A-Za-z0-9:]*|*::*|:*|*:) return 0 ;;
-          *) TICK_PROCESS_STATE=live; return 0 ;;
-        esac
-      fi ;;
-    1) TICK_PROCESS_STATE=dead; return 0 ;;
-    2) return 0 ;;
-    3) TICK_PROCESS_STATE=foreign; return 0 ;;
-    4) TICK_PROCESS_STATE=unresolvable; return 0 ;;
-  esac
-}
-
 tick_lock_mtime_ns() { # $1 symlink
   python3 - "$1" <<'PY'
 import os
@@ -6115,7 +6152,7 @@ tick_lock_expired() { # holder pid token pgrp acquired age_ns format [mtime_ns l
     [ "$elapsed_rc" -eq 0 ] || return 0
   fi
 
-  if [ "$format" = legacy ] && [ "$TICK_PROCESS_ROLE" != 1 ]; then
+  if [ "$format" = legacy ] && [ "$PROCESS_ID_ROLE" != 1 ]; then
     kill_rc=0
     tick_guard_try || kill_rc=$?
     case "$kill_rc" in
@@ -6138,8 +6175,8 @@ tick_lock_expired() { # holder pid token pgrp acquired age_ns format [mtime_ns l
     return 0
   fi
 
-  if [ "$TICK_PROCESS_SIGNAL_SAFE" != 1 ] || [ "$TICK_PROCESS_ROLE" != 1 ] \
-     || [ "$TICK_PROCESS_PGRP" != "$pid" ] || [ "$TICK_PROCESS_SESSION" != "$pid" ]; then
+  if [ "$PROCESS_ID_SIGNAL_SAFE" != 1 ] || [ "$PROCESS_ID_ROLE" != 1 ] \
+     || [ "$PROCESS_ID_PGRP" != "$pid" ] || [ "$PROCESS_ID_SESSION" != "$pid" ]; then
     printf 'expired tick lock %s held by pid %s cannot be reclaimed safely: exact leader generation, tick-worker role, or session leadership is unknown\n' \
       "$TICK_LOCK_PATH" "$pid" >&2
     return 0
@@ -6194,16 +6231,16 @@ tick_lock_acquire() { # 0 owner, 75 live owner was marked dirty, 77 owner unseen
          "${GANG_TICK_DEADLINE_SECONDS:-unset}" "$GANG_TICK_DEADLINE" >&2; return 1 ;;
   esac
   lock_self_pid
-  tick_process_read "$LOCK_SELF_PID"
-  [ "$TICK_PROCESS_STATE" = live ] \
-    || { printf 'tick worker process identity is %s before lock acquisition\n' "$TICK_PROCESS_STATE" >&2; return 1; }
-  self_namespace="$TICK_PROCESS_NAMESPACE"
+  process_identity_read "$LOCK_SELF_PID"
+  [ "$PROCESS_ID_STATE" = live ] \
+    || { printf 'tick worker process identity is %s before lock acquisition\n' "$PROCESS_ID_STATE" >&2; return 1; }
+  self_namespace="$PROCESS_ID_NAMESPACE"
   now_ns="$(clock_now_ns)" \
     || { printf 'tick worker cannot read the monotonic acquisition clock\n' >&2; return 1; }
   case "$now_ns" in ''|*[!0-9]*) printf 'tick worker has an unreadable monotonic acquisition clock\n' >&2; return 1 ;; esac
   # The pid namespace travels with the pid: without it a contender in another
   # namespace reads the number against the wrong table.
-  TICK_LOCK_RECORD="v3:$LOCK_SELF_PID:$TICK_PROCESS_TOKEN:$TICK_PROCESS_PGRP:$now_ns:$self_namespace"
+  TICK_LOCK_RECORD="v3:$LOCK_SELF_PID:$PROCESS_ID_TOKEN:$PROCESS_ID_PGRP:$now_ns:$self_namespace"
   while :; do
     err=""
     guard_rc=0
@@ -6279,8 +6316,8 @@ tick_lock_acquire() { # 0 owner, 75 live owner was marked dirty, 77 owner unseen
       *[!0-9]*|'') printf "tick lock %s has an unreadable pid '%s'\n" "$TICK_LOCK_PATH" "$holder" >&2; return 1 ;;
       *) pid="$holder" ;;
     esac
-    tick_process_read "$pid" "$namespace" "$token"
-    if [ "$TICK_PROCESS_STATE" = unresolvable ]; then
+    process_identity_read "$pid" "$namespace" "$token"
+    if [ "$PROCESS_ID_STATE" = unresolvable ]; then
       if [ -n "$namespace" ]; then
         printf 'tick lock %s is held by pid %s in pid namespace %s, which this process cannot see; lock was retained\n' \
           "$TICK_LOCK_PATH" "$pid" "$namespace" >&2
@@ -6296,18 +6333,18 @@ tick_lock_acquire() { # 0 owner, 75 live owner was marked dirty, 77 owner unseen
       # raise "last tick failed" against a team whose passes were running.
       return 77
     fi
-    if [ "$TICK_PROCESS_STATE" = unknown ]; then
+    if [ "$PROCESS_ID_STATE" = unknown ]; then
       printf 'tick lock %s held by pid %s has unreadable process identity; lock was retained\n' "$TICK_LOCK_PATH" "$pid" >&2
       return 1
     fi
-    if [ "$TICK_PROCESS_STATE" = foreign ]; then
+    if [ "$PROCESS_ID_STATE" = foreign ]; then
       # Exists, but belongs to another user: a recycled number, never a tick
       # worker of this team, whose workers always run as this user. Retired
       # the same way a dead owner is; the line is for a reader of the worker.
       printf 'tick lock %s names pid %s, which belongs to another user and cannot be a tick worker for this team; the stale lock was retired\n' \
         "$TICK_LOCK_PATH" "$pid" >&2
     fi
-    if [ "$TICK_PROCESS_STATE" = dead ] || [ "$TICK_PROCESS_STATE" = foreign ]; then
+    if [ "$PROCESS_ID_STATE" = dead ] || [ "$PROCESS_ID_STATE" = foreign ]; then
       guard_rc=0
       tick_guard_try || guard_rc=$?
       case "$guard_rc" in
@@ -6326,7 +6363,7 @@ tick_lock_acquire() { # 0 owner, 75 live owner was marked dirty, 77 owner unseen
       continue
     fi
     if [ "$format" != legacy ]; then
-      if [ "$TICK_PROCESS_TOKEN" != "$token" ] || [ "$TICK_PROCESS_PGRP" != "$pgrp" ]; then
+      if [ "$PROCESS_ID_TOKEN" != "$token" ] || [ "$PROCESS_ID_PGRP" != "$pgrp" ]; then
         guard_rc=0
         tick_guard_try || guard_rc=$?
         case "$guard_rc" in
@@ -6357,18 +6394,18 @@ tick_lock_acquire() { # 0 owner, 75 live owner was marked dirty, 77 owner unseen
       legacy_age=$((now - mtime_ns / 1000000000))
       [ "$legacy_age" -ge 0 ] \
         || { printf 'legacy tick lock %s has a future creation time\n' "$TICK_LOCK_PATH" >&2; return 1; }
-      token="$TICK_PROCESS_TOKEN" pgrp="$TICK_PROCESS_PGRP"
+      token="$PROCESS_ID_TOKEN" pgrp="$PROCESS_ID_PGRP"
     fi
     touch -- "$TICK_DIRTY_PATH" || { printf 'cannot mark the running tick dirty at %s\n' "$TICK_DIRTY_PATH" >&2; return 1; }
     expired_rc=0
     tick_lock_expired "$holder" "$pid" "$token" "$pgrp" "$acquired" "$age_ns" "$format" "$mtime_ns" "$legacy_age" "$namespace" \
       || expired_rc=$?
     [ "$expired_rc" -eq 1 ] || return 1
-    if [ "$TICK_PROCESS_STATE" = live ]; then
+    if [ "$PROCESS_ID_STATE" = live ]; then
       again="$(readlink "$TICK_LOCK_PATH" 2>/dev/null)" || again=""
-      tick_process_read "$pid" "$namespace" "$token"
-      if [ "$again" = "$holder" ] && [ "$TICK_PROCESS_STATE" = live ] \
-         && { [ "$format" = legacy ] || { [ "$TICK_PROCESS_TOKEN" = "$token" ] && [ "$TICK_PROCESS_PGRP" = "$pgrp" ]; }; }; then
+      process_identity_read "$pid" "$namespace" "$token"
+      if [ "$again" = "$holder" ] && [ "$PROCESS_ID_STATE" = live ] \
+         && { [ "$format" = legacy ] || { [ "$PROCESS_ID_TOKEN" = "$token" ] && [ "$PROCESS_ID_PGRP" = "$pgrp" ]; }; }; then
         TICK_LOCK_PATH="" TICK_DIRTY_PATH="" TICK_LOCK_RECORD=""
         return 75
       fi

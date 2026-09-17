@@ -1264,6 +1264,7 @@ collar_input() { # record the ownership facts at the first claimed box read
       if [ "\$claimed" -gt 0 ]; then
         rm -f "$RUN_ROOT/steer-claim-watch"
         holder="\$(readlink "\$lock" 2>/dev/null)" || holder=""
+        case "\$holder" in v1:*) holder="\${holder#v1:}"; holder="\${holder%%:*}" ;; esac
         [ -n "\$holder" ] && kill -0 "\$holder" 2>/dev/null && live=yes
         printf 'holder-alive=%s claimed=%s\n' "\$live" "\$claimed" \
           > "$RUN_ROOT/steer-claim-observed"

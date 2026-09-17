@@ -413,12 +413,16 @@ def darwin_record(pid: int, expected_session=None):
 
 def record(pid: int, expected_session=None, expected_namespace=None, expected_token=None):
     if sys.platform == "linux":
-        return linux_record(pid, expected_session, expected_namespace, expected_token)
-    if sys.platform == "darwin":
+        current = linux_record(pid, expected_session, expected_namespace, expected_token)
+    elif sys.platform == "darwin":
         if expected_namespace not in (None, 0):
             raise UnknownProcess
-        return darwin_record(pid, expected_session)
-    raise UnknownProcess
+        current = darwin_record(pid, expected_session)
+    else:
+        raise UnknownProcess
+    if expected_token is not None and current[4] != expected_token:
+        raise DeadProcess
+    return current
 
 
 def print_codex(pid: int) -> int:
