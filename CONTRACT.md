@@ -55,6 +55,11 @@ whether the lead could act differently knowing it.
 Report what you got wrong and what remains unproven. Both change what the lead
 can rely on.
 
+Once your completion report is delivered and every agent you hitched is dropped
+or has marked itself, run `gang safe-to-drop --report-to NAME`, naming the agent
+that received the report. After that you receive nothing more; new work needs a
+new agent.
+
 ## The marathon rule
 
 Never halt the team to wait for the operator. Resolve reversible questions
