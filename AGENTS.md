@@ -115,6 +115,7 @@ an operator request.
 | `docs/adr/` | durable decision records and their index |
 | `docs/reference.md` | exact commands, environment, and collar contract |
 | `docs/operations.md` | unattended operation and recovery |
+| `docs/review-tiers.md` | how far a result is reviewed, by whom, and for how many rounds |
 | `CONTRIBUTING.md` | repository gates, commits, releases, and measurement |
 | `CHANGELOG.md` | release history owned by Release Please; never hand-edit |
 | `docs/benchmarks.md` | external benchmark selection guidance and validity gates |

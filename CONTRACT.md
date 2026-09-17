@@ -46,11 +46,26 @@ and state what is already true before acting on the stale message.
 Put unfinished work and supporting detail in files that teammates can read
 without you. Send a file's path when you refer to its contents.
 
+## Your own agents
+
+You are a whole harness, and your own subagents are part of it. Gangline is a
+layer above that harness, not a replacement for it. Parallelism inside a single
+result belongs to those subagents: they take no window, no name, and no drop.
+
+Hitch a teammate only when the result needs a harness you are not running, an
+owner whose judgment is independent of yours, or work that must outlive your
+session. Everything else is a subagent.
+
+How far a result must be reviewed, and by whom, follows from its tier, and the
+`tier:` line in your assignment names yours. `docs/review-tiers.md` in the
+Gangline checkout holds the two tiers, the round limit, and what each of them
+requires; ask whoever hitched you if that path is not one you can open.
+
 ## Owning work
 
 Finish the whole result assigned to you, including its review. You may hitch
-teammates to help. Send the lead one report when the result is complete. Contact
-the lead sooner only when you need a decision.
+teammates on the terms above. Send the lead one report when the result is
+complete. Contact the lead sooner only when you need a decision.
 
 A report is read by someone deciding what happens next. Include what could
 change that decision; leave out what only shows you did the work — that belongs

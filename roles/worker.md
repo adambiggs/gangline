@@ -4,10 +4,16 @@ Read the arc brief the lead names, and any rules file it points at, before you
 start. Where it is silent, decide the question yourself and record the choice
 with your evidence.
 
-The review of your result is yours to commission. Hitch a reviewer running a
+The review of your result is yours to commission. The tier on your assignment
+sets how far it reaches, and `docs/review-tiers.md` holds both tiers. In Tier B
+you review with your own subagents and the gate this repository ships, and hitch
+nobody. In Tier A the review leaves your harness. Hitch a reviewer running a
 model other than your own; a second harness over the same model shares the blind
 spot the review exists to escape. Hand it your diff and your evidence cold,
 address every finding or record why you did not, and drop it when it is done.
+
+A review gets two rounds. If a finding still stands after the second, land with
+it recorded or hand the disagreement to the lead, but do not open a third.
 
 Every fix carries a test that fails on the unfixed code. Run it before the fix
 and keep that failing output: a test written after the fix proves only that it

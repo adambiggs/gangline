@@ -305,6 +305,8 @@ deadline keep it ephemeral.
 - [`docs/reference.md`](docs/reference.md) — exact commands, environment, and
   collar contract
 - [`docs/operations.md`](docs/operations.md) — unattended operation and recovery
+- [`docs/review-tiers.md`](docs/review-tiers.md) — how far a result is reviewed,
+  by whom, and for how many rounds
 - [`docs/benchmarks.md`](docs/benchmarks.md) — benchmark selection and validity
   gates
 - [`CONSTITUTION.md`](CONSTITUTION.md) — binding project laws

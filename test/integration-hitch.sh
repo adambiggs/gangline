@@ -1043,8 +1043,22 @@ contains "the contract says every agent belongs to an addressable team" \
 contains "the contract makes teammate reachability the shared-state test" \
   "$(contract_prose)" \
   "Put unfinished work and supporting detail in files that teammates can read without you."
-contains "the contract lets a result owner hitch help" \
-  "$(contract_prose)" "You may hitch teammates to help."
+# HELP ALONE IS NO LONGER A REASON TO HITCH. The old wording offered a teammate
+# for any result its owner wanted a hand with, which the terms above it now
+# answer: the owner's own subagents are the hand, and a window is for a harness,
+# an independent judgment or a life beyond the session. So the lock moves to the
+# sentence that carries the qualifier rather than pinning prose it contradicts.
+contains "the contract lets a result owner hitch on stated terms" \
+  "$(contract_prose)" "You may hitch teammates on the terms above."
+contains "and states the three the terms come to" \
+  "$(contract_prose)" \
+  "Hitch a teammate only when the result needs a harness you are not running, an owner whose judgment is independent of yours, or work that must outlive your session."
+contains "before which parallelism inside one result is the owner's own" \
+  "$(contract_prose)" \
+  "Parallelism inside a single result belongs to those subagents: they take no window, no name, and no drop."
+contains "and the contract points at where review depth is settled" \
+  "$(contract_prose)" \
+  '`docs/review-tiers.md` in the Gangline checkout holds the two tiers'
 contains "the contract requires one completed-result report" \
   "$(contract_prose)" "Send the lead one report when the result is complete."
 excludes "the startup contract no longer spends a line on compaction" \

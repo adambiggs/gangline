@@ -569,7 +569,7 @@ ac16() {
   # one; see docs/records/lead-brief-revision-2026-08-30.md.
   lead="$(tr '\n' ' ' < "$PRODUCT_ROOT/roles/lead.md" | tr -s ' ')"
   contains "AC16 the lead brief leaves methods to the teammate" "$lead" \
-    "The arc owner chooses the method, decomposition, delegation, and independent reviewer."
+    "The arc owner chooses the method, decomposition, delegation, and, where its tier calls for one, the independent reviewer."
   contains "AC16 the lead does not prescribe how an arc is worked" "$lead" \
     "Do not prescribe how an arc is worked."
   contains "AC16 the lead commissions rather than performs review" "$lead" \
@@ -602,6 +602,26 @@ ac16() {
     "Act on the substrate yourself only when what every arc depends on is failing"
   contains "AC16 the substrate repair returns to an owner" "$lead" \
     "hand the repair to an owner as an arc"
+  contains "AC16 an arc gets one owner and that owner's own subagents" "$lead" \
+    "Assign one owner per arc."
+  contains "AC16 a second window on one result buys nothing" "$lead" \
+    "a second window opened against the same result buys the team nothing"
+  contains "AC16 the lead's live-hitch ceiling is four by default" "$lead" \
+    "Four live hitches is your ceiling unless the operator has set another"
+  contains "AC16 the brief defers to the limit the refusal names" "$lead" \
+    "names the limit it applied"
+  contains "AC16 the ceiling is enforced rather than advisory" "$lead" \
+    '`gang hitch` refuses past it'
+  contains "AC16 an override carries a reason that survives the week" "$lead" \
+    "a reason you would defend a week later"
+  contains "AC16 a review is not an arc and outside Tier A not a hitch" "$lead" \
+    "A review is not an arc, and outside Tier A its reviewer is not a hitch."
+  contains "AC16 no agent is hitched to watch, relay, or split" "$lead" \
+    "Never hitch an agent to watch another, to relay an arc's progress"
+  contains "AC16 every assignment carries its tier before the owner starts" "$lead" \
+    "carries its tier on a line of its own, decided before the owner starts"
+  contains "AC16 a tier settled afterwards is settled by the outcome" "$lead" \
+    "A tier settled afterwards is settled by how the work turned out."
   # A brief is delivered beside the contract and costs every lead that reads it,
   # so no shipped brief may repeat a contract sentence. This catches a copy, not
   # a paraphrase: matching is exact once whitespace and terminal punctuation are
