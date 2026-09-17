@@ -1698,6 +1698,46 @@ equal "a step that prints just under the quiet bound passes" "0" "$gate_pulse_rc
 contains "the pulsing step ran through its final pulse" "$gate_pulse_out" "pulse 6"
 excludes "a pulsing step is not called stalled" "$gate_pulse_out" "STALLED"
 
+# CPU work is observable progress even when a program has not completed an
+# output line. This is the watchdog behaviour under test, so the clock is
+# scaled rather than stopped: a quiet-box busy child produced its first /proc
+# CPU tick in 10.5--11.5ms, snapshot creation took 1.1s, the fixture quiet
+# budget is 3s, the child remains active for 4.5s, and the production quiet
+# budget is 300s. The child's parent
+# blocks on one timed read while the child consumes CPU; there is no polling or
+# output heartbeat that could make the old output-only watchdog pass.
+gate_cpu_progress="$RUN_ROOT/gate-cpu-progress"
+cp -R "$gate_run" "$gate_cpu_progress"
+gate_cpu_progress_wait="$RUN_ROOT/gate-cpu-progress-wait"
+mkfifo "$gate_cpu_progress_wait"
+cat > "$gate_cpu_progress/test/lint.sh" <<SH
+#!/usr/bin/env bash
+# SPDX-License-Identifier: Apache-2.0
+busy=""
+cleanup() {
+  [ -z "\$busy" ] || kill -TERM "\$busy" 2>/dev/null || true
+  [ -z "\$busy" ] || wait "\$busy" 2>/dev/null || true
+}
+trap cleanup EXIT
+sh -c 'while :; do :; done' &
+busy=\$!
+exec 7<> "$gate_cpu_progress_wait"
+IFS= read -r -t 4.5 -u 7 || true
+cleanup
+trap - EXIT
+SH
+chmod +x "$gate_cpu_progress/test/lint.sh"
+git -C "$gate_cpu_progress" add test/lint.sh
+git -C "$gate_cpu_progress" -c user.name=fixture -c user.email=fixture@example.invalid \
+  commit -qm 'test: CPU-active quiet lint fixture'
+gate_cpu_progress_rc=0
+gate_cpu_progress_out="$(GANG_GATE_QUIET_SECONDS=3 \
+  "$gate_cpu_progress/test/gate.sh" 2>&1)" || gate_cpu_progress_rc=$?
+equal "a CPU-active quiet lint step is not killed as stalled" \
+  "0" "$gate_cpu_progress_rc"
+excludes "CPU progress is not called an output stall" \
+  "$gate_cpu_progress_out" "STALLED: lint"
+
 # REQUIRE_ALL is the gate's evidence, not a permission to print its verdict. A
 # nested real focused run reaches the actual omitted-part branch. Its own gate
 # self-test skips this probe, so this remains one child rather than recursing.
