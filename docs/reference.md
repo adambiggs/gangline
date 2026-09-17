@@ -24,8 +24,8 @@ Self is resolved from the calling tmux pane in the same way as a message sender.
 | Bare command | Result |
 |---|---|
 | `status`, `capture`, `composer`, `compact`, `context`, `mail`, `limits`, `wait-limit`, `interrupt`, `flush` | Target the calling agent. |
-| `drop` | Print help; destructive commands never target by omission. |
-| `hitch`, `adopt`, `rename`, `send`, `run`, `wait`, `explain`, `down` | Print help; the missing name is not a self target. |
+| `drop` | Refuse with its one-line usage; destructive commands never target by omission. |
+| `hitch`, `adopt`, `rename`, `send`, `run`, `wait`, `explain`, `down` | Refuse with their one-line usage; the missing name is not a self target. |
 | `up`, `roster`, `attach`, `teams`, `alerts`, `tick`, `collars`, `models`, `roles`, `config`, `curfew`, `notify`, `upgrade` | Keep their ordinary bare meaning. |
 
 `gang --version` prints the release version from the adjacent `version.txt`

@@ -251,6 +251,15 @@ arity_probes=(
   "upgrade|STRAY|upgrade: unexpected argument 'STRAY'"
   "usage|STRAY|usage: unexpected argument 'STRAY'"
   "cap|STRAY|cap: unknown action 'STRAY'"
+  "trust|codex|trust: -d <dir> is required"
+  "at|--to ghost --stdin|at: a time is required"
+  "at|90m --to ghost --clear|at: --clear cancels every timed send parked for a target and takes nothing else"
+  "interrupt|ghost -m|interrupt: -m needs a value"
+  "compact|ghost --resume|compact: --resume needs the turn to take after the compaction"
+  "wait|ghost --until|wait: --until needs idle or done"
+  "wait|ghost --until later|wait: --until must be idle or done, got 'later'"
+  "wait|ghost --until idle --timeout zero|wait: --timeout must be a positive whole number of seconds, got 'zero'"
+  "adopt|ghost|adopt: -c <collar> is required"
 )
 arity_probe_commands="$(printf '%s\n' "${arity_probes[@]}" | cut -d'|' -f1 | sort -u)"
 equal "every dispatched operator command refuses arity it cannot consume" \
@@ -267,6 +276,46 @@ for arity_probe in "${arity_probes[@]}"; do
   refuses "gang $arity_cmd refuses a stray argument" \
     "$arity_expected" env $arity_env "$GANG" "$arity_cmd" $arity_argv
 done
+# ARGUMENT REFUSALS ARE A SEPARATE CLI SURFACE from an operational failure:
+# the command has read enough argv to know it will not act, so it names its
+# compact syntax, preserves the parser's exact explanation, and points at the
+# full page.  The table above already covers every dispatched operator command
+# without a side effect; reusing it keeps a newly added parser from escaping
+# this contract.
+for arity_probe in "${arity_probes[@]}"; do
+  arity_cmd="${arity_probe%%|*}"
+  arity_rest="${arity_probe#*|}"
+  arity_argv="${arity_rest%%|*}"
+  arity_rest="${arity_rest#*|}"
+  arity_expected="${arity_rest%%|*}"
+  arity_env=""
+  [ "$arity_rest" = "$arity_expected" ] || arity_env="${arity_rest#*|}"
+  arity_usage_rc=0
+  # shellcheck disable=SC2086 # probe argv and env are deliberately word-split
+  arity_usage_out="$(env $arity_env "$GANG" "$arity_cmd" $arity_argv 2>&1)" \
+    || arity_usage_rc=$?
+  equal "gang $arity_cmd marks an argument error as a refusal" \
+    "3" "$arity_usage_rc"
+  contains "gang $arity_cmd prefixes its argument error with one-line usage" \
+    "$arity_usage_out" "usage: gang $arity_cmd"
+  contains "gang $arity_cmd keeps the parser's specific argument error" \
+    "$arity_usage_out" "$arity_expected"
+  contains "gang $arity_cmd points from its argument error to full help" \
+    "$arity_usage_out" "gang $arity_cmd --help"
+done
+# THE POSITION OF A REQUIRED NAME IS NOT AN INVITATION to fall back to the
+# onboarding page.  This is the representative shape that used to do so: all
+# options are valid, but the name arrived where only the option parser reads.
+hitch_position_rc=0
+hitch_position_out="$(env GANG_COLLAR=claude-code "$GANG" hitch -c claude-code -d "$ROOT" 2>&1)" \
+  || hitch_position_rc=$?
+equal "hitch refuses a name omitted before its options" "3" "$hitch_position_rc"
+contains "the omitted hitch name prints its one-line usage" \
+  "$hitch_position_out" "usage: gang hitch"
+contains "the omitted hitch name points at hitch help" \
+  "$hitch_position_out" "gang hitch --help"
+excludes "the omitted hitch name does not print the onboarding page" \
+  "$hitch_position_out" "Every agent is a real CLI harness"
 # help is a dispatcher arm rather than a command function, and it discarded
 # everything past the page it was asked for.
 refuses "gang help refuses a stray argument" \

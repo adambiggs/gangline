@@ -1736,7 +1736,22 @@ EOF
 
 usage() { cmd_help; }
 
-usage_die() { usage >&2; exit 1; }
+usage_line() { # $1 = public command; print the command's first invocation line
+  local line
+  line="$(cmd_help "$1" | awk -v command="$1" '
+    $0 ~ "^[[:space:]]*gang " command "( |$)" { sub(/^[[:space:]]*/, ""); print; exit }
+  ')"
+  [ -n "$line" ] || die "internal: help for '$1' has no invocation line"
+  printf 'usage: %s\n' "$line"
+}
+
+usage_refuse() { # argv is invalid, so no command effect has happened
+  usage_line "$cmd" >&2
+  printf 'gang: for complete usage, run gang %s --help\n' "$cmd" >&2
+  refuse "$*"
+}
+
+usage_die() { usage_refuse "$cmd: required argument"; }
 
 TEST_ONLY_COLLARS="bash"
 
@@ -1820,7 +1835,7 @@ list_usable_roles() {
 }
 
 cmd_roles() {
-  [ $# -eq 0 ] || die "roles: takes no arguments"
+  [ $# -eq 0 ] || usage_refuse "roles: takes no arguments"
   role_rows
 }
 
@@ -5493,7 +5508,7 @@ EOF
 
 cmd_teams() { # every team gang wrote down, and whether its server still answers
   local root file name socket rc rows=0
-  [ $# -eq 0 ] || die "teams: takes no arguments"
+  [ $# -eq 0 ] || usage_refuse "teams: takes no arguments"
   root="$(team_root_of)"
   if [ ! -d "$root" ]; then
     printf '%s\n' "$(colour "$C_DIM" "no teams recorded under $root")"
@@ -7219,7 +7234,7 @@ cmd_tick_worker() { # internal owner; 75 contention, 76 committed failed pass, 7
 
 cmd_tick() { # public synchronous seam; its worker is always self-deadlined
   local out="" rc=0 GANG_TICK_TICKET=""
-  [ $# -eq 0 ] || die "tick: takes no arguments"
+  [ $# -eq 0 ] || usage_refuse "tick: takes no arguments"
   session_live || return 0
   require_python3
   tick_deadline_valid "$GANG_TICK_DEADLINE" || exit 1
@@ -7331,7 +7346,7 @@ cmd_alerts() { # read active conditions; --open changes only their seen state
     0:) ;;
     1:--porcelain) mode=porcelain ;;
     1:--open) mode=open ;;
-    *) die "alerts: expected no arguments, --porcelain, or --open" ;;
+    *) usage_refuse "alerts: expected no arguments, --porcelain, or --open" ;;
   esac
   if ! session_live; then
     [ "$mode" = porcelain ] \
@@ -9184,7 +9199,7 @@ run_record_create() { # caller holds RUN_TEAM_ROOT/.lock; argv follows --
 
 run_start() { # argv follows --
   local active out="" rc=0 state_home post post_runner post_finalize post_dir
-  [ "$#" -gt 0 ] || die "run: command required after --"
+  [ "$#" -gt 0 ] || usage_refuse "run: command required after --"
   session_live || refuse "run: no Gangline team is running, so no completion can be delivered"
   run_requester_read
   run_state_prepare
@@ -9499,18 +9514,18 @@ cmd_run() {
       run_start "$@"
       ;;
     --cancel)
-      [ "$#" -eq 2 ] || die "run: --cancel takes one run id"
+      [ "$#" -eq 2 ] || usage_refuse "run: --cancel takes one run id"
       run_cancel "$2"
       ;;
     --active)
-      [ "$#" -eq 1 ] || die "run: --active takes no argument"
+      [ "$#" -eq 1 ] || usage_refuse "run: --active takes no argument"
       run_active
       ;;
     --finish)
       run_finish "$@"
       ;;
     '') cmd_help run; return 1 ;;
-    *) die "run: expected -- <command>, --active, or --cancel <run-id>" ;;
+    *) usage_refuse "run: expected -- <command>, --active, or --cancel <run-id>" ;;
   esac
 }
 
@@ -14035,20 +14050,20 @@ else:
 
 cmd_trust() { # an attended native hooks-review window; it never sends an answer
   local prof="${1:-}" dir="" id="" name="" launch_env="" model="" effort="" levels="" flat="" levels_rc=0
-  [ -n "$prof" ] && [[ "$prof" != -* ]] || { cmd_help trust; exit 1; }
+  [ -n "$prof" ] && [[ "$prof" != -* ]] || usage_refuse "trust: collar required"
   shift
   while [ $# -gt 0 ]; do
     case "$1" in
-      -d|--dir) [ $# -ge 2 ] || die "trust: $1 needs a value"
+      -d|--dir) [ $# -ge 2 ] || usage_refuse "trust: $1 needs a value"
                 dir="$2"; shift 2 ;;
-      -m|--model) [ $# -ge 2 ] || die "trust: $1 needs a value"
+      -m|--model) [ $# -ge 2 ] || usage_refuse "trust: $1 needs a value"
                   model="$2"; shift 2 ;;
-      -e|--effort) [ $# -ge 2 ] || die "trust: $1 needs a value"
+      -e|--effort) [ $# -ge 2 ] || usage_refuse "trust: $1 needs a value"
                    effort="$2"; shift 2 ;;
-      *) die "trust: unknown argument '$1'" ;;
+      *) usage_refuse "trust: unknown argument '$1'" ;;
     esac
   done
-  [ -n "$dir" ] || die "trust: -d <dir> is required, so the native review answers the same directory its refused hitch used"
+  [ -n "$dir" ] || usage_refuse "trust: -d <dir> is required, so the native review answers the same directory its refused hitch used"
   [ -d "$dir" ] || die "trust: no such directory '$dir'"
   dir="$(CDPATH='' cd -- "$dir" && pwd)" || die "trust: cannot resolve directory '$dir'"
   collar_file "$prof" >/dev/null \
@@ -14242,28 +14257,28 @@ hitch_launch() {
   valid_name "$name" \
     || die "hitch: '$name' is not usable — use letters, digits, dot, dash and underscore; do not start with dash or dot; hitch and gangline are reserved"
   while [ $# -gt 0 ]; do case "$1" in
-    -c|--collar) [ $# -ge 2 ] || die "hitch: $1 needs a value"
+    -c|--collar) [ $# -ge 2 ] || usage_refuse "hitch: $1 needs a value"
                   prof="$2"; collar_arg=1; shift 2 ;;
-    -d|--dir)     [ $# -ge 2 ] || die "hitch: $1 needs a value"; dir="$2";  shift 2 ;;
-    -m|--model)   [ $# -ge 2 ] || die "hitch: $1 needs a value"; model="$2"; shift 2 ;;
-    -e|--effort)  [ $# -ge 2 ] || die "hitch: $1 needs a value"; effort="$2"; shift 2 ;;
-    -t|--task)    [ $# -ge 2 ] || die "hitch: $1 needs a value"; task="$2"; shift 2 ;;
-    -r|--role)    [ $# -ge 2 ] || die "hitch: $1 needs a value"; role="$2"; shift 2 ;;
-    -l|--lights)  [ $# -ge 2 ] || die "hitch: $1 needs a value"
+    -d|--dir)     [ $# -ge 2 ] || usage_refuse "hitch: $1 needs a value"; dir="$2";  shift 2 ;;
+    -m|--model)   [ $# -ge 2 ] || usage_refuse "hitch: $1 needs a value"; model="$2"; shift 2 ;;
+    -e|--effort)  [ $# -ge 2 ] || usage_refuse "hitch: $1 needs a value"; effort="$2"; shift 2 ;;
+    -t|--task)    [ $# -ge 2 ] || usage_refuse "hitch: $1 needs a value"; task="$2"; shift 2 ;;
+    -r|--role)    [ $# -ge 2 ] || usage_refuse "hitch: $1 needs a value"; role="$2"; shift 2 ;;
+    -l|--lights)  [ $# -ge 2 ] || usage_refuse "hitch: $1 needs a value"
                   lights_arg="$2"; lights_given=1; shift 2 ;;
     --resume)     resume=1; shift
                   if [ $# -gt 0 ] && [[ "$1" != -* ]]; then resume_id="$1"; shift; fi ;;
-    --stdin)      [ "$use_stdin" -eq 0 ] || die "hitch: --stdin may be passed only once"
+    --stdin)      [ "$use_stdin" -eq 0 ] || usage_refuse "hitch: --stdin may be passed only once"
                   use_stdin=1; shift ;;
-    --tier)       [ $# -ge 2 ] || die "hitch: $1 needs A or B"
-                  [ "$assignment_tier_given" -eq 0 ] || die "hitch: --tier may be passed only once"
-                  case "$2" in A|B) assignment_tier="$2" ;; *) die "hitch: --tier takes A or B, not '$2'" ;; esac
+    --tier)       [ $# -ge 2 ] || usage_refuse "hitch: $1 needs A or B"
+                  [ "$assignment_tier_given" -eq 0 ] || usage_refuse "hitch: --tier may be passed only once"
+                  case "$2" in A|B) assignment_tier="$2" ;; *) usage_refuse "hitch: --tier takes A or B, not '$2'" ;; esac
                   assignment_tier_given=1; shift 2 ;;
-    --over-ceiling) [ $# -ge 2 ] || die "hitch: $1 needs a value"
-                  [ "$over_ceiling_given" -eq 0 ] || die "hitch: --over-ceiling may be passed only once"
-                  case "$2" in *[![:space:]]*) ;; *) die "hitch: --over-ceiling needs a reason for holding one more agent" ;; esac
+    --over-ceiling) [ $# -ge 2 ] || usage_refuse "hitch: $1 needs a value"
+                  [ "$over_ceiling_given" -eq 0 ] || usage_refuse "hitch: --over-ceiling may be passed only once"
+                  case "$2" in *[![:space:]]*) ;; *) usage_refuse "hitch: --over-ceiling needs a reason for holding one more agent" ;; esac
                   over_ceiling="$2"; over_ceiling_given=1; shift 2 ;;
-    *) die "hitch: unknown argument '$1'" ;;
+    *) usage_refuse "hitch: unknown argument '$1'" ;;
   esac; done
   usage_lights_parse "$GANG_USAGE_LIGHTS" >/dev/null || true
   auto_resume_parse "$GANG_AUTO_RESUME" >/dev/null || true
@@ -14969,12 +14984,12 @@ cmd_talk() { # compose with the terminal editor, then hand the bytes to send
   case "$name" in ''|-*) usage_die ;; esac
   shift
   while [ $# -gt 0 ]; do case "$1" in
-    --from) [ $# -ge 2 ] || die "talk: --from needs a value"
+    --from) [ $# -ge 2 ] || usage_refuse "talk: --from needs a value"
             from="$2"; from_seen=1; shift 2 ;;
     --live-only|--supersede|--ack) send_args+=("$1"); shift ;;
     --stdin) die "talk: the body opens in your editor; --stdin belongs to gang send" ;;
-    -*) die "talk: unknown argument '$1'" ;;
-    *) die "talk: unknown argument '$1' — name the recipient first: gang talk <name>" ;;
+    -*) usage_refuse "talk: unknown argument '$1'" ;;
+    *) usage_refuse "talk: unknown argument '$1' — name the recipient first: gang talk <name>" ;;
   esac; done
   [ -t 0 ] && [ -t 1 ] && [ -t 2 ] \
     || die "talk: requires a terminal; non-interactive callers use gang send --to $name --stdin"
@@ -15152,11 +15167,11 @@ cmd_send() {
   local drain_rc=0 drain_err="" commit_err="" next_opportunity="next completes a turn"
   local promote_warning="" no_reply=0 waiver="" waived_note="" ack=0
   while [ $# -gt 0 ]; do case "$1" in
-    --to) [ $# -ge 2 ] || die "send: --to needs a value"
-          [ -z "$name" ] || die "send: --to may be passed only once"
+    --to) [ $# -ge 2 ] || usage_refuse "send: --to needs a value"
+          [ -z "$name" ] || usage_refuse "send: --to may be passed only once"
           name="$2"; shift 2 ;;
-    --from) [ $# -ge 2 ] || die "send: --from needs a value"; from="$2"; shift 2 ;;
-    --stdin) [ "$use_stdin" -eq 0 ] || die "send: --stdin may be passed only once"
+    --from) [ $# -ge 2 ] || usage_refuse "send: --from needs a value"; from="$2"; shift 2 ;;
+    --stdin) [ "$use_stdin" -eq 0 ] || usage_refuse "send: --stdin may be passed only once"
              use_stdin=1; shift ;;
     --live-only) live_only=1; shift ;;
     --supersede) supersede=1; shift ;;
@@ -15168,11 +15183,11 @@ cmd_send() {
     # remedy. Anything not shaped like a flag is what someone typed where the
     # body goes, and the whole body then comes back at them as "unknown
     # argument" with nothing saying where it should have gone instead.
-    -*) die "send: unknown argument '$1'" ;;
-    *) die "send: unknown argument '$1' — a message body is not an argument; gang reads it from stdin: gang send --to <name> --stdin" ;;
+    -*) usage_refuse "send: unknown argument '$1'" ;;
+    *) usage_refuse "send: unknown argument '$1' — a message body is not an argument; gang reads it from stdin: gang send --to <name> --stdin" ;;
   esac; done
-  [ -n "$name" ] || die "send: target required (--to <name>)"
-  [ "$use_stdin" -eq 1 ] || die "send: message body required on stdin"
+  [ -n "$name" ] || usage_refuse "send: target required (--to <name>)"
+  [ "$use_stdin" -eq 1 ] || usage_refuse "send: message body required on stdin"
   [ "$supersede" -eq 0 ] || [ "$live_only" -eq 0 ] \
     || die "send: --supersede replaces an older message in the spool, and --live-only never parks one"
   [ "$ack" -eq 0 ] || [ "$live_only" -eq 0 ] \
@@ -15759,18 +15774,18 @@ cmd_at() { # park an attributed envelope now, deliver it when the clock passes
   local now due frag entry n=0 e
   case "${1:-}" in ''|-*) ;; *) when="$1"; shift ;; esac
   while [ $# -gt 0 ]; do case "$1" in
-    --to) [ $# -ge 2 ] || die "at: --to needs a value"
-          [ -z "$name" ] || die "at: --to may be passed only once"
+    --to) [ $# -ge 2 ] || usage_refuse "at: --to needs a value"
+          [ -z "$name" ] || usage_refuse "at: --to may be passed only once"
           name="$2"; shift 2 ;;
-    --from) [ $# -ge 2 ] || die "at: --from needs a value"; from="$2"; shift 2 ;;
-    --stdin) [ "$use_stdin" -eq 0 ] || die "at: --stdin may be passed only once"
+    --from) [ $# -ge 2 ] || usage_refuse "at: --from needs a value"; from="$2"; shift 2 ;;
+    --stdin) [ "$use_stdin" -eq 0 ] || usage_refuse "at: --stdin may be passed only once"
              use_stdin=1; shift ;;
     --clear) clear=1; shift ;;
     --fire) [ $# -ge 2 ] || die "at: --fire needs an entry name"; fire="$2"; shift 2 ;;
     --unit) [ $# -ge 2 ] || die "at: --unit needs a transient unit name"
             fired_unit="$2"; shift 2 ;;
-    -*) die "at: unknown argument '$1'" ;;
-    *) die "at: unknown argument '$1' — a message body is not an argument; gang reads it from stdin: gang at <time> --to <name> --stdin" ;;
+    -*) usage_refuse "at: unknown argument '$1'" ;;
+    *) usage_refuse "at: unknown argument '$1' — a message body is not an argument; gang reads it from stdin: gang at <time> --to <name> --stdin" ;;
   esac; done
   if [ -n "$fire" ]; then
     [ -z "$when" ] && [ "$clear" -eq 0 ] && [ "$use_stdin" -eq 0 ] && [ -z "$from" ] \
@@ -15790,10 +15805,10 @@ cmd_at() { # park an attributed envelope now, deliver it when the clock passes
     return
   fi
   [ -z "$fired_unit" ] || die "at: --unit belongs to the internal --fire callback"
-  [ -n "$name" ] || die "at: target required (--to <name>)"
+  [ -n "$name" ] || usage_refuse "at: target required (--to <name>)"
   if [ "$clear" -eq 1 ]; then
     [ -z "$when" ] && [ "$use_stdin" -eq 0 ] && [ -z "$from" ] \
-      || die "at: --clear cancels every timed send parked for a target and takes nothing else"
+      || usage_refuse "at: --clear cancels every timed send parked for a target and takes nothing else"
     resolve "$name"
     while read -r e; do
       [ -n "$e" ] || continue
@@ -15804,8 +15819,8 @@ cmd_at() { # park an attributed envelope now, deliver it when the clock passes
     printf 'cancelled %s timed send(s) parked for %s\n' "$n" "$name"
     return
   fi
-  [ -n "$when" ] || die "at: a time is required: gang at <duration|HH:MM> --to <name> --stdin"
-  [ "$use_stdin" -eq 1 ] || die "at: message body required on stdin"
+  [ -n "$when" ] || usage_refuse "at: a time is required: gang at <duration|HH:MM> --to <name> --stdin"
+  [ "$use_stdin" -eq 1 ] || usage_refuse "at: message body required on stdin"
   command -v systemd-run >/dev/null 2>&1 \
     || die "at: systemd-run is required for the transient user timer that delivers a timed send; nothing was parked"
   now="$(date +%s)"
@@ -15889,7 +15904,7 @@ flush_stranded() { # $1 = target name
 # and no Enter is pressed.
 cmd_flush() {
   local name="${1:-}" parked body frag box loaded unverified_record flush_cost flush_queued_rc=0
-  [ $# -le 1 ] || die "flush: unexpected argument '$2'"
+  [ $# -le 1 ] || usage_refuse "flush: unexpected argument '$2'"
   if [ -z "$name" ]; then
     name="$(self_name)" || {
       cmd_help flush
@@ -16015,16 +16030,16 @@ cmd_interrupt() {
   # that was wrong. What the caller typed is knowable without a pane; where they
   # are standing is not.
   while [ $# -gt 0 ]; do case "$1" in
-    -m) [ "$have_m" -eq 0 ] || die "interrupt: -m may be passed only once"
-        [ $# -ge 2 ] || die "interrupt: -m needs a value"
-        [ -n "$2" ] || die "interrupt: -m needs a non-empty message"
+    -m) [ "$have_m" -eq 0 ] || usage_refuse "interrupt: -m may be passed only once"
+        [ $# -ge 2 ] || usage_refuse "interrupt: -m needs a value"
+        [ -n "$2" ] || usage_refuse "interrupt: -m needs a non-empty message"
         reason="$2"; have_m=1; shift 2 ;;
-    --from) [ $# -ge 2 ] || die "interrupt: --from needs a value"
+    --from) [ $# -ge 2 ] || usage_refuse "interrupt: --from needs a value"
         from="$2"; shift 2 ;;
-    *) die "interrupt: unexpected argument '$1'" ;;
+    *) usage_refuse "interrupt: unexpected argument '$1'" ;;
   esac; done
   [ "$have_m" -eq 1 ] || [ -z "$from" ] \
-    || die "interrupt: --from names the author of a message; pass -m or drop it"
+    || usage_refuse "interrupt: --from names the author of a message; pass -m or drop it"
   if [ -z "$name" ]; then
     name="$(self_name)" || {
       cmd_help interrupt
@@ -16209,18 +16224,18 @@ compact_recover() { # $1 = resolved agent name; press the collar's way out of a 
 cmd_compact() {
   local name="" self="" mine=0 busy_rc=0 resume="" resume_given=0 cancel=0 recover=0 self_request="" self_reason="" self_witness="" option="" self_claim_rc=0 submit_rc=0
   while [ $# -gt 0 ]; do case "$1" in
-    --resume) [ $# -ge 2 ] || die "compact: --resume needs the turn to take after the compaction"
-              [ "$resume_given" -eq 0 ] || die "compact: --resume may be passed only once"
+    --resume) [ $# -ge 2 ] || usage_refuse "compact: --resume needs the turn to take after the compaction"
+              [ "$resume_given" -eq 0 ] || usage_refuse "compact: --resume may be passed only once"
               resume="$2"; resume_given=1; shift 2 ;;
     --cancel) cancel=1; shift ;;
     --recover) recover=1; shift ;;
-    -*) die "compact: unknown argument '$1'" ;;
-    *) [ -z "$name" ] || die "compact: unexpected argument '$1'"
+    -*) usage_refuse "compact: unknown argument '$1'" ;;
+    *) [ -z "$name" ] || usage_refuse "compact: unexpected argument '$1'"
        name="$1"; shift ;;
   esac; done
   case "$resume" in
     *[![:space:]]*|'') ;;
-    *) die "compact: --resume was given only whitespace; omit it to use the default continuation" ;;
+    *) usage_refuse "compact: --resume was given only whitespace; omit it to use the default continuation" ;;
   esac
   if [ -z "$name" ]; then
     name="$(self_name)" || {
@@ -16232,9 +16247,9 @@ cmd_compact() {
   [ "$cancel" -eq 0 ] || [ "$recover" -eq 0 ] \
     || die "compact: --cancel and --recover are separate operations; pass one"
   [ "$cancel" -eq 0 ] || [ "$resume_given" -eq 0 ] \
-    || die "compact: --cancel withdraws a request and takes no --resume"
+    || usage_refuse "compact: --cancel withdraws a request and takes no --resume"
   [ "$recover" -eq 0 ] || [ "$resume_given" -eq 0 ] \
-    || die "compact: --recover takes no --resume"
+    || usage_refuse "compact: --recover takes no --resume"
   resolve "$name"
   if [ "$cancel" -eq 1 ]; then
     self_compact_cancel "$name"
@@ -16353,7 +16368,7 @@ cmd_compact() {
 
 cmd_curfew() { # declare, show, or clear one optional team curfew
   local spec="${1:-}" now now_ns duration_ns deadline_ns rc=0
-  [ $# -le 1 ] || die "curfew: unexpected argument '$2'; gang curfew takes one duration, HH:MM clock time, or clear"
+  [ $# -le 1 ] || usage_refuse "curfew: unexpected argument '$2'; gang curfew takes one duration, HH:MM clock time, or clear"
   session_live || die "no team (session '$SESSION' not running)"
   if [ -z "$spec" ]; then
     curfew_read || rc=$?
@@ -16395,7 +16410,7 @@ cmd_curfew() { # declare, show, or clear one optional team curfew
 
 cmd_notify() { # declare, show, or clear one optional stall-note target
   local name="${1:-}" current
-  [ $# -le 1 ] || die "notify: unexpected argument '$2'; gang notify takes one agent name or clear"
+  [ $# -le 1 ] || usage_refuse "notify: unexpected argument '$2'; gang notify takes one agent name or clear"
   session_live || die "no team (session '$SESSION' not running)"
   if [ -z "$name" ]; then
     current="$(tmux show-options -qv -t "=$SESSION:" @gl_notify 2>/dev/null)" || current=""
@@ -16421,7 +16436,7 @@ cmd_notify() { # declare, show, or clear one optional stall-note target
 
 cmd_context() { # print the collar's native context reading, unparsed
   local name="${1:-}"
-  [ $# -le 1 ] || die "context: unexpected argument '$2'"
+  [ $# -le 1 ] || usage_refuse "context: unexpected argument '$2'"
   if [ -z "$name" ]; then
     name="$(self_name)" || {
       cmd_help context
@@ -16699,13 +16714,13 @@ cmd_log() { # durable evidence for this team, optionally one agent
   local -a args=()
   case "${1:-}" in ''|--*) ;; *) name="$1"; shift ;; esac
   while [ $# -gt 0 ]; do case "$1" in
-    --since) [ $# -ge 2 ] || die 'log: --since needs a monotonic timestamp'
+    --since) [ $# -ge 2 ] || usage_refuse 'log: --since needs a monotonic timestamp'
              since="$2"; shift 2 ;;
     --kind) [ $# -ge 2 ] || die 'log: --kind needs an event kind'
             kind="$2"; shift 2 ;;
-    *) die "log: unexpected argument '$1'" ;;
+    *) usage_refuse "log: unexpected argument '$1'" ;;
   esac; done
-  case "$since" in ''|*[!0-9]*) [ -z "$since" ] || die 'log: --since must be a monotonic whole-number timestamp' ;; esac
+  case "$since" in ''|*[!0-9]*) [ -z "$since" ] || usage_refuse 'log: --since must be a monotonic whole-number timestamp' ;; esac
   if [ "$provided" -eq 0 ] && ! session_live; then
     cmd_help log
     return 1
@@ -16949,22 +16964,22 @@ cmd_usage() { # token consumption per agent, joined from ccusage by native sessi
   while [ $# -gt 0 ]; do
     case "$1" in
       --all)
-        [ "$all" -eq 0 ] || die "usage: --all was given more than once"
+        [ "$all" -eq 0 ] || usage_refuse "usage: --all was given more than once"
         all=1 ;;
       --daily)
-        [ -z "$daily" ] || die "usage: --daily was given more than once"
+        [ -z "$daily" ] || usage_refuse "usage: --daily was given more than once"
         daily=today
         if [ $# -gt 1 ] && [[ "$2" != --* ]]; then daily="$2"; shift; fi ;;
       --since)
-        [ -z "$since" ] || die "usage: --since was given more than once"
-        [ $# -gt 1 ] || die "usage: --since needs a YYYY-MM-DD date"
+        [ -z "$since" ] || usage_refuse "usage: --since was given more than once"
+        [ $# -gt 1 ] || usage_refuse "usage: --since needs a YYYY-MM-DD date"
         since="$2"; shift ;;
-      *) die "usage: unexpected argument '$1'" ;;
+      *) usage_refuse "usage: unexpected argument '$1'" ;;
     esac
     shift
   done
   [ -z "$daily" ] || [ -z "$since" ] \
-    || die "usage: --daily and --since are separate views; choose one"
+    || usage_refuse "usage: --daily and --since are separate views; choose one"
   if session_live; then
     created="$(usage_team_created)"
     [ -n "$created" ] || die "usage: could not read when session '$SESSION' was created"
@@ -16989,11 +17004,11 @@ cmd_usage() { # token consumption per agent, joined from ccusage by native sessi
 cmd_limits() { # sample the collar's correctness source, never its usage UI
   local name="${1:-}" rc=0 cause state now line label used reset observed age when
   if [ "$name" = --history ]; then
-    [ $# -eq 1 ] || die "limits: --history takes no agent name or other arguments"
+    [ $# -eq 1 ] || usage_refuse "limits: --history takes no agent name or other arguments"
     "$GANGLINE_CAP_HELPER" history
     return
   fi
-  [ $# -le 1 ] || die "limits: unexpected argument '$2'"
+  [ $# -le 1 ] || usage_refuse "limits: unexpected argument '$2'"
   if [ -z "$name" ]; then
     name="$(self_name)" || {
       cmd_help limits
@@ -17026,7 +17041,7 @@ cmd_cap() { # provider window history; the helper owns storage and thresholds
   case "$action" in
     -h|--help) cmd_help cap; return 0 ;;
     check|show|watch|replay|forget) ;;
-    *) die "cap: unknown action '$action'; expected check, show, watch, replay or forget" ;;
+    *) usage_refuse "cap: unknown action '$action'; expected check, show, watch, replay or forget" ;;
   esac
   "$GANGLINE_CAP_HELPER" "$action" "$@"
 }
@@ -17252,15 +17267,15 @@ cmd_wait_limit() { # schedule, clear, or internally fire one provider-reset wake
   local name="" resume="" clear=0 fire="" fired_unit="" rc=0 cause record legacy_id
   case "${1:-}" in ''|-*) ;; *) name="$1"; shift ;; esac
   while [ $# -gt 0 ]; do case "$1" in
-    --resume) [ $# -ge 2 ] || die "wait-limit: --resume needs a value"
-              [ -z "$resume" ] || die "wait-limit: --resume may be passed once"
+    --resume) [ $# -ge 2 ] || usage_refuse "wait-limit: --resume needs a value"
+              [ -z "$resume" ] || usage_refuse "wait-limit: --resume may be passed once"
               resume="$2"; shift 2 ;;
     --clear) clear=1; shift ;;
     --fire) [ $# -ge 2 ] || die "wait-limit: --fire needs a reset epoch"
             fire="$2"; shift 2 ;;
     --unit) [ $# -ge 2 ] || die "wait-limit: --unit needs a transient unit name"
             fired_unit="$2"; shift 2 ;;
-    *) die "wait-limit: unknown argument '$1'" ;;
+    *) usage_refuse "wait-limit: unknown argument '$1'" ;;
   esac; done
   [ -n "$name" ] || name="$(self_name)" || {
     cmd_help wait-limit
@@ -17830,8 +17845,8 @@ explain_cache_compactions_report() { # $1 window id; recent automatic submission
 
 cmd_explain() {
   local name="${1:-}" pane scope_unit="" harness_identity="" harness_lost="" harness_unreadable="" tick_action=""
-  [ $# -le 1 ] || die "explain: unexpected argument '$2'"
-  case "$name" in ''|-*) cmd_help explain; exit 1 ;; esac
+  [ $# -le 1 ] || usage_refuse "explain: unexpected argument '$2'"
+  case "$name" in ''|-*) usage_refuse "explain: agent required" ;; esac
   resolve "$name"
   pane="$(wait_active_pane "$AGENT_ID")" \
     || die "explain: cannot identify the active pane in '$name'"
@@ -18201,33 +18216,33 @@ PY
 
 cmd_wait() {
   local name="${1:-}" until="" bound="$GANG_TURN_LIMIT" bound_given=0 pane state self="" turn_rc=0
-  case "$name" in ''|-*) cmd_help wait; exit 1 ;; esac
+  case "$name" in ''|-*) usage_refuse "wait: agent required" ;; esac
   shift
   while [ $# -gt 0 ]; do
     case "$1" in
       --until)
-        [ $# -ge 2 ] || die "wait: --until needs idle or done"
-        [ -z "$until" ] || die "wait: --until was given more than once"
+        [ $# -ge 2 ] || usage_refuse "wait: --until needs idle or done"
+        [ -z "$until" ] || usage_refuse "wait: --until was given more than once"
         until="$2"; shift 2 ;;
       --timeout)
-        [ $# -ge 2 ] || die "wait: --timeout needs a positive whole number of seconds"
-        [ "$bound_given" -eq 0 ] || die "wait: --timeout was given more than once"
+        [ $# -ge 2 ] || usage_refuse "wait: --timeout needs a positive whole number of seconds"
+        [ "$bound_given" -eq 0 ] || usage_refuse "wait: --timeout was given more than once"
         bound_given=1
         bound="$2"; shift 2 ;;
-      *) die "wait: unexpected argument '$1'" ;;
+      *) usage_refuse "wait: unexpected argument '$1'" ;;
     esac
   done
   case "$until" in
     idle|done) ;;
-    '') die "wait: --until idle|done is required" ;;
-    *) die "wait: --until must be idle or done, got '$until'" ;;
+    '') usage_refuse "wait: --until idle|done is required" ;;
+    *) usage_refuse "wait: --until must be idle or done, got '$until'" ;;
   esac
   case "$bound" in
-    ''|*[!0-9]*) die "wait: --timeout must be a positive whole number of seconds, got '$bound'" ;;
+    ''|*[!0-9]*) usage_refuse "wait: --timeout must be a positive whole number of seconds, got '$bound'" ;;
   esac
   case "$bound" in
     *[1-9]*) ;;
-    *) die "wait: --timeout must be a positive whole number of seconds, got '$bound'" ;;
+    *) usage_refuse "wait: --timeout must be a positive whole number of seconds, got '$bound'" ;;
   esac
   self="$(self_window)" || self=""
   [ -z "$self" ] \
@@ -18395,7 +18410,7 @@ cmd_status() {
   local state self_failed self_pending state_note_failed staged staged_box staged_box_rc parked park_unverified spooled age held held_dir spool_failed stall_failed auto_failed hook_failed journal_failed mismatch probe_failed skew="" current self_failed_rc parked_rc mode_note mode_rc=1 run_rc=0
   local timed_line status_cost staged_rc
   local name="${1:-}"
-  [ $# -le 1 ] || die "status: unexpected argument '$2'"
+  [ $# -le 1 ] || usage_refuse "status: unexpected argument '$2'"
   if [ -z "$name" ]; then
     name="$(self_name)" || {
       cmd_help status
@@ -18565,7 +18580,7 @@ cmd_status() {
 cmd_mail() { # read a queue; its own agent's read archives what it consumes
   local name="${1:-}" id rc=0 dir e n=0 held=0 deferred=0
   local self="" mine=0 claim label heading=waiting mail_archive="" archived_name="" self_lock=0
-  [ $# -le 1 ] || die "mail: unexpected argument '$2'"
+  [ $# -le 1 ] || usage_refuse "mail: unexpected argument '$2'"
   if [ -z "$name" ]; then
     name="$(self_name)" || {
       cmd_help mail
@@ -18717,7 +18732,7 @@ cmd_mail() { # read a queue; its own agent's read archives what it consumes
 
 cmd_whoami() {
   local id name collar stamped live mismatch
-  [ $# -eq 0 ] || die "whoami: takes no arguments"
+  [ $# -eq 0 ] || usage_refuse "whoami: takes no arguments"
   id="$(self_window)" || {
     cmd_help whoami
     printf "(this shell is not in a Gangline agent window of team '%s')\n" "$SESSION"
@@ -18751,7 +18766,7 @@ cmd_roster() {
   if [ $# -eq 1 ] && [ "$1" = --porcelain ]; then
     porcelain=1
   elif [ $# -ne 0 ]; then
-    die "roster: expected no arguments or --porcelain"
+    usage_refuse "roster: expected no arguments or --porcelain"
   fi
   if ! session_live; then
     [ "$porcelain" -eq 1 ] \
@@ -19301,7 +19316,7 @@ sys.stdout.write(value)' \
 
 cmd_capture() { # trailing blank pane rows are dead space, not content
   local id name="${1:-}" rc=0
-  [ $# -le 2 ] || die "capture: unexpected argument '$3'"
+  [ $# -le 2 ] || usage_refuse "capture: unexpected argument '$3'"
   if [ -z "$name" ]; then
     name="$(self_name)" || {
       cmd_help capture
@@ -19324,7 +19339,7 @@ cmd_composer() { # what a human actually typed — capture shows the raw pane,
   # where a harness's dim suggested-prompt placeholder is indistinguishable from
   # a real draft; the collar's reading strips styling, so placeholders vanish
   local name="${1:-}"
-  [ $# -le 1 ] || die "composer: unexpected argument '$2'"
+  [ $# -le 1 ] || usage_refuse "composer: unexpected argument '$2'"
   if [ -z "$name" ]; then
     name="$(self_name)" || {
       cmd_help composer
@@ -19363,15 +19378,15 @@ cmd_adopt() { # register an EXISTING tmux window as a gang agent
   valid_name "$name" \
     || die "adopt: '$name' is not a usable agent name — hitch and gangline are reserved for Gangline; other names use letters, digits, dot, dash and underscore only. Rename the window first (tmux rename-window)"
   while [ $# -gt 0 ]; do case "$1" in
-    -c|--collar) [ $# -ge 2 ] || die "adopt: $1 needs a value"
+    -c|--collar) [ $# -ge 2 ] || usage_refuse "adopt: $1 needs a value"
                   collar="$2"; shift 2 ;;
-    --over-ceiling) [ $# -ge 2 ] || die "adopt: $1 needs a value"
-                  [ "$over_ceiling_given" -eq 0 ] || die "adopt: --over-ceiling may be passed only once"
-                  case "$2" in *[![:space:]]*) ;; *) die "adopt: --over-ceiling needs a reason for holding one more agent" ;; esac
+    --over-ceiling) [ $# -ge 2 ] || usage_refuse "adopt: $1 needs a value"
+                  [ "$over_ceiling_given" -eq 0 ] || usage_refuse "adopt: --over-ceiling may be passed only once"
+                  case "$2" in *[![:space:]]*) ;; *) usage_refuse "adopt: --over-ceiling needs a reason for holding one more agent" ;; esac
                   over_ceiling="$2"; over_ceiling_given=1; shift 2 ;;
-    *) die "adopt: unknown argument '$1'" ;;
+    *) usage_refuse "adopt: unknown argument '$1'" ;;
   esac; done
-  [ -n "$collar" ] || die "adopt: -c <collar> is required"
+  [ -n "$collar" ] || usage_refuse "adopt: -c <collar> is required"
   ! test_only_collar "$collar" \
     || die "adopt: '$collar' is a stand-in for gangline's own suite, not a harness to run an agent on (GANG_TEST_COLLARS=1 if you are testing gang itself)"
   load_collar "$collar"
@@ -19446,8 +19461,8 @@ cmd_adopt() { # register an EXISTING tmux window as a gang agent
 
 cmd_rename() { # change one registered identity without changing its spool
   local old new shown_old id rc=0 collision_rc=0 registered
-  [ $# -ge 2 ] || { cmd_help rename; exit 1; }
-  [ $# -le 2 ] || die "rename: unexpected argument '$3'"
+  [ $# -ge 2 ] || usage_refuse "rename: current and new names required"
+  [ $# -le 2 ] || usage_refuse "rename: unexpected argument '$3'"
   old="$1" new="$2"
   shown_old="$(printf '%s' "$old" | config_sanitize)"
 
@@ -19586,10 +19601,10 @@ safe_to_drop_preconditions() { # $1 own window, $2 own token; 1 with SAFE_TO_DRO
 cmd_safe_to_drop() { # the one self-declared teardown authorization (ADR-0198)
   local report="" self token name report_id rows rc=0 nonce state rtoken rest found=0 again
   while [ $# -gt 0 ]; do case "$1" in
-    --report-to) [ $# -ge 2 ] || die "safe-to-drop: --report-to needs a value"
-                 [ -z "$report" ] || die "safe-to-drop: --report-to may be passed only once"
+    --report-to) [ $# -ge 2 ] || usage_refuse "safe-to-drop: --report-to needs a value"
+                 [ -z "$report" ] || usage_refuse "safe-to-drop: --report-to may be passed only once"
                  report="$2"; shift 2 ;;
-    *) die "safe-to-drop: unknown argument '$1'" ;;
+    *) usage_refuse "safe-to-drop: unknown argument '$1'" ;;
   esac; done
   [ -n "$report" ] || die "safe-to-drop: --report-to <name> is required — the agent your completion report was delivered to"
   self="$(self_window)" \
@@ -19759,12 +19774,12 @@ cmd_drop() {
   while [ $# -gt 0 ]; do case "$1" in
     --orphan) orphan=1; shift ;;
     --) [ $# -eq 2 ] && [ "$have_target" -eq 0 ] \
-          || die "drop: -- takes exactly the one agent name after it"
+          || usage_refuse "drop: -- takes exactly the one agent name after it"
         target="$2"; have_target=1; shift 2 ;;
-    *) [ "$have_target" -eq 0 ] || die "drop: unexpected argument '$1'"
+    *) [ "$have_target" -eq 0 ] || usage_refuse "drop: unexpected argument '$1'"
        target="$1"; have_target=1; shift ;;
   esac; done
-  [ "$have_target" -eq 1 ] || die "drop: name the agent to drop"
+  [ "$have_target" -eq 1 ] || usage_refuse "drop: name the agent to drop"
   set -- "$target"
   # The argument reaches the terminal, and drop is the one command an operator
   # runs with a name they read off a hostile registration. It is not validated
@@ -19786,7 +19801,7 @@ cmd_drop() {
 cmd_down() { # inverse of up: end the whole team's session
   local named="${1:-}" id raw special shown names="" self="" wait_ids="" ids=""
   local unit scope_units="" unissued_scopes="" orphan_scopes="" scope_rc=0 forget_rc=0
-  [ $# -le 1 ] || die "down: unexpected argument '$2'"
+  [ $# -le 1 ] || usage_refuse "down: unexpected argument '$2'"
   [ "$named" = "$SESSION" ] \
     || die "down: this shell's team is '$SESSION' and you named '$named' — refusing to end a session you did not name. Gang ends exactly the team it is pointed at (gang roster; GANG_SESSION selects another)"
   session_live || die "no session '$SESSION' running"
@@ -19882,7 +19897,7 @@ $orphan_scopes"
 
 cmd_attach() {
   local socket rc=0
-  [ $# -eq 0 ] || die "attach: takes no arguments"
+  [ $# -eq 0 ] || usage_refuse "attach: takes no arguments"
   # THE SOCKET THIS SHELL CAN SEE IS ASKED FIRST, so an ordinary attach is
   # exactly what it always was. Only when the team is not on it does the
   # written-down socket matter, and that is the disconnect this exists for: the
@@ -19941,7 +19956,7 @@ collar_resume_word() { # $1 -> resume | resume-id-only | no-resume | unknown
 }
 
 cmd_collars() {
-  [ $# -eq 0 ] || die "collars: takes no arguments"
+  [ $# -eq 0 ] || usage_refuse "collars: takes no arguments"
   local n word names
   names="$(list_collars)"
   while read -r n; do
@@ -19958,10 +19973,10 @@ cmd_models() {
   while [ $# -gt 0 ]; do
     case "$1" in
       -c|--collar)
-        [ $# -ge 2 ] || die "models: $1 needs a value"
-        [ "$collar_arg" -eq 0 ] || die "models: -c may be passed only once"
+        [ $# -ge 2 ] || usage_refuse "models: $1 needs a value"
+        [ "$collar_arg" -eq 0 ] || usage_refuse "models: -c may be passed only once"
         prof="$2" collar_arg=1; shift 2 ;;
-      *) die "models: unexpected argument '$1'" ;;
+      *) usage_refuse "models: unexpected argument '$1'" ;;
     esac
   done
   if [ "$collar_arg" -eq 0 ]; then
@@ -20024,7 +20039,7 @@ config_effective() { # $1 settable key -> the value its consumers read
 
 cmd_config() {
   local k value record key origin line source file doctrine roles state i spec
-  [ $# -eq 0 ] || die "config: takes no arguments"
+  [ $# -eq 0 ] || usage_refuse "config: takes no arguments"
   for k in $GANG_CONFIG_KEYS; do
     value="$(config_effective "$k" | config_sanitize)"
     if record="$(config_origin "$k")"; then
@@ -20122,8 +20137,8 @@ cmd_upgrade() {
   case "$#:${1:-}" in
     0:) ;;
     1:--check) mode=--check ;;
-    1:*) die "upgrade: unexpected argument '$1'" ;;
-    *) die "upgrade: unexpected argument '$2'" ;;
+    1:*) usage_refuse "upgrade: unexpected argument '$1'" ;;
+    *) usage_refuse "upgrade: unexpected argument '$2'" ;;
   esac
   [ -r "$ROOT/install.sh" ] \
     || die "upgrade: cannot read the installer at $ROOT/install.sh"
@@ -20195,8 +20210,7 @@ fi
 if [ $# -eq 0 ]; then
   case "$cmd" in
     hitch|adopt|rename|talk|send|at|run|wait|explain|drop|down|safe-to-drop)
-      cmd_help "$cmd"
-      exit 1
+      usage_refuse "$cmd: required argument"
       ;;
   esac
 fi
