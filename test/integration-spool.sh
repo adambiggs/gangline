@@ -2159,8 +2159,10 @@ case "${1:-}" in
 esac
 SH
 chmod +x "$RUN_ROOT/porcelain-bin/date"
+# Both fixtures are hitched by the operator, so the two trailing hitcher
+# columns read the operator sentinel and no parent name.
 expected_porcelain="$(printf \
-  'porcelain-busy\tporcelain\tbusy\t1\t5\tsid-porcelain\nporcelain-idle\tporcelain\tidle\t0\t-\tUNSTAMPED')"
+  'porcelain-busy\tporcelain\tbusy\t1\t5\tsid-porcelain\toperator\t-\nporcelain-idle\tporcelain\tidle\t0\t-\tUNSTAMPED\toperator\t-')"
 default_porcelain_probe="$(PATH="$RUN_ROOT/porcelain-bin:$PATH" \
   GANG_ACTIVITY_WINDOW=0 "$GANG" roster | grep '^porcelain-')"
 if [ "$default_porcelain_probe" = "$expected_porcelain" ]; then
@@ -2171,7 +2173,7 @@ else
 fi
 actual_porcelain="$(PATH="$RUN_ROOT/porcelain-bin:$PATH" \
   GANG_ACTIVITY_WINDOW=0 "$GANG" roster --porcelain | grep '^porcelain-')"
-equal "porcelain roster prints the exact six-column rows" \
+equal "porcelain roster prints the exact eight-column rows" \
   "$expected_porcelain" "$actual_porcelain"
 equal "porcelain names contain no window-state glyph bytes" \
   $'porcelain-busy\nporcelain-idle' \
