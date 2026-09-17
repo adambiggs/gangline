@@ -181,12 +181,14 @@ adds no aggregate runtime deadline to that lane. Repository rules or branch
 protection are an operator configuration choice, so this merger procedure
 remains required unless the operator installs matching enforcement.
 
-Each mandatory step must complete an output line within 300 seconds. A quiet
-step is reported with its process tree and last 30 lines, then its private
-process group is ended and the heavy-test lock is released. Set
+Each mandatory step has a 300-second quiet budget. A quiet step is reported
+with its process tree and last 30 lines, then its private process group is ended
+and the heavy-test lock is released. Set
 `GANG_GATE_QUIET_SECONDS` to a positive number of seconds to change that
-operating point for a slower host. This is an inactivity bound, not a total
-step duration: every completed line renews it.
+operating point for a slower host. Every completed line starts a new silent
+phase. A runnable process group may receive one equal grace at that phase's
+first expiry; a blocked group stalls at one quiet budget, and the second expiry
+always stalls, so silent CPU activity is bounded to two budgets.
 
 The following rules are mandatory:
 
@@ -225,18 +227,20 @@ The following rules are mandatory:
   development agent to test Gangline.
 - Preserve existing assertions as required by `AGENTS.md`.
 
-The gate watchdog fixture is the sole timeout-behaviour exception. It scales
-the quiet budget to 1 second and joins the nested gate's own verdict event. An
-independent 120-second fixture ceiling turns a missing event into a named
-failure and performs ownership-checked cleanup; it is not evidence that a child
-finished. `GANG_TEST_GATE_EVENT_CEILING` may lower that ceiling only for a red
-fixture that deliberately removes the event. The fixture records those values
-beside the 300-second production budget and 104-second measured healthy output
-gap. Its pulsing control emits every 0.3 seconds for six renewals, 1.8 times the
-total quiet budget, to prove activity renews the budget. Changing the production
-value requires a fresh healthy output-gap measurement; changing the scaled
-values or fixture ceiling requires remeasuring the fixture snapshot and updating
-its margin.
+The gate watchdog fixtures are the sole timeout-behaviour exception. The
+blocked and pulsing controls scale the quiet budget to 1 second and join the
+nested gate's own verdict event. The CPU-progress controls use a measured 10s
+quiet budget: a 15s runnable child proves the one grace, while a 30s child must
+stall at the 20s hard ceiling. An independent 120-second fixture ceiling turns
+a missing event into a named failure and performs ownership-checked cleanup; it
+is not evidence that a child finished. `GANG_TEST_GATE_EVENT_CEILING` may lower
+that ceiling only for a red fixture that deliberately removes the event. The
+fixtures record those values beside the 300-second production budget and
+104-second measured healthy output gap. The pulsing control emits every 0.3
+seconds for six renewals, 1.8 times its quiet budget, to prove completed output
+starts new silent phases. Changing the production value requires a fresh
+healthy output-gap measurement; changing the scaled values or fixture ceiling
+requires remeasuring the fixture snapshot and updating its margin.
 
 `test/lint.sh` enforces the shell timing ban across `test/` and executable CI
 helpers. `.github/workflows/shell.yml` enforces the suite ceiling.

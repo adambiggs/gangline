@@ -1518,6 +1518,8 @@ flock -n "$gate_stall_lock" true || gate_stall_lock_rc_after_gate=$?
 equal "a stalled smoke is the gate's quiet-expiry status" "124" "$gate_stall_rc"
 contains "the stall names the step and quiet budget" \
   "$gate_stall_out" "STALLED: smoke produced no output for 1s"
+excludes "a blocked step receives no CPU-progress grace" \
+  "$gate_stall_out" "ACTIVE: smoke"
 contains "the stall prints its process tree" "$gate_stall_out" "PROCESS TREE"
 contains "the stall keeps the first trailing line" \
   "$gate_stall_out" "smoke last line one"
@@ -1698,14 +1700,15 @@ equal "a step that prints just under the quiet bound passes" "0" "$gate_pulse_rc
 contains "the pulsing step ran through its final pulse" "$gate_pulse_out" "pulse 6"
 excludes "a pulsing step is not called stalled" "$gate_pulse_out" "STALLED"
 
-# CPU work is observable progress even when a program has not completed an
-# output line. This is the watchdog behaviour under test, so the clock is
+# Runnable CPU work is observable progress even when a program has not
+# completed an output line. This is the watchdog behaviour under test, so the clock is
 # scaled rather than stopped: a quiet-box busy child produced its first /proc
-# CPU tick in 10.5--11.5ms, snapshot creation took 1.1s, the fixture quiet
-# budget is 3s, the child remains active for 4.5s, and the production quiet
-# budget is 300s. The child's parent
-# blocks on one timed read while the child consumes CPU; there is no polling or
-# output heartbeat that could make the old output-only watchdog pass.
+# CPU tick in 10.5--11.5ms; snapshot creation took 1.1s on the quiet red run
+# and 2.9s on the contended green run. The fixture quiet budget is therefore
+# 10s, the child remains active for 15s, and the production quiet budget is
+# 300s. The child's parent blocks on one timed read while the child consumes
+# CPU; there is no polling or output heartbeat that could make the old
+# output-only watchdog pass.
 gate_cpu_progress="$RUN_ROOT/gate-cpu-progress"
 cp -R "$gate_run" "$gate_cpu_progress"
 gate_cpu_progress_wait="$RUN_ROOT/gate-cpu-progress-wait"
@@ -1722,7 +1725,7 @@ trap cleanup EXIT
 sh -c 'while :; do :; done' &
 busy=\$!
 exec 7<> "$gate_cpu_progress_wait"
-IFS= read -r -t 4.5 -u 7 || true
+IFS= read -r -t 15 -u 7 || true
 cleanup
 trap - EXIT
 SH
@@ -1731,12 +1734,44 @@ git -C "$gate_cpu_progress" add test/lint.sh
 git -C "$gate_cpu_progress" -c user.name=fixture -c user.email=fixture@example.invalid \
   commit -qm 'test: CPU-active quiet lint fixture'
 gate_cpu_progress_rc=0
-gate_cpu_progress_out="$(GANG_GATE_QUIET_SECONDS=3 \
+gate_cpu_progress_out="$(GANG_GATE_QUIET_SECONDS=10 \
   "$gate_cpu_progress/test/gate.sh" 2>&1)" || gate_cpu_progress_rc=$?
 equal "a CPU-active quiet lint step is not killed as stalled" \
   "0" "$gate_cpu_progress_rc"
+# source-guard: producer@c65f5ab426be: the fixture lint emits no bytes, so only the gate monitor can produce the ACTIVE lease witness
+contains "CPU progress visibly extends the quiet lease" \
+  "$gate_cpu_progress_out" "ACTIVE: lint has runnable"
 excludes "CPU progress is not called an output stall" \
   "$gate_cpu_progress_out" "STALLED: lint"
+
+# One grace is the hard ceiling, not a new renewable lease. This copy keeps the
+# same measured 10s quiet budget but stays CPU-active for 30s. A bounded gate
+# must grant at 10s and stall at 20s; the finite 30s worker makes an accidental
+# unbounded implementation finish as a visible false pass instead of hanging
+# the mandatory suite forever.
+gate_cpu_ceiling="$RUN_ROOT/gate-cpu-ceiling"
+cp -R "$gate_cpu_progress" "$gate_cpu_ceiling"
+sed 's/read -r -t 15/read -r -t 30/' \
+  "$gate_cpu_ceiling/test/lint.sh" > "$gate_cpu_ceiling/test/lint.sh.new"
+mv "$gate_cpu_ceiling/test/lint.sh.new" "$gate_cpu_ceiling/test/lint.sh"
+chmod +x "$gate_cpu_ceiling/test/lint.sh"
+git -C "$gate_cpu_ceiling" add test/lint.sh
+git -C "$gate_cpu_ceiling" -c user.name=fixture -c user.email=fixture@example.invalid \
+  commit -qm 'test: CPU-active quiet lint past its one grace'
+gate_cpu_ceiling_rc=0
+gate_cpu_ceiling_out="$(GANG_GATE_QUIET_SECONDS=10 \
+  "$gate_cpu_ceiling/test/gate.sh" 2>&1)" || gate_cpu_ceiling_rc=$?
+equal "a silent CPU-active step stalls at twice the quiet budget" \
+  "124" "$gate_cpu_ceiling_rc"
+contains "the CPU-active step receives its one grace before stalling" \
+  "$gate_cpu_ceiling_out" "ACTIVE: lint has runnable"
+contains "the second quiet expiry stalls despite continuing CPU activity" \
+  "$gate_cpu_ceiling_out" "STALLED: lint produced no output for 10s"
+gate_cpu_ceiling_graces="$(awk \
+  'index($0, "ACTIVE: lint has runnable") { count++ } END { print count + 0 }' \
+  <<<"$gate_cpu_ceiling_out")"
+equal "a silent phase receives exactly one CPU-progress grace" \
+  "1" "$gate_cpu_ceiling_graces"
 
 # REQUIRE_ALL is the gate's evidence, not a permission to print its verdict. A
 # nested real focused run reaches the actual omitted-part branch. Its own gate

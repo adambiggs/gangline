@@ -674,13 +674,36 @@ gate_step_tree() { # $1 process-group id
     | awk -v group="$pgid" '$3 == group { print "  " $0 }' >&2
 }
 
-# Output is a lease, not a total-duration budget. Every complete line renews it.
-# The file remains the exact trailing transcript used in a stall report. A
-# partial final line is retained at EOF, but a program that never completes that
-# line has not made new terminal output visible and does not renew the lease.
+# A CPU-starved process is still runnable even when it cannot complete an
+# output line. Procfs is only an optional witness for one bounded grace: an
+# unreadable or unsupported process table fabricates no activity. Membership
+# must match the session's process group; a remembered root pid alone is not
+# evidence about the process now carrying that number.
+gate_step_runnable() { # $1 process-group id
+  local pgid="$1" stat record fields
+  for stat in /proc/[0-9]*/stat; do
+    [ -r "$stat" ] || continue
+    record="$(<"$stat")" 2>/dev/null || continue
+    fields="${record##*) }"
+    # shellcheck disable=SC2086 # /proc stat fields are kernel-delimited words
+    set -- $fields
+    [ $# -ge 3 ] || continue
+    [ "$3" = "$pgid" ] || continue
+    [ "$1" = R ] && return 0
+  done
+  return 1
+}
+
+# Every complete output line starts a new silent phase. At that phase's first
+# quiet expiry, a runnable process group may receive one final equal grace; its
+# second expiry always stalls, so CPU activity cannot renew silence without
+# bound. A blocked group receives no grace. The file remains the exact trailing
+# transcript used in a stall report. A partial final line is retained at EOF,
+# but a program that never completes that line has not made new terminal output
+# visible and starts neither a new phase nor a new grace.
 gate_monitored_step() { # $1 name, $2 output, $3 live, $4 cwd, rest = argv
   local name="$1" output="$2" live="$3" cwd="$4"
-  local fifo pidfile pid parent fd line read_rc rc started
+  local fifo pidfile pid parent fd line read_rc rc started progress_grace_used
   shift 4
   started="$EPOCHREALTIME"
   fifo="$WORK/$name.fifo"
@@ -697,6 +720,7 @@ gate_monitored_step() { # $1 name, $2 output, $3 live, $4 cwd, rest = argv
   pid=$!
   parent=$BASHPID
   printf '%s %s %s\n' "$pid" "$parent" "$name" > "$pidfile"
+  progress_grace_used=0
   exec {fd}< "$fifo"
   : > "$output"
   while :; do
@@ -708,10 +732,18 @@ gate_monitored_step() { # $1 name, $2 output, $3 live, $4 cwd, rest = argv
       [ "$live" -eq 0 ] || printf '%s\n' "$line"
     fi
     if [ "$read_rc" -eq 0 ]; then
+      progress_grace_used=0
       continue
     fi
     if [ "$read_rc" -le 128 ]; then
       break
+    fi
+
+    if [ "$progress_grace_used" -eq 0 ] && gate_step_runnable "$pid"; then
+      progress_grace_used=1
+      printf 'gate: ACTIVE: %s has runnable CPU state without output for %ss; granting one final quiet grace\n' \
+        "$name" "$GATE_QUIET_SECONDS" >&2
+      continue
     fi
 
     # Publish the verdict with the marker, before process-tree reporting can
