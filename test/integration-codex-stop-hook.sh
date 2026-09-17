@@ -1126,9 +1126,18 @@ contains "roster keeps the debt alarm after the release" "$($GANG roster)" "repl
 contains "with no notify target and no lead, the undelivered alert is said on the window" \
   "$($GANG status reply-b)" "stop release alert NOT delivered: no notify target is declared and no agent is named lead"
 "$GANG" notify reply-c >/dev/null
-reply_stop_run "$reply_b_pane" "$reply_stop_active_payload"
-equal "a later re-Stop with the debt still standing is released the same way" \
-  "{}" "$reply_stop_output"
+# THE ALERT IS DRIVEN THROUGH THE COMMAND THE ADAPTER CALLS, not through the
+# adapter. The adapter bounds `gang reply-released` at a fixed two seconds, and
+# a release that also queues a deferred alert overran that bound on a loaded
+# host: the adapter then said "released with the obligation unrecorded" on
+# stderr, still answered {}, and the undelivered note below survived. Called
+# directly, the release runs to completion whatever the host's load; the
+# adapter's own answer is checked after the alert has landed.
+reply_released_rc=0
+reply_released_out="$(TMUX_PANE="$reply_b_pane" "$GANG" reply-released 2>&1)" \
+  || reply_released_rc=$?
+equal "a release with a notify target is recorded without complaint" \
+  "0:" "$reply_released_rc:$reply_released_out"
 excludes "a stop alert does not wake its notify target on its own" \
   "$(pane_all reply-c)" \
   "stop alert (stop): reply-b went idle with a reply owed to reply-a (message $reply_a_one) standing"
@@ -1138,6 +1147,9 @@ equal "the alert is Gangline's own and leaves its target nothing to owe" \
   $'clear\t-\t-\t-' "$(TMUX_PANE="$reply_c_pane" "$GANG" reply-obligations)"
 excludes "a delivered alert retires the undelivered note" \
   "$($GANG status reply-b)" "stop release alert NOT delivered"
+reply_stop_run "$reply_b_pane" "$reply_stop_active_payload"
+equal "a later re-Stop with the debt still standing is released the same way" \
+  "{}" "$reply_stop_output"
 # A TIMED-OUT QUERY IS RECORDED BEFORE ANYTHING IS READ AGAIN, and told even
 # when the second reading finds nothing standing: the fault is the timeout.
 reply_auto_pane="$(tmux list-panes -t "$(window_id auto-resume)" -F '#{pane_id}')"
