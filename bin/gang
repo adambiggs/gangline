@@ -1094,15 +1094,26 @@ gang usage
   model, joined from ccusage.
 
   gang usage [--all]
+  gang usage [--all] --daily [YYYY-MM-DD]
+  gang usage [--all] --since YYYY-MM-DD
 
   --all   every agent recorded on this host,
           not only this team's
+
+  --daily  local attribution for one day
+           (default: today)
+
+  --since  local attribution from this date
+           through today
 
   Gangline records who ran, on what, where and
   for how long; ccusage (if installed) reports
   the tokens. Rows join by native session id.
   Without ccusage the table still prints, and
   says why the token columns are empty.
+  Daily/since rows split input, output (including
+  thinking), and cache reads per agent and model.
+  They are local attribution, never account quota.
   Provider percent-used windows are gang limits.
 EOF
       ;;
@@ -16483,12 +16494,26 @@ cmd_usage_record_worker() { # internal host-side append reached only through tmu
 }
 
 cmd_usage() { # token consumption per agent, joined from ccusage by native session id
-  local created=0 id special ids="" scope=()
-  case "${1:-}" in
-    '') ;;
-    --all) scope=(--all); [ $# -eq 1 ] || die "usage: unexpected argument '$2'" ;;
-    *) die "usage: unexpected argument '$1'" ;;
-  esac
+  local created=0 id special ids="" daily="" since="" all=0 report_args=()
+  while [ $# -gt 0 ]; do
+    case "$1" in
+      --all)
+        [ "$all" -eq 0 ] || die "usage: --all was given more than once"
+        all=1 ;;
+      --daily)
+        [ -z "$daily" ] || die "usage: --daily was given more than once"
+        daily=today
+        if [ $# -gt 1 ] && [[ "$2" != --* ]]; then daily="$2"; shift; fi ;;
+      --since)
+        [ -z "$since" ] || die "usage: --since was given more than once"
+        [ $# -gt 1 ] || die "usage: --since needs a YYYY-MM-DD date"
+        since="$2"; shift ;;
+      *) die "usage: unexpected argument '$1'" ;;
+    esac
+    shift
+  done
+  [ -z "$daily" ] || [ -z "$since" ] \
+    || die "usage: --daily and --since are separate views; choose one"
   if session_live; then
     created="$(usage_team_created)"
     [ -n "$created" ] || die "usage: could not read when session '$SESSION' was created"
@@ -16500,10 +16525,13 @@ cmd_usage() { # token consumption per agent, joined from ccusage by native sessi
   else
     printf '%s\n' "$(colour "$C_DIM" "no live team (session '$SESSION' not running); showing what was recorded for that name")"
   fi
+  [ "$all" -eq 0 ] || report_args+=(--all)
+  [ -z "$daily" ] || report_args+=(--daily "$daily")
+  [ -z "$since" ] || report_args+=(--since "$since")
   # shellcheck disable=SC2086  # ids are tmux window ids, never blank-bearing
   { for id in $ids; do usage_agent_stream "$id" "$created"; done; } \
     | "$GANGLINE_USAGE_HELPER" report --events "$(usage_events_path)" \
-        --team "$SESSION" --team-created "$created" ${scope[@]+"${scope[@]}"} \
+        --team "$SESSION" --team-created "$created" "${report_args[@]}" \
     || die "usage: the report helper failed (status $?)"
 }
 

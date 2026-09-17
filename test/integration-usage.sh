@@ -13,7 +13,8 @@ usage_bin="$RUN_ROOT/usage-bin"
 # its own rather than counting lines other parts wrote.
 usage_data="$RUN_ROOT/usage-data"
 usage_events="$usage_data/gangline/usage/events.jsonl"
-mkdir -p "$usage_bin/present" "$usage_bin/failing" "$usage_bin/garbage" "$usage_bin/unjson"
+mkdir -p "$usage_bin/present" "$usage_bin/filtered-gap" "$usage_bin/failing" \
+  "$usage_bin/garbage" "$usage_bin/unjson"
 cat > "$usage_bin/present/ccusage" <<'SH'
 #!/usr/bin/env bash
 # The session shape ccusage 20 prints: one Claude Code row whose period is the
@@ -26,8 +27,48 @@ cat <<'JSON'
  {"agent":"claude","period":"11111111-aaaa-4bbb-8ccc-000000000001","inputTokens":10,"outputTokens":20,"cacheReadTokens":300,"cacheCreationTokens":40,"totalTokens":370,"modelsUsed":["claude-opus-5"],"modelBreakdowns":[{"modelName":"claude-opus-5","inputTokens":10,"outputTokens":20,"cacheReadTokens":300,"cacheCreationTokens":40}],"metadata":{"lastActivity":"2026-09-02T10:00:00.000Z"}},
  {"agent":"codex","period":"2026/09/02/rollout-2026-09-02T00-00-00-22222222-bbbb-4ccc-8ddd-000000000002","inputTokens":5,"outputTokens":6,"cacheReadTokens":7,"cacheCreationTokens":0,"totalTokens":18,"modelsUsed":["gpt-5.6"],"modelBreakdowns":[{"modelName":"gpt-5.6","inputTokens":5,"outputTokens":6,"cacheReadTokens":7,"cacheCreationTokens":0}],"metadata":{"lastActivity":"2026-09-02T10:00:00.000Z","reasoningOutputTokens":3}},
  {"agent":"claude","period":"rollout-33333333-cccc-4ddd-8eee-000000000003","inputTokens":1000,"outputTokens":1000,"cacheReadTokens":1000,"cacheCreationTokens":1000,"totalTokens":4000,"modelsUsed":["claude-opus-5"],"modelBreakdowns":[{"modelName":"claude-opus-5","inputTokens":1000,"outputTokens":1000,"cacheReadTokens":1000,"cacheCreationTokens":1000}],"metadata":{"lastActivity":"2026-09-02T10:00:00.000Z"}}
+],"daily":[
+ {"agent":"all","period":"2026-09-02","inputTokens":1015,"outputTokens":1026,"cacheReadTokens":1307,"cacheCreationTokens":1040,"totalTokens":4388,"modelsUsed":["claude-opus-5","gpt-5.6"],"modelBreakdowns":[
+  {"modelName":"claude-opus-5","inputTokens":1010,"outputTokens":1020,"cacheReadTokens":1300,"cacheCreationTokens":1040},
+  {"modelName":"gpt-5.6","inputTokens":5,"outputTokens":6,"cacheReadTokens":7,"cacheCreationTokens":0}
+ ],"metadata":{"agents":["claude","codex"]}}
 ],"totals":{"inputTokens":15,"outputTokens":26,"cacheReadTokens":307,"cacheCreationTokens":40,"totalTokens":388}}
 JSON
+SH
+cat > "$usage_bin/filtered-gap/ccusage" <<'SH'
+#!/usr/bin/env bash
+# ccusage 20 omits Claude sessions from the filtered aggregate, while its
+# exact-session view still returns their in-span entries.
+printf '%s\n' "$*" >> "${USAGE_FIXTURE_ARGV:-/dev/null}"
+case " $* " in
+  *" --id 11111111-aaaa-4bbb-8ccc-000000000001 "*)
+    cat <<'JSON'
+{"sessionId":"11111111-aaaa-4bbb-8ccc-000000000001","entries":[
+ {"model":"claude-opus-5","inputTokens":4,"outputTokens":8,"cacheReadTokens":100,"cacheCreationTokens":10,"timestamp":"2026-09-02T09:00:00.000Z"},
+ {"model":"claude-opus-5","inputTokens":6,"outputTokens":12,"cacheReadTokens":200,"cacheCreationTokens":30,"timestamp":"2026-09-02T10:00:00.000Z"}
+]}
+JSON
+    ;;
+  *" --id "*)
+    printf '%s\n' 'null'
+    ;;
+  *" --since "*)
+    cat <<'JSON'
+{"session":[
+ {"agent":"codex","period":"2026/09/02/rollout-2026-09-02T00-00-00-22222222-bbbb-4ccc-8ddd-000000000002","inputTokens":5,"outputTokens":6,"cacheReadTokens":7,"cacheCreationTokens":0,"modelBreakdowns":[{"modelName":"gpt-5.6","inputTokens":5,"outputTokens":6,"cacheReadTokens":7,"cacheCreationTokens":0}],"metadata":{"lastActivity":"2026-09-02T10:00:00.000Z"}}
+]}
+JSON
+    ;;
+  *)
+    cat <<'JSON'
+{"session":[
+ {"agent":"claude","period":"11111111-aaaa-4bbb-8ccc-000000000001","inputTokens":10,"outputTokens":20,"cacheReadTokens":300,"cacheCreationTokens":40,"modelBreakdowns":[{"modelName":"claude-opus-5","inputTokens":10,"outputTokens":20,"cacheReadTokens":300,"cacheCreationTokens":40}],"metadata":{"lastActivity":"2026-09-03T10:00:00.000Z"}},
+ {"agent":"codex","period":"2026/09/02/rollout-2026-09-02T00-00-00-22222222-bbbb-4ccc-8ddd-000000000002","inputTokens":5,"outputTokens":6,"cacheReadTokens":7,"cacheCreationTokens":0,"modelBreakdowns":[{"modelName":"gpt-5.6","inputTokens":5,"outputTokens":6,"cacheReadTokens":7,"cacheCreationTokens":0}],"metadata":{"lastActivity":"2026-09-02T10:00:00.000Z"}},
+ {"agent":"codex","period":"2026/09/02/rollout-2026-09-02T00-00-00-33333333-cccc-4ddd-8eee-000000000003","inputTokens":9,"outputTokens":9,"cacheReadTokens":9,"cacheCreationTokens":0,"modelBreakdowns":[{"modelName":"gpt-5.6","inputTokens":9,"outputTokens":9,"cacheReadTokens":9,"cacheCreationTokens":0}],"metadata":{"lastActivity":"2026-09-02T10:00:00.000Z"}}
+]}
+JSON
+    ;;
+esac
 SH
 cat > "$usage_bin/failing/ccusage" <<'SH'
 #!/usr/bin/env bash
@@ -44,6 +85,7 @@ printf 'Loading transcripts...\n'
 SH
 chmod +x "$usage_bin"/*/ccusage
 usage_present="$usage_bin/present:$PATH"
+usage_filtered_gap="$usage_bin/filtered-gap:$PATH"
 usage_failing="$usage_bin/failing:$PATH"
 usage_garbage="$usage_bin/garbage:$PATH"
 usage_unjson="$usage_bin/unjson:$PATH"
@@ -148,6 +190,55 @@ excludes "no Codex note is printed for a team without a codex collar" \
   "$usage_out" "experimental"
 contains "gang usage prints the record path" \
   "$usage_out" "record: $usage_events"
+usage_daily_argv="$RUN_ROOT/usage-daily-argv"
+usage_daily_out="$(USAGE_FIXTURE_ARGV="$usage_daily_argv" PATH="$usage_present" \
+  XDG_DATA_HOME="$usage_data" "$GANG" usage --daily 2026-09-02 2>&1)" \
+  || fail "gang usage daily succeeds with ccusage present" "status $?: [$usage_daily_out]"
+equal "daily usage asks ccusage for native sessions filtered to one day" \
+  "session --json --no-cost --offline --since 2026-09-02 --until 2026-09-02" \
+  "$(<"$usage_daily_argv")"
+equal "daily usage splits each Gangline agent and model into quota-relevant classes" \
+  "usage-alpha claude-opus-5 10 20 300 40 95.4%" \
+  "$(printf '%s\n' "$usage_daily_out" | awk '$1 == "usage-alpha" { print $1, $2, $3, $4, $5, $6, $7 }')"
+equal "daily usage keeps Codex output inclusive of its reported thinking" \
+  "usage-beta gpt-5.6 5 6 7 0 4.6%" \
+  "$(printf '%s\n' "$usage_daily_out" | awk '$1 == "usage-beta" { print $1, $2, $3, $4, $5, $6, $7 }')"
+contains "daily usage labels the output column as including thinking" \
+  "$usage_daily_out" "output(+thinking)"
+contains "agent attribution says its share is local rather than account-wide" \
+  "$usage_daily_out" "local agent attribution; not account-quota share"
+usage_gap_argv="$RUN_ROOT/usage-filtered-gap-argv"
+# Alpha continued after the selected day. Its registration still overlaps the
+# day, so later lastActivity must not turn its exact in-day entries into zero.
+tmux set-option -w -t "$usage_alpha_id" @gl_hitched_at \
+  "$(date -d '2026-09-02 08:00:00' +%s)"
+usage_gap_out="$(USAGE_FIXTURE_ARGV="$usage_gap_argv" PATH="$usage_filtered_gap" \
+  XDG_DATA_HOME="$usage_data" "$GANG" usage --daily 2026-09-02 2>&1)" \
+  || fail "daily usage recovers a session omitted from ccusage's filtered aggregate" \
+       "status $?: [$usage_gap_out]"
+tmux set-option -w -t "$usage_alpha_id" @gl_hitched_at "$usage_alpha_hitched"
+equal "a filtered report first reads the aggregate, then discovers and reads the omitted id" \
+  "session --json --no-cost --offline
+session --json --no-cost --offline --id $usage_claude_id --since 2026-09-02 --until 2026-09-02
+session --json --no-cost --offline --id $usage_stray_id --since 2026-09-02 --until 2026-09-02
+session --json --no-cost --offline --since 2026-09-02 --until 2026-09-02" \
+  "$(sort "$usage_gap_argv")"
+equal "the exact-session fallback restores a continued Claude session's in-day classes" \
+  "usage-alpha claude-opus-5 10 20 300 40 95.4%" \
+  "$(printf '%s\n' "$usage_gap_out" | awk '$1 == "usage-alpha" { print $1, $2, $3, $4, $5, $6, $7 }')"
+excludes "filtered zero-usage sessions do not become uncovered noise" \
+  "$usage_gap_out" "usage-delta: unmatched"
+contains "filtered coverage keeps unstamped agents visible in a bounded summary" \
+  "$usage_gap_out" "unstamped (1 agent): usage-gamma"
+usage_since_argv="$RUN_ROOT/usage-since-argv"
+usage_since_out="$(USAGE_FIXTURE_ARGV="$usage_since_argv" PATH="$usage_present" \
+  XDG_DATA_HOME="$usage_data" "$GANG" usage --since 2026-09-02 2>&1)" \
+  || fail "gang usage since succeeds with ccusage present" "status $?: [$usage_since_out]"
+equal "since usage asks ccusage for one filtered session report" \
+  "session --json --no-cost --offline --since 2026-09-02" \
+  "$(<"$usage_since_argv")"
+contains "since usage keeps the same per-agent and per-model split" \
+  "$usage_since_out" "usage-alpha"
 usage_arity_out="$(XDG_DATA_HOME="$usage_data" "$GANG" usage --all extra 2>&1)" \
   && fail "gang usage refuses an argument it does not take" "succeeded: [$usage_arity_out]" \
   || contains "gang usage refuses an argument it does not take" \

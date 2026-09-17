@@ -1795,7 +1795,7 @@ keeps the prepared row in tmux when no host-side record exists, and lets the lif
 finish: unavailable diagnostic storage must not strand a delivery, teardown, or tick. The missing
 row remains an explicit gap rather than evidence that the action did not occur.
 
-### `gang usage [--all]`
+### `gang usage [--all] [--daily [YYYY-MM-DD] | --since YYYY-MM-DD]`
 
 Prints token consumption per agent and per model. Gangline supplies the agent,
 harness, model, effort, state, duration, and task label from its own launch
@@ -1839,6 +1839,25 @@ under the effective archive root's `usage-unrecorded/` directory and its exact p
 that file to the repaired event file and remove it. If neither path is writable,
 Gangline prints the named tmux buffer that retains the JSON until the server
 exits. Provider percent-used windows are `gang limits`, not this command.
+
+`--daily` asks ccusage for native sessions filtered to one local calendar day
+(today when no date is given); `--since` filters from one local calendar date
+through the present. Gangline rejoins those filtered session rows to live and
+recorded native session IDs instead of assigning a cumulative teardown snapshot
+to the day it ended. Where ccusage's filtered aggregate omits a known session,
+Gangline discovers in-span IDs from the unfiltered aggregate and reads their
+exact filtered entries. All reads share one 30-second, 64-call bound and true
+source failures remain visible in the coverage summary. A resumed native
+session is counted once in this attribution even if it spans several hitches;
+a session associated with more than one Gangline agent is reported as ambiguous
+rather than assigned.
+
+The filtered table groups by Gangline agent and model and keeps input, output
+(including thinking/reasoning in ccusage's output count), cache reads, and cache
+creation separate. Its percentage is explicitly a share of those local token
+classes, not a share of account quota. Remote consumers share the provider
+allowance, so only provider-published samples from `gang limits --history` can
+measure or project account-quota movement.
 
 ### `gang cap [check|show|watch|replay|forget]`
 

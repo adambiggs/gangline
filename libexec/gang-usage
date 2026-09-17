@@ -22,7 +22,10 @@ import signal
 import socket
 import subprocess
 import sys
+import threading
 import time
+from concurrent.futures import ThreadPoolExecutor, as_completed
+from datetime import date, datetime, timedelta
 
 TOKEN_KEYS = (
     ("inputTokens", "input"),
@@ -172,39 +175,157 @@ def epoch_or_none(value):
 
 
 CCUSAGE_BOUND_SECONDS = 30
+CCUSAGE_MAX_CALLS = 64
+CCUSAGE_PARALLEL_CALLS = 8
+CLOCK_HELPER = os.path.join(os.path.dirname(os.path.abspath(__file__)), "gang-clock")
+CLOCK_HELPER_SECONDS = 1
 
 
-def read_source() -> tuple:
-    """("read", rows) or (status, note) where status names why there are none."""
-    exe = shutil.which("ccusage")
-    if not exe:
-        return ("absent", "no ccusage executable on PATH")
-    # THE BOUND COVERS THE WHOLE PROCESS GROUP. ccusage on PATH is usually a
-    # wrapper that starts node and waits; killing the wrapper alone leaves the
-    # child holding the captured pipes, and the read would then wait for EOF
-    # without any bound at all. A new session makes the group ours to kill.
+def monotonic_ns() -> int:
+    """Read Gangline's one shared monotonic clock seam."""
     try:
-        proc = subprocess.Popen(
-            [exe, "session", "--json", "--no-cost", "--offline"],
-            stdin=subprocess.DEVNULL, stdout=subprocess.PIPE,
-            stderr=subprocess.PIPE, start_new_session=True)
-    except OSError as err:
-        return ("failed", f"could not run {exe}: {err}")
-    try:
-        stdout, stderr = proc.communicate(timeout=CCUSAGE_BOUND_SECONDS)
-    except subprocess.TimeoutExpired:
+        result = subprocess.run(
+            [CLOCK_HELPER, "now"], check=False,
+            stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+            text=True, timeout=CLOCK_HELPER_SECONDS)
+    except (OSError, subprocess.TimeoutExpired) as err:
+        raise Malformed(f"cannot read the shared monotonic clock: {err}") from err
+    value = result.stdout.strip()
+    if result.returncode != 0 or not value.isascii() or not value.isdigit():
+        first = result.stderr.strip().splitlines()[:1]
+        raise Malformed("the shared monotonic clock is unreadable"
+                        + (f": {first[0]}" if first else ""))
+    return int(value, 10)
+
+
+class CcusageBudget:
+    """One wall-clock and process-count bound shared by a whole report."""
+
+    def __init__(self):
+        self.exe = shutil.which("ccusage")
         try:
-            os.killpg(proc.pid, signal.SIGKILL)
-        except OSError:
-            pass
-        proc.communicate()
-        return ("failed", f"ccusage did not finish within {CCUSAGE_BOUND_SECONDS}s")
-    if proc.returncode != 0:
-        first = stderr.decode("utf-8", "replace").strip().splitlines()[:1]
-        return ("failed", f"ccusage exited {proc.returncode}"
-                + (f": {first[0]}" if first else " and printed no error"))
+            self.started_ns = monotonic_ns()
+            self.clock_error = None
+        except Malformed as err:
+            self.started_ns = 0
+            self.clock_error = str(err)
+        self.calls = 0
+        self.lock = threading.Lock()
+
+    def run(self, arguments: list) -> tuple:
+        if not self.exe:
+            return ("absent", "no ccusage executable on PATH")
+        if self.clock_error is not None:
+            return ("failed", self.clock_error)
+        with self.lock:
+            if self.calls >= CCUSAGE_MAX_CALLS:
+                return ("failed", f"ccusage report exceeded {CCUSAGE_MAX_CALLS} calls")
+            self.calls += 1
+        try:
+            elapsed_ns = monotonic_ns() - self.started_ns
+        except Malformed as err:
+            return ("failed", str(err))
+        if elapsed_ns < 0:
+            return ("failed", "the shared monotonic clock moved backwards")
+        remaining = CCUSAGE_BOUND_SECONDS - elapsed_ns / 1_000_000_000
+        if remaining <= 0:
+            return ("failed", f"ccusage report exceeded its {CCUSAGE_BOUND_SECONDS}s budget")
+        exe = self.exe
+        command = [exe, "session", "--json", "--no-cost", "--offline", *arguments]
+        # THE BOUND COVERS THE WHOLE PROCESS GROUP. ccusage on PATH is usually a
+        # wrapper that starts node and waits; killing the wrapper alone leaves the
+        # child holding the captured pipes, and the read would then wait for EOF
+        # without any bound at all. A new session makes the group ours to kill.
+        try:
+            proc = subprocess.Popen(
+                command,
+                stdin=subprocess.DEVNULL, stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE, start_new_session=True)
+        except OSError as err:
+            return ("failed", f"could not run {exe}: {err}")
+        try:
+            stdout, stderr = proc.communicate(timeout=remaining)
+        except subprocess.TimeoutExpired:
+            try:
+                os.killpg(proc.pid, signal.SIGKILL)
+            except OSError:
+                pass
+            proc.communicate()
+            return ("failed", f"ccusage report exceeded its {CCUSAGE_BOUND_SECONDS}s budget")
+        if proc.returncode != 0:
+            first = stderr.decode("utf-8", "replace").strip().splitlines()[:1]
+            return ("failed", f"ccusage exited {proc.returncode}"
+                    + (f": {first[0]}" if first else " and printed no error"))
+        return ("read", stdout)
+
+
+def read_source(since: str | None = None, until: str | None = None,
+                budget: CcusageBudget | None = None) -> tuple:
+    """("read", rows) or (status, note) where status names why there are none."""
+    budget = budget or CcusageBudget()
+    arguments = []
+    if since is not None:
+        arguments += ["--since", since]
+    if until is not None:
+        arguments += ["--until", until]
+    status, detail = budget.run(arguments)
+    if status != "read":
+        return (status, detail)
     try:
-        return ("read", load_ccusage(stdout))
+        return ("read", load_ccusage(detail))
+    except Malformed as err:
+        return ("malformed", str(err))
+
+
+def load_ccusage_entries(raw: bytes, session_id: str, agent: str) -> list:
+    """Turn ccusage's exact-session entries into one ordinary session row."""
+    if not raw.strip():
+        raise Malformed("ccusage printed nothing")
+    try:
+        data = json.loads(raw)
+    except ValueError as err:
+        raise Malformed(f"exact-session output is not JSON: {err}") from err
+    if not isinstance(data, dict) or data.get("sessionId") != session_id \
+            or not isinstance(data.get("entries"), list):
+        raise Malformed("exact-session output has no matching sessionId and entries list")
+    models, last_activity = {}, None
+    for number, entry in enumerate(data["entries"], 1):
+        where = f"exact-session entry {number}"
+        if not isinstance(entry, dict) or not isinstance(entry.get("model"), str) \
+                or not entry["model"]:
+            raise Malformed(f"{where} names no model")
+        timestamp = entry.get("timestamp")
+        if not isinstance(timestamp, str) or not timestamp:
+            raise Malformed(f"{where} has no timestamp")
+        values = {ours: whole(entry.get(theirs), f"{where} {theirs}")
+                  for theirs, ours in TOKEN_KEYS}
+        slot = models.setdefault(
+            entry["model"], {ours: 0 for _, ours in TOKEN_KEYS})
+        for _, ours in TOKEN_KEYS:
+            slot[ours] += values[ours]
+        if last_activity is None or timestamp > last_activity:
+            last_activity = timestamp
+    parts = [{"model": model, **values} for model, values in sorted(models.items())]
+    totals = {ours: sum(part[ours] for part in parts) for _, ours in TOKEN_KEYS}
+    return [{"period": session_id, "agent": agent, "totals": totals,
+             "models": parts, "last_activity": last_activity}]
+
+
+def read_exact_source(session_id: str, agent: str, since: str,
+                      until: str | None, budget: CcusageBudget) -> tuple:
+    arguments = ["--id", session_id, "--since", since]
+    if until is not None:
+        arguments += ["--until", until]
+    status, detail = budget.run(arguments)
+    if status != "read":
+        return (status, detail)
+    try:
+        if json.loads(detail) is None:
+            return ("unmatched", "ccusage has no exact-session reading for this id")
+    except ValueError:
+        pass
+    try:
+        return ("read", load_ccusage_entries(detail, session_id, agent))
     except Malformed as err:
         return ("malformed", str(err))
 
@@ -382,6 +503,13 @@ def count_text(value) -> str:
     return "" if value is None else f"{value:,}"
 
 
+def bounded_values(values, limit: int = 8) -> str:
+    ordered = sorted(set(values))
+    shown = ", ".join(visible(value) for value in ordered[:limit])
+    extra = len(ordered) - limit
+    return shown + (f" (+{extra} more)" if extra > 0 else "")
+
+
 def table(headers: list, rows: list, numeric: set) -> str:
     widths = [len(h) for h in headers]
     for row in rows:
@@ -399,9 +527,133 @@ def table(headers: list, rows: list, numeric: set) -> str:
     return "\n".join(lines)
 
 
+def day(value: str, option: str) -> str:
+    if value == "today":
+        return date.today().isoformat()
+    try:
+        parsed = date.fromisoformat(value)
+    except ValueError as err:
+        raise Malformed(f"{option} is not a YYYY-MM-DD date: {value!r}") from err
+    if parsed.isoformat() != value:
+        raise Malformed(f"{option} is not a YYYY-MM-DD date: {value!r}")
+    return value
+
+
+def attribution(shown: list) -> tuple:
+    """Per-agent/model local tokens, counting one native session once.
+
+    A resumed hitch repeats the same cumulative session under the same agent.
+    It remains several lifecycle rows, but it is one ccusage measurement. A
+    session mapped to different Gangline names is ambiguous and contributes to
+    neither: choosing one would invent attribution.
+    """
+    sessions = {}
+    for row in shown:
+        session_id = row.get("session_id")
+        if not session_id or row.get("usage_status") != "matched":
+            continue
+        slot = sessions.setdefault(session_id, {"agents": set(), "models": None})
+        slot["agents"].add(row.get("agent"))
+        slot["models"] = row.get("models")
+    grouped, ambiguous = {}, []
+    for session_id, session in sessions.items():
+        if len(session["agents"]) != 1:
+            ambiguous.append(session_id)
+            continue
+        agent = next(iter(session["agents"]))
+        for part in session["models"] or []:
+            key = (agent, part["model"])
+            slot = grouped.setdefault(
+                key, {"input": 0, "output": 0, "cache_read": 0, "cache_write": 0})
+            for _, ours in TOKEN_KEYS:
+                slot[ours] += part[ours]
+    return grouped, ambiguous
+
+
+def activity_in_span(value, since: str, until: str | None) -> bool:
+    if not isinstance(value, str) or len(value) < 10:
+        return False
+    try:
+        observed = date.fromisoformat(value[:10]).isoformat()
+    except ValueError:
+        return False
+    return observed >= since and (until is None or observed <= until)
+
+
+def lifecycle_overlaps(rows: list, since: str, until: str | None, now: int) -> bool:
+    """Whether any Gangline registration could have consumed in the span."""
+    first_day = date.fromisoformat(since)
+    start = int(datetime.combine(first_day, datetime.min.time()).timestamp())
+    end = None
+    if until is not None:
+        last_day = date.fromisoformat(until) + timedelta(days=1)
+        end = int(datetime.combine(last_day, datetime.min.time()).timestamp())
+    for row in rows:
+        hitched = epoch_or_none(row.get("hitched_at"))
+        ended = now if row.get("state") == "live" else epoch_or_none(row.get("ended_at"))
+        if hitched is None or ended is None:
+            return True
+        if ended >= start and (end is None or hitched < end):
+            return True
+    return False
+
+
+def recover_filtered_sessions(shown: list, since: str, until: str | None,
+                              now: int, budget: CcusageBudget) -> list:
+    """Recover filtered sessions ccusage omits from its aggregate report.
+
+    ccusage 20's date-filtered aggregate currently omits Claude sessions even
+    though its exact-session reader can return their selected entries. Use the
+    unfiltered aggregate only to discover which unmatched native ids were
+    active in the span, then read those ids exactly. The shared budget bounds
+    all discovery and exact reads together.
+    """
+    missing = {}
+    for row in shown:
+        session_id = row.get("session_id")
+        if session_id and row.get("usage_status") == "unmatched":
+            missing.setdefault(session_id, []).append(row)
+    if not missing:
+        return []
+    discovery = read_source(budget=budget)
+    if discovery[0] != "read":
+        return [f"ccusage discovery {discovery[0]}: {visible(discovery[1])}"]
+    candidates = {}
+    for session_id, rows in missing.items():
+        found = match(discovery[1], session_id)
+        if len(found) > 1:
+            for row in rows:
+                row.update(join(row, discovery))
+        elif len(found) == 1 and (
+                activity_in_span(found[0].get("last_activity"), since, until)
+                or lifecycle_overlaps(rows, since, until, now)):
+            candidates[session_id] = (found[0]["agent"], rows)
+    if not candidates:
+        return []
+    workers = min(CCUSAGE_PARALLEL_CALLS, len(candidates))
+    with ThreadPoolExecutor(max_workers=workers) as executor:
+        futures = {
+            executor.submit(read_exact_source, session_id, agent, since, until, budget):
+            (session_id, rows)
+            for session_id, (agent, rows) in candidates.items()
+        }
+        for future in as_completed(futures):
+            _, rows = futures[future]
+            exact = future.result()
+            for row in rows:
+                row.update(join(row, exact))
+    return []
+
+
 def report(args) -> int:
     live = read_agents(sys.stdin.buffer.read())
-    source = read_source()
+    if args.daily and args.since:
+        raise Malformed("--daily and --since are separate views; choose one")
+    selected_day = day(args.daily, "--daily") if args.daily else None
+    selected_since = day(args.since, "--since") if args.since else None
+    filtered = selected_day is not None or selected_since is not None
+    budget = CcusageBudget()
+    source = read_source(selected_day or selected_since, selected_day, budget)
     now = args.now if args.now is not None else int(time.time())
     shown = []
     for agent in live:
@@ -416,7 +668,16 @@ def report(args) -> int:
     for row in ended:
         row = dict(row)
         row["state"] = "ended"
+        if filtered:
+            # A teardown row is a cumulative snapshot taken at teardown, not a
+            # measurement of the selected day/range. Rejoin its native id to
+            # ccusage's filtered report rather than misdating that total.
+            row.update(join(row, source))
         shown.append(row)
+    recovery_coverage = []
+    if filtered and source[0] == "read":
+        recovery_coverage = recover_filtered_sessions(
+            shown, selected_day or selected_since, selected_day, now, budget)
 
     headers = ["agent", "harness", "model", "effort", "state", "duration",
                "input", "output", "cache-r", "cache-w", "usage", "task"]
@@ -431,7 +692,29 @@ def report(args) -> int:
             visible(row.get("usage_status")), visible(row.get("task")),
         ])
     out = []
-    if body:
+    if filtered:
+        grouped, ambiguous = attribution(shown)
+        span = selected_day if selected_day else f"since {selected_since}"
+        out.append(f"local agent attribution; not account-quota share: {span}")
+        total = sum(sum(values.values()) for values in grouped.values())
+        rows = []
+        for (agent, model), values in sorted(grouped.items()):
+            tokens = sum(values.values())
+            share = f"{tokens * 100 / total:.1f}%" if total else "unknown"
+            rows.append([
+                visible(agent), visible(model), count_text(values["input"]),
+                count_text(values["output"]), count_text(values["cache_read"]),
+                count_text(values["cache_write"]), share,
+            ])
+        if rows:
+            out.append(table(
+                ["agent", "model", "input", "output(+thinking)", "cache-r", "cache-w",
+                 "local-share"], rows, {2, 3, 4, 5, 6}))
+        else:
+            out.append("no attributed local usage in the selected span")
+        if ambiguous:
+            out.append("ambiguous local attribution: " + bounded_values(ambiguous))
+    elif body:
         out.append(table(headers, body, {6, 7, 8, 9}))
     else:
         out.append("no agents: none live in this team and none recorded for it")
@@ -444,7 +727,7 @@ def report(args) -> int:
             slot["agents"] += 1
             for _, ours in TOKEN_KEYS:
                 slot[ours] += part[ours]
-    if by_model:
+    if by_model and not filtered:
         rows = [[visible(name), str(v["agents"]), count_text(v["input"]), count_text(v["output"]),
                  count_text(v["cache_read"]), count_text(v["cache_write"])]
                 for name, v in sorted(by_model.items())]
@@ -455,10 +738,26 @@ def report(args) -> int:
     uncovered = []
     if source[0] != "read":
         uncovered.append(f"ccusage {source[0]}: {visible(source[1]) or 'no reading'}")
-    for row in shown:
-        if row.get("usage_status") != "matched":
-            uncovered.append(f"{visible(row.get('agent'))}: {row.get('usage_status')}"
-                             f"{' — ' + visible(row['usage_note']) if row.get('usage_note') else ''}")
+    uncovered.extend(recovery_coverage)
+    if filtered:
+        grouped_coverage = {}
+        for row in shown:
+            status = row.get("usage_status")
+            if status in ("matched", "unmatched"):
+                continue
+            key = (status, row.get("usage_note"))
+            grouped_coverage.setdefault(key, []).append(row.get("agent"))
+        for (status, note), agents in sorted(
+                grouped_coverage.items(), key=lambda item: (str(item[0][0]), str(item[0][1]))):
+            count = len(set(agents))
+            uncovered.append(f"{status} ({count} agent{'s' if count != 1 else ''}): "
+                             f"{bounded_values(agents)}"
+                             f"{' — ' + visible(note) if note else ''}")
+    else:
+        for row in shown:
+            if row.get("usage_status") != "matched":
+                uncovered.append(f"{visible(row.get('agent'))}: {row.get('usage_status')}"
+                                 f"{' — ' + visible(row['usage_note']) if row.get('usage_note') else ''}")
     if any((row.get("collar") == "codex") for row in shown):
         uncovered.append("codex rows come from ccusage's Codex reader, which ccusage documents as experimental")
     if unreadable:
@@ -490,6 +789,8 @@ def main() -> int:
     sub.choices["report"].add_argument("--team", required=True)
     sub.choices["report"].add_argument("--team-created", type=int, default=0)
     sub.choices["report"].add_argument("--all", action="store_true")
+    sub.choices["report"].add_argument("--daily", nargs="?", const="today")
+    sub.choices["report"].add_argument("--since")
     args = parser.parse_args()
     try:
         if args.mode == "record":
