@@ -190,6 +190,150 @@ if [ "$monotonic_readers" != libexec/gang-clock ]; then
   exit 1
 fi
 
+# A FUNCTION THAT REPORTS THROUGH A GLOBAL CANNOT BE CALLED IN A COMMAND
+# SUBSTITUTION. The substitution is a subshell, so the assignment lands in a
+# copy that dies with it and the caller reads the empty value it started with.
+# Nothing fails: a refusal still refuses and simply names no cause, a limit
+# still applies and is simply zero. That is the one outcome CONSTITUTION law 8
+# exists to prevent, and the one a green run cannot distinguish from the value
+# the caller meant to read, so the rule covers every global and not only those
+# that carry a reason.
+#
+# TWO BOUNDS, BOTH MEASURED BELOW RATHER THAN ASSERTED. The read must fall
+# within three lines of the call, and the call must be written literally as
+# `$(name` — a function reached through a variable, or a read further down the
+# block, is outside what this can see. The calibration holds one case at exactly
+# three lines and one at four, so those numbers are a recorded margin.
+subshell_state_reporters() { # files -> "file:line:function" per offending call
+  local file fn global
+  for file in "$@"; do
+    while read -r fn global; do
+      [ -n "$fn" ] || continue
+      # THE DEFECT IS A READ THAT THE SUBSHELL HAS ALREADY THROWN AWAY: the call
+      # is captured, the function returns, and the caller reaches for a global its
+      # own shell never had. Matching the two together rather than by where the
+      # function ends keeps this honest around bodies that embed another
+      # language's braces, which no line-wise reading of a shell function survives.
+      awk -v file="$file" -v fn="$fn" -v g="$global" '
+        { line[NR] = $0 }
+        END {
+          for (n = 1; n <= NR; n++) {
+            if (line[n] !~ "[$][(][ ]*" fn "([ )]|$)") continue
+            for (m = n; m <= n + 3 && m <= NR; m++) {
+              if (line[m] ~ "[$][{]?" g "([^A-Za-z0-9_]|$)") {
+                print file ":" n ":" fn
+                break
+              }
+            }
+          }
+        }
+      ' "$file"
+    done <<EOF2
+$(awk '
+    /^[a-z_][a-z0-9_]*\(\)/ { fn = $1; sub(/\(\).*/, "", fn) }
+    fn != "" && /^[[:space:]]+[A-Z][A-Z0-9_]*=/ {
+      v = $1; sub(/^[[:space:]]*/, "", v); sub(/=.*/, "", v); print fn, v
+    }
+  ' "$file" | sort -u)
+EOF2
+  done
+}
+
+# CALIBRATED BEFORE IT IS TRUSTED, on every reading it has to tell apart: a
+# reporter called plainly, one whose reason is lost in a substitution, one that
+# is called the same way but says its reason on stdout, a function that returns
+# a number rather than a reason the same losing way, a declaration at column
+# zero that belongs to no function at all, and the two boundary readings that
+# fix the window at three lines. A rule that matched nothing would read exactly
+# like a tree with nothing to report.
+subshell_state_cal="$(mktemp -d "${TMPDIR:-/tmp}/gangline-lint.XXXXXX")"
+cat > "$subshell_state_cal/subject" <<'CAL'
+plain_reporter() {
+  PLAIN_ERROR="set in the caller's own shell"
+  return 1
+}
+counting_reporter() {
+  COUNTING_ERROR="set in a subshell and lost"
+  printf '0'
+  return 1
+}
+speaking_reporter() {
+  SPEAKING_ERROR="set in a subshell and said aloud"
+  printf '%s' "$SPEAKING_ERROR"
+  return 1
+}
+quiet_helper() {
+  printf 'no global here'
+}
+counting_selector() {
+  CHOSEN_LIMIT=4
+  printf '0'
+}
+edge_reporter() {
+  EDGE_ERROR="read three lines below its call, the last line still seen"
+  return 1
+}
+far_reporter() {
+  FAR_ERROR="read four lines below its call, one past the window"
+  return 1
+}
+TOP_LEVEL_KEYS="declared at column zero, owned by no function"
+plain_reporter || printf '%s' "$PLAIN_ERROR"
+held="$(counting_reporter a b)" || printf '%s' "$COUNTING_ERROR"
+said="$(speaking_reporter)" || printf 'the reason travelled on stdout'
+other="$(quiet_helper)"
+n="$(counting_selector)"
+printf '%s' "$CHOSEN_LIMIT"
+printf '%s' "$TOP_LEVEL_KEYS"
+edge="$(edge_reporter)"
+printf 'one\n'
+printf 'two\n'
+printf '%s' "$EDGE_ERROR"
+far="$(far_reporter)"
+printf 'one\n'
+printf 'two\n'
+printf 'three\n'
+printf '%s' "$FAR_ERROR"
+CAL
+subshell_state_found="$(subshell_state_reporters "$subshell_state_cal/subject")"
+subshell_state_want="$(printf '%s\n' \
+  "$subshell_state_cal/subject:32:counting_reporter" \
+  "$subshell_state_cal/subject:35:counting_selector" \
+  "$subshell_state_cal/subject:38:edge_reporter")"
+rm -rf -- "$subshell_state_cal"
+if [ "$subshell_state_found" != "$subshell_state_want" ]; then
+  printf '%s\n' \
+    'lint: the subshell state-reporter selector does not hold its calibration.' \
+    "expected [$subshell_state_want], got [${subshell_state_found:-<none>}]" >&2
+  exit 1
+fi
+
+# THE SHELL FILES THIS PROJECT RUNS, which is narrower than the canonical lint
+# list below on purpose: that list carries test/*.sh, where a wrapper function
+# named for the command it shadows is invoked with a per-command environment
+# prefix — `ROOT="$ROOT" bash -c …` reads as an assignment to a global, and the
+# call sites read `$ROOT` a line later. Telling that prefix from a plain
+# assignment needs the shell's own parser, and a selector that guessed would go
+# blind exactly where this rule is load-bearing. Production code is where the
+# swallowed value has no test to notice it, so that is what is covered, and the
+# gap is written down rather than hidden behind a narrower pattern.
+subshell_state_files=""
+for f in bin/gang install.sh collars/*.sh libexec/gang-* \
+  libexec/gang-tmux-guard/tmux statusline/*.sh .githooks/*; do
+  [ -f "$f" ] || continue
+  subshell_state_files="$subshell_state_files $f"
+done
+# shellcheck disable=SC2086  # a space-separated list of repository paths
+subshell_state_offenders="$(subshell_state_reporters $subshell_state_files)"
+if [ -n "$subshell_state_offenders" ]; then
+  printf '%s\n' \
+    "lint: these functions return state through a global but are called inside" \
+    "a command substitution, where that assignment is made in a subshell and" \
+    "lost; return the value on stdout beside the first, or call them plainly:" \
+    "$subshell_state_offenders" >&2
+  exit 1
+fi
+
 # THE E2E LANE IS THE ONE FILE ALLOWED TO SPEND WALL TIME, and this is the check
 # that keeps that exemption honest. It drives a real claude-code TUI, so it
 # cannot be written against a fake clock — but the rule below was never about
