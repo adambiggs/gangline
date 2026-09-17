@@ -192,14 +192,41 @@ SH
 chmod +x "$RUN_ROOT/td-norequest/tmux"
 td_worker_id="$(window_id td-worker)"
 tmux set-option -w -t "$td_worker_id" @gl_self_compact_requested 0123456789abcdef
+tmux set-option -w -t "$td_worker_id" @gl_self_compact_resume TD_WITHDRAWN_RESUME
+tmux set-option -w -t "$td_worker_id" @gl_self_compact_failed \
+  '[request:0123456789abcdef] another Gangline process is delivering to td-worker (still scheduled; gang retries at the next turn boundary)'
 td_as td-worker safe-to-drop --report-to td-lead
-tmux set-option -uw -t "$td_worker_id" @gl_self_compact_requested
 equal "a standing self-compaction request refuses the mark" 3 "$td_rc"
 contains "that refusal names the request" "$td_out" "still standing"
+# A REQUEST WHOSE BOUNDARY KEEPS REFUSING IS WITHDRAWN BY ITS AGENT. Without
+# this the only ways out were a retry that could fail again, a hand-edit of the
+# window option, or a drop without the mark.
+contains "that refusal says how to withdraw it" "$td_out" "gang compact --cancel"
+td_as td-peer compact td-worker --cancel
+equal "an agent cannot withdraw another agent's self-compaction" 3 "$td_rc"
+equal "the refused withdrawal leaves the request standing" 0123456789abcdef \
+  "$(tmux show-options -wqv -t "$td_worker_id" @gl_self_compact_requested)"
+td_as td-worker compact --cancel --resume TD_BOTH
+equal "a withdrawal takes no continuation" 1 "$td_rc"
+td_as td-worker compact --cancel
+equal "an agent withdraws its own standing self-compaction" 0 "$td_rc"
+contains "the withdrawal says what it withdrew" "$td_out" "withdrawn"
+for td_option in @gl_self_compact_requested @gl_self_compact_resume \
+    @gl_self_compact_failed @gl_self_compact_witness @gl_self_compact_noted; do
+  equal "the withdrawal clears $td_option" "" \
+    "$(tmux show-options -wqv -t "$td_worker_id" "$td_option")"
+done
+td_as td-worker compact --cancel
+equal "withdrawing when nothing stands is not an error" 0 "$td_rc"
+contains "and says nothing was standing" "$td_out" "no self-compaction"
 tmux set-option -w -t "$td_worker_id" @gl_self_compact_dispatching 0123456789abcdef
 td_as td-worker safe-to-drop --report-to td-lead
-tmux set-option -uw -t "$td_worker_id" @gl_self_compact_dispatching
 equal "a dispatching self-compaction refuses the mark" 3 "$td_rc"
+td_as td-worker compact --cancel
+equal "a compaction already being dispatched cannot be withdrawn" 3 "$td_rc"
+equal "the refused withdrawal leaves the dispatch standing" 0123456789abcdef \
+  "$(tmux show-options -wqv -t "$td_worker_id" @gl_self_compact_dispatching)"
+tmux set-option -uw -t "$td_worker_id" @gl_self_compact_dispatching
 equal "neither refusal records a mark" "" "$(td_mark td-worker)"
 td_rc=0
 td_out="$(PATH="$RUN_ROOT/td-norequest:$PATH" TMUX_PANE="$(td_pane td-worker)" \

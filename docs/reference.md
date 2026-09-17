@@ -1344,7 +1344,7 @@ stopping — a harness that ends that turn by killing the tool call takes the
 sending process with it before the reason is typed. Whether it survives is the
 same harness verdict the stop itself is.
 
-### `gang compact [<name>] [--resume <turn>]`
+### `gang compact [<name>] [--resume <turn>]`, `gang compact --cancel`
 
 Submits the collar's native compaction command through the same verified input
 path. An external request refuses a busy or unknown target.
@@ -1385,7 +1385,16 @@ waiting mail, including the note its own refusal spooled; PostCompact then
 drains the spool into the compacted context. A boundary where the request
 cannot be spent, because its witness binding fails closed or it is retired as
 unsupported, delivers the mail instead.
-`status` and `roster` expose the pending failure. A guarded launch that cannot
+`status` and `roster` expose the pending failure.
+
+A standing self-compaction request refuses `gang safe-to-drop`. `gang compact
+--cancel` withdraws it: only the agent that requested it may, the withdrawal
+takes the same claims as the dispatching boundary, it clears the request with
+its continuation and failure record, and it records
+`compaction.self-withdrawn`. A request a boundary is already dispatching cannot
+be withdrawn, and withdrawing when nothing stands succeeds without effect.
+
+A guarded launch that cannot
 install hooks cannot witness deferred self-compaction requests from inside that
 harness, but tick delivery remains available for requests already recorded.
 

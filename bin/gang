@@ -994,6 +994,7 @@ gang compact
 
   gang compact [name]
     [--resume "<turn to take after>"]
+  gang compact --cancel
 
   Reach for it when an agent is close to
   filling its context window; gang context
@@ -1006,10 +1007,15 @@ gang compact
              follows, so the agent never
              lands idle behind a compaction;
              this replaces the default turn.
+  --cancel   withdraw this agent's own
+             self-compaction request before a
+             turn boundary dispatches it.
 
   An agent compacting itself is scheduled for
   the end of its current turn. gang status
-  reports a self-compaction still pending.
+  reports a self-compaction still pending,
+  and gang safe-to-drop refuses until it is
+  done or withdrawn.
 
   A boundary where the composer is somebody
   else's — an operator mid-reply, a dialog on
@@ -15606,12 +15612,72 @@ cmd_interrupt() {
     "$(colour "$C_DIM" "(the turn bracket is dropped; whether the turn ended is now the pane's evidence to answer, and the stop remains the harness's verdict)")"
 }
 
+# A STANDING REQUEST IS WITHDRAWN BY THE AGENT THAT MADE IT. A boundary that
+# keeps refusing leaves the request standing, and a standing request refuses
+# safe-to-drop; without a withdrawal the agent's only ways out were a retry
+# that could be refused again, a hand-edit of the window option, or a drop
+# without the mark. The worker's own request-keyed claim is taken, so a
+# boundary dispatching the request excludes the withdrawal and the reverse:
+# a worker that loses the claim leaves the request alone, and one that won it
+# has either consumed the request or put it back before releasing.
+self_compact_cancel() { # $1 agent name; AGENT_ID resolved
+  local self="" request dispatch claim_rc=0 option state_claim=""
+  self="$(self_window)" || self=""
+  [ -n "$self" ] && [ "$self" = "$AGENT_ID" ] \
+    || refuse "only '$1' may withdraw its own self-compaction; a peer compaction (gang compact $1) answers it instead"
+  request="$(window_option "$AGENT_ID" @gl_self_compact_requested)" \
+    || die "whether a self-compaction of '$1' is standing cannot be read"
+  dispatch="$(window_option "$AGENT_ID" @gl_self_compact_dispatching)" \
+    || die "whether a self-compaction of '$1' is being dispatched cannot be read"
+  [ -z "$dispatch" ] \
+    || refuse "a turn boundary is dispatching this self-compaction now; it cannot be withdrawn — gang status $1 shows its outcome"
+  if [ -z "$request" ]; then
+    printf '%s\n' "no self-compaction is standing for $1; nothing to withdraw"
+    return 0
+  fi
+  # Both claims: the state claim excludes a boundary retiring the request as
+  # unsupported, which would otherwise write its refusal back over the
+  # withdrawal, and the request claim excludes the dispatching worker.
+  self_compact_state_claim "$AGENT_ID" || claim_rc=$?
+  case "$claim_rc" in
+    0) state_claim="$EVENT_CLAIM" ;;
+    1) refuse "a turn boundary is settling this self-compaction now — retry in a moment" ;;
+    *) die "cannot claim the self-compaction record of '$1': $EVENT_CLAIM_ERROR" ;;
+  esac
+  event_claim self-compact "$AGENT_ID" "$request" || claim_rc=$?
+  case "$claim_rc" in
+    0) ;;
+    1) rm -f -- "$state_claim"
+       refuse "a turn boundary is dispatching this self-compaction now; it cannot be withdrawn — gang status $1 shows its outcome" ;;
+    *) rm -f -- "$state_claim"
+       die "cannot claim the self-compaction request of '$1': $EVENT_CLAIM_ERROR" ;;
+  esac
+  if [ "$(window_option "$AGENT_ID" @gl_self_compact_requested)" != "$request" ]; then
+    event_claim_release; rm -f -- "$state_claim"
+    refuse "the self-compaction request stopped standing as it was being withdrawn — gang status $1 shows what happened to it"
+  fi
+  for option in @gl_self_compact_requested @gl_self_compact_witness \
+      @gl_self_compact_resume @gl_self_compact_failed @gl_self_compact_noted; do
+    tmux set-option -uw -t "$AGENT_ID" "$option" \
+      || { event_claim_release; rm -f -- "$state_claim"
+           die "could not clear $option while withdrawing the self-compaction of '$1'"; }
+  done
+  tmux wait-for -S "gang-self-compact-$request" 2>/dev/null || true
+  event_log_record "$AGENT_ID" compaction.self-withdrawn \
+    "{\"request_id\":\"$request\"}" \
+    || { event_claim_release; rm -f -- "$state_claim"
+         die 'compaction: the withdrawal was made but could not be appended'; }
+  event_claim_release; rm -f -- "$state_claim"
+  printf '%s\n' "$(colour "$C_OK" "self-compaction request withdrawn") $(colour "$C_DIM" "(nothing was typed; no continuation follows)")"
+}
+
 cmd_compact() {
-  local name="" self="" mine=0 busy_rc=0 resume="" self_request="" self_reason="" self_witness="" option="" self_claim_rc=0 submit_rc=0
+  local name="" self="" mine=0 busy_rc=0 resume="" resume_given=0 cancel=0 self_request="" self_reason="" self_witness="" option="" self_claim_rc=0 submit_rc=0
   while [ $# -gt 0 ]; do case "$1" in
     --resume) [ $# -ge 2 ] || die "compact: --resume needs the turn to take after the compaction"
-              [ -z "$resume" ] || die "compact: --resume may be passed only once"
-              resume="$2"; shift 2 ;;
+              [ "$resume_given" -eq 0 ] || die "compact: --resume may be passed only once"
+              resume="$2"; resume_given=1; shift 2 ;;
+    --cancel) cancel=1; shift ;;
     -*) die "compact: unknown argument '$1'" ;;
     *) [ -z "$name" ] || die "compact: unexpected argument '$1'"
        name="$1"; shift ;;
@@ -15628,6 +15694,12 @@ cmd_compact() {
     }
   fi
   resolve "$name"
+  if [ "$cancel" -eq 1 ]; then
+    [ "$resume_given" -eq 0 ] \
+      || die "compact: --cancel withdraws a request and takes no --resume"
+    self_compact_cancel "$name"
+    return 0
+  fi
   # A compaction and its continuation are work, and a deferred self-request is
   # recorded long before any keystroke; refuse both before anything is written.
   safe_to_drop_delivery_guard "$AGENT_ID" "a compaction"
@@ -18886,7 +18958,7 @@ safe_to_drop_preconditions() { # $1 own window, $2 own token; 1 with SAFE_TO_DRO
       return 1
     }
     [ -z "$standing" ] || {
-      SAFE_TO_DROP_ERROR="a self-compaction you requested is still standing"
+      SAFE_TO_DROP_ERROR="a self-compaction you requested is still standing — withdraw it with gang compact --cancel, or let its turn boundary finish it"
       return 1
     }
   done
