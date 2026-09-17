@@ -518,9 +518,17 @@ SH
     fi
     rm -f -- "$socket"
   done
-  cmp -s "$root/plain.map" "$root/role.map" \
-    && pass "AC14 role leaves window and session mappings byte-identical" \
-    || fail "AC14 role leaves window and session mappings byte-identical" "$(diff -u "$root/plain.map" "$root/role.map" || true)"
+  # A ROLE IS A REGISTERED FACT ABOUT THE WINDOW, so these maps differ by exactly
+  # one option and nothing else. The older expectation was that a role changed
+  # nothing observable at all, which left every later reader with the window name
+  # to go by — and an agent is not what it is called. What that expectation was
+  # really guarding is unchanged and still asserted: a role must not move the
+  # session, the collar, the scope, the spool or any other registration.
+  local difference
+  difference="$(diff "$root/plain.map" "$root/role.map" | grep -E '^[<>] ' || true)"
+  equal "AC14 role registers the role it was given and changes nothing else" \
+    "< @gl_role ''
+> @gl_role lead" "$difference"
 }
 
 ac15() {
@@ -958,6 +966,13 @@ ac26() {
       "$(pane_all role-ac26-msg | tr -s ' \n' '  ')" \
       "$(tr -s ' \n' '  ' < "$PRODUCT_ROOT/roles/worker.md")"
     submitted "AC26 the message-level worker contract was submitted" role-ac26-msg
+    # THE ROLE IS REGISTERED AS WELL AS DELIVERED, so what an agent was hitched
+    # as is a fact about its window rather than a paragraph in its context. A
+    # reading that went by the window name instead would answer for what an
+    # agent is called.
+    equal "AC26 the hitched role is registered on the agent's window" \
+      "worker" "$(tmux -S "$TMUX_SOCKET" show-options -wqv \
+        -t "$(window_id role-ac26-msg)" @gl_role)"
     drop_agent role-ac26-msg
   else
     fail "AC26 a role-less-option collar accepts the worker role" "$out"
@@ -986,6 +1001,16 @@ ac26() {
     "naming a defect in what you are pushing, so fix the content"
   contains "AC26 one report follows the landing" "$worker" \
     "Send the lead one report once the work has landed"
+  contains "AC26 the assignment's tier sets how far the review reaches" "$worker" \
+    "tier on your assignment sets how far it reaches"
+  contains "AC26 a Tier B review hitches nobody" "$worker" \
+    "In Tier B you review with your own subagents and the gate this repository ships"
+  contains "AC26 a Tier A review leaves the owner's harness" "$worker" \
+    "In Tier A the review leaves your harness."
+  contains "AC26 a review gets two rounds and no third" "$worker" \
+    "A review gets two rounds."
+  contains "AC26 an unsettled finding lands recorded or reaches the lead" "$worker" \
+    "land with it recorded or hand the disagreement to the lead, but do not open a third"
   contains "AC26 the report names commits, proof, gaps and operator work" "$worker" \
     "the commits, what each test proves, what remains unproven, and anything the operator must do"
 }

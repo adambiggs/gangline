@@ -275,7 +275,11 @@ equal "a verified self-declared operator envelope creates no peer debt" \
 # The prompt a harness submits is the envelope the pane received, read back
 # rather than rebuilt here: a rebuilt envelope that no longer matches the wire
 # proves no prompt, arms no debt, and lets the debt checks below pass unarmed.
-printf '%s' ASSIGN_READ | TMUX_PANE="$reply_a_pane" "$GANG" hitch assign-read \
+# reply-a already holds reply-b, and this second child is what makes an
+# assignment envelope observable from the agent that sent it. The live-hitch
+# ceiling is not this part's subject, so it is off for the one hitch that crosses
+# it.
+printf '%s' ASSIGN_READ | GANG_HITCH_CEILING=off TMUX_PANE="$reply_a_pane" "$GANG" hitch assign-read \
   -c replyable -d /tmp --stdin >/dev/null
 assign_id="$(window_id assign-read)"
 assign_pane="$(tmux list-panes -t "$assign_id" -F '#{pane_id}')"

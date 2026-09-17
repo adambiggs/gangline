@@ -3399,3 +3399,289 @@ else
     "$codexheld_capture" "could not hold this pane"
   tmux kill-window -t "$codexheld_window"
 fi
+
+# HOW MANY AGENTS ONE AGENT MAY HOLD AT ONCE. The ceiling counts the caller's
+# live registered children and refuses before hitch's first tmux mutation, so a
+# refusal leaves no window, no spool and no event behind. Children are staged
+# with `gang adopt`, which writes the same @gl_hitched_by stamp a hitch does, so
+# the count under test is driven without paying for a harness per child.
+ceiling_window() { # $1 name -> a live window id in this suite's session
+  tmux new-window -d -P -F '#{window_id}' -t "=$GANG_SESSION" \
+    -n "$1" "PS1='❯ ' bash --norc"
+}
+ceiling_pane_of() { tmux list-panes -t "$1" -F '#{pane_id}'; }
+ceiling_child() { # $1 name, $2 adopting agent's pane -> that agent's live child
+  local id
+  id="$(ceiling_window "$1")"
+  TMUX_PANE="$2" "$GANG" adopt "$1" -c bash >/dev/null
+  printf '%s' "$id"
+}
+
+# THE ROLE IS REGISTERED, NOT INFERRED, and test/role-briefs.sh proves a hitch
+# writes @gl_role from the brief it delivered. Here the stamp is set directly:
+# what is under test is the ceiling that reads it, and a hitcher staged with
+# tmux carries no brief of its own to read it from.
+ceiling_origin="$(ceiling_window ceil-origin)"
+"$GANG" adopt ceil-origin -c bash >/dev/null
+ceiling_pane="$(ceiling_pane_of "$ceiling_origin")"
+ceiling_token="$(tmux show-options -wqv -t "$ceiling_origin" @gl_spool)"
+equal "the staged hitcher carries no registered role" \
+  "" "$(tmux show-options -wqv -t "$ceiling_origin" @gl_role)"
+TMUX_PANE="$ceiling_pane" "$HITCH" ceilfirst -c bash -d /tmp >/dev/null
+equal "an agent holding nothing may hitch the one teammate its ceiling allows" \
+  "$ceiling_token" "$(tmux show-options -wqv -t "$(window_id ceilfirst)" @gl_hitched_by)"
+equal "and a hitch given no role registers none" \
+  "" "$(tmux show-options -wqv -t "$(window_id ceilfirst)" @gl_role)"
+
+ceiling_second_rc=0
+ceiling_second_out="$(TMUX_PANE="$ceiling_pane" \
+  "$GANG" hitch ceilsecond -c bash -d /tmp 2>&1)" || ceiling_second_rc=$?
+equal "a second live hitch is refused" 3 "$ceiling_second_rc"
+contains "the refusal counts the hitch it would have been" \
+  "$ceiling_second_out" "'ceilsecond' would be live hitch number 2 and your ceiling, with no role recorded for this window, is 1"
+contains "and names the parallelism that costs no window" \
+  "$ceiling_second_out" "run this inside your own harness with subagents"
+equal "a refused hitch launches nothing" "" "$(window_id ceilsecond)"
+excludes "and the roster never names it" "$("$GANG" roster)" "ceilsecond"
+
+# A MARK IS NOT A RELEASE. `gang safe-to-drop` says the work is finished; the
+# window it leaves standing is exactly what this refusal asks its hitcher for.
+tmux set-option -w -t "$(window_id ceilfirst)" @gl_safe_to_drop "$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+ceiling_marked_rc=0
+ceiling_marked_out="$(TMUX_PANE="$ceiling_pane" \
+  "$GANG" hitch ceilmarked -c bash -d /tmp 2>&1)" || ceiling_marked_rc=$?
+equal "a child already marked safe to drop still holds its window" \
+  3 "$ceiling_marked_rc"
+contains "and still counts against the ceiling" \
+  "$ceiling_marked_out" "would be live hitch number 2"
+
+# THE CEILING IS SELECTED BY THE REGISTERED ROLE. This window is named
+# ceil-origin and answers to the lead's four; the one below is named lead and
+# answers to one, which is the reading a name-based ceiling would invert.
+tmux set-option -w -t "$ceiling_origin" @gl_role lead
+ceiling_child ceil-child2 "$ceiling_pane" >/dev/null
+ceiling_child ceil-child3 "$ceiling_pane" >/dev/null
+ceiling_child ceil-child4 "$ceiling_pane" >/dev/null
+ceiling_lead_rc=0
+ceiling_lead_out="$(TMUX_PANE="$ceiling_pane" \
+  "$GANG" hitch ceilfifth -c bash -d /tmp 2>&1)" || ceiling_lead_rc=$?
+equal "the lead's fifth live hitch is refused" 3 "$ceiling_lead_rc"
+contains "under the ceiling its role selects" \
+  "$ceiling_lead_out" "would be live hitch number 5 and your ceiling as lead is 4"
+
+ceiling_named="$(ceiling_window lead)"
+"$GANG" adopt lead -c bash >/dev/null
+ceiling_named_pane="$(ceiling_pane_of "$ceiling_named")"
+ceiling_child ceil-named-child "$ceiling_named_pane" >/dev/null
+ceiling_named_rc=0
+ceiling_named_out="$(TMUX_PANE="$ceiling_named_pane" \
+  "$GANG" hitch ceilnamed -c bash -d /tmp 2>&1)" || ceiling_named_rc=$?
+equal "an agent merely called lead is not the lead" 3 "$ceiling_named_rc"
+contains "and is held to the unroled ceiling" \
+  "$ceiling_named_out" "would be live hitch number 2 and your ceiling, with no role recorded for this window, is 1"
+
+# THE EXCEPTION STAYS AVAILABLE AT THE PRICE OF A REASON, and the reason is
+# recorded where gang records the hitch rather than only in the pane that typed it.
+TMUX_PANE="$ceiling_pane" "$HITCH" ceilover -c bash -d /tmp \
+  --over-ceiling 'the report must outlive this session' >/dev/null
+equal "--over-ceiling hitches past the ceiling" \
+  "$ceiling_token" "$(tmux show-options -wqv -t "$(window_id ceilover)" @gl_hitched_by)"
+# AND THE REASON IS RECORDED WHERE GANG RECORDS THE HITCH, not only in the pane
+# that typed it. An event stream this host cannot write settles nothing about
+# what was written to it, so it answers unknown rather than either column.
+ceiling_over_rc=0
+ceiling_over_log="$("$GANG" log ceilover --kind agent.hitched 2>&1)" || ceiling_over_rc=$?
+if [ "$ceiling_over_rc" -ne 0 ]; then
+  unknown "an override records the reason it was given" \
+    "the event stream could not be read: $ceiling_over_log"
+else
+  # source-guard: producer@5c6c55c272a3: the hitch above is the only command that ever carried this reason, and the reader is scoped to that one agent's agent.hitched events
+  contains "an override records the reason it was given" \
+    "$ceiling_over_log" "the report must outlive this session"
+  # source-guard: producer@95aba3076bef: the same scoped read; only a hitch given --over-ceiling writes this member, and no other hitch of ceilover exists to write it
+  contains "under the member that names the override" \
+    "$ceiling_over_log" "over_ceiling"
+fi
+refuses "--over-ceiling without a value is refused" \
+  "hitch: --over-ceiling needs a value" \
+  env TMUX_PANE="$ceiling_pane" "$GANG" hitch ceilnoreason -c bash -d /tmp --over-ceiling
+refuses "and whitespace is not a reason" \
+  "hitch: --over-ceiling needs a reason for holding one more agent" \
+  env TMUX_PANE="$ceiling_pane" "$GANG" hitch ceilblank -c bash -d /tmp --over-ceiling '   '
+equal "neither refused override launches anything" "" \
+  "$(window_id ceilnoreason)$(window_id ceilblank)"
+
+# WHAT THE SETTING CAN SAY. A role the map names neither exactly nor through *
+# is unbounded, an explicit `off` is a setting rather than a mistake, and the
+# whole map can be turned off. Each is driven from a hitcher already past the
+# ceiling its default would impose.
+GANG_HITCH_CEILING='worker=1' TMUX_PANE="$ceiling_pane" \
+  "$HITCH" ceilunnamed -c bash -d /tmp >/dev/null
+equal "a map naming neither this role nor * bounds somebody else" \
+  "$ceiling_token" "$(tmux show-options -wqv -t "$(window_id ceilunnamed)" @gl_hitched_by)"
+GANG_HITCH_CEILING='*=1 lead=off' TMUX_PANE="$ceiling_pane" \
+  "$HITCH" ceilroleoff -c bash -d /tmp >/dev/null
+equal "an explicit off exempts the role that carries it" \
+  "$ceiling_token" "$(tmux show-options -wqv -t "$(window_id ceilroleoff)" @gl_hitched_by)"
+GANG_HITCH_CEILING=off TMUX_PANE="$ceiling_pane" \
+  "$HITCH" ceilalloff -c bash -d /tmp >/dev/null
+equal "and off bounds nobody at all" \
+  "$ceiling_token" "$(tmux show-options -wqv -t "$(window_id ceilalloff)" @gl_hitched_by)"
+
+# A MALFORMED SETTING IS READ BEFORE ANY DECISION, so it refuses every hitch
+# rather than only the ones it would have bounded — these run as the operator,
+# whom no ceiling binds.
+refuses "a ceiling entry that is not a count is refused, naming the entry" \
+  "GANG_HITCH_CEILING entry 'lead=x' must be ROLE=N or ROLE=off" \
+  env GANG_HITCH_CEILING='lead=x' "$GANG" hitch ceilbad -c bash -d /tmp
+refuses "and says where the setting came from" \
+  "(from the environment)" \
+  env GANG_HITCH_CEILING='lead=x' "$GANG" hitch ceilbad -c bash -d /tmp
+refuses "a ceiling of zero is refused rather than read as none" \
+  "GANG_HITCH_CEILING entry 'lead=0' needs a positive ceiling, or off for none" \
+  env GANG_HITCH_CEILING='lead=0' "$GANG" hitch ceilzero -c bash -d /tmp
+refuses "a role named twice is refused rather than resolved" \
+  "GANG_HITCH_CEILING names 'lead' twice" \
+  env GANG_HITCH_CEILING='lead=2 lead=3' "$GANG" hitch ceiltwice -c bash -d /tmp
+equal "no malformed setting launches anything" "" \
+  "$(window_id ceilbad)$(window_id ceilzero)$(window_id ceiltwice)"
+refuses "a malformed setting is refused behind an override too" \
+  "GANG_HITCH_CEILING entry 'lead=x' must be ROLE=N or ROLE=off" \
+  env GANG_HITCH_CEILING='lead=x' TMUX_PANE="$ceiling_pane" \
+  "$GANG" hitch ceilbadover -c bash -d /tmp --over-ceiling 'the setting is read first'
+equal "and the override launched nothing either" "" "$(window_id ceilbadover)"
+
+# THE REASON IS RECORDED WHENEVER THE FLAG IS PASSED, not only when it was the
+# thing that let the hitch through. An override given under the ceiling still
+# says why it was reached for, and reading it back only where it changed the
+# outcome would leave the commoner case unproven.
+ceiling_under="$(ceiling_window ceil-under)"
+"$GANG" adopt ceil-under -c bash >/dev/null
+ceiling_under_pane="$(ceiling_pane_of "$ceiling_under")"
+TMUX_PANE="$ceiling_under_pane" "$HITCH" ceilunder -c bash -d /tmp \
+  --over-ceiling 'habit, and the habit is the record' >/dev/null
+ceiling_under_rc=0
+ceiling_under_log="$("$GANG" log ceilunder --kind agent.hitched 2>&1)" || ceiling_under_rc=$?
+if [ "$ceiling_under_rc" -ne 0 ]; then
+  unknown "an override under the ceiling is recorded all the same" \
+    "the event stream could not be read: $ceiling_under_log"
+else
+  # source-guard: producer@b93bf895c3ec: the hitch above is the only command that ever carried this reason, and the reader is scoped to that one agent's agent.hitched events
+  contains "an override under the ceiling is recorded all the same" \
+    "$ceiling_under_log" "habit, and the habit is the record"
+fi
+
+# A REGISTRY GANG CANNOT READ IS NOT A ZERO, and the refusal has to say which
+# reading failed. The count travels out of a command substitution, so a reason
+# left in a shell variable would be set in the subshell and the refusal would
+# name no cause at all. Only the one listing the ceiling depends on is blinded:
+# the shim matches that exact format and hands every other call straight on,
+# through the PATH it was found on rather than an absolute path, so the tmux
+# guard stays in the chain.
+mkdir -p "$RUN_ROOT/bin/blindtmux"
+cat > "$RUN_ROOT/bin/blindtmux/tmux" <<'SH'
+#!/bin/sh
+for blind_arg in "$@"; do
+  case "$blind_arg" in
+    '#{window_id}|#{@gl_hitched_by}|#{@gl_agent}') exit 1 ;;
+  esac
+done
+PATH="${PATH#*:}"
+export PATH
+exec tmux "$@"
+SH
+chmod +x "$RUN_ROOT/bin/blindtmux/tmux"
+refuses "an unreadable window registry refuses rather than counting to zero" \
+  "how many agents you already hold is unknown" \
+  env PATH="$RUN_ROOT/bin/blindtmux:$PATH" TMUX_PANE="$ceiling_pane" \
+  "$GANG" hitch ceilblind -c bash -d /tmp
+equal "and a refusal it could not count for launches nothing" "" "$(window_id ceilblind)"
+
+# THE NAME IS EXEMPTED ON ONE WINDOW, NOT EVERY WINDOW THAT SHARES IT. A resume
+# respawns the window a name resolves to, and a name resolves only inside this
+# session, while the count reads the whole server. A child of the same name in
+# another session is therefore a second agent and not the one about to be
+# reused.
+ceiling_far="$(ceiling_window ceil-far)"
+"$GANG" adopt ceil-far -c bash >/dev/null
+ceiling_far_pane="$(ceiling_pane_of "$ceiling_far")"
+ceiling_far_token="$(tmux show-options -wqv -t "$ceiling_far" @gl_spool)"
+tmux new-session -d -s ceil-elsewhere -n ceilghost "PS1='❯ ' bash --norc"
+ceiling_ghost="$(tmux list-windows -t '=ceil-elsewhere' -F '#{window_id}')"
+tmux set-option -w -t "$ceiling_ghost" @gl_agent ceilghost
+tmux set-option -w -t "$ceiling_ghost" @gl_hitched_by "$ceiling_far_token"
+refuses "a same-named child in another session still counts" \
+  "would be live hitch number 2" \
+  env TMUX_PANE="$ceiling_far_pane" "$GANG" hitch ceilghost -c bash -d /tmp
+equal "and the hitch it would have let through opened nothing here" "" \
+  "$(window_id ceilghost)"
+tmux kill-session -t '=ceil-elsewhere'
+
+# THE OPERATOR IS UNBOUNDED, and the instrument says so rather than the absence
+# of a refusal: this suite hitches from a shell with no agent identity, and it
+# holds more agents than any ceiling here would allow.
+ceiling_operator_held="$(tmux list-windows -a -F '#{@gl_hitched_by}' \
+  | awk '$0 == "operator" { n = n + 1 } END { print n + 0 }')"
+if [ "$ceiling_operator_held" -gt 1 ]; then
+  "$HITCH" ceilop -c bash -d /tmp >/dev/null
+  equal "the operator's shell is bounded by no ceiling" \
+    "operator" "$(tmux show-options -wqv -t "$(window_id ceilop)" @gl_hitched_by)"
+  "$GANG" drop ceilop >/dev/null
+else
+  fail "the operator's shell is bounded by no ceiling" \
+    "only $ceiling_operator_held operator-held agents are live, so a ceiling of 1 was never reached"
+fi
+
+# A RENEWAL IS NOT A SECOND AGENT. --resume respawns the very window it would
+# otherwise count, so the name being hitched never stands in its own way.
+ceiling_two="$(ceiling_window ceil-two)"
+"$GANG" adopt ceil-two -c bash >/dev/null
+ceiling_two_pane="$(ceiling_pane_of "$ceiling_two")"
+# A COLLAR OF ITS OWN, because the resume launch here has to produce a live
+# agent rather than a recorded launch line: the fixture above relaunches onto a
+# command that takes the session id as a script name and exits 127.
+cat > "$RUN_ROOT/collars/ceiling-resume.sh" <<SH
+# shellcheck shell=bash
+# shellcheck disable=SC2034
+. "$ROOT/collars/bash.sh"
+GANG_RESUME_LAUNCH="GANG_RESUMED={{session_id}} PS1='❯ ' bash --norc"
+collar_session_id() { printf 'fixture-session-id'; }
+SH
+TMUX_PANE="$ceiling_two_pane" "$HITCH" ceilresume -c ceiling-resume -d /tmp >/dev/null
+ceiling_resume_id="$(window_id ceilresume)"
+# A RENEWAL RELAUNCHES A HELD CORPSE, so the child is made one first: hitch
+# refuses to replace a live pane with a resumed harness, and the window the
+# corpse still holds is what the ceiling would otherwise count. Its death is
+# ordered through a pipe this run owns rather than a tmux client, so a pane that
+# never dies stalls on its own fifo instead of on the shared server.
+mkfifo "$RUN_ROOT/ceilresume.fifo"
+tmux set-option -w -t "$ceiling_resume_id" remain-on-exit on
+tmux set-hook -w -t "$ceiling_resume_id" pane-died \
+  "run-shell -b 'printf x > $RUN_ROOT/ceilresume.fifo'"
+tmux respawn-window -k -t "$ceiling_resume_id" -c /tmp 'exit 0'
+exec 3<"$RUN_ROOT/ceilresume.fifo"
+cat <&3 >/dev/null
+exec 3<&-
+equal "the child a renewal is offered is a corpse holding its window" \
+  1 "$(tmux display-message -p -t "$ceiling_resume_id" '#{pane_dead}')"
+ceiling_resume_rc=0
+ceiling_resume_out="$(TMUX_PANE="$ceiling_two_pane" "$GANG" hitch ceilresume \
+  -c ceiling-resume -d /tmp --resume fixture-session-id 2>&1)" || ceiling_resume_rc=$?
+if [ "$ceiling_resume_rc" -ne 0 ]; then
+  fail "an agent at its ceiling may still renew the child it already holds" \
+    "status $ceiling_resume_rc: $ceiling_resume_out"
+else
+  pass "an agent at its ceiling may still renew the child it already holds"
+fi
+excludes "and the renewal is not counted against it" \
+  "$ceiling_resume_out" "would be live hitch number"
+contains "and it is the harness session the renewal named that came back" \
+  "$(tmux display-message -p -t "$(window_id ceilresume)" '#{pane_start_command}')" \
+  "GANG_RESUMED=fixture-session-id"
+
+for ceiling_agent in ceilfirst ceilover ceilunnamed ceilroleoff ceilalloff \
+  ceilresume ceilunder ceil-child2 ceil-child3 ceil-child4 ceil-named-child \
+  ceil-origin ceil-two ceil-under ceil-far lead; do
+  "$GANG" drop "$ceiling_agent" >/dev/null
+done
+unset ceiling_agent
