@@ -50,6 +50,30 @@ GANG_LOCK_DIR="$fixture_root/locks"
 mkdir -p -m 700 "$GANG_LOCK_DIR"
 path="$GANG_LOCK_DIR/pane.lock"
 fixture_mode="${5:-standard}"
+retry_ledger="${6:-}"
+mkdir -p "$fixture_root/bin"
+cat > "$fixture_root/bin/sleep" <<'CLOCK'
+#!/bin/sh
+[ -n "${GANG_TEST_PANE_LOCK_RETRY_LEDGER:-}" ] || {
+  printf 'stale-pane-lock fixture reached an uninstrumented clock wait\n' >&2
+  exit 98
+}
+printf '%s\n' "$1" >> "$GANG_TEST_PANE_LOCK_RETRY_LEDGER"
+if [ "${GANG_TEST_PANE_LOCK_RETRY_MODE:-}" = retry-release ] \
+   && [ ! -e "$GANG_TEST_PANE_LOCK_RETRY_ROOT/released" ]; then
+  : > "$GANG_TEST_PANE_LOCK_RETRY_ROOT/released"
+  rm -f -- "$GANG_TEST_PANE_LOCK_RETRY_PATH"
+fi
+CLOCK
+chmod +x "$fixture_root/bin/sleep"
+PATH="$fixture_root/bin:$PATH"
+export PATH
+GANG_TEST_PANE_LOCK_RETRY_LEDGER="$retry_ledger"
+GANG_TEST_PANE_LOCK_RETRY_MODE="$fixture_mode"
+GANG_TEST_PANE_LOCK_RETRY_ROOT="$fixture_root"
+GANG_TEST_PANE_LOCK_RETRY_PATH="$path"
+export GANG_TEST_PANE_LOCK_RETRY_LEDGER GANG_TEST_PANE_LOCK_RETRY_MODE \
+  GANG_TEST_PANE_LOCK_RETRY_ROOT GANG_TEST_PANE_LOCK_RETRY_PATH
 ln() {
   local argument="" last="" once="$fixture_root/vanished-once"
   for argument do last="$argument"; done
@@ -88,6 +112,22 @@ case "$fixture_mode" in
     lock_release
     exit 0
     ;;
+  retry-held|retry-release|no-wait)
+    lock_self_pid
+    command ln -s "$LOCK_SELF_PID" "$path"
+    if [ "$fixture_mode" = no-wait ]; then
+      lock_pane pane
+    else
+      lock_pane pane send
+    fi
+    lock_release
+    exit 0
+    ;;
+  malformed)
+    command ln -s not-a-pid "$path"
+    lock_pane pane send
+    exit 0
+    ;;
   standard) ;;
   *) printf 'unknown stale-pane-lock fixture mode: %s\n' "$5" >&2; exit 2 ;;
 esac
@@ -122,6 +162,61 @@ chmod +x "$TEST_ROOT/harness.sh"
   "$(dirname "$GANG")/../libexec/gang-state-root" "$ROOT" vanish
 "$BASH" "$TEST_ROOT/harness.sh" "$TEST_ROOT/lock-functions.sh" "$TEST_ROOT/reused" \
   "$(dirname "$GANG")/../libexec/gang-state-root" "$ROOT" reused
+
+retry_held_ledger="$TEST_ROOT/retry-held.ledger"
+retry_held_err="$TEST_ROOT/retry-held.err"
+retry_held_rc=0
+"$BASH" "$TEST_ROOT/harness.sh" "$TEST_ROOT/lock-functions.sh" \
+  "$TEST_ROOT/retry-held" "$(dirname "$GANG")/../libexec/gang-state-root" \
+  "$ROOT" retry-held "$retry_held_ledger" 2> "$retry_held_err" || retry_held_rc=$?
+[ "$retry_held_rc" -eq 3 ] || {
+  printf 'held send-mode pane lock exited %s instead of 3: %s\n' \
+    "$retry_held_rc" "$(<"$retry_held_err")" >&2
+  exit 1
+}
+[ "$(cat "$retry_held_ledger" 2>/dev/null)" = $'0.1\n0.2\n0.4\n0.8\n1.6' ] || {
+  printf 'held send-mode pane lock did not spend its bounded backoff ledger: %s\n' \
+    "$(cat "$retry_held_ledger" 2>/dev/null)" >&2
+  exit 1
+}
+# source-guard: whole-surface@2d9bcc5649a6: retry_held_err is the complete stderr from the single held-lock invocation above, so any visible producer of this exact refusal is valid evidence
+case "$(<"$retry_held_err")" in
+  *'another Gangline process is delivering to pane — inspect it with gang capture pane before retrying'*) ;;
+  *) printf 'exhausted send-mode retry changed the contention diagnostic: %s\n' \
+       "$(<"$retry_held_err")" >&2; exit 1 ;;
+esac
+
+retry_release_ledger="$TEST_ROOT/retry-release.ledger"
+"$BASH" "$TEST_ROOT/harness.sh" "$TEST_ROOT/lock-functions.sh" \
+  "$TEST_ROOT/retry-release" "$(dirname "$GANG")/../libexec/gang-state-root" \
+  "$ROOT" retry-release "$retry_release_ledger"
+[ "$(<"$retry_release_ledger")" = 0.1 ] || {
+  printf 'released send-mode pane lock did not succeed after one backoff: %s\n' \
+    "$(<"$retry_release_ledger")" >&2
+  exit 1
+}
+
+no_wait_ledger="$TEST_ROOT/no-wait.ledger"
+no_wait_rc=0
+"$BASH" "$TEST_ROOT/harness.sh" "$TEST_ROOT/lock-functions.sh" \
+  "$TEST_ROOT/no-wait" "$(dirname "$GANG")/../libexec/gang-state-root" \
+  "$ROOT" no-wait "$no_wait_ledger" 2> "$TEST_ROOT/no-wait.err" || no_wait_rc=$?
+[ "$no_wait_rc" -eq 3 ] && [ ! -e "$no_wait_ledger" ] || {
+  printf 'a non-send pane-lock caller retried contention (rc=%s ledger=%s)\n' \
+    "$no_wait_rc" "$(cat "$no_wait_ledger" 2>/dev/null)" >&2
+  exit 1
+}
+
+malformed_ledger="$TEST_ROOT/malformed.ledger"
+malformed_rc=0
+"$BASH" "$TEST_ROOT/harness.sh" "$TEST_ROOT/lock-functions.sh" \
+  "$TEST_ROOT/malformed" "$(dirname "$GANG")/../libexec/gang-state-root" \
+  "$ROOT" malformed "$malformed_ledger" 2> "$TEST_ROOT/malformed.err" || malformed_rc=$?
+[ "$malformed_rc" -eq 1 ] && [ ! -e "$malformed_ledger" ] || {
+  printf 'a malformed pane-lock owner was retried (rc=%s ledger=%s)\n' \
+    "$malformed_rc" "$(cat "$malformed_ledger" 2>/dev/null)" >&2
+  exit 1
+}
 
 # A PID WRITTEN INSIDE A HARNESS SANDBOX NAMES ONLY THAT PID NAMESPACE. The
 # sandbox's pid 1 is an unrelated live process on the host, so a bare-pid lock

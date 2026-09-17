@@ -96,13 +96,17 @@ alpha_delivery_id="$(window_id alpha)"
 alpha_delivery_lock="$GANG_LOCK_DIR/$(printf '%s' "$alpha_delivery_id" | tr -c 'A-Za-z0-9' '_').lock"
 mkdir -p "$GANG_LOCK_DIR"
 ln -s "$$" "$alpha_delivery_lock"
+live_lock_ledger="$RUN_ROOT/live-delivery-lock-waits"
 if live_lock_refusal="$(printf 'MARK_LIVE_LOCK' |
-  GANG_LOCK_WAIT=not-a-number "$GANG" send --to alpha --from tester --stdin 2>&1)"; then
+  GANG_LOCK_WAIT=not-a-number GANG_TEST_CLOCK_LEDGER="$live_lock_ledger" \
+    "$GANG" send --to alpha --from tester --stdin 2>&1)"; then
   live_lock_rc=0
 else
   live_lock_rc=$?
 fi
-equal "a live delivery lock refuses immediately" "3" "$live_lock_rc"
+equal "a held delivery lock exhausts a bounded send retry" "3" "$live_lock_rc"
+equal "a held delivery lock spends the declared backoff budget" \
+  $'0.1\n0.2\n0.4\n0.8\n1.6' "$(cat "$live_lock_ledger")"
 contains "a live delivery lock explains the contention" \
   "$live_lock_refusal" "another Gangline process is delivering"
 excludes "a live delivery lock prevents the paste" "$(pane alpha)" "MARK_LIVE_LOCK"

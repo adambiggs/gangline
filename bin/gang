@@ -4914,9 +4914,27 @@ lock_self_pid() { # sets LOCK_SELF_PID to the pid that will actually hold a clai
   esac
 }
 
-lock_pane() { # $1 = window id; held until lock_release or this process exits
+lock_pane_send_backoff() { # $1 = zero-based retry number; false when spent
+  local delay
+  case "$1" in
+    0) delay=0.1 ;;
+    1) delay=0.2 ;;
+    2) delay=0.4 ;;
+    3) delay=0.8 ;;
+    4) delay=1.6 ;;
+    *) return 1 ;;
+  esac
+  sleep "$delay" \
+    || die "cannot wait $delay seconds for another Gangline delivery to finish"
+}
+
+lock_pane() { # $1 = window id, $2 = optional send; held until release or exit
   local base holder name path reaper err me owner format pid token namespace extra
-  local read_races=0 reaper_result="" reaper_rc=0
+  local read_races=0 reaper_result="" reaper_rc=0 retry_step=0 wait_mode="${2:-}"
+  case "$wait_mode" in
+    ''|send) ;;
+    *) die "internal: lock_pane received unknown wait mode '$wait_mode'" ;;
+  esac
   lock_self_pid
   me="$LOCK_SELF_PID"
   process_identity_read "$me"
@@ -4934,51 +4952,58 @@ lock_pane() { # $1 = window id; held until lock_release or this process exits
   # process would read the lock as stale, delete it, and paste into the same
   # composer concurrently. BASHPID is the process that actually holds it.
   while :; do
-    err="$(ln -s "$owner" "$path" 2>&1)" \
-      && { LOCK_PATH="$path"; LOCK_OWNER="$owner"; trap 'on_exit' EXIT; return; }
-    if [ ! -L "$path" ]; then
-      [ ! -e "$path" ] || die "cannot take the delivery lock at $path — ${err:-unknown error}. Nothing holds this lock; the path cannot be created atomically, so retrying will not help. Remove any lock left by an older Gangline, or point GANG_LOCK_DIR at somewhere writable by every Gangline process that delivers to this pane."
+    while :; do
+      err="$(ln -s "$owner" "$path" 2>&1)" \
+        && { LOCK_PATH="$path"; LOCK_OWNER="$owner"; trap 'on_exit' EXIT; return; }
+      if [ ! -L "$path" ]; then
+        [ ! -e "$path" ] || die "cannot take the delivery lock at $path — ${err:-unknown error}. Nothing holds this lock; the path cannot be created atomically, so retrying will not help. Remove any lock left by an older Gangline, or point GANG_LOCK_DIR at somewhere writable by every Gangline process that delivers to this pane."
+        read_races=$((read_races + 1))
+        [ "$read_races" -le 1 ] \
+          || refuse "the delivery lock for $name disappeared twice while Gangline was resolving contention — inspect it with gang capture $name before retrying"
+        continue
+      fi
+      # A valid owner may release between the -L observation and readlink. Its
+      # absence is ordinary resolved contention, so reattempt the atomic claim.
+      # A replacement can appear between those reads too: read it once more
+      # before calling it malformed, and bound repeated vanishes at one retry.
+      if holder="$(readlink "$path" 2>/dev/null)"; then break; fi
+      if [ -L "$path" ]; then
+        if holder="$(readlink "$path" 2>/dev/null)"; then break; fi
+        [ ! -L "$path" ] || { holder=""; break; }
+      fi
       read_races=$((read_races + 1))
       [ "$read_races" -le 1 ] \
         || refuse "the delivery lock for $name disappeared twice while Gangline was resolving contention — inspect it with gang capture $name before retrying"
-      continue
-    fi
-    # A valid owner may release between the -L observation and readlink. Its
-    # absence is ordinary resolved contention, so reattempt the atomic claim.
-    # A replacement can appear between those reads too: read it once more
-    # before calling it malformed, and bound repeated vanishes at one retry.
-    if holder="$(readlink "$path" 2>/dev/null)"; then break; fi
-    if [ -L "$path" ]; then
-      if holder="$(readlink "$path" 2>/dev/null)"; then break; fi
-      [ ! -L "$path" ] || { holder=""; break; }
-    fi
-    read_races=$((read_races + 1))
-    [ "$read_races" -le 1 ] \
-      || refuse "the delivery lock for $name disappeared twice while Gangline was resolving contention — inspect it with gang capture $name before retrying"
-  done
-  format=legacy pid="" token="" namespace="" extra=""
-  case "$holder" in
-    v1:*)
-      IFS=: read -r format pid token namespace extra <<<"$holder:__end"
-      [ "$extra" = __end ] || format=""
-      case "$pid" in ''|*[!0-9]*) format="" ;; esac
-      case "$token" in ''|*[!A-Za-z0-9]*) format="" ;; esac
-      case "$namespace" in ''|*[!0-9]*) format="" ;; esac
-      [ "$format" = v1 ] \
-        || die "delivery lock $path has an unreadable owner '$holder' — refusing to delete state Gangline cannot identify"
-      ;;
-    ''|*[!0-9]*) die "delivery lock $path has an unreadable owner '$holder' — refusing to delete state Gangline cannot identify" ;;
-    *) pid="$holder" ;;
-  esac
-  process_identity_read "$pid" "$namespace" "$token"
-  case "$PROCESS_ID_STATE" in
-    live) refuse "another Gangline process is delivering to $name — inspect it with gang capture $name before retrying" ;;
-    dead|foreign) ;;
-    unresolvable)
-      refuse "the delivery lock for $name is held by pid $pid in a process namespace this command cannot see — retry from the host before removing it"
-      ;;
-    *) die "cannot classify the owner of delivery lock $path — pid $pid has unreadable process identity; the lock was retained" ;;
-  esac
+    done
+    format=legacy pid="" token="" namespace="" extra=""
+    case "$holder" in
+      v1:*)
+        IFS=: read -r format pid token namespace extra <<<"$holder:__end"
+        [ "$extra" = __end ] || format=""
+        case "$pid" in ''|*[!0-9]*) format="" ;; esac
+        case "$token" in ''|*[!A-Za-z0-9]*) format="" ;; esac
+        case "$namespace" in ''|*[!0-9]*) format="" ;; esac
+        [ "$format" = v1 ] \
+          || die "delivery lock $path has an unreadable owner '$holder' — refusing to delete state Gangline cannot identify"
+        ;;
+      ''|*[!0-9]*) die "delivery lock $path has an unreadable owner '$holder' — refusing to delete state Gangline cannot identify" ;;
+      *) pid="$holder" ;;
+    esac
+    process_identity_read "$pid" "$namespace" "$token"
+    case "$PROCESS_ID_STATE" in
+      live)
+        if [ "$wait_mode" = send ] && lock_pane_send_backoff "$retry_step"; then
+          retry_step=$((retry_step + 1))
+          continue
+        fi
+        refuse "another Gangline process is delivering to $name — inspect it with gang capture $name before retrying"
+        ;;
+      dead|foreign) ;;
+      unresolvable)
+        refuse "the delivery lock for $name is held by pid $pid in a process namespace this command cannot see — retry from the host before removing it"
+        ;;
+      *) die "cannot classify the owner of delivery lock $path — pid $pid has unreadable process identity; the lock was retained" ;;
+    esac
   # Two contenders can both observe a dead holder. The symlink itself cannot
   # compare-and-delete that owner: an unconditional rm after the first
   # replacement would erase the first contender's live lock. A Python process
@@ -4987,9 +5012,9 @@ lock_pane() { # $1 = window id; held until lock_release or this process exits
   # Linux userlands gang supports; Bash 3.2 has neither anonymous descriptors
   # nor a system flock(1). The guard inode remains after every pass: unlinking
   # it would let old and new waiters lock different inodes concurrently.
-  reaper="$path.reap"
-  if reaper_result="$(python3 - "$reaper" "$path" "$holder" "$owner" \
-    "$ROOT/libexec/gang-process-identity" "$SESSION" "$pid" "$namespace" "$token" 2>&1 <<'PY'
+    reaper="$path.reap"
+    if reaper_result="$(python3 - "$reaper" "$path" "$holder" "$owner" \
+      "$ROOT/libexec/gang-process-identity" "$SESSION" "$pid" "$namespace" "$token" 2>&1 <<'PY'
 import errno
 import fcntl
 import os
@@ -5055,33 +5080,39 @@ finally:
     os.close(fd)
 PY
 )"; then
-    reaper_rc=0
-  else
-    reaper_rc=$?
-  fi
-  case "$reaper_rc:$reaper_result" in
-    0:reclaimed) ;;
-    3:busy)
-      refuse "another Gangline process is verifying the stale delivery lock for $name — inspect it with gang capture $name before retrying"
-      ;;
-    4:changed)
-      refuse "the stale delivery lock for $name changed while Gangline was verifying its dead owner — inspect with gang capture $name before retrying"
-      ;;
-    5:live)
-      refuse "another Gangline process is delivering to $name — inspect it with gang capture $name before retrying"
-      ;;
-    6:replaced)
-      refuse "the stale delivery lock for $name was cleared, but another sender took it first — inspect with gang capture $name before retrying"
-      ;;
-    7:unresolvable)
-      refuse "the delivery lock for $name names pid $pid in a process namespace this command can no longer see — retry from the host before removing it"
-      ;;
-    *)
-      die "cannot recover the stale delivery lock $path — ${reaper_result:-unknown reaper failure}. No delivery started"
-      ;;
-  esac
-  LOCK_PATH="$path" LOCK_OWNER="$owner"
-  trap 'on_exit' EXIT
+      reaper_rc=0
+    else
+      reaper_rc=$?
+    fi
+    case "$reaper_rc:$reaper_result" in
+      0:reclaimed) ;;
+      3:busy)
+        refuse "another Gangline process is verifying the stale delivery lock for $name — inspect it with gang capture $name before retrying"
+        ;;
+      4:changed)
+        refuse "the stale delivery lock for $name changed while Gangline was verifying its dead owner — inspect with gang capture $name before retrying"
+        ;;
+      5:live)
+        if [ "$wait_mode" = send ] && lock_pane_send_backoff "$retry_step"; then
+          retry_step=$((retry_step + 1))
+          continue
+        fi
+        refuse "another Gangline process is delivering to $name — inspect it with gang capture $name before retrying"
+        ;;
+      6:replaced)
+        refuse "the stale delivery lock for $name was cleared, but another sender took it first — inspect with gang capture $name before retrying"
+        ;;
+      7:unresolvable)
+        refuse "the delivery lock for $name names pid $pid in a process namespace this command can no longer see — retry from the host before removing it"
+        ;;
+      *)
+        die "cannot recover the stale delivery lock $path — ${reaper_result:-unknown reaper failure}. No delivery started"
+        ;;
+    esac
+    LOCK_PATH="$path" LOCK_OWNER="$owner"
+    trap 'on_exit' EXIT
+    return
+  done
 }
 
 # THE SPOOL. A refused delivery is a live target that cannot take input YET:
@@ -14507,7 +14538,7 @@ send_outcome() { # $1 = target name; the parenthetical a verified delivery earne
   fi
 }
 
-send_live() { # $1 target, $2 locked if caller holds lock, $3 live-only probe;
+send_live() { # $1 target, $2 locked, $3 live-only probe, $4 lock wait mode;
               # AGENT_ID and ENVELOPE set.
               # 3 = refused, nothing typed
   local busy_rc=0 blocked_rc=0 box="" keep_lock=0
@@ -14516,8 +14547,9 @@ send_live() { # $1 target, $2 locked if caller holds lock, $3 live-only probe;
   # it: a command substitution's exit does not fire the EXIT trap that would
   # release it, so the decision and the commit stay under one hold.
   case "${2:-}" in
-    '') lock_pane "$AGENT_ID" ;;
-    locked) [ -n "$LOCK_PATH" ] || die "internal: send_live called locked without a pane lock"
+    '') lock_pane "$AGENT_ID" "${4:-}" ;;
+    locked) [ -z "${4:-}" ] || die "internal: send_live called locked with a lock wait mode"
+            [ -n "$LOCK_PATH" ] || die "internal: send_live called locked without a pane lock"
             keep_lock=1 ;;
     *) die "internal: send_live received unknown lock mode '$2'" ;;
   esac
@@ -14677,7 +14709,7 @@ cmd_send() {
     reply_candidate_prepare "$AGENT_ID" "$ENVELOPE_NONCE" "$MESSAGE_SENDER_TOKEN" \
       "$SEND_FROM" "$MESSAGE_REPLY_MODE" "$MESSAGE_REPLY_TO" "$ENVELOPE" \
       || die "send: reply provenance could not be recorded before delivery; nothing was typed"
-    err="$(send_live "$name" "" live-only 2>&1)" || rc=$?
+    err="$(send_live "$name" "" live-only send 2>&1)" || rc=$?
     case "$rc" in
       0) reply_candidates_verified \
            || printf '%s\n' "gang: delivered to $name, but its reply provenance stayed ambiguous and Stop will fail closed" >&2
@@ -14701,7 +14733,7 @@ cmd_send() {
   # send_live covered only the delivery attempt and left the rest outside it. A
   # command substitution's exit does not fire the EXIT trap, so the lock taken
   # here survives the call and covers the whole sequence.
-  lock_pane "$AGENT_ID"
+  lock_pane "$AGENT_ID" send
   safe_to_drop_delivery_guard "$AGENT_ID" "'$frag' to $name"
   # THE RETIREMENT IS PREPARED BEFORE ANYTHING IS DELIVERED, and it has to be,
   # because the live path has no second chance. Retiring AFTER send_live meant a
