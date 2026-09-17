@@ -1875,7 +1875,9 @@ load_collar() { # $1 = collar name; sets the GANG_* strategy surface
         || die "collar '$1' declares $declared '$key', which is not a tmux key name — gang refuses to send it, because tmux would deliver the letters instead of the key" ;;
     esac
   done
-  for key in $GANG_COMPACT_RECOVER_KEYS; do
+  local -a recover_keys=()
+  read -r -a recover_keys <<<"$GANG_COMPACT_RECOVER_KEYS"
+  for key in ${recover_keys[@]+"${recover_keys[@]}"}; do
     case "$key" in
       *[!A-Za-z0-9-]*) die "collar '$1' declares GANG_COMPACT_RECOVER_KEYS word '$key', which is not a tmux key name — gang refuses to send it, because tmux would deliver the letters instead of the key" ;;
     esac
@@ -15732,7 +15734,9 @@ self_compact_cancel() { # $1 agent name; AGENT_ID resolved
 
 compact_recover() { # $1 = resolved agent name; press the collar's way out of a stuck compaction
   local name="$1" key
-  [ -n "$GANG_COMPACT_RECOVER_KEYS" ] \
+  local -a keys=()
+  read -r -a keys <<<"$GANG_COMPACT_RECOVER_KEYS"
+  [ "${#keys[@]}" -gt 0 ] \
     || die "compact: collar '$AGENT_COLLAR' declares no GANG_COMPACT_RECOVER_KEYS, so gang does not know the keystrokes that end a stuck compaction in this harness (gang attach)"
   lock_pane "$AGENT_ID"
   # Both facts are required, and neither alone is enough: an open bracket
@@ -15748,7 +15752,7 @@ compact_recover() { # $1 = resolved agent name; press the collar's way out of a 
     || refuse "compact: '$name' is occupied (authority unknown) — a UI owns its input box, so $GANG_COMPACT_RECOVER_KEYS would answer that UI (gang attach)"
   pane_mode_free "$AGENT_ID" \
     || refuse "compact: tmux mode owns the pane of '$name', so $GANG_COMPACT_RECOVER_KEYS would act on operator-owned mode state instead of the harness; attach and leave the mode, then retry"
-  for key in $GANG_COMPACT_RECOVER_KEYS; do
+  for key in "${keys[@]}"; do
     tmux send-keys -t "$AGENT_ID" "$key" \
       || die "compact: could not send $key to $name; the keys before it were sent"
   done

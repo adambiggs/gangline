@@ -927,6 +927,24 @@ GANG_STOP_HOOK=1
 GANG_BUSY_REGEX='MARK_COMPACTING_[0-9]+%'
 GANG_COMPACT_RECOVER_KEYS="Escape Enter"
 SH
+# A declared key is a word, never a pattern: '*' run from a directory holding
+# only key-named files must not become those keys.
+cat > "$RUN_ROOT/collars/globkeys.sh" <<SH
+# shellcheck shell=bash
+# shellcheck disable=SC2034
+. "$ROOT/collars/bash.sh"
+GANG_COMPACT_RECOVER_KEYS='*'
+SH
+mkdir -p "$RUN_ROOT/globkeys-cwd"
+: > "$RUN_ROOT/globkeys-cwd/Enter"
+: > "$RUN_ROOT/globkeys-cwd/Escape"
+globkeys_rc=0
+globkeys_out="$(cd "$RUN_ROOT/globkeys-cwd" \
+  && "$GANG" hitch globkeys -c globkeys -d /tmp 2>&1)" || globkeys_rc=$?
+equal "a recover key declared as a pattern refuses the collar" 1 "$globkeys_rc"
+contains "and names the word it refused" "$globkeys_out" "GANG_COMPACT_RECOVER_KEYS word '*'"
+[ "$globkeys_rc" -ne 0 ] || "$GANG" drop globkeys >/dev/null 2>&1 || :
+rm -f -- "$RUN_ROOT/collars/globkeys.sh"
 stuck_clock="$RUN_ROOT/stuck-clock"
 cat > "$stuck_clock" <<'SH'
 #!/bin/sh
