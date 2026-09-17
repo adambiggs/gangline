@@ -7649,7 +7649,9 @@ drop_authority() { # $1 target window, $2 its shown name; returns only if this c
   case "$hrc" in
     0) refuse "drop: '$2' was hitched by live agent '$hitcher', and an agent drops only windows it hitched itself; nothing was dropped. Ask $hitcher, or the operator" ;;
     2) refuse "drop: the operator hitched '$2', and an agent drops only windows it hitched itself; nothing was dropped. The operator can drop it from their own shell" ;;
-    3) [ "$mrc" -eq 0 ] || [ "$orphan" -eq 1 ] \
+    3) [ "$mrc" -ne 4 ] \
+         || refuse "drop: whether '$2' marked itself safe to drop cannot be read; nothing was dropped"
+       [ "$mrc" -eq 0 ] || [ "$orphan" -eq 1 ] \
          || refuse "drop: '$2' was hitched by '$hitcher', which is gone, and it has not marked itself safe to drop; only the operator, or a root agent passing --orphan, may drop an unmarked orphan. Nothing was dropped"
        # GONE MUST STILL BE GONE. The register is read again at the moment of
        # the decision, and one that now shows a holder, or more than one, or

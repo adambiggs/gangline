@@ -409,6 +409,28 @@ equal "porcelain names a marked orphan" marked-orphan "$(td_teardown_word td-orp
 td_as td-other drop td-orphan
 equal "a non-root agent cannot drop a marked orphan" 3 "$td_rc"
 contains "the non-root refusal names who may" "$td_out" "only a root agent"
+# A MARK THAT CANNOT BE READ IS NOT AN ABSENT ONE. --orphan takes only an
+# unmarked orphan, and an unreadable mark must not be counted as that.
+mkdir -p "$RUN_ROOT/td-nomark"
+cat > "$RUN_ROOT/td-nomark/tmux" <<SH
+#!/bin/sh
+REAL="$(command -v tmux)"
+GANG_TEST_PATH_SHIM_GUARD="$GANG_TEST_PATH_SHIM_GUARD"
+SH
+cat >> "$RUN_ROOT/td-nomark/tmux" <<'SH'
+. "$GANG_TEST_PATH_SHIM_GUARD"
+path_shim_guard "$REAL" "$0" tmux || exit $?
+# Only the safe-to-drop mark cannot be read.
+[ "$1" = show-options ] && [ "${5:-}" = @gl_safe_to_drop ] && exit 1
+exec "$REAL" "$@"
+SH
+chmod +x "$RUN_ROOT/td-nomark/tmux"
+td_rc=0
+td_out="$(PATH="$RUN_ROOT/td-nomark:$PATH" TMUX_PANE="$(td_pane td-peer)" \
+  "$GANG" drop td-orphan --orphan 2>&1)" || td_rc=$?
+equal "an unreadable mark refuses --orphan" 3 "$td_rc"
+contains "and says the mark cannot be read" "$td_out" "cannot be read"
+equal "and the orphan survives" 1 "$(window_names | grep -cx td-orphan || :)"
 
 # THE SECOND FALSIFIER: A MARK SURVIVING ITS REGISTRATION. A mark whose token
 # is not the window's current spool identity is not honoured anywhere.
