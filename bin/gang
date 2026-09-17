@@ -646,17 +646,20 @@ EOF
 gang trust
   Attend a native hook-trust review.
 
-  gang trust <harness> -d <dir>
+gang trust <harness> -d <dir>
 
   <harness>  collar for the native review.
   -d, --dir  directory to trust in review.
+  -m, --model model for the review.
+  -e, --effort effort for the review.
 
 This opens an unregistered window in the
 current team, with the collar's hook flags
 but no launch preflight. Attach, select the
 printed window, and answer the native menu.
-Gangline sends no trust-menu key. Quit the
-harness, then re-run the refused hitch.
+Gangline sends no trust-menu key. After its
+composer appears, gang tick retires this
+marker-owned transient window.
 EOF
       ;;
     adopt) cat <<'EOF'
@@ -6286,6 +6289,30 @@ tick_roster_rotate() { # stdin roster lines, $1 cursor window id: the lines afte
     }'
 }
 
+tick_trust_reviews() { # retire only the transient review windows gang itself marked
+  local id prof agent read_rc=0 rc=0
+  while IFS='|' read -r id prof agent; do
+    [ -n "$id" ] && [ -n "$prof" ] || continue
+    if [ -n "$agent" ]; then
+      printf 'tick: attended trust review %s is registered; refusing to retire it\n' "$id" >&2
+      rc=1
+      continue
+    fi
+    load_collar "$prof" || { printf 'tick: could not load attended trust collar %s\n' "$prof" >&2; rc=1; continue; }
+    read_rc=0
+    input_painted "$id" || read_rc=$?
+    case "$read_rc" in
+      0) tmux kill-window -t "$id" \
+           || { printf 'tick: could not retire attended trust review %s\n' "$id" >&2; rc=1; continue; }
+         printf 'retired attended hook-trust review %s for %s after its composer appeared\n' "$id" "$prof" ;;
+      1) ;;
+      3) printf 'tick: could not read attended trust review %s\n' "$id" >&2; rc=1 ;;
+      *) rc=1 ;;
+    esac
+  done < <(tmux list-windows -t "=$SESSION" -F '#{window_id}|#{@gl_hook_trust_review}|#{@gl_agent}')
+  return "$rc"
+}
+
 tick_full_pass_once() {
   local id agent collar special wins rc=0 pass_rc=0 err="" pending="" busy_rc=0
   local compact_note="" compact_rc=0 cache_rc=0 compacted=0
@@ -6295,6 +6322,7 @@ tick_full_pass_once() {
   wins="$(tmux list-windows -t "=$SESSION" \
     -F '#{window_id} #{@gl_agent} #{@gl_collar} #{@gl_tick_alerts}')" \
     || { printf "tick could not list windows in session '%s'\n" "$SESSION" >&2; return 1; }
+  tick_trust_reviews || rc=1
   # A PASS THAT CANNOT FINISH THE ROSTER INSIDE ITS BUDGET STOPS AND SAYS WHERE.
   # One visit costs on the order of a second of tmux round trips, so a large
   # team overran the fixed deadline, the controller killed the worker, and
@@ -13132,13 +13160,17 @@ else:
 }
 
 cmd_trust() { # an attended native hooks-review window; it never sends an answer
-  local prof="${1:-}" dir="" id="" name="" launch_env=""
+  local prof="${1:-}" dir="" id="" name="" launch_env="" model="" effort="" levels="" flat="" levels_rc=0
   [ -n "$prof" ] && [[ "$prof" != -* ]] || { cmd_help trust; exit 1; }
   shift
   while [ $# -gt 0 ]; do
     case "$1" in
       -d|--dir) [ $# -ge 2 ] || die "trust: $1 needs a value"
                 dir="$2"; shift 2 ;;
+      -m|--model) [ $# -ge 2 ] || die "trust: $1 needs a value"
+                  model="$2"; shift 2 ;;
+      -e|--effort) [ $# -ge 2 ] || die "trust: $1 needs a value"
+                   effort="$2"; shift 2 ;;
       *) die "trust: unknown argument '$1'" ;;
     esac
   done
@@ -13150,9 +13182,26 @@ cmd_trust() { # an attended native hooks-review window; it never sends an answer
   ! test_only_collar "$prof" \
     || die "trust: '$prof' is a stand-in for Gangline's own suite, not a native harness"
   session_live || die "trust: no running team owns an attended review window; run this from the team whose hitch refused"
+  GANG_MODEL="$model"
   load_collar "$prof"
   [ -n "${GANG_TRUST_LAUNCH:-}" ] \
     || die "trust: collar '$prof' declares no attended hook-trust launch"
+  if [ -n "$model" ]; then
+    [ -n "$GANG_MODEL_OPT" ] || die "trust: collar '$prof' declares no GANG_MODEL_OPT, so it cannot take -m"
+    case "$model" in *[!A-Za-z0-9._:/@-]*) die "trust: model '$model' has characters gang will not paste into a launch line" ;; esac
+    validate_model_choice "$prof" "$model"
+    GANG_TRUST_LAUNCH="$GANG_TRUST_LAUNCH $GANG_MODEL_OPT $model"
+  fi
+  if [ -n "$effort" ]; then
+    [ -n "$GANG_EFFORT_OPT" ] || die "trust: collar '$prof' declares no GANG_EFFORT_OPT, so it cannot take -e"
+    case "$effort" in *[!A-Za-z0-9._:/@-]*) die "trust: effort '$effort' has characters gang will not paste into a launch line" ;; esac
+    [ -n "$GANG_EFFORT_CMD" ] || die "trust: collar '$prof' declares GANG_EFFORT_OPT but no GANG_EFFORT_CMD, so gang cannot validate '$effort'"
+    levels="$(effort_levels "$model")" || levels_rc=$?
+    [ "$levels_rc" -eq 0 ] && [ -n "$levels" ] || die "trust: collar '$prof' could not determine its reasoning-effort vocabulary"
+    flat=" $(printf '%s' "$levels" | tr '[:space:]' ' ') "
+    case "$flat" in *" $effort "*) ;; *) die "trust: '$effort' is not an effort collar '$prof' takes (have:$flat)" ;; esac
+    GANG_TRUST_LAUNCH="$GANG_TRUST_LAUNCH $GANG_EFFORT_OPT$effort"
+  fi
   name="trust-$prof-$(mint_nonce)"
   # This launch remains unregistered, but its native hooks still need the
   # guarded callback route ordinary hitches receive. Preserve the pane's socket
@@ -13169,7 +13218,7 @@ cmd_trust() { # an attended native hooks-review window; it never sends an answer
   tmux set-option -w -t "$id" @gl_hook_trust_review "$prof" 2>/dev/null || true
   printf '%s\n' "$(colour "$C_WORK" "opened attended hook-trust review $id for $prof — Gangline sent no menu key")"
   printf 'attach to team %s, then run: tmux select-window -t %s\n' "$SESSION" "$id"
-  printf 'answer the native menu yourself, quit the harness, then re-run the refused hitch\n'
+  printf 'answer the native menu yourself, then run gang tick to retire this transient review before re-running the refused hitch\n'
 }
 
 hook_trust_held_recovery() { # $1 dead window, $2 requested collar, $3 canonical directory, $4 requested name
@@ -13635,6 +13684,7 @@ hitch_launch() {
     lookup_rc=$?
     win_id_missing "$lookup_rc" "'$name' died at launch (cmd: $GANG_LAUNCH)"
   }
+  printf '%s\n' "$(colour "$C_OK" "registered $name in window $id ($prof) — if this caller is cut off, inspect: gang status $name")"
   local msg delivery_err="" delivery_rc=0
   msg="$(startup_brief "$name" "$DOCTRINE" "${HITCH_BODY:+body}")"
   echo "$(colour "$C_OK" "hitched $name") ($prof) in $dir$(colour "$C_DIM" "$context_notice$cache_notice — watch: gang attach")"

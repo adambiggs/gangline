@@ -423,8 +423,9 @@ def main():
         "per path.",
         "",
         "Trusting is yours to grant, not Gangline's. Open the attended native",
-        "review window below, answer 'Trust all and continue', quit codex, then",
-        "re-hitch. Gangline sends no trust-menu key:",
+        "review window below, answer 'Trust all and continue', then run gang",
+        "tick after the composer appears before re-hitching. Gangline sends no",
+        "trust-menu key:",
         "",
         "  gang trust codex -d %s" % shlex.quote(cwd),
         "",
@@ -433,7 +434,8 @@ def main():
     refuse(
         detail,
         "gang: %d codex hook(s) are untrusted — run gang trust codex -d %s, answer "
-        "'Trust all and continue', quit codex, then re-hitch (this held window "
+        "'Trust all and continue', then run gang tick after the composer appears "
+        "before re-hitching (this held window "
         "carries the full list: gang capture <name> 40)." % (len(pending),
                                                               shlex.quote(cwd)))
 

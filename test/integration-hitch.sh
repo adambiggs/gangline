@@ -691,6 +691,8 @@ GANG_BOOT_TIMEOUT=5 "$GANG" hitch late-composer -c late-composer -d /tmp \
   >"$late_output" 2>&1 &
 late_hitch_pid=$!
 tmux wait-for "$late_observed"
+contains "a slow hitch reports its registered name and window before the boot wait" \
+  "$(<"$late_output")" "registered late-composer in window"
 excludes "a blank slow boot is not reported as a first-run modal" \
   "$(<"$late_output")" "answer it with 'gang attach'"
 rm -f -- "$RUN_ROOT/late-composer-blocked"
@@ -704,6 +706,54 @@ fi
 excludes "a completed delayed composer leaves no first-run warning" \
   "$(<"$late_output")" "answer it with 'gang attach'"
 "$GANG" drop late-composer >/dev/null
+
+# A caller can die while hitch is still observing a deliberately slow reader.
+# The window's registration receipt is therefore the durable fact it needs to
+# retain, and after the artificial reader is released, status is the supported
+# recovery surface rather than a reason to re-hitch blindly.
+cutoff_observed="test-cutoff-observed-$$"
+cat > "$RUN_ROOT/collars/cutoff-composer.sh" <<SH
+# shellcheck shell=bash
+# shellcheck disable=SC2034
+. "$ROOT/collars/bash.sh"
+GANG_LAUNCH="PS1='❯ ' bash --norc"
+_gl_cutoff_real="\$(declare -f collar_input)"
+eval "cutoff_real_input \${_gl_cutoff_real#collar_input}"
+collar_input() {
+  if [ -e "$RUN_ROOT/cutoff-composer-blocked" ]; then
+    if [ -e "$RUN_ROOT/cutoff-composer-seen" ]; then
+      tmux wait-for -S "$cutoff_observed"
+      return 1
+    fi
+    : > "$RUN_ROOT/cutoff-composer-seen"
+    return 1
+  fi
+  cutoff_real_input "\$1"
+}
+SH
+touch "$RUN_ROOT/cutoff-composer-blocked"
+cutoff_output="$RUN_ROOT/cutoff-composer.out"
+GANG_BOOT_TIMEOUT=5 "$GANG" hitch cutoff-composer -c cutoff-composer -d /tmp \
+  >"$cutoff_output" 2>&1 &
+cutoff_hitch_pid=$!
+tmux wait-for "$cutoff_observed"
+contains "a cut-off slow hitch printed stable registration before its wait" \
+  "$(<"$cutoff_output")" "registered cutoff-composer in window"
+kill "$cutoff_hitch_pid"
+if wait "$cutoff_hitch_pid"; then
+  fail "the slow-hitch caller can be cut off after registration" \
+    "hitch unexpectedly completed"
+else
+  pass "the slow-hitch caller can be cut off after registration"
+fi
+rm -f -- "$RUN_ROOT/cutoff-composer-blocked"
+cutoff_status_rc=0
+cutoff_status="$("$GANG" status cutoff-composer 2>&1)" || cutoff_status_rc=$?
+equal "a caller cut off during boot can inspect the registered agent" 0 \
+  "$cutoff_status_rc"
+contains "the cut-off hitch's status names the registered agent" \
+  "$cutoff_status" "cutoff-composer"
+"$GANG" drop cutoff-composer >/dev/null
 
 # Readiness and delivery do not share a lock: a harness may start writing after
 # wait_ready accepts its empty box and before inject takes its protected pair of
