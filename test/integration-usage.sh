@@ -229,8 +229,14 @@ equal "the exact-session fallback restores a continued Claude session's in-day c
   "$(printf '%s\n' "$usage_gap_out" | awk '$1 == "usage-alpha" { print $1, $2, $3, $4, $5, $6, $7 }')"
 excludes "filtered zero-usage sessions do not become uncovered noise" \
   "$usage_gap_out" "usage-delta: unmatched"
+# Focused usage runs retain the substrate prerequisite's unstamped windows,
+# while full runs may have dropped them before reaching this part. The coverage
+# property is that this fixture's own unstamped agent remains in that bounded
+# group, not that no prerequisite window shares it.
+usage_gap_unstamped="$(printf '%s\n' "$usage_gap_out" \
+  | awk '/^  unstamped \(/ { print; exit }')"
 contains "filtered coverage keeps unstamped agents visible in a bounded summary" \
-  "$usage_gap_out" "unstamped (1 agent): usage-gamma"
+  "$usage_gap_unstamped" "usage-gamma"
 usage_since_argv="$RUN_ROOT/usage-since-argv"
 usage_since_out="$(USAGE_FIXTURE_ARGV="$usage_since_argv" PATH="$usage_present" \
   XDG_DATA_HOME="$usage_data" "$GANG" usage --since 2026-09-02 2>&1)" \
