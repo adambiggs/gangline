@@ -15783,16 +15783,18 @@ cmd_compact() {
       exit 1
     }
   fi
+  [ "$cancel" -eq 0 ] || [ "$recover" -eq 0 ] \
+    || die "compact: --cancel and --recover are separate operations; pass one"
+  [ "$cancel" -eq 0 ] || [ "$resume_given" -eq 0 ] \
+    || die "compact: --cancel withdraws a request and takes no --resume"
+  [ "$recover" -eq 0 ] || [ "$resume_given" -eq 0 ] \
+    || die "compact: --recover takes no --resume"
   resolve "$name"
   if [ "$cancel" -eq 1 ]; then
-    [ "$resume_given" -eq 0 ] \
-      || die "compact: --cancel withdraws a request and takes no --resume"
     self_compact_cancel "$name"
     return 0
   fi
   if [ "$recover" -eq 1 ]; then
-    [ "$resume_given" -eq 0 ] && [ "$cancel" -eq 0 ] \
-      || die "compact: --recover takes no --resume or --cancel"
     compact_recover "$name"
     return 0
   fi

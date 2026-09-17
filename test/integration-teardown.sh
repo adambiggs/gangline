@@ -210,6 +210,10 @@ equal "the refused withdrawal leaves the request standing" 0123456789abcdef \
   "$(tmux show-options -wqv -t "$td_worker_id" @gl_self_compact_requested)"
 td_as td-worker compact --cancel --resume TD_BOTH
 equal "a withdrawal takes no continuation" 1 "$td_rc"
+td_as td-worker compact --cancel --recover
+equal "withdrawal and recovery together are refused" 1 "$td_rc"
+equal "and refused before the request is withdrawn" 0123456789abcdef \
+  "$(tmux show-options -wqv -t "$td_worker_id" @gl_self_compact_requested)"
 td_as td-worker compact --cancel
 equal "an agent withdraws its own standing self-compaction" 0 "$td_rc"
 contains "the withdrawal says what it withdrew" "$td_out" "withdrawn"
