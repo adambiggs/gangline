@@ -90,7 +90,18 @@ case "${GANGLINE_PROCESS_UID:-}" in
   ''|*[!0-9]*) guard_uid="$(id -u 2>/dev/null || echo 0)" ;;
   *) guard_uid="$GANGLINE_PROCESS_UID" ;;
 esac
-default_guard_state="/tmp/gangline-$guard_uid"
+# The default root is the one bin/gang resolves, from the file both source.
+# Losing it costs only where a verdict is logged, never the verdict, so the
+# guard says so and keeps guarding rather than refusing every tmux call.
+if [ -n "$guard_dir" ] && [ -r "$guard_dir/../gang-state-root" ]; then
+  # shellcheck source=libexec/gang-state-root
+  . "$guard_dir/../gang-state-root"
+  gangline_state_root_resolve "$guard_uid"
+  default_guard_state=$GANGLINE_STATE_DEFAULT
+else
+  guard_say "gang tmux guard: cannot read ${guard_dir:-its own directory}/../gang-state-root, so its verdicts are logged under /tmp/gangline-$guard_uid, which may not be where gang keeps this team's state; reinstall gangline"
+  default_guard_state="/tmp/gangline-$guard_uid"
+fi
 guard_state="${GANG_LOCK_DIR:-$default_guard_state}"
 team_guard_state="${GANG_TMUX_GUARD_LOG_DIR:-$default_guard_state}"
 
@@ -114,6 +125,19 @@ note() { # $1 verdict, rest = argv, appended where it outlives the pane
   [ "$guard_state" = "$default_guard_state" ] \
     || [ "$team_guard_state" = "$default_guard_state" ] \
     || note_append "$default_guard_state" "$verdict" "$@"
+  # CHECKED AFTER WRITING. A root retired while this guard ran keeps the line,
+  # and the root that replaced it gets it too, so the log every later process
+  # reads misses nothing written after the marker.
+  [ -n "${GANGLINE_STATE_MARKER:-}" ] || return 0
+  for note_old in "$guard_state" "$team_guard_state" "$default_guard_state"; do
+    [ -e "$note_old/$GANGLINE_STATE_MARKER" ] || continue
+    gangline_state_root_resolve "$guard_uid"
+    case "$GANGLINE_STATE_DEFAULT" in
+      "$guard_state"|"$team_guard_state"|"$default_guard_state") ;;
+      *) note_append "$GANGLINE_STATE_DEFAULT" "$verdict" "$@" ;;
+    esac
+    return 0
+  done
 }
 
 # RETAIN ONLY TMUX'S SOCKET SELECTORS. The actual target is asked of tmux below;

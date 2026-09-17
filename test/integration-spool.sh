@@ -3054,3 +3054,442 @@ printf 'MARK_LINGERS' |
   "$GANG" send --to lingering --from tester --stdin >/dev/null
 # shellcheck disable=SC2034  # read in test/integration-hooks.sh, which accounts for this spool at teardown
 lingering_spool="$GANG_LOCK_DIR/spool/$(tmux show-options -wqv -t "$lingering_id" @gl_spool)"
+
+# --- the default runtime root, its /tmp pin, and the pin's retirement --------
+# The two fixed bases are relocated under this run, so the host's real
+# /tmp/gangline-UID and /run/user/UID are never read or written here.
+stateroot_uid="$(id -u)"
+stateroot_base="$RUN_ROOT/stateroot"
+stateroot_resolve() { # $1 tmp base, $2 run base -> "default|legacy|runtime"
+  env -u GANG_LOCK_DIR XDG_RUNTIME_DIR="$RUN_ROOT/not-the-runtime-dir" \
+    GANG_TEST_COLLARS=1 GANG_TEST_STATE_BASES="$1:$2" sh -c '
+    . "$1/libexec/gang-state-root"
+    gangline_state_root_resolve "$2"
+    printf "%s|%s|%s" "$GANGLINE_STATE_DEFAULT" "$GANGLINE_STATE_LEGACY" "$GANGLINE_STATE_RUNTIME"' \
+    sh "$ROOT" "$stateroot_uid"
+}
+mkdir -p "$stateroot_base/a/tmp" "$stateroot_base/a/run"
+equal "without a logind runtime directory the root stays under /tmp" \
+  "$stateroot_base/a/tmp/gangline-$stateroot_uid|$stateroot_base/a/tmp/gangline-$stateroot_uid|" \
+  "$(stateroot_resolve "$stateroot_base/a/tmp" "$stateroot_base/a/run")"
+mkdir -m 700 "$stateroot_base/a/run/$stateroot_uid"
+equal "with one, the root is the uid's runtime directory, whatever XDG_RUNTIME_DIR says" \
+  "$stateroot_base/a/run/$stateroot_uid/gangline" \
+  "$(stateroot_resolve "$stateroot_base/a/tmp" "$stateroot_base/a/run" | cut -d'|' -f1)"
+mkdir -m 700 "$stateroot_base/a/tmp/gangline-$stateroot_uid"
+equal "an existing /tmp root pins every process to it" \
+  "$stateroot_base/a/tmp/gangline-$stateroot_uid" \
+  "$(stateroot_resolve "$stateroot_base/a/tmp" "$stateroot_base/a/run" | cut -d'|' -f1)"
+: > "$stateroot_base/a/tmp/gangline-$stateroot_uid/retired"
+equal "a /tmp root carrying the retirement marker no longer pins" \
+  "$stateroot_base/a/run/$stateroot_uid/gangline" \
+  "$(stateroot_resolve "$stateroot_base/a/tmp" "$stateroot_base/a/run" | cut -d'|' -f1)"
+equal "outside a test the bases are /tmp and /run/user" \
+  "|/tmp/gangline-$stateroot_uid|" \
+  "$(env -u GANG_LOCK_DIR -u GANG_TEST_COLLARS GANG_TEST_STATE_BASES="$stateroot_base/a/tmp:$stateroot_base/a/run" sh -c '
+    . "$1/libexec/gang-state-root"
+    gangline_state_root_resolve "$2"
+    printf "|%s|" "$GANGLINE_STATE_LEGACY"' sh "$ROOT" "$stateroot_uid")"
+stateroot_guard_log="$(env -u GANG_LOCK_DIR -u GANG_TMUX_GUARD_LOG_DIR GANG_TEST_COLLARS=1 \
+  GANG_TEST_STATE_BASES="$stateroot_base/a/tmp:$stateroot_base/a/run" \
+  GANGLINE_PROCESS_UID="$stateroot_uid" sh -c '
+    mkdir -p "$1"
+    "$2/libexec/gang-tmux-guard/tmux" -S "$3/no-such-socket" kill-server > "$3/stateroot-guard.out" 2>&1 || :
+    cat "$1/tmux-guard.log" 2>/dev/null || :' sh \
+  "$stateroot_base/a/run/$stateroot_uid/gangline" "$ROOT" "$RUN_ROOT")"
+# source-guard: whole-surface@bd0b5a81f900: the surface is only the log file under a directory this run just created, and the guard is the only writer of that file name
+contains "the tmux guard logs under the same default root gang resolves" \
+  "$stateroot_guard_log" "kill-server"
+
+# A guard that resolved the /tmp root before a retirement marked it. The tmux
+# it runs marks the root on its first call, before the guard logs its verdict.
+mkdir -p "$stateroot_base/i/tmp" "$stateroot_base/i/run/$stateroot_uid/gangline" "$stateroot_base/i/bin"
+mkdir -m 700 "$stateroot_base/i/tmp/gangline-$stateroot_uid"
+cat > "$stateroot_base/i/bin/tmux" <<'EOF'
+#!/bin/sh
+bin=${0%/*}
+PATH=${PATH#"$bin:"}
+[ -e "$STATEROOT_I_OLD/retired" ] \
+  || printf 'gangline runtime state moved to %s\n' "$STATEROOT_I_NEW" > "$STATEROOT_I_OLD/retired"
+exec tmux "$@"
+EOF
+chmod +x "$stateroot_base/i/bin/tmux"
+env -u GANG_LOCK_DIR -u GANG_TMUX_GUARD_LOG_DIR GANG_TEST_COLLARS=1 \
+  GANG_TEST_STATE_BASES="$stateroot_base/i/tmp:$stateroot_base/i/run" \
+  GANGLINE_PROCESS_UID="$stateroot_uid" PATH="$stateroot_base/i/bin:$PATH" \
+  STATEROOT_I_OLD="$stateroot_base/i/tmp/gangline-$stateroot_uid" \
+  STATEROOT_I_NEW="$stateroot_base/i/run/$stateroot_uid/gangline" \
+  "$ROOT/libexec/gang-tmux-guard/tmux" -S "$RUN_ROOT/no-such-socket" kill-server \
+  > "$RUN_ROOT/stateroot-guard-i.out" 2>&1 || :
+if [ -f "$stateroot_base/i/tmp/gangline-$stateroot_uid/retired" ]; then
+  pass "the guard's tmux marked the root while the guard ran"
+else
+  fail "the guard's tmux marked the root while the guard ran" "$(cat "$RUN_ROOT/stateroot-guard-i.out")"
+fi
+# source-guard: whole-surface@bd0b5a81f900: the surface is only the log file under a directory this run just created, and the guard is the only writer of that file name
+contains "a guard that resolved a root retired under it also logs under the new root" \
+  "$(cat "$stateroot_base/i/run/$stateroot_uid/gangline/tmux-guard.log" 2>&1)" "kill-server"
+
+# Retirement: a /tmp root whose only recorded team is gone, holding one spool
+# with mail, is archived and moved aside when a session opens.
+stateroot_tmp="$stateroot_base/b/tmp"
+stateroot_run="$stateroot_base/b/run"
+stateroot_legacy="$stateroot_tmp/gangline-$stateroot_uid"
+stateroot_token=0123456789abcdef0123
+mkdir -p "$stateroot_tmp" "$stateroot_run"
+mkdir -m 700 "$stateroot_run/$stateroot_uid" "$stateroot_legacy" \
+  "$stateroot_legacy/teams" "$stateroot_legacy/spool" \
+  "$stateroot_legacy/spool/$stateroot_token"
+printf '%s\n' "$RUN_ROOT/no-such-server" > "$stateroot_legacy/teams/stateroot-gone-$$"
+printf 'MARK_STATEROOT_HELD\n' > "$stateroot_legacy/spool/$stateroot_token/1-held"
+stateroot_session="stateroot-$$"
+stateroot_out="$(env -u GANG_LOCK_DIR GANG_TEST_STATE_BASES="$stateroot_tmp:$stateroot_run" \
+  GANG_SESSION="$stateroot_session" "$GANG" hitch mover -c bash -d /tmp 2>&1)" \
+  || fail "a session opens while retiring a dead /tmp root" "status $?: [$stateroot_out]"
+if [ -d "$stateroot_legacy" ] && [ -f "$stateroot_legacy/retired" ]; then
+  pass "the retired /tmp root stays in place, marked"
+else
+  fail "the retired /tmp root stays in place, marked" "$(ls -la "$stateroot_legacy" 2>&1)"
+fi
+if [ ! -e "$stateroot_legacy/spool/$stateroot_token" ]; then
+  pass "and its archived spool is gone from it"
+else
+  fail "and its archived spool is gone from it" "$(ls -R "$stateroot_legacy" 2>&1)"
+fi
+contains "and hitch says where state now lives" \
+  "$stateroot_out" "runtime state now lives under $stateroot_run/$stateroot_uid/gangline"
+contains "the held mail reaches the archive" \
+  "$(find "$GANG_ARCHIVE_DIR" -path "*orphan-$stateroot_token*" -type f -exec cat {} + 2>/dev/null)" \
+  "MARK_STATEROOT_HELD"
+# Such a process has no team record to route by, so it carries the server.
+stateroot_socket="$(tmux display-message -p -t "=$stateroot_session" '#{socket_path}')"
+stateroot_stale_rc=0
+stateroot_stale_out="$(printf 'MARK_STATEROOT_STALE' | env GANG_LOCK_DIR="$stateroot_legacy" \
+  TMUX="$stateroot_socket,0,0" GANG_SESSION="$stateroot_session" \
+  "$GANG" send --to mover --from tester --stdin 2>&1)" \
+  || stateroot_stale_rc=$?
+if [ "$stateroot_stale_rc" -ne 0 ]; then
+  pass "a process still naming the retired root explicitly is refused"
+else
+  fail "a process still naming the retired root explicitly is refused" "$stateroot_stale_out"
+fi
+contains "and the refusal names the retired root and where state went" \
+  "$stateroot_stale_out" "the lock root $stateroot_legacy is retired: gangline runtime state moved to $stateroot_run/$stateroot_uid/gangline"
+stateroot_mover="$(window_id_in "$stateroot_session" mover)"
+excludes "and nothing reached the agent's pane" \
+  "$(tmux capture-pane -p -t "$stateroot_mover")" "MARK_STATEROOT_STALE"
+stateroot_spool="$(tmux show-options -wqv -t "$stateroot_mover" @gl_spool)"
+if [ -n "$stateroot_spool" ] && [ -d "$stateroot_run/$stateroot_uid/gangline/spool/$stateroot_spool" ]; then
+  pass "the new session's spool is under the runtime root"
+else
+  fail "the new session's spool is under the runtime root" \
+    "token [$stateroot_spool]; $(ls -R "$stateroot_run" 2>&1 | head -20)"
+fi
+env -u GANG_LOCK_DIR GANG_TEST_STATE_BASES="$stateroot_tmp:$stateroot_run" \
+  GANG_SESSION="$stateroot_session" "$GANG" down "$stateroot_session" >/dev/null
+
+# A /tmp root on which a recorded team still answers keeps the pin, and the
+# next session opens there beside it.
+stateroot_tmp="$stateroot_base/c/tmp"
+stateroot_run="$stateroot_base/c/run"
+stateroot_legacy="$stateroot_tmp/gangline-$stateroot_uid"
+mkdir -p "$stateroot_tmp" "$stateroot_run"
+mkdir -m 700 "$stateroot_run/$stateroot_uid" "$stateroot_legacy" "$stateroot_legacy/teams"
+printf '%s\n' "$TMUX_SOCKET" > "$stateroot_legacy/teams/$GANG_SESSION"
+stateroot_session="stateroot-pinned-$$"
+stateroot_out="$(env -u GANG_LOCK_DIR GANG_TEST_STATE_BASES="$stateroot_tmp:$stateroot_run" \
+  GANG_SESSION="$stateroot_session" "$GANG" hitch stayer -c bash -d /tmp 2>&1)" \
+  || fail "a session opens beside a live team's /tmp root" "status $?: [$stateroot_out]"
+if [ -d "$stateroot_legacy" ] && [ ! -L "$stateroot_legacy" ]; then
+  pass "a /tmp root a live team uses is not retired"
+else
+  fail "a /tmp root a live team uses is not retired" "$(ls -ld "$stateroot_legacy" 2>&1)"
+fi
+contains "and hitch names the team holding it" \
+  "$stateroot_out" "while team '$GANG_SESSION' runs there"
+stateroot_stayer="$(window_id_in "$stateroot_session" stayer)"
+stateroot_spool="$(tmux show-options -wqv -t "$stateroot_stayer" @gl_spool)"
+if [ -n "$stateroot_spool" ] && [ -d "$stateroot_legacy/spool/$stateroot_spool" ]; then
+  pass "the new session's spool joins the pinned /tmp root"
+else
+  fail "the new session's spool joins the pinned /tmp root" "token [$stateroot_spool]"
+fi
+excludes "nothing was created under the runtime root" \
+  "$(find "$stateroot_run/$stateroot_uid" -mindepth 1 2>&1)" "gangline"
+env -u GANG_LOCK_DIR GANG_TEST_STATE_BASES="$stateroot_tmp:$stateroot_run" \
+  GANG_SESSION="$stateroot_session" "$GANG" down "$stateroot_session" >/dev/null
+
+# A /tmp root with no team record keeps the pin while a live window on the
+# team server still claims one of its spools.
+stateroot_tmp="$stateroot_base/d/tmp"
+stateroot_run="$stateroot_base/d/run"
+stateroot_legacy="$stateroot_tmp/gangline-$stateroot_uid"
+stateroot_claimed="$(tmux list-windows -t "=$GANG_SESSION" -F '#{@gl_spool}' | grep -m1 .)"
+mkdir -p "$stateroot_tmp" "$stateroot_run"
+mkdir -m 700 "$stateroot_run/$stateroot_uid" "$stateroot_legacy" "$stateroot_legacy/spool" \
+  "$stateroot_legacy/spool/$stateroot_claimed"
+stateroot_session="stateroot-claimed-$$"
+stateroot_out="$(env -u GANG_LOCK_DIR GANG_TEST_STATE_BASES="$stateroot_tmp:$stateroot_run" \
+  GANG_SESSION="$stateroot_session" "$GANG" hitch claimer -c bash -d /tmp 2>&1)" \
+  || fail "a session opens beside a claimed /tmp spool" "status $?: [$stateroot_out]"
+if [ -d "$stateroot_legacy/spool/$stateroot_claimed" ] && [ ! -L "$stateroot_legacy" ]; then
+  pass "a /tmp root whose spool a live window claims is not retired"
+else
+  fail "a /tmp root whose spool a live window claims is not retired" "$(ls -ld "$stateroot_legacy" 2>&1)"
+fi
+contains "and hitch names the claimed spool" \
+  "$stateroot_out" "a live window still claims its spool $stateroot_claimed"
+env -u GANG_LOCK_DIR GANG_TEST_STATE_BASES="$stateroot_tmp:$stateroot_run" \
+  GANG_SESSION="$stateroot_session" "$GANG" down "$stateroot_session" >/dev/null
+
+# Races with another process. A tmux wrapper ahead of the real one acts on the
+# /tmp root at a chosen tmux call of a hitch that already resolved it: at the
+# first call, before that hitch's own retirement looks, or at its window scan,
+# after it decided whether to retire. It either removes the root, as a /tmp
+# cleaner would, or marks it retired, as another hitch would.
+stateroot_tmp="$stateroot_base/e/tmp"
+stateroot_run="$stateroot_base/e/run"
+stateroot_legacy="$stateroot_tmp/gangline-$stateroot_uid"
+mkdir -p "$stateroot_tmp" "$stateroot_run" "$stateroot_base/e/bin"
+mkdir -m 700 "$stateroot_run/$stateroot_uid"
+cat > "$stateroot_base/e/bin/tmux" <<'EOF'
+#!/bin/sh
+bin=${0%/*}
+PATH=${PATH#"$bin:"}
+if [ ! -e "$bin/fired" ]; then
+  case "$STATEROOT_RACE:$*" in
+    first:*|claims:*"list-windows -a -F #{@gl_spool}"*)
+      : > "$bin/fired"
+      case "$STATEROOT_RACE_ACTION" in
+        remove) mv -- "$STATEROOT_RACE_LEGACY" "$STATEROOT_RACE_LEGACY.removed" ;;
+        mark) printf 'gangline runtime state moved to elsewhere\n' > "$STATEROOT_RACE_LEGACY/retired" ;;
+      esac ;;
+  esac
+fi
+exec tmux "$@"
+EOF
+chmod +x "$stateroot_base/e/bin/tmux"
+stateroot_race() { # $1 mode, $2 action, $3 session, $4 spool token the root holds; sets stateroot_out/_rc
+  rm -rf -- "$stateroot_legacy" "$stateroot_legacy.removed" "$stateroot_base/e/bin/fired" \
+    "$stateroot_run/$stateroot_uid/gangline"
+  mkdir -m 700 "$stateroot_legacy"
+  [ -z "$4" ] || mkdir -p "$stateroot_legacy/spool/$4"
+  stateroot_rc=0
+  stateroot_out="$(env -u GANG_LOCK_DIR GANG_TEST_STATE_BASES="$stateroot_tmp:$stateroot_run" \
+    PATH="$stateroot_base/e/bin:$PATH" STATEROOT_RACE="$1" STATEROOT_RACE_ACTION="$2" \
+    STATEROOT_RACE_LEGACY="$stateroot_legacy" \
+    GANG_SESSION="$3" "$GANG" hitch racer -c bash -d /tmp 2>&1)" || stateroot_rc=$?
+  if [ -e "$stateroot_base/e/bin/fired" ]; then
+    pass "the racing process acted during the $1 $2 race"
+  else
+    fail "the racing process acted during the $1 $2 race" "$stateroot_out"
+  fi
+}
+stateroot_race first remove "stateroot-race-a-$$" ""
+if [ "$stateroot_rc" -ne 0 ]; then
+  pass "a hitch whose resolved /tmp root was removed under it is refused"
+else
+  fail "a hitch whose resolved /tmp root was removed under it is refused" "$stateroot_out"
+fi
+if [ ! -e "$stateroot_legacy" ]; then
+  pass "and it does not recreate the removed root"
+else
+  fail "and it does not recreate the removed root" "$(ls -ld "$stateroot_legacy" 2>&1)"
+fi
+contains "and it says the root went away while it ran" \
+  "$stateroot_out" "the runtime state root $stateroot_legacy was retired or removed while this command ran"
+stateroot_claimed="$(tmux list-windows -t "=$GANG_SESSION" -F '#{@gl_spool}' | grep -m1 .)"
+stateroot_race claims mark "stateroot-race-b-$$" "$stateroot_claimed"
+contains "a hitch kept on the /tmp root by a claimed spool meets a marker written after it looked" \
+  "$stateroot_out" "a live window still claims its spool $stateroot_claimed"
+if [ "$stateroot_rc" -ne 0 ]; then
+  pass "and is refused rather than opening its session there"
+else
+  fail "and is refused rather than opening its session there" "$stateroot_out"
+fi
+contains "and it says the root was retired while it ran" \
+  "$stateroot_out" "the runtime state root $stateroot_legacy was retired or removed while this command ran"
+stateroot_sessions="$(tmux list-sessions -F '#{session_name}')"
+if printf '%s\n' "$stateroot_sessions" | grep -qx "stateroot-race-[ab]-$$"; then
+  fail "no refused hitch left a session behind" "$stateroot_sessions"
+else
+  pass "no refused hitch left a session behind"
+fi
+stateroot_session="stateroot-race-c-$$"
+stateroot_race claims mark "$stateroot_session" ""
+if [ "$stateroot_rc" -eq 0 ]; then
+  pass "a hitch that loses the marker to another retirer still opens its session"
+else
+  fail "a hitch that loses the marker to another retirer still opens its session" "status $stateroot_rc: [$stateroot_out]"
+fi
+stateroot_racer="$(window_id_in "$stateroot_session" racer)" || stateroot_racer=""
+stateroot_spool=""
+[ -z "$stateroot_racer" ] || stateroot_spool="$(tmux show-options -wqv -t "$stateroot_racer" @gl_spool)"
+if [ -n "$stateroot_spool" ] && [ -d "$stateroot_run/$stateroot_uid/gangline/spool/$stateroot_spool" ]; then
+  pass "and its spool is under the runtime root"
+else
+  fail "and its spool is under the runtime root" "token [$stateroot_spool]; [$stateroot_out]"
+fi
+for stateroot_session in "stateroot-race-a-$$" "stateroot-race-b-$$" "stateroot-race-c-$$"; do
+  if tmux list-sessions -F '#{session_name}' | grep -qx "$stateroot_session"; then
+    env -u GANG_LOCK_DIR GANG_TEST_STATE_BASES="$stateroot_tmp:$stateroot_run" \
+      GANG_SESSION="$stateroot_session" "$GANG" down "$stateroot_session" >/dev/null
+  fi
+done
+
+# Three parties inside one retirement. At the moment the retiring hitch has
+# stopped the /tmp root pinning, a hook opens a second team, recreates the old
+# path as a process that resolved it earlier would, adds an agent to that
+# second team, leaves mail in a spool a process made just before the move, and
+# publishes a fresh claim on a window, as a mint that checked before the marker
+# would. Every agent must end on one root, that mail must be swept, and the
+# claimed reservation must follow its window to the new root.
+stateroot_tmp="$stateroot_base/g/tmp"
+stateroot_run="$stateroot_base/g/run"
+stateroot_legacy="$stateroot_tmp/gangline-$stateroot_uid"
+stateroot_late=fedcba9876543210fedc
+stateroot_carried=abcdef0123456789abcd
+tmux new-session -d -s "stateroot-claim-$$" -n claimant
+stateroot_claimant="$(window_id_in "stateroot-claim-$$" claimant)"
+stateroot_socket="$(tmux display-message -p -t "=stateroot-claim-$$" '#{socket_path}')"
+mkdir -p "$stateroot_tmp" "$stateroot_run"
+mkdir -m 700 "$stateroot_run/$stateroot_uid" "$stateroot_legacy"
+cat > "$stateroot_base/g/hook" <<'EOF'
+#!/bin/sh
+set -e
+[ ! -d "$STATEROOT_G_NEW" ] || : > "$STATEROOT_G_NEW_SEEN"
+GANG_SESSION="$STATEROOT_G_SECOND" "$STATEROOT_G_GANG" hitch dee -c bash -d /tmp
+mkdir -p "$STATEROOT_G_LEGACY/spool/$STATEROOT_G_LATE"
+printf 'MARK_STATEROOT_LATE\n' > "$STATEROOT_G_LEGACY/spool/$STATEROOT_G_LATE/1-late"
+mkdir -m 700 "$STATEROOT_G_LEGACY/spool/$STATEROOT_G_CARRIED"
+tmux -S "$STATEROOT_G_SOCKET" set-option -w -t "$STATEROOT_G_CLAIMANT" @gl_spool "$STATEROOT_G_CARRIED"
+GANG_SESSION="$STATEROOT_G_SECOND" "$STATEROOT_G_GANG" hitch cee -c bash -d /tmp
+EOF
+chmod +x "$stateroot_base/g/hook"
+stateroot_out="$(env -u GANG_LOCK_DIR GANG_TEST_STATE_BASES="$stateroot_tmp:$stateroot_run" \
+  GANG_TEST_RETIRE_HOOK="$stateroot_base/g/hook" STATEROOT_G_GANG="$GANG" \
+  STATEROOT_G_SECOND="stateroot-second-$$" STATEROOT_G_LEGACY="$stateroot_legacy" \
+  STATEROOT_G_LATE="$stateroot_late" STATEROOT_G_CARRIED="$stateroot_carried" \
+  STATEROOT_G_SOCKET="$stateroot_socket" STATEROOT_G_CLAIMANT="$stateroot_claimant" \
+  STATEROOT_G_NEW="$stateroot_run/$stateroot_uid/gangline" STATEROOT_G_NEW_SEEN="$stateroot_base/g/new-seen" \
+  GANG_SESSION="stateroot-first-$$" "$GANG" hitch ay -c bash -d /tmp 2>&1)" \
+  || fail "a retiring hitch survives a race inside its move" "status $?: [$stateroot_out]"
+if [ -e "$stateroot_base/g/new-seen" ]; then
+  pass "the runtime root exists by the time the marker does"
+else
+  fail "the runtime root exists by the time the marker does" "[$stateroot_out]"
+fi
+for stateroot_pair in "stateroot-first-$$ ay" "stateroot-second-$$ dee" "stateroot-second-$$ cee"; do
+  stateroot_win="$(window_id_in "${stateroot_pair% *}" "${stateroot_pair#* }")" || stateroot_win=""
+  stateroot_spool=""
+  [ -z "$stateroot_win" ] || stateroot_spool="$(tmux show-options -wqv -t "$stateroot_win" @gl_spool)"
+  if [ -n "$stateroot_spool" ] && [ -d "$stateroot_run/$stateroot_uid/gangline/spool/$stateroot_spool" ]; then
+    pass "agent ${stateroot_pair#* } ends on the runtime root"
+  else
+    fail "agent ${stateroot_pair#* } ends on the runtime root" "token [$stateroot_spool]; [$stateroot_out]"
+  fi
+done
+contains "mail left in the old root just before the move reaches the archive" \
+  "$(find "$GANG_ARCHIVE_DIR" -path "*orphan-$stateroot_late*" -type f -exec cat {} + 2>/dev/null)" \
+  "MARK_STATEROOT_LATE"
+if [ -d "$stateroot_run/$stateroot_uid/gangline/spool/$stateroot_carried" ] \
+   && [ ! -e "$stateroot_legacy/spool/$stateroot_carried" ]; then
+  pass "a reservation claimed just before the marker moves to the runtime root"
+else
+  fail "a reservation claimed just before the marker moves to the runtime root" \
+    "$(ls -R "$stateroot_tmp" "$stateroot_run" 2>&1 | head -30); [$stateroot_out]"
+fi
+tmux kill-session -t "=stateroot-claim-$$"
+for stateroot_session in "stateroot-first-$$" "stateroot-second-$$"; do
+  if tmux list-sessions -F '#{session_name}' | grep -qx "$stateroot_session"; then
+    env -u GANG_LOCK_DIR GANG_TEST_STATE_BASES="$stateroot_tmp:$stateroot_run" \
+      GANG_SESSION="$stateroot_session" "$GANG" down "$stateroot_session" >/dev/null
+  fi
+done
+
+# A logind host whose runtime directory for this uid is gone falls back to /tmp
+# for every process, and the process creating that root says what was lost.
+stateroot_tmp="$stateroot_base/f/tmp"
+stateroot_run="$stateroot_base/f/run"
+stateroot_legacy="$stateroot_tmp/gangline-$stateroot_uid"
+mkdir -p "$stateroot_tmp" "$stateroot_run"
+stateroot_session="stateroot-lost-$$"
+stateroot_out="$(env -u GANG_LOCK_DIR GANG_TEST_STATE_BASES="$stateroot_tmp:$stateroot_run" \
+  GANG_SESSION="$stateroot_session" "$GANG" hitch loner -c bash -d /tmp 2>&1)" \
+  || fail "a session opens on the /tmp fallback" "status $?: [$stateroot_out]"
+contains "creating the /tmp fallback on a host whose runtime directory is gone warns of the loss" \
+  "$stateroot_out" "gang created $stateroot_legacy because this host has no runtime directory for uid $stateroot_uid"
+stateroot_loner="$(window_id_in "$stateroot_session" loner)"
+stateroot_spool="$(tmux show-options -wqv -t "$stateroot_loner" @gl_spool)"
+if [ -n "$stateroot_spool" ] && [ -d "$stateroot_legacy/spool/$stateroot_spool" ]; then
+  pass "and the session's spool is under that fallback"
+else
+  fail "and the session's spool is under that fallback" "token [$stateroot_spool]"
+fi
+stateroot_out="$(env -u GANG_LOCK_DIR GANG_TEST_STATE_BASES="$stateroot_tmp:$stateroot_run" \
+  GANG_SESSION="$stateroot_session" "$GANG" hitch second -c bash -d /tmp 2>&1)" \
+  || fail "a second agent joins the /tmp fallback" "status $?: [$stateroot_out]"
+excludes "an existing fallback is not reported again" "$stateroot_out" "gang created"
+env -u GANG_LOCK_DIR GANG_TEST_STATE_BASES="$stateroot_tmp:$stateroot_run" \
+  GANG_SESSION="$stateroot_session" "$GANG" down "$stateroot_session" >/dev/null
+# An adoption minting its spool while another hitch retires the root. A tmux
+# wrapper parks the adoption at its first read of the claimed spools, which
+# comes after it has established the old root, and runs a whole retiring hitch
+# there before letting the read go on. The adoption must not end with its
+# spool under the root everyone else has stopped using.
+stateroot_tmp="$stateroot_base/h/tmp"
+stateroot_run="$stateroot_base/h/run"
+stateroot_legacy="$stateroot_tmp/gangline-$stateroot_uid"
+mkdir -p "$stateroot_tmp" "$stateroot_run" "$stateroot_base/h/bin"
+mkdir -m 700 "$stateroot_run/$stateroot_uid" "$stateroot_legacy"
+cat > "$stateroot_base/h/bin/tmux" <<'EOF'
+#!/bin/sh
+bin=${0%/*}
+PATH=${PATH#"$bin:"}
+if [ ! -e "$bin/fired" ]; then
+  case "$*" in
+    *"list-windows -a -F #{@gl_spool}"*)
+      : > "$bin/fired"
+      env -u TMUX GANG_SESSION="$STATEROOT_H_OTHER" \
+        "$STATEROOT_H_GANG" hitch retirer -c bash -d /tmp > "$bin/retirer.out" 2>&1 \
+        || : > "$bin/retirer.failed" ;;
+  esac
+fi
+exec tmux "$@"
+EOF
+chmod +x "$stateroot_base/h/bin/tmux"
+stateroot_session="stateroot-adopt-$$"
+tmux new-session -d -s "$stateroot_session" -n adoptee
+stateroot_adoptee="$(window_id_in "$stateroot_session" adoptee)"
+stateroot_socket="$(tmux display-message -p -t "=$stateroot_session" '#{socket_path}')"
+stateroot_rc=0
+stateroot_out="$(env -u GANG_LOCK_DIR GANG_TEST_STATE_BASES="$stateroot_tmp:$stateroot_run" \
+  PATH="$stateroot_base/h/bin:$PATH" STATEROOT_H_GANG="$GANG" \
+  STATEROOT_H_OTHER="stateroot-other-$$" TMUX="$stateroot_socket,0,0" \
+  GANG_SESSION="$stateroot_session" "$GANG" adopt adoptee -c bash 2>&1)" || stateroot_rc=$?
+if [ -e "$stateroot_base/h/bin/fired" ] && [ ! -e "$stateroot_base/h/bin/retirer.failed" ] \
+   && [ -f "$stateroot_legacy/retired" ]; then
+  pass "a retiring hitch ran while the adoption was minting"
+else
+  fail "a retiring hitch ran while the adoption was minting" \
+    "$(cat "$stateroot_base/h/bin/retirer.out" 2>&1); [$stateroot_out]"
+fi
+stateroot_spool="$(tmux show-options -wqv -t "$stateroot_adoptee" @gl_spool)"
+if [ -n "$stateroot_spool" ] && [ -d "$stateroot_legacy/spool/$stateroot_spool" ]; then
+  fail "the adoption leaves no spool claimed under the retired root" \
+    "status $stateroot_rc; token $stateroot_spool; [$stateroot_out]"
+else
+  pass "the adoption leaves no spool claimed under the retired root"
+fi
+if [ "$stateroot_rc" -ne 0 ]; then
+  contains "and the refused adoption says the root was retired while it ran" \
+    "$stateroot_out" "the runtime state root $stateroot_legacy was retired or removed while this command ran"
+  equal "and the refused adoption left the window unclaimed" "" "$stateroot_spool"
+fi
+for stateroot_session in "stateroot-other-$$" "stateroot-adopt-$$"; do
+  if tmux list-sessions -F '#{session_name}' | grep -qx "$stateroot_session"; then
+    env -u GANG_LOCK_DIR GANG_TEST_STATE_BASES="$stateroot_tmp:$stateroot_run" \
+      TMUX="$stateroot_socket,0,0" GANG_SESSION="$stateroot_session" \
+      "$GANG" down "$stateroot_session" >/dev/null
+  fi
+done

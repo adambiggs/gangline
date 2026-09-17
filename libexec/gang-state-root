@@ -1,0 +1,63 @@
+# shellcheck shell=sh
+# SPDX-License-Identifier: Apache-2.0
+# The default Gangline runtime state root: delivery locks, spools, team
+# records, tick and scope registries, and the tmux guard's log. Sourced, not
+# executed, by bin/gang and by the tmux guard, so the one rule every process on
+# a host must agree on is written once. GANG_LOCK_DIR overrides it; callers
+# apply that override themselves.
+#
+# A FUNCTION OF THE HOST AND THE UID, NEVER OF THE CALLER'S ENVIRONMENT.
+# XDG_RUNTIME_DIR is absent from an `env -i` shell and from some service
+# environments while present in every tmux pane, so reading it would give two
+# processes delivering to one pane two lock roots, and neither would notice.
+# The logind runtime directory is therefore named by uid, /run/user/UID, which
+# is what XDG_RUNTIME_DIR holds wherever logind sets it.
+#
+# THE OLD ROOT PINS UNTIL IT IS RETIRED. A team started before this root moved
+# keeps its spools and locks under /tmp/gangline-UID. While that directory
+# exists every process keeps using it, so a checkout updated under a running
+# team changes nothing that team depends on. `gang` retires it when it opens a
+# session and no recorded team is live there, by creating the file `retired`
+# inside it. The directory stays where it is, so nothing can recreate it
+# unmarked; a marked root no longer pins, and lock_base refuses it to a process
+# that still names it. The host empties /tmp at boot, which retires it too.
+#
+# WITHOUT A LOGIND RUNTIME DIRECTORY (macOS, hosts without systemd-logind) the
+# root stays /tmp/gangline-UID, as it always was. On a logind host whose
+# /run/user/UID is gone (logout without linger) every process for the uid falls
+# back to /tmp together, so the lock stays whole, but whatever the runtime root
+# held is gone; GANGLINE_STATE_RUNTIME_LOST lets gang say so when it creates
+# the fallback.
+
+# shellcheck disable=SC2034  # the four results are read by the sourcing script
+# $1 = uid. Sets GANGLINE_STATE_DEFAULT, GANGLINE_STATE_LEGACY,
+# GANGLINE_STATE_RUNTIME (empty when there is no logind runtime directory) and
+# GANGLINE_STATE_RUNTIME_LOST (1 when /run/user exists but this uid's does not).
+gangline_state_root_resolve() {
+  _gsr_tmp=/tmp
+  _gsr_run=/run/user
+  # Test-only relocation of the two fixed bases, so a suite can drive the
+  # pin and the retirement without touching this host's real roots.
+  if [ "${GANG_TEST_COLLARS:-}" = 1 ] && [ -n "${GANG_TEST_STATE_BASES:-}" ]; then
+    _gsr_tmp=${GANG_TEST_STATE_BASES%%:*}
+    _gsr_run=${GANG_TEST_STATE_BASES#*:}
+  fi
+  GANGLINE_STATE_LEGACY="$_gsr_tmp/gangline-$1"
+  GANGLINE_STATE_RUNTIME=""
+  GANGLINE_STATE_RUNTIME_LOST=""
+  if [ -d "$_gsr_run/$1" ] && [ ! -L "$_gsr_run/$1" ]; then
+    GANGLINE_STATE_RUNTIME="$_gsr_run/$1/gangline"
+  elif [ -d "$_gsr_run" ]; then
+    GANGLINE_STATE_RUNTIME_LOST=1
+  fi
+  GANGLINE_STATE_MARKER=retired
+  if [ -L "$GANGLINE_STATE_LEGACY" ] || [ -z "$GANGLINE_STATE_RUNTIME" ] \
+     || { [ -d "$GANGLINE_STATE_LEGACY" ] \
+          && [ ! -e "$GANGLINE_STATE_LEGACY/$GANGLINE_STATE_MARKER" ] \
+          && [ ! -L "$GANGLINE_STATE_LEGACY/$GANGLINE_STATE_MARKER" ]; }; then
+    GANGLINE_STATE_DEFAULT="$GANGLINE_STATE_LEGACY"
+  else
+    GANGLINE_STATE_DEFAULT="$GANGLINE_STATE_RUNTIME"
+  fi
+  unset _gsr_tmp _gsr_run
+}

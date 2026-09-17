@@ -369,10 +369,11 @@ server; lifecycle reads remove it after its unit is collected, and teardown
 removes it after a stop. The porcelain roster remains one fixed-shape row per
 live agent and does not include either team-level report.
 
-The default lock root is under `/tmp`, so without an installer-supplied
-`GANG_LOCK_DIR` the issuance proof lasts for the current boot, matching the
-transient scopes it describes. A persistent lock root makes that proof survive
-reboots as well. Gangline does not infer ownership after either root is lost.
+The default lock root is the uid's runtime directory, or `/tmp` where there is
+none (see `GANG_LOCK_DIR` below), so without an installer-supplied
+`GANG_LOCK_DIR` the issuance proof lasts for the current boot, and on a logind
+host without linger only until the user's last session ends. A persistent lock
+root makes that proof survive both. Gangline does not infer ownership after either root is lost.
 
 The tmux server that holds the team is scoped the same way, as
 `gangline-<session>.scope`, so its death is a named unit stopping rather than an
@@ -2194,7 +2195,7 @@ Exactly these keys are settable:
 | `GANG_COLLAR` | `claude-code` | default collar for `up` and `hitch` |
 | `GANG_SESSION` | `gangline` | exact tmux session Gangline addresses |
 | `GANG_COLLARS` | unset | custom collar directory searched before shipped collars |
-| `GANG_LOCK_DIR` | `/tmp/gangline-$(id -u)` | shared delivery locks and per-target spools |
+| `GANG_LOCK_DIR` | `/run/user/$(id -u)/gangline` when that runtime directory exists and `/tmp/gangline-$(id -u)` is not a directory, or carries a `retired` file; otherwise `/tmp/gangline-$(id -u)` | runtime state: shared delivery locks, per-target spools, team records, tick and scope registries, tmux guard log. `XDG_RUNTIME_DIR` is not read. Its contents die with the runtime directory (logout without linger, reboot) or with `/tmp` at boot |
 | `GANG_ARCHIVE_DIR` | `${XDG_STATE_HOME:-$HOME/.local/state}/gangline/archive` | pending-message archive written before windows die |
 | `GANG_CONTEXT_LIGHTS` | `collar` | whitespace-separated `COLLAR/MODEL=SPEC` entries, either half `*`, the most specific match winning; SPEC is `collar` to take the collar's own default for the hitched model, `off`, `yellow,red` token thresholds, or `yellow%,red%` relative thresholds, and a SPEC with no selector is the deprecated form of `*=SPEC`; `gang hitch -l` overrides the whole map for one agent |
 | `GANG_CONTEXT_BANDS` | unset | `off`, or semicolon-separated `SELECTOR=BAND@THRESHOLD:TEMPLATE|...` entries. `SELECTOR` is exact `COLLAR/MODEL`, then `COLLAR/*`, then required `*`; the most specific match wins. Thresholds are positive, increasing, and all tokens or all percentages below 100. Templates use only documented placeholders and are rendered at the crossing; missing cache-reader values render `unavailable`. A nonempty map replaces legacy lights for later hitches, while `gang hitch -l` explicitly keeps one legacy two-light hitch. |

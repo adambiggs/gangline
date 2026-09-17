@@ -313,6 +313,14 @@ if [ "${GANG_TICK_INTERNAL:-}" != 1 ] \
 fi
 export GANGLINE_PROCESS_UID
 
+# ONE DEFAULT STATE ROOT FOR EVERY PROCESS ON THE HOST. The rule, and why it
+# does not read XDG_RUNTIME_DIR, is in the sourced file; the tmux guard sources
+# the same one. GANG_LOCK_DIR still overrides it at every use.
+# shellcheck source=libexec/gang-state-root
+. "$ROOT/libexec/gang-state-root" \
+  || die "cannot read $ROOT/libexec/gang-state-root, which says where Gangline keeps its runtime state; reinstall gangline"
+gangline_state_root_resolve "$GANGLINE_PROCESS_UID"
+
 # NEW TEAMS LIVE OFF TMUX'S DEFAULT SOCKET. A process inside an agent pane can
 # invoke the real tmux binary by absolute path, beyond the PATH guard. Keeping
 # the team on a named socket means that client still has no route to the team
@@ -4772,20 +4780,77 @@ lock_release() {
   LOCK_PATH="" LOCK_OWNER=""
 }
 
+state_root_moved() { # $1 = the default root this process resolved; refuses
+  die "the runtime state root $1 was retired or removed while this command ran; it now lives under ${GANGLINE_STATE_RUNTIME:-another root}. gang will not keep using the old one, because every process started since uses the new one. Run the command again."
+}
+
+state_root_created() { # $1 = the default root, just created by this process
+  # A ROOT THAT VANISHED IS NOT RECREATED. The resolver keeps the /tmp root only
+  # while it exists when a runtime directory is present, so creating it here
+  # means something removed it after this process looked.
+  if [ "$1" = "$GANGLINE_STATE_LEGACY" ] && [ -n "$GANGLINE_STATE_RUNTIME" ]; then
+    rmdir -- "$1" 2>/dev/null || :
+    state_root_moved "$1"
+  fi
+  [ "$1" = "$GANGLINE_STATE_LEGACY" ] && [ -n "$GANGLINE_STATE_RUNTIME_LOST" ] || return 0
+  printf '%s\n' "$(colour "$C_BAD" "gang created $1 because this host has no runtime directory for uid $GANGLINE_PROCESS_UID. If a team was running under a runtime directory that logout removed, its queued mail and delivery locks are gone: restart that team with gang down and gang up, and keep the directory alive with loginctl enable-linger.")" >&2
+}
+
+state_root_retired_at() { # $1 = a path; 0 when it lies under a root marked retired
+  local root="${GANG_LOCK_DIR:-$GANGLINE_STATE_LEGACY}"
+  case "$1" in
+    "$root"|"$root"/*) ;;
+    *) return 1 ;;
+  esac
+  [ -e "$root/$GANGLINE_STATE_MARKER" ] || [ -L "$root/$GANGLINE_STATE_MARKER" ]
+}
+
+state_root_retired_check() { # $1 = a path lock_base just established, $2 = 1 if it created it
+  # CHECKED AFTER THE PATH EXISTS, NEVER ONLY BEFORE. The retirer writes its
+  # marker and then sweeps the old root; this process establishes its path and
+  # then reads the marker. Whichever order the two land in, one of them sees
+  # the other, so nothing is left working in a root the rest of the host has
+  # stopped using without being refused or swept.
+  # An explicit root is checked as itself, whatever the resolver would name.
+  local marker="" root="${GANG_LOCK_DIR:-$GANGLINE_STATE_LEGACY}"
+  state_root_retired_at "$1" || return 0
+  [ "$2" != 1 ] || rmdir -- "$1" 2>/dev/null || :
+  [ -n "${GANG_LOCK_DIR:-}" ] || state_root_moved "$root"
+  IFS= read -r marker < "$root/$GANGLINE_STATE_MARKER" || :
+  die "the lock root $root is retired: ${marker:-it carries $GANGLINE_STATE_MARKER}. This process names it explicitly, so unset GANG_LOCK_DIR or restart it; do not remove the marker."
+}
+
 lock_base() { # $1 = the lock root; returns with it established as ours, or refuses
-  local err
-  mkdir -p "$(dirname "$1")" 2>/dev/null || :
-  err="$(mkdir -m 700 "$1" 2>&1)" && return 0
-  [ -e "$1" ] || [ -L "$1" ] \
-    || die "cannot create the lock directory $1 — ${err:-unknown error}. Every gang process delivering to a pane must agree on this path, so gang will not quietly pick another: point GANG_LOCK_DIR at somewhere writable by ALL of them."
-  [ ! -L "$1" ] \
-    || die "the lock directory $1 is a symlink to $(readlink "$1" 2>/dev/null) — refusing to lock through it. A lock taken somewhere other than where the other delivering processes look is not a lock. Remove it, or point GANG_LOCK_DIR at a real directory."
-  [ -d "$1" ] \
-    || die "the lock path $1 exists and is not a directory — remove it, or point GANG_LOCK_DIR at a directory gang can own."
+  local err place="" created=""
+  # THE DEFAULT ROOT IS CREATED ONLY BY NAME. A path below it is created only
+  # once the root itself is established here, never by `mkdir -p`, which would
+  # silently recreate a root that vanished after this process resolved it.
+  if [ -z "${GANG_LOCK_DIR:-}" ]; then
+    case "$1" in
+      "$GANGLINE_STATE_DEFAULT") place=root ;;
+      "$GANGLINE_STATE_DEFAULT"/*) lock_base "$GANGLINE_STATE_DEFAULT"; place=below ;;
+    esac
+  fi
+  [ "$place" = below ] || mkdir -p "$(dirname "$1")" 2>/dev/null || :
+  if err="$(mkdir -m 700 "$1" 2>&1)"; then
+    created=1
+    [ "$place" != root ] || state_root_created "$1"
+  else
+    if [ "$place" = below ] && [ ! -d "$GANGLINE_STATE_DEFAULT" ]; then
+      state_root_moved "$GANGLINE_STATE_DEFAULT"
+    fi
+    [ -e "$1" ] || [ -L "$1" ] \
+      || die "cannot create the lock directory $1 — ${err:-unknown error}. Every gang process delivering to a pane must agree on this path, so gang will not quietly pick another: point GANG_LOCK_DIR at somewhere writable by ALL of them."
+    [ ! -L "$1" ] \
+      || die "the lock directory $1 is a symlink to $(readlink "$1" 2>/dev/null) — refusing to lock through it. A lock taken somewhere other than where the other delivering processes look is not a lock. Remove it, or point GANG_LOCK_DIR at a real directory."
+    [ -d "$1" ] \
+      || die "the lock path $1 exists and is not a directory — remove it, or point GANG_LOCK_DIR at a directory gang can own."
+  fi
   [ -O "$1" ] \
     || die "the lock directory $1 is not owned by uid $EUID — refusing to take delivery locks in a directory somebody else controls, because they could delete or forge them. Point GANG_LOCK_DIR somewhere you own."
   err="$(chmod 700 "$1" 2>&1)" \
     || die "cannot restrict the lock directory $1 to this user — ${err:-unknown error}. Left open to others on a shared /tmp, another user can delete or forge the delivery locks gang relies on."
+  state_root_retired_check "$1" "$created"
 }
 
 LOCK_SELF_PID=""
@@ -4811,7 +4876,7 @@ lock_pane() { # $1 = window id; held until lock_release or this process exits
   local base holder name path reaper err me read_races=0 reaper_result="" reaper_rc=0
   lock_self_pid
   me="$LOCK_SELF_PID"
-  base="${GANG_LOCK_DIR:-/tmp/gangline-$GANGLINE_PROCESS_UID}"
+  base="${GANG_LOCK_DIR:-$GANGLINE_STATE_DEFAULT}"
   lock_base "$base"
   name="$(agent_name_of "$1")"
   path="$base/$(printf '%s' "$1" | tr -c 'A-Za-z0-9' '_').lock"
@@ -4972,7 +5037,7 @@ PY
 # every gang process talking to this team agrees on. A record is a fact about
 # reachability, never authority: `teams` re-asks the server itself rather than
 # believing the file.
-team_root_of() { printf '%s/teams' "${GANG_LOCK_DIR:-/tmp/gangline-$GANGLINE_PROCESS_UID}"; }
+team_root_of() { printf '%s/teams' "${GANG_LOCK_DIR:-$GANGLINE_STATE_DEFAULT}"; }
 
 team_record_name() { # $1 = session; 0 with the record's basename, 1 = unusable
   case "$1" in
@@ -5052,6 +5117,132 @@ team_route_resolve() { # point this gang process at the selected live team
 team_live_on() { # $1 socket, $2 session; 0 live, 1 not there, 2 no server answers
   tmux -S "$1" list-sessions -F '#{session_name}' >/dev/null 2>&1 || return 2
   tmux -S "$1" has-session -t "=$2" 2>/dev/null || return 1
+}
+
+STATE_ROOT_LIVE=""
+state_root_team_spools() { # STATE_ROOT_LIVE = spool tokens the team server's windows claim; 1 = unknown
+  # A server that is not running holds none; any other failure is not an
+  # empty answer, and leaves the error in STATE_ROOT_LIVE.
+  STATE_ROOT_LIVE="$(tmux -L "$GANGLINE_TEAM_LABEL" list-windows -a -F '#{@gl_spool}' 2>&1)" && return 0
+  case "$STATE_ROOT_LIVE" in
+    *"no server running"*|*"error connecting to"*"No such file or directory"*)
+      STATE_ROOT_LIVE=""; return 0 ;;
+  esac
+  return 1
+}
+
+state_root_carry_claims() { # $1 old spool root, $2 live tokens; 1 = a claimed spool holds mail
+  # A window that published its claim before the marker was read keeps working
+  # when every sender resolves the new root, provided its reservation moves
+  # too. Only an empty one is moved: a claim published in that window is a
+  # fresh mint, and mail in a claimed spool is left for its reader.
+  local token rc=0 new
+  new="$(spool_root_of)"
+  while IFS= read -r token; do
+    case "$token" in ''|*[!a-f0-9]*) continue ;; esac
+    [ -d "$1/$token" ] && [ ! -L "$1/$token" ] || continue
+    if ! rmdir -- "$1/$token" 2>/dev/null; then
+      [ ! -d "$1/$token" ] || rc=1
+      continue
+    fi
+    spool_root_prepare
+    mkdir -m 700 "$new/$token" 2>/dev/null || [ -d "$new/$token" ] \
+      || die "cannot carry the spool reservation $token to $new"
+  done <<EOF
+$2
+EOF
+  return "$rc"
+}
+
+state_root_retire_legacy() { # before a session opens: move off a pinned /tmp root nobody lives on
+  # THE RUNNING TEAM KEEPS ITS ROOT; THE NEXT ONE MOVES. libexec/gang-state-root
+  # keeps every process on /tmp/gangline-UID while that directory exists. This
+  # is the one place it is safe to stop: a session is about to open, and no
+  # team this uid recorded there still answers. Anything that cannot be proven
+  # dead keeps the pin, because two roots at once split every delivery lock.
+  local legacy file name socket rc live token marker tomb err left=0
+  [ -z "${GANG_LOCK_DIR:-}" ] || return 0
+  legacy="$GANGLINE_STATE_LEGACY"
+  [ "$GANGLINE_STATE_DEFAULT" = "$legacy" ] || return 0
+  [ -n "$GANGLINE_STATE_RUNTIME" ] || return 0
+  [ -d "$legacy" ] && [ ! -L "$legacy" ] && [ -O "$legacy" ] || return 0
+  for file in "$legacy/teams"/* "$legacy/teams"/.[!.]* "$legacy/teams"/..?*; do
+    [ -e "$file" ] || [ -L "$file" ] || continue
+    name="${file##*/}"
+    socket=""
+    if [ -f "$file" ] && [ ! -L "$file" ]; then
+      IFS= read -r socket < "$file" || socket=""
+    fi
+    if [ -z "$socket" ]; then
+      printf '%s\n' "$(colour "$C_DIM" "runtime state stays under $legacy: the team record $file names no socket, so gang cannot prove that team is gone")" >&2
+      return 0
+    fi
+    rc=0
+    team_live_on "$socket" "$name" || rc=$?
+    if [ "$rc" -eq 0 ]; then
+      printf '%s\n' "$(colour "$C_DIM" "runtime state stays under $legacy while team '$name' runs there; it moves to $GANGLINE_STATE_RUNTIME once no team is live on it")" >&2
+      return 0
+    fi
+  done
+  # A WINDOW WITHOUT A RECORD STILL HOLDS ITS SPOOL. The team server gang opens
+  # sessions on is asked directly; a server that does not answer holds none.
+  if ! state_root_team_spools; then
+    printf '%s\n' "$(colour "$C_DIM" "runtime state stays under $legacy: the team server did not say which spools its windows claim — $STATE_ROOT_LIVE")" >&2
+    return 0
+  fi
+  live="$STATE_ROOT_LIVE"
+  if [ -n "$live" ]; then
+    while IFS= read -r token; do
+      case "$token" in ''|*[!a-f0-9]*) continue ;; esac
+      if [ -d "$legacy/spool/$token" ]; then
+        printf '%s\n' "$(colour "$C_DIM" "runtime state stays under $legacy: a live window still claims its spool $token")" >&2
+        return 0
+      fi
+    done <<EOF
+$live
+EOF
+  fi
+  # THE OLD TREE STAYS WHERE IT IS, MARKED. Renaming it away would leave a
+  # moment in which the path is absent, and a process that resolved it earlier
+  # would recreate an unmarked directory that pins everyone back. A marker file
+  # created exclusively inside it is the whole move: the resolver passes over a
+  # marked root, and lock_base refuses one.
+  # THE NEW ROOT EXISTS BEFORE THE MARKER DOES, so a process that sees the
+  # marker and turns to the new root always finds it there.
+  lock_base "$GANGLINE_STATE_RUNTIME"
+  marker="$legacy/$GANGLINE_STATE_MARKER"
+  tomb="gangline runtime state moved to $GANGLINE_STATE_RUNTIME"
+  if ! err="$( ( set -C; printf '%s\n' "$tomb" > "$marker" ) 2>&1)"; then
+    # Another hitch retiring the same root got there first.
+    if [ -e "$marker" ]; then
+      gangline_state_root_resolve "$GANGLINE_PROCESS_UID"
+      return 0
+    fi
+    printf '%s\n' "$(colour "$C_BAD" "runtime state stays under $legacy: gang could not mark it retired — ${err:-unknown error}")" >&2
+    return 0
+  fi
+  if [ "${GANG_TEST_COLLARS:-}" = 1 ] && [ -n "${GANG_TEST_RETIRE_HOOK:-}" ]; then
+    env -u GANG_TEST_RETIRE_HOOK "$GANG_TEST_RETIRE_HOOK" \
+      || die "the test retirement hook $GANG_TEST_RETIRE_HOOK failed"
+  fi
+  gangline_state_root_resolve "$GANGLINE_PROCESS_UID"
+  # SWEPT AFTER THE MARKER, so a spool made before it is found here and one made
+  # after it was refused where it was made. Mail no window claims goes where
+  # the orphan sweep sends it rather than into a directory /tmp will empty.
+  if ! state_root_team_spools; then
+    left=1
+  elif [ -d "$legacy/spool" ]; then
+    state_root_carry_claims "$legacy/spool" "$STATE_ROOT_LIVE" || left=1
+    spool_classify "$legacy/spool" "$STATE_ROOT_LIVE"
+    spool_tokens_archive "$legacy/spool" "$SPOOL_ORPHANS" || left=1
+    [ -z "$SPOOL_FOREIGN" ] || left=1
+    for token in "$legacy/spool"/*; do
+      [ ! -d "$token" ] || left=1
+    done
+  fi
+  printf '%s\n' "$(colour "$C_WORK" "runtime state now lives under $GANGLINE_STATE_DEFAULT; the old root $legacy is marked retired, and the host's next boot removes it")"
+  [ "$left" -eq 0 ] \
+    || printf '%s\n' "$(colour "$C_BAD" "some spools could not be archived and are still under $legacy/spool — read them before the host reboots; an agent whose window claims one must be restarted")" >&2
 }
 
 cmd_teams() { # every team gang wrote down, and whether its server still answers
@@ -5556,7 +5747,7 @@ alert_ui_ensure() { # migrate and install the non-stealing tmux alert center
   tick_paths_set || return 1
   alert_legacy_windows_remove || return 1
   alert_status_ensure || return 1
-  command="GANG_SESSION=$(option_shell_quote "$SESSION") GANG_CONFIG_DIR=$(option_shell_quote "$CONFIG_DIR") GANG_LOCK_DIR=$(option_shell_quote "${GANG_LOCK_DIR:-/tmp/gangline-$GANGLINE_PROCESS_UID}") \"$(option_shell_quote "$ROOT/bin/gang")\" alerts --open"
+  command="GANG_SESSION=$(option_shell_quote "$SESSION") GANG_CONFIG_DIR=$(option_shell_quote "$CONFIG_DIR") GANG_LOCK_DIR=$(option_shell_quote "${GANG_LOCK_DIR:-$GANGLINE_STATE_DEFAULT}") \"$(option_shell_quote "$ROOT/bin/gang")\" alerts --open"
   alert_option_set @gl_alert_health "$TICK_HEALTH" || return 1
   alert_binding_claim || claim_rc=$?
   if [ "$claim_rc" -eq 0 ]; then
@@ -5711,7 +5902,7 @@ tick_state_forget() { # health and the tick journals die with their team
 tick_lock_paths_set() {
   local base
   tick_team_digest_set || return 1
-  base="${GANG_LOCK_DIR:-/tmp/gangline-$GANGLINE_PROCESS_UID}/tick"
+  base="${GANG_LOCK_DIR:-$GANGLINE_STATE_DEFAULT}/tick"
   lock_base "$base"
   TICK_LOCK_PATH="$base/$TICK_TEAM_DIGEST.lock"
   TICK_DIRTY_PATH="$base/$TICK_TEAM_DIGEST.dirty"
@@ -7021,10 +7212,10 @@ tick_launch() { # isolate a post-command candidate from the command's own result
   return 0
 }
 
-spool_root_of() { printf '%s/spool' "${GANG_LOCK_DIR:-/tmp/gangline-$GANGLINE_PROCESS_UID}"; }
+spool_root_of() { printf '%s/spool' "${GANG_LOCK_DIR:-$GANGLINE_STATE_DEFAULT}"; }
 
 spool_root_prepare() { # establish the shared roots before a window depends on them
-  local base="${GANG_LOCK_DIR:-/tmp/gangline-$GANGLINE_PROCESS_UID}"
+  local base="${GANG_LOCK_DIR:-$GANGLINE_STATE_DEFAULT}"
   lock_base "$base"
   lock_base "$base/spool"
 }
@@ -8110,7 +8301,10 @@ spool_mint() { # $1 = window id; the spool identity, minted where nothing races 
     spool_token_holders "$token" "$1"
     [ -z "$SPOOL_TOKEN_HOLDERS" ] \
       || die "this window's spool identity '$token' is already held by$SPOOL_TOKEN_HOLDERS — refusing to enrol two windows on one spool, where each would drain mail addressed to the other. Clear @gl_spool on this window, then adopt it again to be given one of its own"
-    mkdir -m 700 "$root/$token" 2>/dev/null && return 0
+    if mkdir -m 700 "$root/$token" 2>/dev/null; then
+      state_root_retired_check "$root/$token" 1
+      return 0
+    fi
     # EEXIST is the repair succeeding on a reservation that is already there. Any
     # other reason it could not be taken is a spool this window cannot be said to
     # own, and saying so beats returning as though the identity were reserved.
@@ -8121,6 +8315,7 @@ spool_mint() { # $1 = window id; the spool identity, minted where nothing races 
     # is the same rule lock_base already keeps.
     [ ! -L "$root/$token" ] && [ -d "$root/$token" ] && [ -O "$root/$token" ] \
       || die "cannot reserve the spool identity '$token' this window already carries: $root/$token is not a directory this user owns — every gang process delivering to this window has to find the spool at that exact path, and gang will not treat a link or a foreign directory as a reservation"
+    state_root_retired_check "$root/$token" ""
     return 0
   fi
   # WHAT A LIVE WINDOW HAS PUBLISHED IS TAKEN, RESERVED OR NOT. Until every
@@ -8146,13 +8341,22 @@ spool_mint() { # $1 = window id; the spool identity, minted where nothing races 
   spool_refusal="$(tmux set-option -w -t "$1" @gl_spool "$token" 2>&1)" \
     || { rmdir -- "$root/$token" 2>/dev/null || :
          die "cannot record the spool identity for this window${spool_refusal:+ — $spool_refusal}"; }
+  # CHECKED AFTER PUBLISHING. A retirement writes its marker and then reads the
+  # claims windows publish: a claim published before that read is carried to
+  # the new root by the retirer, and one published after it is taken back here.
+  if state_root_retired_at "$root/$token"; then
+    spool_refusal="$(tmux set-option -uw -t "$1" @gl_spool 2>&1)" \
+      || die "cannot withdraw the spool identity $token from this window after its root $root was retired${spool_refusal:+ — $spool_refusal}; clear @gl_spool on the window by hand"
+    rmdir -- "$root/$token" 2>/dev/null || :
+    state_root_retired_check "$root/$token" ""
+  fi
 }
 
 spool_establish() { # $1 = window id; SPOOL_DIR = its spool, created and owned by us
   local base
   spool_existing "$1" \
     || die "this window has no spool identity, and gang will not mint one on the way to parking a message. It is minted at hitch and adopt — re-hitch or re-adopt this agent"
-  base="${GANG_LOCK_DIR:-/tmp/gangline-$GANGLINE_PROCESS_UID}"
+  base="${GANG_LOCK_DIR:-$GANGLINE_STATE_DEFAULT}"
   lock_base "$base"
   lock_base "$base/spool"
   lock_base "$SPOOL_DIR"
@@ -8671,7 +8875,7 @@ run_start() { # argv follows --
     --property=TimeoutStopSec=20s --property=UMask=0077 --working-directory="$PWD"
     --property="ExecStopPost=$post"
     --setenv="GANG_SESSION=$SESSION" --setenv="GANG_CONFIG_DIR=$CONFIG_DIR"
-    --setenv="GANG_LOCK_DIR=${GANG_LOCK_DIR:-/tmp/gangline-$GANGLINE_PROCESS_UID}"
+    --setenv="GANG_LOCK_DIR=${GANG_LOCK_DIR:-$GANGLINE_STATE_DEFAULT}"
     --setenv="GANG_ARCHIVE_DIR=$(archive_root)" --setenv="GANG_TMUX_GUARD=$GANG_TMUX_GUARD"
     --setenv="XDG_STATE_HOME=$state_home" --setenv="HOME=$HOME"
     --setenv="GANG_RUN_TEAM_ROOT=$RUN_TEAM_ROOT"
@@ -9799,11 +10003,22 @@ spool_orphans() { # every spool directory no live window claims; 1 = cannot tell
   # tmux server, and a reading that failed is not an empty one. Answering a
   # failed read as "no window holds anything" would call every live agent's
   # spool an orphan, so the failure comes back to the caller to act on.
-  local root e token live nl=$'\n'
+  local root live
   SPOOL_ORPHANS=""; SPOOL_FOREIGN=""
   root="$(spool_root_of)"
   [ -d "$root" ] || return 0
   live="$(tmux list-windows -a -F '#{@gl_spool}' 2>/dev/null)" || return 1
+  spool_classify "$root" "$live"
+}
+
+spool_orphans_under() { # $1 spool root no live window can claim; every minted spool is an orphan
+  SPOOL_ORPHANS=""; SPOOL_FOREIGN=""
+  [ -d "$1" ] || return 0
+  spool_classify "$1" ""
+}
+
+spool_classify() { # $1 spool root, $2 live tokens -> SPOOL_ORPHANS, SPOOL_FOREIGN
+  local root="$1" live="$2" e token nl=$'\n'
   for e in "$root"/* "$root"/.[!.]* "$root"/..?*; do
     [ -e "$e" ] || [ -L "$e" ] || continue
     token="${e##*/}"
@@ -9869,38 +10084,50 @@ $SPOOL_FOREIGN
 EOF
 }
 
-spool_sweep_orphans() { # archive and retire every spool no live window claims
-  # RUN WHERE THE ANSWER IS CHEAPEST AND SAFEST: immediately after a session is
-  # created, when the server this reads is one gang has just proved it can talk
-  # to and the only spool gang owns is the one it has just minted. Every other
-  # directory under the root belonged to a window that is gone.
-  local root token dir swept=0
-  root="$(spool_root_of)"
-  spool_orphans || {
-    printf '%s\n' "$(colour "$C_BAD" "orphaned spools were NOT swept: gang could not read the tmux server's window list, so it cannot tell a dead session's spool from a live agent's — read $root by hand")" >&2
-    return 0
-  }
+SPOOL_ARCHIVED=0
+spool_tokens_archive() { # $1 spool root, $2 newline-separated tokens; 1 = one was left in place
+  # Archives each named spool as orphan-TOKEN and removes its directory;
+  # SPOOL_ARCHIVED counts the directories removed.
+  local token dir rc=0
+  SPOOL_ARCHIVED=0
   while IFS= read -r token; do
     [ -n "$token" ] || continue
-    dir="$root/$token"
+    dir="$1/$token"
     # THE SWEEP NEVER STOPS THE SESSION IT RUNS IN. A stray this cannot archive
     # is reported and left exactly where it is; dying here would make one
     # unaccountable directory refuse every `up` until a person removed it, and
     # the mail in every OTHER orphan would stay invisible in the meantime.
     if ! spool_dir_preflight "$dir"; then
       printf '%s\n' "$(colour "$C_BAD" "$SPOOL_PREFLIGHT_ERROR, so it was left alone — nothing in it has been moved. Read it, then remove it by hand")" >&2
+      rc=1
       continue
     fi
     spool_dir_archive "$dir" "orphan-$token"
     rmdir -- "$dir" 2>/dev/null \
       || { printf '%s\n' "$(colour "$C_BAD" "the orphaned spool $dir was emptied into the archive but could not be removed — remove it by hand")" >&2
+           rc=1
            continue; }
-    swept=$((swept + 1))
+    SPOOL_ARCHIVED=$((SPOOL_ARCHIVED + 1))
   done <<EOF
-$SPOOL_ORPHANS
+$2
 EOF
-  [ "$swept" -eq 0 ] \
-    || printf '%s\n' "$(colour "$C_WORK" "swept $swept orphaned spool director(ies) from $root — they belonged to windows that are gone")"
+  return "$rc"
+}
+
+spool_sweep_orphans() { # archive and retire every spool no live window claims
+  # RUN WHERE THE ANSWER IS CHEAPEST AND SAFEST: immediately after a session is
+  # created, when the server this reads is one gang has just proved it can talk
+  # to and the only spool gang owns is the one it has just minted. Every other
+  # directory under the root belonged to a window that is gone.
+  local root token
+  root="$(spool_root_of)"
+  spool_orphans || {
+    printf '%s\n' "$(colour "$C_BAD" "orphaned spools were NOT swept: gang could not read the tmux server's window list, so it cannot tell a dead session's spool from a live agent's — read $root by hand")" >&2
+    return 0
+  }
+  spool_tokens_archive "$root" "$SPOOL_ORPHANS" || :
+  [ "$SPOOL_ARCHIVED" -eq 0 ] \
+    || printf '%s\n' "$(colour "$C_WORK" "swept $SPOOL_ARCHIVED orphaned spool director(ies) from $root — they belonged to windows that are gone")"
   while IFS= read -r token; do
     [ -n "$token" ] || continue
     printf '%s\n' "$(colour "$C_BAD" "under the spool root and not gang's: $root/$token — gang did not mint it and will not read, archive or remove it")" >&2
@@ -10286,7 +10513,7 @@ event_claim() { # $1 family, $2 window, $3 key; 0 = this process owns the decisi
        printf '%s\n' "$EVENT_CLAIM_ERROR" >&2
        return 2 ;;
   esac
-  base="${GANG_LOCK_DIR:-/tmp/gangline-$GANGLINE_PROCESS_UID}"
+  base="${GANG_LOCK_DIR:-$GANGLINE_STATE_DEFAULT}"
   if ! err="$(lock_base "$base" 2>&1)"; then
     EVENT_CLAIM_ERROR="${err##*$'\n'}"
     [ -n "$EVENT_CLAIM_ERROR" ] || EVENT_CLAIM_ERROR="cannot establish the event-claim directory $base"
@@ -13033,7 +13260,7 @@ tmux_guard_wrap() {
       "$dir" >&2
     return 0
   }
-  log_dir="${GANG_LOCK_DIR:-/tmp/gangline-$GANGLINE_PROCESS_UID}"
+  log_dir="${GANG_LOCK_DIR:-$GANGLINE_STATE_DEFAULT}"
   # A launch-time `off` cannot remove the shim from an agent. The shim may
   # honour that explicit override only outside an agent context; this marker
   # closes the interval before hitch records @gl_agent on the new window.
@@ -13082,11 +13309,11 @@ scope_issue_root_read() { # SCOPE_ISSUE_ROOT = this team's persistent registry
   local name
   SCOPE_ISSUE_ROOT=""
   name="$(team_record_name "$SESSION")" || return 1
-  SCOPE_ISSUE_ROOT="${GANG_LOCK_DIR:-/tmp/gangline-$(id -u)}/scopes/$name"
+  SCOPE_ISSUE_ROOT="${GANG_LOCK_DIR:-$GANGLINE_STATE_DEFAULT}/scopes/$name"
 }
 
 scope_issue_root_prepare() {
-  local base="${GANG_LOCK_DIR:-/tmp/gangline-$(id -u)}"
+  local base="${GANG_LOCK_DIR:-$GANGLINE_STATE_DEFAULT}"
   scope_issue_root_read \
     || die "GANG_SCOPE=on cannot reserve scope identities for session '$SESSION': its name is not usable as a registry directory"
   lock_base "$base"
@@ -13783,6 +14010,7 @@ hitch_launch() {
   # Every hitch publishes a spool identity after launch. A bad operator root
   # is already fully knowable here; discovering it only in spool_mint reports
   # failure after leaving a registered, running agent behind.
+  session_live || state_root_retire_legacy
   spool_root_prepare
 
   # Scope provenance is the final pre-launch reservation: every validation and
@@ -18891,7 +19119,7 @@ config_effective() { # $1 settable key -> the value its consumers read
     GANG_COLLAR) printf '%s' "${GANG_COLLAR:-claude-code}" ;;
     GANG_SESSION) printf '%s' "$SESSION" ;;
     GANG_COLLARS) printf '%s' "${GANG_COLLARS:-}" ;;
-    GANG_LOCK_DIR) printf '%s' "${GANG_LOCK_DIR:-/tmp/gangline-$GANGLINE_PROCESS_UID}" ;;
+    GANG_LOCK_DIR) printf '%s' "${GANG_LOCK_DIR:-$GANGLINE_STATE_DEFAULT}" ;;
     GANG_TMUX_GUARD) printf '%s' "$GANG_TMUX_GUARD" ;;
     GANG_ARCHIVE_DIR) printf '%s' "$(archive_root)" ;;
     GANG_CONTEXT_LIGHTS) printf '%s' "$GANG_CONTEXT_LIGHTS" ;;

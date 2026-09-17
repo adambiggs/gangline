@@ -84,6 +84,36 @@ For Codex, this commonly means the tmux socket and Gangline checkout need to be
 inside paths its sandbox permits. Fix that in the operator's Codex configuration;
 shipped collars never disable sandboxing or bypass approvals.
 
+A sandboxed agent must also be able to write Gangline's runtime state root:
+`/run/user/UID/gangline` wherever logind provides `/run/user/UID`, otherwise
+`/tmp/gangline-UID` (see `GANG_LOCK_DIR` in `docs/reference.md`). A Codex
+`workspace-write` sandbox permits `/tmp` but not `/run/user`, so grant that one
+directory in the operator's permission profile, or set `GANG_LOCK_DIR` for
+every process that addresses the team. `gang hitch` creates the directory before
+the agent starts.
+
+### Moving runtime state off /tmp
+
+A team started while `/tmp/gangline-UID` exists keeps using it, and so does
+every other `gang` process for this uid, even after the checkout is updated.
+The move happens when `gang up` or `gang hitch` opens a session, no
+`GANG_LOCK_DIR` is set, and no team recorded under the old root still answers:
+`gang` creates a file named `retired` inside the old root, which stays in
+place, and then archives its held spools as orphans. `gang` says which it did,
+or which live team kept the old root. A process still naming the old root,
+explicitly or because it resolved it before the marker appeared, refuses; rerun
+it, and never remove the marker. A reboot empties `/tmp` and makes the move
+with nothing to archive. To move a running team, stop it with `gang down` and
+start it again. If a hitch reports spools it could not archive, read them under
+`/tmp/gangline-UID/spool` before the host reboots.
+
+On a logind host, `/run/user/UID` disappears when the user's last session ends
+unless linger is enabled (`loginctl enable-linger`). Every `gang` process then
+falls back to `/tmp/gangline-UID` together (or refuses, if that root was
+already retired, until the runtime directory returns or `GANG_LOCK_DIR` is set), and the one that creates it warns
+that a team running under the runtime directory has lost its queued mail and
+delivery locks. Restart such a team with `gang down` and `gang up`.
+
 Use a stable `GANG_SESSION`, `GANG_COLLARS`, `GANG_LOCK_DIR`, and absolute
 `GANG_CONFIG_DIR` for every shell that addresses the team. A hitch pins the
 resolved config root into its agent so nested hitches read the same file and

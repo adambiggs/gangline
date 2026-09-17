@@ -17,8 +17,8 @@ trap 'rm -rf -- "$CONFIG_ROOT"' EXIT HUP INT TERM
 # EVERY ROOT THIS FILE COULD WRITE THROUGH IS PRIVATE, not only the one the
 # checks below happen to name. The commands here read and write nothing outside
 # the config directory today, but `gang up` archives against whatever
-# GANG_LOCK_DIR resolves to, and its default is the operator's own
-# /tmp/gangline-$(id -u) — so a session-shaped check added later would act on
+# GANG_LOCK_DIR resolves to, and its default is the operator's own runtime
+# state root (libexec/gang-state-root) — so a session-shaped check added later would act on
 # the live team's locks and spools. Exported once here rather than left to a
 # line each new check remembers to copy, because the check that forgets is the
 # one that does the damage.
