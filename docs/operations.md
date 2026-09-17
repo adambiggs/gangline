@@ -286,6 +286,19 @@ continuation, and names the form that works, a peer's
 `gang compact <name> --resume`. Do not treat a later automatic/native
 compaction as proof that a request ran.
 
+A compaction that never finishes raises the tick alert
+`compaction-stuck: <name>` once its bracket outlives `GANG_TURN_LIMIT` while the
+pane still paints it. Recover it with gang rather than raw keystrokes:
+
+```sh
+gang compact <name> --recover
+gang status <name>
+```
+
+It sends the collar's recovery keys (Escape then Enter for Claude Code) only
+while that evidence still holds; the agent's context was not compacted, so ask
+again once it is idle.
+
 ## Reading provider limits without attaching
 
 Ask for each agent by name:

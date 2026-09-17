@@ -1344,7 +1344,7 @@ stopping — a harness that ends that turn by killing the tool call takes the
 sending process with it before the reason is typed. Whether it survives is the
 same harness verdict the stop itself is.
 
-### `gang compact [<name>] [--resume <turn>]`, `gang compact --cancel`
+### `gang compact [<name>] [--resume <turn>]`, `gang compact --cancel`, `gang compact <name> --recover`
 
 Submits the collar's native compaction command through the same verified input
 path. An external request refuses a busy or unknown target.
@@ -1393,6 +1393,15 @@ takes the same claims as the dispatching boundary, it clears the request with
 its continuation and failure record, and it records
 `compaction.self-withdrawn`. A request a boundary is already dispatching cannot
 be withdrawn, and withdrawing when nothing stands succeeds without effect.
+
+A compaction bracket still open past `GANG_TURN_LIMIT` no longer holds the
+agent busy. When the pane also still paints the collar's busy evidence, the tick
+fails with `compaction-stuck: <name> ...` naming `gang compact <name>
+--recover`, which raises the tick alert until a pass finds it gone. `--recover`
+presses the collar's `GANG_COMPACT_RECOVER_KEYS` under the pane lock and clears
+the bracket. It refuses exit 3, pressing nothing, unless the bracket is overdue
+and the pane paints busy: an open bracket over an idle pane is a refused
+compaction, not a stuck one. It also refuses an occupied pane or tmux mode.
 
 A guarded launch that cannot
 install hooks cannot witness deferred self-compaction requests from inside that
@@ -2328,6 +2337,7 @@ there, never in a harness-name branch in the core script.
 | `collar_dismiss_advisory target` | optional, tick-only companion to `collar_advisory`; recognize a named advisory by its full text, send only that surface's dismissal shortcut, then return 0 and print the action. Return 1 with no output for every other surface, or 2 with a cause when the recognized action cannot be sent. Core verifies occupancy before calling it and waits for an empty settled composer before delivery |
 | `GANG_QUEUE_RECALL_KEY` | tmux key name that loads the parked message back into the composer, used by `flush` |
 | `GANG_INTERRUPT_KEY` | tmux key name that stops an active turn, used by `interrupt` |
+| `GANG_COMPACT_RECOVER_KEYS` | space-separated tmux key names, pressed in order, that end a compaction the harness never finishes, used by `compact --recover` |
 | `GANG_STOP_HOOK=1` | the launch command installs a native Stop hook reaching `gang hook`, so this harness supplies an immediate native turn boundary; cooperative ticks retry spools independently. Such a collar cannot be adopted because an existing pane does not prove the launch-installed hook |
 | `GANG_STALL_TYPES` | space-separated native `Notification` kinds that mean the harness is awaiting a person |
 | `GANG_QUIET_AT_REST=1` | harness terminal becomes quiet when idle |

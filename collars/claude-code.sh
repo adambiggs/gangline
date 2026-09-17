@@ -699,6 +699,9 @@ GANG_MIDTURN_INPUT=steer
 # Escape stops an active turn; the harness paints "esc to interrupt" while one
 # is in flight.
 GANG_INTERRUPT_KEY="Escape"
+# A compaction that never finishes keeps painting its progress and accepts
+# nothing; Escape abandons it and Enter returns the composer.
+GANG_COMPACT_RECOVER_KEYS="Escape Enter"
 collar_context() { # $1 = tmux target; reads the gangline statusline beacon
   local pane m
   # A PANE THAT COULD NOT BE READ IS NOT A PANE WITH NO READOUT. The capture is

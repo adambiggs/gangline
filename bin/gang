@@ -77,7 +77,7 @@ fail() { # $1 = exit status, rest = message
 }
 
 GANG_CONFIG_KEYS='GANG_COLLAR GANG_SESSION GANG_COLLARS GANG_LOCK_DIR GANG_ARCHIVE_DIR GANG_CONTEXT_LIGHTS GANG_CONTEXT_BANDS GANG_CACHE_BANDS GANG_CACHE_COMPACTION GANG_USAGE_LIGHTS GANG_AUTO_RESUME GANG_SCOPE GANG_TMUX_GUARD GANG_BOOT_TIMEOUT GANG_GATE_LOOKS GANG_CHURN_WAIT GANG_ACTIVITY_WINDOW GANG_TURN_LIMIT GANG_TICK_DEADLINE'
-GANG_COLLAR_KEYS='GANG_LAUNCH GANG_RESUME_LAUNCH GANG_TRUST_LAUNCH GANG_MODEL_OPT GANG_MODEL_ALIASES GANG_EFFORT_OPT GANG_EFFORT_CMD GANG_ROLE_PROMPT_OPT GANG_HARNESS_PROMPT GANG_BUSY_REGEX GANG_OCCUPIED_REGEX GANG_QUEUED_REGEX GANG_QUEUE_RECALL_KEY GANG_INTERRUPT_KEY GANG_STOP_HOOK GANG_STALL_TYPES GANG_QUIET_AT_REST GANG_MIDTURN_INPUT GANG_COMPACT_CMD GANG_SELF_COMPACT GANG_SELF_COMPACT_WITNESS GANG_USAGE_LIGHT_INTERVAL GANG_USAGE_LIMIT_MAX_AGE'
+GANG_COLLAR_KEYS='GANG_LAUNCH GANG_RESUME_LAUNCH GANG_TRUST_LAUNCH GANG_MODEL_OPT GANG_MODEL_ALIASES GANG_EFFORT_OPT GANG_EFFORT_CMD GANG_ROLE_PROMPT_OPT GANG_HARNESS_PROMPT GANG_BUSY_REGEX GANG_OCCUPIED_REGEX GANG_QUEUED_REGEX GANG_QUEUE_RECALL_KEY GANG_INTERRUPT_KEY GANG_COMPACT_RECOVER_KEYS GANG_STOP_HOOK GANG_STALL_TYPES GANG_QUIET_AT_REST GANG_MIDTURN_INPUT GANG_COMPACT_CMD GANG_SELF_COMPACT GANG_SELF_COMPACT_WITNESS GANG_USAGE_LIGHT_INTERVAL GANG_USAGE_LIMIT_MAX_AGE'
 CONFIG_DIR="" CONFIG_FILE="" CONFIG_ORIGINS="" CONFIG_SEEN=""
 
 config_record() { # $1 key, $2 env|config, optional $3 config line
@@ -995,6 +995,7 @@ gang compact
   gang compact [name]
     [--resume "<turn to take after>"]
   gang compact --cancel
+  gang compact <name> --recover
 
   Reach for it when an agent is close to
   filling its context window; gang context
@@ -1010,6 +1011,9 @@ gang compact
   --cancel   withdraw this agent's own
              self-compaction request before a
              turn boundary dispatches it.
+  --recover  end a compaction the tick
+             reports stuck, with the keys
+             its collar declares.
 
   An agent compacting itself is scheduled for
   the end of its current turn. gang status
@@ -1794,7 +1798,7 @@ load_collar() { # $1 = collar name; sets the GANG_* strategy surface
   GANG_OCCUPIED_REGEX="" GANG_QUEUED_REGEX="" GANG_COMPACT_CMD="" GANG_SELF_COMPACT=""
   GANG_SELF_COMPACT_WITNESS=""
   GANG_MIDTURN_INPUT="" GANG_QUEUE_RECALL_KEY=""
-  GANG_INTERRUPT_KEY="" GANG_STOP_HOOK=""
+  GANG_INTERRUPT_KEY="" GANG_COMPACT_RECOVER_KEYS="" GANG_STOP_HOOK=""
   GANG_STALL_TYPES=""
   GANG_USAGE_LIGHT_INTERVAL=0 GANG_USAGE_LIMIT_MAX_AGE=0
   GANG_QUIET_AT_REST="" GANG_MODEL_OPT="" GANG_MODEL_ALIASES=""
@@ -1865,6 +1869,11 @@ load_collar() { # $1 = collar name; sets the GANG_* strategy surface
     case "$key" in
       ''|*[!A-Za-z0-9-]*) [ -z "$key" ] \
         || die "collar '$1' declares $declared '$key', which is not a tmux key name — gang refuses to send it, because tmux would deliver the letters instead of the key" ;;
+    esac
+  done
+  for key in $GANG_COMPACT_RECOVER_KEYS; do
+    case "$key" in
+      *[!A-Za-z0-9-]*) die "collar '$1' declares GANG_COMPACT_RECOVER_KEYS word '$key', which is not a tmux key name — gang refuses to send it, because tmux would deliver the letters instead of the key" ;;
     esac
   done
 }
@@ -2792,6 +2801,20 @@ compaction_witness() { # $1 = window id; 0 compacting, 1 not, 2 bracket unusable
     [ $(( now - at )) -lt "$GANG_TURN_LIMIT" ] || return 2
   fi
   return 0
+}
+
+compaction_overdue() { # $1 = window id; 0 when an open v2 bracket has outlived the turn bound
+  # The other side of the age-out above: past the bound the bracket no longer
+  # holds the agent busy, so a compaction that never finished must be said by
+  # whoever reads this, not inferred from a verdict that has already let go.
+  local raw state at elapsed_rc=0
+  raw="$(tmux show-options -wqv -t "$1" @gl_compaction 2>/dev/null)" || raw=""
+  read -r state at _ <<<"$raw"
+  [ "$state" = open ] || return 1
+  case "$at" in v2:[0-9]*) at="${at#v2:}" ;; *) return 1 ;; esac
+  [[ "$at" =~ ^[0-9]+$ ]] || return 1
+  clock_elapsed "$at" $(( GANG_TURN_LIMIT * 1000000000 )) || elapsed_rc=$?
+  [ "$elapsed_rc" -eq 0 ]
 }
 
 agent_name_of() { # $1 = window id; its registered name, or its title if it has none
@@ -6802,6 +6825,17 @@ tick_full_pass_once() {
     # drain above, so an expired turn found here is not dispatched a second
     # time from the same pass. A window that went between the listing and this
     # read has no glyph left to correct.
+    # A COMPACTION STILL PAINTED PAST THE TURN BOUND IS STUCK. Paint is the
+    # conjunct because a refused compaction leaves the same open bracket over
+    # an idle pane, and that one needs nothing from anybody.
+    if compaction_overdue "$id"; then
+      if busy_painted "$id"; then
+        printf 'compaction-stuck: %s has been compacting for longer than %ss; gang compact %s --recover\n' \
+          "$agent" "$GANG_TURN_LIMIT" "$agent" >&2
+        rc=1
+      fi
+      [ -z "$WINDOW_GONE" ] || continue
+    fi
     err=""
     if ! err="$(TICK_PASS=0 TICK_GLYPH_REFRESH=1 state_now "$id" snapshot 2>&1 >/dev/null)" \
        && tmux display-message -p -t "$id" '#{window_id}' >/dev/null 2>&1; then
@@ -15671,13 +15705,44 @@ self_compact_cancel() { # $1 agent name; AGENT_ID resolved
   printf '%s\n' "$(colour "$C_OK" "self-compaction request withdrawn") $(colour "$C_DIM" "(nothing was typed; no continuation follows)")"
 }
 
+compact_recover() { # $1 = resolved agent name; press the collar's way out of a stuck compaction
+  local name="$1" key
+  [ -n "$GANG_COMPACT_RECOVER_KEYS" ] \
+    || die "compact: collar '$AGENT_COLLAR' declares no GANG_COMPACT_RECOVER_KEYS, so gang does not know the keystrokes that end a stuck compaction in this harness (gang attach)"
+  lock_pane "$AGENT_ID"
+  # Both facts are required, and neither alone is enough: an open bracket
+  # inside the bound is a compaction still allowed to finish, and one past it
+  # over an idle pane is a refusal that never sent its close. Keys pressed into
+  # either would land on a harness that is not stuck.
+  compaction_overdue "$AGENT_ID" \
+    || refuse "compact: '$name' has no compaction open past the ${GANG_TURN_LIMIT}s turn bound (not overdue), so nothing was pressed (gang status $name)"
+  busy_painted "$AGENT_ID" \
+    || { [ -z "$WINDOW_GONE" ] || die "compact: '$name' went away"
+         refuse "compact: '$name' paints no compaction in progress, so its open bracket is a refused compaction rather than a stuck one and nothing was pressed (gang capture $name)"; }
+  ! occupied "$AGENT_ID" \
+    || refuse "compact: '$name' is occupied (authority unknown) — a UI owns its input box, so $GANG_COMPACT_RECOVER_KEYS would answer that UI (gang attach)"
+  pane_mode_free "$AGENT_ID" \
+    || refuse "compact: tmux mode owns the pane of '$name', so $GANG_COMPACT_RECOVER_KEYS would act on operator-owned mode state instead of the harness; attach and leave the mode, then retry"
+  for key in $GANG_COMPACT_RECOVER_KEYS; do
+    tmux send-keys -t "$AGENT_ID" "$key" \
+      || die "compact: could not send $key to $name; the keys before it were sent"
+  done
+  # CLEARED, NOT CLOSED, for the reason interrupt gives: gang saw keys leave,
+  # not a compaction end, and the paint tier answers from what the harness does.
+  tmux set-option -uw -t "$AGENT_ID" @gl_compaction \
+    || die "compact: $GANG_COMPACT_RECOVER_KEYS was sent to $name but its compaction bracket could not be cleared"
+  printf 'compact: sent %s to %s to end its stuck compaction; read the result with gang status %s\n' \
+    "$GANG_COMPACT_RECOVER_KEYS" "$name" "$name"
+}
+
 cmd_compact() {
-  local name="" self="" mine=0 busy_rc=0 resume="" resume_given=0 cancel=0 self_request="" self_reason="" self_witness="" option="" self_claim_rc=0 submit_rc=0
+  local name="" self="" mine=0 busy_rc=0 resume="" resume_given=0 cancel=0 recover=0 self_request="" self_reason="" self_witness="" option="" self_claim_rc=0 submit_rc=0
   while [ $# -gt 0 ]; do case "$1" in
     --resume) [ $# -ge 2 ] || die "compact: --resume needs the turn to take after the compaction"
               [ "$resume_given" -eq 0 ] || die "compact: --resume may be passed only once"
               resume="$2"; resume_given=1; shift 2 ;;
     --cancel) cancel=1; shift ;;
+    --recover) recover=1; shift ;;
     -*) die "compact: unknown argument '$1'" ;;
     *) [ -z "$name" ] || die "compact: unexpected argument '$1'"
        name="$1"; shift ;;
@@ -15698,6 +15763,12 @@ cmd_compact() {
     [ "$resume_given" -eq 0 ] \
       || die "compact: --cancel withdraws a request and takes no --resume"
     self_compact_cancel "$name"
+    return 0
+  fi
+  if [ "$recover" -eq 1 ]; then
+    [ "$resume_given" -eq 0 ] && [ "$cancel" -eq 0 ] \
+      || die "compact: --recover takes no --resume or --cancel"
+    compact_recover "$name"
     return 0
   fi
   # A compaction and its continuation are work, and a deferred self-request is

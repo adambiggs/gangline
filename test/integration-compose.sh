@@ -911,6 +911,94 @@ equal "a turn on a window with no bracket writes none" "" \
   "$(tmux show-options -wqv -t "$(window_id unbracketed)" @gl_compaction)"
 "$GANG" drop unbracketed >/dev/null 2>&1 || :
 "$GANG" drop bracket >/dev/null 2>&1 || :
+
+# A COMPACTION THAT NEVER FINISHES IS SAID, AND GANG HAS THE WAY OUT. Past the
+# turn bound an open bracket stops holding the agent busy, and a harness still
+# painting its compaction then reads as nothing in particular, so the tick
+# names it. The painted conjunct is what keeps a refused compaction, whose
+# bracket also stays open, from raising the same alert over an idle pane. The
+# private team keeps the fake clock, which ages every bracket it reads, away
+# from the shared fixture windows.
+cat > "$RUN_ROOT/collars/stuckable.sh" <<SH
+# shellcheck shell=bash
+# shellcheck disable=SC2034
+. "$ROOT/collars/bash.sh"
+GANG_STOP_HOOK=1
+GANG_BUSY_REGEX='MARK_COMPACTING_[0-9]+%'
+GANG_COMPACT_RECOVER_KEYS="Escape Enter"
+SH
+stuck_clock="$RUN_ROOT/stuck-clock"
+cat > "$stuck_clock" <<'SH'
+#!/bin/sh
+now="${GANG_TEST_CLOCK_NOW_NS:?}"
+case "${1:-}" in
+  now) [ "$#" -eq 1 ] || exit 2; printf '%s\n' "$now" ;;
+  elapsed)
+    [ "$#" -eq 3 ] || exit 2
+    [ "$now" -ge "$2" ] || exit 2
+    [ $(( now - $2 )) -ge "$3" ]
+    ;;
+  *) exit 2 ;;
+esac
+SH
+chmod +x "$stuck_clock"
+stuck_team="gang-stuck-$$"
+stuck_base="$("$ROOT/libexec/gang-clock" now)"
+stuck_now=$(( stuck_base + 302000000000 ))
+stuck_gang() {
+  env GANG_SESSION="$stuck_team" GANG_TEST_CLOCK="$stuck_clock" \
+    GANG_TEST_CLOCK_NOW_NS="$stuck_now" "$GANG" "$@"
+}
+stuck_hitch="$(stuck_gang hitch stuck -c stuckable -d "$RUN_ROOT" 2>&1)" \
+  || fail "the stuck-compaction team hitches" "$stuck_hitch"
+stuck_id="$(window_id_in "$stuck_team" stuck)"
+stuck_keys="$RUN_ROOT/stuck-keys"
+tmux set-option -w -t "$stuck_id" @gl_compaction \
+  "open v2:$(( stuck_now - 301000000000 ))"
+stuck_idle_rc=0
+stuck_gang tick > "$RUN_ROOT/stuck-idle.out" 2> "$RUN_ROOT/stuck-idle.err" \
+  || stuck_idle_rc=$?
+equal "the tick over an overdue bracket on an idle pane ran" 0 "$stuck_idle_rc"
+excludes "and names no stuck compaction, since a refused one looks just like it" \
+  "$(<"$RUN_ROOT/stuck-idle.err")" "compaction-stuck"
+stuck_idle_recover_rc=0
+stuck_idle_recover="$(stuck_gang compact stuck --recover 2>&1)" \
+  || stuck_idle_recover_rc=$?
+equal "recovery refuses a pane that paints no compaction" 3 "$stuck_idle_recover_rc"
+contains "and says why" "$stuck_idle_recover" "paints no compaction"
+tmux send-keys -l -t "$stuck_id" \
+  "printf 'MARK_COMPACTING_%s%%\\n' 42; tmux wait-for -S stuck-painted-$$; IFS= read -rsN2 k; printf '%q\\n' \"\$k\" > '$stuck_keys'; tmux wait-for -S stuck-keyed-$$"
+tmux send-keys -t "$stuck_id" Enter
+tmux wait-for "stuck-painted-$$"
+stuck_rc=0
+stuck_gang tick > "$RUN_ROOT/stuck.out" 2> "$RUN_ROOT/stuck.err" || stuck_rc=$?
+equal "a compaction painted past the turn bound fails the tick" 1 "$stuck_rc"
+contains "and the tick names the stuck agent" \
+  "$(<"$RUN_ROOT/stuck.err")" "compaction-stuck: stuck"
+contains "and the gang command that recovers it" \
+  "$(<"$RUN_ROOT/stuck.err")" "gang compact stuck --recover"
+tmux set-option -w -t "$stuck_id" @gl_compaction "open v2:$stuck_now"
+stuck_fresh_rc=0
+stuck_fresh="$(stuck_gang compact stuck --recover 2>&1)" || stuck_fresh_rc=$?
+equal "recovery refuses a compaction still inside the turn bound" 3 "$stuck_fresh_rc"
+contains "and says why" "$stuck_fresh" "not overdue"
+equal "and presses nothing" "" "$(cat "$stuck_keys" 2>/dev/null || :)"
+tmux set-option -w -t "$stuck_id" @gl_compaction \
+  "open v2:$(( stuck_now - 301000000000 ))"
+tmux wait-for "stuck-keyed-$$" &
+stuck_waiter=$!
+stuck_recover_rc=0
+stuck_recover="$(stuck_gang compact stuck --recover 2>&1)" || stuck_recover_rc=$?
+# A refused recovery pressed nothing the pane could answer, so the barrier is
+# released here instead of being left to the suite's ceiling.
+[ "$stuck_recover_rc" -eq 0 ] || tmux wait-for -S "stuck-keyed-$$"
+wait "$stuck_waiter"
+equal "recovery of an overdue painted compaction succeeds" 0 "$stuck_recover_rc"
+contains "and says which keys it pressed" "$stuck_recover" "Escape Enter"
+equal "the harness receives Escape then Enter" "\$'\\E\\n'" "$(<"$stuck_keys")"
+equal "and the stuck bracket is cleared" "" \
+  "$(tmux show-options -wqv -t "$stuck_id" @gl_compaction)"
+stuck_gang drop stuck >/dev/null 2>&1 || :
 excludes "and the message gang recorded was never submitted twice" \
   "$mismatch_out" "flushed the parked message"
 # THE TARGET SHELL, not gang's account of itself. Its prompt count changes only
