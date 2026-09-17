@@ -483,6 +483,8 @@ start and end a team
   adopt     register an existing window
   rename    change an agent's registered name
   drop      remove one agent
+  safe-to-drop
+            mark this agent droppable
   down      end the team
 
 talk to agents
@@ -1339,7 +1341,10 @@ gang roster
   --porcelain  one unpadded, uncoloured TSV
                row per window, for scripts:
                name, collar, state, spooled,
-               oldest_age_s, session_id.
+               oldest_age_s, session_id,
+               hitcher_state, hitcher_name,
+               teardown (- or the
+               safe-to-drop mark).
 
   Every agent is listed. A row whose state
   gang could not READ carries ?unknown? in
@@ -1485,6 +1490,13 @@ gang drop
   whose collar supplied no id prints no
   relaunch line at all.
 
+  From an agent's pane, drop takes only a
+  window that agent hitched. A root agent
+  (one the operator hitched) may also drop
+  an orphan that marked itself safe to drop
+  after its hitcher went away. An operator
+  shell drops any agent.
+
   Messages still waiting for it are archived
   before the window dies. Whatever exists
   only on that screen goes with it; gang
@@ -1495,6 +1507,27 @@ gang drop
   host mount namespace. Failure does not stop
   the drop: stderr names a preserved fallback
   file, or a tmux buffer kept until server exit.
+EOF
+      ;;
+    safe-to-drop) cat <<'EOF'
+gang safe-to-drop
+  Mark this agent safe to drop: its window
+  may be torn down. It says nothing about
+  whether a task is complete.
+
+  gang safe-to-drop --report-to <name>
+
+  --report-to  the agent your completion
+               report was delivered to.
+               Gang proves a message from
+               this registration reached it.
+
+  Refused unless every agent you hitched is
+  gone or marked, and no mail for you is
+  still waiting. Once marked, nothing more
+  is delivered to this registration and the
+  mark cannot be cleared: more work needs a
+  new agent. Your hitcher may then drop you.
 EOF
       ;;
     down) cat <<'EOF'
@@ -7123,6 +7156,189 @@ hitcher_tag() { # $1 window -> one compact roster/explain token: hitcher=NAME,
   esac
 }
 
+# SAFE-TO-DROP IS ONE SELF-ATTESTED TERMINAL FACT (ADR-0198). Its value is the
+# spool token of the registration that set it, so it is honoured only while the
+# window still carries that token: a mark cannot outlive the registration that
+# made it, and nothing clears it for more work, because a registration that
+# wants work is a new one. It authorizes teardown and says nothing else — not
+# that a task is complete, not that the agent is idle or waiting.
+safe_to_drop_read() { # $1 window; 0 marked for its current registration,
+                      # 1 unmarked, 2 a mark left by another registration,
+                      # 4 unreadable
+  local mark token
+  mark="$(tmux show-options -wqv -t "$1" @gl_safe_to_drop 2>/dev/null)" || return 4
+  [ -n "$mark" ] || return 1
+  token="$(tmux show-options -wqv -t "$1" @gl_spool 2>/dev/null)" || return 4
+  case "$mark" in *[!a-f0-9]*) return 2 ;; esac
+  [ -n "$token" ] && [ "$mark" = "$token" ] || return 2
+}
+
+safe_to_drop_delivery_guard() { # $1 window, $2 what is delivered; caller holds its pane lock
+  # UNDER THE PANE LOCK, which is also what the mark is set under: a delivery
+  # either lands before the mark, where the mark's own empty-spool check sees
+  # it, or meets the mark here and is refused with the body still the sender's.
+  local rc=0
+  safe_to_drop_read "$1" || rc=$?
+  case "$rc" in
+    0) refuse "refusing to deliver $2: $(agent_name_of "$1") has marked itself safe to drop, and a marked registration accepts no further delivery. Nothing was typed or parked and the body is still the sender's; work for it needs a new registration (gang hitch)" ;;
+    1|2) return 0 ;;
+    *) refuse "refusing to deliver $2: whether $(agent_name_of "$1") has marked itself safe to drop cannot be read, so nothing was typed or parked and the body is still the sender's" ;;
+  esac
+}
+
+safe_to_drop_word() { # $1 window -> the porcelain teardown word
+  # -              not marked
+  # marked         marked; its live hitcher (or the operator) may drop it
+  # marked-orphan  marked, hitcher witnessed gone; a root agent may drop it
+  # stale          a mark left by an earlier registration, not honoured
+  # unknown        the mark or its provenance could not be read
+  local rc=0 hrc=0
+  safe_to_drop_read "$1" || rc=$?
+  case "$rc" in
+    0) hitched_by_read "$1" >/dev/null || hrc=$?
+       if [ "$hrc" -eq 3 ]; then
+         hrc=0
+         stable_agent_resolve "$(tmux show-options -wqv -t "$1" @gl_hitched_by 2>/dev/null)" || hrc=$?
+         [ "$hrc" -eq 3 ] || hrc=4
+       fi
+       case "$hrc" in
+         3) printf marked-orphan ;;
+         0|1|2) printf marked ;;
+         *) printf unknown ;;
+       esac ;;
+    1) printf %s - ;;
+    2) printf stale ;;
+    *) printf unknown ;;
+  esac
+}
+
+safe_to_drop_status() { # $1 window -> one human line, nothing when unmarked
+  case "$(safe_to_drop_word "$1")" in
+    -) ;;
+    marked) printf '%s\n' "$(colour "$C_OK" "safe to drop: its hitcher or the operator may drop it; it accepts no further delivery")" ;;
+    marked-orphan) printf '%s\n' "$(colour "$C_OK" "safe to drop, orphaned: a root agent or the operator may drop it; it accepts no further delivery")" ;;
+    stale) printf '%s\n' "$(colour "$C_BAD" "stale safe-to-drop mark from an earlier registration; not honoured")" ;;
+    *) printf '%s\n' "$(colour "$C_BAD" "safe-to-drop mark unreadable; not honoured")" ;;
+  esac
+}
+
+socket_same() { # $1 $2 tmux socket paths; 0 = the same socket
+  local a b
+  [ "$1" != "$2" ] || return 0
+  a="$(cd -P "$(dirname "$1")" 2>/dev/null && printf '%s/%s' "$PWD" "$(basename "$1")")" || a="$1"
+  b="$(cd -P "$(dirname "$2")" 2>/dev/null && printf '%s/%s' "$PWD" "$(basename "$2")")" || b="$2"
+  [ "$a" = "$b" ]
+}
+
+drop_caller_elsewhere() { # $1 source socket; the caller's pane is on another server
+  # PANE IDS ARE SERVER-LOCAL, so the pane is read where it lives. Only an
+  # unregistered window there is the operator's.
+  local panes pid wid ctoken cname found=""
+  panes="$(tmux -S "$1" list-panes -a -F '#{pane_id} #{window_id}' 2>/dev/null)" \
+    || refuse "drop: this shell names pane $TMUX_PANE on tmux server $1, which cannot be read, so whether an agent is asking is unknown; nothing was dropped"
+  while read -r pid wid; do
+    [ "$pid" = "$TMUX_PANE" ] || continue
+    found="$wid"
+  done <<<"$panes"
+  [ -n "$found" ] \
+    || refuse "drop: this shell names pane $TMUX_PANE on tmux server $1, which does not have it, so whether an agent is asking is unknown; nothing was dropped"
+  ctoken="$(tmux -S "$1" show-options -wqv -t "$found" @gl_spool 2>/dev/null)" \
+    || refuse "drop: the registration of pane $TMUX_PANE on tmux server $1 cannot be read; nothing was dropped"
+  cname="$(tmux -S "$1" show-options -wqv -t "$found" @gl_agent 2>/dev/null)" \
+    || refuse "drop: the registration of pane $TMUX_PANE on tmux server $1 cannot be read; nothing was dropped"
+  [ -z "$ctoken$cname" ] \
+    || refuse "drop: pane $TMUX_PANE is a Gangline agent on another tmux server ($1), and an agent drops only windows it hitched in its own team; nothing was dropped"
+}
+
+drop_authority() { # $1 target window, $2 its shown name; returns only if this caller may drop it
+  # AN AGENT DROPS WHAT IT HITCHED. The operator's shell drops anything, as it
+  # always has. An agent may drop a window whose recorded hitcher is its own
+  # current registration, marked or not, so a wedged child is still its
+  # hitcher's to clear. The one exception is the orphan: when a marked window's
+  # hitcher can only be witnessed, a root agent — one the operator hitched — may
+  # drop it by name. An unmarked orphan stays with the operator.
+  local caller ctoken cname htok hitcher hrc=0 mrc=0 grc=0 root panes nl=$'\n' source_socket
+  if [ -z "${TMUX_PANE:-}" ] && [ "$GANGLINE_CALLER_ATTACHED" -eq 1 ] \
+     && [ "$GANGLINE_CALLER_SOCKET" = "${TMUX%%,*}" ]; then
+    refuse "drop: this shell is inside the tmux server that holds '$SESSION' and does not name a pane, so Gangline cannot tell whether an agent is asking; nothing was dropped. Run it from the agent's own pane, or from a shell outside tmux"
+  fi
+  # WHERE THE PANE LIVES comes first: an agent carries its server as
+  # GANG_TMUX_SOCKET (TMUX is removed at launch), an attached shell as TMUX.
+  # A pane from another server is never looked up here, where its id may name
+  # an unrelated window.
+  if [ -n "${TMUX_PANE:-}" ]; then
+    source_socket="${GANG_TMUX_SOCKET:-}"
+    [ -n "$source_socket" ] || [ "$GANGLINE_CALLER_ATTACHED" -eq 0 ] \
+      || source_socket="$GANGLINE_CALLER_SOCKET"
+    if [ -n "$source_socket" ] && ! socket_same "$source_socket" "${TMUX%%,*}"; then
+      drop_caller_elsewhere "$source_socket"
+      return 0
+    fi
+  fi
+  if ! caller="$(self_window)"; then
+    # Outside the team's pane list, or the list could not be read. A shell with
+    # no pane is the operator's. A pane from another server was settled above,
+    # so this one is named on the server gang reached: it has to be found there
+    # and its window has to carry no registration. An agent of another session
+    # is still an agent, and a pane tmux cannot find is not evidence.
+    [ -n "${TMUX_PANE:-}" ] || return 0
+    # Listed, not displayed: tmux 3.2a answers display-message for a pane it
+    # does not have with an empty line and status 0.
+    panes="$(tmux list-panes -a -F '#{pane_id}' 2>/dev/null)" \
+      || refuse "drop: the team's tmux server cannot list its panes, so whether an agent is asking is unknown; nothing was dropped"
+    case "$nl$panes$nl" in
+      *"$nl$TMUX_PANE$nl"*) ;;
+      *) refuse "drop: this shell names pane $TMUX_PANE on the team's tmux server, which tmux cannot find, so whether an agent is asking is unknown; nothing was dropped" ;;
+    esac
+    caller="$(tmux display-message -p -t "$TMUX_PANE" '#{window_id}' 2>/dev/null)" && [ -n "$caller" ] \
+      || refuse "drop: the window of pane $TMUX_PANE cannot be read, so whether an agent is asking is unknown; nothing was dropped"
+    ctoken="$(tmux show-options -wqv -t "$caller" @gl_spool 2>/dev/null)" \
+      || refuse "drop: the registration of pane $TMUX_PANE cannot be read, so whether an agent is asking is unknown; nothing was dropped"
+    cname="$(tmux show-options -wqv -t "$caller" @gl_agent 2>/dev/null)" \
+      || refuse "drop: the registration of pane $TMUX_PANE cannot be read, so whether an agent is asking is unknown; nothing was dropped"
+    [ -z "$ctoken$cname" ] \
+      || refuse "drop: pane $TMUX_PANE belongs to a Gangline registration that is not in the readable pane list of session '$SESSION', and an agent drops only windows it hitched in its own team; nothing was dropped"
+    return 0
+  fi
+  ctoken="$(tmux show-options -wqv -t "$caller" @gl_spool 2>/dev/null)" \
+    || refuse "drop: this pane's registration cannot be read, so whether an agent is asking is unknown; nothing was dropped"
+  cname="$(tmux show-options -wqv -t "$caller" @gl_agent 2>/dev/null)" \
+    || refuse "drop: this pane's registration cannot be read, so whether an agent is asking is unknown; nothing was dropped"
+  # Recorded the way hitch provenance records it: a pane with no registration
+  # of its own is the operator's. Half a registration is not evidence of either.
+  [ -n "$ctoken" ] || [ -n "$cname" ] || return 0
+  [ -n "$ctoken" ] && [ -n "$cname" ] \
+    || refuse "drop: this pane carries only part of a Gangline registration, so whether an agent is asking is unknown; nothing was dropped"
+  case "$ctoken" in *[!a-f0-9]*) refuse "drop: this pane's spool identity '$ctoken' is not one gang minted, so gang cannot tell which windows it hitched; nothing was dropped" ;; esac
+  hitcher="$(hitched_by_read "$1")" || hrc=$?
+  htok="$(tmux show-options -wqv -t "$1" @gl_hitched_by 2>/dev/null)" || htok=""
+  if [ "$hrc" -eq 0 ] && [ "$htok" = "$ctoken" ]; then
+    stable_agent_resolve "$ctoken" || hrc=$?
+    [ "$hrc" -eq 0 ] && [ "$STABLE_AGENT_WINDOW" = "$caller" ] \
+      || refuse "drop: more than one window claims this agent's spool identity, so gang cannot prove $cname hitched '$2'; nothing was dropped (gang roster)"
+    return 0
+  fi
+  safe_to_drop_read "$1" || mrc=$?
+  root="$(tmux show-options -wqv -t "$caller" @gl_hitched_by 2>/dev/null)" || root=""
+  case "$hrc" in
+    0) refuse "drop: '$2' was hitched by live agent '$hitcher', and an agent drops only windows it hitched itself; nothing was dropped. Ask $hitcher, or the operator" ;;
+    2) refuse "drop: the operator hitched '$2', and an agent drops only windows it hitched itself; nothing was dropped. The operator can drop it from their own shell" ;;
+    3) [ "$mrc" -eq 0 ] \
+         || refuse "drop: '$2' was hitched by '$hitcher', which is gone, and it has not marked itself safe to drop; only the operator may drop an unmarked orphan. Nothing was dropped"
+       # GONE MUST STILL BE GONE. The register is read again at the moment of
+       # the decision, and one that now shows a holder, or more than one, or
+       # cannot be read, does not authorize the drop.
+       stable_agent_resolve "$htok" || grc=$?
+       [ "$grc" -eq 3 ] \
+         || refuse "drop: whether the hitcher '$hitcher' of '$2' is gone cannot be proved from the live window register; nothing was dropped"
+       [ "$root" = "$HITCHED_BY_OPERATOR" ] \
+         || refuse "drop: '$2' is a marked orphan (its hitcher '$hitcher' is gone); only a root agent, one the operator hitched, or the operator may drop it. Nothing was dropped"
+       return 0 ;;
+    1) refuse "drop: '$2' records no hitch provenance, so gang cannot prove $cname hitched it; only the operator may drop it. Nothing was dropped" ;;
+    *) refuse "drop: the hitch provenance of '$2' cannot be checked against the live window register; nothing was dropped" ;;
+  esac
+}
+
 # REPLY OBLIGATIONS ARE MESSAGE PROVENANCE, NOT LIFECYCLE PROVENANCE. Hitch and
 # adopt ancestry above remains useful for observation, but never opens or
 # settles a debt. Each observed peer message gets its own option, so crossed
@@ -9169,6 +9385,7 @@ SPOOL_ENTRY="" SPOOL_STAGED=""
 # one operation.
 spool_stage() { # window sender envelope fragment, optional token/mode/replies/nonce
   local stamp tmp
+  safe_to_drop_delivery_guard "$1" "'$4'"
   spool_establish "$1"
   # THE EMPTY ARM BELOW IS ONLY REACHABLE BECAUSE OF THIS `|| stamp=""`. An
   # assignment from a command substitution carries the substitution's status,
@@ -10656,6 +10873,7 @@ inject() { # $1 window, $2 text, $3 head, $4 locked,
     locked) [ -n "$LOCK_PATH" ] || die "internal: inject called locked without a pane lock"; keep_lock=1 ;;
     *) die "internal: inject received unknown lock mode '$4'" ;;
   esac
+  safe_to_drop_delivery_guard "$1" "'$frag'"
   mismatch="$(identity_mismatch_read "$1")" || mismatch=""
   [ -z "$mismatch" ] \
     || refuse "refusing to deliver '$frag': $tname is session-lost ($mismatch). Nothing was typed; restart or re-hitch the intended native session before delivering to this pane"
@@ -14204,6 +14422,7 @@ cmd_send() {
   # command substitution's exit does not fire the EXIT trap, so the lock taken
   # here survives the call and covers the whole sequence.
   lock_pane "$AGENT_ID"
+  safe_to_drop_delivery_guard "$AGENT_ID" "'$frag' to $name"
   # THE RETIREMENT IS PREPARED BEFORE ANYTHING IS DELIVERED, and it has to be,
   # because the live path has no second chance. Retiring AFTER send_live meant a
   # sweep that met an unreadable entry rolled back and refused with the new body
@@ -14467,6 +14686,7 @@ cmd_send() {
 TIMED_ENTRY=""
 timed_write() { # window sender envelope fragment due, optional token/mode/replies/nonce
   local tmp
+  safe_to_drop_delivery_guard "$1" "'$4'"
   spool_establish "$1"
   TIMED_ENTRY="$SPOOL_DIR/.timed-$(timed_stamp "$5")-$(mint_nonce)"
   # Staged then renamed, like every other entry: a reader that meets this
@@ -14993,6 +15213,9 @@ cmd_interrupt() {
     send_identity_guard interrupt
   fi
   resolve "$name"
+  # A mark is never cleared, so refusing before the key needs no lock; the
+  # check under the lock below covers a mark set in between.
+  [ "$have_m" -eq 0 ] || safe_to_drop_delivery_guard "$AGENT_ID" "the interrupt reason"
   [ -n "$GANG_INTERRUPT_KEY" ] \
     || die "interrupt: collar '$AGENT_COLLAR' declares no GANG_INTERRUPT_KEY, so gang does not know the keystroke that stops a turn in this harness (gang attach)"
   if [ "$have_m" -eq 1 ]; then
@@ -15008,6 +15231,9 @@ cmd_interrupt() {
     envelope "$SEND_WIRE" "$reason" "$([ "$MESSAGE_REPLY_TO" = - ] || printf '%s' "$MESSAGE_REPLY_TO")"
   fi
   lock_pane "$AGENT_ID"
+  # The reason is a delivery, so a marked registration refuses it before the
+  # key rather than after a turn it no longer has was stopped.
+  [ "$have_m" -eq 0 ] || safe_to_drop_delivery_guard "$AGENT_ID" "the interrupt reason"
   # Occupancy is not authority here either: the stop key is very often the key
   # a native dialog reads as an answer, and gang does not answer dialogs.
   ! occupied "$AGENT_ID" \
@@ -15081,6 +15307,9 @@ cmd_compact() {
     }
   fi
   resolve "$name"
+  # A compaction and its continuation are work, and a deferred self-request is
+  # recorded long before any keystroke; refuse both before anything is written.
+  safe_to_drop_delivery_guard "$AGENT_ID" "a compaction"
   [ -n "${GANG_COMPACT_CMD:-}" ] \
     || die "collar '$AGENT_COLLAR' declares no compact command"
   ! occupied "$AGENT_ID" \
@@ -15124,6 +15353,10 @@ cmd_compact() {
       esac
       die "self-compaction $self_reason"
     fi
+    # UNDER THE PANE LOCK THE MARK IS SET UNDER, so a request is either seen
+    # by the mark's precondition or meets the mark here.
+    lock_pane "$AGENT_ID"
+    safe_to_drop_delivery_guard "$AGENT_ID" "a compaction"
     self_request="$(self_compact_request "$AGENT_ID")"
     event_log_record "$AGENT_ID" compaction.self-requested \
       "{\"request_id\":\"$self_request\"}" \
@@ -15136,6 +15369,7 @@ cmd_compact() {
     else
       tmux set-option -uw -t "$AGENT_ID" @gl_self_compact_resume 2>/dev/null || true
     fi
+    lock_release
     printf '%s\n' "$(colour "$C_OK" "self-compaction scheduled for the end of this turn") $(colour "$C_DIM" "(finish this turn now; a continuation turn follows the compaction)")"
     return 0
   fi
@@ -17213,6 +17447,7 @@ cmd_status() {
   # window is gone is reported under the name it had when it hitched, and it is
   # said that it is gone rather than printed as though it were still there.
   printf '%s\n' "$(colour "$C_DIM" "$(hitcher_phrase "$AGENT_ID")")"
+  safe_to_drop_status "$AGENT_ID"
   reply_obligation_status_report "$AGENT_ID"
   reply_released_status_report "$AGENT_ID"
   tick_health_report
@@ -17584,7 +17819,7 @@ roster_row_unread() { # $1 window, $2 name, $3 porcelain; the row for a row that
   prof="$(collar_read "$1")"
   [ -n "$prof" ] || prof="-"
   if [ "$3" -eq 1 ]; then
-    printf '%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\n' "$2" "$prof" unknown - - - unknown -
+    printf '%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\n' "$2" "$prof" unknown - - - unknown - unknown
   else
     printf '%-16s %-12s %s\n' "$2" "$prof" \
       "$(paint_state "$(printf '%-18s' '?unknown?')")"
@@ -17635,9 +17870,9 @@ roster_row_porcelain() { # name, collar, state, spooled, age seconds, session id
   stamped="$(tmux show-options -wqv -t "$1" @gl_session_id 2>/dev/null)" \
     || stamped=""
   hitcher_describe "$1"
-  printf '%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\n' \
+  printf '%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\n' \
     "$2" "$prof" "$state" "$spooled" "$age" "${stamped:-UNSTAMPED}" \
-    "$HITCHER_STATE" "${HITCHER_NAME:--}"
+    "$HITCHER_STATE" "${HITCHER_NAME:--}" "$(safe_to_drop_word "$1")"
   [ "$unread" -eq 0 ] || exit 4
 }
 
@@ -17742,6 +17977,13 @@ roster_row() { # $1 window, $2 name, $3 current binary id;
   [ "$deferred" -eq 0 ] || detail="$detail deferred=$deferred"
   held="$(spool_held "$1")"
   [ "$held" -eq 0 ] || detail="$detail spool-held=$held"
+  case "$(safe_to_drop_word "$1")" in
+    -) ;;
+    marked) detail="$detail safe-to-drop" ;;
+    marked-orphan) detail="$detail safe-to-drop=orphan" ;;
+    stale) detail="$detail safe-to-drop-stale" ;;
+    *) detail="$detail safe-to-drop-unreadable" ;;
+  esac
   [ -z "$(tmux show-options -wqv -t "$1" @gl_stall_failed)" ] \
     || detail="$detail stall-note-failed"
   [ -z "$(tmux show-options -wqv -t "$1" @gl_auto_resume_failed)" ] \
@@ -18146,8 +18388,13 @@ cmd_adopt() { # register an EXISTING tmux window as a gang agent
   id="$(win_id "$name")" || { rc=$?; win_id_missing "$rc" "no window '$name' in session '$SESSION' to adopt"; }
   launch_dead "$id" \
     && die "adopt: nothing is running in window '$name', so there is no harness to adopt. Restart the harness there and retry, or if tmux is holding the dead window remove it with: tmux kill-window -t '$id'"
-  registered="$(tmux show-options -wqv -t "$id" @gl_agent 2>/dev/null)" || registered=""
+  registered="$(tmux show-options -wqv -t "$id" @gl_agent 2>/dev/null)" \
+    || die "adopt: the registration of window '$name' cannot be read; nothing was changed"
   registered_identity_guard "$id" "$name" adopt "$collar"
+  # RE-ADOPTION KEEPS THE SPOOL IDENTITY, so it cannot be the new registration
+  # a marked agent needs before it takes more work.
+  ! safe_to_drop_read "$id" \
+    || refuse "adopt: '$name' has marked itself safe to drop, and re-adopting keeps the registration that mark belongs to; drop it and hitch a new agent instead. Nothing was changed"
   usage_lights_parse "$GANG_USAGE_LIGHTS" >/dev/null || true
   auto_resume_parse "$GANG_AUTO_RESUME" >/dev/null || true
   # A WINDOW-SUPPLIED SPOOL IDENTITY CAN REFUSE. Settle that residue before
@@ -18162,9 +18409,14 @@ cmd_adopt() { # register an EXISTING tmux window as a gang agent
   # Re-adoption of an already registered agent is metadata repair and must not
   # erase a scope Gangline launched and still owns.
   [ -n "$registered" ] || tmux set-option -w -t "$id" @gl_scope ""
-  hitched_by="$(hitched_by_of)"
-  tmux set-option -w -t "$id" @gl_hitched_by "${hitched_by%%$'\t'*}"
-  tmux set-option -w -t "$id" @gl_hitched_by_name "${hitched_by#*$'\t'}"
+  # RE-ADOPTION IS REPAIR, NOT CREATION. The window keeps whatever hitch
+  # provenance it has, absent included: drop authority and a hitcher's child
+  # scan read it, and the repairer did not create the window.
+  if [ -z "$registered" ]; then
+    hitched_by="$(hitched_by_of)"
+    tmux set-option -w -t "$id" @gl_hitched_by "${hitched_by%%$'\t'*}"
+    tmux set-option -w -t "$id" @gl_hitched_by_name "${hitched_by#*$'\t'}"
+  fi
   # An adopted harness was launched by someone else, so its model and effort
   # are unknown rather than empty choices; the directory is the pane's own.
   tmux set-option -w -t "$id" @gl_model ""
@@ -18289,6 +18541,97 @@ parting_lines() { # $1 = window id, $2 = the name a relaunch would take
   esac
 }
 
+SAFE_TO_DROP_ERROR=""
+safe_to_drop_preconditions() { # $1 own window, $2 own token; 1 with SAFE_TO_DROP_ERROR
+  # EVERYTHING GANG CAN PROVE, AND NOTHING IT CANNOT READ IS SPENT AS A PASS.
+  local rows wid htok wname live="" e sep='|' standing
+  SAFE_TO_DROP_ERROR=""
+  rows="$(tmux list-windows -a -F "#{window_id}$sep#{@gl_hitched_by}$sep#{@gl_agent}" 2>/dev/null)" || {
+    SAFE_TO_DROP_ERROR="the live window registry cannot be read, so whether a child you hitched is still live is unknown"
+    return 1
+  }
+  while IFS="$sep" read -r wid htok wname; do
+    [ "$htok" = "$2" ] && [ "$wid" != "$1" ] || continue
+    safe_to_drop_read "$wid" && continue
+    live="$live ${wname:-$wid}"
+  done <<<"$rows"
+  [ -z "$live" ] || {
+    SAFE_TO_DROP_ERROR="children you hitched are still live and not marked safe to drop:$live — close them out first (each marks itself, or you drop it)"
+    return 1
+  }
+  for e in @gl_self_compact_requested @gl_self_compact_dispatching; do
+    standing="$(tmux show-options -wqv -t "$1" "$e" 2>/dev/null)" || {
+      SAFE_TO_DROP_ERROR="whether a self-compaction of yours is still standing cannot be read"
+      return 1
+    }
+    [ -z "$standing" ] || {
+      SAFE_TO_DROP_ERROR="a self-compaction you requested is still standing"
+      return 1
+    }
+  done
+  # A MESSAGE THAT COULD STILL ARRIVE, OR WHOSE ARRIVAL IS UNSETTLED, IS NOT
+  # ONE A MARK MAY CLOSE OVER. Held outcomes count: whether they reached this
+  # agent is unknown, and a terminal fact must not be set over that.
+  spool_existing "$1" || { SAFE_TO_DROP_ERROR="this window carries no spool identity"; return 1; }
+  for e in "$SPOOL_DIR"/[0-9]* "$SPOOL_DIR"/.deferred-* "$SPOOL_DIR"/.timed-* "$SPOOL_DIR"/sending-* "$SPOOL_DIR"/failed-* "$SPOOL_DIR"/unverified-* "$SPOOL_DIR"/interrupted-* "$SPOOL_DIR"/.writing-*; do
+    [ -e "$e" ] || continue
+    SAFE_TO_DROP_ERROR="mail addressed to you is still waiting, in flight, or held ($(spool_count "$1") waiting, $(deferred_count "$1") deferred, $(timed_count "$1") timed, $(spool_held "$1") held) — take delivery of waiting mail (gang mail); held mail is settled only by its sender retiring or by your hitcher dropping you unmarked"
+    return 1
+  done
+}
+
+cmd_safe_to_drop() { # the one self-declared teardown authorization (ADR-0198)
+  local report="" self token name report_id rows rc=0 nonce state rtoken rest found=0 again
+  while [ $# -gt 0 ]; do case "$1" in
+    --report-to) [ $# -ge 2 ] || die "safe-to-drop: --report-to needs a value"
+                 [ -z "$report" ] || die "safe-to-drop: --report-to may be passed only once"
+                 report="$2"; shift 2 ;;
+    *) die "safe-to-drop: unknown argument '$1'" ;;
+  esac; done
+  [ -n "$report" ] || die "safe-to-drop: --report-to <name> is required — the agent your completion report was delivered to"
+  self="$(self_window)" \
+    || refuse "safe-to-drop: only a registered agent marks itself, from its own pane in session '$SESSION'; nothing was marked"
+  token="$(tmux show-options -wqv -t "$self" @gl_spool 2>/dev/null)" || token=""
+  name="$(tmux show-options -wqv -t "$self" @gl_agent 2>/dev/null)" || name=""
+  [ -n "$name" ] && [ -n "$token" ] \
+    || refuse "safe-to-drop: this pane is not a registered Gangline agent with a spool identity; nothing was marked"
+  case "$token" in *[!a-f0-9]*) refuse "safe-to-drop: this pane's spool identity '$token' is not one gang minted; nothing was marked" ;; esac
+  if safe_to_drop_read "$self"; then
+    printf '%s\n' "$(colour "$C_OK" "$name is already marked safe to drop")"
+    return 0
+  fi
+  report_id="$(win_id "$report")" || { rc=$?; win_id_missing "$rc" "safe-to-drop: no agent '$report' holds your report; nothing was marked"; }
+  [ "$report_id" != "$self" ] \
+    || refuse "safe-to-drop: a report delivered to yourself is not one anybody received; nothing was marked"
+  # THE REPORT IS PROVED FROM THE RECIPIENT, NOT CLAIMED BY THE SENDER. A reply
+  # record on its window, written by this registration, with prompt or delivery
+  # proof, is Gangline's own evidence that a message from you reached it. Which
+  # message was the report is yours to attest.
+  rows="$(reply_state_rows "$report_id")" || rc=$?
+  [ "$rc" -eq 0 ] \
+    || refuse "safe-to-drop: $(reply_rows_error "$rows") on $report's window, so delivery of your report cannot be proved; nothing was marked"
+  while read -r nonce state rtoken rest; do
+    [ "$rtoken" = "$token" ] || continue
+    case "$state" in prompt|verified|owed|complete|settled|discharged) found=1 ;; esac
+  done <<<"$rows"
+  [ "$found" -eq 1 ] \
+    || refuse "safe-to-drop: no message from this registration is proved delivered to $report (queued or held mail is not delivered); deliver your completion report first. Nothing was marked"
+  safe_to_drop_preconditions "$self" "$token" \
+    || refuse "safe-to-drop: $SAFE_TO_DROP_ERROR. Nothing was marked"
+  # THE SAME LOCK EVERY DELIVERY TAKES. Rechecked under it, so a message that
+  # won the race is seen here, and one that lost meets the mark.
+  lock_pane "$self"
+  again="$(tmux show-options -wqv -t "$self" @gl_spool 2>/dev/null)" || again=""
+  [ "$again" = "$token" ] \
+    || { lock_release; refuse "safe-to-drop: this window's registration changed while marking; nothing was marked"; }
+  safe_to_drop_preconditions "$self" "$token" \
+    || { lock_release; refuse "safe-to-drop: $SAFE_TO_DROP_ERROR. Nothing was marked"; }
+  tmux set-option -w -t "$self" @gl_safe_to_drop "$token" \
+    || { lock_release; die "safe-to-drop: the mark could not be recorded; nothing was marked"; }
+  lock_release
+  printf '%s\n' "$(colour "$C_OK" "$name marked safe to drop") $(colour "$C_DIM" "(this registration accepts no further delivery; its hitcher may drop it)")"
+}
+
 cmd_drop() {
   local id shown rc=0 scope_unit="" scope_owned=0 scope_rc=0
   [ $# -le 1 ] || die "drop: unexpected argument '$2'"
@@ -18300,6 +18643,7 @@ cmd_drop() {
   # Droppable, contained, and printed safely is the combination that holds.
   shown="$(printf '%s' "$1" | config_sanitize)"
   id="$(win_id "$1")" || { rc=$?; win_id_missing "$rc" "no agent '$shown'"; }
+  drop_authority "$id" "$shown"
   scope_unit="$(tmux show-options -wqv -t "$id" @gl_scope 2>/dev/null)" || scope_unit=""
   [ -z "$scope_unit" ] || ! scope_unit_issued "$scope_unit" || scope_owned=1
   parting_lines "$id" "$shown"
@@ -18739,7 +19083,7 @@ fi
 # clock passes, and hitch, adopt and rename name a window that is not this one.
 if [ $# -eq 0 ]; then
   case "$cmd" in
-    hitch|adopt|rename|talk|send|at|run|wait|explain|drop|down)
+    hitch|adopt|rename|talk|send|at|run|wait|explain|drop|down|safe-to-drop)
       cmd_help "$cmd"
       exit 1
       ;;
@@ -18792,6 +19136,7 @@ case "$cmd" in
   __event-proof)
             cmd_event_proof "$@" ;;
   drop)     cmd_drop "$@" ;;
+  safe-to-drop) cmd_safe_to_drop "$@" ;;
   down)     cmd_down "$@" ;;
   collars)  cmd_collars "$@" ;;
   models)   cmd_models "$@" ;;

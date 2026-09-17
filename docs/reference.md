@@ -775,6 +775,49 @@ the fallback cannot be written. The archive root defaults below
 `${XDG_STATE_HOME:-$HOME/.local/state}/gangline/archive`; `GANG_ARCHIVE_DIR`
 overrides it.
 
+Run from a registered agent's pane, `drop` takes only a window whose recorded
+hitcher is that agent's current spool identity, marked safe to drop or not, so a
+hitcher can still clear a wedged child. It refuses any other target with exit 3
+and changes nothing. The one exception is a window that has marked itself safe
+to drop and whose hitcher can only be witnessed, not resolved to a live window:
+a root agent, one whose own hitch provenance is the operator, may drop that
+orphan by name, and only once the live window register proves the hitcher gone. An unmarked orphan, a window the operator hitched, and a window
+with no recorded provenance are the operator's to drop. A pane with no registration
+of its own counts as the operator's shell, as it does when hitch provenance is
+recorded, and an operator shell drops any agent. A shell attached to the team's
+tmux server that names no pane, and a pane carrying only part of a
+registration, are refused, as is a shell attached to that server naming a pane tmux cannot
+find there. Re-adopting a registered window never changes its hitch
+provenance, absent included, so it grants the re-adopter nothing.
+
+### `gang safe-to-drop --report-to <name>`
+
+Marks the calling agent's current registration safe to drop (ADR-0198). The
+mark authorizes teardown only; it does not claim a task is complete. It is
+refused with exit 3, and nothing is recorded, unless all of these hold:
+
+- the caller is a registered agent running in its own pane;
+- `<name>` is another live agent whose window holds a reply record written by
+  the caller's current spool identity with prompt or delivery proof, which is
+  Gangline's evidence that a message from this registration reached it — the
+  agent attests that message was its completion report;
+- every live window whose recorded hitcher is the caller is itself marked;
+- no mail for the caller is waiting, deferred, timed, being written, or held
+  with its delivery unsettled, and no self-compaction of its own is requested
+  or dispatching, or unreadable. A deferred self-compaction request is written
+  under the same pane lock.
+
+The last two are checked again under the caller's pane lock, the lock every
+delivery to that window takes, and the mark is written under it. The mark is
+the window option `@gl_safe_to_drop`, holding the spool identity it was set for;
+it is honoured only while that equals the window's `@gl_spool`, and it dies
+with the window. From then on every delivery to that registration — `send`,
+`talk`, `at`, `interrupt -m`, `compact`, and any parked entry —
+refuses with exit 3 before anything is typed or parked, naming the mark, and
+the body stays the sender's. Nothing clears the mark: `adopt` refuses a marked
+window, because re-adoption keeps its registration. More work needs a new
+agent. Marking an already marked registration exits 0 and says so.
+
 ### `gang down <session>`
 
 Kills the exact team session and every window in it, archiving each window's
@@ -1955,8 +1998,8 @@ is deciding: read the rows, not the status.
 
 `gang roster --porcelain` is the scripting interface. It prints one unpadded,
 uncoloured TSV row per window with these columns in order: `name`, `collar`,
-`state`, `spooled`, `oldest_age_s`, `session_id`, `hitcher_state`, and
-`hitcher_name`. State is one lowercase
+`state`, `spooled`, `oldest_age_s`, `session_id`, `hitcher_state`,
+`hitcher_name`, and `teardown`. State is one lowercase
 word: `busy`, `waiting`, `idle`, `occupied`, `dead`, `bricked`, `session-lost`, or
 `unknown` for the human states. `unknown` covers both a state Gangline determined it could not
 settle and one it could not read at all; the human row separates them and the
@@ -1968,8 +2011,16 @@ absent from the fixed porcelain shape and remain visible as `deferred=N` and
 shape without the plain roster's archival side effect. `oldest_age_s` is integer
 seconds or `-` for an empty queue or an unreadable age. A row Gangline could not
 produce at all falls back
-to the name, the collar, `unknown` for both `state` and `hitcher_state`, and `-`
-in every other field. `session_id` is the exact stamp or `UNSTAMPED`.
+to the name, the collar, `unknown` for `state`, `hitcher_state` and
+`teardown`, and `-` in every other field. `session_id` is the exact stamp or
+`UNSTAMPED`.
+`teardown` is `-` for a window that has not marked itself safe to drop,
+`marked` for one that has, `marked-orphan` for a marked window whose hitcher is
+witnessed but gone (a root agent may drop it), `stale` for a mark left by an
+earlier registration, which nothing honours, and `unknown` when the mark or its
+provenance cannot be read. The human row carries `safe-to-drop`,
+`safe-to-drop=orphan`, `safe-to-drop-stale`, or `safe-to-drop-unreadable`, and
+`gang status` says who may drop a marked agent.
 With no running session it prints no rows and exits successfully, like the human
 roster.
 

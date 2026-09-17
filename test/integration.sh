@@ -726,7 +726,7 @@ start_parallel_instruments() {
 # below names that closure before any fragment sources: a partial request that
 # omits one refuses with the exact parts to add, rather than failing later on a
 # raw tmux or missing-fixture read.
-integration_parts="cli substrate trust hitch compose spool readiness hooks notify usage events cap tick friction run"
+integration_parts="cli substrate trust hitch compose spool readiness hooks notify usage events cap tick friction run teardown"
 integration_declared_parts="$integration_parts"
 integration_selector="${GANG_INTEGRATION_PARTS:-all}"
 IFS=, read -r -a integration_selected_parts <<< "$integration_selector"
@@ -745,7 +745,7 @@ integration_part() {
 integration_part_dependencies() { # $1 = selectable fragment, stdout = explicit prerequisites
   case "$1" in
     cli) printf '\n' ;;
-    substrate|spool|notify|cap|tick|friction) printf 'cli\n' ;;
+    substrate|spool|notify|cap|tick|friction|teardown) printf 'cli\n' ;;
     trust|run|hitch|compose|usage|events) printf 'cli substrate\n' ;;
     readiness) printf 'cli substrate compose\n' ;;
     hooks) printf 'cli substrate spool\n' ;;
@@ -805,6 +805,7 @@ integration_part cap && { integration_ran_parts="${integration_ran_parts:+$integ
 integration_part tick && { integration_ran_parts="${integration_ran_parts:+$integration_ran_parts }tick"; . "$ROOT/test/integration-tick.sh"; }
 integration_part friction && { integration_ran_parts="${integration_ran_parts:+$integration_ran_parts }friction"; . "$ROOT/test/integration-friction.sh"; }
 integration_part run && { integration_ran_parts="${integration_ran_parts:+$integration_ran_parts }run"; . "$ROOT/test/integration-run.sh"; }
+integration_part teardown && { integration_ran_parts="${integration_ran_parts:+$integration_ran_parts }teardown"; . "$ROOT/test/integration-teardown.sh"; }
 
 integration_require_all_rc=0
 if [ "${GANG_INTEGRATION_REQUIRE_ALL:-0}" = 1 ]; then
