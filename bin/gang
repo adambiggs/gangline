@@ -1497,10 +1497,13 @@ gang drop
   Remove one agent: kill exactly that agent's
   window.
 
-  gang drop <name>
+  gang drop <name> [--orphan]
 
-  <name>  agent to remove. Required — drop
-          never takes a target by omission.
+  <name>    agent to remove. Required — drop
+            never takes a target by omission.
+  --orphan  from a root agent: drop an orphan
+            that never marked itself safe to
+            drop.
 
   Prints the stamped harness session id and
   the exact gang hitch --resume line that
@@ -1515,8 +1518,9 @@ gang drop
   window that agent hitched. A root agent
   (one the operator hitched) may also drop
   an orphan that marked itself safe to drop
-  after its hitcher went away. An operator
-  shell drops any agent.
+  after its hitcher went away, and with
+  --orphan one that never marked itself. An
+  operator shell drops any agent.
 
   Messages still waiting for it are archived
   before the window dies. Whatever exists
@@ -7571,8 +7575,15 @@ drop_authority() { # $1 target window, $2 its shown name; returns only if this c
   # current registration, marked or not, so a wedged child is still its
   # hitcher's to clear. The one exception is the orphan: when a marked window's
   # hitcher can only be witnessed, a root agent — one the operator hitched — may
-  # drop it by name. An unmarked orphan stays with the operator.
+  # drop it by name. An unmarked orphan needs the same root agent to say so
+  # with --orphan ($3 = 1): the hitcher that could have cleared a wedged child
+  # is gone, and an agent that never got its task or cannot finish its report
+  # never marks itself, so the operator was the only way out. The flag keeps
+  # the default a refusal, since the drop ends whatever that agent was doing.
+  # DROP_ORPHAN_UNMARKED says whether this path authorized the drop.
   local caller ctoken cname htok hitcher hrc=0 mrc=0 grc=0 root panes nl=$'\n' source_socket
+  local orphan="${3:-0}"
+  DROP_ORPHAN_UNMARKED=0
   if [ -z "${TMUX_PANE:-}" ] && [ "$GANGLINE_CALLER_ATTACHED" -eq 1 ] \
      && [ "$GANGLINE_CALLER_SOCKET" = "${TMUX%%,*}" ]; then
     refuse "drop: this shell is inside the tmux server that holds '$SESSION' and does not name a pane, so Gangline cannot tell whether an agent is asking; nothing was dropped. Run it from the agent's own pane, or from a shell outside tmux"
@@ -7638,16 +7649,22 @@ drop_authority() { # $1 target window, $2 its shown name; returns only if this c
   case "$hrc" in
     0) refuse "drop: '$2' was hitched by live agent '$hitcher', and an agent drops only windows it hitched itself; nothing was dropped. Ask $hitcher, or the operator" ;;
     2) refuse "drop: the operator hitched '$2', and an agent drops only windows it hitched itself; nothing was dropped. The operator can drop it from their own shell" ;;
-    3) [ "$mrc" -eq 0 ] \
-         || refuse "drop: '$2' was hitched by '$hitcher', which is gone, and it has not marked itself safe to drop; only the operator may drop an unmarked orphan. Nothing was dropped"
+    3) [ "$mrc" -eq 0 ] || [ "$orphan" -eq 1 ] \
+         || refuse "drop: '$2' was hitched by '$hitcher', which is gone, and it has not marked itself safe to drop; only the operator, or a root agent passing --orphan, may drop an unmarked orphan. Nothing was dropped"
        # GONE MUST STILL BE GONE. The register is read again at the moment of
        # the decision, and one that now shows a holder, or more than one, or
        # cannot be read, does not authorize the drop.
        stable_agent_resolve "$htok" || grc=$?
        [ "$grc" -eq 3 ] \
          || refuse "drop: whether the hitcher '$hitcher' of '$2' is gone cannot be proved from the live window register; nothing was dropped"
-       [ "$root" = "$HITCHED_BY_OPERATOR" ] \
-         || refuse "drop: '$2' is a marked orphan (its hitcher '$hitcher' is gone); only a root agent, one the operator hitched, or the operator may drop it. Nothing was dropped"
+       if [ "$mrc" -eq 0 ]; then
+         [ "$root" = "$HITCHED_BY_OPERATOR" ] \
+           || refuse "drop: '$2' is a marked orphan (its hitcher '$hitcher' is gone); only a root agent, one the operator hitched, or the operator may drop it. Nothing was dropped"
+       else
+         [ "$root" = "$HITCHED_BY_OPERATOR" ] \
+           || refuse "drop: '$2' is an unmarked orphan (its hitcher '$hitcher' is gone); only a root agent, one the operator hitched, or the operator may drop it. Nothing was dropped"
+         DROP_ORPHAN_UNMARKED=1
+       fi
        return 0 ;;
     1) refuse "drop: '$2' records no hitch provenance, so gang cannot prove $cname hitched it; only the operator may drop it. Nothing was dropped" ;;
     *) refuse "drop: the hitch provenance of '$2' cannot be checked against the live window register; nothing was dropped" ;;
@@ -19097,8 +19114,18 @@ cmd_safe_to_drop() { # the one self-declared teardown authorization (ADR-0198)
 }
 
 cmd_drop() {
-  local id shown rc=0 scope_unit="" scope_owned=0 scope_rc=0
-  [ $# -le 1 ] || die "drop: unexpected argument '$2'"
+  local id shown rc=0 scope_unit="" scope_owned=0 scope_rc=0 orphan=0 target="" have_target=0 facts='{"scope":"single"}'
+  # `--` still reaches a forged registration whose name looks like the flag.
+  while [ $# -gt 0 ]; do case "$1" in
+    --orphan) orphan=1; shift ;;
+    --) [ $# -eq 2 ] && [ "$have_target" -eq 0 ] \
+          || die "drop: -- takes exactly the one agent name after it"
+        target="$2"; have_target=1; shift 2 ;;
+    *) [ "$have_target" -eq 0 ] || die "drop: unexpected argument '$1'"
+       target="$1"; have_target=1; shift ;;
+  esac; done
+  [ "$have_target" -eq 1 ] || die "drop: name the agent to drop"
+  set -- "$target"
   # The argument reaches the terminal, and drop is the one command an operator
   # runs with a name they read off a hostile registration. It is not validated
   # here on purpose: valid_name would leave a window whose own registration is
@@ -19107,7 +19134,12 @@ cmd_drop() {
   # Droppable, contained, and printed safely is the combination that holds.
   shown="$(printf '%s' "$1" | config_sanitize)"
   id="$(win_id "$1")" || { rc=$?; win_id_missing "$rc" "no agent '$shown'"; }
-  drop_authority "$id" "$shown"
+  drop_authority "$id" "$shown" "$orphan"
+  if [ "$orphan" -eq 1 ]; then
+    [ "$DROP_ORPHAN_UNMARKED" -eq 1 ] \
+      || refuse "drop: --orphan takes only an unmarked orphan dropped by a root agent, and '$shown' is not one this caller needs it for; nothing was dropped. Retry without --orphan"
+    facts='{"scope":"single","orphan":"unmarked"}'
+  fi
   scope_unit="$(tmux show-options -wqv -t "$id" @gl_scope 2>/dev/null)" || scope_unit=""
   [ -z "$scope_unit" ] || ! scope_unit_issued "$scope_unit" || scope_owned=1
   parting_lines "$id" "$shown"
@@ -19118,7 +19150,7 @@ cmd_drop() {
   spool_archive "$id"
   idle_notice_archive "$id"
   spool_forget "$id"
-  event_log_record "$id" agent.dropped '{"scope":"single"}' \
+  event_log_record "$id" agent.dropped "$facts" \
     || die 'drop: teardown evidence could not be recorded'
   usage_events_record drop "$id"
   tmux kill-window -t "$id"

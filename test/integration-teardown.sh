@@ -14,6 +14,7 @@
 #       td-child
 #     td-wedged
 #     td-orphan
+#     td-orphan2
 cat > "$RUN_ROOT/collars/droppable.sh" <<SH
 # shellcheck shell=bash
 # shellcheck disable=SC2034
@@ -45,6 +46,7 @@ td_teardown_word() { "$GANG" roster --porcelain | awk -F '\t' -v n="$1" '$1 == n
 TMUX_PANE="$(td_pane td-lead)" "$HITCH" td-worker -c droppable -d /tmp >/dev/null
 TMUX_PANE="$(td_pane td-lead)" "$HITCH" td-wedged -c droppable -d /tmp >/dev/null
 TMUX_PANE="$(td_pane td-lead)" "$HITCH" td-orphan -c droppable -d /tmp >/dev/null
+TMUX_PANE="$(td_pane td-lead)" "$HITCH" td-orphan2 -c droppable -d /tmp >/dev/null
 TMUX_PANE="$(td_pane td-worker)" "$HITCH" td-child -c droppable -d /tmp >/dev/null
 TMUX_PANE="$(td_pane td-peer)" "$HITCH" td-other -c droppable -d /tmp >/dev/null
 TMUX_PANE="$(td_pane td-lead)" "$HITCH" td-bare -c droppable -d /tmp >/dev/null
@@ -386,7 +388,21 @@ equal "the orphan's hitcher is witnessed, not live" "td-lead" \
   "$(tmux show-options -wqv -t "$(window_id td-orphan)" @gl_hitched_by_name)"
 td_as td-peer drop td-orphan
 equal "a root agent cannot drop an unmarked orphan" 3 "$td_rc"
-contains "the unmarked-orphan refusal names the operator" "$td_out" "only the operator may drop an unmarked orphan"
+# The refusal used to say only the operator may, which --orphan below makes
+# false for a root agent; the operator is still named first.
+contains "the unmarked-orphan refusal names the operator and the flag" "$td_out" \
+  "only the operator, or a root agent passing --orphan, may drop an unmarked orphan"
+td_as td-other drop td-orphan2 --orphan
+equal "a non-root agent cannot take an unmarked orphan with --orphan" 3 "$td_rc"
+contains "and the refusal names who may" "$td_out" "only a root agent"
+td_as td-peer drop td-other --orphan
+equal "--orphan refuses a drop it does not authorize" 3 "$td_rc"
+contains "and says to retry without it" "$td_out" "Retry without --orphan"
+equal "so a hitcher's own child survives a misused flag" 1 \
+  "$(window_names | grep -cx td-other || :)"
+td_as td-peer drop td-orphan2 --orphan
+equal "a root agent takes an unmarked orphan with --orphan" 0 "$td_rc"
+equal "and the orphan's window is gone" "" "$(window_id td-orphan2 || :)"
 td_as td-orphan safe-to-drop --report-to td-peer
 equal "an orphan with a delivered report marks itself" 0 "$td_rc"
 equal "porcelain names a marked orphan" marked-orphan "$(td_teardown_word td-orphan)"

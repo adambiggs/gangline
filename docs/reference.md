@@ -762,7 +762,7 @@ command without leaving filesystem state. Stall notes remain attributed
 messages to the declared notify target and are not silently reclassified as
 alert lifecycle state.
 
-### `gang drop <name>`
+### `gang drop <name> [--orphan]`
 
 Prints the window's stamped native session id, then kills the exact agent
 window. Whether that id comes with a relaunch command depends on the collar: one
@@ -792,8 +792,12 @@ hitcher can still clear a wedged child. It refuses any other target with exit 3
 and changes nothing. The one exception is a window that has marked itself safe
 to drop and whose hitcher can only be witnessed, not resolved to a live window:
 a root agent, one whose own hitch provenance is the operator, may drop that
-orphan by name, and only once the live window register proves the hitcher gone. An unmarked orphan, a window the operator hitched, and a window
-with no recorded provenance are the operator's to drop. A pane with no registration
+orphan by name, and only once the live window register proves the hitcher gone.
+The same root agent may drop an unmarked orphan under the same proof only by
+passing `--orphan`, which records `"orphan": "unmarked"` in the
+`agent.dropped` event; without it the drop refuses, and `--orphan` on any other
+target refuses. A window the operator hitched and a window with no recorded
+provenance are the operator's to drop. A pane with no registration
 of its own counts as the operator's shell, as it does when hitch provenance is
 recorded, and an operator shell drops any agent. A shell attached to the team's
 tmux server that names no pane, and a pane carrying only part of a
