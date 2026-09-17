@@ -214,7 +214,7 @@ usage_ambiguous_out="$(PATH="$usage_present" XDG_DATA_HOME="$usage_data" \
   "$GANG" usage --daily 2026-09-02 2>&1)" \
   || fail "daily usage survives one session registered to two agents" \
        "status $?: [$usage_ambiguous_out]"
-tmux set-option -wu -t "$usage_gamma_id" @gl_session_id
+tmux set-option -w -t "$usage_gamma_id" @gl_session_id ""
 contains "daily attribution names a session registered to two agents as ambiguous" \
   "$usage_ambiguous_out" "ambiguous local attribution: $usage_claude_id"
 equal "ambiguous sessions are excluded rather than assigned to either agent" "" \
