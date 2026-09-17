@@ -208,20 +208,6 @@ contains "daily usage labels the output column as including thinking" \
   "$usage_daily_out" "output(+thinking)"
 contains "agent attribution says its share is local rather than account-wide" \
   "$usage_daily_out" "local agent attribution; not account-quota share"
-usage_gamma_id="$(window_id usage-gamma)"
-tmux set-option -w -t "$usage_gamma_id" @gl_session_id "$usage_claude_id"
-usage_ambiguous_out="$(PATH="$usage_present" XDG_DATA_HOME="$usage_data" \
-  "$GANG" usage --daily 2026-09-02 2>&1)" \
-  || fail "daily usage survives one session registered to two agents" \
-       "status $?: [$usage_ambiguous_out]"
-tmux set-option -w -t "$usage_gamma_id" @gl_session_id ""
-contains "daily attribution names a session registered to two agents as ambiguous" \
-  "$usage_ambiguous_out" "ambiguous local attribution: $usage_claude_id"
-equal "ambiguous sessions are excluded rather than assigned to either agent" "" \
-  "$(printf '%s\n' "$usage_ambiguous_out" | awk '$1 == "usage-alpha" || $1 == "usage-gamma"')"
-equal "the remaining attributed sessions retain the whole local-share denominator" \
-  "usage-beta gpt-5.6 5 6 7 0 100.0%" \
-  "$(printf '%s\n' "$usage_ambiguous_out" | awk '$1 == "usage-beta" { print $1, $2, $3, $4, $5, $6, $7 }')"
 usage_gap_argv="$RUN_ROOT/usage-filtered-gap-argv"
 # Alpha continued after the selected day. Its registration still overlaps the
 # day, so later lastActivity must not turn its exact in-day entries into zero.
@@ -255,6 +241,20 @@ session --json --no-cost --offline" \
   "$(<"$usage_since_argv")"
 contains "since usage keeps the same per-agent and per-model split" \
   "$usage_since_out" "usage-alpha"
+usage_gamma_id="$(window_id usage-gamma)"
+tmux set-option -w -t "$usage_gamma_id" @gl_session_id "$usage_claude_id"
+usage_ambiguous_out="$(PATH="$usage_present" XDG_DATA_HOME="$usage_data" \
+  "$GANG" usage --daily 2026-09-02 2>&1)" \
+  || fail "daily usage survives one session registered to two agents" \
+       "status $?: [$usage_ambiguous_out]"
+tmux set-option -w -t "$usage_gamma_id" @gl_session_id ""
+contains "daily attribution names a session registered to two agents as ambiguous" \
+  "$usage_ambiguous_out" "ambiguous local attribution: $usage_claude_id"
+equal "ambiguous sessions are excluded rather than assigned to either agent" "" \
+  "$(printf '%s\n' "$usage_ambiguous_out" | awk '$1 == "usage-alpha" || $1 == "usage-gamma"')"
+equal "the remaining attributed sessions retain the whole local-share denominator" \
+  "usage-beta gpt-5.6 5 6 7 0 100.0%" \
+  "$(printf '%s\n' "$usage_ambiguous_out" | awk '$1 == "usage-beta" { print $1, $2, $3, $4, $5, $6, $7 }')"
 usage_arity_out="$(XDG_DATA_HOME="$usage_data" "$GANG" usage --all extra 2>&1)" \
   && fail "gang usage refuses an argument it does not take" "succeeded: [$usage_arity_out]" \
   || contains "gang usage refuses an argument it does not take" \
