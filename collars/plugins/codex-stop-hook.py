@@ -63,7 +63,6 @@ HOOK_STARTED = time.monotonic()
 QUERY_ATTEMPT_SEC = float(os.environ.get("GANG_STOP_QUERY_ATTEMPT_SEC", "5"))
 QUERY_DEADLINE_SEC = float(os.environ.get("GANG_STOP_QUERY_DEADLINE_SEC", "9"))
 QUERY_MIN_ATTEMPT_SEC = QUERY_ATTEMPT_SEC / 5
-RELEASE_TIMEOUT_SEC = 2
 # THE BOUNDARY SPENDS WHAT THE EARLIER PARTS LEFT, ONCE. A fixed budget near
 # the idle cost of one Gangline call is a budget only a quiet host can meet:
 # under CPU contention the boundary timed out, the Stop was refused, and the
@@ -257,7 +256,7 @@ def report_release(gang: str, why: str) -> None:
     # already been told once, and holding the turn again would only spend the
     # model turns this release exists to save.
     args = ["reply-released"] + ([why] if why else [])
-    budget = min(RELEASE_TIMEOUT_SEC, fuse_left())
+    budget = fuse_left()
     if budget <= 0:
         raise ValueError(
             "the %gs native fuse was spent before the release could be recorded"
