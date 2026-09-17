@@ -27,6 +27,8 @@ refuse() { fail 3 "$@"; }
 agent_name_of() { printf '%s' "$1"; }
 on_exit() { local rc=$?; set +e; lock_release; return "$rc"; }
 GANGLINE_PROCESS_UID="$(id -u)"
+. "$3"
+gangline_state_root_resolve "$GANGLINE_PROCESS_UID"
 . "$1"
 
 GANG_LOCK_DIR="$2/locks"
@@ -56,6 +58,7 @@ lock_release
 SH
 chmod +x "$TEST_ROOT/harness.sh"
 
-"$BASH" "$TEST_ROOT/harness.sh" "$TEST_ROOT/lock-functions.sh" "$TEST_ROOT"
+"$BASH" "$TEST_ROOT/harness.sh" "$TEST_ROOT/lock-functions.sh" "$TEST_ROOT" \
+  "$(dirname "$GANG")/../libexec/gang-state-root"
 printf 'stale-pane-lock: recovered and released under Bash %s.%s\n' \
   "${BASH_VERSINFO[0]}" "${BASH_VERSINFO[1]}"

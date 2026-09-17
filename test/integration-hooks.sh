@@ -3713,6 +3713,7 @@ cp "$ROOT/bin/gang" "$installer_src/bin/gang"
 cp "$ROOT/install.sh" "$installer_src/install.sh"
 cp "$ROOT/.gitignore" "$installer_src/.gitignore"
 cp -R "$ROOT/collars" "$installer_src/collars"
+cp -R "$ROOT/libexec" "$installer_src/libexec"
 printf '%s\n' 1.0.0 > "$installer_src/version.txt"
 git init -q "$installer_src"
 git -C "$installer_src" config user.name 'Gangline installer test'

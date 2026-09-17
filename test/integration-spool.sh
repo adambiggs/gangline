@@ -3486,10 +3486,9 @@ if [ "$stateroot_rc" -ne 0 ]; then
     "$stateroot_out" "the runtime state root $stateroot_legacy was retired or removed while this command ran"
   equal "and the refused adoption left the window unclaimed" "" "$stateroot_spool"
 fi
-for stateroot_session in "stateroot-other-$$" "stateroot-adopt-$$"; do
-  if tmux list-sessions -F '#{session_name}' | grep -qx "$stateroot_session"; then
-    env -u GANG_LOCK_DIR GANG_TEST_STATE_BASES="$stateroot_tmp:$stateroot_run" \
-      TMUX="$stateroot_socket,0,0" GANG_SESSION="$stateroot_session" \
-      "$GANG" down "$stateroot_session" >/dev/null
-  fi
-done
+if tmux list-sessions -F '#{session_name}' | grep -qx "stateroot-other-$$"; then
+  env -u GANG_LOCK_DIR GANG_TEST_STATE_BASES="$stateroot_tmp:$stateroot_run" \
+    GANG_SESSION="stateroot-other-$$" "$GANG" down "stateroot-other-$$" >/dev/null
+fi
+# The adoption was refused, so its session holds no agent and no team record.
+tmux kill-session -t "=stateroot-adopt-$$"

@@ -3211,7 +3211,7 @@ excludes "and reports no unknown path either" \
 
 skew_root="$RUN_ROOT/other-gang"
 mkdir -p "$skew_root"
-cp -R "$ROOT/bin" "$ROOT/collars" "$ROOT/roles" "$skew_root/"
+cp -R "$ROOT/bin" "$ROOT/collars" "$ROOT/libexec" "$ROOT/roles" "$skew_root/"
 cp "$ROOT/CONTRACT.md" "$skew_root/"
 skew_out="$RUN_ROOT/skew.err"
 skew_gang "$skew_root/bin/gang" hitch other -c bash >/dev/null 2>"$skew_out" || true

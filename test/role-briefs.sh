@@ -651,6 +651,7 @@ ac17() {
   local tree="$TEST_ROOT/ac17-tree" config="$TEST_ROOT/ac17-config" out refusal advertised rc=0
   mkdir -p "$tree/bin" "$tree/collars" "$tree/roles" "$config/roles"
   cp "$PRODUCT_ROOT/bin/gang" "$tree/bin/gang"
+  cp -R "$PRODUCT_ROOT/libexec" "$tree/libexec"
   cp "$PRODUCT_ROOT/collars/"*.sh "$tree/collars/"
   cp "$PRODUCT_ROOT/roles/"*.md "$tree/roles/"
   # A product root without a contract is not a product root: hitch refuses one.
@@ -862,6 +863,7 @@ ac24() {
 
   rc=0
   cp "$GANG" "$tree/bin/gang"
+  cp -R "$PRODUCT_ROOT/libexec" "$tree/libexec"
   cp "$PRODUCT_ROOT/collars/"*.sh "$tree/collars/"
   cp "$PRODUCT_ROOT/roles/"*.md "$tree/roles/"
   out="$(GANG_CONFIG_DIR="$config" GANG_COLLARS="$tree/collars" \

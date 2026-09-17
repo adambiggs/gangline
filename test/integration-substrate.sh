@@ -333,6 +333,7 @@ tmux set-option -w -t "$alpha_id" @gl_binary_id "$binary_stamp"
 installed_root="$RUN_ROOT/installed"
 mkdir -p "$installed_root/bin"
 cp -R "$ROOT/collars" "$installed_root/collars"
+cp -R "$ROOT/libexec" "$installed_root/libexec"
 cp "$GANG" "$installed_root/bin/gang"
 installed_gang="$installed_root/bin/gang"
 excludes "byte-identical Gangline copies compare as current" \
@@ -350,9 +351,10 @@ mkdir -p "$dirty_root/bin"
 # (macOS exposes /var/folders through /private/var/folders).
 dirty_root="$(cd -P "$dirty_root" && pwd)"
 cp -R "$ROOT/collars" "$dirty_root/collars"
+cp -R "$ROOT/libexec" "$dirty_root/libexec"
 cp "$GANG" "$dirty_root/bin/gang"
 git -C "$dirty_root" init -q
-git -C "$dirty_root" add -- bin/gang collars
+git -C "$dirty_root" add -- bin/gang collars libexec
 git -C "$dirty_root" -c user.name=fixture -c user.email=fixture@example.invalid \
   commit -qm 'test: clean executable witness'
 dirty_head="$(git -C "$dirty_root" rev-parse HEAD)"
