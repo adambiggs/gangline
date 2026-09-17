@@ -943,8 +943,21 @@ globkeys_out="$(cd "$RUN_ROOT/globkeys-cwd" \
   && "$GANG" hitch globkeys -c globkeys -d /tmp 2>&1)" || globkeys_rc=$?
 equal "a recover key declared as a pattern refuses the collar" 1 "$globkeys_rc"
 contains "and names the word it refused" "$globkeys_out" "GANG_COMPACT_RECOVER_KEYS word '*'"
-[ "$globkeys_rc" -ne 0 ] || "$GANG" drop globkeys >/dev/null 2>&1 || :
+[ "$globkeys_rc" -ne 0 ] || "$GANG" drop globkeys >/dev/null || :
 rm -f -- "$RUN_ROOT/collars/globkeys.sh"
+# The declaration is read whole: a word on a later line is validated too.
+cat > "$RUN_ROOT/collars/linekeys.sh" <<SH
+# shellcheck shell=bash
+# shellcheck disable=SC2034
+. "$ROOT/collars/bash.sh"
+GANG_COMPACT_RECOVER_KEYS=\$'Escape\\nbad.key'
+SH
+linekeys_rc=0
+linekeys_out="$("$GANG" hitch linekeys -c linekeys -d /tmp 2>&1)" || linekeys_rc=$?
+equal "a recover key on a later line is still validated" 1 "$linekeys_rc"
+contains "and is named when refused" "$linekeys_out" "GANG_COMPACT_RECOVER_KEYS word 'bad.key'"
+[ "$linekeys_rc" -ne 0 ] || "$GANG" drop linekeys >/dev/null || :
+rm -f -- "$RUN_ROOT/collars/linekeys.sh"
 stuck_clock="$RUN_ROOT/stuck-clock"
 cat > "$stuck_clock" <<'SH'
 #!/bin/sh

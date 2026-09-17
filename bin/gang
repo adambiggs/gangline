@@ -1876,7 +1876,7 @@ load_collar() { # $1 = collar name; sets the GANG_* strategy surface
     esac
   done
   local -a recover_keys=()
-  read -r -a recover_keys <<<"$GANG_COMPACT_RECOVER_KEYS"
+  IFS=$' \t\n' read -r -d '' -a recover_keys <<<"$GANG_COMPACT_RECOVER_KEYS" || :
   for key in ${recover_keys[@]+"${recover_keys[@]}"}; do
     case "$key" in
       *[!A-Za-z0-9-]*) die "collar '$1' declares GANG_COMPACT_RECOVER_KEYS word '$key', which is not a tmux key name — gang refuses to send it, because tmux would deliver the letters instead of the key" ;;
@@ -15735,7 +15735,7 @@ self_compact_cancel() { # $1 agent name; AGENT_ID resolved
 compact_recover() { # $1 = resolved agent name; press the collar's way out of a stuck compaction
   local name="$1" key
   local -a keys=()
-  read -r -a keys <<<"$GANG_COMPACT_RECOVER_KEYS"
+  IFS=$' \t\n' read -r -d '' -a keys <<<"$GANG_COMPACT_RECOVER_KEYS" || :
   [ "${#keys[@]}" -gt 0 ] \
     || die "compact: collar '$AGENT_COLLAR' declares no GANG_COMPACT_RECOVER_KEYS, so gang does not know the keystrokes that end a stuck compaction in this harness (gang attach)"
   lock_pane "$AGENT_ID"
