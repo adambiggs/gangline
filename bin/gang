@@ -15676,6 +15676,10 @@ self_compact_cancel() { # $1 agent name; AGENT_ID resolved
   self="$(self_window)" || self=""
   [ -n "$self" ] && [ "$self" = "$AGENT_ID" ] \
     || refuse "only '$1' may withdraw its own self-compaction; a peer compaction (gang compact $1) answers it instead"
+  # UNDER THE PANE LOCK, which is what a new request is recorded under: a
+  # successor recorded between clearing the token and clearing its binding
+  # would otherwise lose its continuation and witness while still standing.
+  lock_pane "$AGENT_ID"
   request="$(window_option "$AGENT_ID" @gl_self_compact_requested)" \
     || die "whether a self-compaction of '$1' is standing cannot be read"
   dispatch="$(window_option "$AGENT_ID" @gl_self_compact_dispatching)" \
@@ -15707,8 +15711,10 @@ self_compact_cancel() { # $1 agent name; AGENT_ID resolved
     event_claim_release; rm -f -- "$state_claim"
     refuse "the self-compaction request stopped standing as it was being withdrawn — gang status $1 shows what happened to it"
   fi
-  for option in @gl_self_compact_requested @gl_self_compact_witness \
-      @gl_self_compact_resume @gl_self_compact_failed @gl_self_compact_noted; do
+  # The token goes last, so no request can be recorded until its whole
+  # binding is gone.
+  for option in @gl_self_compact_witness @gl_self_compact_resume \
+      @gl_self_compact_failed @gl_self_compact_noted @gl_self_compact_requested; do
     tmux set-option -uw -t "$AGENT_ID" "$option" \
       || { event_claim_release; rm -f -- "$state_claim"
            die "could not clear $option while withdrawing the self-compaction of '$1'"; }
