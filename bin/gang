@@ -1894,7 +1894,7 @@ mint_message_nonce() { od -An -N8 -tx1 /dev/urandom | tr -d ' \n'; }
 
 ENVELOPE="" ENVELOPE_NONCE=""
 envelope() { # $1 sender, $2 body, optional $3 correlated reply nonces,
-             # optional $4 non-empty when the sender waived a reply
+             # optional $4 the waiver the envelope states: no-reply or assignment
              # -> exact wire message in ENVELOPE and its nonce in ENVELOPE_NONCE
   local nonce body marked sentinel=$'\034'
   nonce="$(mint_message_nonce)"
@@ -1907,7 +1907,11 @@ envelope() { # $1 sender, $2 body, optional $3 correlated reply nonces,
   ENVELOPE_NONCE="$nonce"
   ENVELOPE="[gang:$1#$nonce"
   [ -z "${3:-}" ] || ENVELOPE="$ENVELOPE reply-to=$3"
-  [ -z "${4:-}" ] || ENVELOPE="$ENVELOPE no-reply"
+  case "${4:-}" in
+    '') ;;
+    no-reply|assignment) ENVELOPE="$ENVELOPE $4" ;;
+    *) die "internal: unknown envelope waiver '$4'" ;;
+  esac
   ENVELOPE="$ENVELOPE] $body [/gang:$1#$nonce]"
 }
 
@@ -2160,7 +2164,10 @@ startup_brief() { # $1 = agent name, $2 = doctrine body or empty, $3 = non-empty
   # A MESSAGE HANDED TO HITCH ARRIVES IN THE SAME BATCH, right behind this
   # contract, so a closing "End this turn." reads as the last instruction for
   # both and the agent stops at a read receipt instead of starting that work.
-  [ -z "${3:-}" ] || closer=''
+  # Saying nothing let the contract's reply rule stand in its place, so the
+  # closer names the message as the assignment and its report as the reply.
+  [ -z "${3:-}" ] \
+    || closer=' The message that follows is your assignment: begin it in the turn that reads it. Do not acknowledge it; your completion report is its reply.'
   contract="$(config_path "$CONTRACT_FILE" | config_sanitize)"
   if [ -n "$ROLE_NAME" ]; then
     role="$(printf '%s' "$ROLE_NAME" | config_sanitize)"
@@ -13573,9 +13580,9 @@ hitch_register() { # $1 window, $2 agent name, $3 option, $4 value
 
 # THE STDIN MESSAGE FOLLOWS THE CONTRACT; it is not folded into it. The contract
 # is hitch's own attributed text and the message is the caller's, so it goes out
-# as an ordinary send from the caller's window: it carries that observed identity
-# and the reply it owes, and it queues behind the contract wherever the contract
-# waits.
+# through gang send from the caller's window as the agent's assignment: it
+# carries that observed identity, owes no reply because the completion report
+# answers it, and queues behind the contract wherever the contract waits.
 HITCH_BODY=""
 cmd_hitch() {
   HITCH_BODY=""
@@ -13585,7 +13592,11 @@ cmd_hitch() {
 }
 
 hitch_body_send() { # $1 name; hand HITCH_BODY to gang send from the calling window
-  printf '%s' "$HITCH_BODY" | "$ROOT/bin/gang" send --to "$1" --stdin
+  # AN ASSIGNMENT IS ANSWERED BY THE WORK. Sent as an ordinary request it
+  # opened reply debt, the Stop adapter refused idle until the new agent
+  # acknowledged it, and agents answered "received, starting now" and ended
+  # the turn with nothing begun. The completion report is the reply.
+  printf '%s' "$HITCH_BODY" | "$ROOT/bin/gang" send --to "$1" --assignment --stdin
 }
 
 stdin_unread() { # succeed when stdin is a pipe, socket or file holding bytes nobody read
@@ -14574,6 +14585,8 @@ cmd_send() {
     --live-only) live_only=1; shift ;;
     --supersede) supersede=1; shift ;;
     --no-reply) no_reply=1; waiver=no-reply; shift ;;
+    # Private to hitch: the message it sends after the startup contract.
+    --assignment) no_reply=1; waiver=assignment; shift ;;
     --ack) ack=1; shift ;;
     # A BODY IS THE LIKELY MISTAKE, so the refusal that catches it names the
     # remedy. Anything not shaped like a flag is what someone typed where the
@@ -14588,6 +14601,8 @@ cmd_send() {
     || die "send: --supersede replaces an older message in the spool, and --live-only never parks one"
   [ "$ack" -eq 0 ] || [ "$live_only" -eq 0 ] \
     || die "send: --ack holds the message for the target's next delivery, and --live-only never holds one"
+  [ "$waiver" != assignment ] || [ "$live_only" -eq 0 ] \
+    || die "send: --assignment parks behind a booting agent, and --live-only never parks"
   [ "$ack" -eq 0 ] || [ "$no_reply" -eq 0 ] \
     || die "send: --ack acknowledges replies you read this turn and already owes nothing; --no-reply waives a request"
   send_sender "$from"

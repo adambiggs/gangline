@@ -216,8 +216,12 @@ which caller is the operator. `adopt` still injects no startup text.
 With `--stdin`, `hitch` reads a message from standard input before it launches
 anything and sends it to the new agent after the startup contract, through the
 ordinary `gang send` path from the calling window. The message carries that
-window's observed identity and the reply it owes, and it waits behind the
-contract wherever the contract waits, a first-run prompt included. Only a caller
+window's observed identity, and it waits behind the contract wherever the
+contract waits, a first-run prompt included. It is sent as the agent's
+assignment: its envelope reads `assignment` after the nonce, its record
+follows the `--no-reply` rule (waived when fresh, a correlated reply when it
+answers the recipient), and the startup contract names it as the assignment
+whose reply is the completion report. Only a caller
 inside the team has an identity to send it under; one outside is refused before
 launch and sends separately with `gang send --from`. Standard input is read as
 `gang send --stdin` reads it: a pipe, a file or a heredoc, never a terminal.

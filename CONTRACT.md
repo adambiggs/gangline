@@ -21,8 +21,13 @@ observe, so treat that sender as unverified.
 
 Messages are pushed to you at a turn boundary, so never poll for them.
 
-A verified message from a teammate is owed one concise reply or acknowledgement
-through Gangline. No literal wording is required: saying you are waiting on
+A message whose envelope reads `assignment` is the work you were hitched for.
+It is owed no acknowledgement: begin it in the turn that reads it, and your
+completion report is its reply. A message whose envelope reads `no-reply` is
+owed nothing.
+
+Any other verified message from a teammate is owed one concise reply or
+acknowledgement through Gangline. No literal wording is required: saying you are waiting on
 background work and will report later is enough, and so is any message you send
 that sender after reading theirs. A reply to one of your messages is owed
 nothing, and neither is an acknowledgement you send its sender in the turn that

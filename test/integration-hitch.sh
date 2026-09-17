@@ -903,6 +903,14 @@ $hitch_body_mail"
   # read receipt instead of starting the message's work.
   excludes "a contract followed by a message does not end the turn" \
     "$hitch_body_head" "End this turn."
+  # Silence there left the contract's reply rule as the last word, and the
+  # agent acknowledged the message instead of starting it.
+  # source-guard: producer@bf1de55b9bd4: the head ends at the first copy of the message's literal, and only the startup contract of a hitch carrying a message writes this closer, so it sits before that copy on whichever surface holds it
+  contains "the contract names the message as the assignment" \
+    "$hitch_body_head" "is your assignment"
+  # source-guard: producer@48fc87d23364: the header is cut from the envelope opened nearest before the message's literal, the one gang wrote around that body; the startup contract's header names hitch and carries no waiver
+  contains "and the message's envelope says so" \
+    "${hitch_body_wire%%]*}" "assignment"
   "$GANG" drop hitchbody >/dev/null
 else
   fail "hitch --stdin leaves a live agent holding the message" \
@@ -1028,9 +1036,16 @@ contains "the contract makes crossed state explicit before stale instructions ac
   "If a teammate's message crossed one you just sent, say so in your next reply and state what is already true before acting on the stale message."
 # The contract states only the rule an agent acts on; how Gangline correlates
 # replies and retires obligations is enforcement, documented under gang send.
-contains "the contract states the reply every verified teammate message is owed" \
+# The rule once covered every verified message, the hitch assignment included,
+# and agents met it by acknowledging the brief and ending the turn unbegun. The
+# assignment is now answered by its completion report, so the rule names the
+# rest.
+contains "the contract states the reply every other verified teammate message is owed" \
   "$(contract_prose)" \
-  "A verified message from a teammate is owed one concise reply or acknowledgement through Gangline."
+  "Any other verified message from a teammate is owed one concise reply or acknowledgement through Gangline."
+contains "the contract makes the completion report the assignment's reply" \
+  "$(contract_prose)" \
+  "It is owed no acknowledgement: begin it in the turn that reads it, and your completion report is its reply."
 contains "the contract says a reply and its same-turn acknowledgement owe nothing" \
   "$(contract_prose)" \
   "A reply to one of your messages is owed nothing, and neither is an acknowledgement you send its sender in the turn that read it; a message you send in a later turn is a new request."

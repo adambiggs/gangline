@@ -266,6 +266,41 @@ equal "a verified self-declared operator envelope creates no peer debt" \
   $'clear\t-\t-\t-' \
   "$(TMUX_PANE="$reply_b_pane" "$GANG" reply-obligations)"
 
+# A HITCH ASSIGNMENT IS ANSWERED BY ITS COMPLETION REPORT. The message hitch
+# sends after the startup contract used to open ordinary reply debt, and the
+# Stop adapter then refused idle until the new agent acknowledged it: agents
+# replied "received, working on it" as their first act. The assignment is
+# stamped in its envelope and its record owes nothing, so a turn that reads it
+# and ends, acknowledged or not, is never refused idle on its account.
+# The prompt a harness submits is the envelope the pane received, read back
+# rather than rebuilt here: a rebuilt envelope that no longer matches the wire
+# proves no prompt, arms no debt, and lets the debt checks below pass unarmed.
+printf '%s' ASSIGN_READ | TMUX_PANE="$reply_a_pane" "$GANG" hitch assign-read \
+  -c replyable -d /tmp --stdin >/dev/null
+assign_id="$(window_id assign-read)"
+assign_pane="$(tmux list-panes -t "$assign_id" -F '#{pane_id}')"
+assign_nonce="$(reply_nonce_from "$assign_id" reply-a)" || assign_nonce=""
+equal "the hitch assignment leaves its recipient one record" 16 "${#assign_nonce}"
+# source-guard: producer@1db1d3e47cb4: ASSIGN_READ exists only on the stdin of the hitch above, and the nonce is read from the one record that hitch's send left on assign-read
+contains "the assignment is stamped in its envelope" "$(pane_all assign-read)" \
+  "[gang:reply-a#$assign_nonce assignment] ASSIGN_READ"
+equal "the assignment record is waived, not a request" waived \
+  "$(tmux show-options -wqv -t "$assign_id" "@gl_reply_$assign_nonce" | cut -d: -f4)"
+assign_wire="$(pane_all assign-read \
+  | grep -o "\[gang:reply-a#[^]]*\] ASSIGN_READ \[/gang:reply-a#[0-9a-f]*\]" | tail -1)" \
+  || assign_wire=""
+contains "the pane carries the assignment envelope" "$assign_wire" "] ASSIGN_READ [/gang:reply-a#"
+reply_prompt_event "$assign_pane" "$assign_wire"
+contains "explain shows the assignment was read and owes nothing" \
+  "$($GANG explain assign-read)" \
+  "reply waived by reply-a (message $assign_nonce; nothing owed; read)"
+equal "a read assignment owes no acknowledgement" \
+  $'clear\t-\t-\t-' \
+  "$(TMUX_PANE="$assign_pane" "$GANG" reply-obligations)"
+reply_stop_run "$assign_pane"
+equal "a turn that reads the assignment and ends is not refused idle" "{}" "$reply_stop_output"
+"$GANG" drop assign-read >/dev/null
+
 # A REPLY THAT CREATES NO RECIPROCAL DEBT MAY DECLINE A TURN OF ITS OWN.
 # Requests remain immediate because their native prompt proof is what opens the
 # recipient's obligation. A reply the sender marks --ack waits for the next
