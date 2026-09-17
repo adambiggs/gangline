@@ -236,8 +236,9 @@ longer brief goes on standard input or names a file to read.
 
 `hitch` registers the launch record `gang usage` joins on: the model and effort
 chosen (empty where none was), the directory, the wall-clock start, and the
-optional `-t` label, an opaque string of at most 200 printable characters that
-Gangline prints and never reads. A resume re-registers all of them for the new
+optional `-t` task, a string of at most 200 printable characters. `gang usage`
+prints it as a label; without `--stdin` the startup contract also delivers it as
+the assignment, as above. A resume re-registers all of them for the new
 launch. `adopt` registers the pane's current directory and an empty model and
 effort, because it did not choose them.
 
