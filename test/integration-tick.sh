@@ -1509,6 +1509,18 @@ collar_cache_stamp() {
   stat -c %Y -- "\$file"
 }
 SH
+cat > "$RUN_ROOT/collars/tick-occupied-gone.sh" <<SH
+# shellcheck shell=bash
+# shellcheck disable=SC2034
+. "$RUN_ROOT/collars/tick-cache.sh"
+GANG_OCCUPIED_REGEX='TICK_OCCUPIED_GONE'
+SH
+cat > "$RUN_ROOT/collars/tick-occupied-late.sh" <<SH
+# shellcheck shell=bash
+# shellcheck disable=SC2034
+. "$RUN_ROOT/collars/tick-native.sh"
+GANG_BUSY_REGEX='TICK_OCCUPIED_LATE'
+SH
 cat > "$RUN_ROOT/collars/tick-codex-adopt.sh" <<SH
 # shellcheck shell=bash
 # shellcheck disable=SC2034
@@ -2907,6 +2919,94 @@ contains "the still-live roster entry is visited in the same pass" \
 # still exists is unchanged code (window_gone must return false there and
 # fall through to the original `die`); it is not independently re-exercised
 # here. See test/evidence/tick254/NOTES.md.
+
+# ISSUE #264: THE WINDOW MAY DISAPPEAR INSIDE occupied(), after the tick has
+# already accepted its roster entry. Pause immediately before occupied's first
+# pane read, remove that real window through the ordinary drop path, and then
+# resume the pass. The stale ID is gone, not an unreadable live pane: it must
+# be skipped without an occupancy alert or any later write, while the pass
+# still reaches another roster entry. The refused-live-pane control remains in
+# integration-readiness.sh and must keep failing loudly.
+"$HITCH" tick-occupied-victim -c tick-occupied-gone -d /tmp >/dev/null
+"$HITCH" tick-occupied-live -c tick-native -d /tmp >/dev/null
+tick_occupied_ready_fifo="$RUN_ROOT/tick-occupied-ready"
+tick_occupied_release_fifo="$RUN_ROOT/tick-occupied-release"
+tick_occupied_ledger="$RUN_ROOT/tick-occupied-ledger"
+mkfifo "$tick_occupied_ready_fifo" "$tick_occupied_release_fifo"
+GANG_TEST_OCCUPIED_VICTIM=tick-occupied-victim \
+GANG_TEST_OCCUPIED_READY_FIFO="$tick_occupied_ready_fifo" \
+GANG_TEST_OCCUPIED_RELEASE_FIFO="$tick_occupied_release_fifo" \
+GANG_TEST_TICK_VISIT_LEDGER="$tick_occupied_ledger" \
+  "$GANG" tick > "$RUN_ROOT/tick-occupied.out" \
+    2> "$RUN_ROOT/tick-occupied.err" &
+tick_occupied_pid=$!
+IFS= read -r -N 1 _ < "$tick_occupied_ready_fifo"
+tick_occupied_drop_rc=0
+"$GANG" drop tick-occupied-victim \
+  > "$RUN_ROOT/tick-occupied-drop.out" 2>&1 || tick_occupied_drop_rc=$?
+printf '\n' > "$tick_occupied_release_fifo"
+tick_occupied_rc=0
+wait "$tick_occupied_pid" || tick_occupied_rc=$?
+equal "the normal drop path removes a window paused inside occupied" \
+  0 "$tick_occupied_drop_rc"
+equal "the pass whose occupancy target vanished still completes cleanly" \
+  0 "$tick_occupied_rc"
+excludes "a gone occupancy target raises no unreadable-pane alert" \
+  "$(<"$RUN_ROOT/tick-occupied.err")" "refusing to guess occupancy"
+excludes "a gone occupancy target receives no later tick write" \
+  "$(<"$RUN_ROOT/tick-occupied.err")" "tick-occupied-victim"
+contains "the same pass continues to its still-live roster entry" \
+  "$(<"$tick_occupied_ledger")" "tick-occupied-live"
+tick_occupied_cleanup_rc=0
+GANG_TEST_TICK_MODE=manual "$GANG" tick >/dev/null \
+  || tick_occupied_cleanup_rc=$?
+equal "a clean pass clears any failed health left by the vanished-window fixture" \
+  0 "$tick_occupied_cleanup_rc"
+"$GANG" drop tick-occupied-live >/dev/null
+
+# The final occupied fallback negates busy_painted's ordinary "not busy"
+# answer. Drive the narrower race where the composer absence is read while the
+# window is live, then drop it immediately before busy_painted's own capture;
+# a gone result must not be negated into "occupied" for state_now to spend.
+"$HITCH" tick-occupied-late -c tick-occupied-late -d /tmp >/dev/null
+"$HITCH" tick-occupied-late-live -c tick-native -d /tmp >/dev/null
+tick_occupied_late_id="$(window_id tick-occupied-late)"
+tick_occupied_late_box_ready="$RUN_ROOT/tick-occupied-late-box-ready"
+tick_occupied_late_box_hold="$RUN_ROOT/tick-occupied-late-box-hold"
+mkfifo "$tick_occupied_late_box_ready" "$tick_occupied_late_box_hold"
+tmux send-keys -l -t "$tick_occupied_late_id" \
+  "printf '\\033[2J\\033[H'; printf 'TICK_OCCUPIED_LATE\\n'; printf x > '$tick_occupied_late_box_ready'; IFS= read -r _ < '$tick_occupied_late_box_hold'"
+tmux send-keys -t "$tick_occupied_late_id" Enter
+IFS= read -r -N 1 _ < "$tick_occupied_late_box_ready"
+tick_occupied_late_ready_fifo="$RUN_ROOT/tick-occupied-late-ready"
+tick_occupied_late_release_fifo="$RUN_ROOT/tick-occupied-late-release"
+tick_occupied_late_ledger="$RUN_ROOT/tick-occupied-late-ledger"
+mkfifo "$tick_occupied_late_ready_fifo" "$tick_occupied_late_release_fifo"
+GANG_TEST_OCCUPIED_VICTIM=tick-occupied-late \
+GANG_TEST_OCCUPIED_PHASE=busy \
+GANG_TEST_OCCUPIED_READY_FIFO="$tick_occupied_late_ready_fifo" \
+GANG_TEST_OCCUPIED_RELEASE_FIFO="$tick_occupied_late_release_fifo" \
+GANG_TEST_TICK_VISIT_LEDGER="$tick_occupied_late_ledger" \
+  "$GANG" tick > "$RUN_ROOT/tick-occupied-late.out" \
+    2> "$RUN_ROOT/tick-occupied-late.err" &
+tick_occupied_late_pid=$!
+IFS= read -r -N 1 _ < "$tick_occupied_late_ready_fifo"
+tick_occupied_late_drop_rc=0
+"$GANG" drop tick-occupied-late \
+  > "$RUN_ROOT/tick-occupied-late-drop.out" 2>&1 \
+  || tick_occupied_late_drop_rc=$?
+printf '\n' > "$tick_occupied_late_release_fifo"
+tick_occupied_late_rc=0
+wait "$tick_occupied_late_pid" || tick_occupied_late_rc=$?
+equal "the normal drop path removes a window between occupancy reads" \
+  0 "$tick_occupied_late_drop_rc"
+equal "the pass whose final occupancy target vanished completes cleanly" \
+  0 "$tick_occupied_late_rc"
+excludes "a gone final occupancy target is not mislabeled occupied" \
+  "$(<"$RUN_ROOT/tick-occupied-late.err")" "tick-occupied-late"
+contains "the late-race pass continues to its live roster entry" \
+  "$(<"$tick_occupied_late_ledger")" "tick-occupied-late-live"
+"$GANG" drop tick-occupied-late-live >/dev/null
 
 # THE DEADLINE IS AN OPERATOR SETTING, VALIDATED BEFORE THE WORKER STARTS, AND
 # THE WORKER ACCEPTS ONLY THE NUMBER ITS CONTROLLER ENFORCES.

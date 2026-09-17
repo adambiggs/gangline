@@ -3893,8 +3893,23 @@ occupied_witness() { # $1 = window id; 0 = the event tier answers occupied
 }
 
 OCCUPIED_SURFACE=""
+occupied_test_pause() { # $1 window, $2 first|busy; inert outside test collars
+  [ "${GANG_TEST_COLLARS:-}" = 1 ] \
+    && [ "${GANG_TEST_OCCUPIED_PHASE:-first}" = "$2" ] \
+    && [ -n "${GANG_TEST_OCCUPIED_VICTIM:-}" ] \
+    && [ "$(agent_name_of "$1")" = "$GANG_TEST_OCCUPIED_VICTIM" ] \
+    && [ -n "${GANG_TEST_OCCUPIED_READY_FIFO:-}" ] \
+    && [ -n "${GANG_TEST_OCCUPIED_RELEASE_FIFO:-}" ] || return 0
+  printf x > "$GANG_TEST_OCCUPIED_READY_FIFO"
+  IFS= read -r _ < "$GANG_TEST_OCCUPIED_RELEASE_FIFO" || true
+}
+
 occupied() { # $1 = window id, collar loaded; exit 0 if a UI owns the input box
   OCCUPIED_SURFACE=""
+  WINDOW_GONE=""
+  # A deterministic issue-264 seam: the roster has already named this live
+  # window, and the test removes it before occupancy takes its first pane read.
+  occupied_test_pause "$1" first
   if occupied_witness "$1"; then return 0; fi
   local pane live_rc=0 painted_rc=0 turn_rc=0
   # PermissionRequest remains stronger above. During a cooperative retry, a
@@ -3906,15 +3921,20 @@ occupied() { # $1 = window id, collar loaded; exit 0 if a UI owns the input box
     [ "$turn_rc" -ne 1 ] || return 1
   fi
   if [ -n "${GANG_OCCUPIED_REGEX:-}" ]; then
-    pane="$(capture_joined "$1")" || die "cannot read pane $1 — refusing to guess occupancy"
+    pane="$(capture_joined "$1")" || {
+      if window_gone "$1"; then WINDOW_GONE=1; return 1; fi
+      die "cannot read pane $1 — refusing to guess occupancy"
+    }
     if re_match GANG_OCCUPIED_REGEX "$pane"; then
       if declare -F collar_input >/dev/null; then
         input_read "$1" >/dev/null || live_rc=$?
       else
         live_rc=1
       fi
-      [ "$live_rc" -ne 3 ] \
-        || die "cannot read the composer in pane $1 — refusing to guess occupancy"
+      if [ "$live_rc" -eq 3 ]; then
+        if window_gone "$1"; then WINDOW_GONE=1; return 1; fi
+        die "cannot read the composer in pane $1 — refusing to guess occupancy"
+      fi
       [ "$live_rc" -ne 5 ] \
         || die "the collar input reader returned a status Gangline cannot interpret (reported above) — refusing to spend an unknown composer as occupancy"
       if [ "$live_rc" -eq 6 ]; then
@@ -3930,14 +3950,22 @@ occupied() { # $1 = window id, collar loaded; exit 0 if a UI owns the input box
   # the negation turns that into a UI owning the screen. On a live, healthy
   # agent that is a state gang invented out of a read it never took.
   input_painted "$1" || painted_rc=$?
-  [ "$painted_rc" -ne 3 ] \
-    || die "cannot read the composer in pane $1 — refusing to guess occupancy"
+  if [ "$painted_rc" -eq 3 ]; then
+    if window_gone "$1"; then WINDOW_GONE=1; return 1; fi
+    die "cannot read the composer in pane $1 — refusing to guess occupancy"
+  fi
   if [ "$painted_rc" -eq 6 ]; then
     OCCUPIED_SURFACE=background-sessions
     return 0
   fi
   [ "$painted_rc" -ne 0 ] || return 1
-  ! busy_painted "$1"
+  # The box read above can succeed before this final busy-paint read loses the
+  # window. Preserve busy_painted's gone signal instead of negating its shared
+  # "not busy / gone" status into a false occupied verdict.
+  occupied_test_pause "$1" busy
+  if busy_painted "$1"; then return 1; fi
+  [ -z "$WINDOW_GONE" ] || return 1
+  return 0
 }
 
 # WHAT OWNS THE SCREEN, BY NAME. A native dialog painted over a live composer
@@ -6902,8 +6930,8 @@ tick_full_pass_once() {
       [ -z "$WINDOW_GONE" ] || continue
     fi
     err=""
-    if ! err="$(TICK_PASS=0 TICK_GLYPH_REFRESH=1 state_now "$id" snapshot 2>&1 >/dev/null)" \
-       && tmux display-message -p -t "$id" '#{window_id}' >/dev/null 2>&1; then
+    if ! err="$(TICK_PASS=0 TICK_GLYPH_REFRESH=1 state_now "$id" snapshot 2>&1 >/dev/null)"; then
+      if window_gone "$id"; then continue; fi
       err="${err##*$'\n'}"
       err="${err#gang: }"
       glyph_write "$id" "?unknown? (the cooperative pass could not read this window)"
@@ -12437,6 +12465,7 @@ cache_compaction_candidate() { # $1 window, $2 collar; 0 ready, 1 no, 2 diagnost
   [ "$(spool_held "$1")" -eq 0 ] || return 1
   tick_delivery_active "$1" && return 1
   occupied "$1" && return 1
+  [ -z "$WINDOW_GONE" ] || return 1
   busy "$1" || busy_rc=$?
   [ -z "$WINDOW_GONE" ] || return 1
   [ "$busy_rc" -eq 1 ] || return 1
@@ -17395,6 +17424,7 @@ state_now() { # $1 = window id, collar loaded -> the state, in words
     printf '%s\n' "$state"
     return 0
   fi
+  [ -z "$WINDOW_GONE" ] || return 1
   bricked "$1" || bricked_rc=$?
   case "$bricked_rc" in
     0)
