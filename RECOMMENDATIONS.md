@@ -35,11 +35,15 @@ the shared cache; push verifies the same hash and scans only unseen content.
 semantic-call usage on a cache hit. Fleet-wide share is not yet measured; add a
 hit counter before claiming a percentage.
 
-## 3. Fix cumulative-session double counting before adding time views
+## 3. Fix the legacy unfiltered cumulative-session roll-up
 
 **Change:** Gangline. Keep per-hitch teardown snapshots, but aggregate repeated
 native session IDs by a documented latest-snapshot or monotonic-delta rule.
-Surface resets/decreases as unknown rather than subtracting blindly.
+Surface resets/decreases as unknown rather than subtracting blindly. Issue #277
+tracks this defect.
+The date-filtered attribution below is independent: it rejoins ccusage's
+filtered facts and deduplicates native session IDs instead of summing teardown
+snapshots.
 
 **Estimated saving:** 0 direct quota. This removes an overcount that would make
 every later routing or pace decision systematically wrong.
@@ -124,4 +128,5 @@ Implement the two requested smallest lead-facing surfaces: provider history
 with pace projection, and a daily usage view that exposes ccusage's measured
 session/day facts joined to Gangline agents without summing lifecycle snapshots.
 The cumulative resume overcount remains a separate correctness issue and must
-be fixed before any unfiltered view sums teardown snapshots.
+be fixed before the legacy unfiltered roll-up is used for decisions. It is
+tracked in #277; the filtered attribution does not reuse that roll-up.

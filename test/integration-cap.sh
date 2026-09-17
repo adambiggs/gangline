@@ -265,6 +265,42 @@ contains "history derives slope only from those account samples" \
 contains "history names projected exhaustion when it precedes reset" \
   "$cap_out" "on track to exhaust"
 
+# Every reachable fallback says what evidence is missing or what the observed
+# account pace implies. Separate labels and reset epochs prove history does not
+# blend provider windows merely because they appear in one retained file.
+cap_history_edges_root="$RUN_ROOT/cap-history-edges"
+cap_history_edge_reset=$((cap_now + 12 * 60 * 60))
+cap_history_rotated_reset=$((cap_now + 5 * 24 * 60 * 60))
+mkdir -p "$cap_history_edges_root"
+cat > "$cap_history_edges_root/readings.jsonl" <<ROWS
+{"at":$((cap_now - 7 * 60 * 60)),"provider":"claude","status":"unreadable","reason":"fixture reader refused"}
+{"at":$((cap_now - 6 * 60 * 60)),"provider":"claude","label":"single weekly","window":"weekly","used":30,"resets_at":$cap_history_edge_reset,"observed":$((cap_now - 6 * 60 * 60)),"source":"claude-usage-turn","status":"ok","disposition":"current"}
+{"at":$((cap_now - 5 * 60 * 60)),"provider":"codex","label":"flat weekly","window":"weekly","used":40,"resets_at":$cap_history_edge_reset,"observed":$((cap_now - 5 * 60 * 60)),"source":"codex-session-file","status":"ok","disposition":"opened"}
+{"at":$((cap_now - 4 * 60 * 60)),"provider":"codex","label":"flat weekly","window":"weekly","used":40,"resets_at":$cap_history_edge_reset,"observed":$((cap_now - 4 * 60 * 60)),"source":"codex-session-file","status":"ok","disposition":"current"}
+{"at":$((cap_now - 3 * 60 * 60)),"provider":"codex","label":"slow weekly","window":"weekly","used":10,"resets_at":$cap_history_edge_reset,"observed":$((cap_now - 3 * 60 * 60)),"source":"codex-session-file","status":"ok","disposition":"opened"}
+{"at":$((cap_now - 2 * 60 * 60)),"provider":"codex","label":"slow weekly","window":"weekly","used":11,"resets_at":$cap_history_edge_reset,"observed":$((cap_now - 2 * 60 * 60)),"source":"codex-session-file","status":"ok","disposition":"current"}
+{"at":$((cap_now - 90 * 60)),"provider":"claude","label":"rotated weekly","window":"weekly","used":80,"resets_at":$cap_history_edge_reset,"observed":$((cap_now - 90 * 60)),"source":"claude-usage-turn","status":"ok","disposition":"superseded"}
+{"at":$((cap_now - 30 * 60)),"provider":"claude","label":"rotated weekly","window":"weekly","used":5,"resets_at":$cap_history_rotated_reset,"observed":$((cap_now - 30 * 60)),"source":"claude-usage-turn","status":"ok","disposition":"current"}
+ROWS
+cap_pass "history renders every reachable pace fallback without refusing" 0 \
+  env "GANG_CAP_DIR=$cap_history_edges_root" "$GANG" limits --history
+contains "history preserves an unreadable provider sample" \
+  "$cap_out" "claude: unreadable — fixture reader refused"
+contains "history compares the single retained point" \
+  "$cap_out" "pace single weekly: 30% used"
+contains "the single-point reason names the missing comparison" \
+  "$cap_out" "insufficient same-window samples for a projection"
+contains "history compares the flat account window" \
+  "$cap_out" "pace flat weekly: 40% used"
+contains "the flat slope projects no exhaustion" \
+  "$cap_out" "0.0 percentage points/hour — no exhaustion projected at this pace"
+contains "history compares the slow positive account window" \
+  "$cap_out" "pace slow weekly: 11% used"
+contains "the slow projection is bounded by the provider reset" \
+  "$cap_out" "not on track to exhaust before reset"
+equal "different reset epochs remain separate pace groups" 2 \
+  "$(printf '%s\n' "$cap_out" | grep -c '^pace rotated weekly:')"
+
 # THE SAMPLING TIMER RUNS THE SAME COMMAND A PERSON WOULD.
 cap_pass "printing the timer units refuses nothing" 0 \
   "$GANG" cap watch --print-units --interval 15min

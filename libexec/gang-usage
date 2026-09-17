@@ -719,6 +719,9 @@ def report(args) -> int:
     else:
         out.append("no agents: none live in this team and none recorded for it")
 
+    # This legacy unfiltered roll-up still sums per-hitch cumulative snapshots
+    # when one native session is resumed. Issue #277 tracks its correction.
+    # Filtered attribution above does not reuse it and deduplicates session ids.
     by_model = {}
     for row in shown:
         for part in row.get("models") or []:

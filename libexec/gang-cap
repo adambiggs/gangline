@@ -945,9 +945,6 @@ def cmd_history(args) -> int:
         first_at, first = points[0]
         interval = latest_at - first_at
         change = latest["used"] - first["used"]
-        if interval <= 0:
-            print(f"{prefix} — insufficient distinct sample times for a projection")
-            continue
         per_hour = change * 3600 / interval
         if per_hour <= 0:
             print(f"{prefix} — {per_hour:.1f} percentage points/hour"

@@ -1847,10 +1847,15 @@ recorded native session IDs instead of assigning a cumulative teardown snapshot
 to the day it ended. Where ccusage's filtered aggregate omits a known session,
 Gangline discovers in-span IDs from the unfiltered aggregate and reads their
 exact filtered entries. All reads share one 30-second, 64-call bound and true
-source failures remain visible in the coverage summary. A resumed native
-session is counted once in this attribution even if it spans several hitches;
-a session associated with more than one Gangline agent is reported as ambiguous
-rather than assigned.
+source failures remain visible in the coverage summary. A known session with no
+filtered row or exact entries is zero in the selected span, so it is omitted
+rather than reported as a broken join; failed, malformed, unstamped, and
+ambiguous coverage remains visible. Exact recovery is limited to session IDs
+discoverable through ccusage or retained Gangline lifecycle registrations, so
+usage that predates every retained registration may remain unattributed. A
+resumed native session is counted once in this attribution even if it spans
+several hitches; a session associated with more than one Gangline agent is
+reported as ambiguous rather than assigned.
 
 The filtered table groups by Gangline agent and model and keeps input, output
 (including thinking/reasoning in ccusage's output count), cache reads, and cache

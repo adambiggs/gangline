@@ -1111,9 +1111,10 @@ gang usage
   the tokens. Rows join by native session id.
   Without ccusage the table still prints, and
   says why the token columns are empty.
-  Daily/since rows split input, output (including
-  thinking), and cache reads per agent and model.
-  They are local attribution, never account quota.
+  Daily/since rows split input, output
+  (including thinking), and cache reads per
+  agent and model. They are local attribution,
+  never account quota.
   Provider percent-used windows are gang limits.
 EOF
       ;;
