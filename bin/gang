@@ -607,9 +607,12 @@ gang hitch
       harness's own vocabulary; checked
       before a window opens.
   -t, --task <task>
-      opaque label for what this agent was
-      hitched to do; gang usage prints it
-      and gang never reads it.
+      what this agent was hitched to do;
+      gang usage prints it. Without --stdin
+      the startup contract delivers it as
+      the assignment; with --stdin the
+      message is the assignment and this is
+      a label.
   -r, --role <role>
       role brief for this agent, on top of
       the contract every agent gets. gang
@@ -2159,15 +2162,21 @@ system_prompt_build() { # populate the system-prompt-level composite byte-exact
     "$SYSTEM_PROMPT" "$role" "$path" "$ROLE_BODY"
 }
 
-startup_brief() { # $1 = agent name, $2 = doctrine body or empty, $3 = non-empty when a message follows
+startup_brief() { # $1 = agent name, $2 = doctrine body or empty, $3 = non-empty when a message follows, $4 = task or empty
   local role path contract closer=' End this turn.'
   # A MESSAGE HANDED TO HITCH ARRIVES IN THE SAME BATCH, right behind this
   # contract, so a closing "End this turn." reads as the last instruction for
   # both and the agent stops at a read receipt instead of starting that work.
   # Saying nothing let the contract's reply rule stand in its place, so the
   # closer names the message as the assignment and its report as the reply.
-  [ -z "${3:-}" ] \
-    || closer=' The message that follows is your assignment: begin it in the turn that reads it. Do not acknowledge it; your completion report is its reply.'
+  # A TASK WITH NO MESSAGE IS THE ASSIGNMENT. Callers hand the brief to -t, and
+  # a contract that ended the turn left the agent idle with its work unread.
+  if [ -n "${3:-}" ]; then
+    closer=' The message that follows is your assignment: begin it in the turn that reads it. Do not acknowledge it; your completion report is its reply.'
+  elif [ -n "${4:-}" ]; then
+    closer=" Your hitcher gave this task, and it is your assignment: $(printf '%s' "$4" | config_sanitize)
+Begin it in the turn that reads it. Do not acknowledge it; your completion report is its reply."
+  fi
   contract="$(config_path "$CONTRACT_FILE" | config_sanitize)"
   if [ -n "$ROLE_NAME" ]; then
     role="$(printf '%s' "$ROLE_NAME" | config_sanitize)"
@@ -14211,7 +14220,7 @@ hitch_launch() {
   }
   printf '%s\n' "$(colour "$C_OK" "registered $name in window $id ($prof) — if this caller is cut off, inspect: gang status $name")"
   local msg delivery_err="" delivery_rc=0
-  msg="$(startup_brief "$name" "$DOCTRINE" "${HITCH_BODY:+body}")"
+  msg="$(startup_brief "$name" "$DOCTRINE" "${HITCH_BODY:+body}" "$task")"
   echo "$(colour "$C_OK" "hitched $name") ($prof) in $dir$(colour "$C_DIM" "$context_notice$cache_notice — watch: gang attach")"
   printf '%s\n' "$(colour "$C_WORK" "waiting for $name to finish booting...")"
   local ready=0 recovery
@@ -15843,7 +15852,7 @@ launch_record_check() { # $1 = task label; refuse what a record line cannot carr
   case "$1" in
     *[$'\001'-$'\037'$'\177']*) die "hitch: task '$(printf '%s' "$1" | config_sanitize)' has control characters gang will not record" ;;
   esac
-  [ "${#1}" -le 200 ] || die "hitch: task label is longer than 200 characters; it is a label, not a brief"
+  [ "${#1}" -le 200 ] || die "hitch: task is longer than 200 characters; pass a longer brief on stdin with --stdin, or a task naming a file to read"
 }
 
 usage_events_path() { printf '%s' "${XDG_DATA_HOME:-$HOME/.local/share}/gangline/usage/events.jsonl"; }

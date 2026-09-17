@@ -189,7 +189,7 @@ selects the harness. If a native first-run gate appears, `up` exposes it before
 waiting for startup-contract delivery, so answering that prompt remains the
 only operator step.
 
-### `gang hitch <name> [-c harness] [-d dir] [-m model] [-e effort] [-t|--task label] [-r|--role role] [-l|--lights lights] [--resume [session-id]] [--stdin]`
+### `gang hitch <name> [-c harness] [-d dir] [-m model] [-e effort] [-t|--task task] [-r|--role role] [-l|--lights lights] [--resume [session-id]] [--stdin]`
 
 Starts a native harness in a named tmux window and delivers one startup contract.
 That contract names the agent and carries `CONTRACT.md`, which holds the
@@ -227,6 +227,12 @@ launch and sends separately with `gang send --from`. Standard input is read as
 `gang send --stdin` reads it: a pipe, a file or a heredoc, never a terminal.
 Without the flag `hitch` reads nothing from standard input, so where it can see
 unread input waiting there it refuses before launching rather than drop it.
+
+Without `--stdin`, a `-t` task is the assignment: the startup contract quotes it
+and tells the agent to begin it, with the completion report as its reply, in
+place of ending the turn. With `--stdin` the message is the assignment and `-t`
+is only the label `gang usage` prints. A task is at most 200 characters, so a
+longer brief goes on standard input or names a file to read.
 
 `hitch` registers the launch record `gang usage` joins on: the model and effort
 chosen (empty where none was), the directory, the wall-clock start, and the

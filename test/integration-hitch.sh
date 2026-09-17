@@ -917,6 +917,30 @@ else
     "no window 'hitchbody': $hitch_body_out"
 fi
 
+# A TASK WITH NO MESSAGE IS THE ASSIGNMENT. Callers put the brief in -t, the
+# agent received a contract ending "End this turn." and nothing else, and it
+# sat idle until someone noticed and sent the brief by hand.
+hitch_task_rc=0
+hitch_task_out="$("$GANG" hitch hitchtask -c bash -d /tmp \
+  -t 'MARK_HITCH_TASK' </dev/null 2>&1)" || hitch_task_rc=$?
+equal "hitch -t without --stdin launches the agent" 0 "$hitch_task_rc"
+if [ -n "$(window_id hitchtask)" ]; then
+  hitch_task_seen="$(pane hitchtask)
+$("$GANG" mail hitchtask 2>&1)"
+  # source-guard: producer@d6db65636994: the hitch above is the sole producer of this literal; only its -t value carries it
+  contains "the task reaches the new agent" \
+    "$hitch_task_seen" "MARK_HITCH_TASK"
+  # source-guard: producer@89c88c45533d: only the startup contract of a hitch carrying an assignment writes this closer, and no message was sent to this agent
+  contains "the contract names the task as the assignment" \
+    "$hitch_task_seen" "is your assignment"
+  excludes "and does not end the turn" \
+    "$hitch_task_seen" "End this turn."
+  "$GANG" drop hitchtask >/dev/null
+else
+  fail "hitch -t leaves a live agent holding its task" \
+    "no window 'hitchtask': $hitch_task_out"
+fi
+
 # The message rides out a first-run prompt as the contract does. Send refuses to
 # type into the prompt and queues the message behind the parked contract, so the
 # end of hitch's wait no longer takes the message with it.
