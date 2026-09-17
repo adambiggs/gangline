@@ -836,8 +836,11 @@ re-hitch only if the process itself needs replacement.
 When a Codex hook review blocks an unattended hitch, run `gang trust codex -d
 <hitch-dir>` from a detached operator terminal that can reach the team. It
 opens the native review in an attended tmux window with the same hook commands
-but without the preflight. Gangline never selects a menu item: answer or reject
-it yourself, quit Codex, then hitch again.
+but without the preflight. Carry the refused hitch's `-m` and `-e` choices to
+the trust command where that collar supports them. Gangline never selects a
+menu item: answer or reject it yourself, then run `gang tick` after the
+composer appears to retire the marker-owned transient review before hitching
+again.
 
 An operator who wants no gate at all sets that in their own configuration
 rather than in a collar: codex takes `--dangerously-bypass-hook-trust`, and a

@@ -231,6 +231,11 @@ Gangline prints and never reads. A resume re-registers all of them for the new
 launch. `adopt` registers the pane's current directory and an empty model and
 effort, because it did not choose them.
 
+Immediately after that registration, before its first boot observation,
+`hitch` prints the name and tmux window id. If its caller is interrupted while
+the harness is still booting, that receipt means the launch is live; run
+`gang status <name>` to inspect it rather than retrying the hitch blindly.
+
 The launch environment carries the exact `GANG_SESSION`, the absolute resolved
 `GANG_CONFIG_DIR`, and any custom collar and lock paths, so harness commands
 cannot drift to another session or configuration layer on the same tmux server.
@@ -2312,17 +2317,19 @@ before opening a composer and holds the window with this final line (with its
 live count and directory substituted):
 
 ```
-gang: N codex hook(s) are untrusted — run gang trust codex -d CWD, answer 'Trust all and continue', quit codex, then re-hitch (this held window carries the full list: gang capture <name> 40).
+gang: N codex hook(s) are untrusted — run gang trust codex -d CWD, answer 'Trust all and continue', then run gang tick after the composer appears before re-hitching (this held window carries the full list: gang capture <name> 40).
 ```
 
-From the affected team, run `gang trust codex -d CWD`, attach to the printed
-disposable window, select it, and choose Codex's native **Trust all and
-continue**. The command opens the collar's exact hook configuration without
-the preflight that would otherwise refuse before the menu; it sends no trust
-key and does not register the review window as an agent. Quit Codex, then
-re-run `gang hitch`. The held refusal's roster row also prints this exact
-command as `!hook-trust!`, even if the preflight ended just after recording the
-requested identity. The native menu requires a person;
+From the affected team, run `gang trust codex -d CWD`, adding the refused
+hitch's `-m` and `-e` choices where the collar supports them. Attach to the
+printed disposable window, select it, and choose Codex's native **Trust all
+and continue**. The command opens the collar's exact hook configuration
+without the preflight that would otherwise refuse before the menu; it sends no
+trust key and does not register the review window as an agent. Once the collar
+observes the resulting composer, run `gang tick`: it retires that
+marker-owned transient window. The held refusal's roster row also prints this
+exact command as `!hook-trust!`, even if the preflight ended just after
+recording the requested identity. The native menu requires a person;
 Gangline deliberately cannot grant trust. An edit that changes the configured
 command or path can therefore cause every later Codex hitch on that machine to
 refuse until a person completes those steps.

@@ -309,6 +309,48 @@ contains "the attended trust command says it sent no menu key" \
 equal "the attended trust review is not registered as an agent" "" \
   "$(tmux show-options -wqv -t "$friction_trust_window" @gl_agent)"
 
+# A trust-review window is a transient owned by the command, not an unadopted
+# agent. Its model and effort must therefore follow the refused hitch's choices
+# and a cooperative tick must retire it once its own collar positively sees the
+# composer that follows the operator's native menu answer.
+friction_trust_choice_args="$RUN_ROOT/friction-trust-choice-args"
+friction_trust_choice_launch="$RUN_ROOT/friction-trust-choice-launch.sh"
+friction_trust_choice_channel="gang-friction-trust-choice-$$"
+cat > "$friction_trust_choice_launch" <<SH
+#!/bin/sh
+printf '%s\\n' "\$@" > '$friction_trust_choice_args'
+tmux -S '$friction_socket' wait-for -S '$friction_trust_choice_channel'
+PS1='❯ ' exec bash --norc
+SH
+chmod +x "$friction_trust_choice_launch"
+cat > "$friction_collars/trust-review.sh" <<SH
+# shellcheck shell=bash
+# shellcheck disable=SC2034
+. "$ROOT/collars/bash.sh"
+GANG_TRUST_LAUNCH="'$friction_trust_choice_launch'"
+GANG_MODEL_OPT='--model'
+GANG_EFFORT_OPT='--effort='
+GANG_EFFORT_CMD="printf 'careful\\n'"
+collar_model_check() {
+  [ "\$1" = chosen-model ]
+}
+SH
+friction_trust_choice_out="$("$GANG" trust trust-review -d "$RUN_ROOT" \
+  -m chosen-model -e careful)"
+tmux wait-for "$friction_trust_choice_channel"
+friction_trust_choice_window="$(printf '%s\n' "$friction_trust_choice_out" \
+  | awk '{ for (i = 1; i <= NF; i++) if ($i ~ /^@[0-9]+$/) { print $i; exit } }')"
+[ -n "$friction_trust_choice_window" ] \
+  || { printf 'friction: choice trust command named no window [%s]\n' "$friction_trust_choice_out" >&2; exit 1; }
+equal "the attended trust launch receives the requested model and effort" \
+  $'--model\nchosen-model\n--effort=careful' "$(<"$friction_trust_choice_args")"
+equal "the transient choice review remains unregistered before its menu is answered" "" \
+  "$(tmux show-options -wqv -t "$friction_trust_choice_window" @gl_agent)"
+"$GANG" tick >/dev/null
+equal "a tick retires the composer-ready trust review that gang launched" "" \
+  "$(tmux list-windows -t "=$GANG_SESSION" -F '#{window_id}' | \
+    awk -v wanted="$friction_trust_choice_window" '$1 == wanted { print $1 }')"
+
 # A preflight refusal can die before or just after hitch records its identity,
 # so its marker must keep the attended recovery visible in either state.
 friction_hold_hooks=""
@@ -398,6 +440,10 @@ else
   fail "an untrusted Codex hitch leaves its original requested window held" \
     "hitch unexpectedly succeeded [$friction_rehitch_refusal]"
 fi
+contains "an untrusted hitch directs the attended review to tick after its composer" \
+  "$friction_rehitch_refusal" "run gang tick after the composer appears"
+excludes "an untrusted hitch no longer asks the operator to quit Codex" \
+  "$friction_rehitch_refusal" "quit codex"
 friction_rehitch_id="$(window_id trust-rehitch)"
 equal "the original refused window carries its exact attended-trust marker" \
   $'codex\t'"$RUN_ROOT" \
