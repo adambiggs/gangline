@@ -1968,6 +1968,32 @@ equal "a re-Stop with debt standing is released, not held" "{}" "$reply_fake_out
 # source-guard: whole-surface@8d591dac2c95: the complete fake hook log orders the release before the boundary, so any producer is valid evidence
 equal "the release is reported to Gangline before the boundary closes" \
   $'released\nhook' "$(cat "$reply_fake_log")"
+
+# A release spends the native fuse's remaining budget just like the mutating
+# boundary that follows it. Capture the subprocess deadline directly: using a
+# wall-clock delay here would make host scheduling the assertion instead of the
+# timeout the adapter grants Gangline.
+reply_release_budget="$(python3 -B - "$reply_stop_hook" <<'PY'
+import importlib.util
+import subprocess
+import sys
+
+spec = importlib.util.spec_from_file_location("gangline_stop_hook", sys.argv[1])
+module = importlib.util.module_from_spec(spec)
+sys.modules[spec.name] = module
+spec.loader.exec_module(module)
+seen = []
+module.fuse_left = lambda: 6.0
+module.gang_run = lambda gang, args, deadline, payload=None: (
+    seen.append(deadline)
+    or subprocess.CompletedProcess([gang, *args], 0, "", "")
+)
+module.report_release("/fixture/gang", "")
+print(seen[0])
+PY
+)"
+equal "a release may spend all the time left in the native fuse" 6.0 \
+  "$reply_release_budget"
 : > "$reply_fake_log"
 reply_fake_out="$(printf '%s' "$reply_stop_active_payload" \
   | FAKE_REPLY_QUERY='owed\t2222222222222222\tlive-peer\tlive\n' FAKE_REPLY_LOG="$reply_fake_log" \
