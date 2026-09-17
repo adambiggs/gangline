@@ -203,4 +203,5 @@ Gangline's durable constraints live in the records below. A record's id is perma
 | [0197](0197-arc-workspaces-preserve-native-trust-as-linked-worktrees-of-the-canonical-checkout.md) | Arc workspaces preserve native trust as linked worktrees of the canonical checkout | proposed | 2026-09-16 |
 | [0198](0198-an-agent-declares-itself-safe-to-drop.md) | An agent declares itself safe to drop | accepted | 2026-09-16 |
 | [0200](0200-hitch-provenance-is-one-vocabulary-across-every-inspection-surface.md) | Hitch provenance is one vocabulary across every inspection surface | proposed | 2026-09-16 |
+| [0201](0201-a-hitch-assignment-is-answered-by-its-completion-report.md) | A hitch assignment is answered by its completion report | proposed | 2026-09-16 |
 | [0202](0202-runtime-state-lives-in-the-uid-s-runtime-directory-and-moves-only-when-a-session-opens.md) | Runtime state lives in the uid's runtime directory and moves only when a session opens | proposed | 2026-09-16 |
