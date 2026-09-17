@@ -1735,7 +1735,7 @@ readout is visible. claude-code can answer only when lights were enabled at
 hitch, because that launch choice installs its statusline beacon. Adopted
 windows answer only when their required native source is independently present.
 
-### `gang limits [name]`
+### `gang limits [name]` / `gang limits --history`
 
 Reads the non-interactive provider-limit source declared by the target's collar.
 It prints one native window per line with percent used, the reset in local time,
@@ -1755,6 +1755,16 @@ reader, malformed row, missing reset, or missing observation time fails loudly.
 A successful read records the most constrained native window on the target's
 tmux window. `status` and `roster` report that ephemeral evidence without
 sampling again; it dies with the agent window.
+
+`--history` reads the bounded account-quota samples retained by `gang cap`
+without taking a provider turn. It prints every provider-published reading and,
+for weekly samples sharing one provider reset, compares elapsed window time with
+the observed percentage slope. With at least two distinct observations it says
+whether that pace reaches 100% before reset and gives the projected time; with
+insufficient, flat, or decreasing evidence it says why no exhaustion time is
+available. Projection is labelled as derived and never uses `gang usage`,
+ccusage, or the local usage-event ledger: those cover local attribution while
+the account allowance is shared with consumers on other machines.
 
 ### `gang log [name] [--since MONOTONIC_NS] [--kind KIND]`
 

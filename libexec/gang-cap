@@ -10,6 +10,10 @@ is on disk; Claude publishes the same kind of reading only to a live
 first time a reading crosses a threshold inside one provider window. `show`
 prints what was last read without spending a turn.
 
+`history` prints those provider-published samples and derives pace only between
+observations in the same provider window. Local token totals never enter that
+projection: other machines and sessions share the account allowance.
+
 Every percentage stored here is a number the provider published. Nothing in
 this program derives a percentage from token volume: a figure that reads as a
 measurement while being an estimate is worse than an absent one, because the
@@ -866,6 +870,102 @@ def cmd_show(args) -> int:
     return 0
 
 
+def cmd_history(args) -> int:
+    """Print retained account-quota samples and same-window pace."""
+    path = state_root() / "readings.jsonl"
+    if not path.exists():
+        print("gang limits: no account-quota history has been recorded; "
+              "take samples with 'gang cap check' or 'gang cap watch'")
+        return 0
+
+    rows = []
+    groups = {}
+    try:
+        stream = open(path, encoding="utf-8")
+    except OSError as err:
+        raise Unreadable(f"{path} could not be read: {err}") from err
+    with stream:
+        for number, line in enumerate(stream, 1):
+            if not line.strip():
+                continue
+            try:
+                raw = json.loads(line)
+            except ValueError as err:
+                raise Unreadable(f"history line {number} is not JSON: {err}") from err
+            at = whole_epoch(raw.get("at"), f"history line {number} at")
+            status = raw.get("status", "ok")
+            if status != "ok":
+                provider = raw.get("provider")
+                reason = raw.get("reason")
+                if provider not in SOURCE_FOR_PROVIDER:
+                    raise Unreadable(
+                        f"history line {number} names no known provider: {provider!r}")
+                if status != "unreadable" or not isinstance(reason, str) or not reason:
+                    raise Unreadable(
+                        f"history line {number} has no readable failure status and reason")
+                rows.append((at, f"{stamp(at)}  {provider}: unreadable — {reason}"))
+                continue
+            row = validated_row(raw, f"history line {number}")
+            disposition = raw.get("disposition")
+            if disposition not in ("opened", "current", "stale", "superseded"):
+                raise Unreadable(
+                    f"history line {number} has no known disposition: {disposition!r}")
+            rows.append((
+                at,
+                f"{stamp(row['observed'])}  {row['label']}: {row['used']}% used"
+                f" — resets {stamp(row['resets_at'])} — {disposition}",
+            ))
+            if row["window"] == "weekly":
+                key = (row["provider"], row["label"], row["resets_at"])
+                # A replayed session file can append the same provider
+                # observation more than once. One observation is one point;
+                # the last identical stamp wins without manufacturing a flat
+                # interval or extra weight.
+                groups.setdefault(key, {})[row["observed"]] = row
+
+    if not rows:
+        print("gang limits: no account-quota history has been recorded; "
+              "take samples with 'gang cap check' or 'gang cap watch'")
+        return 0
+    for _, rendered in sorted(rows):
+        print(rendered)
+
+    for (_, label, reset), observations in sorted(groups.items()):
+        points = sorted(observations.items())
+        latest_at, latest = points[-1]
+        window_seconds = WEEKLY_MINUTES * 60
+        started = reset - window_seconds
+        elapsed = max(0, min(window_seconds, latest_at - started))
+        elapsed_percent = (elapsed * 100 + window_seconds // 2) // window_seconds
+        prefix = (f"pace {label}: {latest['used']}% used at {elapsed_percent}% "
+                  f"of weekly window")
+        if len(points) < 2:
+            print(f"{prefix} — insufficient same-window samples for a projection")
+            continue
+        first_at, first = points[0]
+        interval = latest_at - first_at
+        change = latest["used"] - first["used"]
+        if interval <= 0:
+            print(f"{prefix} — insufficient distinct sample times for a projection")
+            continue
+        per_hour = change * 3600 / interval
+        if per_hour <= 0:
+            print(f"{prefix} — {per_hour:.1f} percentage points/hour"
+                  " — no exhaustion projected at this pace")
+            continue
+        exhaust = latest_at + (100 - latest["used"]) * 3600 / per_hour
+        slope = f"{per_hour:.1f} percentage points/hour"
+        if exhaust < reset:
+            print(f"{prefix} — {slope} — on track to exhaust {stamp(int(exhaust))}"
+                  f" before reset {stamp(reset)}")
+        else:
+            projected = min(100, latest["used"] + per_hour * (reset - latest_at) / 3600)
+            print(f"{prefix} — {slope} — not on track to exhaust before reset"
+                  f" (projected {projected:.0f}% at {stamp(reset)})")
+    print(f"history: {path}")
+    return 0
+
+
 def cmd_forget(args) -> int:
     """Remove everything this command has written."""
     root = state_root()
@@ -1060,6 +1160,9 @@ def main(argv: list) -> int:
 
     show = subparsers.add_parser("show")
     show.set_defaults(run=cmd_show)
+
+    history = subparsers.add_parser("history")
+    history.set_defaults(run=cmd_history)
 
     replay = subparsers.add_parser("replay")
     replay.add_argument("--readings", required=True)

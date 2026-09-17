@@ -1070,15 +1070,22 @@ gang limits
   an agent's composer.
 
   gang limits [name]
+  gang limits --history
 
   [name]  agent whose provider limits to read
           (default: this window)
+
+  --history  retained account-quota samples
+             and pace within each provider
+             window
 
   The collar owns a machine-readable or
   headless source. Output names each native
   window, percent used, reset time, and sample
   age. A collar with no such source fails
   loudly; gang never substitutes a pane scrape.
+  History and pace use only percentages the
+  provider published, never local token totals.
 EOF
       ;;
     usage) cat <<'EOF'
@@ -16502,6 +16509,11 @@ cmd_usage() { # token consumption per agent, joined from ccusage by native sessi
 
 cmd_limits() { # sample the collar's correctness source, never its usage UI
   local name="${1:-}" rc=0 cause state now line label used reset observed age when
+  if [ "$name" = --history ]; then
+    [ $# -eq 1 ] || die "limits: --history takes no agent name or other arguments"
+    "$GANGLINE_CAP_HELPER" history
+    return
+  fi
   [ $# -le 1 ] || die "limits: unexpected argument '$2'"
   if [ -z "$name" ]; then
     name="$(self_name)" || {

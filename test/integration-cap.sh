@@ -242,6 +242,29 @@ cap_pass "replaying with every disposition named refuses nothing" 0 \
 equal "and the reading belonging to a closed window is refused there too" \
   1 "$(printf '%s\n' "$cap_out" | grep -c superseded)"
 
+# HISTORY AND PACE USE ONLY THE ACCOUNT QUOTA THE PROVIDER PUBLISHED. Local
+# ccusage totals cover only this host and cannot measure the shared allowance;
+# this fixture therefore contains cap readings and no token/event input.
+cap_history_root="$RUN_ROOT/cap-history"
+cap_history_reset=$((cap_now + 6 * 24 * 60 * 60))
+cap_history_first=$((cap_now - 2 * 60 * 60))
+cap_history_last=$((cap_now - 1 * 60 * 60))
+mkdir -p "$cap_history_root"
+cat > "$cap_history_root/readings.jsonl" <<ROWS
+{"at":$cap_history_first,"provider":"codex","label":"codex weekly","window":"weekly","used":10,"resets_at":$cap_history_reset,"observed":$cap_history_first,"source":"codex-session-file","status":"ok","disposition":"opened"}
+{"at":$cap_history_last,"provider":"codex","label":"codex weekly","window":"weekly","used":20,"resets_at":$cap_history_reset,"observed":$cap_history_last,"source":"codex-session-file","status":"ok","disposition":"current"}
+ROWS
+cap_pass "the limits history view reads retained account-quota samples" 0 \
+  env "GANG_CAP_DIR=$cap_history_root" "$GANG" limits --history
+contains "history exposes each provider-published sample" \
+  "$cap_out" "codex weekly: 10% used"
+contains "history compares progress with the provider window" \
+  "$cap_out" "pace codex weekly: 20% used at 14% of weekly window"
+contains "history derives slope only from those account samples" \
+  "$cap_out" "10.0 percentage points/hour"
+contains "history names projected exhaustion when it precedes reset" \
+  "$cap_out" "on track to exhaust"
+
 # THE SAMPLING TIMER RUNS THE SAME COMMAND A PERSON WOULD.
 cap_pass "printing the timer units refuses nothing" 0 \
   "$GANG" cap watch --print-units --interval 15min
