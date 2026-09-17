@@ -751,8 +751,8 @@ cutoff_status_rc=0
 cutoff_status="$("$GANG" status cutoff-composer 2>&1)" || cutoff_status_rc=$?
 equal "a caller cut off during boot can inspect the registered agent" 0 \
   "$cutoff_status_rc"
-contains "the cut-off hitch's status names the registered agent" \
-  "$cutoff_status" "cutoff-composer"
+contains "the cut-off hitch's status reports the registered agent's state" \
+  "$cutoff_status" "~idle~"
 "$GANG" drop cutoff-composer >/dev/null
 
 # Readiness and delivery do not share a lock: a harness may start writing after
