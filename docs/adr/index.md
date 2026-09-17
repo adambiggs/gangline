@@ -205,3 +205,4 @@ Gangline's durable constraints live in the records below. A record's id is perma
 | [0200](0200-hitch-provenance-is-one-vocabulary-across-every-inspection-surface.md) | Hitch provenance is one vocabulary across every inspection surface | proposed | 2026-09-16 |
 | [0201](0201-a-hitch-assignment-is-answered-by-its-completion-report.md) | A hitch assignment is answered by its completion report | proposed | 2026-09-16 |
 | [0202](0202-runtime-state-lives-in-the-uid-s-runtime-directory-and-moves-only-when-a-session-opens.md) | Runtime state lives in the uid's runtime directory and moves only when a session opens | proposed | 2026-09-16 |
+| [0203](0203-a-hitch-refuses-past-a-live-child-ceiling-selected-by-the-hitcher-s-registered-role.md) | A hitch refuses past a live-child ceiling selected by the hitcher's registered role | proposed | 2026-09-17 |
