@@ -79,8 +79,8 @@ can rely on.
 
 Once your completion report is delivered and every agent you hitched is dropped
 or has marked itself, run `gang safe-to-drop --report-to NAME`, naming the agent
-that received the report. After that you receive nothing more; new work needs a
-new agent.
+that received the report. A message delivered to you after that clears the mark;
+mark yourself again once you are done with it.
 
 ## The marathon rule
 

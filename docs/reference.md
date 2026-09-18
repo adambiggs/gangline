@@ -871,12 +871,13 @@ The last two are checked again under the caller's pane lock, the lock every
 delivery to that window takes, and the mark is written under it. The mark is
 the window option `@gl_safe_to_drop`, holding the spool identity it was set for;
 it is honoured only while that equals the window's `@gl_spool`, and it dies
-with the window. From then on every delivery to that registration — `send`,
-`talk`, `at`, `interrupt -m`, `compact`, and any parked entry —
-refuses with exit 3 before anything is typed or parked, naming the mark, and
-the body stays the sender's. Nothing clears the mark: `adopt` refuses a marked
-window, because re-adoption keeps its registration. More work needs a new
-agent. Marking an already marked registration exits 0 and says so.
+with the window. A delivery to that registration — `send`, `talk`, `at`,
+`interrupt -m`, `compact`, and any parked entry — clears the mark under the
+same lock and goes through as it would to any live agent, recording an
+`agent.unmarked` event; `status` and `roster` stop naming the mark, and the
+agent marks itself again when it is done. A mark that cannot be read refuses
+the delivery with exit 3 before anything is typed or parked, and the body stays
+the sender's. Marking an already marked registration exits 0 and says so.
 
 ### `gang down <session>`
 
@@ -1035,11 +1036,7 @@ this query path, so any of them may be the reader that first latches the proof.
 `status` retains the message and witnessed sender as retirement history, and
 Stop may proceed if no live or ambiguous obligation remains. A fresh hitch with
 the same name has a different token and inherits nothing; failure to read the
-identity inventory remains unknown and fails closed. A live sender that has marked
-itself safe to drop accepts no further delivery, so its request cannot be
-answered: the query emits a `retired` row naming `sender-marked` and writes no
-proof, since the registration still stands and its drop retires the record as
-gone. A mark that cannot be read stays unknown and fails closed.
+identity inventory remains unknown and fails closed.
 
 Unenveloped session-keyboard input and `self-declared:` envelopes create no
 peer obligation. They also do not clear, supersede, or mask one. Tool events,

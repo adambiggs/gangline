@@ -1770,9 +1770,9 @@ equal "a spool held mid-delivery blocks automatic compaction" 3 \
   "$(tick_cache_count)"
 rm -f -- "$GANG_LOCK_DIR/spool/$tick_cache_spool/sending-cache-test"
 
-# A window marked safe to drop accepts no further delivery, so choosing it
-# for compaction made every tick fail on the refusal and raise a fresh alert
-# (#288). A marked window is not a candidate, and the pass stays green.
+# A window marked safe to drop has declared its work done, and compacting it
+# would clear the mark that authorizes its teardown. A marked window is not a
+# candidate, and the pass stays green (#288).
 tick_cache_ready
 tmux set-option -w -t "$tick_cache_id" @gl_safe_to_drop \
   "$(tmux show-options -wqv -t "$tick_cache_id" @gl_spool)"

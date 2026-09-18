@@ -1587,10 +1587,9 @@ gang safe-to-drop
 
   Refused unless every agent you hitched is
   gone or marked, and no mail for you is
-  still waiting. Once marked, nothing more
-  is delivered to this registration and the
-  mark cannot be cleared: more work needs a
-  new agent. Your hitcher may then drop you.
+  still waiting. Your hitcher may then drop
+  you. A delivery to you clears the mark;
+  mark yourself again when done with it.
 EOF
       ;;
     down) cat <<'EOF'
@@ -7668,9 +7667,9 @@ hitcher_tag() { # $1 window -> one compact roster/explain token: hitcher=NAME,
 # SAFE-TO-DROP IS ONE SELF-ATTESTED TERMINAL FACT (ADR-0198). Its value is the
 # spool token of the registration that set it, so it is honoured only while the
 # window still carries that token: a mark cannot outlive the registration that
-# made it, and nothing clears it for more work, because a registration that
-# wants work is a new one. It authorizes teardown and says nothing else — not
-# that a task is complete, not that the agent is idle or waiting.
+# made it. A delivery clears it (#296), since a message the agent takes is more
+# work. It authorizes teardown and says nothing else — not that a task is
+# complete, not that the agent is idle or waiting.
 safe_to_drop_read() { # $1 window; 0 marked for its current registration,
                       # 1 unmarked, 2 a mark left by another registration,
                       # 4 unreadable
@@ -7682,14 +7681,18 @@ safe_to_drop_read() { # $1 window; 0 marked for its current registration,
   [ -n "$token" ] && [ "$mark" = "$token" ] || return 2
 }
 
-safe_to_drop_delivery_guard() { # $1 window, $2 what is delivered; caller holds its pane lock
+safe_to_drop_clear_for_delivery() { # $1 window, $2 what is delivered; caller holds its pane lock
   # UNDER THE PANE LOCK, which is also what the mark is set under: a delivery
   # either lands before the mark, where the mark's own empty-spool check sees
-  # it, or meets the mark here and is refused with the body still the sender's.
+  # it, or meets the mark here and clears it. A mark that cannot be read cannot
+  # be cleared, and delivering over it could leave standing a teardown
+  # authorization for an agent that has work.
   local rc=0
   safe_to_drop_read "$1" || rc=$?
   case "$rc" in
-    0) refuse "refusing to deliver $2: $(agent_name_of "$1") has marked itself safe to drop, and a marked registration accepts no further delivery. Nothing was typed or parked and the body is still the sender's; work for it needs a new registration (gang hitch)" ;;
+    0) tmux set-option -uw -t "$1" @gl_safe_to_drop \
+         || refuse "refusing to deliver $2: the safe-to-drop mark of $(agent_name_of "$1") could not be cleared, so nothing was typed or parked and the body is still the sender's"
+       event_log_record "$1" agent.unmarked '{"cleared_by":"delivery"}' ;;
     1|2) return 0 ;;
     *) refuse "refusing to deliver $2: whether $(agent_name_of "$1") has marked itself safe to drop cannot be read, so nothing was typed or parked and the body is still the sender's" ;;
   esac
@@ -7724,8 +7727,8 @@ safe_to_drop_word() { # $1 window -> the porcelain teardown word
 safe_to_drop_status() { # $1 window -> one human line, nothing when unmarked
   case "$(safe_to_drop_word "$1")" in
     -) ;;
-    marked) printf '%s\n' "$(colour "$C_OK" "safe to drop: its hitcher or the operator may drop it; it accepts no further delivery")" ;;
-    marked-orphan) printf '%s\n' "$(colour "$C_OK" "safe to drop, orphaned: a root agent or the operator may drop it; it accepts no further delivery")" ;;
+    marked) printf '%s\n' "$(colour "$C_OK" "safe to drop: its hitcher or the operator may drop it; a delivery clears the mark")" ;;
+    marked-orphan) printf '%s\n' "$(colour "$C_OK" "safe to drop, orphaned: a root agent or the operator may drop it; a delivery clears the mark")" ;;
     stale) printf '%s\n' "$(colour "$C_BAD" "stale safe-to-drop mark from an earlier registration; not honoured")" ;;
     *) printf '%s\n' "$(colour "$C_BAD" "safe-to-drop mark unreadable; not honoured")" ;;
   esac
@@ -8378,7 +8381,7 @@ reply_threads_close_if_ended() { # $1 window; a prompt is arriving
 }
 
 reply_obligation_query() { # calling window -> one or more four-field TSV verdicts
-  local rows="" rc=0 nonce state token witness mode digest replies live_rc=0 mark_rc=0 any=0
+  local rows="" rc=0 nonce state token witness mode digest replies live_rc=0 any=0
   rows="$(reply_state_rows "$1")" || rc=$?
   if [ "$rc" -ne 0 ]; then
     printf 'unknown\t-\t-\t%s\n' "$(reply_rows_error "$rows")"
@@ -8412,21 +8415,6 @@ reply_obligation_query() { # calling window -> one or more four-field TSV verdic
     # The prompt proof alone proves the debtor read the request, so it is owed
     # whether or not the sender's delivery proof has landed yet.
     live_rc=0; stable_agent_resolve "$token" || live_rc=$?
-    # A SENDER MARKED SAFE TO DROP ACCEPTS NO FURTHER DELIVERY (ADR-0198), so
-    # its request can never be answered and holding the debtor at Stop for it
-    # wedged that debtor until the sender was dropped. No proof is written:
-    # the registration still stands, and its drop retires the record as gone.
-    # Only a well-formed owed request is waived; any other state stays unknown.
-    if [ "$live_rc" -eq 0 ] && { [ "$state" = owed ] || [ "$state" = prompt ]; }; then
-      mark_rc=0; safe_to_drop_read "$STABLE_AGENT_WINDOW" || mark_rc=$?
-      case "$mark_rc" in
-        0) printf 'retired\t%s\t%s\tsender-marked\n' "$nonce" "$STABLE_AGENT_NAME"
-           continue ;;
-        1|2) ;;
-        *) printf 'unknown\t%s\t%s\tsender-mark-unreadable\n' "$nonce" "$STABLE_AGENT_NAME"
-           continue ;;
-      esac
-    fi
     case "$live_rc" in
       0) case "$state" in
            owed|prompt) printf 'owed\t%s\t%s\tlive\n' "$nonce" "$STABLE_AGENT_NAME" ;;
@@ -8529,10 +8517,7 @@ reply_obligation_status_report() { # $1 window; every debt or ambiguous record
     case "$status" in
       clear|'') ;;
       owed) printf '%s\n' "$(colour "$C_BAD" "reply owed to $peer (message $nonce; sender $detail)")" ;;
-      retired) case "$detail" in
-          sender-marked) printf '%s\n' "$(colour "$C_DIM" "reply obligation retired for $peer (message $nonce; sender marked itself safe to drop)")" ;;
-          *) printf '%s\n' "$(colour "$C_DIM" "reply obligation retired for $peer (message $nonce; sender gone)")" ;;
-        esac ;;
+      retired) printf '%s\n' "$(colour "$C_DIM" "reply obligation retired for $peer (message $nonce; sender gone)")" ;;
       unknown) printf '%s\n' "$(colour "$C_BAD" "reply obligation UNKNOWN (${nonce:-?} from ${peer:-?}: $detail); Stop fails closed")" ;;
     esac
   done <<<"$rows"
@@ -10008,7 +9993,7 @@ SPOOL_ENTRY="" SPOOL_STAGED=""
 # one operation.
 spool_stage() { # window sender envelope fragment, optional token/mode/replies/nonce
   local stamp tmp
-  safe_to_drop_delivery_guard "$1" "'$4'"
+  safe_to_drop_clear_for_delivery "$1" "'$4'"
   spool_establish "$1"
   # THE EMPTY ARM BELOW IS ONLY REACHABLE BECAUSE OF THIS `|| stamp=""`. An
   # assignment from a command substitution carries the substitution's status,
@@ -11528,7 +11513,7 @@ inject() { # $1 window, $2 text, $3 head, $4 locked,
     locked) [ -n "$LOCK_PATH" ] || die "internal: inject called locked without a pane lock"; keep_lock=1 ;;
     *) die "internal: inject received unknown lock mode '$4'" ;;
   esac
-  safe_to_drop_delivery_guard "$1" "'$frag'"
+  safe_to_drop_clear_for_delivery "$1" "'$frag'"
   mismatch="$(identity_mismatch_read "$1")" || mismatch=""
   [ -z "$mismatch" ] \
     || refuse "refusing to deliver '$frag': $tname is session-lost ($mismatch). Nothing was typed; restart or re-hitch the intended native session before delivering to this pane"
@@ -12628,8 +12613,9 @@ cache_compaction_candidate() { # $1 window, $2 collar; 0 ready, 1 no, 2 diagnost
        return 2 ;;
     *) die "internal: cache_compaction_for returned unknown status $config_rc" ;;
   esac
-  # A registration marked safe to drop accepts no further delivery (ADR-0198),
-  # so choosing it only had the delivery refuse it and fail every pass (#288).
+  # A registration marked safe to drop has declared its work done (ADR-0198).
+  # Compacting it would spend tokens on an agent awaiting teardown, and the
+  # compaction's delivery would clear the mark that authorizes that teardown.
   safe_to_drop_read "$1" || mark_rc=$?
   case "$mark_rc" in
     0) return 1 ;;
@@ -15269,7 +15255,7 @@ cmd_send() {
   # command substitution's exit does not fire the EXIT trap, so the lock taken
   # here survives the call and covers the whole sequence.
   lock_pane "$AGENT_ID" send
-  safe_to_drop_delivery_guard "$AGENT_ID" "'$frag' to $name"
+  safe_to_drop_clear_for_delivery "$AGENT_ID" "'$frag' to $name"
   # THE RETIREMENT IS PREPARED BEFORE ANYTHING IS DELIVERED, and it has to be,
   # because the live path has no second chance. Retiring AFTER send_live meant a
   # sweep that met an unreadable entry rolled back and refused with the new body
@@ -15533,7 +15519,7 @@ cmd_send() {
 TIMED_ENTRY=""
 timed_write() { # window sender envelope fragment due, optional token/mode/replies/nonce
   local tmp
-  safe_to_drop_delivery_guard "$1" "'$4'"
+  safe_to_drop_clear_for_delivery "$1" "'$4'"
   spool_establish "$1"
   TIMED_ENTRY="$SPOOL_DIR/.timed-$(timed_stamp "$5")-$(mint_nonce)"
   # Staged then renamed, like every other entry: a reader that meets this
@@ -16060,9 +16046,6 @@ cmd_interrupt() {
     send_identity_guard interrupt
   fi
   resolve "$name"
-  # A mark is never cleared, so refusing before the key needs no lock; the
-  # check under the lock below covers a mark set in between.
-  [ "$have_m" -eq 0 ] || safe_to_drop_delivery_guard "$AGENT_ID" "the interrupt reason"
   [ -n "$GANG_INTERRUPT_KEY" ] \
     || die "interrupt: collar '$AGENT_COLLAR' declares no GANG_INTERRUPT_KEY, so gang does not know the keystroke that stops a turn in this harness (gang attach)"
   if [ "$have_m" -eq 1 ]; then
@@ -16078,9 +16061,9 @@ cmd_interrupt() {
     envelope "$SEND_WIRE" "$reason" "$([ "$MESSAGE_REPLY_TO" = - ] || printf '%s' "$MESSAGE_REPLY_TO")"
   fi
   lock_pane "$AGENT_ID"
-  # The reason is a delivery, so a marked registration refuses it before the
-  # key rather than after a turn it no longer has was stopped.
-  [ "$have_m" -eq 0 ] || safe_to_drop_delivery_guard "$AGENT_ID" "the interrupt reason"
+  # The reason is a delivery, so it clears a mark before the key rather than
+  # after the turn was stopped, and an unreadable mark refuses it there.
+  [ "$have_m" -eq 0 ] || safe_to_drop_clear_for_delivery "$AGENT_ID" "the interrupt reason"
   # Occupancy is not authority here either: the stop key is very often the key
   # a native dialog reads as an answer, and gang does not answer dialogs.
   ! occupied "$AGENT_ID" \
@@ -16267,9 +16250,6 @@ cmd_compact() {
     compact_recover "$name"
     return 0
   fi
-  # A compaction and its continuation are work, and a deferred self-request is
-  # recorded long before any keystroke; refuse both before anything is written.
-  safe_to_drop_delivery_guard "$AGENT_ID" "a compaction"
   [ -n "${GANG_COMPACT_CMD:-}" ] \
     || die "collar '$AGENT_COLLAR' declares no compact command"
   ! occupied "$AGENT_ID" \
@@ -16316,7 +16296,7 @@ cmd_compact() {
     # UNDER THE PANE LOCK THE MARK IS SET UNDER, so a request is either seen
     # by the mark's precondition or meets the mark here.
     lock_pane "$AGENT_ID"
-    safe_to_drop_delivery_guard "$AGENT_ID" "a compaction"
+    safe_to_drop_clear_for_delivery "$AGENT_ID" "a compaction"
     self_request="$(self_compact_request "$AGENT_ID")"
     event_log_record "$AGENT_ID" compaction.self-requested \
       "{\"request_id\":\"$self_request\"}" \
@@ -19406,10 +19386,6 @@ cmd_adopt() { # register an EXISTING tmux window as a gang agent
   registered="$(tmux show-options -wqv -t "$id" @gl_agent 2>/dev/null)" \
     || die "adopt: the registration of window '$name' cannot be read; nothing was changed"
   registered_identity_guard "$id" "$name" adopt "$collar"
-  # RE-ADOPTION KEEPS THE SPOOL IDENTITY, so it cannot be the new registration
-  # a marked agent needs before it takes more work.
-  ! safe_to_drop_read "$id" \
-    || refuse "adopt: '$name' has marked itself safe to drop, and re-adopting keeps the registration that mark belongs to; drop it and hitch a new agent instead. Nothing was changed"
   if [ -z "$registered" ]; then
     hitched_by="$(hitched_by_of)"
     hitch_ceiling_check "$hitched_by" "$name" "$over_ceiling_given" adopt
@@ -19655,7 +19631,7 @@ cmd_safe_to_drop() { # the one self-declared teardown authorization (ADR-0198)
   tmux set-option -w -t "$self" @gl_safe_to_drop "$token" \
     || { lock_release; die "safe-to-drop: the mark could not be recorded; nothing was marked"; }
   lock_release
-  printf '%s\n' "$(colour "$C_OK" "$name marked safe to drop") $(colour "$C_DIM" "(this registration accepts no further delivery; its hitcher may drop it)")"
+  printf '%s\n' "$(colour "$C_OK" "$name marked safe to drop") $(colour "$C_DIM" "(its hitcher may drop it; a delivery to it clears the mark)")"
 }
 
 # A HITCHER'S DROP SETTLES ITS CHILDREN (#289). A child that marked itself safe
