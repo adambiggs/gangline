@@ -29,6 +29,12 @@ jobs:
           set -euo pipefail
           mkdir -p _site
           cp site/index.html site/field.js _site/
+          # Pages caches everything for ten minutes and browsers hold scripts
+          # longer, so the script's address carries its content hash: a new
+          # field.js is a new URL the moment the page that names it arrives.
+          v=$(sha256sum site/field.js | cut -c1-12)
+          sed -i "s|src=\"field.js\"|src=\"field.js?v=$v\"|" _site/index.html
+          grep -q "field.js?v=$v" _site/index.html
           cp site/demo.gif site/demo.mp4 site/demo-poster.jpg _site/
           cp -R site/fonts _site/fonts
           # Install instructions point at the raw GitHub URL on purpose — what you
