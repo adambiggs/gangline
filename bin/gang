@@ -12386,7 +12386,7 @@ cache_compaction_idle_gap() { # $1 window; 0 allowed, 1 same or unproved gap
 }
 
 cache_compaction_candidate() { # $1 window, $2 collar; 0 ready, 1 no, 2 diagnostic failure
-  local busy_rc=0 cache_bands_rc=0 config_rc=0 idle_rc=0 now age render_rc=0 self_pending="" reason=""
+  local busy_rc=0 cache_bands_rc=0 config_rc=0 idle_rc=0 mark_rc=0 now age render_rc=0 self_pending="" reason=""
   CACHE_BAND_INSTRUCTION=""
   cache_compaction_for "$1" || config_rc=$?
   case "$config_rc" in
@@ -12396,6 +12396,16 @@ cache_compaction_candidate() { # $1 window, $2 collar; 0 ready, 1 no, 2 diagnost
          "$(agent_name_of "$1")" >&2
        return 2 ;;
     *) die "internal: cache_compaction_for returned unknown status $config_rc" ;;
+  esac
+  # A registration marked safe to drop accepts no further delivery (ADR-0198),
+  # so choosing it only had the delivery refuse it and fail every pass (#288).
+  safe_to_drop_read "$1" || mark_rc=$?
+  case "$mark_rc" in
+    0) return 1 ;;
+    1|2) ;;
+    *) printf 'tick cannot read whether %s has marked itself safe to drop; refusing automatic compaction\n' \
+         "$(agent_name_of "$1")" >&2
+       return 2 ;;
   esac
   [ -n "${GANG_COMPACT_CMD:-}" ] || return 1
   self_pending="$(tmux show-options -wqv -t "$1" @gl_self_compact_requested 2>/dev/null)" \
