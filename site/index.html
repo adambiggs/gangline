@@ -23,7 +23,7 @@
     :root{
       --bg:#06090f;--g1:#071530;--g2:#1f2860;--g3:#3d2444;
       --bg2:rgba(255,255,255,.05);--ink:#e9eef7;--soft:#b2bed0;--mute:#7f8da0;--rule:rgba(255,255,255,.11);
-      --acc:#f0a23c;--acc-ink:#10131a;--glyph:233,238,247;--trail:132,170,214;--sel:rgba(132,170,214,.32);
+      --acc:#f0a23c;--acc-ink:#10131a;--glyph:233,238,247;--trail:132,170,214;--sel:rgba(132,170,214,.32);--ts:0 1px 2px rgba(0,0,0,.45);
       --serif:'Newsreader',Georgia,serif;--sans:'Instrument Sans',system-ui,sans-serif;--mono:'JetBrains Mono',ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;
       color-scheme:dark;
     }
@@ -33,12 +33,12 @@
     @media (prefers-color-scheme:light){:root:not([data-theme=dark]){
       --bg:#e9f0f8;--g1:#b9d2ee;--g2:#eef3f9;--g3:#94b3d0;
       --bg2:rgba(16,38,60,.05);--ink:#12202e;--soft:#42546a;--mute:#6a7e96;--rule:rgba(16,38,60,.13);
-      --acc:#b4531c;--acc-ink:#fff;--glyph:24,46,74;--trail:64,104,148;--sel:rgba(64,104,148,.22);color-scheme:light;
+      --acc:#b4531c;--acc-ink:#fff;--glyph:24,46,74;--trail:64,104,148;--sel:rgba(64,104,148,.22);--ts:0 1px 1px rgba(255,255,255,.55);color-scheme:light;
     }}
     :root[data-theme=light]{
       --bg:#e9f0f8;--g1:#b9d2ee;--g2:#eef3f9;--g3:#94b3d0;
       --bg2:rgba(16,38,60,.05);--ink:#12202e;--soft:#42546a;--mute:#6a7e96;--rule:rgba(16,38,60,.13);
-      --acc:#b4531c;--acc-ink:#fff;--glyph:24,46,74;--trail:64,104,148;--sel:rgba(64,104,148,.22);color-scheme:light;
+      --acc:#b4531c;--acc-ink:#fff;--glyph:24,46,74;--trail:64,104,148;--sel:rgba(64,104,148,.22);--ts:0 1px 1px rgba(255,255,255,.55);color-scheme:light;
     }
 
     *,*::before,*::after{box-sizing:border-box}
@@ -46,7 +46,7 @@
     /* With a mouse or trackpad the page stops dead at its ends rather than
        rubber-banding. Touch keeps its native bounce and pull-to-refresh. */
     @media (hover:hover) and (pointer:fine){html{overscroll-behavior-y:none}}
-    body{margin:0;background:var(--bg);color:var(--ink);font-family:var(--sans);font-size:1.0625rem;line-height:1.65;-webkit-font-smoothing:antialiased}
+    body{margin:0;text-shadow:var(--ts);background:var(--bg);color:var(--ink);font-family:var(--sans);font-size:1.0625rem;line-height:1.65;-webkit-font-smoothing:antialiased}
     a{color:var(--ink);text-decoration:none;transition:color 150ms}
     a:hover{color:var(--acc)}
     p a,li a{text-decoration:underline;text-decoration-color:var(--mute);text-underline-offset:.18em}
