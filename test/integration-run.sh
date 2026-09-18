@@ -219,6 +219,79 @@ run_locked_verified_count="$(printf '%s\n' "$run_locked_verified" |
   grep -Fc "\"message_id\": \"$run_locked_message_id\"" || :)"
 equal "the released completion is verified exactly once" \
   1 "$run_locked_verified_count"
+
+# THE STABLE REQUESTER MAY RENAME BETWEEN ITS TOKEN SNAPSHOT AND BY-NAME
+# RESOLUTION. A one-shot tmux shim returns the real pre-rename stable-agent
+# rows, then changes both the registered identity and window title before the
+# following resolve. The finalizer must re-read the stable token and accept one
+# completion for that same window; an uncaught resolve exit would instead leave
+# the host result with only the runner's generic transport-failure record.
+run_identity_out="$(run_start sh -c 'printf MARK_RUN_IDENTITY_RACE')"
+contains "an identity-race run is accepted" "$run_identity_out" "started run"
+run_identity="$(run_record_for MARK_RUN_IDENTITY_RACE)" || run_identity=""
+run_identity_spool="$GANG_LOCK_DIR/spool/$(tmux show-options -wqv -t "$run_requester_id" @gl_spool)"
+run_identity_bin="$RUN_ROOT/run-identity-bin"
+run_identity_once="$RUN_ROOT/run-identity-once"
+run_identity_real_tmux="$(command -v tmux)"
+mkdir -p "$run_identity_bin"
+cat > "$run_identity_bin/tmux" <<SH
+#!/bin/sh
+. "\$GANG_TEST_PATH_SHIM_GUARD"
+path_shim_guard "$run_identity_real_tmux" "\$0" tmux || exit \$?
+stable_rows=0
+for argument do
+  [ "\$argument" != '#{window_id} #{@gl_spool} #{@gl_agent}' ] || stable_rows=1
+done
+if [ "\$stable_rows" -eq 1 ] && [ ! -e "$run_identity_once" ]; then
+  rows="\$("$run_identity_real_tmux" "\$@")" || exit \$?
+  : > "$run_identity_once" || exit \$?
+  "$run_identity_real_tmux" set-option -w -t "$run_requester_id" \
+    @gl_agent run-requester-raced || exit \$?
+  "$run_identity_real_tmux" rename-window -t "$run_requester_id" \
+    run-requester-raced || exit \$?
+  printf '%s\n' "\$rows"
+  exit 0
+fi
+exec "$run_identity_real_tmux" "\$@"
+SH
+chmod +x "$run_identity_bin/tmux"
+tmux send-keys -l -t "$run_requester_id" 'HUMAN_DRAFT'
+run_identity_finish_rc=0
+PATH="$run_identity_bin:$PATH" run_finish_direct "$run_identity" \
+  >"$RUN_ROOT/run-identity-finish.out" 2>"$RUN_ROOT/run-identity-finish.err" \
+  || run_identity_finish_rc=$?
+equal "a mid-resolution requester rename does not reject its completion" \
+  0 "$run_identity_finish_rc"
+contains "the renamed requester still accepts the completion" \
+  "$(<"$run_identity/delivery")" "accepted into requester delivery path"
+run_identity_envelopes="$(grep -rl "run ${run_identity##*/} completed" \
+  "$run_identity_spool" 2>/dev/null || :)"
+run_identity_envelope=""
+run_identity_envelope_count=0
+while IFS= read -r run_identity_candidate; do
+  [ -n "$run_identity_candidate" ] || continue
+  run_identity_envelope_count=$((run_identity_envelope_count + 1))
+  [ -n "$run_identity_envelope" ] || run_identity_envelope="$run_identity_candidate"
+done <<< "$run_identity_envelopes"
+equal "the identity race leaves exactly one eligible completion" \
+  1 "$run_identity_envelope_count"
+tmux set-option -w -t "$run_requester_id" @gl_agent run-requester
+tmux rename-window -t "$run_requester_id" run-requester
+tmux send-keys -t "$run_requester_id" C-u
+run_identity_tick_rc=0
+XDG_STATE_HOME="$run_state" "$GANG" tick \
+  >"$RUN_ROOT/run-identity-tick.out" 2>"$RUN_ROOT/run-identity-tick.err" \
+  || run_identity_tick_rc=$?
+equal "the renamed requester completion settles after identity restoration" \
+  0 "$run_identity_tick_rc"
+run_identity_message_id="${run_identity_envelope##*/}"
+run_identity_verified="$(XDG_STATE_HOME="$run_state" "$GANG" log run-requester \
+  --kind delivery.verified 2>&1)"
+run_identity_verified_count="$(printf '%s\n' "$run_identity_verified" |
+  grep -Fc "\"message_id\": \"$run_identity_message_id\"" || :)"
+equal "the identity-race completion is verified exactly once" \
+  1 "$run_identity_verified_count"
+rm -f -- "$run_identity_bin/tmux"
 tmux send-keys -l -t "$run_requester_id" 'HUMAN_DRAFT'
 
 run_existing_tmpdir="$run_state/requester-existing-tmp"

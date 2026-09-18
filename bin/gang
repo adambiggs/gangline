@@ -9282,6 +9282,7 @@ run_message() { # $1 directory -> bounded terminal-safe completion body
 
 run_finish() { # invoked by the service's ExecStopPost finalizer: --finish ID --unit UNIT
   local id="" unit="" dir requester token current_token body="" frag="" dispatch="" rc=0 stable_rc=0
+  local resolved="" resolve_error="" resolve_attempt=0 target_id="" target_collar="" extra=""
   while [ $# -gt 0 ]; do case "$1" in
     --finish) [ $# -ge 2 ] || die "run: --finish needs a run id"; id="$2"; shift 2 ;;
     --unit) [ $# -ge 2 ] || die "run: --unit needs a service name"; unit="$2"; shift 2 ;;
@@ -9310,18 +9311,54 @@ run_finish() { # invoked by the service's ExecStopPost finalizer: --finish ID --
     run_delivery_store "$dir" 'discarded: team is gone; output retained'
     return 0
   fi
-  stable_agent_resolve "$token" || stable_rc=$?
-  case "$stable_rc" in
-    0) requester="$STABLE_AGENT_NAME" ;;
-    3) run_delivery_store "$dir" 'discarded: requester is gone; output retained'; return 0 ;;
-    *) run_delivery_store "$dir" 'unconfirmed: requester identity could not be resolved; output retained'; return 1 ;;
-  esac
-  resolve "$requester"
-  current_token="$(tmux show-options -wqv -t "$AGENT_ID" @gl_spool 2>/dev/null)" || current_token=""
-  if [ "$AGENT_ID" != "$STABLE_AGENT_WINDOW" ] || [ "$current_token" != "$token" ]; then
+  # THE STABLE TOKEN AND BY-NAME RESOLUTION ARE TWO LIVE READS. A rename can
+  # land between them, so resolve in a subprocess whose die cannot escape this
+  # finalizer, then re-read the token once. A stable rename succeeds on the
+  # second name; a drop becomes discarded; a twice-moving or unreadable target
+  # receives an explicit unconfirmed outcome. No path may exit after audit but
+  # before writing delivery, because that file is the finalizer's idempotence
+  # boundary.
+  while [ "$resolve_attempt" -lt 2 ]; do
+    stable_rc=0
+    stable_agent_resolve "$token" || stable_rc=$?
+    case "$stable_rc" in
+      0) requester="$STABLE_AGENT_NAME" ;;
+      3) run_delivery_store "$dir" 'discarded: requester is gone; output retained'; return 0 ;;
+      *) run_delivery_store "$dir" 'unconfirmed: requester identity could not be resolved; output retained'; return 1 ;;
+    esac
+    rc=0
+    resolved="$(
+      {
+        trap - EXIT
+        resolve "$requester"
+        current_token="$(tmux show-options -wqv -t "$AGENT_ID" @gl_spool 2>/dev/null)" \
+          || current_token=""
+        if [ "$AGENT_ID" != "$STABLE_AGENT_WINDOW" ] || [ "$current_token" != "$token" ]; then
+          printf '%s\n' 'run: requester identity changed before completion acceptance' >&2
+          exit 1
+        fi
+        printf '%s\t%s' "$AGENT_ID" "$AGENT_COLLAR"
+      } 2>&1
+    )" || rc=$?
+    if [ "$rc" -eq 0 ]; then
+      IFS=$'\t' read -r target_id target_collar extra <<<"$resolved"
+      if [ -n "$target_id" ] && [ -n "$target_collar" ] && [ -z "$extra" ]; then
+        break
+      fi
+      rc=1
+      resolved='run: requester resolution returned an unreadable identity'
+    fi
+    resolve_error="$resolved"
+    target_id=""; target_collar=""
+    resolve_attempt=$((resolve_attempt + 1))
+  done
+  if [ -z "$target_id" ]; then
     run_delivery_store "$dir" 'unconfirmed: requester identity changed before completion acceptance; output retained'
+    [ -z "$resolve_error" ] || printf '%s\n' "$resolve_error" >&2
     return 1
   fi
+  AGENT_ID="$target_id"
+  AGENT_COLLAR="$target_collar"
   body="$(run_message "$dir")"
   send_sender gang-run run
   send_identity_guard run
@@ -9344,7 +9381,13 @@ run_finish() { # invoked by the service's ExecStopPost finalizer: --finish ID --
   run_delivery_store "$dir" 'accepted into requester delivery path'
   [ -z "$dispatch" ] || printf '%s\n' "$dispatch" >&2
   rc=0
-  dispatch="$(trap - EXIT; spool_drain "$AGENT_ID" 2>&1)" || rc=$?
+  dispatch="$(
+    {
+      trap - EXIT
+      load_collar "$AGENT_COLLAR"
+      spool_drain "$AGENT_ID"
+    } 2>&1
+  )" || rc=$?
   [ -z "$dispatch" ] || printf '%s\n' "$dispatch" >&2
   case "$rc" in
     0|3|4) return 0 ;;
