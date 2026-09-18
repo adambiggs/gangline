@@ -821,6 +821,16 @@ registration, are refused, as is a shell attached to that server naming a pane t
 find there. Re-adopting a registered window never changes its hitch
 provenance, absent included, so it grants the re-adopter nothing.
 
+Before removing the window, `drop` settles every window it hitched. A child
+marked safe to drop is dropped with it, recursively, and its
+`agent.dropped` event records `"scope": "cascade"`. A child at any depth that
+has not marked itself, or whose mark cannot be read, is never dropped: when the
+dropped window was hitched by a live agent the drop does not remove, the child's
+hitch provenance moves to that agent
+and `drop` prints `<child> now answers to <agent>`; otherwise it is left an
+orphan and `drop` says who may still drop it. If the live window register
+cannot be read, the drop refuses and nothing is removed.
+
 ### `gang safe-to-drop --report-to <name>`
 
 Marks the calling agent's current registration safe to drop (ADR-0198). The

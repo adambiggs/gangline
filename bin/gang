@@ -19368,33 +19368,66 @@ cmd_safe_to_drop() { # the one self-declared teardown authorization (ADR-0198)
   printf '%s\n' "$(colour "$C_OK" "$name marked safe to drop") $(colour "$C_DIM" "(this registration accepts no further delivery; its hitcher may drop it)")"
 }
 
-cmd_drop() {
-  local id shown rc=0 scope_unit="" scope_owned=0 scope_rc=0 orphan=0 target="" have_target=0 facts='{"scope":"single"}'
-  # `--` still reaches a forged registration whose name looks like the flag.
-  while [ $# -gt 0 ]; do case "$1" in
-    --orphan) orphan=1; shift ;;
-    --) [ $# -eq 2 ] && [ "$have_target" -eq 0 ] \
-          || die "drop: -- takes exactly the one agent name after it"
-        target="$2"; have_target=1; shift 2 ;;
-    *) [ "$have_target" -eq 0 ] || die "drop: unexpected argument '$1'"
-       target="$1"; have_target=1; shift ;;
-  esac; done
-  [ "$have_target" -eq 1 ] || die "drop: name the agent to drop"
-  set -- "$target"
-  # The argument reaches the terminal, and drop is the one command an operator
-  # runs with a name they read off a hostile registration. It is not validated
-  # here on purpose: valid_name would leave a window whose own registration is
-  # forged undroppable by any name gang accepts, and tmux kill-window is then
-  # the only way out — which skips the archive and destroys the pending mail.
-  # Droppable, contained, and printed safely is the combination that holds.
-  shown="$(printf '%s' "$1" | config_sanitize)"
-  id="$(win_id "$1")" || { rc=$?; win_id_missing "$rc" "no agent '$shown'"; }
-  drop_authority "$id" "$shown" "$orphan"
-  if [ "$orphan" -eq 1 ]; then
-    [ "$DROP_ORPHAN_UNMARKED" -eq 1 ] \
-      || refuse "drop: --orphan takes only an unmarked orphan dropped by a root agent, and '$shown' is not one this caller needs it for; nothing was dropped. Retry without --orphan"
-    facts='{"scope":"single","orphan":"unmarked"}'
+# A HITCHER'S DROP SETTLES ITS CHILDREN (#289). A child that marked itself safe
+# to drop goes with it: the mark already authorizes teardown, and leaving it
+# behind only made an orphan a root agent had to name. A child that did not
+# mark itself is never dropped here, since that ends work in progress; it is
+# handed to the nearest live agent above everything this drop removes, so that
+# agent can still clear it. With the operator, a gone hitcher, or no record
+# above, nothing live can take it, and it stays an orphan for a root agent
+# (--orphan) or the operator. Whether a mark can be read is not evidence of
+# one: an unreadable mark is handed up, not dropped.
+#
+# THE WHOLE TREE IS PLANNED BEFORE ANYTHING CHANGES. Settling each child as it
+# was reached handed an unmarked grandchild to an ancestor this same drop was
+# about to remove, and a registry that could not be read partway through left
+# some of the tree dropped under a message saying nothing was. Provenance is a
+# window option any pane can write, so the walk keeps a visited set: a forged
+# cycle ends the walk instead of recursing without bound.
+DROP_CASCADE=""
+DROP_HANDUP=""
+DROP_HEIR_TOKEN=""
+DROP_HEIR_NAME=""
+DROP_HEIR_RC=1
+drop_plan() { # $1 window about to be dropped, $2 its shown name; changes nothing
+  local rows wid htok queue w token visited dropping="" mrc sep='|'
+  DROP_CASCADE="" DROP_HANDUP="" DROP_HEIR_TOKEN="" DROP_HEIR_NAME="" DROP_HEIR_RC=0
+  rows="$(tmux list-windows -a -F "#{window_id}$sep#{@gl_hitched_by}" 2>/dev/null)" \
+    || refuse "drop: the live window registry cannot be read, so the windows '$2' hitched cannot be found and settled; nothing was dropped"
+  visited=" $1 " queue="$1"
+  while [ -n "$queue" ]; do
+    w="${queue%% *}"
+    if [ "$w" = "$queue" ]; then queue=""; else queue="${queue#* }"; fi
+    token="$(tmux show-options -wqv -t "$w" @gl_spool 2>/dev/null)" || token=""
+    case "$token" in ''|*[!a-f0-9]*) continue ;; esac
+    dropping="$dropping $token "
+    while IFS="$sep" read -r wid htok; do
+      [ "$htok" = "$token" ] || continue
+      case "$visited" in *" $wid "*) continue ;; esac
+      visited="$visited$wid "
+      mrc=0
+      safe_to_drop_read "$wid" || mrc=$?
+      if [ "$mrc" -eq 0 ]; then
+        DROP_CASCADE="${DROP_CASCADE:+$DROP_CASCADE }$wid"
+        queue="${queue:+$queue }$wid"
+      else
+        DROP_HANDUP="${DROP_HANDUP:+$DROP_HANDUP }$wid"
+      fi
+    done <<<"$rows"
+  done
+  [ -n "$DROP_HANDUP" ] || return 0
+  DROP_HEIR_NAME="$(hitched_by_read "$1")" || DROP_HEIR_RC=$?
+  DROP_HEIR_TOKEN="$(tmux show-options -wqv -t "$1" @gl_hitched_by 2>/dev/null)" || DROP_HEIR_RC=4
+  if [ "$DROP_HEIR_RC" -eq 0 ] && { [ -z "$DROP_HEIR_TOKEN" ] || [ -z "$DROP_HEIR_NAME" ]; }; then
+    DROP_HEIR_RC=4
   fi
+  case "$dropping" in *" $DROP_HEIR_TOKEN "*) [ "$DROP_HEIR_RC" -ne 0 ] || DROP_HEIR_RC=3 ;; esac
+}
+
+DROP_SCOPE_RC=0
+drop_teardown() { # $1 window, $2 shown name, $3 agent.dropped facts, $4 note for
+                  # the dropped line; a scope failure is kept in DROP_SCOPE_RC
+  local id="$1" shown="$2" facts="$3" note="${4:-}" scope_unit="" scope_owned=0 scope_rc=0
   scope_unit="$(tmux show-options -wqv -t "$id" @gl_scope 2>/dev/null)" || scope_unit=""
   [ -z "$scope_unit" ] || ! scope_unit_issued "$scope_unit" || scope_owned=1
   parting_lines "$id" "$shown"
@@ -19420,8 +19453,67 @@ cmd_drop() {
       scope_unissued_survivor "$scope_unit" || scope_rc=$?
     fi
   fi
-  printf '%s\n' "$(colour "$C_OK" "dropped $shown")"
-  return "$scope_rc"
+  [ "$scope_rc" -eq 0 ] || DROP_SCOPE_RC="$scope_rc"
+  printf '%s\n' "$(colour "$C_OK" "dropped $shown")${note:+ $(colour "$C_DIM" "$note")}"
+}
+
+drop_window() { # $1 window, $2 shown name, $3 agent.dropped facts; status = scope teardown's
+  # Called bare, never on the left of || or in a condition, so errexit still
+  # stops the cascade at the first teardown step that fails.
+  local wid cshown heir order=""
+  DROP_SCOPE_RC=0
+  drop_plan "$1" "$2"
+  heir="$(printf '%s' "$DROP_HEIR_NAME" | config_sanitize)"
+  for wid in $DROP_HANDUP; do
+    cshown="$(agent_name_of "$wid" | config_sanitize)"
+    case "$DROP_HEIR_RC" in
+      0)
+        tmux set-option -w -t "$wid" @gl_hitched_by "$DROP_HEIR_TOKEN" \
+          && tmux set-option -w -t "$wid" @gl_hitched_by_name "$DROP_HEIR_NAME" \
+          || die "drop: '$cshown' could not be handed to '$heir'; nothing was dropped, and any child named above as answering to '$heir' keeps that"
+        printf '%s\n' "$(colour "$C_OK" "$cshown now answers to $heir") $(colour "$C_DIM" "(it had not marked itself safe to drop, and dropping $2 removed its hitcher)")" ;;
+      4) printf '%s\n' "$(colour "$C_BAD" "$cshown is left an orphan") $(colour "$C_DIM" "(it had not marked itself safe to drop, dropping $2 removed its hitcher, and whether a live agent stands above $2 cannot be read; a root agent passing --orphan, or the operator, may drop it)")" ;;
+      *) printf '%s\n' "$(colour "$C_BAD" "$cshown is left an orphan") $(colour "$C_DIM" "(it had not marked itself safe to drop, dropping $2 removed its hitcher, and no live agent stands above $2; a root agent passing --orphan, or the operator, may drop it)")" ;;
+    esac
+  done
+  for wid in $DROP_CASCADE; do order="$wid${order:+ $order}"; done
+  for wid in $order; do
+    cshown="$(agent_name_of "$wid" | config_sanitize)"
+    drop_teardown "$wid" "$cshown" '{"scope":"cascade"}' \
+      "(marked safe to drop; it went with $2)"
+  done
+  drop_teardown "$1" "$2" "$3"
+  return "$DROP_SCOPE_RC"
+}
+
+cmd_drop() {
+  local id shown rc=0 orphan=0 target="" have_target=0 facts='{"scope":"single"}'
+  # `--` still reaches a forged registration whose name looks like the flag.
+  while [ $# -gt 0 ]; do case "$1" in
+    --orphan) orphan=1; shift ;;
+    --) [ $# -eq 2 ] && [ "$have_target" -eq 0 ] \
+          || die "drop: -- takes exactly the one agent name after it"
+        target="$2"; have_target=1; shift 2 ;;
+    *) [ "$have_target" -eq 0 ] || die "drop: unexpected argument '$1'"
+       target="$1"; have_target=1; shift ;;
+  esac; done
+  [ "$have_target" -eq 1 ] || die "drop: name the agent to drop"
+  set -- "$target"
+  # The argument reaches the terminal, and drop is the one command an operator
+  # runs with a name they read off a hostile registration. It is not validated
+  # here on purpose: valid_name would leave a window whose own registration is
+  # forged undroppable by any name gang accepts, and tmux kill-window is then
+  # the only way out — which skips the archive and destroys the pending mail.
+  # Droppable, contained, and printed safely is the combination that holds.
+  shown="$(printf '%s' "$1" | config_sanitize)"
+  id="$(win_id "$1")" || { rc=$?; win_id_missing "$rc" "no agent '$shown'"; }
+  drop_authority "$id" "$shown" "$orphan"
+  if [ "$orphan" -eq 1 ]; then
+    [ "$DROP_ORPHAN_UNMARKED" -eq 1 ] \
+      || refuse "drop: --orphan takes only an unmarked orphan dropped by a root agent, and '$shown' is not one this caller needs it for; nothing was dropped. Retry without --orphan"
+    facts='{"scope":"single","orphan":"unmarked"}'
+  fi
+  drop_window "$id" "$shown" "$facts"
 }
 
 cmd_down() { # inverse of up: end the whole team's session
