@@ -41,6 +41,15 @@ jobs:
           # pipe is verifiably the repo file — so no /install copy is published.
           echo gangline.ai > _site/CNAME
 
+      # The docs are the repository's Markdown, rendered here and nowhere
+      # else, so GitHub and the site read the same text.
+      - name: Render the docs
+        run: |
+          set -euo pipefail
+          python3 -m venv "$RUNNER_TEMP/docsite"
+          "$RUNNER_TEMP/docsite/bin/pip" install --quiet markdown-it-py==4.2.0
+          "$RUNNER_TEMP/docsite/bin/python" tools/docsite _site
+
       - uses: actions/configure-pages@v5
       - uses: actions/upload-pages-artifact@v3
         with:

@@ -1,0 +1,191 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <title>{{title}} — Gangline docs</title>
+  <meta name="color-scheme" content="light dark">
+  <script>try{const t=localStorage.getItem('theme');if(t==='light'||t==='dark')document.documentElement.dataset.theme=t}catch{}</script>
+  <meta name="theme-color" content="#b9d2ee" media="(prefers-color-scheme: light)">
+  <meta name="theme-color" content="#071530" media="(prefers-color-scheme: dark)">
+  <link rel="preload" href="{{root}}fonts/instrument-sans-latin.woff2" as="font" type="font/woff2" crossorigin>
+  <style>
+    @font-face{font-family:'Newsreader';src:url('{{root}}fonts/newsreader-latin.woff2') format('woff2');font-weight:200 800;font-style:normal;font-display:swap}
+    @font-face{font-family:'Newsreader';src:url('{{root}}fonts/newsreader-italic-latin.woff2') format('woff2');font-weight:200 800;font-style:italic;font-display:swap}
+    @font-face{font-family:'Instrument Sans';src:url('{{root}}fonts/instrument-sans-latin.woff2') format('woff2');font-weight:400 700;font-style:normal;font-display:swap}
+    @font-face{font-family:'Instrument Sans';src:url('{{root}}fonts/instrument-sans-italic-latin.woff2') format('woff2');font-weight:400 700;font-style:italic;font-display:swap}
+    @font-face{font-family:'JetBrains Mono';src:url('{{root}}fonts/jetbrains-mono-latin.woff2') format('woff2');font-weight:400;font-style:normal;font-display:swap}
+
+    /* The landing page's palette, token for token (site/index.html). */
+    :root{
+      --bg:#06090f;--g1:#071530;--g2:#1f2860;--g3:#3d2444;
+      --bg2:rgba(255,255,255,.05);--ink:#e9eef7;--soft:#b2bed0;--mute:#7f8da0;--rule:rgba(255,255,255,.11);
+      --acc:#f0a23c;--sel:rgba(132,170,214,.32);--panel:rgba(6,9,15,.55);
+      --serif:'Newsreader',Georgia,serif;--sans:'Instrument Sans',system-ui,sans-serif;--mono:'JetBrains Mono',ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;
+      color-scheme:dark;
+    }
+    @media (prefers-color-scheme:light){:root:not([data-theme=dark]){
+      --bg:#e9f0f8;--g1:#b9d2ee;--g2:#eef3f9;--g3:#94b3d0;
+      --bg2:rgba(16,38,60,.05);--ink:#12202e;--soft:#42546a;--mute:#6a7e96;--rule:rgba(16,38,60,.13);
+      --acc:#b4531c;--sel:rgba(64,104,148,.22);--panel:rgba(255,255,255,.6);color-scheme:light;
+    }}
+    :root[data-theme=light]{
+      --bg:#e9f0f8;--g1:#b9d2ee;--g2:#eef3f9;--g3:#94b3d0;
+      --bg2:rgba(16,38,60,.05);--ink:#12202e;--soft:#42546a;--mute:#6a7e96;--rule:rgba(16,38,60,.13);
+      --acc:#b4531c;--sel:rgba(64,104,148,.22);--panel:rgba(255,255,255,.6);color-scheme:light;
+    }
+
+    *,*::before,*::after{box-sizing:border-box}
+    html{-webkit-text-size-adjust:100%;scroll-behavior:smooth;scroll-padding-top:1.5rem}
+    body{margin:0;background:var(--bg);color:var(--ink);font-family:var(--sans);font-size:1.0625rem;line-height:1.65;-webkit-font-smoothing:antialiased}
+    .bgfx{position:fixed;inset:0;z-index:0;pointer-events:none;background:linear-gradient(135deg,var(--g1) 0%,var(--g2) 50%,var(--g3) 100%)}
+    a{color:var(--ink);transition:color 150ms}
+    a:hover{color:var(--acc)}
+    ::selection{background:var(--sel)}
+    :focus-visible{outline:2px solid var(--acc);outline-offset:3px}
+
+    .shell{position:relative;z-index:1;display:grid;grid-template-columns:17rem minmax(0,1fr);max-width:84rem;margin:0 auto;padding:0 clamp(1.5rem,4vw,3rem);gap:clamp(2rem,5vw,5rem)}
+
+    /* Left nav: the landing page's sidenav voice, scrolled on its own. */
+    .side{position:sticky;top:0;height:100vh;overflow-y:auto;padding:3rem 0 2rem;scrollbar-width:thin}
+    .brand{font-family:var(--serif);font-size:2rem;font-weight:500;line-height:1;letter-spacing:-.01em;text-decoration:none}
+    .brand+.sub{margin:.35rem 0 0;color:var(--mute);font-size:.875rem}
+    .side .grp{margin:2rem 0 .6rem;font-size:.75rem;letter-spacing:.12em;text-transform:uppercase;font-weight:600;color:var(--mute)}
+    .side ul{list-style:none;margin:0;padding:0}
+    .side li{margin:0}
+    .side li>a{display:block;padding:.2rem 0;color:var(--soft);text-decoration:none;font-size:.9375rem}
+    .side li>a:hover{color:var(--ink)}
+    .side li.on>a{color:var(--ink);font-weight:600}
+    .side .toc{margin:.25rem 0 .5rem;padding-left:.8rem;border-left:1px solid var(--rule)}
+    .side .toc a{font-size:.8125rem;color:var(--mute);padding:.15rem 0;line-height:1.4}
+    .side .toc a:hover{color:var(--ink)}
+    .side .out{margin-top:2rem;font-size:.875rem;display:flex;flex-direction:column;gap:.3rem}
+    .side .out a{color:var(--mute);text-decoration:none}
+    .side .out a:hover{color:var(--ink)}
+    .navtoggle{display:none}
+
+    /* The article: a readable measure on a quiet panel over the gradient. */
+    main{padding:3rem 0 5rem;min-width:0}
+    article{max-width:46rem}
+    article h1{font-family:var(--serif);font-optical-sizing:auto;font-size:clamp(2.25rem,4vw,3rem);font-weight:500;line-height:1.08;letter-spacing:-.01em;margin:0 0 1.5rem}
+    article h2{font-family:var(--serif);font-size:clamp(1.6rem,2.5vw,2rem);font-weight:500;line-height:1.15;letter-spacing:-.01em;margin:3.5rem 0 1rem;padding-top:1.5rem;border-top:1px solid var(--rule)}
+    article h3{font-size:1.2rem;font-weight:600;line-height:1.3;margin:2.5rem 0 .75rem}
+    article h4,article h5,article h6{font-size:1rem;font-weight:600;margin:2rem 0 .5rem}
+    article h2 code,article h3 code,article h4 code{font-size:.8em}
+    article p,article ul,article ol,article blockquote,article .tblwrap{margin:0 0 1.1rem}
+    article p,article li{text-wrap:pretty}
+    article ul,article ol{padding-left:1.4rem}
+    article li{margin:.25rem 0}
+    article li>p{margin:.4rem 0}
+    article p a,article li a,article td a{text-decoration:underline;text-decoration-color:var(--mute);text-underline-offset:.18em}
+    article img{max-width:100%;height:auto;border:1px solid var(--rule)}
+    article hr{border:0;border-top:1px solid var(--rule);margin:2.5rem 0}
+    blockquote{margin-left:0;padding:.1rem 0 .1rem 1.1rem;border-left:2px solid var(--acc);color:var(--soft)}
+    .meta{margin:-.75rem 0 2rem;color:var(--mute);font-size:.9375rem}
+    .meta .st{font-weight:600;text-transform:uppercase;letter-spacing:.1em;font-size:.75rem;color:var(--acc)}
+    .meta a{color:var(--mute)}
+
+    code{font-family:var(--mono);font-size:.84em}
+    :not(pre)>code{padding:.08em .32em;background:var(--bg2);border:1px solid var(--rule);border-radius:3px;overflow-wrap:anywhere}
+    pre{margin:0;padding:1.1rem 1.4rem;background:var(--panel);border:1px solid var(--rule);font-family:var(--mono);font-size:.8125rem;line-height:1.65;overflow-x:auto;color:var(--ink);tab-size:4}
+    pre code{font-size:inherit}
+    .code{position:relative;margin:0 0 1.25rem}
+    .code pre{padding-right:3.5rem}
+    .copy{position:absolute;top:.5rem;right:.5rem;appearance:none;border:0;background:none;padding:.2rem .3rem;margin:0;
+      font:inherit;font-size:.5625rem;line-height:1;letter-spacing:.1em;text-transform:uppercase;font-weight:600;color:var(--mute);
+      cursor:pointer;opacity:0;transition:color 150ms,opacity 150ms}
+    .code:hover .copy,.copy:focus-visible,.copy[data-done]{opacity:1}
+    .copy:hover{color:var(--ink)}
+    .copy[data-done]{color:var(--acc)}
+    @media (hover:none){.copy{opacity:.7}}
+
+    .tblwrap{overflow-x:auto;border-top:1px solid var(--rule)}
+    table{border-collapse:collapse;width:100%;font-size:.9375rem;line-height:1.5}
+    th,td{text-align:left;vertical-align:top;padding:.55rem .9rem .55rem 0;border-bottom:1px solid var(--rule)}
+    th{font-size:.75rem;letter-spacing:.1em;text-transform:uppercase;font-weight:600;color:var(--mute)}
+    td code{white-space:nowrap}
+    td:last-child{min-width:12rem}
+
+    .ftr{max-width:46rem;margin-top:4rem;padding-top:1.5rem;border-top:1px solid var(--rule);color:var(--mute);font-size:.9375rem;display:flex;flex-wrap:wrap;gap:.5rem 1.5rem}
+    .ftr a{color:var(--mute)}
+    .ftr a:hover{color:var(--ink)}
+
+    .theme{position:fixed;top:1.1rem;right:1.25rem;z-index:3;appearance:none;border:0;background:none;padding:.25rem;margin:0;
+      font:inherit;font-size:.7rem;line-height:1;color:var(--mute);cursor:pointer;opacity:.7;transition:color 150ms,opacity 150ms}
+    .theme:hover{color:var(--ink);opacity:1}
+
+    /* Phone and narrow windows: the nav folds behind one button at the top. */
+    @media (max-width:900px){
+      .shell{display:block;padding:0 1rem}
+      .side{position:static;height:auto;overflow:visible;padding:1.5rem 0 0}
+      .navtoggle{display:inline-block;margin-top:1rem;appearance:none;background:var(--bg2);border:1px solid var(--rule);color:var(--ink);
+        font:inherit;font-size:.8125rem;letter-spacing:.1em;text-transform:uppercase;font-weight:600;padding:.45rem .8rem;cursor:pointer}
+      .side nav{display:none}
+      .side.open nav{display:block}
+      main{padding-top:2rem}
+      article h2{margin-top:2.75rem}
+      pre{font-size:.75rem;padding:1rem}
+    }
+    @media (prefers-reduced-motion:reduce){*{transition:none!important}html{scroll-behavior:auto}}
+  </style>
+</head>
+<body>
+<div class="bgfx" aria-hidden="true"></div>
+<button class="theme" type="button" aria-label="Theme: follows system" title="Theme: follows system">◐</button>
+<div class="shell">
+  <aside class="side">
+    <a class="brand" href="{{root}}">gangline</a>
+    <p class="sub">Documentation</p>
+    <button class="navtoggle" type="button" aria-expanded="false">Contents</button>
+    <nav aria-label="Documentation">{{nav}}
+      <div class="out">
+        <a href="{{source}}">This page on GitHub</a>
+        <a href="https://github.com/adambiggs/gangline">Source repository</a>
+      </div>
+    </nav>
+  </aside>
+  <main>
+    <article>
+{{meta}}
+{{body}}
+    </article>
+    <footer class="ftr">
+      <a href="{{source}}">View source</a>
+      <a href="https://github.com/adambiggs/gangline">GitHub</a>
+      <a href="https://github.com/adambiggs/gangline/blob/main/LICENSE">Apache-2.0</a>
+    </footer>
+  </main>
+</div>
+<script>
+(() => {
+  const b = document.querySelector('.theme');
+  const order = ['auto', 'light', 'dark'];
+  const face = { auto: ['◐', 'follows system'], light: ['○', 'light'], dark: ['●', 'dark'] };
+  const show = (mode) => { b.textContent = face[mode][0]; b.title = b.ariaLabel = 'Theme: ' + face[mode][1]; };
+  const current = () => document.documentElement.dataset.theme || 'auto';
+  show(current());
+  b.addEventListener('click', () => {
+    const next = order[(order.indexOf(current()) + 1) % order.length];
+    try {
+      if (next === 'auto') { delete document.documentElement.dataset.theme; localStorage.removeItem('theme'); }
+      else { document.documentElement.dataset.theme = next; localStorage.setItem('theme', next); }
+    } catch {}
+    show(next);
+  });
+
+  const side = document.querySelector('.side'), t = document.querySelector('.navtoggle');
+  t.addEventListener('click', () => t.ariaExpanded = side.classList.toggle('open'));
+
+  for (const pre of document.querySelectorAll('article pre')) {
+    const box = document.createElement('div'); box.className = 'code';
+    pre.replaceWith(box); box.append(pre);
+    const c = document.createElement('button'); c.className = 'copy'; c.type = 'button'; c.textContent = 'Copy';
+    c.addEventListener('click', () => navigator.clipboard.writeText(pre.innerText.replace(/\n$/, '')).then(() => {
+      c.textContent = 'Copied'; c.dataset.done = ''; setTimeout(() => { c.textContent = 'Copy'; delete c.dataset.done; }, 1500);
+    }, () => {}));
+    box.append(c);
+  }
+})();
+</script>
+</body>
+</html>
