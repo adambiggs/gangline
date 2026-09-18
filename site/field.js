@@ -44,6 +44,11 @@
    * step, chosen by cell, so the grain does not tile. */
   const GLOW = 6, GRAIN = 2, VARIANTS = 4;
   const HALO = [0.3, 0.4, 0.5, 0.65, 0.8, 1];
+  /* Light ink on a dark ground glows. Dark ink on a light ground casts a
+   * shadow instead: the same blur, thrown down and to the right, so the
+   * lines sit on the snow rather than bleed into it. */
+  const SHADOW_X = 1.5, SHADOW_Y = 2, SHADOW_A = 1, SHADOW_PASSES = 3;
+  const inkIsDark = () => { const [r, g, b] = col.split(',').map(Number); return (r * 299 + g * 587 + b * 114) / 1000 < 128; };
   let sprites = [], spriteCol = '', dpr = 1;
   const sprite = (rects, halo, seed) => {
     const c2 = document.createElement('canvas');
@@ -56,9 +61,11 @@
     const draw = () => {
       for (const [w, y, h] of rects) g.fillRect(Math.round((sw - w) / 2), Math.round((y + GLOW) * dpr), w, Math.round(h * dpr));
     };
-    g.shadowColor = 'rgba(' + col + ',' + halo + ')'; g.shadowBlur = GLOW * dpr;
-    draw(); draw();
-    g.shadowColor = 'transparent'; g.shadowBlur = 0;
+    const cast = inkIsDark();
+    g.shadowColor = 'rgba(' + col + ',' + Math.min(1, cast ? halo * SHADOW_A : halo) + ')'; g.shadowBlur = GLOW * dpr;
+    if (cast) { g.shadowOffsetX = SHADOW_X * dpr; g.shadowOffsetY = SHADOW_Y * dpr; }
+    for (let k = 0; k < (cast ? SHADOW_PASSES : 2); k++) draw();
+    g.shadowColor = 'transparent'; g.shadowBlur = 0; g.shadowOffsetX = 0; g.shadowOffsetY = 0;
     /* Grain: the glow's alpha is scaled by noise in GRAIN-pixel blocks. */
     const img = g.getImageData(0, 0, sw, sh), d = img.data;
     for (let y = 0; y < sh; y++) for (let x = 0; x < sw; x++) {
