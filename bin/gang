@@ -16218,6 +16218,25 @@ event_log_append_worker() { # $1 staging buffer, $2 event path
     | "$GANGLINE_EVENTS_HELPER" append-record --events "$2"
 }
 
+event_record_worker_path() { # only the interpreters and guarded tmux route the host worker needs
+  local path="" tool resolved dir
+  for tool in tmux python3 bash; do
+    resolved="$(command -v "$tool")" || return 1
+    case "$resolved" in /*/*) dir="${resolved%/*}" ;; *) return 1 ;; esac
+    case ":$path:" in
+      *":$dir:"*) ;;
+      *) path="${path:+$path:}$dir" ;;
+    esac
+  done
+  for dir in /usr/local/bin /usr/bin /bin; do
+    case ":$path:" in
+      *":$dir:"*) ;;
+      *) path="${path:+$path:}$dir" ;;
+    esac
+  done
+  printf '%s' "$path"
+}
+
 cmd_event_record_worker() { # internal host-side append reached only through tmux run-shell
   local out="" rc=0
   [ "${GANG_EVENT_RECORD_INTERNAL:-}" = 1 ] \
@@ -16232,7 +16251,7 @@ cmd_event_record_worker() { # internal host-side append reached only through tmu
 }
 
 event_log_append_prepared() { # $1 complete prepared JSON line, $2 event path
-  local prepared="$1" events="$2" token buffer report command out="" head detail="" socket="" run_err=""
+  local prepared="$1" events="$2" token buffer report command worker_path out="" head detail="" socket="" run_err=""
   token="$(mint_message_nonce)$(mint_message_nonce)"
   buffer="gang-event-$token"
   report="gang-event-report-$token"
@@ -16261,9 +16280,13 @@ event_log_append_prepared() { # $1 complete prepared JSON line, $2 event path
   # The host append is bookkeeping for the current command, not fresh team
   # activity. Mark it internal so it cannot recalculate a tick team identity
   # or run a health warning while recording that warning's event.
+  worker_path="$(event_record_worker_path)" || {
+    printf 'gang: event record could not resolve the guarded tmux, Python, and Bash worker path\n' >&2
+    return 1
+  }
   command="GANG_EVENT_RECORD_INTERNAL=1 GANG_TICK_INTERNAL=1 GANG_SESSION=$(option_shell_quote "$SESSION")"
   command+=" GANG_CONFIG_DIR=$(option_shell_quote "$CONFIG_DIR")"
-  command+=" PATH=$(option_shell_quote "$PATH") HOME=$(option_shell_quote "${HOME:-}")"
+  command+=" PATH=$(option_shell_quote "$worker_path") HOME=$(option_shell_quote "${HOME:-}")"
   command+=" GANG_EVENT_RECORD_SOCKET=$(option_shell_quote "$socket") TMUX= TMUX_PANE="
   command+=" \"$(option_shell_quote "$ROOT/bin/gang")\" __event-record-worker"
   command+=" \"$(option_shell_quote "$buffer")\" \"$(option_shell_quote "$events")\""
@@ -16494,7 +16517,7 @@ usage_events_append_worker() { # $1 tmux buffer, $2 events, $3 fallback root
 }
 
 usage_events_record() { # $1 drop|down, rest = window ids; never refuses a teardown
-  local how="$1" id events fallback_root created prepared buffer report token command out head rc=0; shift
+  local how="$1" id events fallback_root created prepared buffer report token command worker_path out head rc=0; shift
   events="$(usage_events_path)"
   fallback_root="$(archive_root)"
   # READ CCUSAGE IN THE CALLER'S ENVIRONMENT, where its PATH and transcript
@@ -16543,9 +16566,13 @@ usage_events_record() { # $1 drop|down, rest = window ids; never refuses a teard
   # run-shell expands tmux formats before invoking the shell. Rebuild every
   # caller-supplied byte through a word containing neither '#' nor '$', just as
   # popup commands do, so paths and settings cannot become tmux syntax.
+  worker_path="$(event_record_worker_path)" || {
+    printf 'gang: usage event not written: could not resolve the guarded tmux, Python, and Bash worker path\n' >&2
+    return 0
+  }
   command="GANG_USAGE_RECORD_INTERNAL=1 GANG_SESSION=$(option_shell_quote "$SESSION")"
   command+=" GANG_CONFIG_DIR=$(option_shell_quote "$CONFIG_DIR")"
-  command+=" PATH=$(option_shell_quote "$PATH") HOME=$(option_shell_quote "${HOME:-}") TMUX_PANE="
+  command+=" PATH=$(option_shell_quote "$worker_path") HOME=$(option_shell_quote "${HOME:-}") TMUX_PANE="
   command+=" \"$(option_shell_quote "$ROOT/bin/gang")\" __usage-record-worker"
   command+=" \"$(option_shell_quote "$buffer")\" \"$(option_shell_quote "$events")\" \"$(option_shell_quote "$fallback_root")\""
   command+=" \"$(option_shell_quote "$report")\" \"$(option_shell_quote "$token")\" >/dev/null 2>&1 || :"

@@ -86,9 +86,11 @@ for event_kind in "${event_kinds[@]}"; do
     fail "production event proof reads $event_kind through gang log" "$event_kind_log"
   fi
 done
-event_drop_out="$(event_gang drop event-proof 2>&1)" || {
+event_drop_out="$(PATH="$event_long_path" event_gang drop event-proof 2>&1)" || {
   fail "event proof private team drops" "$event_drop_out"
 }
+excludes "the long ambient PATH does not overflow the usage worker command" \
+  "$event_drop_out" "usage event not written: tmux could not run"
 event_drop_log="$(event_gang log event-proof --kind agent.dropped 2>&1)" || {
   fail "event proof reads teardown evidence" "$event_drop_log"
 }
