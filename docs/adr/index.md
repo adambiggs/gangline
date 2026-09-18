@@ -210,3 +210,4 @@ Gangline's durable constraints live in the records below. A record's id is perma
 | [0205](0205-dropping-a-hitcher-settles-the-windows-it-hitched.md) | Dropping a hitcher settles the windows it hitched | proposed | 2026-09-17 |
 | [0206](0206-declared-assignments-carry-one-review-tier-before-launch.md) | Declared assignments carry one review tier before launch | proposed | 2026-09-18 |
 | [0207](0207-a-delivery-clears-a-safe-to-drop-mark.md) | A delivery clears a safe-to-drop mark | proposed | 2026-09-18 |
+| [0208](0208-gangline-records-no-peer-reply-obligation.md) | Gangline records no peer reply obligation | proposed | 2026-09-18 |
