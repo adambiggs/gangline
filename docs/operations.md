@@ -1076,16 +1076,17 @@ archive root's `usage-unrecorded/` directory (normally below
 then remove the fallback. If the fallback is also unavailable, the error names
 the tmux buffer holding the JSON and its lifetime.
 
-`drop` and `down` archive a window's spool and delete it. Nothing else does, so
-a window killed any other way — an external `tmux kill-window`, or a tmux server
-that goes away with every window option in it — leaves its spool directory under
-`GANG_LOCK_DIR` with nothing pointing at it. Every Gangline command resolves a
-spool through its window, so such a directory is invisible to all of them.
+`drop` and `down` archive a window's spool and delete it. A window killed any
+other way — an external `tmux kill-window`, or a tmux server that goes away with
+every window option in it — leaves its spool directory under `GANG_LOCK_DIR`
+with nothing pointing at it. Every per-window command resolves a spool through
+its window, so such a directory is invisible until a server-wide sweep.
 
-The next `gang up` sweeps them: each directory no live window claims is archived
-under `GANG_ARCHIVE_DIR` as `orphan-<token>` and removed, and the sweep says so
-on stdout. Read those archives the way you read any teardown archive; they are
-durable and nothing removes them but you.
+Every cooperative `gang tick` and the next `gang up` sweep them: each directory
+no live window claims is archived under `GANG_ARCHIVE_DIR` as `orphan-<token>`
+and removed. A session-opening sweep says so on stdout; a tick records a sweep
+failure in team health. Read those archives the way you read any teardown
+archive; they are durable and nothing removes them but you.
 
 Two kinds are named and left alone rather than swept, and `gang roster` keeps
 naming them until someone acts:
@@ -1094,14 +1095,15 @@ naming them until someone acts:
   then remove it by hand;
 - a directory Gangline did not mint — it will not read, archive or remove one.
 
-Between sweeps `gang roster` names an orphan only when there is something in it,
-and says how many children it holds. An orphan holding nothing has no mail to
-reach, so its line could only ask to be ignored; the directory stays where it is
-as a reservation and the next session opening removes it.
+Before the next successful sweep, `gang roster` names an orphan only when there
+is something in it, and says how many children it holds. An orphan holding
+nothing has no mail to reach, so its line could only ask to be ignored; the
+directory stays where it is as a reservation until a later sweep removes it.
 
 If the sweep reports that it could not read the tmux server's window list, it
-archived nothing: it cannot tell a dead session's spool from a live agent's, and
-guessing would move every live agent's mail. Read the spool root by hand.
+archived nothing: it cannot tell a dead session's spool from a live or
+relaunching window, and guessing would move that window's mail. A tick fails its
+health pass; read the spool root by hand.
 
 Run one tmux server per `GANG_LOCK_DIR`. A second server sharing one lock root
 holds a different register of live spool identities, and a session opened on it
