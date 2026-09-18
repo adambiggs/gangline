@@ -7083,7 +7083,7 @@ tick_successor_release() { # let an armed successor start; nothing when none is 
 }
 
 cmd_tick_worker() { # internal owner; 75 contention, 76 committed failed pass, 77 owner unseen
-  local rc=0 lock_rc=0 pass=0 pass_output="" output="" committed=0 handover=0
+  local rc=0 lock_rc=0 pass=0 pass_output="" output="" committed=0 commit_rc=0 handover=0
   local dirty_path="" partial="" TICK_STARTED_S="$SECONDS" TICK_SOFT_BUDGET_S=""
   [ $# -eq 0 ] || die "internal tick worker takes no arguments"
   session_live || return 0
@@ -7166,13 +7166,21 @@ cmd_tick_worker() { # internal owner; 75 contention, 76 committed failed pass, 7
     fi
     committed=0
     if [ "$rc" -eq 0 ]; then
-      if tick_health_ok "${partial:+partial pass: $partial agents visited within the tick budget; a successor tick continues after the cursor}"; then
-        committed=1
-      else
-        output="${output:+$output$'\n'}the tick completed but its health or alert state could not be written"
-        rc=1
-        tick_health_fail "$output" && committed=1
-      fi
+      commit_rc=0
+      tick_health_ok "${partial:+partial pass: $partial agents visited within the tick budget; a successor tick continues after the cursor}" \
+        || commit_rc=$?
+      case "$commit_rc" in
+        0) committed=1 ;;
+        75)
+          # A NEWER TICKET ALREADY COMMITTED THIS TEAM'S RESULT. This pass still
+          # completed successfully; turning its deliberately skipped stale
+          # write into a fresh failure would overwrite the newer outcome it was
+          # designed to preserve and make harmless crossed ticks fail callers.
+          : ;;
+        *) output="${output:+$output$'\n'}the tick completed but its health or alert state could not be written"
+           rc=1
+           tick_health_fail "$output" && committed=1 ;;
+      esac
     elif tick_health_fail "$output"; then
       committed=1
     else
