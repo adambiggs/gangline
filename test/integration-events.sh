@@ -52,9 +52,19 @@ fi
 event_team="gang-events-proof-$$"
 event_data="$RUN_ROOT/event-proof-data"
 event_gang() { env GANG_SESSION="$event_team" XDG_DATA_HOME="$event_data" "$GANG" "$@"; }
-event_hitch_out="$(event_gang hitch event-proof -c bash -d "$RUN_ROOT" 2>&1)" || {
+# A harness PATH can accumulate package and plugin directories until tmux
+# refuses a run-shell command that embeds it. The event worker needs only its
+# interpreters and the guarded tmux route; inflate the caller PATH past that
+# historical boundary while requiring the lifecycle row to cross normally.
+event_long_path="$PATH"
+for ((event_path_copy = 0; event_path_copy < 40; event_path_copy++)); do
+  event_long_path="$RUN_ROOT/event-path-component:$event_long_path"
+done
+event_hitch_out="$(PATH="$event_long_path" event_gang hitch event-proof -c bash -d "$RUN_ROOT" 2>&1)" || {
   fail "event proof private team hitches" "$event_hitch_out"
 }
+excludes "a long caller PATH does not overflow the event worker command" \
+  "$event_hitch_out" "command too long"
 event_hitch_log="$(event_gang log event-proof --kind agent.hitched 2>&1)" || {
   fail "event proof reads a live lifecycle event" "$event_hitch_log"
 }
