@@ -216,7 +216,7 @@
     el, range: (() => { const r = document.createRange(); r.selectNodeContents(el); return r; })(), w: 2 * Math.PI * HZ * (0.85 + hash(7, i, 5) * 0.3), ph: hash(7, i, 6) * 6.28,
     m: 0.8 + hash(7, i, 7) * 0.4, s: 0, v: 0, sx: 0, vx: 0, st: 1, sw: 1, drift: 0, lastOff: 0,
   }));
-  const QUIET = 0.3, FEATHER = 140;
+  const QUIET = 0.45, FEATHER = 140;
   const quiet = Array.from(document.querySelectorAll('[data-quiet]'));
   let qx = new Float32Array(0), qy = new Float32Array(0);
   /* 1 inside [lo, hi], easing to 0 over FEATHER px outside it. */
