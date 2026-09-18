@@ -968,8 +968,9 @@ bare acknowledgement of it, and only the sender can tell which. `gang send --ack
 declares the bare acknowledgement: it is held outside the waking queue after durable
 spool acceptance. `--ack` is refused before anything is typed on a message that
 answers a request record, because its peer is waiting for the answer, on a message
-that matches no thread, which is a fresh request, and beside `--live-only` or
-`--no-reply`. Deferred acknowledgements
+that answers a waived record, which is owed nothing but may carry something to act
+on (an assignment's answer is its completion report), on a message that matches no
+thread, which is a fresh request, and beside `--live-only` or `--no-reply`. Deferred acknowledgements
 join the peer's next ordinary composer-verified Gangline drain ahead of current mail.
 The drain promotes them under their original stamps only after it proves a landing
 zone, so an older ordinary request and a held acknowledgement enter one bundle. A
