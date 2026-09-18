@@ -219,6 +219,18 @@ equal "the read waived message has its prompt proof" "$reply_waived_one_digest" 
   "$(tmux show-options -wqv -t "$reply_b_id" "@gl_rprompt_$reply_waived_one")"
 excludes "status names no debt for a waived message" "$($GANG status reply-b)" \
   "reply owed to reply-a"
+# --ack is still refused on an answer to a waived message, since what it
+# carries may need acting on, but the refusal must not claim a waiting sender.
+reply_waived_ack_rc=0
+reply_waived_ack_err="$(printf '%s' WAIVED_ACK_ANSWER \
+  | TMUX_PANE="$reply_b_pane" "$GANG" send --to reply-a --ack --stdin 2>&1)" \
+  || reply_waived_ack_rc=$?
+equal "--ack on an answer to a waived message is refused" 1 "$reply_waived_ack_rc"
+contains "the refusal says the answered message is owed no reply" \
+  "$reply_waived_ack_err" "answers a message reply-a sent that is owed no reply"
+excludes "and never claims its sender is waiting" \
+  "$reply_waived_ack_err" "is waiting on"
+excludes "the refused answer was never typed" "$(pane_all reply-a)" "WAIVED_ACK_ANSWER"
 reply_stop_run "$reply_b_pane"
 equal "a waived message never refuses idle" "{}" "$reply_stop_output"
 equal "the reading turn's boundary closes the waived thread" \
