@@ -166,6 +166,9 @@ SH
 "$HITCH" recap-rollback -c friction-rollback -d "$RUN_ROOT" >/dev/null
 friction_rollback_id="$(window_id recap-rollback)"
 friction_rollback_pane="$(tmux list-panes -t "$friction_rollback_id" -F '#{pane_id}')"
+friction_rollback_spool="$GANG_LOCK_DIR/spool/$(tmux show-options -wqv -t "$friction_rollback_id" @gl_spool)"
+friction_rollback_delivered="gang-friction-rollback-delivered-$$"
+friction_rollback_real_rm="$(command -v rm)"
 tmux copy-mode -t "$friction_rollback_id"
 friction_rollback_rc=0
 if TMUX_PANE="$friction_caller_pane" "$GANG" compact recap-rollback; then
@@ -184,9 +187,32 @@ printf '%s' '{"hook_event_name":"PreCompact"}' \
   | GANG_TEST_TICK_MODE=manual TMUX_PANE="$friction_rollback_pane" "$GANG" hook >/dev/null
 printf '%s' '{"hook_event_name":"PostCompact"}' \
   | GANG_TEST_TICK_MODE=manual TMUX_PANE="$friction_rollback_pane" "$GANG" hook >/dev/null
+# The continuation delivery is asynchronous. Its durable acceptance below is
+# not its retirement: dropping this fixture in that gap used to race the live
+# worker's `sending-` read/removal and randomly end the whole suite. Signal the
+# exact successful retirement so teardown begins only after the work this test
+# does not exercise is finished; no clock or repeated filesystem read stands
+# in for that event.
+cat > "$RUN_ROOT/bin/rm" <<SH
+#!/bin/sh
+. "\$GANG_TEST_PATH_SHIM_GUARD"
+path_shim_guard "$friction_rollback_real_rm" "\$0" rm || exit \$?
+for argument do
+  case "\$argument" in
+    "\${GANG_TEST_FRICTION_ROLLBACK_SPOOL:-}"/sending-*)
+      "$friction_rollback_real_rm" "\$@" || exit \$?
+      tmux -S '$friction_socket' wait-for -S "\$GANG_TEST_FRICTION_ROLLBACK_DELIVERED" || exit \$?
+      exit 0 ;;
+  esac
+done
+exec "$friction_rollback_real_rm" "\$@"
+SH
+chmod +x "$RUN_ROOT/bin/rm"
 # PostCompact schedules its ordinary drain; the following state read owns the
 # fresh automatic recap observation and arms the one durable continuation.
-friction_rollback_recap="$("$GANG" roster)"
+friction_rollback_recap="$(GANG_TEST_FRICTION_ROLLBACK_SPOOL="$friction_rollback_spool" \
+  GANG_TEST_FRICTION_ROLLBACK_DELIVERED="$friction_rollback_delivered" \
+  "$GANG" roster)"
 contains "an unowned native recap after a refused peer request is observed" \
   "$friction_rollback_recap" "~wait~ (post-compaction continuation pending)"
 friction_rollback_pending="$(tmux show-options -wqv -t "$friction_rollback_id" @gl_recap_pending)"
@@ -198,6 +224,15 @@ equal "an unowned native recap after a refused peer request gets one continuatio
 # the observer armed.
 equal "the unowned native recap keeps one continuation after the refused pane mode ends" 1 \
   "$(tmux show-options -wqv -t "$friction_rollback_id" @gl_recap_handled)"
+tmux wait-for "$friction_rollback_delivered"
+friction_rollback_claim=""
+for friction_rollback_entry in "$friction_rollback_spool"/sending-*; do
+  [ -f "$friction_rollback_entry" ] || continue
+  friction_rollback_claim="$friction_rollback_entry"
+done
+equal "the accepted rollback continuation retires before fixture teardown" "" \
+  "$friction_rollback_claim"
+rm -f -- "$RUN_ROOT/bin/rm"
 "$GANG" drop recap-rollback >/dev/null
 
 friction_self_ready="gang-friction-self-ready-$$"
