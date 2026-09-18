@@ -530,6 +530,13 @@ startup text or retroactively add launch-time native hooks. A collar whose
 context source requires hitch-time identity may therefore report context
 unavailable.
 
+A new adoption is a live child of the agent that runs it, so it applies the
+same role-selected live-hitch ceiling as `gang hitch` before writing any window
+option. `--over-ceiling <why>` admits the same explicit exception and records
+its reason with the adopted child's `agent.hitched` event. Re-adoption repairs
+metadata rather than creating another child and therefore performs no new
+ceiling decision.
+
 A collar declaring `GANG_STOP_HOOK=1` cannot be adopted. That declaration is a
 promise about the exact launch command installing the native boundary, and an
 existing pane supplies no positive evidence that it started with that command.

@@ -690,6 +690,7 @@ gang adopt
 
   gang adopt <name>
     -c <harness>
+    [--over-ceiling <why>]
 
   Reach for it when the harness is already
   running in a window of this team. That
@@ -700,6 +701,11 @@ gang adopt
   -c, --collar <harness>
       which harness is running in there.
       Required; gang never guesses one.
+  --over-ceiling <why>
+      adopt past the live-hitch ceiling this
+      agent is held to, recording why this
+      existing window must become one more
+      live child.
 
   No startup contract is delivered and no
   native hooks are installed, so the agent
@@ -14059,11 +14065,12 @@ hitch_live_children() { # $1 own window, $2 own token, $3 the window a resume
   printf '%s' "$n"
 }
 
-hitch_ceiling_check() { # $1 hitcher stamp (token TAB name), $2 name being hitched,
-                        # $3 1 when --over-ceiling was passed
-  local token="${1%%$'\t'*}" origin role="" held who reuse
-  # Read before any decision, so a malformed setting is caught on every hitch
-  # rather than only on the ones it would have bounded.
+hitch_ceiling_check() { # $1 hitcher stamp (token TAB name), $2 child name,
+                        # $3 1 when --over-ceiling was passed, $4 hitch|adopt
+  local token="${1%%$'\t'*}" origin role="" held who reuse verb="${4:-hitch}" count_word=hitch past=hitched
+  if [ "$verb" = adopt ]; then count_word=adoption; past=adopted; fi
+  # Read before any decision, so a malformed setting is caught on every new
+  # child registration rather than only on the ones it would have bounded.
   hitch_ceiling_map "$GANG_HITCH_CEILING"
   # THE OPERATOR IS UNBOUNDED. A team has to be opened from a shell that is no
   # agent, and a ceiling there would mean gang up could not fill one.
@@ -14078,7 +14085,7 @@ hitch_ceiling_check() { # $1 hitcher stamp (token TAB name), $2 name being hitch
   hitch_ceiling_select "$role" || return 0
   reuse="$(win_id "$2" 2>/dev/null)" || reuse=""
   held="$(hitch_live_children "$origin" "$token" "$reuse")" \
-    || refuse "hitch: $held; nothing was hitched"
+    || refuse "$verb: $held; nothing was $past"
   [ "$held" -ge "$HITCH_CEILING_LIMIT" ] || return 0
   # A WINDOW WITH NO RECORDED ROLE IS NOT THE SAME READING AS ONE BOUNDED AT ITS
   # OWN ROLE'S NUMBER, and every agent hitched before this existed is the first
@@ -14086,7 +14093,7 @@ hitch_ceiling_check() { # $1 hitcher stamp (token TAB name), $2 name being hitch
   # lead that lost its role across a version boundary from an ordinary teammate.
   who="your ceiling, with no role recorded for this window, is"
   [ -z "$role" ] || who="your ceiling as $role is"
-  refuse "hitch: '$2' would be live hitch number $((held + 1)) and $who $HITCH_CEILING_LIMIT$(config_origin_note GANG_HITCH_CEILING) — drop the children whose work is done, or run this inside your own harness with subagents, which take no window; --over-ceiling '<why>' overrides; nothing was hitched"
+  refuse "$verb: '$2' would be live $count_word number $((held + 1)) and $who $HITCH_CEILING_LIMIT$(config_origin_note GANG_HITCH_CEILING) — drop the children whose work is done, or run this inside your own harness with subagents, which take no window; --over-ceiling '<why>' overrides; nothing was $past"
 }
 
 hitch_launch() {
@@ -14165,7 +14172,7 @@ hitch_launch() {
   # same one the child is stamped with below. Hitch mutates the child's window
   # and never the caller's, so the reading cannot move between the two points.
   hitched_by="$(hitched_by_of)"
-  hitch_ceiling_check "$hitched_by" "$name" "$over_ceiling_given"
+  hitch_ceiling_check "$hitched_by" "$name" "$over_ceiling_given" hitch
   # THE COLLAR IS SOURCED SEEING THIS AGENT'S REQUEST, not the team's. A collar
   # may wire its native context source at source time — claude-code paints the
   # beacon its own `collar_context` reads — so a per-agent `--lights` the collar
@@ -19192,12 +19199,17 @@ cmd_composer() { # what a human actually typed — capture shows the raw pane,
 
 cmd_adopt() { # register an EXISTING tmux window as a gang agent
   local name="" collar="" id rc=0 hitched_by="" pane_dir="" registered=""
+  local over_ceiling="" over_ceiling_given=0 over_ceiling_member=""
   name="${1:-}"; case "$name" in ''|-*) usage_die ;; esac; shift
   valid_name "$name" \
     || die "adopt: '$name' is not a usable agent name — hitch and gangline are reserved for Gangline; other names use letters, digits, dot, dash and underscore only. Rename the window first (tmux rename-window)"
   while [ $# -gt 0 ]; do case "$1" in
     -c|--collar) [ $# -ge 2 ] || die "adopt: $1 needs a value"
                   collar="$2"; shift 2 ;;
+    --over-ceiling) [ $# -ge 2 ] || die "adopt: $1 needs a value"
+                  [ "$over_ceiling_given" -eq 0 ] || die "adopt: --over-ceiling may be passed only once"
+                  case "$2" in *[![:space:]]*) ;; *) die "adopt: --over-ceiling needs a reason for holding one more agent" ;; esac
+                  over_ceiling="$2"; over_ceiling_given=1; shift 2 ;;
     *) die "adopt: unknown argument '$1'" ;;
   esac; done
   [ -n "$collar" ] || die "adopt: -c <collar> is required"
@@ -19216,6 +19228,12 @@ cmd_adopt() { # register an EXISTING tmux window as a gang agent
   # a marked agent needs before it takes more work.
   ! safe_to_drop_read "$id" \
     || refuse "adopt: '$name' has marked itself safe to drop, and re-adopting keeps the registration that mark belongs to; drop it and hitch a new agent instead. Nothing was changed"
+  if [ -z "$registered" ]; then
+    hitched_by="$(hitched_by_of)"
+    hitch_ceiling_check "$hitched_by" "$name" "$over_ceiling_given" adopt
+  elif [ "$over_ceiling_given" -eq 1 ]; then
+    die "adopt: --over-ceiling applies only when registering a new child; '$name' is already registered"
+  fi
   usage_lights_parse "$GANG_USAGE_LIGHTS" >/dev/null || true
   auto_resume_parse "$GANG_AUTO_RESUME" >/dev/null || true
   # A WINDOW-SUPPLIED SPOOL IDENTITY CAN REFUSE. Settle that residue before
@@ -19234,7 +19252,6 @@ cmd_adopt() { # register an EXISTING tmux window as a gang agent
   # provenance it has, absent included: drop authority and a hitcher's child
   # scan read it, and the repairer did not create the window.
   if [ -z "$registered" ]; then
-    hitched_by="$(hitched_by_of)"
     tmux set-option -w -t "$id" @gl_hitched_by "${hitched_by%%$'\t'*}"
     tmux set-option -w -t "$id" @gl_hitched_by_name "${hitched_by#*$'\t'}"
   fi
@@ -19246,6 +19263,12 @@ cmd_adopt() { # register an EXISTING tmux window as a gang agent
   tmux set-option -w -t "$id" @gl_dir "$pane_dir"
   tmux set-option -w -t "$id" @gl_task ""
   tmux set-option -w -t "$id" @gl_hitched_at "$(date +%s)"
+  if [ -z "$registered" ]; then
+    [ "$over_ceiling_given" -eq 0 ] \
+      || over_ceiling_member=",\"over_ceiling\":$(json_text "$over_ceiling")"
+    event_log_record "$id" agent.hitched \
+      "{\"collar\":$(json_text "$collar"),\"adopt\":true$over_ceiling_member}"
+  fi
   waiting_clear "$id"
   stamp_binary_id "$id"
   state_note_clear "$id"

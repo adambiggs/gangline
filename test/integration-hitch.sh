@@ -3481,6 +3481,8 @@ ceiling_adopt_over_out="$(TMUX_PANE="$ceiling_pane" \
   || ceiling_adopt_over_rc=$?
 equal "an adoption accepts a reason for exceeding the ceiling" \
   0 "$ceiling_adopt_over_rc"
+contains "the override adoption reports the registered child" \
+  "$ceiling_adopt_over_out" "adopted ceiladoptover as a bash agent"
 equal "an adoption can name why it exceeds the ceiling" \
   "$ceiling_token" \
   "$(tmux show-options -wqv -t "$ceiling_adopt_over" @gl_hitched_by)"
