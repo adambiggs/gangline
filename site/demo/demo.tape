@@ -89,7 +89,7 @@ Sleep 4s
 # End on the artifact itself: the team's animated work owns the final screen.
 Type "clear"
 Enter
-Type "python3 hello.py --hold 8"
+Type "python3 finale.py --hold 8"
 Enter
 Wait+Screen@30s /CONNECTED BY GANGLINE/
 Sleep 6s

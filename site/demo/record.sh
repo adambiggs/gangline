@@ -74,23 +74,46 @@ rm -rf -- "$demo_root"
 mkdir -p "$demo_root"
 git -C "$demo_root" init -q
 cat > "$demo_root/TASK.md" <<'TASK'
-Build a polished, runnable terminal show at /tmp/gangline-demo-run/hello.py.
+Build a restrained, runnable terminal finale at /tmp/gangline-demo-run/finale.py.
+
+This is the closing shot of a public demo, and its held final frame becomes the
+still poster. It has to look like something a serious engineering team would
+leave on screen: quiet, typographic, legible on a phone.
 
 Requirements:
 - Python 3 standard library only; no downloads or generated data files.
-- Animate for about three seconds, then leave a bold final frame on screen.
-- Use ANSI motion and vivid 24-bit color to fill a 1280x720 terminal with a
-  large, centered rainbow banner reading "HELLO, TEAM!", stars/confetti, and
-  the exact subtitle "CLAUDE + CODEX — CONNECTED BY GANGLINE". The final frame
-  must visibly use at least six saturated hues across the banner (red, orange,
-  yellow, green, cyan, blue, magenta), not grayscale or dim theme colors.
+- Animate for about three seconds, then hold a completely static final frame.
+  Nothing blinks, pulses, scrolls, or moves once the reveal is done, and the
+  cursor is not visible in it.
+- The final frame is centered typography on the bare terminal background: a
+  large block-lettered "GANGLINE" wordmark at least six rows tall, a thin
+  horizontal rule under it, and the exact subtitle
+  "CLAUDE + CODEX — CONNECTED BY GANGLINE" below that. Nothing else.
+- The wordmark is drawn as solid type: the strokes of each letter are filled with
+  one glyph, and everything that is not a stroke is a space. Do not fill the
+  counters, the gaps between letters or the area around them with dots, periods,
+  hyphens, dimmed characters, shading or any other placeholder — a lattice of
+  filler reads as a debug grid, not as a wordmark, and it is the one thing this
+  frame cannot look like.
+- The rule is a single unbroken horizontal line: one repeated line-drawing or
+  underline character with no gaps. A run of hyphens, dashes, underscores with
+  spaces, or equals signs is a dashed line and is wrong.
+- Use exactly two colors: 24-bit foreground #f09aac for the wordmark, and
+  24-bit foreground #8b949e for the rule and the subtitle. No third color, no
+  rainbow or per-character gradient, no background fills, no confetti, no
+  stars, no sparkles, no emoji, no box-drawing frame.
+- The animation reveals that same composition rather than playing a different
+  scene: draw the rule, bring the wordmark in, type the subtitle on, stop.
 - Hide the cursor during animation and restore it even on interruption.
 - Adapt to the current terminal dimensions and remain legible without color.
 - Accept --hold SECONDS to keep the completed final frame displayed before
   returning; default to one second and reject invalid values cleanly.
 - Support --check: render no animation, validate the important invariants, print
   exactly "show ready", and exit zero. Its invariants must prove that the final
-  color frame contains multiple explicit 24-bit foreground-color escape codes.
+  frame carries the wordmark and the exact subtitle, that the frame's 24-bit
+  color escapes name only those two colors — a third is a failure — that every
+  cell of the wordmark rows is either the stroke glyph or a space, and that the
+  rule row holds one repeated character and no spaces.
 
 Make it executable. Prove it with py_compile and --check, run the animation once,
 and report the proof and design choices to the lead. Do not merely describe code:
