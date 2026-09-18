@@ -219,9 +219,10 @@ def block_reason(verdicts: list[Verdict]) -> str:
         )
     peers = list(dict.fromkeys(v.peer for v in verdicts))
     return (
-        "you may not go idle: reply to %s with any concise genuine reply or "
-        "acknowledgement (gang send --to NAME --stdin). It may say you are "
-        "waiting on background work and will report later"
+        "you may not go idle: reply to %s with any concise genuine reply "
+        "(gang send --to NAME --stdin), sent without --ack because it answers "
+        "a request and must wake them. It may say you are waiting on "
+        "background work and will report later"
         % ", ".join(peers)
     )
 
