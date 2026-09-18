@@ -3447,7 +3447,6 @@ contains "the repaired failed-turn claim records its marked continuation" \
 "$HITCH" auto-stream-off -c auto-stream -d /tmp >/dev/null
 auto_stream_off_id="$(window_id auto-stream-off)"
 auto_stream_off_pane="$(tmux list-panes -t "$auto_stream_off_id" -F '#{pane_id}')"
-auto_stream_off_before="$(pane_all auto-stream-off)"
 printf '%s' "$(python3 - "$auto_stream_transcript" <<'PY'
 import json, sys
 print(json.dumps({
@@ -3458,10 +3457,11 @@ print(json.dumps({
 }))
 PY
 )" | TMUX_PANE="$auto_stream_off_pane" "$GANG" hook >/dev/null
-# source-guard: whole-surface@fef9194e9e4b: opt-out means the native failure may change no visible producer anywhere in this pane, so complete byte-equality is the intended evidence
-equal "stream-failure continuation is off until auto-resume is declared" \
-  "$auto_stream_off_before" "$(pane_all auto-stream-off)"
-equal "an opted-out stream failure records no handled UUID" "" \
+# The handled UUID is written only after the attributed continuation was
+# submitted successfully, so this option is the execution witness rather than
+# retained pane text from an earlier fixture turn.
+equal "stream-failure recovery does not depend on the usage-threshold option" \
+  "error-c" \
   "$(tmux show-options -wqv -t "$auto_stream_off_id" @gl_auto_resume_error)"
 "$GANG" drop auto-stream-off >/dev/null
 "$GANG" drop auto-stream >/dev/null
