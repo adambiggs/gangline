@@ -1785,6 +1785,24 @@ tmux set-option -w -t "$reply_a_id" @gl_agent reply-a
 equal "repairing sender identity restores the live obligation" \
   $'owed\t'"$reply_gone_nonce"$'\treply-a\tlive' \
   "$(TMUX_PANE="$reply_b_pane" "$GANG" reply-obligations)"
+# A SENDER MARKED SAFE TO DROP CAN BE SENT NOTHING, so a request it left is
+# waived rather than owed: holding its debtor at Stop for a reply that send
+# must refuse wedged that debtor until the sender was dropped (#294).
+tmux set-option -w -t "$reply_a_id" @gl_safe_to_drop \
+  "$(tmux show-options -wqv -t "$reply_a_id" @gl_spool)"
+equal "a sender marked safe to drop retires the debt it is owed" \
+  $'retired\t'"$reply_gone_nonce"$'\treply-a\tsender-marked' \
+  "$(TMUX_PANE="$reply_b_pane" "$GANG" reply-obligations)"
+reply_stop_run "$reply_b_pane"
+equal "a marked sender cannot wedge its debtor at Stop" "{}" "$reply_stop_output"
+contains "status says why the obligation stands retired" "$("$GANG" status reply-b)" \
+  "reply obligation retired for reply-a (message $reply_gone_nonce; sender marked itself safe to drop)"
+equal "the mark writes no retirement proof, since the registration still stands" "" \
+  "$(tmux show-options -wqv -t "$reply_b_id" "@gl_rretired_$reply_gone_nonce")"
+tmux set-option -uw -t "$reply_a_id" @gl_safe_to_drop
+equal "without the mark the obligation is owed again" \
+  $'owed\t'"$reply_gone_nonce"$'\treply-a\tlive' \
+  "$(TMUX_PANE="$reply_b_pane" "$GANG" reply-obligations)"
 reply_gone_meta="$(tmux show-options -wqv -t "$reply_b_id" "@gl_reply_$reply_gone_nonce")"
 IFS=: read -r _ reply_gone_token _ _ reply_gone_digest _ <<<"$reply_gone_meta"
 "$GANG" drop reply-a >/dev/null
