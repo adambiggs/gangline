@@ -518,3 +518,78 @@ contains "status says who may drop it" "$("$GANG" status td-root)" \
 "$GANG" drop td-root >/dev/null
 "$GANG" drop td-bare >/dev/null
 "$GANG" drop td-peer >/dev/null
+
+# A HITCHER'S DROP TAKES WHAT IT LEFT MARKED AND HANDS UP WHAT IT DID NOT
+# (#289). A dropped hitcher used to strand its children: marked ones sat as
+# orphans until a root agent or the operator named each, and unmarked ones
+# answered to nobody live. The tree:
+#
+#   td-gp (operator)
+#     td-mid
+#       td-done          marked, reported to td-mid
+#         td-gdone       marked, reported to td-done
+#         td-late        unmarked, hitched after td-done marked
+#       td-live          unmarked
+GANG_HITCH_CEILING=off "$HITCH" td-gp -c droppable -d /tmp >/dev/null
+GANG_HITCH_CEILING=off TMUX_PANE="$(td_pane td-gp)" \
+  "$HITCH" td-mid -c droppable -d /tmp >/dev/null
+GANG_HITCH_CEILING=off TMUX_PANE="$(td_pane td-mid)" \
+  "$HITCH" td-done -c droppable -d /tmp >/dev/null
+GANG_HITCH_CEILING=off TMUX_PANE="$(td_pane td-mid)" \
+  "$HITCH" td-live -c droppable -d /tmp >/dev/null
+GANG_HITCH_CEILING=off TMUX_PANE="$(td_pane td-done)" \
+  "$HITCH" td-gdone -c droppable -d /tmp >/dev/null
+td_send td-gdone td-done "TD_GDONE_REPORT"
+td_as td-gdone safe-to-drop --report-to td-done
+equal "the grandchild marks itself" 0 "$td_rc"
+td_send td-done td-mid "TD_DONE_REPORT"
+td_as td-done safe-to-drop --report-to td-mid
+equal "the child over a marked grandchild marks itself" 0 "$td_rc"
+# A mark is refused over a live unmarked child, so this one arrives after it.
+GANG_HITCH_CEILING=off TMUX_PANE="$(td_pane td-done)" \
+  "$HITCH" td-late -c droppable -d /tmp >/dev/null
+equal "the late grandchild is live" 1 "$(window_names | grep -cx td-late || :)"
+td_gp_token="$(tmux show-options -wqv -t "$(window_id td-gp)" @gl_spool)"
+td_as td-gp drop td-mid
+equal "a hitcher drops its child that has children of its own" 0 "$td_rc"
+equal "the child's marked child goes with it" "" "$(window_id td-done || :)"
+equal "and so does that child's marked child" "" "$(window_id td-gdone || :)"
+contains "the drop names the marked child it took" "$td_out" "dropped td-done"
+contains "and the grandchild" "$td_out" "dropped td-gdone"
+contains "the cascade is recorded as one" "$("$GANG" log --kind agent.dropped 2>&1)" \
+  '"scope": "cascade"'
+equal "the unmarked child survives its hitcher" 1 "$(window_names | grep -cx td-live || :)"
+equal "and answers to the dropped hitcher's own hitcher" "$td_gp_token td-gp" \
+  "$(tmux show-options -wqv -t "$(window_id td-live)" @gl_hitched_by) $(tmux show-options -wqv -t "$(window_id td-live)" @gl_hitched_by_name)"
+contains "the drop says who took it over" "$td_out" "td-live now answers to td-gp"
+# An unmarked grandchild under a marked child answers to nothing this drop
+# removes: its hitcher and td-mid both go, so it goes to td-gp too.
+equal "an unmarked grandchild skips every hitcher the drop removes" "$td_gp_token td-gp" \
+  "$(tmux show-options -wqv -t "$(window_id td-late)" @gl_hitched_by) $(tmux show-options -wqv -t "$(window_id td-late)" @gl_hitched_by_name)"
+contains "the drop says who took the grandchild over" "$td_out" "td-late now answers to td-gp"
+td_as td-gp drop td-live
+equal "which can drop it without --orphan" 0 "$td_rc"
+td_as td-gp drop td-late
+equal "and the grandchild too" 0 "$td_rc"
+
+# PROVENANCE IS A WINDOW OPTION ANY PANE CAN WRITE, so two marked windows can
+# name each other as hitcher. The drop must end, taking both. FUNCNEST bounds
+# the call so a walk that recursed without end dies here instead of eating
+# the host's memory.
+GANG_HITCH_CEILING=off "$HITCH" td-x -c droppable -d /tmp >/dev/null
+GANG_HITCH_CEILING=off "$HITCH" td-y -c droppable -d /tmp >/dev/null
+td_x_token="$(tmux show-options -wqv -t "$(window_id td-x)" @gl_spool)"
+td_y_token="$(tmux show-options -wqv -t "$(window_id td-y)" @gl_spool)"
+tmux set-option -w -t "$(window_id td-x)" @gl_hitched_by "$td_y_token"
+tmux set-option -w -t "$(window_id td-x)" @gl_hitched_by_name td-y
+tmux set-option -w -t "$(window_id td-x)" @gl_safe_to_drop "$td_x_token"
+tmux set-option -w -t "$(window_id td-y)" @gl_hitched_by "$td_x_token"
+tmux set-option -w -t "$(window_id td-y)" @gl_hitched_by_name td-x
+tmux set-option -w -t "$(window_id td-y)" @gl_safe_to_drop "$td_y_token"
+td_rc=0
+td_out="$(FUNCNEST=400 "$GANG" drop td-x 2>&1)" || td_rc=$?
+equal "a forged hitch cycle still drops" 0 "$td_rc"
+equal "the dropped window is gone" "" "$(window_id td-x || :)"
+equal "and its marked partner in the cycle went with it" "" "$(window_id td-y || :)"
+if window_id td-y >/dev/null; then FUNCNEST=400 "$GANG" drop td-y >/dev/null; fi
+"$GANG" drop td-gp >/dev/null
