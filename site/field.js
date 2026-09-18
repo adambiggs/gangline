@@ -82,7 +82,7 @@
   };
   const build = () => RAMP.map((r, i) => Array.from({ length: VARIANTS }, (_, k) => sprite(r, HALO[i], 100 + i * VARIANTS + k)));
 
-  let W = 0, H = 0, cols = 0, rows = 0, perBand = 0;
+  let W = 0, H = 0, cols = 0, rows = 0, perBand = 0, gridX = 1, gridY = 1;
   let acc = new Float32Array(0), cacc = new Float32Array(0);
   const f = {
     t: 0, last: 0, mx: -1e4, my: -1e4, tx: -1e4, ty: -1e4, cur: 0, pres: 0,
@@ -137,9 +137,12 @@
     const key = b * 1024 + i;
     let o = live.get(key);
     if (!o) {
-      const r = 200 + hash(b, i, 1) * 220;
+      const r = 230 + hash(b, i, 1) * 120;
+      /* Each body has its own cell of a gridX by gridY grid over the band
+       * and lands anywhere inside it, so the bodies spread evenly, with no
+       * clumps and no bare stretches, and still never line up. */
       o = {
-        x: hash(b, i, 2), y: b + hash(b, i, 3), r, a: 0.42 + hash(b, i, 4) * 0.26,
+        x: (i % gridX + hash(b, i, 2)) / gridX, y: b + (Math.floor(i / gridX) + hash(b, i, 3)) / gridY, r, a: 0.5 + hash(b, i, 4) * 0.2,
         w: 2 * Math.PI * HZ * (0.85 + hash(b, i, 5) * 0.3), ph: hash(b, i, 6) * 6.28,
         m: 0.8 + hash(b, i, 7) * 0.4,
         s: 0, v: 0, sx: 0, vx: 0, st: 1, sw: 1, seen: 0,
@@ -233,7 +236,8 @@
     cols = Math.ceil(W / cw) + 1; rows = Math.ceil((H + 2 * OVER) / ch) + 2;
     acc = new Float32Array(cols * rows); cacc = new Float32Array(cols * rows);
     qx = new Float32Array(cols); qy = new Float32Array(rows);
-    perBand = Math.ceil(W * H / 58000);
+    gridX = Math.max(1, Math.round(W / 240)); gridY = Math.max(1, Math.round(H / 240));
+    perBand = gridX * gridY; live.clear();
     if (rm) draw(0);
   };
 
