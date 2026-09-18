@@ -873,8 +873,20 @@ exec 6>&- 7>&-
 # contract as an ordinary send from the calling window, under that window's
 # observed identity.
 hitch_body_sender="$(tmux list-panes -t "$(window_id alpha)" -F '#{pane_id}')"
+hitch_tier_missing_rc=0
+hitch_tier_missing_out="$(printf 'MARK_HITCH_TIER_MISSING' \
+  | TMUX_PANE="$hitch_body_sender" "$GANG" hitch hitchtiermissing \
+      -c bash -d /tmp --stdin 2>&1)" || hitch_tier_missing_rc=$?
+equal "hitch refuses an assignment with no tier line before launch" \
+  1 "$hitch_tier_missing_rc"
+contains "the missing-tier refusal names both accepted own-line declarations" \
+  "$hitch_tier_missing_out" "one line exactly 'tier: A' or 'tier: B'"
+equal "a missing-tier assignment launches nothing" "" \
+  "$(window_id hitchtiermissing)"
+[ -z "$(window_id hitchtiermissing)" ] || "$GANG" drop hitchtiermissing >/dev/null
+
 hitch_body_rc=0
-hitch_body_out="$(printf 'MARK_HITCH_BODY' | TMUX_PANE="$hitch_body_sender" \
+hitch_body_out="$(printf 'tier: A\nMARK_HITCH_BODY' | TMUX_PANE="$hitch_body_sender" \
   "$GANG" hitch hitchbody -c bash -d /tmp --stdin 2>&1)" || hitch_body_rc=$?
 equal "hitch --stdin launches the agent and sends it the message" \
   0 "$hitch_body_rc"
@@ -920,10 +932,24 @@ fi
 # A TASK WITH NO MESSAGE IS THE ASSIGNMENT. Callers put the brief in -t, the
 # agent received a contract ending "End this turn." and nothing else, and it
 # sat idle until someone noticed and sent the brief by hand.
+hitch_task_missing_rc=0
+hitch_task_missing_out="$("$GANG" hitch hitchtaskmissing -c bash -d /tmp \
+  -t 'MARK_HITCH_TASK_MISSING_TIER' </dev/null 2>&1)" \
+  || hitch_task_missing_rc=$?
+equal "a task-only assignment also refuses without a tier" \
+  1 "$hitch_task_missing_rc"
+contains "the task refusal points at the explicit tier flag" \
+  "$hitch_task_missing_out" "--tier A|B"
+equal "the refused task-only assignment launches nothing" "" \
+  "$(window_id hitchtaskmissing)"
+[ -z "$(window_id hitchtaskmissing)" ] || "$GANG" drop hitchtaskmissing >/dev/null
+
 hitch_task_rc=0
 hitch_task_out="$("$GANG" hitch hitchtask -c bash -d /tmp \
-  -t 'MARK_HITCH_TASK' </dev/null 2>&1)" || hitch_task_rc=$?
+  -t 'MARK_HITCH_TASK' --tier B </dev/null 2>&1)" || hitch_task_rc=$?
 equal "hitch -t without --stdin launches the agent" 0 "$hitch_task_rc"
+contains "a Tier B task assignment names the teammate-reviewer violation" \
+  "$hitch_task_out" "hitching a teammate reviewer for it violates Tier B"
 if [ -n "$(window_id hitchtask)" ]; then
   hitch_task_seen="$(pane hitchtask)
 $("$GANG" mail hitchtask 2>&1)"
@@ -946,11 +972,13 @@ fi
 # end of hitch's wait no longer takes the message with it.
 rm -f "$RUN_ROOT/startup-gate-first" "$RUN_ROOT/startup-gate-second"
 gated_body_rc=0
-gated_body_out="$(printf 'MARK_GATED_BODY' | GANG_GATE_LOOKS=1 \
+gated_body_out="$(printf 'tier: B\nMARK_GATED_BODY' | GANG_GATE_LOOKS=1 \
   TMUX_PANE="$hitch_body_sender" "$GANG" hitch gatedbody \
   -c startup-delivery-gate -d /tmp --stdin 2>&1)" || gated_body_rc=$?
 equal "a gated hitch carrying a stdin message keeps the gate verdict" \
   4 "$gated_body_rc"
+contains "an own-line Tier B assignment names the teammate-reviewer violation" \
+  "$gated_body_out" "hitching a teammate reviewer for it violates Tier B"
 contains "and says the message is parked behind the contract" \
   "$gated_body_out" "the contract and the message on stdin are parked in its spool, in that order"
 if [ -n "$(window_id gatedbody)" ]; then
