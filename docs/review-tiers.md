@@ -51,9 +51,9 @@ tier: B
 
 The line is written by whoever assigns the work, above or below the task text
 and before any evidence pointers. An assignment that arrives without it is
-incomplete, but it is not a reason to stop: ask the sender for the tier and
-begin the work as Tier B, then say in your report that no tier was given and
-which one you applied. A tier chosen by the owner is the judgment the tier
-exists to remove, so the sender's answer replaces yours whenever it arrives —
-including after the review has already run, when Tier A means running it again
-outside your harness.
+incomplete. `gang hitch --stdin` refuses it before launch; a task-only hitch
+supplies `--tier A|B`, and Gangline renders the same line into the assignment.
+Tier B acceptance names that hitching a teammate reviewer violates the tier,
+because its review stays inside the owner's harness. Gangline validates this
+declared boundary but keeps no tier state and does not infer assignment intent
+from ordinary messages.

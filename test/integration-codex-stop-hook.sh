@@ -291,15 +291,18 @@ equal "a verified self-declared operator envelope creates no peer debt" \
 # assignment envelope observable from the agent that sent it. The live-hitch
 # ceiling is not this part's subject, so it is off for the one hitch that crosses
 # it.
-printf '%s' ASSIGN_READ | GANG_HITCH_CEILING=off TMUX_PANE="$reply_a_pane" "$GANG" hitch assign-read \
+printf 'tier: B\n%s' ASSIGN_READ | GANG_HITCH_CEILING=off TMUX_PANE="$reply_a_pane" "$GANG" hitch assign-read \
   -c replyable -d /tmp --stdin >/dev/null
 assign_id="$(window_id assign-read)"
 assign_pane="$(tmux list-panes -t "$assign_id" -F '#{pane_id}')"
 assign_nonce="$(reply_nonce_from "$assign_id" reply-a)" || assign_nonce=""
 equal "the hitch assignment leaves its recipient one record" 16 "${#assign_nonce}"
-# source-guard: producer@1db1d3e47cb4: ASSIGN_READ exists only on the stdin of the hitch above, and the nonce is read from the one record that hitch's send left on assign-read
+# source-guard: producer@a2427142d0a4: the hitch above is the only assignment producer for assign-read, and the nonce is read from the one reply record that send left there
 contains "the assignment is stamped in its envelope" "$(pane_all assign-read)" \
-  "[gang:reply-a#$assign_nonce assignment] ASSIGN_READ"
+  "[gang:reply-a#$assign_nonce assignment] tier: B"
+# source-guard: producer@cb17049b6fad: ASSIGN_READ exists only on the stdin of that nonce-bound hitch, whose one reply record independently selects this envelope
+contains "the tiered assignment retains its body" "$(pane_all assign-read)" \
+  "ASSIGN_READ"
 equal "the assignment record is waived, not a request" waived \
   "$(tmux show-options -wqv -t "$assign_id" "@gl_reply_$assign_nonce" | cut -d: -f4)"
 assign_wire="$(pane_all assign-read \

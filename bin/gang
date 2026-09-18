@@ -585,6 +585,7 @@ gang hitch
     [-l <lights>]
     [--resume [session-id]]
     [--stdin]
+    [--tier <A|B>]
     [--over-ceiling <why>]
 
   <name>  how teammates address it. Letters,
@@ -640,6 +641,11 @@ gang hitch
       inside the team. Input waiting on
       stdin without --stdin refuses the
       hitch before anything launches.
+  --tier <A|B>
+      declare the review tier for a task-only
+      assignment. With --stdin, put the exact
+      line "tier: A" or "tier: B" in the
+      message instead.
   --over-ceiling <why>
       hitch past the live-hitch ceiling this
       agent is held to, giving the reason it
@@ -1996,6 +2002,30 @@ stdin_body() { # $1 = command/option label; read all text from stdin into STDIN_
   [ -n "$STDIN_BODY" ] || die "$1: empty body on stdin"
 }
 
+ASSIGNMENT_TIER=""
+assignment_tier_read() { # $1 body, $2 refusal subject; exact own-line A or B
+  local line count=0 invalid=""
+  ASSIGNMENT_TIER=""
+  while IFS= read -r line || [ -n "$line" ]; do
+    case "$line" in
+      'tier: A'|'tier: B')
+        count=$((count + 1))
+        ASSIGNMENT_TIER="${line#tier: }" ;;
+      tier:*) invalid="$line" ;;
+    esac
+  done <<< "$1"
+  [ -z "$invalid" ] \
+    || die "$2 must contain one line exactly 'tier: A' or 'tier: B'; found '$(printf '%s' "$invalid" | config_sanitize)' instead; nothing was launched"
+  [ "$count" -ne 0 ] \
+    || die "$2 must contain one line exactly 'tier: A' or 'tier: B'; nothing was launched"
+  [ "$count" -eq 1 ] \
+    || die "$2 contains more than one tier line; keep exactly one 'tier: A' or 'tier: B' line; nothing was launched"
+}
+
+assignment_tier_notice() { # $1 child name, $2 A|B
+  [ "$2" != B ] || printf "gang: tier B assignment for '%s': its owner reviews inside its own harness; hitching a teammate reviewer for it violates Tier B\n" "$1" >&2
+}
+
 # OBSERVED IDENTITY AND A CLAIM ABOUT ONE ARE DIFFERENT FACTS, and the envelope
 # is where the difference has to land, because the envelope is all the receiver
 # gets. Gangline reads a sender off the calling window where it can see one and
@@ -2215,7 +2245,7 @@ system_prompt_build() { # populate the system-prompt-level composite byte-exact
     "$SYSTEM_PROMPT" "$role" "$path" "$ROLE_BODY"
 }
 
-startup_brief() { # $1 = agent name, $2 = doctrine body or empty, $3 = non-empty when a message follows, $4 = task or empty
+startup_brief() { # $1 agent, $2 doctrine, $3 message marker, $4 task, $5 task tier
   local role path contract closer=' End this turn.'
   # A MESSAGE HANDED TO HITCH ARRIVES IN THE SAME BATCH, right behind this
   # contract, so a closing "End this turn." reads as the last instruction for
@@ -2227,7 +2257,9 @@ startup_brief() { # $1 = agent name, $2 = doctrine body or empty, $3 = non-empty
   if [ -n "${3:-}" ]; then
     closer=' The message that follows is your assignment: begin it in the turn that reads it. Do not acknowledge it; your completion report is its reply.'
   elif [ -n "${4:-}" ]; then
-    closer=" Your hitcher gave this task, and it is your assignment: $(printf '%s' "$4" | config_sanitize)
+    closer=" Your hitcher gave this task, and it is your assignment:
+tier: $5
+$(printf '%s' "$4" | config_sanitize)
 Begin it in the turn that reads it. Do not acknowledge it; your completion report is its reply."
   fi
   contract="$(config_path "$CONTRACT_FILE" | config_sanitize)"
@@ -14101,6 +14133,7 @@ hitch_launch() {
   local lights="" lights_arg="" lights_given=0 lights_subject="" lights_from="" lights_note="" cache_compaction=off boot="${GANG_BOOT_TIMEOUT:-30}" gate_looks="${GANG_GATE_LOOKS:-60}"
   local bands="" bands_from="" bands_summary="" band_i bands_custom=0 cache_bands="" cache_bands_active=0 cache_bands_from="" cache_bands_summary="" cache_band_i cache_bands_custom=0 cache_notice="" context_lights_for_registration="" context_notice="" prior_bands=""
   local hitched_by="" use_stdin=0 over_ceiling="" over_ceiling_given=0 over_ceiling_member=""
+  local assignment_tier="" assignment_tier_given=0
   name="${1:-}"; case "$name" in ''|-*) usage_die ;; esac; shift
   valid_name "$name" \
     || die "hitch: '$name' is not usable — use letters, digits, dot, dash and underscore; do not start with dash or dot; hitch and gangline are reserved"
@@ -14118,6 +14151,10 @@ hitch_launch() {
                   if [ $# -gt 0 ] && [[ "$1" != -* ]]; then resume_id="$1"; shift; fi ;;
     --stdin)      [ "$use_stdin" -eq 0 ] || die "hitch: --stdin may be passed only once"
                   use_stdin=1; shift ;;
+    --tier)       [ $# -ge 2 ] || die "hitch: $1 needs A or B"
+                  [ "$assignment_tier_given" -eq 0 ] || die "hitch: --tier may be passed only once"
+                  case "$2" in A|B) assignment_tier="$2" ;; *) die "hitch: --tier takes A or B, not '$2'" ;; esac
+                  assignment_tier_given=1; shift 2 ;;
     --over-ceiling) [ $# -ge 2 ] || die "hitch: $1 needs a value"
                   [ "$over_ceiling_given" -eq 0 ] || die "hitch: --over-ceiling may be passed only once"
                   case "$2" in *[![:space:]]*) ;; *) die "hitch: --over-ceiling needs a reason for holding one more agent" ;; esac
@@ -14317,10 +14354,21 @@ hitch_launch() {
     send_identity_guard "hitch --stdin"
     stdin_body "hitch"
     HITCH_BODY="$STDIN_BODY"
+    [ "$assignment_tier_given" -eq 0 ] \
+      || die "hitch: --tier declares a task-only assignment; with --stdin, put one line exactly 'tier: A' or 'tier: B' in the message; nothing was launched"
+    assignment_tier_read "$HITCH_BODY" "hitch --stdin: assignment for '$name'"
+    assignment_tier="$ASSIGNMENT_TIER"
+    assignment_tier_notice "$name" "$assignment_tier"
   elif stdin_unread; then
     # Without the flag hitch reads no stdin, so a heredoc handed to it used to be
     # dropped with nothing said. One it can see waiting is refused instead.
     die "hitch: stdin holds unread input and hitch reads none without --stdin, so nothing was launched; pass --stdin to send it to '$name' after the startup contract, or give hitch nothing on stdin"
+  elif [ -n "$task" ]; then
+    [ "$assignment_tier_given" -eq 1 ] \
+      || die "hitch: task '$task' is the assignment without --stdin and needs --tier A|B; nothing was launched"
+    assignment_tier_notice "$name" "$assignment_tier"
+  elif [ "$assignment_tier_given" -eq 1 ]; then
+    die "hitch: --tier declares an assignment, but neither --stdin nor -t supplied one; nothing was launched"
   fi
   if [ -n "$GANG_MODEL_OPT" ] && [ -z "$model" ]; then missing="-m"; fi
   if [ -n "$GANG_EFFORT_OPT" ] && [ -z "$effort" ]; then
@@ -14559,7 +14607,7 @@ hitch_launch() {
   }
   printf '%s\n' "$(colour "$C_OK" "registered $name in window $id ($prof) — if this caller is cut off, inspect: gang status $name")"
   local msg delivery_err="" delivery_rc=0
-  msg="$(startup_brief "$name" "$DOCTRINE" "${HITCH_BODY:+body}" "$task")"
+  msg="$(startup_brief "$name" "$DOCTRINE" "${HITCH_BODY:+body}" "$task" "$assignment_tier")"
   echo "$(colour "$C_OK" "hitched $name") ($prof) in $dir$(colour "$C_DIM" "$context_notice$cache_notice — watch: gang attach")"
   printf '%s\n' "$(colour "$C_WORK" "waiting for $name to finish booting...")"
   local ready=0 recovery
