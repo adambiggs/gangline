@@ -1289,6 +1289,32 @@ contains "the surviving team's command includes the complete alert invocation" \
   "$alert_ui_survivor_command" \
   "alerts --open"
 
+# An alert-center install that fails must say why in the alert itself. A tick
+# alert keeps only the last line of its pass's output, and the install's
+# failure was that last line with no cause: the step that failed, and what it
+# printed, appeared at most on earlier lines the alert drops. A live team whose
+# health record is malformed fails the install at its widget refresh, which
+# names that record as unreadable, while the rest of the pass succeeds.
+alert_ui_cause="gang-alert-cause-$$"
+alert_ui_tmux new-session -d -s "$alert_ui_cause" -n cause \
+  "PS1='❯ ' exec bash --norc"
+alert_ui_gang_for "$alert_ui_cause" adopt cause -c bash >/dev/null
+alert_ui_cause_digest="$(python3 -c \
+  'import hashlib,sys; print(hashlib.sha256((sys.argv[1]+"\0"+sys.argv[2]).encode()).hexdigest()[:24])' \
+  "$alert_ui_socket" "$alert_ui_cause")"
+alert_ui_cause_health="$RUN_ROOT/alert-ui-state/gangline/tick/$alert_ui_cause_digest/health"
+mkdir -p "${alert_ui_cause_health%/health}"
+printf 'malformed\n' > "$alert_ui_cause_health"
+alert_ui_cause_rc=0
+alert_ui_gang_for "$alert_ui_cause" tick > "$RUN_ROOT/alert-ui-cause.out" 2>&1 \
+  || alert_ui_cause_rc=$?
+equal "a tick that cannot install the alert center fails" 1 "$alert_ui_cause_rc"
+alert_ui_cause_note="$(cut -f3 "$alert_ui_cause_health")"
+equal "the alert names the failed install step and what that step printed" \
+  "tick could not install the tmux alert center: could not refresh the alert widget (alert health is unreadable or malformed; refusing to change active alert state)" \
+  "$alert_ui_cause_note"
+alert_ui_tmux kill-session -t "=$alert_ui_cause"
+
 # A teardown that loses the same server-global claim must mutate nothing. Hold
 # a harmless tick inside the claim, attempt `down` from a different team lock
 # root, and compare every alert-center surface before allowing the tick out.
