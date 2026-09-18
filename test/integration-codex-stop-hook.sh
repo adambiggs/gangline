@@ -861,6 +861,19 @@ equal "the native prompt proof alone arms the debt while delivery is in flight" 
 reply_stop_run "$reply_b_pane"
 contains "a prompt-witnessed request asks for the reply that clears it" \
   "$reply_stop_output" "reply to reply-a"
+# Every debt the hook names is a request, and send refuses --ack on an answer
+# to one, so the reply it asks for must be sent without it.
+contains "the hook asks for that reply without --ack" \
+  "$reply_stop_output" "without --ack"
+excludes "the hook does not offer an acknowledgement send would refuse" \
+  "$reply_stop_output" "acknowledgement"
+reply_owed_ack_rc=0
+reply_owed_ack_err="$(printf '%s' OWED_ACK_REFUSED \
+  | TMUX_PANE="$reply_b_pane" "$GANG" send --to reply-a --ack --stdin 2>&1)" \
+  || reply_owed_ack_rc=$?
+equal "send refuses --ack on the reply the hook asks for" 1 "$reply_owed_ack_rc"
+contains "and names the request it answers" \
+  "$reply_owed_ack_err" "answers a request reply-a is waiting on"
 printf '%s' ACK_PROMPT_FIRST \
   | TMUX_PANE="$reply_b_pane" "$GANG" send --to reply-a --stdin >/dev/null
 reply_race_ack_nonce="$(reply_nonce_for_body \

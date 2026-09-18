@@ -1087,6 +1087,14 @@ contains "the contract makes the completion report the assignment's reply" \
 contains "the contract says a reply and its same-turn acknowledgement owe nothing" \
   "$(contract_prose)" \
   "A reply to one of your messages is owed nothing, and neither is an acknowledgement you send its sender in the turn that read it; a message you send in a later turn is a new request."
+# send refuses --ack on any answer to a request, so a contract that offered it
+# for the owed reply led agents straight into that refusal.
+contains "the contract sends the owed reply without --ack" \
+  "$(contract_prose)" \
+  "Whatever pays that debt, an acknowledgement included, always wakes its reader, so send it without \`--ack\`."
+contains "the contract scopes --ack to acknowledging a reply" \
+  "$(contract_prose)" \
+  "When you acknowledge a reply to one of your messages and leave its sender nothing to act on, send it with \`gang send --ack\`"
 contains "the contract keeps keyboard input out of that debt" \
   "$(contract_prose)" \
   "Session-keyboard input, including operator input, neither creates nor clears that debt."
