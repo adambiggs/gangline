@@ -1,248 +1,370 @@
 /* SPDX-License-Identifier: Apache-2.0 */
-/* Gangline's background: a screen of fixed character cells, and a snowfield
- * projected onto it from above.
+/* Gangline's background: a screen of fixed cells with a field of soft
+ * bodies projected onto it as vertical dotted and dashed lines.
  *
  * The cells never move. Each frame every cell asks the scene what lies under
- * it and paints that one glyph, the way adambig.gs samples its wave field —
- * so motion is only ever a change in what a cell shows. The one exception is
- * scrolling, which slides the whole screen as a unit for parallax.
+ * it and paints one mark, so motion is only ever a change in what a cell
+ * shows. The one exception is scrolling, which slides the whole screen as a
+ * unit for parallax.
  *
- * The scene is a trail seen from overhead: the paired lines of a sled's
- * runners winding across the snow, and older passes beside them packed down
- * to a dotted line, all kept faint under the gradient. Over them drifts
- * adambig.gs's block-glyph wave field, read here as low cloud, a little slower
- * than the ground; a trail keeps clear of cloud rather than crossing it.
- * Lines are built from the box-drawing set only — ─ │ and the four round
- * corners — so a track is continuous from cell to cell however it bends.
+ * The scene is a tray of thick liquid being slid under you. Each body hangs
+ * on its own spring: while the page scrolls it lags behind, stretching along
+ * its motion, and when the page stops it swings back and settles. The bodies
+ * are drawn as vertical lines of rising weight, so a body reads as a run of
+ * ruled columns rather than a cloud, and a stretch lengthens the columns.
  */
 (() => {
-  const canvas = document.getElementById('field');
-  if (!canvas || !canvas.getContext) return;
-  const ctx = canvas.getContext('2d');
-  const reduced = matchMedia('(prefers-reduced-motion: reduce)');
-  const dark = matchMedia('(prefers-color-scheme: dark)');
+  const c = document.getElementById('field');
+  if (!c || !c.getContext) return;
+  const ctx = c.getContext('2d');
+  const rm = matchMedia('(prefers-reduced-motion: reduce)').matches;
 
-  const SIZE = 13;
-  const FONT = SIZE + 'px ui-monospace, SFMono-Regular, Menlo, Consolas, monospace';
-  const REACH = 240;
+  /* The ramp, in rising ink, after the box-drawing set ⋮ ┊ ┆ ┋ ┇ ┃: three
+   * dots, light quadruple and triple dash, heavy quadruple and triple dash,
+   * then the solid heavy line. Each is drawn as rectangles rather than from
+   * a font, so it is the same in every browser and on every platform. From
+   * the dashes up each spans its whole cell, so a column fuses into one
+   * continuous line; the dots are shorter and read as loose beads. */
+  const cw = 12, ch = 18;
+  const dashes = (n, w) => {
+    const gap = 2, len = (ch - gap * n) / n, out = [];
+    for (let i = 0; i < n; i++) out.push([w, i * (len + gap) + gap / 2, len]);
+    return out;
+  };
+  const RAMP = [
+    [[1, 5, 1], [1, 8.5, 1], [1, 12, 1]],
+    dashes(4, 1), dashes(3, 1), dashes(4, 2), dashes(3, 2),
+    [[2, 0, ch]],
+  ];
+  const STEPS = [0.2, 0.29, 0.36, 0.5, 0.62];
+  /* One sprite per step in the current ink; painted with the cell's alpha.
+   * Each carries a soft glow baked in around the marks, reaching GLOW px
+   * past the cell, so the halo costs nothing per frame. The glow is stronger
+   * up the ramp, and it is broken into coarse grain: a few variants per
+   * step, chosen by cell, so the grain does not tile. */
+  const GLOW = 6, GRAIN = 2, VARIANTS = 4;
+  const HALO = [0.3, 0.4, 0.5, 0.65, 0.8, 1];
+  let sprites = [], spriteCol = '', dpr = 1;
+  const sprite = (rects, halo, seed) => {
+    const c2 = document.createElement('canvas');
+    const sw = Math.ceil((cw + 2 * GLOW) * dpr), sh = Math.ceil((ch + 2 * GLOW) * dpr);
+    c2.width = sw; c2.height = sh;
+    const g = c2.getContext('2d');
+    g.fillStyle = 'rgb(' + col + ')';
+    /* Weights are in device pixels, so a light line is one hairline on any
+     * screen; the rest of the pattern scales with the cell. */
+    const draw = () => {
+      for (const [w, y, h] of rects) g.fillRect(Math.round((sw - w) / 2), Math.round((y + GLOW) * dpr), w, Math.round(h * dpr));
+    };
+    g.shadowColor = 'rgba(' + col + ',' + halo + ')'; g.shadowBlur = GLOW * dpr;
+    draw(); draw();
+    g.shadowColor = 'transparent'; g.shadowBlur = 0;
+    /* Grain: the glow's alpha is scaled by noise in GRAIN-pixel blocks. */
+    const img = g.getImageData(0, 0, sw, sh), d = img.data;
+    for (let y = 0; y < sh; y++) for (let x = 0; x < sw; x++) {
+      const n = 0.35 + hash(x / GRAIN | 0, y / GRAIN | 0, seed) * 0.9;
+      const i = (y * sw + x) * 4 + 3;
+      d[i] = Math.min(255, d[i] * n);
+    }
+    g.putImageData(img, 0, 0);
+    draw();
+    return c2;
+  };
+  const build = () => RAMP.map((r, i) => Array.from({ length: VARIANTS }, (_, k) => sprite(r, HALO[i], 100 + i * VARIANTS + k)));
 
-  /* Ground passes under the sled at this many cells per second, and the page
-   * adds to it: scrolling is travelling. */
-  const SPEED = 1.6, SCROLL_TRAVEL = 0.012;
-  /* Parallax: how far the whole screen slides per pixel of scroll. */
+  let W = 0, H = 0, cols = 0, rows = 0, perBand = 0;
+  let acc = new Float32Array(0), cacc = new Float32Array(0);
+  const f = { t: 0, last: 0, mx: -1e4, my: -1e4, tx: -1e4, ty: -1e4, cur: 0, pres: 0, scroll: 0, lastScroll: 0, vel: 0, slow: 0, acc: 0, amp: 0, pull: 0, zeta: 1 };
+
+  /* Parallax: the whole glyph matrix slides this much per pixel scrolled,
+   * with the page. The offset is split into whole cells, which the grid
+   * samples ahead by, and a remainder the canvas is translated by. The
+   * remainder is what the whole part overshoots, not what is left over: the
+   * grid steps a cell the moment the offset passes one, and the translate
+   * gives it back until the offset catches up. */
   const PARALLAX = 0.16;
+  const step = (o) => { const whole = Math.floor(o); return { whole, frac: whole - o }; };
 
-  /* One trail per band of world rows. Which kind it is comes from its index,
-   * so the field is the same on every visit and endless in either direction. */
-  const BAND = 14, SLED_SHARE = 0.34;
-  const A = {
-    runner: 0.14, centre: 0.06,   /* a sled: two runner lines and the team's line between */
-    old: 0.07,                    /* an older pass, packed to a dotted line */
-  };
+  /* Two things move the bodies. Drag: the liquid pulls them to a lag set by
+   * the page's speed, taken up at once as it speeds up and given back over
+   * FOLLOW seconds as it slows; the grip fades as the page slows below
+   * RELEASE px/s and the spring loosens from critical to ZETA with it.
+   * Inertia: the page's acceleration throws them the other way, so the
+   * moment a flick starts to decelerate they begin swinging home, and a hard
+   * stop throws them through rest for a full bounce. */
+  const LAG = 0.022, MAX_LAG = 75, FOLLOW = 0.25, RELEASE = 2000, INERTIA = 0.008;
+  const HZ = 1.1, ZETA = 0.5, STRETCH = 1100;
+  /* Slow drift of the whole field across the screen, px/s. */
+  const DRIFT = 14;
 
-  /* Cloud: adambig.gs's drifting wave field, crossing the screen a little
-   * slower than the ground below it. Cells at or above CLOUD show cloud;
-   * the band between CLEAR and CLOUD is left empty around it, so a trail
-   * stops short of a cloud rather than running into its edge. */
-  const CLOUD_SPEED = 0.62, CLOUD = 0.22, CLEAR = 0.17;
-  const CLOUDS = ' ·░▒▓█';
-
-  let W = 0, H = 0, cw = 8, ch = 16, asc = 12, cols = 0, rows = 0;
-  let glyph = [], alpha = new Float32Array(0), tone = new Uint8Array(0), cloud = new Float32Array(0);
-  let dx2 = new Float32Array(0), dy2 = new Float32Array(0);
-  let ink = '232,240,248', line = '132,170,214';
-  let styles = [[], []], styleKey = '';
-
-  const s = {
-    t: 0, last: 0, travel: 0, cur: 0,
-    px: -1e4, py: -1e4, tx: -1e4, ty: -1e4,
-    scroll: 0, lastY: 0, sv: 0, energy: 0,
-  };
-
-  const hash = (x, y) => {
-    let h = Math.imul(x | 0, 374761393) ^ Math.imul(y | 0, 668265263);
+  const hash = (a, b, k) => {
+    let h = Math.imul(a | 0, 374761393) ^ Math.imul(b | 0, 668265263) ^ Math.imul(k | 0, 1274126177);
     h = Math.imul(h ^ (h >>> 13), 1274126177);
     return ((h ^ (h >>> 16)) >>> 0) / 4294967296;
   };
-  /* Split an offset into the whole cells the grid steps by and the remainder
-   * the canvas is translated by. The remainder is what the whole part has
-   * overshot, not what is left of the offset: the grid steps a full cell the
-   * moment `o` passes one, and the translate has to give that cell back until
-   * `o` catches up. Getting this backwards still drifts the right way on
-   * average, but slides against itself between every step. */
-  const step = (o) => { const whole = Math.floor(o); return { whole, frac: whole - o }; };
 
-  const readColors = () => {
-    const css = getComputedStyle(document.documentElement);
-    ink = css.getPropertyValue('--glyph').trim() || ink;
-    line = css.getPropertyValue('--trail').trim() || line;
+  /* Bodies live in bands one viewport tall stacked down the field, made from
+   * their band and index so the field is the same on every visit; only the
+   * spring state is kept, for the bands in view. */
+  const live = new Map();
+  const blob = (b, i) => {
+    const key = b * 1024 + i;
+    let o = live.get(key);
+    if (!o) {
+      const r = 200 + hash(b, i, 1) * 220;
+      o = {
+        x: hash(b, i, 2), y: b + hash(b, i, 3), r, a: 0.42 + hash(b, i, 4) * 0.26,
+        w: 2 * Math.PI * HZ * (0.85 + hash(b, i, 5) * 0.3), ph: hash(b, i, 6) * 6.28,
+        m: 0.8 + hash(b, i, 7) * 0.4,
+        s: 0, v: 0, st: 1, seen: 0,
+      };
+      live.set(key, o);
+    }
+    return o;
+  };
+
+  /* Add one body to the field: an ellipse of half-axes rx, ry at cx, cy,
+   * in matrix coordinates, with a soft (1 - d²)² falloff. */
+  const splat = (cx, cy, rx, ry, a, into = acc) => {
+    const x0 = Math.max(0, Math.floor((cx - rx) / cw)), x1 = Math.min(cols - 1, Math.ceil((cx + rx) / cw));
+    const y0 = Math.max(0, Math.floor((cy - ry) / ch)), y1 = Math.min(rows - 1, Math.ceil((cy + ry) / ch));
+    for (let y = y0; y <= y1; y++) {
+      const dy = (y * ch + ch / 2 - cy) / ry, row = y * cols;
+      for (let x = x0; x <= x1; x++) {
+        const dx = (x * cw + cw / 2 - cx) / rx, d = dx * dx + dy * dy;
+        if (d >= 1) continue;
+        const k = 1 - d;
+        into[row + x] += a * k * k;
+      }
+    }
+  };
+  /* Bodies pinned behind elements marked data-blob, and the elements
+   * marked data-quiet the field is dimmed under. */
+  /* Pinned bodies wander less and are shoved less by the scroll than the
+   * free ones, so they never stray far from their element. */
+  /* Each pinned body is a core and a halo. The core's weight is high
+   * enough that the element itself sits in solid line nearly all the time,
+   * with the fall-off just past its edges; the halo is a larger, far
+   * lighter body that reaches further above and below in dots and light
+   * dashes only. */
+  const PIN_SCALE = 0.9, PIN_PAD_X = 60, PIN_PAD_Y = 50, PIN_A = 2.5, PIN_HOLD = 0.45, PIN_WANDER = 5;
+  /* The halo is tall so the body fades to nothing slowly above and below. */
+  const HALO_PAD_X = 80, HALO_PAD_Y = 300, HALO_A = 0.4;
+  /* A pinned body is carried along with the matrix parallax as the page
+   * scrolls, then drawn back to its element over about PIN_RETURN seconds. */
+  const PIN_RETURN = 1.8, PIN_DRIFT_MAX = 160;
+  /* Around the core, LOBES smaller bodies orbit slowly on their own
+   * phases, each swelling and shrinking as it goes. Summed with the core
+   * they keep its centre solid but pull its outline into a shape that is
+   * never the same ellipse twice. */
+  const LOBES = 4, LOBE_A = 1.1;
+  /* The cursor is a body too, pinned to the pointer the same way but held
+   * much tighter: a firmer spring, a short parallax carry and a quick
+   * return, so it stays under the hand. It fades in and out over CUR_FADE
+   * seconds as the pointer arrives and leaves. */
+  const CUR_RX = 90, CUR_RY = 70, CUR_A = 1.0, CUR_HOLD = 0.35, CUR_RETURN = 0.75, CUR_DRIFT_MAX = 90;
+  const CUR_HALO_RX = 200, CUR_HALO_RY = 240, CUR_HALO_A = 0.5, CUR_LOBES = 3, CUR_LOBE_A = 0.6, CUR_FADE = 0.35;
+  /* The cursor body is summed on its own and capped before it joins the
+   * field, so on its own it never reaches the solid step of the ramp. */
+  const CUR_CAP = 0.7, CUR_EASE = 0.11;
+  const cur = { w: 2 * Math.PI * HZ * 1.3, m: 0.6, s: 0, v: 0, st: 1, drift: 0, lastOff: 0 };
+  const pins = Array.from(document.querySelectorAll('[data-blob]')).map((el, i) => ({
+    el, range: (() => { const r = document.createRange(); r.selectNodeContents(el); return r; })(), w: 2 * Math.PI * HZ * (0.85 + hash(7, i, 5) * 0.3), ph: hash(7, i, 6) * 6.28,
+    m: 0.8 + hash(7, i, 7) * 0.4, s: 0, v: 0, st: 1, drift: 0, lastOff: 0,
+  }));
+  const QUIET = 0.3, FEATHER = 140;
+  const quiet = Array.from(document.querySelectorAll('[data-quiet]'));
+  let qx = new Float32Array(0), qy = new Float32Array(0);
+  /* 1 inside [lo, hi], easing to 0 over FEATHER px outside it. */
+  const fade = (p, lo, hi) => {
+    const d = Math.max(lo - p, p - hi, 0);
+    if (d >= FEATHER) return 0;
+    const u = 1 - d / FEATHER;
+    return u * u * (3 - 2 * u);
   };
 
   const resize = () => {
-    const dpr = Math.min(2, devicePixelRatio || 1);
+    dpr = Math.min(2, devicePixelRatio || 1);
     W = innerWidth; H = innerHeight;
-    canvas.width = Math.round(W * dpr); canvas.height = Math.round(H * dpr);
+    c.width = Math.round(W * dpr); c.height = Math.round(H * dpr);
     ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
-    ctx.font = FONT;
-    ctx.textBaseline = 'alphabetic';
-    /* Cell pitch is the font's own advance and line height, so box glyphs in
-     * neighbouring cells meet with nothing between them. */
-    const m = ctx.measureText('─');
-    cw = m.width || SIZE * 0.6;
-    const a = m.fontBoundingBoxAscent, d = m.fontBoundingBoxDescent;
-    ch = a && d ? Math.round(a + d) : Math.round(SIZE * 1.3);
-    asc = a ? Math.round(a) : Math.round(SIZE * 1.05);
-    cols = Math.ceil(W / cw) + 2; rows = Math.ceil(H / ch) + 3;
-    glyph = new Array(cols * rows).fill(' ');
-    alpha = new Float32Array(cols * rows); tone = new Uint8Array(cols * rows);
-    cloud = new Float32Array(cols * rows);
-    dx2 = new Float32Array(cols); dy2 = new Float32Array(rows);
-    /* A still scene has no next frame to repaint the resized canvas. */
-    if (reduced.matches) draw(0);
+    spriteCol = '';
+    cols = Math.ceil(W / cw) + 1; rows = Math.ceil(H / ch) + 2;
+    acc = new Float32Array(cols * rows); cacc = new Float32Array(cols * rows);
+    qx = new Float32Array(cols); qy = new Float32Array(rows);
+    perBand = Math.ceil(W * H / 58000);
+    if (rm) draw(0);
   };
 
-  const style = (which, a) => {
-    const q = Math.round(a * 100);
-    if (q < 1) return null;
-    const cache = styles[which];
-    return cache[q] || (cache[q] = 'rgba(' + (which ? line : ink) + ',' + q / 100 + ')');
-  };
-
-  /* Where a trail crosses column x, in world rows. Two slow bends and one
-   * quicker one, phased by the band, so no two trails wander alike. */
-  const centre = (band, x) => {
-    const p = hash(band, 77) * 6.28, q = hash(band, 91) * 6.28;
-    return band * BAND + BAND * 0.5
-      + Math.sin(x * 0.017 + p) * 2.8
-      + Math.sin(x * 0.0071 + q) * 3.0
-      + Math.sin(x * 0.041 + p * 2) * 0.35;
-  };
-
-  const put = (x, g, top, c, a, which) => {
-    const y = g - top;
-    if (y < 0 || y >= rows) return;
-    const i = y * cols + x;
-    if (cloud[i] >= CLEAR) return;
-    glyph[i] = c; alpha[i] = a; tone[i] = which;
-  };
-
-  /* Lay one continuous line: ─ where it holds its row, and a round corner,
-   * any │ needed, and the matching corner where it steps to another. */
-  const lay = (x, from, to, top, flat, a) => {
-    if (from === to) { put(x, from, top, flat, a, 1); return; }
-    const down = to > from;
-    put(x, from, top, down ? '╮' : '╯', a, 1);
-    for (let g = Math.min(from, to) + 1; g < Math.max(from, to); g++) put(x, g, top, '│', a, 1);
-    put(x, to, top, down ? '╰' : '╭', a, 1);
-  };
+  let col = '233,238,247';
+  const rgb = () => getComputedStyle(document.documentElement).getPropertyValue('--glyph').trim() || col;
 
   const draw = (dt) => {
     ctx.clearRect(0, 0, W, H);
-    const t = s.t;
-    s.travel += dt * SPEED * (1 + s.energy * 0.6);
-    const u0 = s.travel + s.scroll * SCROLL_TRAVEL;
-    const slide = step(s.scroll * PARALLAX / ch);
-    const top = slide.whole - 1;
-    const r2 = REACH * REACH;
-    if (styleKey !== ink + line) { styleKey = ink + line; styles = [[], []]; }
-
-    /* Screen row y is painted one cell up plus the parallax remainder. */
-    for (let y = 0; y < rows; y++) { const d = (y - 1 + slide.frac) * ch + ch * 0.5 - s.py; dy2[y] = d * d; }
-    for (let x = 0; x < cols; x++) { const d = x * cw + cw * 0.5 - s.px; dx2[x] = d * d; }
-
-    /* Cloud first, everywhere. Its value is kept so the trails can keep
-     * clear of it. */
-    const cu = s.travel * CLOUD_SPEED + s.scroll * SCROLL_TRAVEL, en = s.energy;
-    for (let y = 0; y < rows; y++) {
-      const g = y + top, row = y * cols;
-      for (let x = 0; x < cols; x++) {
-        const u = x + cu;
-        let v = Math.sin(u * 0.11 + t * 0.35) * Math.cos(g * 0.13 - t * 0.22)
-          + Math.sin((u + g) * 0.07 + t * 0.15) * 0.6;
-        v = (v + 1.6) / 3.2;
-        let near = 0;
-        if (s.cur) {
-          const d2 = dx2[x] + dy2[y];
-          if (d2 < r2) { near = 1 - d2 / r2; near *= near * s.cur; }
-        }
-        v = v * (0.62 + en * 0.3) + near * 0.35;
-        const i = row + x;
-        cloud[i] = v; tone[i] = 0;
-        if (v < CLOUD) { glyph[i] = ' '; alpha[i] = 0; continue; }
-        glyph[i] = CLOUDS[Math.min(CLOUDS.length - 1, Math.floor(v * (CLOUDS.length - 1)))];
-        alpha[i] = Math.min(0.22, 0.05 + (v - CLOUD) * 0.3 + near * 0.08);
+    if (!rm) {
+      f.t += dt;
+      if (f.mx < -1e3) { f.mx = f.tx; f.my = f.ty; }
+      f.mx += (f.tx - f.mx) * CUR_EASE; f.my += (f.ty - f.my) * CUR_EASE;
+      f.pres += (f.cur - f.pres) * Math.min(1, dt / CUR_FADE);
+      /* Tray speed in px/s, eased just enough that a wheel tick is a shove.
+       * Its acceleration is taken from a slower speed and smoothed again:
+       * scroll deltas arrive in uneven bunches, and a derivative of them
+       * flickers unless it is filtered harder than the speed itself. */
+      const v = (f.scroll - f.lastScroll) / dt; f.lastScroll = f.scroll;
+      f.vel += (v - f.vel) * 0.5;
+      const was = f.slow; f.slow += (v - f.slow) * 0.25;
+      f.acc += ((f.slow - was) / dt - f.acc) * 0.3;
+      const lag = Math.max(-MAX_LAG, Math.min(MAX_LAG, -f.vel * LAG));
+      /* Taken up at once in the same direction; a reversal turns over
+       * quickly but not in a single frame, which would flash the field. */
+      if (Math.abs(lag) > Math.abs(f.amp) && lag * f.amp >= 0) f.amp = lag;
+      else f.amp += (lag - f.amp) * Math.min(1, dt / (lag * f.amp < 0 ? 0.08 : FOLLOW));
+      const u = Math.min(1, Math.abs(f.vel) / RELEASE), grip = u * u * (3 - 2 * u);
+      /* The sliding matrix is the tray. The goop hangs back behind it while
+       * dragged and is thrown on past it as the tray slows: it lags the
+       * tray, never leads it. */
+      f.pull = -Math.max(-MAX_LAG * 1.5, Math.min(MAX_LAG * 1.5, f.amp * grip - f.acc * INERTIA));
+      f.zeta = ZETA + (1 - ZETA) * grip;
+    }
+    col = rgb();
+    if (col !== spriteCol) { spriteCol = col; sprites = build(); }
+    const t = f.t, off = f.scroll * PARALLAX;
+    const slide = step(off / ch), shift = (slide.frac - 1) * ch;
+    /* Matrix row 0 shows this much of the field above the top of the screen. */
+    const top = (slide.whole - 1) * ch;
+    acc.fill(0);
+    const b0 = Math.floor(off / H) - 1, b1 = Math.floor((off + H) / H) + 1;
+    for (let b = b0; b <= b1; b++) for (let i = 0; i < perBand; i++) {
+      const o = blob(b, i);
+      o.seen = t;
+      if (!rm) {
+        /* Dragged without bounce at speed; sprung home as the page settles. */
+        const k = o.w * o.w, cd = 2 * f.zeta * o.w;
+        o.v += (k * (f.pull * o.m - o.s) - cd * o.v) * dt;
+        o.s += o.v * dt;
+      }
+      /* The whole field drifts slowly across the screen, wrapping at the
+       * edges, and each body wanders and breathes on its own on top of that. */
+      const wander = Math.sin(t * 0.3 + o.ph) * 40, breathe = 1 + 0.1 * Math.sin(t * 0.5 + o.ph * 2);
+      const span = W + 2 * o.r;
+      const cx = ((o.x * W + t * DRIFT + wander + o.r) % span + span) % span - o.r;
+      const cy = o.y * H - top + o.s + Math.cos(t * 0.23 + o.ph) * 30;
+      /* Squash and stretch: fast along y is long and thin. The shape eases
+       * toward the speed rather than reading it raw, so a one-frame spike in
+       * the spring cannot draw a one-frame streak. */
+      if (!rm) o.st += (1 + Math.min(1.4, Math.abs(o.v) / STRETCH) - o.st) * Math.min(1, dt / 0.12);
+      splat(cx, cy, o.r * breathe / Math.sqrt(o.st), o.r * breathe * o.st, o.a);
+    }
+    for (const [key, o] of live) if (o.seen !== t) live.delete(key);
+    /* Pinned bodies sit behind marked elements. They hang on the same
+     * springs and wander and breathe like the rest, but their rest point is
+     * the element itself, wherever it is on screen this frame, so they
+     * follow it through the page's own scroll rather than the parallax. */
+    for (const o of pins) {
+      /* The text's own box, not the element's, which for a heading is the
+       * whole column. */
+      const b = o.range.getBoundingClientRect();
+      if (!rm) {
+        const k = o.w * o.w, cd = 2 * f.zeta * o.w;
+        o.v += (k * (f.pull * o.m - o.s) - cd * o.v) * dt;
+        o.s += o.v * dt;
+        o.st += (1 + Math.min(1.4, Math.abs(o.v) / STRETCH) - o.st) * Math.min(1, dt / 0.12);
+        /* Carried with the matrix as it slides, then eased home. */
+        o.drift = Math.max(-PIN_DRIFT_MAX, Math.min(PIN_DRIFT_MAX, o.drift - (off - o.lastOff)));
+        o.drift -= o.drift * Math.min(1, dt / PIN_RETURN);
+      }
+      o.lastOff = off;
+      const breathe = 1 + 0.06 * Math.sin(t * 0.5 + o.ph * 2);
+      const cx = b.left + b.width / 2 + Math.sin(t * 0.3 + o.ph) * PIN_WANDER;
+      const cy = b.top + b.height / 2 - shift + o.drift + o.s * PIN_HOLD + Math.cos(t * 0.23 + o.ph) * PIN_WANDER;
+      const sc = PIN_SCALE * breathe;
+      splat(cx, cy, (b.width / 2 + PIN_PAD_X) * sc / Math.sqrt(o.st), (b.height / 2 + PIN_PAD_Y) * sc * o.st, PIN_A);
+      splat(cx, cy, (b.width / 2 + HALO_PAD_X) * breathe / Math.sqrt(o.st), (b.height / 2 + HALO_PAD_Y) * breathe * o.st, HALO_A);
+      for (let j = 0; j < LOBES; j++) {
+        const p1 = hash(8, j, 1) * 6.28, p2 = hash(8, j, 2) * 6.28, p3 = hash(8, j, 3) * 6.28;
+        const w1 = 0.11 + hash(8, j, 4) * 0.1, w2 = 0.13 + hash(8, j, 5) * 0.1;
+        const lx = cx + Math.cos(t * w1 + p1) * (b.width * 0.45), ly = cy + Math.sin(t * w2 + p2) * (b.height * 0.5 + 30);
+        const swell = (0.8 + 0.25 * Math.sin(t * 0.37 + p3)) * PIN_SCALE;
+        splat(lx, ly, (b.width * 0.35 + 30) * swell / Math.sqrt(o.st), (b.height * 0.6 + 30) * swell * o.st, LOBE_A);
       }
     }
-
-    /* Then the trails, in the clear between the clouds. */
-    const first = Math.floor((top - BAND) / BAND), last = Math.floor((top + rows + BAND) / BAND);
-    for (let band = first; band <= last; band++) {
-      const sled = hash(band, 13) < SLED_SHARE;
-      let prev = Math.round(centre(band, u0));
-      for (let x = 0; x < cols; x++) {
-        const next = Math.round(centre(band, x + 1 + u0));
-        let lift = 0;
-        if (s.cur) {
-          const d2 = dx2[x] + dy2[Math.max(0, Math.min(rows - 1, prev - top))];
-          if (d2 < r2) { const n = 1 - d2 / r2; lift = n * n * s.cur * 0.14; }
-        }
-        if (sled) {
-          /* The team's line goes down first so a runner stepping rows lands
-           * over it, never under: the runners are the lines that must hold. */
-          lay(x, prev, next, top, '╌', A.centre + lift * 0.5);
-          lay(x, prev - 1, next - 1, top, '─', A.runner + lift);
-          lay(x, prev + 1, next + 1, top, '─', A.runner + lift);
-        } else {
-          lay(x, prev, next, top, '╌', A.old + lift);
-        }
-        prev = next;
+    /* The cursor body. */
+    if (f.pres > 0.01 && f.mx > -1e3) {
+      if (!rm) {
+        const k = cur.w * cur.w, cd = 2 * f.zeta * cur.w;
+        cur.v += (k * (f.pull * cur.m - cur.s) - cd * cur.v) * dt;
+        cur.s += cur.v * dt;
+        cur.st += (1 + Math.min(1.4, Math.abs(cur.v) / STRETCH) - cur.st) * Math.min(1, dt / 0.12);
+        cur.drift = Math.max(-CUR_DRIFT_MAX, Math.min(CUR_DRIFT_MAX, cur.drift - (off - cur.lastOff)));
+        cur.drift -= cur.drift * Math.min(1, dt / CUR_RETURN);
       }
+      cur.lastOff = off;
+      const breathe = 1 + 0.06 * Math.sin(t * 0.6), pres = f.pres * f.pres;
+      const cx = f.mx, cy = f.my - shift + cur.drift + cur.s * CUR_HOLD;
+      const rx = CUR_HALO_RX * breathe / Math.sqrt(cur.st), ry = CUR_HALO_RY * breathe * cur.st;
+      const bx0 = Math.max(0, Math.floor((cx - rx) / cw)), bx1 = Math.min(cols - 1, Math.ceil((cx + rx) / cw));
+      const by0 = Math.max(0, Math.floor((cy - ry) / ch)), by1 = Math.min(rows - 1, Math.ceil((cy + ry) / ch));
+      for (let y = by0; y <= by1; y++) cacc.fill(0, y * cols + bx0, y * cols + bx1 + 1);
+      splat(cx, cy, CUR_RX * breathe / Math.sqrt(cur.st), CUR_RY * breathe * cur.st, CUR_A * pres, cacc);
+      splat(cx, cy, rx, ry, CUR_HALO_A * pres, cacc);
+      for (let j = 0; j < CUR_LOBES; j++) {
+        const p1 = hash(9, j, 1) * 6.28, p2 = hash(9, j, 2) * 6.28, p3 = hash(9, j, 3) * 6.28;
+        const w1 = 0.15 + hash(9, j, 4) * 0.12, w2 = 0.17 + hash(9, j, 5) * 0.12;
+        const lx = cx + Math.cos(t * w1 + p1) * 50, ly = cy + Math.sin(t * w2 + p2) * 45;
+        const swell = 0.8 + 0.25 * Math.sin(t * 0.4 + p3);
+        splat(lx, ly, 55 * swell / Math.sqrt(cur.st), 50 * swell * cur.st, CUR_LOBE_A * pres, cacc);
+      }
+      for (let y = by0; y <= by1; y++) for (let i = y * cols + bx0, e = y * cols + bx1; i <= e; i++) acc[i] += Math.min(CUR_CAP, cacc[i]);
+    } else if (!rm) { cur.lastOff = off; }
+    /* Quiet zones: under marked elements the bodies thin out to QUIET of
+     * their weight, so they dissolve to dots and light dashes there while
+     * the stipple stays as it is, and the eye finds no edge. The thinning
+     * feathers over FEATHER px past the element and is separable, so it is
+     * one factor per column and one per row. */
+    for (let x = 0; x < cols; x++) qx[x] = 0;
+    for (let y = 0; y < rows; y++) qy[y] = 0;
+    let anyQuiet = false;
+    for (const el of quiet) {
+      const b = el.getBoundingClientRect();
+      if (b.bottom < -FEATHER || b.top > H + FEATHER || b.right < -FEATHER || b.left > W + FEATHER) continue;
+      anyQuiet = true;
+      for (let x = 0; x < cols; x++) qx[x] = Math.max(qx[x], fade(x * cw + cw / 2, b.left, b.right));
+      for (let y = 0; y < rows; y++) qy[y] = Math.max(qy[y], fade(y * ch + shift + ch / 2, b.top, b.bottom));
     }
 
-    /* Paint: each row in runs of one style, so a stretch of line or a drift of
-     * cloud goes down in a single call. */
     ctx.save();
-    ctx.translate(0, (slide.frac - 1) * ch);
+    ctx.translate(0, shift);
     for (let y = 0; y < rows; y++) {
-      const row = y * cols, py = y * ch + asc;
-      let run = '', runStyle = null, runX = 0;
+      const py = y * ch, row = y * cols;
       for (let x = 0; x < cols; x++) {
-        const i = row + x, c = glyph[i];
-        const st = c === ' ' ? null : style(tone[i], alpha[i]);
-        if (st !== runStyle) {
-          if (runStyle) { ctx.fillStyle = runStyle; ctx.fillText(run, runX * cw, py); }
-          run = ''; runStyle = st; runX = x;
-        }
-        if (st) run += c;
+        const px = x * cw;
+        const q = anyQuiet ? qx[x] * qy[y] : 0;
+        const v = acc[row + x] * 0.62 * (1 - (1 - QUIET) * q);
+        /* Under everything is a stipple: half the cells carry faint dots,
+         * fixed to the matrix so it slides with it. Toward a body the dashes
+         * fill in to a fringe, and the body's heavier lines sit on top. */
+        if (v < 0.36 && hash(x, y + slide.whole, 9) >= 0.5 + 0.5 * Math.max(0, Math.min(1, (v - 0.08) / 0.28))) continue;
+        /* The ramp leans light: the dots and light dashes carry the stipple
+         * and fringe, the heavy dashes the body, the solid line only overlaps. */
+        let i = 0; while (i < STEPS.length && v >= STEPS[i]) i++;
+        ctx.globalAlpha = Math.min(0.11, 0.06 + Math.max(0, v - 0.1) * 0.1);
+        ctx.drawImage(sprites[i][hash(x, y + slide.whole, 13) * VARIANTS | 0], px - GLOW, py - GLOW, cw + 2 * GLOW, ch + 2 * GLOW);
       }
-      if (runStyle) { ctx.fillStyle = runStyle; ctx.fillText(run, runX * cw, py); }
     }
     ctx.restore();
   };
 
-  readColors();
-  resize();
-  if (dark.addEventListener) dark.addEventListener('change', readColors);
   addEventListener('resize', resize);
+  resize();
+  if (rm) { draw(0); return; }
 
-  if (reduced.matches) { draw(0); return; }
-
-  addEventListener('pointermove', (e) => { s.tx = e.clientX; s.ty = e.clientY; s.cur = 1; }, { passive: true });
-  document.addEventListener('pointerleave', () => { s.cur = 0; });
-  addEventListener('scroll', () => {
-    const y = scrollY; s.sv += y - s.lastY; s.lastY = y; s.scroll = y;
-  }, { passive: true });
+  addEventListener('pointermove', e => { f.tx = e.clientX; f.ty = e.clientY; f.cur = 1; }, { passive: true });
+  document.addEventListener('pointerleave', () => { f.cur = 0; });
+  addEventListener('scroll', () => { f.scroll = scrollY; }, { passive: true });
 
   const loop = (now) => {
-    const dt = s.last ? Math.min(0.05, (now - s.last) / 1000) : 0.016;
-    s.last = now; s.t += dt;
-    if (s.px < -1e3) { s.px = s.tx; s.py = s.ty; }
-    const ease = Math.min(1, dt * 8);
-    s.px += (s.tx - s.px) * ease; s.py += (s.ty - s.py) * ease;
-    s.sv *= 0.88;
-    s.energy += (Math.max(-1, Math.min(1, s.sv / 500)) - s.energy) * 0.1;
-    draw(dt);
-    requestAnimationFrame(loop);
+    const dt = f.last ? Math.min(0.05, (now - f.last) / 1000) : 0.016;
+    f.last = now; draw(dt); requestAnimationFrame(loop);
   };
   requestAnimationFrame(loop);
 })();
