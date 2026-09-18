@@ -185,16 +185,17 @@ collar_cache_stamp() { # $1 target -> epoch of the last transcript write
 # still outrank the answer remains loud; a final line without its newline is an
 # append in flight, not a record yet.
 #
-# FATAL TURN EVIDENCE IS THE NEWEST TOP-LEVEL SEMANTIC RECORD, not pane paint.
+# TURN-ENDING ERROR EVIDENCE IS THE NEWEST TOP-LEVEL SEMANTIC RECORD, not pane paint.
 # Observed on claude-code 2.1.233: an unrecognized launch model writes a
 # synthetic assistant record with isApiErrorMessage=true, error=model_not_found
 # and the message checked below. On 2.1.241, an exhausted 529 retry sequence
 # instead leaves a synthetic assistant record with error=server_error and
 # apiErrorStatus=529, and a response stream that dies mid-turn leaves one with
 # error=server_error and NO apiErrorStatus key at all — the harness prints it,
-# returns to an idle composer, and nothing restarts the lane. Three specimens of
-# that last class differ in their sentence and agree in their structure, and each
-# is followed only by a system/turn_duration record: the turn is over.
+# returns to an idle composer, and needs one bounded continuation. Three
+# specimens of that last class differ in their sentence and agree in their
+# structure, and each is followed only by a system/turn_duration record: the
+# turn is over, but the next turn can succeed without repairing the session.
 # A following real user turn outranks any terminal record
 # while recovery is running; isMeta local-command notices and tool_result-only
 # user records are not turns. A later ordinary assistant record clears it. Other
@@ -357,12 +358,14 @@ if latest is None:
 if mode == "auto":
     error = latest.get("error")
     record_id = latest.get("uuid")
-    if latest.get("isApiErrorMessage") is not True or not isinstance(error, str) or not error:
-        raise SystemExit(1)
-    # A selected-model failure cannot be repaired by replaying the same turn.
-    # The live fatal reader reports it; auto-resume must not spend its one
-    # continuation or repaint the window idle first.
-    if error == "model_not_found":
+    # Only the status-less server_error is the native dead-stream witness.
+    # Other API errors may need a reset, a model change, or operator action;
+    # the stream recovery path must not turn their generic shape into replay.
+    if (
+        latest.get("isApiErrorMessage") is not True
+        or error != "server_error"
+        or "apiErrorStatus" in latest
+    ):
         raise SystemExit(1)
     if not isinstance(record_id, str) or not record_id:
         raise SystemExit(2)
@@ -388,7 +391,7 @@ def fatal_claims(record):
     if error != "server_error":
         return False
     if "apiErrorStatus" not in record:
-        return True
+        return False
     status = record.get("apiErrorStatus")
     return status == 529 and not isinstance(status, bool)
 
@@ -405,6 +408,9 @@ if mode == "blocked":
     if fatal_claims(latest):
         raise SystemExit(1)
     name = latest.get("error")
+    if name == "server_error" and "apiErrorStatus" not in latest:
+        print("Claude Code ended the latest turn on a recoverable broken response stream (server_error)")
+        raise SystemExit(0)
     # The value reaches an operator-facing state line, so it is admitted only
     # in the token shape the harness has been seen to use. Anything else is
     # reported honestly as unnamed rather than pasted into the line.
@@ -415,14 +421,6 @@ if mode == "blocked":
     raise SystemExit(0)
 
 if latest.get("error") == "server_error":
-    # A STREAM THAT DIED CARRIES NO HTTP STATUS. The key is absent rather than
-    # null, which is what separates this class from every status-bearing one,
-    # and it is the structure rather than the sentence: the same record has been
-    # seen saying the response stopped arriving, that the server errored
-    # mid-response, and that the connection was lost.
-    if "apiErrorStatus" not in latest:
-        print("Claude Code ended the latest turn on a broken response stream (server_error)")
-        raise SystemExit(0)
     status = latest.get("apiErrorStatus")
     if status == 529 and not isinstance(status, bool):
         print("Claude Code ended the latest turn on HTTP 529 (server_error)")

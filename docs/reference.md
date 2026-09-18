@@ -716,16 +716,19 @@ kills and reaps its still-owned worker group before the controller re-raises the
 signal. A detached failure cannot change the command that spawned it. It writes
 `health` and `tick.log` under
 `${XDG_STATE_HOME:-$HOME/.local/state}/gangline/tick/<team-key>/`; the next
-invocation, `status`, and `roster` report the last failure. The first failed
-transition also updates the alert center and emits one short `display-message`;
+invocation, `status`, and `roster` report the last failure. A `!blocked!` or
+`!bricked!` state that survives to a cooperative pass fails that pass with the
+agent and collar cause, so it follows the same alert path. The first failed
+transition updates the alert center and emits one short `display-message`;
 repeated failed passes emit neither another message nor another surface. A later
 clean pass replaces failed health with `ok` and resolves the active alert;
 `down` removes that team's health files and its transition journal.
 
 ### `gang alerts [--porcelain|--open]`
 
-Lists the team's currently active alert conditions. A cooperative-tick failure
-is active until a clean pass recovers it. Reading the ordinary list or
+Lists the team's currently active alert conditions. A cooperative-tick failure,
+including one caused by a persistent blocked or bricked agent, is active until
+a clean pass recovers it. Reading the ordinary list or
 `--porcelain` changes nothing. `--open` marks the current list seen, prints it,
 and, when it owns a terminal, waits for one key before closing. Seen and
 resolved are independent: opening the center never changes failed health, and
@@ -1478,10 +1481,12 @@ after a later note is accepted live or parked.
 An `idle_prompt` is only a wake: when its collar's current reader proves
 `!blocked!` or `!bricked!`, Gangline sends one state note. `pane-died` may send
 the corresponding `!dead!` note promptly; the cooperative `gang tick` also
-reconciles dead panes and retained failed notes, so the durable guarantee is
-delivery by the next tick. Notes accepted while the receiver is busy are parked
-through the ordinary spool. A missing receiver leaves the exact pending state
-and a visible `state note NOT accepted` record for later retry.
+reconciles dead panes and retained failed notes. A blocked or bricked state
+observed by tick retries its note and fails tick health with the agent and
+cause, making the condition visible in `gang alerts` until a later clean pass.
+Notes accepted while the receiver is busy are parked through the ordinary
+spool. A missing receiver leaves the exact pending state and a visible `state
+note NOT accepted` record for later retry.
 
 ### `gang curfew [<duration|HH:MM>|clear]`
 
@@ -1687,13 +1692,14 @@ tool-result-only user records are not turns. A selected-model API error is
 fatal, a newer real user turn proves recovery has begun, and other API errors
 such as rate limits are not this fatal shape. Selected-model failures are also
 ineligible for automatic continuation because replay cannot repair the choice.
-Two provider-side classes are fatal: an exhausted retry sequence, which leaves
-`error=server_error` with `apiErrorStatus=529`; and a response stream that died
-mid-turn, which leaves `error=server_error` with no `apiErrorStatus` key at all.
-The absent key is the discriminator, not the sentence — the same record has been
-observed saying the response stopped arriving, that the server errored
-mid-response, and that the connection was lost. Any other `server_error` status
-remains nonfatal.
+An exhausted retry sequence is fatal: it leaves `error=server_error` with
+`apiErrorStatus=529`. A response stream that died mid-turn instead leaves
+`error=server_error` with no `apiErrorStatus` key at all. The absent key is the
+discriminator, not the sentence — the same record has been observed saying the
+response stopped arriving, that the server errored mid-response, and that the
+connection was lost. That status-less record is blocked rather than bricked:
+the current turn is over, but the session's next turn can succeed. Other
+`server_error` statuses remain nonfatal.
 
 A turn bracket left open by an interruption the harness never reported decays
 once it passes `GANG_TURN_LIMIT`: an expired bracket over a quiet, stable pane
@@ -2053,11 +2059,12 @@ threshold decision even though a still-future absolute reset remains sufficient
 to arm against once that decision has been made, so the sample is refused and
 the agent is told, rather than arming from a number that may no longer hold.
 
-On claude-code this declaration also opts into one-hop recovery from a provider
-stream failure. `idle_prompt` supplies the native idle witness and transcript
-path; the collar selects the newest non-sidechain assistant record and returns
-its UUID only when `error` is nonempty and `isApiErrorMessage` is true. Gangline
-then closes the missing turn bracket and submits one continuation for that UUID.
+On claude-code, one-hop recovery from a provider stream failure is independent
+of this provider-reset threshold. `idle_prompt` supplies the native idle witness
+and transcript path; the collar selects the newest non-sidechain assistant
+record and returns its UUID only for the status-less `server_error` shape.
+Gangline then closes the missing turn bracket and submits one continuation for
+that UUID.
 The exact attributed envelope is recorded before submission and must match the
 next native prompt byte-for-byte. If that owned continuation fails, or ownership
 cannot be established, no next continuation is sent; `status` reports
@@ -2445,7 +2452,7 @@ there, never in a harness-name branch in the core script.
 | `collar_session_id target payload` | print the exact native session id witnessed by a hook, or fail without fabricating one |
 | `collar_live_session_id target` | optional independent probe of the native session currently holding the pane; print its exact id, or return nonzero when no safe reading is available. The cooperative tick compares it with the registered id and treats a contradiction as session loss |
 | `collar_harness_identity target` | optional positive root-process witness; print `pid<TAB>kernel-start-stamp` and return 0 only when the collar can demonstrate the pane root is its live harness, return 1 when no identity is recorded, or return 2 with a cause when unreadable. Gangline records it at hitch/adopt and may retry it once at the first native hook. A normal per-window tick makes one further persisted, read-only backfill only where no witness, lost verdict, or earlier tick attempt exists: it records a positive witness, attempted absence, or unreadable result without typing into or changing the native session. Once recorded, a later missing or changed witness is `!harness-lost!` |
-| `collar_auto_resume_record target notification-kind` | optional native failed-turn discriminator; print one stable error-record identity, return 1 for an ordinary idle turn, or return 2 when the native record cannot be read |
+| `collar_auto_resume_record target notification-kind` | optional native recoverable-stream discriminator called on an idle notification; print one stable error-record identity, return 1 for ordinary idle or another error class, or return 2 when the native record cannot be read. A match receives one guarded continuation independently of `GANG_AUTO_RESUME`, whose percentage controls provider-reset wakes |
 | `collar_submitted_prompt target payload` | print the exact native prompt from a prompt-submission event so Gangline can correlate verified peer envelopes and prove whether its marked automatic continuation owns that turn |
 
 The shipped Codex live-id probe asks tmux to run in the server's host namespace,

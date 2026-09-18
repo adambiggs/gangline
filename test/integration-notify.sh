@@ -103,7 +103,18 @@ printf '%s' '{"hook_event_name":"Notification","notification_type":"idle_prompt"
 # source-guard: whole-surface@45e4631ce0f5: the fatal state phrase is emitted only by the qualified state-notification path for this source fixture
 contains "the same qualified wake forwards a bricked transition" \
   "$(pane_all state-lead)" "state-raise is bricked"
+state_unusable_tick_rc=0
+GANG_TEST_TICK_MODE=manual "$GANG" tick \
+  > "$RUN_ROOT/state-unusable-tick.out" 2>&1 || state_unusable_tick_rc=$?
+equal "a bricked state that survives to tick fails that pass" 1 \
+  "$state_unusable_tick_rc"
+contains "the failing pass names the unusable agent and collar cause" \
+  "$(<"$RUN_ROOT/state-unusable-tick.out")" \
+  "unusable-state: state-raise remains bricked after a cooperative tick (fixture fatal turn)"
+contains "the alert center exposes the persistent unusable state" \
+  "$("$GANG" alerts --porcelain)" "fixture fatal turn"
 rm -f -- "$RUN_ROOT/state-notify-bricked" "$RUN_ROOT/state-notify-blocked"
+GANG_TEST_TICK_MODE=manual "$GANG" tick >/dev/null
 
 # A busy lead is not a dropped lead. The ordinary verified/parked sender must
 # commit the alert to its spool, then a later native boundary drains it.
@@ -151,14 +162,23 @@ equal "a missing lead retains the exact state transition for reconciliation" \
 contains "the source makes a missing lead visible instead of accepting the note" \
   "$("$GANG" status state-return)" "state note NOT accepted"
 "$HITCH" state-returned -c bash -d /tmp >/dev/null
-GANG_TEST_TICK_MODE=manual "$GANG" tick >/dev/null
+state_return_tick_rc=0
+GANG_TEST_TICK_MODE=manual "$GANG" tick \
+  > "$RUN_ROOT/state-return-tick.out" 2>&1 || state_return_tick_rc=$?
+equal "a retained blocked transition keeps tick health failed" 1 \
+  "$state_return_tick_rc"
 # source-guard: whole-surface@b0439db65780: this target did not exist at the native wake, so its only route to the historical alert is the tick's retained pending transition
 contains "a tick delivers the original transition after the lead returns" \
   "$(pane_all state-returned)" "state-return is blocked"
 equal "an accepted reconciliation retires the pending transition" "" \
   "$(tmux show-options -wqv -t "$state_return_id" @gl_state_note_pending)"
 state_return_count="$(pane_all state-returned | grep -oF 'state-return is blocked' | wc -l | tr -d ' ' || true)"
-GANG_TEST_TICK_MODE=manual "$GANG" tick >/dev/null
+state_return_repeat_tick_rc=0
+GANG_TEST_TICK_MODE=manual "$GANG" tick \
+  > "$RUN_ROOT/state-return-repeat-tick.out" 2>&1 \
+  || state_return_repeat_tick_rc=$?
+equal "a repeated blocked-state pass remains failed without duplicating its note" 1 \
+  "$state_return_repeat_tick_rc"
 if [ "$state_return_count" -eq 0 ]; then
   fail "a reconciled transition exists before repeated ticks are measured" \
     "no reconciled transition body was delivered"
@@ -169,6 +189,7 @@ else
     "$(pane_all state-returned | grep -oF 'state-return is blocked' | wc -l | tr -d ' ')"
 fi
 rm -f -- "$RUN_ROOT/state-notify-blocked"
+GANG_TEST_TICK_MODE=manual "$GANG" tick >/dev/null
 
 # pane-died is intentionally not a barrier: tmux can lose it. The pane's FIFO
 # gives the test a settled EOF, then the existing tick supplies the guaranteed

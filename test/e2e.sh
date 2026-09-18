@@ -977,9 +977,10 @@ scenario_blocked() {
   fi
 
   # THE READER'S OWN SENTENCE, which no other verdict in this collar produces:
-  # the fatal branch says a broken response stream or an HTTP status, and the
-  # unreadable branches say so. Accepting the state word alone would survive a
-  # reader that reached the right verdict for the wrong record.
+  # the fatal branch says the selected model was rejected or an exhausted HTTP
+  # 529 stood, and the unreadable branches say so. Accepting the state word
+  # alone would survive a reader that reached the right verdict for the wrong
+  # record.
   contains "blocked: the reason is a turn that ended on an API error" \
     "$("$GANG" status "$AGENT" 2>&1)" "ended the latest turn on an API error"
 

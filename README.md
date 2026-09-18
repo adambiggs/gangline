@@ -283,9 +283,10 @@ nobody at the keyboard:
 GANG_AUTO_RESUME="97%" gang hitch worker -c claude-code -m sonnet -e high
 ```
 
-On claude-code the same opt-in also resumes one turn whose provider stream ends
-with a native API-error record. If that continuation fails too, Gangline stops
-after that one hop and leaves the refusal in `status` rather than retrying.
+On claude-code, a provider stream that ends with the native status-less
+`server_error` record receives one continuation without depending on the
+provider-reset threshold. If that continuation fails too, Gangline stops after
+that one hop and leaves the refusal in `status` rather than retrying.
 
 ## Safety model
 

@@ -1816,8 +1816,9 @@ PY
   CLAUDE_TRANSCRIPT="$transcript" ROOT="$ROOT" GANG_CONTEXT_LIGHTS=off bash -c '
     . "$1"
     tmux() { printf "%s" "$CLAUDE_TRANSCRIPT"; }
-    output="$(collar_bricked fixture)"; rc=$?
-    printf "%s\t%s" "$rc" "$output"
+    fatal="$(collar_bricked fixture)"; fatal_rc=$?
+    blocked="$(collar_blocked fixture)"; blocked_rc=$?
+    printf "%s\t%s\t%s\t%s" "$fatal_rc" "$fatal" "$blocked_rc" "$blocked"
   ' fixture "$claude_collar"
 }
 # source-guard: the fixture is the native terminal assistant record, built from
@@ -1827,8 +1828,8 @@ for claude_stream_text in \
   "API Error: Server error mid-response. The response above may be incomplete." \
   "API Error: Connection lost mid-response. The response above may be incomplete."
 do
-  equal "a broken Claude response stream is a fatal turn (${claude_stream_text:11:24}...)" \
-    $'0\tClaude Code ended the latest turn on a broken response stream (server_error)' \
+  equal "a broken Claude response stream is recoverable (${claude_stream_text:11:24}...)" \
+    $'1\t\t0\tClaude Code ended the latest turn on a recoverable broken response stream (server_error)' \
     "$(claude_stream_read "$claude_stream_text")"
 done
 
@@ -1856,8 +1857,8 @@ cat > "$claude_stream_recovered" <<'JSONL'
 {"type":"assistant","isSidechain":false,"isApiErrorMessage":true,"error":"server_error","message":{"content":[{"type":"text","text":"API Error: The response stopped arriving. The response above may be incomplete."}]}}
 {"type":"user","isSidechain":false,"message":{"role":"user","content":"continue"}}
 JSONL
-# source-guard: producer@4952826df386: the fixture is the native record pair built here, and the reader is driven with the transcript path as its only input
-equal "a real turn after a broken stream clears the fatal verdict" \
+# source-guard: producer@7084e8a7e4ed: the fixture is the native record pair built here, and the reader is driven with the transcript path as its only input
+equal "a real turn after a broken stream clears the old terminal verdict" \
   $'1\t' \
   "$(CLAUDE_TRANSCRIPT="$claude_stream_recovered" ROOT="$ROOT" GANG_CONTEXT_LIGHTS=off bash -c '
       . "$1"

@@ -6794,7 +6794,7 @@ tick_trust_reviews() { # retire only the transient review windows gang itself ma
 tick_full_pass_once() {
   local id agent collar special wins rc=0 pass_rc=0 err="" pending="" busy_rc=0
   local compact_note="" compact_rc=0 cache_rc=0 compacted=0
-  local cursor="" last="" visited=0 total=0 partial=0
+  local cursor="" last="" visited=0 total=0 partial=0 refreshed_state="" cause=""
   local TICK_PASS=1 GLYPH_SOURCE=tick
   local alert_err="" alert_rc=0
   # A tick alert keeps only the last line of the pass's output, and a failure
@@ -6988,15 +6988,33 @@ tick_full_pass_once() {
       fi
       [ -z "$WINDOW_GONE" ] || continue
     fi
-    err=""
-    if ! err="$(TICK_PASS=0 TICK_GLYPH_REFRESH=1 state_now "$id" snapshot 2>&1 >/dev/null)"; then
+    refreshed_state=""
+    if ! refreshed_state="$(TICK_PASS=0 TICK_GLYPH_REFRESH=1 state_now "$id" snapshot 2>&1)"; then
       if window_gone "$id"; then continue; fi
-      err="${err##*$'\n'}"
+      err="${refreshed_state##*$'\n'}"
       err="${err#gang: }"
       glyph_write "$id" "?unknown? (the cooperative pass could not read this window)"
       printf 'tick could not read the state of %s: %s\n' "$agent" "${err:-unknown error}" >&2
       rc=1
+      continue
     fi
+    case "$refreshed_state" in
+      '!blocked! ('*')')
+        cause="${refreshed_state#!blocked! (}"
+        cause="${cause%)}"
+        state_note "$id" blocked tick
+        printf 'unusable-state: %s remains blocked after a cooperative tick (%s)\n' \
+          "$agent" "$cause" >&2
+        rc=1 ;;
+      '!bricked! ('*')')
+        cause="${refreshed_state#!bricked! (}"
+        cause="${cause%)}"
+        state_note "$id" bricked tick
+        printf 'unusable-state: %s remains bricked after a cooperative tick (%s)\n' \
+          "$agent" "$cause" >&2
+        rc=1 ;;
+      *) ;;
+    esac
   done <<<"$wins"
   if [ -n "$TICK_CURSOR" ]; then
     if [ "$partial" -eq 1 ]; then
@@ -11399,7 +11417,8 @@ stage_clear() { # $1 = window id; drop a recorded paste once it is provably ours
 
 inject() { # $1 window, $2 text, $3 head, $4 locked,
            # $5 witness: queued for compaction, steer for attributed mid-turn
-           # input, park_confirm for attributed input that must match its queue
+           # input, park_confirm for attributed input that must match its queue,
+           # stream-recovery for the claimed native failed-turn continuation
   local buf="gang-$$" frag before before_rc=0 after after_rc=0 paste_looks=0
   local tname keep_lock=0 mismatch=""
   frag="${2%%$'\n'*}"
@@ -11436,10 +11455,12 @@ inject() { # $1 window, $2 text, $3 head, $4 locked,
   # guard that consults it. An unknown reading is deliberately NOT refused —
   # the state surface already reports it, and one corrupt transcript line must
   # not strand delivery to a window whose composer answered for itself.
-  local blocked_rc=0
-  blocked "$1" || blocked_rc=$?
-  [ "$blocked_rc" -ne 0 ] \
-    || refuse "refusing to deliver '$frag': $tname is blocked ($BLOCKED_WHAT) — its input box is free, but the turn it was already given ended without producing work, so a paste here would be reported delivered with nothing acting on it. Nothing was typed and the body is still the sender's; no turn boundary is coming from it unattended, so the body waits rather than draining on its own (gang capture $tname)"
+  if [ "${5:-}" != stream-recovery ]; then
+    local blocked_rc=0
+    blocked "$1" || blocked_rc=$?
+    [ "$blocked_rc" -ne 0 ] \
+      || refuse "refusing to deliver '$frag': $tname is blocked ($BLOCKED_WHAT) — its input box is free, but the turn it was already given ended without producing work, so a paste here would be reported delivered with nothing acting on it. Nothing was typed and the body is still the sender's; no turn boundary is coming from it unattended, so the body waits rather than draining on its own (gang capture $tname)"
+  fi
   local settled_rc=0
   composer_settled "$1" || settled_rc=$?
   [ "$settled_rc" -ne 3 ] \
@@ -11531,6 +11552,11 @@ inject() { # $1 window, $2 text, $3 head, $4 locked,
     # parked landing from an ordinary submission, and retain the collar's
     # stronger proof that the queue preview names this envelope's unique prefix.
     park_confirm) submit_verify "$1" "$after" "$frag" paste park_confirm "$2" ;;
+    # The caller already claimed the exact native failed-turn record and left
+    # its owned envelope marker on this window. That claim authorizes one
+    # ordinary verified submission through a state that is blocked precisely
+    # because the failed turn ended; it does not relax any composer guard.
+    stream-recovery) submit_verify "$1" "$after" "$frag" paste '' "$2" ;;
     # Ordinary delivery accepts only a verified submission. A harness queue is
     # recovery state, not a landing: busy `park` collars spool before reaching
     # this function, so a queued reading here is unexpected and fails closed.
@@ -12819,7 +12845,6 @@ auto_resume_failed_write() { # $1 window, rest = operator-facing failure
 
 auto_resume_prompt_witness() { # $1 pane, $2 collar, $3 UserPromptSubmit payload
   local pending submitted="" rc=0
-  auto_resume_for "$1" || return 0
   pending="$(tmux show-options -wqv -t "$1" @gl_auto_resume_prompt 2>/dev/null)" \
     || pending=""
   if [ -z "$pending" ]; then
@@ -12853,7 +12878,6 @@ auto_resume_prompt_witness() { # $1 pane, $2 collar, $3 UserPromptSubmit payload
 auto_resume_stream_note() { # $1 pane, $2 collar, $3 Notification kind; 0 = resumed
   local pane="$1" collar="$2" kind="$3" record="" record_rc=0 window="" handled=""
   local own="" pending="" name body err="" rc=0 claim_rc=0
-  auto_resume_for "$pane" || return 1
   load_collar "$collar"
   declare -F collar_auto_resume_record >/dev/null || return 1
   record="$(collar_auto_resume_record "$pane" "$kind")" || record_rc=$?
@@ -12929,7 +12953,7 @@ auto_resume_stream_note() { # $1 pane, $2 collar, $3 Notification kind; 0 = resu
     event_claim_release
     return 1
   }
-  err="$(send_live "$name" "" live-only 2>&1)" || rc=$?
+  err="$(send_live "$name" "" live-only "" stream-recovery 2>&1)" || rc=$?
   err="${err##*$'\n'}"
   case "$rc" in
     0)
@@ -14934,10 +14958,15 @@ send_outcome() { # $1 = target name; the parenthetical a verified delivery earne
   fi
 }
 
-send_live() { # $1 target, $2 locked, $3 live-only probe, $4 lock wait mode;
+send_live() { # $1 target, $2 locked, $3 live-only probe, $4 lock wait mode,
+              # $5 internal delivery witness;
               # AGENT_ID and ENVELOPE set.
               # 3 = refused, nothing typed
-  local busy_rc=0 blocked_rc=0 box="" keep_lock=0
+  local busy_rc=0 blocked_rc=0 box="" keep_lock=0 witness="${5:-}"
+  case "$witness" in
+    ''|stream-recovery) ;;
+    *) die "internal: send_live received unknown witness mode '$witness'" ;;
+  esac
   # THE CALLER MAY OWN THE LOCK. Where the queue choice and the claim have to be
   # one critical section, the lock is taken before this function and outlives
   # it: a command substitution's exit does not fire the EXIT trap that would
@@ -14968,9 +14997,11 @@ send_live() { # $1 target, $2 locked, $3 live-only probe, $4 lock wait mode;
   # mid-turn, from busy paint a finished turn left behind — and answer one with
   # a quiet screen by typing into it. Above busy for the same reason the state
   # read puts it there: a turn-ending record makes a busy marker retained paint.
-  blocked "$AGENT_ID" || blocked_rc=$?
-  [ "$blocked_rc" -ne 0 ] \
-    || refuse "'$1' is blocked ($BLOCKED_WHAT) — its input box is free, but the turn it was already given ended without producing work, so a paste would be reported delivered with nothing acting on it; inspect it with gang capture"
+  if [ "$witness" != stream-recovery ]; then
+    blocked "$AGENT_ID" || blocked_rc=$?
+    [ "$blocked_rc" -ne 0 ] \
+      || refuse "'$1' is blocked ($BLOCKED_WHAT) — its input box is free, but the turn it was already given ended without producing work, so a paste would be reported delivered with nothing acting on it; inspect it with gang capture"
+  fi
   busy "$AGENT_ID" || busy_rc=$?
   case "$busy_rc" in
     0) # States the fact and stops there. The instruction that used to live here
@@ -15024,7 +15055,7 @@ send_live() { # $1 target, $2 locked, $3 live-only probe, $4 lock wait mode;
     1) ;;
     *) die "internal: busy returned unknown verdict $busy_rc" ;;
   esac
-  inject "$AGENT_ID" "$ENVELOPE" "" locked
+  inject "$AGENT_ID" "$ENVELOPE" "" locked "$witness"
   [ "$keep_lock" -eq 1 ] || lock_release
   # No @gl_turn write exists anywhere on this path — not here, and not in the
   # witnesses it consults (turn_witness reports a malformed value without

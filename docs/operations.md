@@ -581,11 +581,12 @@ turn. At the reset the agent receives the ordinary continuation asking it to
 re-read its assignment and continue only if work remains. Nothing polls and no
 process stays running between the arming and the reset.
 
-For claude-code, the same declaration also covers a provider stream that dies
-mid-turn. The native `idle_prompt` notification says the harness is waiting and
-binds its transcript; Gangline resumes only when that transcript's newest
-top-level assistant record is structurally an API error. Error prose is never
-matched. One error UUID receives one attributed continuation. Its visible
+For claude-code, a provider stream that dies mid-turn is recovered independently
+of the provider-reset declaration. The native `idle_prompt` notification says
+the harness is waiting and binds its transcript; Gangline resumes only when
+that transcript's newest top-level assistant record is the status-less
+`server_error` shape. Error prose is never matched. One error UUID receives one
+attributed continuation. Its visible
 Gangline envelope is also the ownership marker: if that continuation dies,
 there is no second hop. An unreadable transcript, unverified marker, refused
 delivery, or exhausted hop is fail-closed and appears in `gang status`; roster
