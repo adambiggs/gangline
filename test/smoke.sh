@@ -49,4 +49,13 @@ GANG_CONFIG_DIR="$CONFIG_ROOT" "$ROOT/bin/gang" models -c claude-code \
 GANG_CONFIG_DIR="$CONFIG_ROOT" "$ROOT/bin/gang" roles >/dev/null
 GANG_CONFIG_DIR="$CONFIG_ROOT" "$ROOT/bin/gang" config >/dev/null
 
+# The public recording starts real harnesses. A parent Claude Code session marks
+# descendants as children and suppresses their transcript; the recorder must
+# clear that inherited marker before VHS starts the demo shell.
+if ! grep -Fx 'unset TMUX TMUX_PANE CLAUDE_CODE_CHILD_SESSION' \
+  "$ROOT/site/demo/record.sh" >/dev/null; then
+  echo "smoke: demo recorder must clear the inherited Claude child-session marker" >&2
+  exit 1
+fi
+
 echo "smoke: command surface passed"

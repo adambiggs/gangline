@@ -21,7 +21,7 @@ mkdir -p "$demo_diag"
 # A recorder may itself run inside an agent window. Make every bare tmux and
 # gang invocation resolve through the disposable server, and keep a second
 # checkout's guard shim out of the PATH inherited by the recorded agents.
-unset TMUX TMUX_PANE
+unset TMUX TMUX_PANE CLAUDE_CODE_CHILD_SESSION
 export TMUX_TMPDIR="$demo_tmux_root"
 export GANG_LOCK_DIR="$demo_tmux_root/locks"
 # hitch writes the socket it actually reached the team on under this root, asked

@@ -34,6 +34,7 @@ alert_ui_injected="/var/tmp/gangline-alert-injected-$$"
 alert_ui_session="quote'\`# \$(touch $alert_ui_injected)'"
 alert_ui_survivor="gang-alert-ui-survivor-$$"
 alert_ui_observer="gang-alert-ui-observer-$$"
+alert_ui_contender="gang-alert-ui-contender-$$"
 mkdir -p "$alert_ui_root"
 alert_ui_tmux() { env -u TMUX TMUX_TMPDIR="$alert_ui_root" tmux "$@"; }
 alert_ui_gang_for() {
@@ -51,6 +52,8 @@ alert_ui_tmux new-session -d -s "$alert_ui_session" -n caller \
 alert_ui_tmux new-session -d -s "$alert_ui_survivor" -n survivor \
   "PS1='❯ ' exec bash --norc"
 alert_ui_tmux new-session -d -s "$alert_ui_observer" -n observer \
+  "PS1='❯ ' exec bash --norc"
+alert_ui_tmux new-session -d -s "$alert_ui_contender" -n contender \
   "PS1='❯ ' exec bash --norc"
 alert_ui_gang adopt caller -c bash >/dev/null
 alert_ui_caller_id="$(alert_ui_tmux list-windows -t "=$alert_ui_session" \
@@ -1315,12 +1318,14 @@ equal "the alert names the failed install step and what that step printed" \
   "$alert_ui_cause_note"
 alert_ui_tmux kill-session -t "=$alert_ui_cause"
 
-# A teardown that loses the same server-global claim must mutate nothing. Hold
-# a harmless tick inside the claim, attempt `down` from a different team lock
-# root, and compare every alert-center surface before allowing the tick out.
-alert_ui_claim_ready="$RUN_ROOT/alert-ui-claim-ready"
-alert_ui_claim_release="$RUN_ROOT/alert-ui-claim-release"
-mkfifo "$alert_ui_claim_ready" "$alert_ui_claim_release"
+# A successful binding claim protects the mutation after it returns, not merely
+# the helper that acquired it. Pause a harmless tick at that exact seam: a
+# second ordinary tick leaves the in-flight binding alone, while `down` from a
+# separate team must still be refused rather than remove its own alert state.
+alert_ui_post_claim_ready="$RUN_ROOT/alert-ui-post-claim-ready"
+alert_ui_post_claim_release="$RUN_ROOT/alert-ui-post-claim-release"
+mkfifo "$alert_ui_post_claim_ready" "$alert_ui_post_claim_release"
+alert_ui_gang_for "$alert_ui_contender" adopt contender -c bash >/dev/null
 alert_ui_survivor_right="$(alert_ui_tmux show-options -qv \
   -t "=$alert_ui_survivor:" status-right)"
 alert_ui_survivor_counts="$(alert_ui_tmux show-options -qv \
@@ -1328,21 +1333,38 @@ alert_ui_survivor_counts="$(alert_ui_tmux show-options -qv \
   -t "=$alert_ui_survivor:" @gl_alert_unseen)"
 alert_ui_survivor_command="$(alert_ui_tmux show-options -qv \
   -t "=$alert_ui_survivor:" @gl_alert_command)"
-GANG_TEST_ALERT_BINDING_CLAIM_READY_FIFO="$alert_ui_claim_ready" \
-GANG_TEST_ALERT_BINDING_CLAIM_RELEASE_FIFO="$alert_ui_claim_release" \
+GANG_TEST_ALERT_BINDING_POST_CLAIM_READY_FIFO="$alert_ui_post_claim_ready" \
+GANG_TEST_ALERT_BINDING_POST_CLAIM_RELEASE_FIFO="$alert_ui_post_claim_release" \
   alert_ui_gang_for "$alert_ui_survivor" tick \
   > "$RUN_ROOT/alert-ui-claim-owner.out" 2>&1 &
 alert_ui_claim_owner=$!
-IFS= read -r -N 1 _ < "$alert_ui_claim_ready"
+IFS= read -r -N 1 _ < "$alert_ui_post_claim_ready"
+# A second ordinary tick sees the server-global claim held, but that is not a
+# broken alert center: the first tick is actively installing it. The contender
+# must leave the binding to that owner without publishing a false health
+# failure, which is the path the recorder's status probes exercise.
+alert_ui_losing_tick_rc=0
+ALERT_UI_LOCK_DIR="$RUN_ROOT/alert-ui-fourth-locks" \
+  alert_ui_gang_for "$alert_ui_survivor" tick \
+  > "$RUN_ROOT/alert-ui-losing-tick.out" 2>&1 \
+  || alert_ui_losing_tick_rc=$?
+equal "a tick leaves an in-flight alert binding to its owner" \
+  0 "$alert_ui_losing_tick_rc"
+excludes "an in-flight alert binding is not a tick failure" \
+  "$(<"$RUN_ROOT/alert-ui-losing-tick.out")" \
+  "could not claim the Prefix+A binding"
+excludes "an in-flight alert binding emits no terminal diagnostic" \
+  "$(<"$RUN_ROOT/alert-ui-losing-tick.out")" \
+  "another alert binding update is in flight"
 alert_ui_losing_down_rc=0
 ALERT_UI_LOCK_DIR="$RUN_ROOT/alert-ui-third-locks" \
-  alert_ui_gang_for "$alert_ui_survivor" down "$alert_ui_survivor" \
+  alert_ui_gang_for "$alert_ui_contender" down "$alert_ui_contender" \
   > "$RUN_ROOT/alert-ui-losing-down.out" 2>&1 \
   || alert_ui_losing_down_rc=$?
 equal "down refuses while another binding transaction owns the server" \
   1 "$alert_ui_losing_down_rc"
-equal "a claim-refused down leaves its team live" present \
-  "$(if alert_ui_tmux has-session -t "=$alert_ui_survivor" 2>/dev/null; then printf present; else printf absent; fi)"
+equal "a claim-refused down leaves the contender team live" present \
+  "$(if alert_ui_tmux has-session -t "=$alert_ui_contender" 2>/dev/null; then printf present; else printf absent; fi)"
 equal "a claim-refused down preserves status-right byte-for-byte" \
   "$alert_ui_survivor_right" \
   "$(alert_ui_tmux show-options -qv -t "=$alert_ui_survivor:" status-right)"
@@ -1352,11 +1374,12 @@ equal "a claim-refused down preserves active and unseen state" \
 equal "a claim-refused down preserves its popup command" \
   "$alert_ui_survivor_command" \
   "$(alert_ui_tmux show-options -qv -t "=$alert_ui_survivor:" @gl_alert_command)"
-printf '\n' > "$alert_ui_claim_release"
+printf '\n' > "$alert_ui_post_claim_release"
 alert_ui_claim_owner_rc=0
 wait "$alert_ui_claim_owner" || alert_ui_claim_owner_rc=$?
 equal "the winning binding transaction completes after refused down" \
   0 "$alert_ui_claim_owner_rc"
+alert_ui_gang_for "$alert_ui_contender" down "$alert_ui_contender" >/dev/null
 
 # `down` is the alert-center uninstall path. The inert observer keeps the
 # server alive so both exact binding removal and unrelated-session survival are

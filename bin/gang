@@ -5883,10 +5883,12 @@ alert_binding_owned() { # true when the live key is the one Gangline recorded
 }
 
 ALERT_BINDING_FD=""
+ALERT_BINDING_ERROR=""
 
 alert_binding_claim() { # serialize the server-global binding decision
   local root socket rc=0
   ALERT_BINDING_FD=""
+  ALERT_BINDING_ERROR=""
   socket="$(tmux display-message -p -t "=$SESSION" '#{socket_path}')" \
     || return 1
   root="$(cd -P "$(dirname "$socket")" 2>/dev/null && pwd)" \
@@ -5906,8 +5908,8 @@ alert_binding_claim() { # serialize the server-global binding decision
          GANG_TEST_ALERT_BINDING_CLAIM_RELEASE_FIFO=""
        fi
        return 0 ;;
-    75) printf 'another alert binding update is in flight on this tmux server\n' >&2 ;;
-    *) printf 'the tmux socket directory lock at %s cannot be acquired for alert binding updates\n' "$root" >&2 ;;
+    75) ALERT_BINDING_ERROR='another alert binding update is in flight on this tmux server' ;;
+    *) ALERT_BINDING_ERROR="the tmux socket directory lock at $root cannot be acquired for alert binding updates" ;;
   esac
   exec {ALERT_BINDING_FD}>&-
   ALERT_BINDING_FD=""
@@ -5977,13 +5979,29 @@ alert_ui_ensure() { # migrate and install the non-stealing tmux alert center
   alert_option_set @gl_alert_health "$TICK_HEALTH" \
     || { alert_ui_failed "record the health path"; return 1; }
   alert_binding_claim || claim_rc=$?
+  if [ "$claim_rc" -eq 0 ] && [ "${GANG_TEST_COLLARS:-}" = 1 ] \
+     && [ -n "${GANG_TEST_ALERT_BINDING_POST_CLAIM_READY_FIFO:-}" ] \
+     && [ -n "${GANG_TEST_ALERT_BINDING_POST_CLAIM_RELEASE_FIFO:-}" ]; then
+    printf x > "$GANG_TEST_ALERT_BINDING_POST_CLAIM_READY_FIFO"
+    IFS= read -r _ < "$GANG_TEST_ALERT_BINDING_POST_CLAIM_RELEASE_FIFO" || true
+    GANG_TEST_ALERT_BINDING_POST_CLAIM_READY_FIFO=""
+    GANG_TEST_ALERT_BINDING_POST_CLAIM_RELEASE_FIFO=""
+  fi
   if [ "$claim_rc" -eq 0 ]; then
     alert_option_set @gl_alert_command "$command" \
       || { rc=$?; alert_ui_failed "record the alert command"; }
     [ "$rc" -ne 0 ] || alert_binding_ensure \
       || { rc=$?; alert_ui_failed "install the Prefix+A binding"; }
     alert_binding_claim_release
+  elif [ "$claim_rc" -eq 75 ] \
+       && [ -n "$(tmux show-options -qv -t "=$SESSION:" @gl_alert_command 2>/dev/null)" ]; then
+    # This session has already contributed its popup command, so another tick
+    # holding the server-global binding claim is doing the only remaining work.
+    # Reporting that ordinary serialization as a failed tick paints a false
+    # alert over a healthy team; a later tick still retries if its owner fails.
+    :
   else
+    [ -z "$ALERT_BINDING_ERROR" ] || printf '%s\n' "$ALERT_BINDING_ERROR" >&2
     rc=1
     alert_ui_failed "claim the Prefix+A binding"
   fi
@@ -6032,7 +6050,10 @@ alert_binding_release() { # called under claim: unbind only our exact last-team 
 alert_ui_remove() { # inverse of alert_ui_ensure; safe to repeat
   local claim_rc=0 rc=0
   alert_binding_claim || claim_rc=$?
-  [ "$claim_rc" -eq 0 ] || return 1
+  if [ "$claim_rc" -ne 0 ]; then
+    [ -z "$ALERT_BINDING_ERROR" ] || printf '%s\n' "$ALERT_BINDING_ERROR" >&2
+    return 1
+  fi
   alert_status_remove || rc=$?
   if [ "$rc" -eq 0 ]; then
     tmux set-option -u -t "=$SESSION:" @gl_alert_active 2>/dev/null || true
