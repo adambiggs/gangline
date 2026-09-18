@@ -16,6 +16,7 @@
     @font-face{font-family:'Newsreader';src:url('fonts/newsreader-italic-latin.woff2') format('woff2');font-weight:200 800;font-style:italic;font-display:swap}
     @font-face{font-family:'Instrument Sans';src:url('fonts/instrument-sans-latin.woff2') format('woff2');font-weight:400 700;font-style:normal;font-display:swap}
     @font-face{font-family:'Instrument Sans';src:url('fonts/instrument-sans-italic-latin.woff2') format('woff2');font-weight:400 700;font-style:italic;font-display:swap}
+    @font-face{font-family:'JetBrains Mono';src:url('fonts/jetbrains-mono-latin.woff2') format('woff2');font-weight:400;font-style:normal;font-display:swap}
 
     /* Dark: dusk on the trail — deep blue overhead, the last plum of light at
        the horizon, and one lit window's worth of warmth. */
@@ -23,7 +24,7 @@
       --bg:#06090f;--g1:#071530;--g2:#1f2860;--g3:#3d2444;
       --bg2:rgba(255,255,255,.05);--ink:#e9eef7;--soft:#b2bed0;--mute:#7f8da0;--rule:rgba(255,255,255,.11);
       --acc:#f0a23c;--acc-ink:#10131a;--glyph:233,238,247;--trail:132,170,214;--sel:rgba(132,170,214,.32);
-      --serif:'Newsreader',Georgia,serif;--sans:'Instrument Sans',system-ui,sans-serif;--mono:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;
+      --serif:'Newsreader',Georgia,serif;--sans:'Instrument Sans',system-ui,sans-serif;--mono:'JetBrains Mono',ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;
       color-scheme:dark;
     }
     /* Light: a snowy morning on the trail — ice-blue sky, snow lit white-blue,
@@ -79,8 +80,8 @@
     .sec h2+p{margin-top:1rem}
     .sec .soft{text-wrap:pretty}
 
-    pre{margin:1.5rem 0 0;padding:1.25rem 1.5rem;background:var(--bg2);border:1px solid var(--rule);font-family:var(--mono);font-size:.875rem;line-height:1.6;overflow-x:auto;color:var(--ink)}
-    code{font-family:var(--mono);font-size:.9em}
+    pre{margin:1.5rem 0 0;padding:1.25rem 1.5rem;background:var(--bg2);border:1px solid var(--rule);font-family:var(--mono);font-size:.8125rem;line-height:1.6;overflow-x:auto;color:var(--ink)}
+    code{font-family:var(--mono);font-size:.875em}
     :not(pre)>code{color:var(--ink)}
     /* Copy buttons: each code block is wrapped by script so the button can
        sit in its corner without scrolling with the code. It is quiet until
