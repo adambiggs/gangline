@@ -37,20 +37,10 @@ if [ -n "${ROOT:-}" ] && [ -x "$ROOT/bin/gang" ]; then
     *[\'\"\\]*|*[[:cntrl:]]*) ;;
     *)
       _gl_cc_cmd="{\"type\":\"command\",\"command\":\"$ROOT/bin/gang\",\"args\":[\"hook\"]}"
-      # Stop is the policy boundary for verified peer reply obligations. The
-      # shared adapter refuses idle once per turn while Gangline reports debt
-      # or ambiguous provenance, releases the re-Stop the harness marks with
-      # stop_hook_active, and delegates a clear boundary back to the generic
-      # hook. THE NATIVE STOP-BLOCK CAP IS LEFT ALONE (2.1.259 overrides a hook
-      # after 8 consecutive blocks and ends the turn without telling it): the
-      # adapter never reaches it on its own, and a launch line that lifted it
-      # turned every fault in the reply subsystem into an unbounded run of
-      # model turns.
-      _gl_cc_stop_cmd="{\"type\":\"command\",\"command\":\"python3\",\"args\":[\"$_gl_cc_dir/plugins/codex-stop-hook.py\",\"$ROOT/bin/gang\"],\"timeout\":15}"
       _gl_cc_esc="${ROOT//\$/\\\\\$}"; _gl_cc_esc="${_gl_cc_esc//\`/\\\\\`}"
       _gl_cc_json="{\"hooks\":{\"UserPromptSubmit\":[{\"hooks\":[$_gl_cc_cmd]}]"
       _gl_cc_json="$_gl_cc_json,\"PostToolUse\":[{\"matcher\":\"*\",\"hooks\":[$_gl_cc_cmd]}]"
-      _gl_cc_json="$_gl_cc_json,\"Stop\":[{\"hooks\":[$_gl_cc_stop_cmd]}]"
+      _gl_cc_json="$_gl_cc_json,\"Stop\":[{\"hooks\":[$_gl_cc_cmd]}]"
       _gl_cc_json="$_gl_cc_json,\"PermissionRequest\":[{\"hooks\":[$_gl_cc_cmd]}]"
       _gl_cc_json="$_gl_cc_json,\"Notification\":[{\"hooks\":[$_gl_cc_cmd]}]"
       _gl_cc_json="$_gl_cc_json,\"PreCompact\":[{\"hooks\":[$_gl_cc_cmd]}]"
@@ -81,7 +71,7 @@ if [ -n "${ROOT:-}" ] && [ -x "$ROOT/bin/gang" ]; then
       GANG_RESUME_LAUNCH="claude --resume {{session_id}} --settings '$_gl_cc_json'"
       GANG_STOP_HOOK=1
       GANG_SELF_COMPACT=deferred
-      unset _gl_cc_cmd _gl_cc_stop_cmd _gl_cc_esc _gl_cc_json _gl_cc_light
+      unset _gl_cc_cmd _gl_cc_esc _gl_cc_json _gl_cc_light
       ;;
   esac
 fi

@@ -215,8 +215,7 @@ preserve_world() {
     >"$dest/environment.txt" || return 1
 
   for file in requests.jsonl stub.out stub.err hitch.out wait.out send.out \
-      peer-hitch.out peer-request.out reply-send.out reply-before.tsv \
-      reply-after.tsv; do
+      peer-hitch.out peer-request.out; do
     [ ! -f "$RUN_ROOT/$file" ] || cp -- "$RUN_ROOT/$file" "$dest/$file" \
       || return 1
   done
@@ -678,23 +677,21 @@ wait_armed() { # the caller's channel is stored in a tmux pane-exited hook
 }
 
 # ---------------------------------------------------------------- scenario 3
-# A VERIFIED PEER REQUEST BLOCKS CLAUDE'S NATIVE Stop UNTIL A CORRELATED REPLY.
-# The request is held at the stub so its provenance can be inspected before
-# Stop. Releasing it makes Claude run Stop; a later request carrying the hook's
-# reason can exist only when that boundary blocked. The reply is then sent
-# under the observed Claude pane identity, and the next native Stop must allow
-# the real TUI to become idle.
-scenario_reply() {
-  world_up reply
-  if ! booted reply; then world_down; return; fi
+# A VERIFIED PEER MESSAGE REACHES CLAUDE'S MODEL TURN AND IS RECORDED AS
+# DELIVERED. The request is held at the stub so the delivery can be read while
+# the turn is open. The delivered marker it leaves on Claude's window is what
+# safe-to-drop reads as proof that a report arrived; after release, the native
+# Stop must let the real TUI become idle with no reply sent.
+scenario_peer() {
+  world_up peer
+  if ! booted peer; then world_down; return; fi
 
-  local peer=fox peer_window agent_window peer_pane agent_pane request_seq block_seq rc=0
-  local request_body="$HOLD_MARKER peer request awaiting acknowledgement"
-  local reply_body="Waiting on background work; I will report later."
+  local peer=fox peer_window agent_window peer_pane agent_pane peer_token agent_spool rc=0
+  local request_body="$HOLD_MARKER peer request"
   EXTRA_AGENTS="$peer"
   GANG_TEST_COLLARS=1 "$GANG" hitch "$peer" -c bash -d "$WORK" \
     >"$RUN_ROOT/peer-hitch.out" 2>&1 || rc=$?
-  equal "reply: the verified peer fixture hitched" 0 "$rc"
+  equal "peer: the verified peer fixture hitched" 0 "$rc"
   if [ "$rc" -ne 0 ]; then
     note "$(tail -3 "$RUN_ROOT/peer-hitch.out")"
     world_down
@@ -713,90 +710,40 @@ scenario_reply() {
   fi
   if [ -z "$peer_window" ] || [ -z "$agent_window" ] \
       || [ -z "$peer_pane" ] || [ -z "$agent_pane" ]; then
-    fail "reply: both registered panes resolve by stable agent identity" \
+    fail "peer: both registered panes resolve by stable agent identity" \
       "peer [$peer_window/$peer_pane], Claude [$agent_window/$agent_pane]"
     world_down
     return
   fi
-  pass "reply: both registered panes resolve by stable agent identity"
+  pass "peer: both registered panes resolve by stable agent identity"
 
   rc=0
   printf '%s' "$request_body" \
     | TMUX_PANE="$peer_pane" "$GANG" send --to "$AGENT" --stdin \
       >"$RUN_ROOT/peer-request.out" 2>&1 || rc=$?
-  equal "reply: the peer request was delivered through observed attribution" 0 "$rc"
+  equal "peer: the request was delivered through observed attribution" 0 "$rc"
   [ "$rc" -eq 0 ] || note "$(tail -3 "$RUN_ROOT/peer-request.out")"
   if ! await_held; then world_down; return; fi
-  request_seq="$HELD_SEQ"
 
-  TMUX_PANE="$agent_pane" "$GANG" reply-obligations \
-    >"$RUN_ROOT/reply-before.tsv"
-  contains "reply: native prompt and delivery proofs arm the peer debt" \
-    "$(cat "$RUN_ROOT/reply-before.tsv")" $'owed\t'
-  contains "reply: the debt belongs to the observed sender" \
-    "$(cat "$RUN_ROOT/reply-before.tsv")" $'\tfox\tlive'
+  peer_token="$(tmux show-options -wqv -t "$peer_window" @gl_spool)"
+  agent_spool="$(tmux show-options -wqv -t "$agent_window" @gl_spool)"
+  if [ -n "$peer_token" ] && [ -n "$agent_spool" ]; then
+    equal "peer: delivery marks the sender's token delivered to Claude's registration" \
+      "$agent_spool" "$(tmux show-options -wqv -t "$agent_window" "@gl_delivered_$peer_token")"
+  else
+    fail "peer: delivery marks the sender's token delivered to Claude's registration" \
+      "a registration token is unreadable: peer [$peer_token], Claude [$agent_spool]"
+  fi
 
   release_held
-  settled "reply native Stop block" reply_block_seen
-  block_seq="$(python3 -c '
-import json, sys
-for line in open(sys.argv[1], encoding="utf-8"):
-    entry = json.loads(line)
-    if entry.get("phase") == "request" and "you may not go idle: reply to fox" in entry.get("text", ""):
-        print(entry["seq"])
-        break
-' "$REQ_LOG")"
-  if [ "$block_seq" -gt "$request_seq" ]; then
-    pass "reply: Claude made a continuation request after its native Stop"
-  else
-    fail "reply: Claude made a continuation request after its native Stop" \
-      "the held request sequence did not advance ($request_seq then $block_seq)"
-  fi
-  local block_request
-  block_request="$(python3 -c '
-import json, sys
-seq = int(sys.argv[2])
-for line in open(sys.argv[1], encoding="utf-8"):
-    entry = json.loads(line)
-    if entry.get("phase") == "request" and entry.get("seq") == seq:
-        print(entry.get("text", ""), end="")
-        break
-' "$REQ_LOG" "$block_seq")"
-  contains "reply: that continuation carries the native Stop block reason" \
-    "$block_request" "you may not go idle: reply to $peer"
-  equal "reply: the real TUI remains busy while its reply is owed" busy "$(state)"
-
-  rc=0
-  printf '%s' "$reply_body" \
-    | TMUX_PANE="$agent_pane" "$GANG" send --to "$peer" --stdin \
-      >"$RUN_ROOT/reply-send.out" 2>&1 || rc=$?
-  equal "reply: an arbitrary correlated acknowledgement is delivered" 0 "$rc"
-  [ "$rc" -eq 0 ] || note "$(tail -3 "$RUN_ROOT/reply-send.out")"
-  TMUX_PANE="$agent_pane" "$GANG" reply-obligations \
-    >"$RUN_ROOT/reply-after.tsv"
-  equal "reply: positive reply correlation clears the obligation" \
-    $'clear\t-\t-\t-' "$(cat "$RUN_ROOT/reply-after.tsv")"
-
-  settled "reply idle after acknowledgement" is_state idle
-  equal "reply: the next native Stop releases Claude after the acknowledgement" \
-    idle "$(state)"
+  settled "peer idle after the delivered turn" is_state idle
+  equal "peer: the native Stop lets Claude go idle without a reply" idle "$(state)"
   local sent
   sent="$(requests)"
-  contains "reply: the verified peer request reached Claude's model turn" \
+  contains "peer: the verified peer request reached Claude's model turn" \
     "$sent" "$request_body"
-  stub_sound reply
+  stub_sound peer
   world_down
-}
-
-reply_block_seen() {
-  python3 -c '
-import json, sys
-for line in open(sys.argv[1], encoding="utf-8"):
-    entry = json.loads(line)
-    if entry.get("phase") == "request" and "you may not go idle: reply to fox" in entry.get("text", ""):
-        raise SystemExit(0)
-raise SystemExit(1)
-' "$REQ_LOG"
 }
 
 # ---------------------------------------------------------------- scenario 4
@@ -1089,7 +1036,7 @@ scenario_blocked() {
 }
 
 # ----------------------------------------------------------------------------
-SCENARIOS="boot turn reply bricked blocked midturn"
+SCENARIOS="boot turn peer bricked blocked midturn"
 
 run() { # $1 scenario name, validated against the list above before it is called
   case " $SCENARIOS " in

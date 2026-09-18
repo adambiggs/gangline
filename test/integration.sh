@@ -280,35 +280,6 @@ if [ "$verb" = wait-for ]; then
   done
 fi
 
-# A TEST-SCOPED TWO-WRITER BARRIER. A peer send prepares immutable metadata,
-# then delivery verification writes its independent proof. When one reply test
-# opts in, stop the second write after the sender has already read its source
-# record. The native prompt observer can then write first. Against the former
-# one-slot state machine, releasing this write overwrote prompt with verified;
-# against independent proofs, both facts survive. The ordinary wait shim below
-# gives the release wait the suite's existing hard ceiling.
-if [ "$verb" = set-option ] && [ -n "${GANG_TEST_REPLY_PROOF_GATE:-}" ]; then
-  for word in "$@"; do
-    case "$word" in
-      @gl_reply_*|@gl_rdelivery_*)
-        if [ -e "${GANG_TEST_REPLY_GATE_STATE:?}" ]; then
-          "$real" wait-for -S "$GANG_TEST_REPLY_PROOF_GATE-ready"
-          GANG_TEST_REPLY_PROOF_GATE= GANG_TEST_REPLY_GATE_STATE= \
-            tmux wait-for "$GANG_TEST_REPLY_PROOF_GATE-release"
-        else
-          : > "$GANG_TEST_REPLY_GATE_STATE"
-        fi
-        break ;;
-    esac
-  done
-fi
-# A TEST-SCOPED WRITE FAILURE for one proof family: the reply-thread close at a
-# boundary must fail closed when its settlement proof cannot be written.
-if [ "$verb" = set-option ] && [ -n "${GANG_TEST_REPLY_SETTLE_FAIL:-}" ]; then
-  for word in "$@"; do
-    case "$word" in @gl_rsettled_*) exit 1 ;; esac
-  done
-fi
 [ "$verb" = wait-for ] && [ "$next" != -S ] || exec "$real" "$@"
 
 ceiling=${GANG_TEST_WAIT_CEILING:-120}
@@ -796,8 +767,7 @@ integration_part hitch && { integration_ran_parts="${integration_ran_parts:+$int
 integration_part compose && { integration_ran_parts="${integration_ran_parts:+$integration_ran_parts }compose"; . "$ROOT/test/integration-compose.sh"; }
 integration_part spool && { integration_ran_parts="${integration_ran_parts:+$integration_ran_parts }spool"; . "$ROOT/test/integration-spool.sh"; }
 integration_part readiness && { integration_ran_parts="${integration_ran_parts:+$integration_ran_parts }readiness"; . "$ROOT/test/integration-readiness.sh"; }
-integration_part hooks && { integration_ran_parts="${integration_ran_parts:+$integration_ran_parts }hooks"; . "$ROOT/test/integration-codex-stop-hook.sh"; }
-integration_part hooks && . "$ROOT/test/integration-hooks.sh"
+integration_part hooks && { integration_ran_parts="${integration_ran_parts:+$integration_ran_parts }hooks"; . "$ROOT/test/integration-hooks.sh"; }
 integration_part notify && { integration_ran_parts="${integration_ran_parts:+$integration_ran_parts }notify"; . "$ROOT/test/integration-notify.sh"; }
 integration_part usage && { integration_ran_parts="${integration_ran_parts:+$integration_ran_parts }usage"; . "$ROOT/test/integration-usage.sh"; }
 integration_part events && { integration_ran_parts="${integration_ran_parts:+$integration_ran_parts }events"; . "$ROOT/test/integration-events.sh"; }

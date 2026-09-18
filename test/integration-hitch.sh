@@ -1100,32 +1100,16 @@ contains "the contract states the complement of envelope attribution" \
 contains "the contract makes crossed state explicit before stale instructions act" \
   "$(contract_prose)" \
   "If a teammate's message crossed one you just sent, say so in your next reply and state what is already true before acting on the stale message."
-# The contract states only the rule an agent acts on; how Gangline correlates
-# replies and retires obligations is enforcement, documented under gang send.
-# The rule once covered every verified message, the hitch assignment included,
-# and agents met it by acknowledging the brief and ending the turn unbegun. The
-# assignment is now answered by its completion report, so the rule names the
-# rest.
-contains "the contract states the reply every other verified teammate message is owed" \
-  "$(contract_prose)" \
-  "Any other verified message from a teammate is owed one concise reply or acknowledgement through Gangline."
+# The contract once held every verified message to a reply, the hitch
+# assignment included, and agents met it by acknowledging the brief and ending
+# the turn unbegun. Peer reply debt is gone; the assignment is answered by its
+# completion report, and that is the one reply rule the contract keeps.
 contains "the contract makes the completion report the assignment's reply" \
   "$(contract_prose)" \
-  "It is owed no acknowledgement: begin it in the turn that reads it, and your completion report is its reply."
-contains "the contract says a reply and its same-turn acknowledgement owe nothing" \
-  "$(contract_prose)" \
-  "A reply to one of your messages is owed nothing, and neither is an acknowledgement you send its sender in the turn that read it; a message you send in a later turn is a new request."
-# send refuses --ack on any answer to a request, so a contract that offered it
-# for the owed reply led agents straight into that refusal.
-contains "the contract sends the owed reply without --ack" \
-  "$(contract_prose)" \
-  "Whatever pays that debt, an acknowledgement included, always wakes its reader, so send it without \`--ack\`."
-contains "the contract scopes --ack to acknowledging a reply" \
-  "$(contract_prose)" \
-  "When you acknowledge a reply to one of your messages and leave its sender nothing to act on, send it with \`gang send --ack\`"
-contains "the contract keeps keyboard input out of that debt" \
-  "$(contract_prose)" \
-  "Session-keyboard input, including operator input, neither creates nor clears that debt."
+  "begin it in the turn that reads it, and your completion report is its reply."
+excludes "the contract holds no peer message to a reply" \
+  "$(contract_prose)" "is owed one concise reply"
+excludes "the contract offers no --ack" "$(contract_prose)" "--ack"
 excludes "the contract leaves reply correlation to the reference" \
   "$(contract_prose)" "correlat"
 excludes "the contract leaves obligation retirement to the reference" \

@@ -71,13 +71,6 @@ which attaches the shipped `worker` brief: what an arc owner is answerable for,
 so the arc's own message carries only that arc. `gang roles` lists the briefs
 this installation has.
 
-Claude Code caps consecutive Stop-hook blocks and ends the turn past the cap.
-Gangline leaves that cap in force. Its Stop adapter refuses idle once per turn
-while a verified peer reply is owed, then releases the turn with the debt still
-recorded: `gang status` and `roster` keep showing it, the notify target or the
-lead is told, and the next delivery raises it again. Nothing has to be set in
-the hitching shell.
-
 Pass a model and effort at every hitch whose collar takes them; Gangline warns
 when a supported choice is omitted and lets the collar pick. Not every collar
 takes both — one that declares no effort spelling refuses `-e` rather than
@@ -105,19 +98,7 @@ TASK
 Every message names its sender in a nonce-bound envelope. Inside the
 team, Gangline reads the sender from the calling window; outside callers name
 themselves with `--from`. Ordinary delivery succeeds only after the target
-composer visibly accepts the paste and submission. An answer to a request still
-wakes its requester. A message sent in the turn that read a reply owes no
-reply of its own but still wakes its reader, because a ruling and a bare
-acknowledgement look alike to Gangline. The sender marks the bare
-acknowledgement with `--ack`: it is held for the recipient's next ordinary
-verified Gangline delivery and visibly joined as accumulated context. A native
-prompt alone does not turn the held acknowledgement into a follow-up turn. After
-thirty minutes its deadline
-service attempts the ordinary verified path even if suspend delayed its first
-invocation, then retries short-lived delivery contention for up to five minutes.
-If an attempted recovery exhausts that window, `gang status` distinguishes the
-retained envelope's spent retry budget from a retry service lost for an unknown
-reason.
+composer visibly accepts the paste and submission.
 
 A target that cannot take input right now gets the message parked by default:
 it waits in the target's spool. Native delivery opportunities, `gang tick`, and

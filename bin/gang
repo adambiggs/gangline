@@ -746,8 +746,6 @@ gang send
     [--from <sender>]
     [--live-only]
     [--supersede]
-    [--no-reply]
-    [--ack]
 
   The body is read from stdin:
 
@@ -776,19 +774,6 @@ gang send
                 Scoped to the sender, not
                 to a subject: unrelated
                 messages of yours go too.
-  --no-reply    this message asks for
-                nothing back: the target
-                reads it owing no reply,
-                and may still answer it
-                in the turn that read it.
-  --ack         a bare acknowledgement of
-                replies read this turn,
-                nothing for the reader to
-                act on: held for their next
-                ordinary delivery instead
-                of waking them. Refused on
-                an answer to a request or
-                on a fresh request.
 
   A refused delivery parks by default and
   enters the session when the target next
@@ -798,23 +783,6 @@ gang send
   is available it cannot park: that exits 3
   saying NOT parked, and the message is still
   yours to send.
-
-  A peer message answers that peer's requests
-  you have read. A crossing unread request
-  remains unanswered. A reply is answerable
-  only in the turn that read it: any
-  acknowledgement closes that thread, while
-  a later turn's message starts a new request.
-  A message sent in the turn that read a
-  reply owes no reply but still wakes the
-  target, because only the sender knows
-  whether it carries a ruling or a bare
-  acknowledgement. --ack holds it for the
-  target's next ordinary verified Gangline
-  delivery instead, marked accumulated; its
-  deadline service starts after 30 minutes
-  and retries contention. An answer to a
-  request always wakes.
 
   On exit 1, do not simply send again. The
   body may have been typed, left staged, or
@@ -1481,22 +1449,6 @@ gang whoami
   was refused on identity grounds.
 EOF
       ;;
-    reply-obligations) cat <<'EOF'
-gang reply-obligations
-  Internal native Stop-hook query. The calling pane is the identity; it prints
-  verified peer reply debts, retired sender audits, or ambiguous
-  provenance as TSV. Do not call it by hand.
-EOF
-      ;;
-    reply-released) cat <<'EOF'
-gang reply-released [query-timeout]
-  Internal native Stop-hook report. The calling pane is the identity; the
-  adapter runs it when the harness is already continuing after a Stop-hook
-  block and a peer reply obligation still stands, so the turn is released
-  with the debt recorded, shown by status and roster, and told to the notify
-  target or the agent named lead. Do not call it by hand.
-EOF
-      ;;
     attach) cat <<'EOF'
 gang attach
   Join the team in tmux.
@@ -1969,9 +1921,9 @@ mint_nonce() { od -An -N4 -tx1 /dev/urandom | tr -d ' \n'; }
 mint_message_nonce() { od -An -N8 -tx1 /dev/urandom | tr -d ' \n'; }
 
 ENVELOPE="" ENVELOPE_NONCE=""
-envelope() { # $1 sender, $2 body, optional $3 correlated reply nonces,
-             # optional $4 the waiver the envelope states: no-reply or assignment
-             # -> exact wire message in ENVELOPE and its nonce in ENVELOPE_NONCE
+envelope() { # $1 sender, $2 body, optional $3 the marker the envelope states:
+             # assignment -> exact wire message in ENVELOPE and its nonce in
+             # ENVELOPE_NONCE
   local nonce body marked sentinel=$'\034'
   nonce="$(mint_message_nonce)"
   marked="$(printf '%s\034' "$2" \
@@ -1982,11 +1934,10 @@ envelope() { # $1 sender, $2 body, optional $3 correlated reply nonces,
   esac
   ENVELOPE_NONCE="$nonce"
   ENVELOPE="[gang:$1#$nonce"
-  [ -z "${3:-}" ] || ENVELOPE="$ENVELOPE reply-to=$3"
-  case "${4:-}" in
+  case "${3:-}" in
     '') ;;
-    no-reply|assignment) ENVELOPE="$ENVELOPE $4" ;;
-    *) die "internal: unknown envelope waiver '$4'" ;;
+    assignment) ENVELOPE="$ENVELOPE $3" ;;
+    *) die "internal: unknown envelope marker '$3'" ;;
   esac
   ENVELOPE="$ENVELOPE] $body [/gang:$1#$nonce]"
 }
@@ -4905,8 +4856,7 @@ queued_body_confirmed() { # $1 window id, $2 the body gang composed
 # therefore cannot be the witness for the expected mid-turn landing. Every
 # peer body begins with gang's attributed opening prefix through a 16-hex nonce
 # unique to that message. Its position at byte zero keeps it in Codex's retained
-# first row; unlike the optional reply-to clause after it, the prefix is shorter
-# than an ordinary queue row. A pre-existing queue has a different nonce, while
+# first row, and the prefix is shorter than an ordinary queue row. A pre-existing queue has a different nonce, while
 # every message bundled behind the first prefix was part of the same single
 # paste and Enter.
 queued_envelope_confirmed() { # $1 window id, $2 attributed body gang composed
@@ -7509,11 +7459,7 @@ alert_note_fit() { # $1 note, $2.. the report's other lines -> the note rows tha
 
 tick_launch() { # isolate a post-command candidate from the command's own result
   [ -z "${GANG_TICK_INTERNAL:-}" ] || return 0
-  # The private Stop query is one read inside the adapter's native boundary,
-  # not independent team activity. Letting it launch here made every Stop
-  # start one tick for the query and another for the terminal `gang hook`.
-  # The hook remains the clear Stop's one cooperative edge.
-  case "${cmd:-}" in alerts|tick|__tick-worker|__usage-record-worker|__event-record-worker|reply-obligations) return 0 ;; esac
+  case "${cmd:-}" in alerts|tick|__tick-worker|__usage-record-worker|__event-record-worker) return 0 ;; esac
   tick_session_live || return 0
   case "${GANG_TEST_TICK_MODE:-}" in
     manual) [ "${GANG_TEST_COLLARS:-}" = 1 ] && return 0 ;;
@@ -7866,275 +7812,6 @@ drop_authority() { # $1 target window, $2 its shown name; returns only if this c
   esac
 }
 
-# REPLY OBLIGATIONS ARE MESSAGE PROVENANCE, NOT LIFECYCLE PROVENANCE. Hitch and
-# adopt ancestry above remains useful for observation, but never opens or
-# settles a debt. Each observed peer message gets its own option, so crossed
-# prompts and multiple senders cannot overwrite a last-message slot. Metadata
-# is immutable and every fact gets a separate monotonic proof option:
-#
-#   @gl_reply_NONCE    message:sender-token:witness:mode:sha256:reply-nonces
-#   @gl_rprompt_NONCE  sha256
-#   @gl_rdelivery_NONCE sha256
-#   @gl_rsettled_NONCE sha256
-#   @gl_rretired_NONCE sha256
-#
-# This is deliberately not one mutable state word. Native prompt observation
-# and transport verification can finish concurrently; independent facts cannot
-# overwrite each other. A request is owed once its prompt proof lands. A
-# correlated reply adds settlement proof to the original request: with either
-# arrival witness beside it that reply discharges the obligation, because a
-# reply Gangline correlated and delivered is itself evidence the request
-# reached the debtor, and the missing witness has no later writer. Outbound
-# mail correlates only to records the sender has read (prompt proof), so a
-# message crossing an unread request is fresh business rather than its answer.
-# A reply record takes the same settlement proof when it is answered or when
-# the turn that read it ends: an acknowledgement of a reply is correlated to
-# it and opens no debt, and a message sent in a later turn is a new request.
-# The immutable record remains as its audit trail until the window goes away.
-# A request its sender sent with --no-reply is stamped waived: it owes nothing,
-# and like a reply it can be answered until the turn that read it ends.
-# Any missing, malformed, or orphaned evidence fails closed.
-REPLY_STATE_PREFIX='@gl_reply_'
-REPLY_PROMPT_PREFIX='@gl_rprompt_'
-REPLY_DELIVERY_PREFIX='@gl_rdelivery_'
-REPLY_SETTLED_PREFIX='@gl_rsettled_'
-REPLY_RETIRED_PREFIX='@gl_rretired_'
-REPLY_STATUS="" REPLY_TOKEN="" REPLY_WITNESS="" REPLY_MODE=""
-REPLY_DIGEST="" REPLY_TO="" REPLY_NONCE=""
-
-reply_nonce_list_valid() { # $1 comma-separated message nonces or '-'
-  local rest value
-  [ "$1" != - ] || return 0
-  rest="$1"
-  while :; do
-    value="${rest%%,*}"
-    [ "${#value}" -eq 16 ] || return 1
-    case "$value" in *[!a-f0-9]*) return 1 ;; esac
-    [ "$rest" != "$value" ] || break
-    rest="${rest#*,}"
-  done
-}
-
-reply_state_parse() { # $1 option name, $2 value; 0 valid, 1 malformed
-  local extra
-  REPLY_STATUS=""; REPLY_TOKEN=""; REPLY_WITNESS=""; REPLY_MODE=""
-  REPLY_DIGEST=""; REPLY_TO=""; REPLY_NONCE=""
-  case "$1" in "$REPLY_STATE_PREFIX"*) REPLY_NONCE="${1#"$REPLY_STATE_PREFIX"}" ;; *) return 1 ;; esac
-  [ "${#REPLY_NONCE}" -eq 16 ] || return 1
-  case "$REPLY_NONCE" in *[!a-f0-9]*) return 1 ;; esac
-  IFS=: read -r REPLY_STATUS REPLY_TOKEN REPLY_WITNESS REPLY_MODE REPLY_DIGEST REPLY_TO extra <<<"$2"
-  [ -z "$extra" ] || return 1
-  [ "$REPLY_STATUS" = message ] || return 1
-  [ "${#REPLY_TOKEN}" -eq 8 ] || return 1
-  case "$REPLY_TOKEN" in *[!a-f0-9]*) return 1 ;; esac
-  valid_name "$REPLY_WITNESS" || return 1
-  case "$REPLY_MODE" in request|reply|waived|legacy) ;; *) return 1 ;; esac
-  [ "${#REPLY_DIGEST}" -eq 64 ] || return 1
-  case "$REPLY_DIGEST" in *[!a-f0-9]*) return 1 ;; esac
-  reply_nonce_list_valid "$REPLY_TO"
-}
-
-reply_nonce_valid() { # $1 nonce
-  [ "${#1}" -eq 16 ] || return 1
-  case "$1" in *[!a-f0-9]*) return 1 ;; esac
-}
-
-REPLY_PROOF_PRESENT=0
-reply_joined_proof() { # encoded proof or '-', expected digest
-  case "$1" in
-    -) REPLY_PROOF_PRESENT=0 ;;
-    =*) [ "${1#=}" = "$2" ] || return 1
-        REPLY_PROOF_PRESENT=1 ;;
-    *) return 1 ;;
-  esac
-}
-
-reply_nonce_valid_digest() { # $1 sha256
-  [ "${#1}" -eq 64 ] || return 1
-  case "$1" in *[!a-f0-9]*) return 1 ;; esac
-}
-
-REPLY_ROWS_ERROR=""
-reply_state_rows() { # $1 window -> nonce derived-state token witness mode digest reply-to
-  local rows joined kind key value prompt delivery settled retired proof_nonce extra
-  REPLY_ROWS_ERROR=""
-  rows="$(tmux show-options -w -t "$1" 2>/dev/null)" \
-    || {
-      REPLY_ROWS_ERROR="tmux could not read reply-obligation evidence"
-      printf '! %s\n' "$REPLY_ROWS_ERROR"
-      return 2
-    }
-  # JOIN ONCE. Long-lived agents retain completed audit records, so scanning
-  # the complete option set once per proof and per message makes every Stop
-  # query quadratic. awk's associative join produces one metadata row with its
-  # four proofs plus one row for every orphan. Values are prefixed with '=' so
-  # an empty malformed value remains a field rather than collapsing under the
-  # shell's whitespace IFS; '-' can then mean absence unambiguously.
-  joined="$(printf '%s\n' "$rows" | awk \
-    -v metadata="$REPLY_STATE_PREFIX" \
-    -v prompt="$REPLY_PROMPT_PREFIX" \
-    -v delivery="$REPLY_DELIVERY_PREFIX" \
-    -v settled="$REPLY_SETTLED_PREFIX" \
-    -v retired="$REPLY_RETIRED_PREFIX" '
-function suffix(key, prefix) { return substr(key, length(prefix) + 1) }
-function encoded(present, value) { return present ? "=" value : "-" }
-{
-  key = $1
-  sub(/^[^ ]* /, "", $0)
-  value = $0
-  if (index(key, metadata) == 1) {
-    nonce = suffix(key, metadata); m[nonce] = value; mk[nonce] = key; next
-  }
-  if (index(key, prompt) == 1) {
-    nonce = suffix(key, prompt); p[nonce] = value; pp[nonce] = 1; pk[nonce] = key; next
-  }
-  if (index(key, delivery) == 1) {
-    nonce = suffix(key, delivery); d[nonce] = value; dp[nonce] = 1; dk[nonce] = key; next
-  }
-  if (index(key, settled) == 1) {
-    nonce = suffix(key, settled); s[nonce] = value; sp[nonce] = 1; sk[nonce] = key; next
-  }
-  if (index(key, retired) == 1) {
-    nonce = suffix(key, retired); r[nonce] = value; rp[nonce] = 1; rk[nonce] = key
-  }
-}
-END {
-  for (nonce in m)
-    printf "M\t%s\t=%s\t%s\t%s\t%s\t%s\n", mk[nonce], m[nonce],
-      encoded(pp[nonce], p[nonce]), encoded(dp[nonce], d[nonce]),
-      encoded(sp[nonce], s[nonce]), encoded(rp[nonce], r[nonce])
-  for (nonce in p) if (!(nonce in m)) printf "O\t%s\t=%s\t-\t-\t-\t-\n", pk[nonce], p[nonce]
-  for (nonce in d) if (!(nonce in m)) printf "O\t%s\t=%s\t-\t-\t-\t-\n", dk[nonce], d[nonce]
-  for (nonce in s) if (!(nonce in m)) printf "O\t%s\t=%s\t-\t-\t-\t-\n", sk[nonce], s[nonce]
-  for (nonce in r) if (!(nonce in m)) printf "O\t%s\t=%s\t-\t-\t-\t-\n", rk[nonce], r[nonce]
-}
-')" || {
-    REPLY_ROWS_ERROR="reply-obligation evidence could not be joined"
-    printf '! %s\n' "$REPLY_ROWS_ERROR"
-    return 3
-  }
-  while IFS=$'\t' read -r kind key value prompt delivery settled retired extra; do
-    [ -n "$kind" ] || continue
-    [ -z "$extra" ] && [ "${value#=}" != "$value" ] || {
-      REPLY_ROWS_ERROR="reply-obligation option $key is malformed"
-      printf '! %s\n' "$REPLY_ROWS_ERROR"
-      return 3
-    }
-    value="${value#=}"
-    if [ "$kind" = O ]; then
-      case "$key" in
-        "$REPLY_PROMPT_PREFIX"*) proof_nonce="${key#"$REPLY_PROMPT_PREFIX"}" ;;
-        "$REPLY_DELIVERY_PREFIX"*) proof_nonce="${key#"$REPLY_DELIVERY_PREFIX"}" ;;
-        "$REPLY_SETTLED_PREFIX"*) proof_nonce="${key#"$REPLY_SETTLED_PREFIX"}" ;;
-        "$REPLY_RETIRED_PREFIX"*) proof_nonce="${key#"$REPLY_RETIRED_PREFIX"}" ;;
-        *) proof_nonce="" ;;
-      esac
-      if ! reply_nonce_valid "$proof_nonce" || ! reply_nonce_valid_digest "$value"; then
-        REPLY_ROWS_ERROR="reply-obligation proof option $key is malformed"
-      else
-        REPLY_ROWS_ERROR="reply-obligation proof option $key is orphaned"
-      fi
-      printf '! %s\n' "$REPLY_ROWS_ERROR"
-      return 3
-    fi
-    [ "$kind" = M ] || {
-      REPLY_ROWS_ERROR="reply-obligation evidence row is malformed"
-      printf '! %s\n' "$REPLY_ROWS_ERROR"
-      return 3
-    }
-    reply_state_parse "$key" "$value" || {
-      REPLY_ROWS_ERROR="reply-obligation option $key is malformed"
-      printf '! %s\n' "$REPLY_ROWS_ERROR"
-      return 3
-    }
-    reply_joined_proof "$prompt" "$REPLY_DIGEST" || {
-      REPLY_ROWS_ERROR="reply-obligation prompt proof for $REPLY_NONCE is malformed"
-      printf '! %s\n' "$REPLY_ROWS_ERROR"
-      return 3
-    }
-    prompt=$REPLY_PROOF_PRESENT
-    reply_joined_proof "$delivery" "$REPLY_DIGEST" || {
-      REPLY_ROWS_ERROR="reply-obligation delivery proof for $REPLY_NONCE is malformed"
-      printf '! %s\n' "$REPLY_ROWS_ERROR"
-      return 3
-    }
-    delivery=$REPLY_PROOF_PRESENT
-    reply_joined_proof "$settled" "$REPLY_DIGEST" || {
-      REPLY_ROWS_ERROR="reply-obligation settlement proof for $REPLY_NONCE is malformed"
-      printf '! %s\n' "$REPLY_ROWS_ERROR"
-      return 3
-    }
-    settled=$REPLY_PROOF_PRESENT
-    reply_joined_proof "$retired" "$REPLY_DIGEST" || {
-      REPLY_ROWS_ERROR="reply-obligation retirement proof for $REPLY_NONCE is malformed"
-      printf '! %s\n' "$REPLY_ROWS_ERROR"
-      return 3
-    }
-    retired=$REPLY_PROOF_PRESENT
-    if [ "$settled" -eq 1 ] && [ "$retired" -eq 1 ]; then
-      REPLY_ROWS_ERROR="reply-obligation $REPLY_NONCE has conflicting settlement and retirement proofs"
-      printf '! %s\n' "$REPLY_ROWS_ERROR"
-      return 3
-    elif [ "$settled" -eq 1 ]; then
-      # A request's settlement is its answer; a reply's is the end of its
-      # thread, written by the acknowledgement that answered it or by the
-      # boundary that ended the turn which read it. Legacy peer mail carries
-      # no correlation and cannot take either.
-      [ "$REPLY_MODE" != legacy ] || {
-        REPLY_ROWS_ERROR="reply-obligation settlement proof for $REPLY_NONCE has no request"
-        printf '! %s\n' "$REPLY_ROWS_ERROR"
-        return 3
-      }
-      if [ "$prompt" -eq 1 ] && [ "$delivery" -eq 1 ]; then
-        REPLY_STATUS=settled
-      elif [ "$prompt" -eq 1 ] || [ "$delivery" -eq 1 ]; then
-        REPLY_STATUS=discharged
-      else
-        REPLY_STATUS=unwitnessed
-      fi
-    elif [ "$retired" -eq 1 ]; then
-      [ "$REPLY_MODE" = request ] || {
-        REPLY_ROWS_ERROR="reply-obligation retirement proof for $REPLY_NONCE has no request"
-        printf '! %s\n' "$REPLY_ROWS_ERROR"
-        return 3
-      }
-      REPLY_STATUS=retired
-    elif [ "$REPLY_MODE" = legacy ]; then
-      REPLY_STATUS=legacy
-    elif [ "$prompt" -eq 1 ] && [ "$delivery" -eq 1 ]; then
-      if [ "$REPLY_MODE" = request ]; then REPLY_STATUS=owed; else REPLY_STATUS=complete; fi
-    elif [ "$prompt" -eq 1 ]; then
-      REPLY_STATUS=prompt
-    elif [ "$delivery" -eq 1 ]; then
-      REPLY_STATUS=verified
-    else
-      REPLY_STATUS=candidate
-    fi
-    printf '%s %s %s %s %s %s %s\n' \
-      "$REPLY_NONCE" "$REPLY_STATUS" "$REPLY_TOKEN" "$REPLY_WITNESS" \
-      "$REPLY_MODE" "$REPLY_DIGEST" "$REPLY_TO"
-  done <<<"$joined"
-}
-
-reply_rows_error() { # captured reply_state_rows stdout -> its terminal error
-  local last="${1##*$'\n'}"
-  case "$last" in
-    '! '*) printf '%s' "${last#'! '}" ;;
-    *) printf 'reply-obligation evidence could not be read' ;;
-  esac
-}
-
-reply_state_write() { # window nonce token name mode digest replies
-  tmux set-option -w -t "$1" "$REPLY_STATE_PREFIX$2" \
-    "message:$3:$4:$5:$6:$7" 2>/dev/null
-}
-
-reply_state_unset() { tmux set-option -uw -t "$1" "$REPLY_STATE_PREFIX$2" 2>/dev/null; }
-
-reply_proof_write() { # window prefix nonce digest
-  tmux set-option -w -t "$1" "$2$3" "$4" 2>/dev/null
-}
-
 STABLE_AGENT_NAME="" STABLE_AGENT_WINDOW=""
 stable_agent_resolve() { # $1 spool token; 0 exactly one live agent, 3 gone, 4 unreadable
   local rows token name window found=0
@@ -8152,405 +7829,34 @@ stable_agent_resolve() { # $1 spool token; 0 exactly one live agent, 3 gone, 4 u
   [ "$found" -eq 1 ] || return 3
 }
 
-MESSAGE_SENDER_TOKEN="-" MESSAGE_REPLY_MODE="control" MESSAGE_REPLY_TO="-"
-MESSAGE_DEFERABLE=0 MESSAGE_ANSWERS_REQUEST=0
-reply_outgoing_classify() { # $1 sender window, $2 target window
-  local target_token rows="" nonce state token witness mode digest replies rc=0 matched="" all_replies=1
-  MESSAGE_SENDER_TOKEN="-"; MESSAGE_REPLY_MODE="control"; MESSAGE_REPLY_TO="-"
-  MESSAGE_DEFERABLE=0 MESSAGE_ANSWERS_REQUEST=0
-  [ -n "$1" ] || return 0 # self-declared operator traffic never creates or settles peer debt
-  [ "$1" != "$2" ] || return 0 # an interrupt note to oneself is not peer traffic
+# THE SENDER TOKEN IS WHAT A PEER MESSAGE CARRIES FOR ITS SENDER: the spool
+# retires waiting mail whose sender registration is gone, and the recipient
+# records which registrations reached it. Operator and self-addressed traffic
+# carries none.
+MESSAGE_SENDER_TOKEN="-"
+message_sender_classify() { # $1 sender window, $2 target window
+  MESSAGE_SENDER_TOKEN="-"
+  [ -n "$1" ] || return 0
+  [ "$1" != "$2" ] || return 0
   case "$SEND_TOKEN" in
     ''|*[!a-f0-9]*) die "send: this observed sender carries no usable stable Gangline identity; re-hitch or re-adopt it before sending peer mail" ;;
   esac
   [ "${#SEND_TOKEN}" -eq 8 ] \
     || die "send: this observed sender carries no usable stable Gangline identity; re-hitch or re-adopt it before sending peer mail"
-  MESSAGE_SENDER_TOKEN="$SEND_TOKEN"; MESSAGE_REPLY_MODE="request"
-  target_token="$(tmux show-options -wqv -t "$2" @gl_spool 2>/dev/null)" || target_token=""
-  case "$target_token" in
-    ''|*[!a-f0-9]*) die "send: the target carries no usable stable Gangline identity, so a response cannot be correlated safely" ;;
-  esac
-  [ "${#target_token}" -eq 8 ] \
-    || die "send: the target carries no usable stable Gangline identity, so a response cannot be correlated safely"
-  rows="$(reply_state_rows "$1")" || rc=$?
-  [ "$rc" -eq 0 ] \
-    || die "send: $(reply_rows_error "$rows"); no message was typed and no existing obligation was settled"
-  # CORRELATE ONLY TO WHAT THE SENDER HAS READ. A request with delivery proof
-  # alone is still queued in the harness, so an outbound message crossing it
-  # cannot be its answer; treating it as one settled a debt the debtor never
-  # saw. A reply the sender has read is a correlation target until its thread
-  # closes, so an acknowledgement of it opens no debt and an ack chain ends on
-  # any message; the boundary that ends the reading turn closes it, so a
-  # later message to the same peer is a fresh request.
-  while read -r nonce state token witness mode digest replies; do
-    [ -n "$nonce" ] || continue
-    case "$mode:$state" in
-      request:prompt|request:owed|reply:prompt|reply:complete|waived:prompt|waived:complete) ;;
-      *) continue ;;
-    esac
-    [ "$token" = "$target_token" ] || continue
-    matched="${matched:+$matched,}$nonce"
-    # A reply to a REQUEST carries the answer its peer is waiting for. It owes
-    # no acknowledgement but it still has to wake that peer. Only a message
-    # closing threads that were themselves replies MAY be a bare
-    # acknowledgement that can safely join some later wake; whether it is one
-    # is the sender's call (--ack), because a ruling sent in the turn that
-    # read a reply matches exactly the same records.
-    [ "$mode" = reply ] || all_replies=0
-    [ "$mode" != request ] || MESSAGE_ANSWERS_REQUEST=1
-  done <<<"$rows"
-  [ -n "$matched" ] || return 0
-  MESSAGE_REPLY_MODE="reply"
-  MESSAGE_REPLY_TO="$matched"
-  MESSAGE_DEFERABLE="$all_replies"
+  MESSAGE_SENDER_TOKEN="$SEND_TOKEN"
 }
 
-reply_digest() {
-  printf '%s' "$1" \
-    | python3 -c 'import hashlib,sys; print(hashlib.sha256(sys.stdin.buffer.read()).hexdigest())'
-}
-
-REPLY_PREPARED=""
-reply_candidate_prepare() { # target nonce sender-token name mode replies envelope
-  local prior digest expected
-  [ "$3" != - ] || return 0
-  prior="$(tmux show-options -wqv -t "$1" "$REPLY_STATE_PREFIX$2" 2>/dev/null)" || prior=""
-  digest="$(reply_digest "$7")" || return 1
-  expected="message:$3:$4:$5:$digest:$6"
-  if [ -n "$prior" ]; then
-    # A deferred envelope records immutable provenance when Gangline accepts
-    # it, before any prompt or delivery proof can exist. The later bundled
-    # drain prepares that same record again. Exact equality is idempotence;
-    # any disagreement is a nonce collision and remains a hard refusal.
-    [ "$prior" = "$expected" ] || return 1
-  else
-    reply_state_write "$1" "$2" "$3" "$4" "$5" "$digest" "$6" || return 1
-  fi
-  REPLY_PREPARED="${REPLY_PREPARED:+$REPLY_PREPARED$'\n'}$1 $2"
-}
-
-reply_candidates_abort() { # only after positive proof that no key was typed
-  local window nonce rows="" state_nonce state token witness mode digest replies rc=0
-  [ -n "$REPLY_PREPARED" ] || return 0
-  while read -r window nonce; do
-    [ -n "$window" ] && [ -n "$nonce" ] || continue
-    rows="$(reply_state_rows "$window")" || rc=$?
-    [ "$rc" -eq 0 ] || continue
-    while read -r state_nonce state token witness mode digest replies; do
-      [ "$state_nonce" = "$nonce" ] || continue
-      [ "$state" != candidate ] || reply_state_unset "$window" "$nonce" || true
-    done <<<"$rows"
-  done <<<"$REPLY_PREPARED"
-  REPLY_PREPARED=""
-}
-
-reply_settle_by_token() { # sending-agent token, target token, comma-separated correlated nonces
-  # IDEMPOTENT BY CONSTRUCTION. The proof is one immutable digest per record,
-  # so every witness of the same correlated message writes the same bytes:
-  # spool acceptance, delivery verification, and the creditor's late prompt
-  # proof may each arrive, in any order and any number of times.
-  local sender_token="$1" target_token="$2" list="$3" nonce value rc=0
-  [ "$list" != - ] || return 0
-  stable_agent_resolve "$sender_token" || rc=$?
-  [ "$rc" -eq 0 ] || return 0
-  while :; do
-    nonce="${list%%,*}"
-    value="$(tmux show-options -wqv -t "$STABLE_AGENT_WINDOW" "$REPLY_STATE_PREFIX$nonce" 2>/dev/null)" || value=""
-    if [ -n "$value" ] && reply_state_parse "$REPLY_STATE_PREFIX$nonce" "$value"; then
-      if [ "$REPLY_MODE" != legacy ] && [ "$REPLY_TOKEN" = "$target_token" ]; then
-        reply_proof_write "$STABLE_AGENT_WINDOW" "$REPLY_SETTLED_PREFIX" \
-          "$nonce" "$REPLY_DIGEST" || true
-      fi
-    fi
-    [ "$list" != "$nonce" ] || break
-    list="${list#*,}"
-  done
-}
-
-reply_delivery_verified() { # target window, nonce; independent delivery proof
-  local value token mode digest replies target_token after
-  value="$(tmux show-options -wqv -t "$1" "$REPLY_STATE_PREFIX$2" 2>/dev/null)" || value=""
-  [ -n "$value" ] || return 0 # control/self-declared messages made no candidate
-  reply_state_parse "$REPLY_STATE_PREFIX$2" "$value" || return 1
-  token="$REPLY_TOKEN"; mode="$REPLY_MODE"; digest="$REPLY_DIGEST"; replies="$REPLY_TO"
-  target_token="$(tmux show-options -wqv -t "$1" @gl_spool 2>/dev/null)" || target_token=""
+# A VERIFIED DELIVERY IS RECORDED ON THE RECIPIENT, keyed by the sender's
+# registration and valued with the recipient's own, so safe-to-drop can prove a
+# report reached this registration of the agent it names rather than take the
+# sender's word or an earlier registration's receipt.
+DELIVERED_PREFIX='@gl_delivered_'
+delivery_mark() { # $1 target window, $2 sender token or '-'
+  local target_token
+  [ "$2" != - ] || return 0
+  target_token="$(tmux show-options -wqv -t "$1" @gl_spool)" || return 1
   case "$target_token" in ''|*[!a-f0-9]*) return 1 ;; esac
-  reply_proof_write "$1" "$REPLY_DELIVERY_PREFIX" "$2" "$digest" || return 1
-  after="$(tmux show-options -wqv -t "$1" "$REPLY_STATE_PREFIX$2" 2>/dev/null)" || after=""
-  [ "$after" = "$value" ] || return 1
-  reply_settle_by_token "$token" "$target_token" "$replies"
-}
-
-reply_candidates_verified() { # finish every candidate this delivery prepared
-  local prepared="$REPLY_PREPARED" window nonce failed=0
-  REPLY_PREPARED=""
-  while read -r window nonce; do
-    [ -n "$window" ] && [ -n "$nonce" ] || continue
-    reply_delivery_verified "$window" "$nonce" || failed=1
-  done <<<"$prepared"
-  return "$failed"
-}
-
-reply_prompt_envelope_digest() { # native prompt, sender, nonce -> exact envelope digest
-  printf '%s' "$1" | python3 -c '
-import hashlib, sys
-sender, nonce = sys.argv[1:]
-prompt = sys.stdin.read()
-start = "[gang:%s#%s" % (sender, nonce)
-at = prompt.find(start)
-if at < 0: raise SystemExit(1)
-opened = prompt.find("]", at + len(start))
-end = "[/gang:%s#%s]" % (sender, nonce)
-closed = prompt.find(end, opened + 1)
-if opened < 0 or closed < 0: raise SystemExit(1)
-wire = prompt[at:closed + len(end)]
-print(hashlib.sha256(wire.encode()).hexdigest())
-' "$2" "$3"
-}
-
-reply_prompt_observe() { # pane, collar, UserPromptSubmit payload
-  local rows="" rc=0 prompt="" nonce state token witness mode digest replies seen value own_token=""
-  rows="$(reply_state_rows "$1")" || return 0
-  [ -n "$rows" ] || return 0
-  load_collar "$2"
-  declare -F collar_submitted_prompt >/dev/null || return 0
-  prompt="$(collar_submitted_prompt "$1" "$3")" || rc=$?
-  [ "$rc" -eq 0 ] && [ -n "$prompt" ] || return 0
-  own_token="$(tmux show-options -wqv -t "$1" @gl_spool 2>/dev/null)" || own_token=""
-  while read -r nonce state token witness mode digest replies; do
-    # A correlated acknowledgement may discharge a record before the native
-    # prompt event arrives. That record no longer blocks, so the late prompt
-    # proof completes its audit trail rather than releasing Stop.
-    case "$state" in candidate|verified|discharged|unwitnessed) ;; *) continue ;; esac
-    seen="$(reply_prompt_envelope_digest "$prompt" "$witness" "$nonce" 2>/dev/null)" || seen=""
-    [ -n "$seen" ] && [ "$seen" = "$digest" ] || continue
-    reply_proof_write "$1" "$REPLY_PROMPT_PREFIX" "$nonce" "$digest" || continue
-    value="$(tmux show-options -wqv -t "$1" "$REPLY_STATE_PREFIX$nonce" 2>/dev/null)" || value=""
-    [ -n "$value" ] || { tmux set-option -uw -t "$1" "$REPLY_PROMPT_PREFIX$nonce" 2>/dev/null || true; continue; }
-    # THE READER'S WITNESS SETTLES WHAT THE SENDER'S PROCESS COULD NOT. A
-    # correlated reply whose sending process died between typing and
-    # verification, at a tick deadline or a lost screen, left its delivery
-    # proof unwritten and the debtor asked at every Stop for a reply it had
-    # already given. The prompt that carried the reply into this context is
-    # positive proof it arrived; the settlement it writes is the same digest
-    # delivery verification writes, so the two witnesses cannot disagree.
-    [ "$mode" != reply ] || reply_settle_by_token "$token" "$own_token" "$replies"
-  done <<<"$rows"
-}
-
-reply_threads_close() { # $1 window; the turn that read a reply is over
-  # A REPLY IS ANSWERABLE IN THE TURN THAT READ IT. Left open, it would make
-  # every later message to its sender a correlated reply, and a follow-up
-  # request would open no debt. Closing it at the boundary that ends the
-  # reading turn keeps the ack window exactly one turn wide. A reply the
-  # holder has not read yet is left alone: its turn has not begun. A waived
-  # request closes the same way, for the same reason.
-  # FAILS CLOSED. A close that could not be read or written leaves the
-  # reply open and says so, so the caller can refuse to end the turn: an
-  # unclosed boundary keeps the reply answerable, where a silently allowed
-  # one would correlate the next turn's fresh work to a stale reply.
-  local rows="" rc=0 failed=0 nonce state token witness mode digest replies
-  rows="$(reply_state_rows "$1")" || rc=$?
-  [ "$rc" -eq 0 ] || {
-    printf 'read reply records could not be closed: %s\n' "$(reply_rows_error "$rows")" >&2
-    return 1
-  }
-  while read -r nonce state token witness mode digest replies; do
-    [ -n "$nonce" ] || continue
-    case "$mode" in reply|waived) ;; *) continue ;; esac
-    case "$state" in prompt|complete) ;; *) continue ;; esac
-    reply_proof_write "$1" "$REPLY_SETTLED_PREFIX" "$nonce" "$digest" || {
-      printf 'read reply %s could not be closed: its settlement proof was not written\n' "$nonce" >&2
-      failed=1
-    }
-  done <<<"$rows"
-  return "$failed"
-}
-
-reply_threads_close_if_ended() { # $1 window; a prompt is arriving
-  # A prompt inside a live turn is steering: the replies that turn read stay
-  # answerable. A prompt under a closed, cleared, expired or unreadable
-  # bracket begins a new turn, so the replies read before it are closed
-  # first and the message this prompt carries is the only one left open.
-  # Doubt closes: a mistaken close costs one acknowledgement turn, where a
-  # mistaken open loses an obligation without a trace.
-  local rc=0
-  turn_witness "$1" || rc=$?
-  [ "$rc" -ne 0 ] || return 0
-  reply_threads_close "$1"
-}
-
-reply_obligation_query() { # calling window -> one or more four-field TSV verdicts
-  local rows="" rc=0 nonce state token witness mode digest replies live_rc=0 any=0
-  rows="$(reply_state_rows "$1")" || rc=$?
-  if [ "$rc" -ne 0 ]; then
-    printf 'unknown\t-\t-\t%s\n' "$(reply_rows_error "$rows")"
-    return 0
-  fi
-  while read -r nonce state token witness mode digest replies; do
-    [ -n "$nonce" ] || continue
-    case "$state" in settled|discharged|complete) continue ;; esac
-    # A REPLY RECORD IS AUDIT, NEVER DEBT. Its mode is stamped in the same
-    # immutable metadata whether or not both arrival proofs landed, so a
-    # partial reply record is exactly as much a non-obligation as a complete
-    # one. Failing closed on one named no action, because no message its
-    # holder can send settles a record that was never a request. A waived
-    # request is audit for the same reason: its sender declared nothing owed.
-    case "$mode" in reply|waived) continue ;; esac
-    # DEBT BEGINS WITH THE NATIVE PROMPT PROOF. A request the harness has not
-    # yet submitted into the debtor's context is not one the debtor can answer:
-    # the metadata lands before the paste and the delivery proof lands before
-    # the harness queue drains, so a record with neither or only the delivery
-    # witness is audit of a message in flight, never a demand.
-    case "$state" in candidate|verified) continue ;; esac
-    any=1
-    if [ "$state" = retired ]; then
-      printf 'retired\t%s\t%s\tsender-gone\n' "$nonce" "$witness"
-      continue
-    fi
-    if [ "$mode" != request ]; then
-      printf 'unknown\t%s\t%s\t%s\n' "$nonce" "$witness" "provenance-$state-$mode"
-      continue
-    fi
-    # The prompt proof alone proves the debtor read the request, so it is owed
-    # whether or not the sender's delivery proof has landed yet.
-    live_rc=0; stable_agent_resolve "$token" || live_rc=$?
-    case "$live_rc" in
-      0) case "$state" in
-           owed|prompt) printf 'owed\t%s\t%s\tlive\n' "$nonce" "$STABLE_AGENT_NAME" ;;
-           *) printf 'unknown\t%s\t%s\tprovenance-%s-request\n' \
-                "$nonce" "$STABLE_AGENT_NAME" "$state" ;;
-         esac ;;
-      3) if reply_proof_write "$1" "$REPLY_RETIRED_PREFIX" "$nonce" "$digest"; then
-           printf 'retired\t%s\t%s\tsender-gone\n' "$nonce" "$witness"
-         else
-           printf 'unknown\t%s\t%s\tretirement-proof-write-failed\n' "$nonce" "$witness"
-         fi ;;
-      *) printf 'unknown\t%s\t%s\tsender-identity-unreadable\n' "$nonce" "$witness" ;;
-    esac
-  done <<<"$rows"
-  [ "$any" -eq 1 ] || printf 'clear\t-\t-\t-\n'
-}
-
-cmd_reply_obligations() { # private native Stop query; caller identity is TMUX_PANE
-  local child
-  [ "$#" -eq 0 ] || return 1
-  child="$(self_window)" \
-    || { printf 'unknown\t-\t-\tcaller-unresolvable\n'; return 0; }
-  reply_obligation_query "$child"
-}
-
-REPLY_RELEASED_OPTION='@gl_stop_released' # outside REPLY_STATE_PREFIX: not a reply record
-
-reply_release_summary() { # $1 window -> what stands now; 1 = nothing does
-  # READ NOW, NOT AT THE RELEASE. The adapter may have released on a query
-  # that timed out, and the note that follows should say what Gangline can
-  # read at the moment it speaks; a record cleared since then is nothing to
-  # report, and one the adapter never saw is still named.
-  local rows status nonce peer detail out=""
-  rows="$(reply_obligation_query "$1")"
-  while IFS=$'\t' read -r status nonce peer detail; do
-    [ "$peer" != - ] || peer=""
-    case "$status" in
-      owed) out="${out:+$out; }a reply owed to $peer (message $nonce)" ;;
-      unknown) out="${out:+$out; }a reply record it cannot clear ($detail${peer:+, from $peer})" ;;
-    esac
-  done <<<"$rows"
-  [ -n "$out" ] || return 1
-  printf '%s' "$out"
-}
-
-cmd_reply_released() { # private: the native Stop adapter released a turn with debt standing
-  # THE OBLIGATION IS NOT FORGIVEN, ONLY THE HARNESS TURN. The records stay on
-  # the window exactly as they were, so `status` and `roster` keep reporting
-  # them and the next delivery's first Stop refuses idle again. What this adds
-  # is the loud half: a release stamp `status` prints until the next native
-  # prompt, and a state note to whoever watches the team.
-  local child origin="${1:-stop}" summary
-  [ "$#" -le 1 ] || return 1
-  case "$origin" in stop|query-timeout) ;; *) return 1 ;; esac
-  child="$(self_window)" \
-    || { printf 'reply-released: this pane is not a window of session %s\n' "$SESSION" >&2; return 1; }
-  if [ "$origin" = query-timeout ]; then
-    # A TIMEOUT IS RECORDED BEFORE ANYTHING IS READ AGAIN. The adapter is here
-    # because its query did not answer inside its budget, and this command
-    # runs under a bound of its own, so the stamp and the note go on the
-    # window first; a summary that does answer only enriches the stamp.
-    reply_release_stamp "$child" query-timeout || return 1
-    state_note "$child" reply-owed "$origin"
-    summary="$(reply_release_summary "$child")" || return 0
-    reply_release_stamp "$child" "query-timeout; $summary" || return 1
-    return 0
-  fi
-  summary="$(reply_release_summary "$child")" || return 0
-  reply_release_stamp "$child" "$summary" || return 1
-  state_note "$child" reply-owed "$origin"
-}
-
-reply_release_stamp() { # $1 window, $2 what stood (or query-timeout[; what stood])
-  tmux set-option -w -t "$1" "$REPLY_RELEASED_OPTION" "$(date +%s) $2" 2>/dev/null \
-    || { printf 'reply-released: could not stamp the release on the window\n' >&2; return 1; }
-}
-
-reply_released_status_report() { # $1 window; the stamp the last release left
-  local raw at rest now
-  raw="$(tmux show-options -wqv -t "$1" "$REPLY_RELEASED_OPTION" 2>/dev/null)" || raw=""
-  [ -n "$raw" ] || return 0
-  read -r at rest <<<"$raw"
-  case "$at" in ''|*[!0-9]*) return 0 ;; esac
-  now="$(date +%s)"
-  [ "$at" -le "$now" ] || at="$now"
-  case "$rest" in
-    query-timeout)
-      printf '%s\n' "$(colour "$C_BAD" "Stop released $(human_seconds $(( now - at ))) ago after its reply query timed out; nothing readable stood, and the next delivery raises whatever does")" ;;
-    "query-timeout; "*)
-      printf '%s\n' "$(colour "$C_BAD" "Stop released $(human_seconds $(( now - at ))) ago after its reply query timed out, with ${rest#query-timeout; } standing; the next delivery raises it again")" ;;
-    *)
-      printf '%s\n' "$(colour "$C_BAD" "Stop released $(human_seconds $(( now - at ))) ago with $rest standing; the next delivery raises it again")" ;;
-  esac
-}
-
-reply_obligation_status_report() { # $1 window; every debt or ambiguous record
-  local rows status nonce peer detail
-  rows="$(reply_obligation_query "$1")"
-  while IFS=$'\t' read -r status nonce peer detail; do
-    case "$status" in
-      clear|'') ;;
-      owed) printf '%s\n' "$(colour "$C_BAD" "reply owed to $peer (message $nonce; sender $detail)")" ;;
-      retired) printf '%s\n' "$(colour "$C_DIM" "reply obligation retired for $peer (message $nonce; sender gone)")" ;;
-      unknown) printf '%s\n' "$(colour "$C_BAD" "reply obligation UNKNOWN (${nonce:-?} from ${peer:-?}: $detail); Stop fails closed")" ;;
-    esac
-  done <<<"$rows"
-}
-
-reply_waived_report() { # $1 window; messages whose sender asked for nothing back
-  local rows rc=0 nonce state token witness mode digest replies seen
-  rows="$(reply_state_rows "$1")" || rc=$?
-  if [ "$rc" -ne 0 ]; then
-    printf 'reply waivers: unknown (%s)\n' "$(reply_rows_error "$rows")"
-    return 0
-  fi
-  while read -r nonce state token witness mode digest replies; do
-    [ "$mode" = waived ] || continue
-    case "$state" in
-      prompt|complete|settled|discharged) seen="read" ;;
-      candidate|verified) seen="not yet read" ;;
-      *) seen="$state" ;;
-    esac
-    printf '%s\n' "$(colour "$C_DIM" "reply waived by $witness (message $nonce; nothing owed; $seen)")"
-  done <<<"$rows"
-}
-
-reply_obligation_roster_detail() { # $1 window -> clear|owed|unknown
-  local rows status _ rest result=clear
-  rows="$(reply_obligation_query "$1")"
-  while IFS=$'\t' read -r status _ rest; do
-    case "$status" in
-      unknown) printf 'unknown'; return ;;
-      owed) result=owed ;;
-    esac
-  done <<<"$rows"
-  printf '%s' "$result"
+  tmux set-option -w -t "$1" "$DELIVERED_PREFIX$2" "$target_token"
 }
 
 SPOOL_UNAVAILABLE_WHY=""
@@ -8827,66 +8133,6 @@ timed_count() { # $1 = window id -> how many timed sends are parked against it
   local e n=0
   while read -r e; do [ -z "$e" ] || n=$((n + 1)); done <<<"$(timed_entries "$1")"
   printf '%s' "$n"
-}
-
-# A DEFERRED ENVELOPE HAS ALREADY BEEN ACCEPTED, BUT OWES ITS RECIPIENT NO
-# reply. It remains outside the ordinary [0-9]* queue until either ordinary
-# peer business wakes the recipient or this deadline expires. Thirty minutes
-# is a recovery ceiling, not the normal delivery path: it bounds a quiet team
-# without turning routine acknowledgements into immediate context reloads.
-DEFERRED_MAX_SECONDS=1800
-DEFERRED_RETRY_LIMIT_SECONDS=300
-DEFERRED_CONTEXT_MARKER='[gangline: accumulated context; held because this envelope owed no reply]'
-DEFERRED_EVIDENCE_BODY=""
-
-deferred_evidence_body() { # $1 delivered body; unwrap only Gangline's exact marker
-  DEFERRED_EVIDENCE_BODY="$1"
-  case "$1" in
-    "$DEFERRED_CONTEXT_MARKER"$'\n'*)
-      DEFERRED_EVIDENCE_BODY="${1#"$DEFERRED_CONTEXT_MARKER"$'\n'}" ;;
-  esac
-}
-
-deferred_entries() { # $1 = window id; oldest accepted entry first
-  local e
-  spool_existing "$1" || return 0
-  for e in "$SPOOL_DIR"/.deferred-[0-9]*; do
-    [ -f "$e" ] && printf '%s\n' "$e"
-  done
-}
-
-deferred_count() { # $1 = window id
-  local e n=0
-  while read -r e; do [ -z "$e" ] || n=$((n + 1)); done <<<"$(deferred_entries "$1")"
-  printf '%s' "$n"
-}
-
-deferred_due_of() { # $1 entry; print its forced-wake epoch
-  local base rest due
-  base="${1##*/}"
-  rest="${base#.deferred-}"
-  [ "$rest" != "$base" ] || return 1
-  due="${rest%%-*}"
-  [ "${#due}" -eq 10 ] || return 1
-  case "$due" in *[!0-9]*) return 1 ;; esac
-  printf '%s' "$((10#$due))"
-}
-
-deferred_original_name() { # $1 entry; print the ordinary queue basename
-  local base rest due original stamp
-  base="${1##*/}"
-  rest="${base#.deferred-}"
-  [ "$rest" != "$base" ] || return 1
-  due="${rest%%-*}"
-  original="${rest#*-}"
-  [ "${#due}" -eq 10 ] || return 1
-  case "$due" in *[!0-9]*) return 1 ;; esac
-  stamp="${original%%-*}"
-  [ "${#stamp}" -eq 20 ] || return 1
-  case "$stamp" in *[!0-9]*) return 1 ;; esac
-  [ "$original" != "$stamp" ] || return 1
-  case "${original#*-}" in ''|*[!a-f0-9]*) return 1 ;; esac
-  printf '%s' "$original"
 }
 
 # THE UNIT NAME IS DERIVED FROM THE ENTRY, not remembered beside it. The entry
@@ -9408,7 +8654,7 @@ run_finish() { # invoked by the service's ExecStopPost finalizer: --finish ID --
   # drain. Thus a competing delivery lock can delay the completion but cannot
   # reject the already durable host result or create a second copy.
   dispatch="$(trap - EXIT; spool_write "$AGENT_ID" "$SEND_FROM" "$ENVELOPE" "$frag" \
-    - control - "$ENVELOPE_NONCE" 2>&1)" || rc=$?
+    - "$ENVELOPE_NONCE" 2>&1)" || rc=$?
   if [ "$rc" -ne 0 ]; then
     run_delivery_store "$dir" 'unconfirmed: completion could not enter requester delivery path; output retained'
     [ -z "$dispatch" ] || printf '%s\n' "$dispatch" >&2
@@ -9819,11 +9065,11 @@ EOF
 }
 
 SPOOL_SENDER="" SPOOL_FRAG="" SPOOL_BODY="" SPOOL_READ_ERROR=""
-SPOOL_SENDER_TOKEN="-" SPOOL_REPLY_MODE="control" SPOOL_REPLY_TO="-" SPOOL_NONCE=""
+SPOOL_SENDER_TOKEN="-" SPOOL_REPLY_MODE="control" SPOOL_NONCE=""
 spool_read_try() { # $1 = entry path; 0 loaded, 1 with SPOOL_READ_ERROR
   local first version extra raw
   SPOOL_SENDER=""; SPOOL_FRAG=""; SPOOL_BODY=""
-  SPOOL_SENDER_TOKEN="-"; SPOOL_REPLY_MODE="control"; SPOOL_REPLY_TO="-"; SPOOL_NONCE=""
+  SPOOL_SENDER_TOKEN="-"; SPOOL_REPLY_MODE="control"; SPOOL_NONCE=""
   SPOOL_READ_ERROR=""
   # Read one checked snapshot before touching fields. A redirection failure in
   # `if ! { read; ...; } < file` can skip the group yet leave its final status
@@ -9844,30 +9090,23 @@ spool_read_try() { # $1 = entry path; 0 loaded, 1 with SPOOL_READ_ERROR
   esac
   case "$first" in
     v2$'\t'*)
-      IFS=$'\t' read -r version SPOOL_SENDER SPOOL_SENDER_TOKEN SPOOL_REPLY_MODE SPOOL_REPLY_TO SPOOL_NONCE extra <<<"$first"
+      IFS=$'\t' read -r version SPOOL_SENDER SPOOL_SENDER_TOKEN SPOOL_REPLY_MODE _ SPOOL_NONCE extra <<<"$first"
       if [ "$version" != v2 ] || [ -n "$extra" ] || [ -z "$SPOOL_SENDER" ]; then
         SPOOL_READ_ERROR="the spooled message $1 has malformed Gangline delivery metadata"
         return 1
       fi
       case "$SPOOL_SENDER_TOKEN:$SPOOL_REPLY_MODE" in
-        -:control) [ "$SPOOL_REPLY_TO" = - ] \
-          || { SPOOL_READ_ERROR="the spooled control message $1 claims peer correlation"; return 1; } ;;
+        -:control) ;;
+        # Entries written before reply debt was removed may still say reply or
+        # waived and carry a reply-to list; both are delivered as peer mail and
+        # the list is no longer read.
         *:request|*:reply|*:waived)
           [ "${#SPOOL_SENDER_TOKEN}" -eq 8 ] \
             || { SPOOL_READ_ERROR="the spooled message $1 has malformed sender identity metadata"; return 1; }
           case "$SPOOL_SENDER_TOKEN" in *[!a-f0-9]*) SPOOL_READ_ERROR="the spooled message $1 has malformed sender identity metadata"; return 1 ;; esac
           valid_name "$SPOOL_SENDER" \
-            || { SPOOL_READ_ERROR="the spooled message $1 has an invalid witnessed sender"; return 1; }
-          if [ "$SPOOL_REPLY_MODE" != reply ]; then
-            [ "$SPOOL_REPLY_TO" = - ] \
-              || { SPOOL_READ_ERROR="the spooled request $1 carries reply-only correlation"; return 1; }
-          else
-            [ "$SPOOL_REPLY_TO" != - ] \
-              || { SPOOL_READ_ERROR="the spooled reply $1 carries no correlation"; return 1; }
-          fi
-          reply_nonce_list_valid "$SPOOL_REPLY_TO" \
-            || { SPOOL_READ_ERROR="the spooled message $1 has malformed reply correlation"; return 1; } ;;
-        *) SPOOL_READ_ERROR="the spooled message $1 has an unknown reply-delivery mode"; return 1 ;;
+            || { SPOOL_READ_ERROR="the spooled message $1 has an invalid witnessed sender"; return 1; } ;;
+        *) SPOOL_READ_ERROR="the spooled message $1 has an unknown delivery mode"; return 1 ;;
       esac
       [ "${#SPOOL_NONCE}" -eq 16 ] \
         || { SPOOL_READ_ERROR="the spooled message $1 has a malformed message nonce"; return 1; }
@@ -9875,20 +9114,14 @@ spool_read_try() { # $1 = entry path; 0 loaded, 1 with SPOOL_READ_ERROR
       ;;
     *)
       SPOOL_SENDER="$first"
-      # Old three-line entries carry no stable sender token, message nonce, or
-      # reply correlation. Known Gangline control authors remain control mail.
-      # Anything shaped like a peer is delivered but recorded as legacy
-      # ambiguity so an upgrade cannot silently erase a reply obligation.
+      # Old three-line entries carry no stable sender token or message nonce.
+      # Known Gangline control authors remain control mail; anything shaped
+      # like a peer is delivered with no sender token, so it proves no delivery.
       case "$SPOOL_SENDER" in
         gangline|hitch|self-declared:*) ;;
         *)
           valid_name "$SPOOL_SENDER" \
-            || { SPOOL_READ_ERROR="the legacy spooled message $1 has an invalid sender and no verifiable provenance"; return 1; }
-          SPOOL_SENDER_TOKEN=00000000
-          SPOOL_REPLY_MODE=legacy
-          SPOOL_NONCE="$(mint_message_nonce)" \
-            || { SPOOL_READ_ERROR="the legacy spooled message $1 could not be assigned a local evidence nonce"; return 1; }
-          ;;
+            || { SPOOL_READ_ERROR="the legacy spooled message $1 has an invalid sender and no verifiable provenance"; return 1; } ;;
       esac
       ;;
   esac
@@ -9927,17 +9160,15 @@ spool_supersede_try() { # $1 window, $2 sender; retire that sender's waiting ent
   # and nothing has yet been destroyed; if any step fails, every one it moved
   # goes back. Nothing is unlinked until the caller has the replacement safely
   # parked and calls spool_retire_commit.
-  local e base held="" nl=$'\n' n rest
-  SPOOL_SUPERSEDE_ERROR=""; SPOOL_RETIRED=""; SPOOL_RETIRED_REPLIES=""
+  local e base held="" nl=$'\n'
+  SPOOL_SUPERSEDE_ERROR=""; SPOOL_RETIRED=""
   spool_existing "$1" || return 0
   [ -d "$SPOOL_DIR" ] || return 0
   # NO ENTRY TO EXCLUDE. The sweep used to be handed the replacement's own name
   # to skip, because the replacement was already parked in this namespace when
   # the sweep ran. It is not any more — cmd_send stages it and parks it after —
-  # so every ordinary or deferred entry from this sender here is genuinely an
-  # older one. A reply held outside the waking queue is still an accepted
-  # message and --supersede must retire it on the same transaction.
-  for e in "$SPOOL_DIR"/[0-9]* "$SPOOL_DIR"/.deferred-[0-9]*; do
+  # so every entry from this sender here is genuinely an older one.
+  for e in "$SPOOL_DIR"/[0-9]*; do
     [ -f "$e" ] || continue
     spool_read_try "$e" || { SPOOL_SUPERSEDE_ERROR="$SPOOL_READ_ERROR"; break; }
     [ "$SPOOL_SENDER" = "$2" ] || continue
@@ -9945,20 +9176,6 @@ spool_supersede_try() { # $1 window, $2 sender; retire that sender's waiting ent
     mv -- "$e" "$SPOOL_DIR/.retiring-$base" \
       || { SPOOL_SUPERSEDE_ERROR="cannot supersede the spooled message $e"; break; }
     held="$held$base$nl"
-    # A RETIRED REPLY HANDS ITS CORRELATION TO THE REPLACEMENT. Acceptance into
-    # the spool settled the debt this reply answered, so nothing on the sender's
-    # window would correlate the replacement to it again; retiring the reply
-    # without passing that on left the debt settled and the request unanswered.
-    [ "$SPOOL_REPLY_MODE" = reply ] || continue
-    rest="$SPOOL_REPLY_TO"
-    while :; do
-      n="${rest%%,*}"
-      case ",$SPOOL_RETIRED_REPLIES," in *",$n,"*) ;; *)
-        SPOOL_RETIRED_REPLIES="${SPOOL_RETIRED_REPLIES:+$SPOOL_RETIRED_REPLIES,}$n" ;;
-      esac
-      [ "$rest" != "$n" ] || break
-      rest="${rest#*,}"
-    done
   done
   SPOOL_RETIRED="$held"
   if [ -n "$SPOOL_SUPERSEDE_ERROR" ]; then
@@ -9969,7 +9186,7 @@ spool_supersede_try() { # $1 window, $2 sender; retire that sender's waiting ent
   return 0
 }
 
-SPOOL_RETIRED="" SPOOL_RETIRED_REPLIES="" SPOOL_ROLLBACK_ERROR=""
+SPOOL_RETIRED="" SPOOL_ROLLBACK_ERROR=""
 spool_retire_rollback() { # put every set-aside predecessor back where a drain reads
   # THE RETIREMENT IS NOT FINAL UNTIL THE REPLACEMENT IS. Anything that goes
   # wrong between the two — an entry the sweep cannot read, a park that fails —
@@ -10026,7 +9243,7 @@ SPOOL_ENTRY="" SPOOL_STAGED=""
 # spool_commit renames it into the [0-9]* namespace, which is the act that makes
 # it deliverable. Everything that is not superseding calls spool_write and sees
 # one operation.
-spool_stage() { # window sender envelope fragment, optional token/mode/replies/nonce
+spool_stage() { # window sender envelope fragment, optional sender token and nonce
   local stamp tmp
   safe_to_drop_clear_for_delivery "$1" "'$4'"
   spool_establish "$1"
@@ -10040,8 +9257,12 @@ spool_stage() { # window sender envelope fragment, optional token/mode/replies/n
     ''|*[!0-9]*) die "cannot stamp a spool entry — python3 has to run for gang to order a spool oldest-first, and a message it could not then deliver in order will not be parked" ;;
   esac
   tmp="$SPOOL_DIR/.writing-$$-$stamp"
-  printf 'v2\t%s\t%s\t%s\t%s\t%s\n%s\n%s\n' \
-    "$2" "${5:--}" "${6:-control}" "${7:--}" "${8:-$ENVELOPE_NONCE}" "$4" "$3" > "$tmp" \
+  # The v2 header keeps its mode and reply-to columns so older readers still
+  # parse it; a peer entry says request, control mail says control, and the
+  # reply-to column is always empty.
+  printf 'v2\t%s\t%s\t%s\t-\t%s\n%s\n%s\n' \
+    "$2" "${5:--}" "$([ "${5:--}" = - ] && printf control || printf request)" \
+    "${6:-$ENVELOPE_NONCE}" "$4" "$3" > "$tmp" \
     || die "cannot write a spooled message into $SPOOL_DIR"
   SPOOL_STAGED="$tmp"
   SPOOL_ENTRY="$SPOOL_DIR/$stamp-$(mint_nonce)"
@@ -10071,90 +9292,6 @@ spool_write() { # $1 window, $2 sender, $3 envelope, $4 fragment; sets SPOOL_ENT
   event_log_record "$1" delivery.queued \
     "{\"message_id\":\"${SPOOL_ENTRY##*/}\",\"sender\":\"$2\"}" \
     || die 'delivery: the accepted spool entry could not be recorded'
-}
-
-DEFERRED_ERROR=""
-deferred_hold_try() { # window name sender envelope fragment, optional token/mode/replies/nonce
-  local now due original accumulated
-  DEFERRED_ERROR=""
-  command -v systemd-run >/dev/null 2>&1 || {
-    DEFERRED_ERROR="systemd-run is unavailable, so no bounded hold can be armed"
-    return 1
-  }
-  now="$(date +%s)"
-  case "$now" in ''|*[!0-9]*) DEFERRED_ERROR="the current time is unreadable, so no bounded hold can be armed"; return 1 ;; esac
-  due=$((now + DEFERRED_MAX_SECONDS))
-  reply_candidate_prepare "$1" "${9:-$ENVELOPE_NONCE}" "${6:--}" \
-    "$3" "${7:-control}" "${8:--}" "$4" || {
-      DEFERRED_ERROR="reply provenance could not be recorded before the hold"
-      return 1
-    }
-  accumulated="$DEFERRED_CONTEXT_MARKER"$'\n'"$4"
-  spool_stage "$1" "$3" "$accumulated" "$5" \
-    "${6:--}" "${7:-control}" "${8:--}" "${9:-$ENVELOPE_NONCE}"
-  original="${SPOOL_ENTRY##*/}"
-  SPOOL_ENTRY="$SPOOL_DIR/.deferred-$(timed_stamp "$due")-$original"
-  # ARM BEFORE ACCEPTANCE. A timer whose entry never commits is a harmless
-  # stale callback; an entry committed before its timer exists has a process-
-  # death window in which it can remain hidden forever. Once the rename below
-  # makes the hold durable, its recovery ceiling is therefore already live.
-  if ! timed_arm "$1" "$2" "$SPOOL_ENTRY" "$due" retry; then
-    rm -f -- "$SPOOL_STAGED" \
-      || die "the bounded-hold timer could not be armed and the unaccepted staging file $SPOOL_STAGED could not be removed; no delivery is promised for that visible artifact"
-    SPOOL_STAGED=""
-    reply_candidates_abort
-    DEFERRED_ERROR="the bounded-hold timer could not be armed"
-    return 1
-  fi
-  if ! spool_commit_try; then
-    reply_candidates_abort
-    die "$SPOOL_COMMIT_ERROR — the envelope was NOT held; its already armed timer will find no accepted entry and do nothing"
-  fi
-  # Metadata is durable evidence, not an assertion of delivery. Leave it for
-  # the eventual drain to prepare idempotently, but do not let a later send in
-  # this process verify a message that has not entered the recipient yet.
-  REPLY_PREPARED=""
-  return 0
-}
-
-DEFERRED_PROMOTE_ERROR=""
-deferred_promote_all_locked() { # $1 window; caller holds its pane lock
-  local e base original moved="" nl=$'\n' tab=$'\t' old new
-  DEFERRED_PROMOTE_ERROR=""
-  [ -n "$LOCK_PATH" ] || die "internal: deferred promotion requires the pane lock"
-  spool_existing "$1" || {
-    DEFERRED_PROMOTE_ERROR="the target's spool identity disappeared before deferred promotion"
-    return 1
-  }
-  [ -d "$SPOOL_DIR" ] || {
-    DEFERRED_PROMOTE_ERROR="the target's spool directory disappeared before deferred promotion"
-    return 1
-  }
-  while read -r e; do
-    [ -n "$e" ] || continue
-    base="${e##*/}"
-    original="$(deferred_original_name "$e")" || {
-      DEFERRED_PROMOTE_ERROR="deferred entry $e has no recoverable queue order"
-      break
-    }
-    new="$SPOOL_DIR/$original"
-    if [ -e "$new" ] || ! mv -- "$e" "$new"; then
-      DEFERRED_PROMOTE_ERROR="cannot promote deferred entry $e without replacing another message"
-      break
-    fi
-    # A prior deadline callback may have exhausted its retry budget after a
-    # failed attempt. Once another real wake promotes the entry, that handoff
-    # no longer describes live mail and must not survive as stale evidence.
-    rm -f -- "$SPOOL_DIR/.retry-exhausted-$base" 2>/dev/null || :
-    moved="$moved$base$tab$original$nl"
-  done <<<"$(deferred_entries "$1")"
-  if [ -z "$DEFERRED_PROMOTE_ERROR" ]; then return 0; fi
-  while IFS=$'\t' read -r old new; do
-    [ -n "$old" ] || continue
-    mv -- "$SPOOL_DIR/$new" "$SPOOL_DIR/$old" 2>/dev/null \
-      || DEFERRED_PROMOTE_ERROR="$DEFERRED_PROMOTE_ERROR; promoted entry $SPOOL_DIR/$new could not be restored to $SPOOL_DIR/$old"
-  done <<<"$moved"
-  return 1
 }
 
 ARCHIVE_CLAIMED="" ARCHIVE_CLAIM_ERROR=""
@@ -10308,7 +9445,7 @@ spool_archive_preflight() { # $1 = window id; refuse before any teardown mutates
 }
 
 spool_archive() { # $1 = window id; move every entry somewhere a person can read it
-  local name waiting deferred held spool_archive_held entry message_id message_ids="" quoted
+  local name waiting held spool_archive_held entry message_id message_ids="" quoted
   spool_archive_preflight "$1"
   [ -n "$SPOOL_DIR" ] && [ -d "$SPOOL_DIR" ] || return 0
   # SAID BEFORE THE MOVE, AND SAID SEPARATELY. The count printed after the
@@ -10320,9 +9457,6 @@ spool_archive() { # $1 = window id; move every entry somewhere a person can read
   waiting="$(spool_count "$1")"
   [ "$waiting" -eq 0 ] \
     || printf '%s\n' "$(colour "$C_WORK" "$waiting message(s) were still waiting for a delivery opportunity and will not get one; they are archived below, and their senders may send them again")"
-  deferred="$(deferred_count "$1")"
-  [ "$deferred" -eq 0 ] \
-    || printf '%s\n' "$(colour "$C_WORK" "$deferred no-reply envelope(s) were deferred and will not reach their forced wake because this agent is ending; they are archived below")"
   held="$(spool_held "$1")"
   if [ "$held" -ne 0 ]; then
     printf '%s\n' "$(colour "$C_BAD" "$held message(s) are held here — gang could not verify delivery and will not send them again:")"
@@ -10344,7 +9478,6 @@ spool_archive() { # $1 = window id; move every entry somewhere a person can read
     message_id="${entry##*/}"
     case "$message_id" in
       sending-*|failed-*|unverified-*|interrupted-*) message_id="${message_id#*-}" ;;
-      .deferred-*-*) message_id="${message_id#.deferred-}"; message_id="${message_id#*-}" ;;
       .writing-*) continue ;;
     esac
     quoted="$(json_text "$message_id")"
@@ -10617,7 +9750,7 @@ EOF
 spool_drain() { # $1 window id; whole queue oldest-first; optional $2 = locked
   local e claim rc err failed unver busy_rc=0 compaction_rc=0 witness="" keep_lock=0 mismatch=""
   local advisory_rc=1 advisory_dismissed=0
-  local bundle="" frags="" claims="" n=0 nl=$'\n'
+  local bundle="" frags="" claims="" senders="" token n=0 nl=$'\n'
   spool_existing "$1" || return 4
   [ -d "$SPOOL_DIR" ] || return 4
   # LOCK BEFORE THE FIRST CLAIM. The queue is one oldest-first submission, so
@@ -10703,18 +9836,6 @@ spool_drain() { # $1 window id; whole queue oldest-first; optional $2 = locked
   # safe to inspect: clearing a matching bundle is allowed only in a settled,
   # idle composer under this same lock.
   spool_recover_claims "$1"
-  # THIS DRAIN IS ALREADY THE WAKE. Promote quiet envelopes only after the
-  # landing zone is proved, while the same pane lock still excludes every
-  # sender and competing drain. Their original acceptance stamps put them
-  # beside older ordinary mail before one claim loop builds one verified
-  # bundle. A failed promotion is transactional and must not delay the current
-  # waking message; it stays on its own timer and the failure remains loud.
-  if [ "$(spool_count "$1")" -gt 0 ] \
-     && [ "$(deferred_count "$1")" -gt 0 ] \
-     && ! deferred_promote_all_locked "$1"; then
-    printf 'spool drain continuing without accumulated context: %s; deferred envelopes retain their forced-delivery timers\n' \
-      "$DEFERRED_PROMOTE_ERROR" >&2
-  fi
   for e in "$SPOOL_DIR"/[0-9]*; do
     [ -f "$e" ] || continue
     claim="$SPOOL_DIR/sending-${e##*/}"
@@ -10727,19 +9848,7 @@ spool_drain() { # $1 window id; whole queue oldest-first; optional $2 = locked
     frags="${frags:+$frags, }$SPOOL_FRAG"
     claims="${claims:+$claims$nl}$claim"
     n=$((n + 1))
-    deferred_evidence_body "$SPOOL_BODY"
-    if ! reply_candidate_prepare "$1" "$SPOOL_NONCE" "$SPOOL_SENDER_TOKEN" \
-      "$SPOOL_SENDER" "$SPOOL_REPLY_MODE" "$SPOOL_REPLY_TO" "$DEFERRED_EVIDENCE_BODY"; then
-      reply_candidates_abort
-      while IFS= read -r claim; do
-        [ -n "$claim" ] || continue
-        e="$SPOOL_DIR/${claim##*/sending-}"
-        mv -- "$claim" "$e" 2>/dev/null \
-          || printf 'a spooled message whose reply provenance could not be prepared is held at %s\n' "$claim" >&2
-      done <<<"$claims"
-      [ "$keep_lock" -eq 1 ] || lock_release
-      die "spool drain stopped before typing: reply provenance for $SPOOL_NONCE could not be recorded; every recoverable claim was returned to the queue"
-    fi
+    senders="$senders $SPOOL_SENDER_TOKEN"
   done
   if [ "$n" -eq 0 ]; then
     [ "$keep_lock" -eq 1 ] || lock_release
@@ -10766,11 +9875,12 @@ spool_drain() { # $1 window id; whole queue oldest-first; optional $2 = locked
        done <<EOF
 $claims
 EOF
-       reply_candidates_verified \
-         || printf 'delivered %s spooled message(s), but their reply provenance stayed ambiguous and Stop will fail closed\n' "$n" >&2
+       for token in $senders; do
+         delivery_mark "$1" "$token" \
+           || printf 'delivered %s spooled message(s), but the delivered marker for sender token %s could not be recorded; that sender cannot prove this delivery to safe-to-drop\n' "$n" "$token" >&2
+       done
        ;;
-    3) reply_candidates_abort
-       # Refused, so nothing was typed: every body is still its sender's and
+    3) # Refused, so nothing was typed: every body is still its sender's and
        # every entry goes back in line under its own stamp, in its own order.
        while IFS= read -r claim; do
          [ -n "$claim" ] || continue
@@ -10932,32 +10042,18 @@ stall_failed_write() { # $1 = raising window, rest = reason; a hook never dies f
   tmux set-option -w -t "$win" @gl_stall_failed "$*" 2>/dev/null || true
 }
 
-stall_deliver() { # $1 target id, $2 target name, $3 raising name, $4 body, optional $5 = defer
+stall_deliver() { # $1 target id, $2 target name, $3 raising name, $4 body
   local rc=0 err="" frag
   AGENT_ID="$1"
   AGENT_COLLAR="$(collar_read "$AGENT_ID")" || exit 1
   [ -n "$AGENT_COLLAR" ] \
     || die "window '$2' exists but is not a gang agent (gang adopt $2 -c <collar>)"
   load_collar "$AGENT_COLLAR"
-  # This observation is authored by Gangline, not by the raising agent. Giving
-  # an automatic alert the peer's verified envelope would manufacture a reply
-  # obligation that peer never sent and has no correlated delivery record for.
+  # This observation is authored by Gangline, not by the raising agent, so it
+  # goes under Gangline's envelope rather than the peer's.
   envelope gangline "$4"
   frag="${4%%$'\n'*}"
   [ "${#frag}" -le 40 ] || frag="${frag:0:40}…"
-  # Legacy/adopted windows can be addressable before they own a spool token.
-  # They cannot accept a durable hold, but they can still accept the live alert
-  # this path delivered before deferral existed, so skip straight to it.
-  if [ "${5:-}" = defer ] && spool_existing "$AGENT_ID"; then
-    lock_pane "$AGENT_ID"
-    if deferred_hold_try "$AGENT_ID" "$2" gangline "$ENVELOPE" "$frag"; then
-      lock_release
-      return 0
-    fi
-    lock_release
-    printf 'gang: control alert could not receive a bounded hold (%s); preserving immediate delivery to %s\n' \
-      "$DEFERRED_ERROR" "$2" >&2
-  fi
   err="$(send_live "$2" 2>&1)" || rc=$?
   case "$rc" in
     0) return 0 ;;
@@ -11074,27 +10170,12 @@ state_note_clear() { # a new native turn makes a later unusable transition disti
   tmux set-option -uw -t "$1" @gl_state_note_noted 2>/dev/null || true
   tmux set-option -uw -t "$1" @gl_state_note_pending 2>/dev/null || true
   tmux set-option -uw -t "$1" @gl_state_note_failed 2>/dev/null || true
-  tmux set-option -uw -t "$1" "$REPLY_RELEASED_OPTION" 2>/dev/null || true
 }
 
 state_note_attempt() { # $1 window, $2 state word, $3 origin; 0 accepted
-  local agent notify="" target="" rc=0 deliver_rc=0 err="" body summary=""
+  local agent notify="" target="" rc=0 deliver_rc=0 err="" body
   agent="$(agent_name_of "$1")" || return 1
   notify="$(tmux show-options -qv -t "=$SESSION:" @gl_notify 2>/dev/null)" || notify=""
-  if [ -z "$notify" ] && [ "$2" = reply-owed ]; then
-    # A RELEASED REPLY DEBT IS TOLD TO SOMEONE. Every other state note is
-    # silent without a declared target, because it reports a stall the operator
-    # chose whether to watch. This one reports a turn Gangline let go with a
-    # peer still waiting, so when nobody was declared it goes to the agent
-    # `gang up` names for the team's lead, and says so on the window when
-    # there is no such agent either.
-    if win_id lead >/dev/null 2>&1; then
-      notify=lead
-    else
-      state_note_failed_write "$1" "stop release alert NOT delivered: no notify target is declared and no agent is named lead (gang notify NAME)"
-      return 1
-    fi
-  fi
   [ -n "$notify" ] || return 1
   target="$(win_id "$notify" 2>/dev/null)" || {
     rc=$?
@@ -11109,29 +10190,8 @@ state_note_attempt() { # $1 window, $2 state word, $3 origin; 0 accepted
     state_note_failed_write "$1" "notify target '$notify' is the affected agent itself"
     return 1
   }
-  if [ "$2" = reply-owed ]; then
-    # Composed at delivery, not at the release: a tick retrying a pending
-    # note must say what stands now, and a debt cleared since then is a note
-    # with nothing left to say.
-    summary="$(reply_release_summary "$1")" || summary=""
-    if [ -n "$summary" ]; then
-      body="stop alert ($3): $agent went idle with $summary standing — the obligation is not forgiven and its next delivery raises it again; inspect with gang explain $agent"
-    elif [ "$3" = query-timeout ]; then
-      # The fault is the timeout itself, so it is told even when nothing
-      # stands now: a query that stops answering is what #195 looked like.
-      body="stop alert ($3): $agent went idle after its reply query timed out; nothing readable stands now, and the next delivery raises whatever does; inspect with gang explain $agent"
-    else
-      state_note_commit "$1" "$2" || return 1
-      return 0
-    fi
-  else
-    body="state alert ($3): $agent is $2 — inspect with gang explain $agent"
-  fi
-  if [ "$2" = reply-owed ]; then
-    err="$(stall_deliver "$target" "$notify" "$agent" "$body" defer 2>&1)" || deliver_rc=$?
-  else
-    err="$(stall_deliver "$target" "$notify" "$agent" "$body" 2>&1)" || deliver_rc=$?
-  fi
+  body="state alert ($3): $agent is $2 — inspect with gang explain $agent"
+  err="$(stall_deliver "$target" "$notify" "$agent" "$body" 2>&1)" || deliver_rc=$?
   if [ "$deliver_rc" -eq 0 ]; then
     state_note_commit "$1" "$2" || return 1
     return 0
@@ -11142,7 +10202,7 @@ state_note_attempt() { # $1 window, $2 state word, $3 origin; 0 accepted
 
 state_note() { # $1 window, $2 state word, $3 origin; never fatal to hook/tick
   local noted="" pending="" claim_rc=0
-  case "$2" in blocked|bricked|dead|harness-lost|reply-owed) ;; *) return 0 ;; esac
+  case "$2" in blocked|bricked|dead|harness-lost) ;; *) return 0 ;; esac
   noted="$(tmux show-options -wqv -t "$1" @gl_state_note_noted 2>/dev/null)" || noted=""
   [ "$noted" != "$2" ] || return 0
   pending="$(tmux show-options -wqv -t "$1" @gl_state_note_pending 2>/dev/null)" || pending=""
@@ -11161,7 +10221,7 @@ state_note_retry() { # $1 window; retry the exact retained transition, no reread
   [ -n "$pending" ] || return 0
   read -r state origin extra <<<"$pending"
   [ -z "$extra" ] || return 0
-  case "$state" in blocked|bricked|dead|harness-lost|reply-owed) ;; *) return 0 ;; esac
+  case "$state" in blocked|bricked|dead|harness-lost) ;; *) return 0 ;; esac
   [ -n "$origin" ] || return 0
   state_note "$1" "$state" "$origin"
 }
@@ -14086,10 +13146,10 @@ cmd_hitch() {
 }
 
 hitch_body_send() { # $1 name; hand HITCH_BODY to gang send from the calling window
-  # AN ASSIGNMENT IS ANSWERED BY THE WORK. Sent as an ordinary request it
-  # opened reply debt, the Stop adapter refused idle until the new agent
-  # acknowledged it, and agents answered "received, starting now" and ended
-  # the turn with nothing begun. The completion report is the reply.
+  # AN ASSIGNMENT IS ANSWERED BY THE WORK. Its marker tells the new agent to
+  # begin rather than acknowledge; agents that acknowledged an assignment
+  # answered "received, starting now" and ended the turn with nothing begun.
+  # The completion report is the reply.
   printf '%s' "$HITCH_BODY" | "$ROOT/bin/gang" send --to "$1" --assignment --stdin
 }
 
@@ -15051,7 +14111,7 @@ cmd_talk() { # compose with the terminal editor, then hand the bytes to send
   while [ $# -gt 0 ]; do case "$1" in
     --from) [ $# -ge 2 ] || usage_refuse "talk: --from needs a value"
             from="$2"; from_seen=1; shift 2 ;;
-    --live-only|--supersede|--ack) send_args+=("$1"); shift ;;
+    --live-only|--supersede) send_args+=("$1"); shift ;;
     --stdin) die "talk: the body opens in your editor; --stdin belongs to gang send" ;;
     -*) usage_refuse "talk: unknown argument '$1'" ;;
     *) usage_refuse "talk: unknown argument '$1' — name the recipient first: gang talk <name>" ;;
@@ -15228,9 +14288,8 @@ send_live() { # $1 target, $2 locked, $3 live-only probe, $4 lock wait mode,
 }
 
 cmd_send() {
-  local name="" from="" use_stdin=0 body="" live_only=0 supersede=0 rc=0 err="" frag n rest
+  local name="" from="" use_stdin=0 body="" live_only=0 supersede=0 rc=0 err="" frag marker=""
   local drain_rc=0 drain_err="" commit_err="" next_opportunity="next completes a turn"
-  local promote_warning="" no_reply=0 waiver="" waived_note="" ack=0
   while [ $# -gt 0 ]; do case "$1" in
     --to) [ $# -ge 2 ] || usage_refuse "send: --to needs a value"
           [ -z "$name" ] || usage_refuse "send: --to may be passed only once"
@@ -15240,10 +14299,8 @@ cmd_send() {
              use_stdin=1; shift ;;
     --live-only) live_only=1; shift ;;
     --supersede) supersede=1; shift ;;
-    --no-reply) no_reply=1; waiver=no-reply; shift ;;
     # Private to hitch: the message it sends after the startup contract.
-    --assignment) no_reply=1; waiver=assignment; shift ;;
-    --ack) ack=1; shift ;;
+    --assignment) marker=assignment; shift ;;
     # A BODY IS THE LIKELY MISTAKE, so the refusal that catches it names the
     # remedy. Anything not shaped like a flag is what someone typed where the
     # body goes, and the whole body then comes back at them as "unknown
@@ -15255,12 +14312,8 @@ cmd_send() {
   [ "$use_stdin" -eq 1 ] || usage_refuse "send: message body required on stdin"
   [ "$supersede" -eq 0 ] || [ "$live_only" -eq 0 ] \
     || die "send: --supersede replaces an older message in the spool, and --live-only never parks one"
-  [ "$ack" -eq 0 ] || [ "$live_only" -eq 0 ] \
-    || die "send: --ack holds the message for the target's next delivery, and --live-only never holds one"
-  [ "$waiver" != assignment ] || [ "$live_only" -eq 0 ] \
+  [ "$marker" != assignment ] || [ "$live_only" -eq 0 ] \
     || die "send: --assignment parks behind a booting agent, and --live-only never parks"
-  [ "$ack" -eq 0 ] || [ "$no_reply" -eq 0 ] \
-    || die "send: --ack acknowledges replies you read this turn and already owes nothing; --no-reply waives a request"
   send_sender "$from"
   send_identity_guard
   stdin_body "send"
@@ -15268,49 +14321,18 @@ cmd_send() {
   resolve "$name"
   [ -z "$SEND_WINDOW" ] || [ "$SEND_WINDOW" != "$AGENT_ID" ] \
     || refuse "send: '$name' resolves to this sending pane; a message that returns to its author is never intended"
-  reply_outgoing_classify "$SEND_WINDOW" "$AGENT_ID"
-  # ONLY A FRESH REQUEST CHANGES MODE. A message that answers is a reply and
-  # owes nothing already, and self-declared traffic never opened a debt; the
-  # envelope still carries the waiver so the recipient reads what was said.
-  if [ "$no_reply" -eq 1 ] && [ "$MESSAGE_REPLY_MODE" = request ]; then
-    MESSAGE_REPLY_MODE=waived
-    waived_note=" $(colour "$C_DIM" "(owes no reply)")"
-  fi
-  # ONLY THE SENDER KNOWS WHETHER A MESSAGE NEEDS ACTING ON. A message sent in
-  # the turn that read a peer's reply correlates only to replies: it owes
-  # nothing, but Gangline cannot tell a ruling from a bare acknowledgement, so
-  # holding it by default left a ruling unseen for thirty minutes while its
-  # reader carried on idle or on stale state. Such a message wakes its target
-  # like any other; the sender opts into the quiet hold with --ack, and only
-  # for a message that answers no request, because an answer is awaited.
-  if [ "$ack" -eq 1 ]; then
-    [ "$MESSAGE_REPLY_MODE" = reply ] \
-      || die "send: --ack acknowledges a reply you read this turn, and this message answers none; it is a fresh request to $name and must wake them, so send it without --ack"
-    # A waived record owes nothing, but an answer to it can still carry
-    # something to act on, and an assignment's answer is its completion
-    # report; only an acknowledgement of a reply may wait.
-    [ "$MESSAGE_DEFERABLE" -eq 1 ] || [ "$MESSAGE_ANSWERS_REQUEST" -eq 1 ] \
-      || die "send: --ack refused: this message answers a message $name sent that is owed no reply, and only an acknowledgement of a reply may wait for their next delivery; send it without --ack"
-    [ "$MESSAGE_DEFERABLE" -eq 1 ] \
-      || die "send: --ack refused: this message answers a request $name is waiting on, so it must wake them; send it without --ack"
-  fi
-  envelope "$SEND_WIRE" "$body" "$([ "$MESSAGE_REPLY_TO" = - ] || printf '%s' "$MESSAGE_REPLY_TO")" "$waiver"
+  message_sender_classify "$SEND_WINDOW" "$AGENT_ID"
+  envelope "$SEND_WIRE" "$body" "$marker"
   frag="${body%%$'\n'*}"
   [ "${#frag}" -le 40 ] || frag="${frag:0:40}…"
   if [ "$live_only" -eq 1 ]; then
-    reply_candidate_prepare "$AGENT_ID" "$ENVELOPE_NONCE" "$MESSAGE_SENDER_TOKEN" \
-      "$SEND_FROM" "$MESSAGE_REPLY_MODE" "$MESSAGE_REPLY_TO" "$ENVELOPE" \
-      || die "send: reply provenance could not be recorded before delivery; nothing was typed"
     err="$(send_live "$name" "" live-only send 2>&1)" || rc=$?
     case "$rc" in
-      0) reply_candidates_verified \
-           || printf '%s\n' "gang: delivered to $name, but its reply provenance stayed ambiguous and Stop will fail closed" >&2
+      0) delivery_mark "$AGENT_ID" "$MESSAGE_SENDER_TOKEN" \
+           || printf '%s\n' "gang: delivered to $name, but the delivered marker safe-to-drop reads could not be recorded" >&2
          [ -z "$err" ] || printf '%s\n' "$err" >&2
-         printf '%s\n' "$(colour "$C_OK" "delivered to $name as [gang:$SEND_WIRE]") $(colour "$C_DIM" "$(send_outcome "$name")")$waived_note"
+         printf '%s\n' "$(colour "$C_OK" "delivered to $name as [gang:$SEND_WIRE]") $(colour "$C_DIM" "$(send_outcome "$name")")"
          return 0 ;;
-      3) reply_candidates_abort
-         [ -z "$err" ] || printf '%s\n' "$err" >&2
-         exit 3 ;;
       *) [ -z "$err" ] || printf '%s\n' "$err" >&2
          exit "$rc" ;;
     esac
@@ -15341,116 +14363,6 @@ cmd_send() {
     lock_release
     die "$SPOOL_SUPERSEDE_ERROR — so nothing was sent: --supersede promised the recipient would see this message INSTEAD of your older waiting ones, and it cannot be delivered without retiring them. Nothing was typed and nothing was retired. Read what could not be retired, then send again"
   fi
-  # The replacement stands in for what it retires, correlation included. Only
-  # the envelope changes; nothing has recorded its nonce yet.
-  if [ -n "$SPOOL_RETIRED_REPLIES" ]; then
-    # Inherited correlation is enough to keep the replacement acknowledgement-
-    # loop free, but not enough to prove it carries no awaited answer. One
-    # retired ordinary reply may append a request nonce after the fresh
-    # classifier saw only reply records. Keep every such replacement on the
-    # waking path; quiet eligibility never survives supersession inheritance.
-    MESSAGE_DEFERABLE=0
-    rest="$SPOOL_RETIRED_REPLIES"
-    while :; do
-      n="${rest%%,*}"
-      case ",$MESSAGE_REPLY_TO," in *",$n,"*) ;; *)
-        [ "$MESSAGE_REPLY_TO" != - ] && MESSAGE_REPLY_TO="$MESSAGE_REPLY_TO,$n" \
-          || MESSAGE_REPLY_TO="$n" ;;
-      esac
-      [ "$rest" != "$n" ] || break
-      rest="${rest#*,}"
-    done
-    MESSAGE_REPLY_MODE="reply"
-    waived_note=""
-    envelope "$SEND_WIRE" "$body" "$MESSAGE_REPLY_TO" "$waiver"
-  fi
-  # A BARE ACKNOWLEDGEMENT THE SENDER MARKED --ack CREATES NO RECIPROCAL DEBT
-  # and carries no answer its recipient is waiting for, so it earns no turn of
-  # its own. Accept the complete attributed envelope into a hidden,
-  # deadline-backed queue and settle the sender's debt at that durable
-  # acceptance. If the host cannot arm the ceiling, preserve the immediate
-  # path: an optimization is never allowed to strand or silently accept mail.
-  # An --ack whose supersession inherited a request correlation says so and
-  # wakes: the retirement is already prepared under the lock, and waking is
-  # the safe side of the refusal that would otherwise stand here.
-  [ "$ack" -eq 0 ] || [ "$MESSAGE_DEFERABLE" -eq 1 ] \
-    || printf 'gang: --ack set aside: this replacement inherits a request %s is waiting on, so it wakes them\n' "$name" >&2
-  if [ "$ack" -eq 1 ] && [ "$MESSAGE_REPLY_MODE" = reply ] && [ "$MESSAGE_DEFERABLE" -eq 1 ]; then
-    if deferred_hold_try "$AGENT_ID" "$name" "$SEND_FROM" "$ENVELOPE" "$frag" \
-      "$MESSAGE_SENDER_TOKEN" "$MESSAGE_REPLY_MODE" "$MESSAGE_REPLY_TO" "$ENVELOPE_NONCE"; then
-      [ "$supersede" -eq 0 ] || spool_retire_commit \
-        || printf '%s\n' "gang: $SPOOL_SUPERSEDE_ERROR" >&2
-      reply_settle_by_token "$MESSAGE_SENDER_TOKEN" \
-        "$(tmux show-options -wqv -t "$AGENT_ID" @gl_spool 2>/dev/null)" "$MESSAGE_REPLY_TO"
-      lock_release
-      printf '%s\n%s\n' \
-        "$(colour "$C_OK" "held for $name as [gang:$SEND_WIRE] — accepted, not yet in the session")" \
-        "$(colour "$C_DIM" "(owes no reply) it joins the next ordinary verified Gangline delivery; its retrying deadline starts in $(human_seconds "$DEFERRED_MAX_SECONDS"). 'gang status $name' names it until then.")"
-      return 0
-    fi
-    printf 'gang: deferred delivery unavailable (%s); preserving immediate delivery for %s\n' \
-      "$DEFERRED_ERROR" "$name" >&2
-  fi
-  reply_candidate_prepare "$AGENT_ID" "$ENVELOPE_NONCE" "$MESSAGE_SENDER_TOKEN" \
-    "$SEND_FROM" "$MESSAGE_REPLY_MODE" "$MESSAGE_REPLY_TO" "$ENVELOPE" \
-    || die "send: reply provenance could not be recorded before delivery; nothing was typed"
-  # AN OWED-REPLY MESSAGE IS THE WAKE. When quiet envelopes precede it, first
-  # commit this request to the ordinary queue, promote every deferred envelope
-  # under the same pane lock, then submit the globally stamped queue once. The
-  # recipient sees accumulated context first and current business last, in one
-  # verified turn. A promotion failure stays loud while the request retains its
-  # ordinary immediate-delivery semantics and the hidden entries keep timers.
-  if [ "$MESSAGE_REPLY_MODE" != reply ] \
-    && [ "$(deferred_count "$AGENT_ID")" -gt 0 ]; then
-    spool_stage "$AGENT_ID" "$SEND_FROM" "$ENVELOPE" "$frag" \
-      "$MESSAGE_SENDER_TOKEN" "$MESSAGE_REPLY_MODE" "$MESSAGE_REPLY_TO" "$ENVELOPE_NONCE"
-    if ! spool_commit_try; then
-      commit_err="$SPOOL_COMMIT_ERROR"
-      reply_candidates_abort
-      [ "$supersede" -eq 0 ] || spool_retire_rollback \
-        || commit_err="$commit_err — $SPOOL_ROLLBACK_ERROR"
-      die "$commit_err — the waking message was NOT accepted"
-    fi
-    [ "$supersede" -eq 0 ] || spool_retire_commit \
-      || printf '%s\n' "gang: $SPOOL_SUPERSEDE_ERROR" >&2
-    if ! deferred_promote_all_locked "$AGENT_ID"; then
-      promote_warning="$DEFERRED_PROMOTE_ERROR"
-    fi
-    REPLY_PREPARED=""
-    drain_err="$(trap - EXIT; spool_drain "$AGENT_ID" locked 2>&1)" || drain_rc=$?
-    [ -z "$promote_warning" ] \
-      || printf 'gang: accumulated context did NOT join this wake: %s; each held envelope retains its forced-delivery timer\n' \
-        "$promote_warning" >&2
-    case "$drain_rc" in
-      0) lock_release
-         [ -z "$drain_err" ] || printf '%s\n' "$drain_err" >&2
-         if [ -z "$promote_warning" ]; then
-           printf '%s\n' "$(colour "$C_OK" "delivered accumulated context and current [gang:$SEND_WIRE] to $name in one verified wake")$waived_note"
-         else
-           printf '%s\n' "$(colour "$C_OK" "delivered current [gang:$SEND_WIRE] to $name; accumulated context remains on its separately reported recovery path")$waived_note"
-         fi
-         return 0 ;;
-      3|4) lock_release
-         [ -z "$drain_err" ] || printf '%s\n' "$drain_err" >&2
-         if [ -z "$promote_warning" ]; then
-           printf '%s\n%s\n' \
-             "$(colour "$C_OK" "queued current [gang:$SEND_WIRE] with accumulated context for $name — accepted, not yet in the session")$waived_note" \
-             "$(colour "$C_DIM" "($(spool_count "$AGENT_ID") waiting) the bundle enters at $name's next delivery opportunity; nothing further is needed from you.")"
-         else
-           printf '%s\n%s\n' \
-             "$(colour "$C_OK" "queued current [gang:$SEND_WIRE] for $name — accepted, not yet in the session; accumulated context remains separately deferred")$waived_note" \
-             "$(colour "$C_DIM" "($(spool_count "$AGENT_ID") waiting) current mail enters at $name's next delivery opportunity; nothing further is needed from you.")"
-         fi
-         return 0 ;;
-      5) lock_release
-         [ -z "$drain_err" ] || printf '%s\n' "$drain_err" >&2
-         printf '%s\n' "$(colour "$C_BAD" "accumulated delivery to $name was submitted but NOT verified; gang will not send it twice")"
-         exit 5 ;;
-      *) lock_release
-         [ -z "$drain_err" ] || printf '%s\n' "$drain_err" >&2
-         exit "$drain_rc" ;;
-    esac
-  fi
   # Only a REFUSAL is spoolable. Every refusal on this path happens before a
   # keystroke, so the body is provably still the sender's; a hard failure means
   # something was already typed and its fate is unknown, and parking that would
@@ -15458,15 +14370,15 @@ cmd_send() {
   err="$(send_live "$name" locked 2>&1)" || rc=$?
   case "$rc" in
     0) # Delivered. The retirement it was conditional on is now final.
-       reply_candidates_verified \
-         || printf '%s\n' "gang: delivered to $name, but its reply provenance stayed ambiguous and Stop will fail closed" >&2
+       delivery_mark "$AGENT_ID" "$MESSAGE_SENDER_TOKEN" \
+         || printf '%s\n' "gang: delivered to $name, but the delivered marker safe-to-drop reads could not be recorded" >&2
        [ "$supersede" -eq 0 ] || spool_retire_commit \
          || printf '%s\n' "gang: $SPOOL_SUPERSEDE_ERROR" >&2
        lock_release
        [ -z "$err" ] || printf '%s\n' "$err" >&2
-       printf '%s\n' "$(colour "$C_OK" "delivered to $name as [gang:$SEND_WIRE]") $(colour "$C_DIM" "$(send_outcome "$name")")$waived_note"
+       printf '%s\n' "$(colour "$C_OK" "delivered to $name as [gang:$SEND_WIRE]") $(colour "$C_DIM" "$(send_outcome "$name")")"
        return 0 ;;
-    3) reply_candidates_abort ;;
+    3) ;;
     5) # KEYSTROKES LANDED AND THEIR OUTCOME IS UNKNOWN, so this send is neither
        # delivered nor parkable. Parking it would put a second copy in front of
        # a recipient who may already have the first; calling it a failure would
@@ -15520,7 +14432,7 @@ cmd_send() {
   # committing it, then unlinking what was set aside is the single ordering that
   # is safe against both.
   spool_stage "$AGENT_ID" "$SEND_FROM" "$ENVELOPE" "$frag" \
-    "$MESSAGE_SENDER_TOKEN" "$MESSAGE_REPLY_MODE" "$MESSAGE_REPLY_TO" "$ENVELOPE_NONCE"
+    "$MESSAGE_SENDER_TOKEN" "$ENVELOPE_NONCE"
   if ! spool_commit_try; then
     commit_err="$SPOOL_COMMIT_ERROR"
     [ "$supersede" -eq 0 ] || spool_retire_rollback \
@@ -15529,14 +14441,6 @@ cmd_send() {
   fi
   [ "$supersede" -eq 0 ] || spool_retire_commit \
     || printf '%s\n' "gang: $SPOOL_SUPERSEDE_ERROR" >&2
-  # ACCEPTANCE INTO THE SPOOL SETTLES THE DEBT. The correlated reply is now
-  # durable and nothing the debtor can do moves it sooner: it drains at the
-  # creditor's next native boundary, which only the creditor reaches. Settling
-  # at delivery instead held the debtor at every Stop until then, with a block
-  # text that asked for the reply it had already sent. The drain rewrites the
-  # same monotonic proof, so a delivered reply settles exactly as before.
-  reply_settle_by_token "$MESSAGE_SENDER_TOKEN" \
-    "$(tmux show-options -wqv -t "$AGENT_ID" @gl_spool 2>/dev/null)" "$MESSAGE_REPLY_TO"
   # Steering-capable collars still land without a keystroke: the committed
   # spool entry is now the ordering authority. While this same pane lock is
   # held, try the whole queue. A free composer drains it now; copy-mode, a
@@ -15547,7 +14451,7 @@ cmd_send() {
     case "$drain_rc" in
       0) lock_release
          [ -z "$drain_err" ] || printf '%s\n' "$drain_err" >&2
-         printf '%s\n' "$(colour "$C_OK" "delivered to $name as [gang:$SEND_WIRE]") $(colour "$C_DIM" "(verified from its attributed spool into collar-declared mid-turn input)")$waived_note"
+         printf '%s\n' "$(colour "$C_OK" "delivered to $name as [gang:$SEND_WIRE]") $(colour "$C_DIM" "(verified from its attributed spool into collar-declared mid-turn input)")"
          return 0 ;;
       3|4) err="$drain_err" ;;
       5) lock_release
@@ -15578,17 +14482,17 @@ cmd_send() {
   blocked "$AGENT_ID" || queue_blocked=$?
   if [ "$queue_blocked" -eq 0 ]; then
     printf '%s\n%s\n' \
-      "$(colour "$C_OK" "queued for $name as [gang:$SEND_WIRE] — accepted, not yet in the session")$waived_note" \
+      "$(colour "$C_OK" "queued for $name as [gang:$SEND_WIRE] — accepted, not yet in the session")" \
       "$(colour "$C_BAD" "($(spool_count "$AGENT_ID") waiting) '$name' is blocked ($BLOCKED_WHAT). No turn boundary is coming from it unattended, so this will NOT drain on its own — it waits until somebody repairs that window (gang capture $name; gang attach $name). 'gang roster' shows it queued against a blocked window.")"
     return 0
   fi
   printf '%s\n%s\n' \
-    "$(colour "$C_OK" "queued for $name as [gang:$SEND_WIRE] — accepted, not yet in the session")$waived_note" \
+    "$(colour "$C_OK" "queued for $name as [gang:$SEND_WIRE] — accepted, not yet in the session")" \
     "$(colour "$C_DIM" "($(spool_count "$AGENT_ID") waiting) ${err##*$'\n'} — it enters the session when '$name' $next_opportunity, and nothing further is needed from you. Until then 'gang roster' shows it queued.")"
 }
 
 TIMED_ENTRY=""
-timed_write() { # window sender envelope fragment due, optional token/mode/replies/nonce
+timed_write() { # window sender envelope fragment due, optional sender token and nonce
   local tmp
   safe_to_drop_clear_for_delivery "$1" "'$4'"
   spool_establish "$1"
@@ -15598,8 +14502,9 @@ timed_write() { # window sender envelope fragment due, optional token/mode/repli
   # that means "ready". The `.writing-` prefix is the one spool_abandoned
   # already knows how to ask about and spool_dir_archive already carries out.
   tmp="$SPOOL_DIR/.writing-$$-at-$(timed_stamp "$5")"
-  printf 'v2\t%s\t%s\t%s\t%s\t%s\n%s\n%s\n' \
-    "$2" "${6:--}" "${7:-control}" "${8:--}" "${9:-$ENVELOPE_NONCE}" "$4" "$3" > "$tmp" \
+  printf 'v2\t%s\t%s\t%s\t-\t%s\n%s\n%s\n' \
+    "$2" "${6:--}" "$([ "${6:--}" = - ] && printf control || printf request)" \
+    "${7:-$ENVELOPE_NONCE}" "$4" "$3" > "$tmp" \
     || die "at: cannot write a timed message into $SPOOL_DIR"
   mv -- "$tmp" "$TIMED_ENTRY" \
     || { rm -f -- "$tmp"
@@ -15661,76 +14566,6 @@ timed_fire() { # $1 name, $2 entry basename, $3 the unit systemd is running
   return 0
 }
 
-deferred_fire_attempt() { # $1 name, $2 window id; one promotion/drain attempt
-  local name="$1" id="$2" rc=0 err=""
-  resolve "$name"
-  lock_pane "$id"
-  # One expired ceiling wakes with every quiet envelope accumulated so far.
-  # Promotion is oldest-first and retains each original acceptance stamp; the
-  # normal drain then owns verification, retry, and no-duplicate semantics.
-  if ! deferred_promote_all_locked "$id"; then
-    lock_release
-    die "deferred delivery for $name reached its bound but could not be promoted: $DEFERRED_PROMOTE_ERROR"
-  fi
-  err="$(trap - EXIT; spool_drain "$id" locked 2>&1)" || rc=$?
-  lock_release
-  [ -z "$err" ] || printf '%s\n' "$err" >&2
-  case "$rc" in
-    0|3|4) return 0 ;;
-    *) return "$rc" ;;
-  esac
-}
-
-deferred_fire() { # $1 name, $2 entry basename, $3 transient unit
-  local name="$1" base="$2" fired="$3" id rc=0 entry due now marker
-  id="$(win_id "$name")" || rc=$?
-  [ "$rc" -eq 0 ] || return 0
-  spool_existing "$id" || return 0
-  entry="$SPOOL_DIR/$base"
-  [ -f "$entry" ] || return 0
-  [ "$(timed_unit "$id" "$base")" = "$fired" ] || return 0
-  due="$(deferred_due_of "$entry")" || return 0
-  now="$(date +%s)"
-  case "$now" in ''|*[!0-9]*) return 1 ;; esac
-  [ "$due" -le "$now" ] || return 0
-  # Every callback attempts promotion once, even when its first invocation was
-  # delayed by suspend. Only an actual failed attempt spends retry authority.
-  # Isolating the attempt turns lock_pane/die exits into a status this parent
-  # can cap without weakening their ordinary diagnostics or cleanup traps.
-  ( deferred_fire_attempt "$name" "$id" ) || rc=$?
-  [ "$rc" -ne 0 ] || return 0
-  if [ "${GANG_TEST_COLLARS:-}" = 1 ] \
-     && [ -n "${GANG_TEST_DEFER_ATTEMPT_READY_FIFO:-}" ] \
-     && [ -n "${GANG_TEST_DEFER_ATTEMPT_RELEASE_FIFO:-}" ]; then
-    printf x > "$GANG_TEST_DEFER_ATTEMPT_READY_FIFO"
-    IFS= read -r _ < "$GANG_TEST_DEFER_ATTEMPT_RELEASE_FIFO" || true
-  fi
-  # A lock holder may have promoted this entry after our refused attempt.
-  # Its successful move owns the outcome; never leave exhaustion evidence for
-  # mail that is no longer hidden.
-  [ -f "$entry" ] || return 0
-  now="$(date +%s)"
-  case "$now" in ''|*[!0-9]*) return "$rc" ;; esac
-  [ $(( now - due )) -ge "$DEFERRED_RETRY_LIMIT_SECONDS" ] || return "$rc"
-
-  # Persist why retry authority stopped. A missing service alone cannot tell
-  # status whether systemd vanished or Gangline deliberately spent its finite
-  # budget. The marker is evidence only; the envelope stays hidden and intact.
-  marker="${entry%/*}/.retry-exhausted-${entry##*/}"
-  if ! printf 'promotion attempt failed at %s after deadline %s\n' "$now" "$due" > "$marker"; then
-    printf 'deferred delivery for %s exhausted its retry window after a failed attempt, but Gangline could not record that handoff at %s; stopping the callback so it cannot spin, and gang status %s will report the retry service GONE for an unknown reason\n' \
-      "$name" "$marker" "$name" >&2
-    return 0
-  fi
-  if [ ! -f "$entry" ]; then
-    rm -f -- "$marker" 2>/dev/null || :
-    return 0
-  fi
-  printf 'deferred delivery for %s exhausted its %s retry window after a failed promotion attempt; the envelope remains at %s and gang status %s reports the exhausted handoff\n' \
-    "$name" "$(human_seconds "$DEFERRED_RETRY_LIMIT_SECONDS")" "$entry" "$name" >&2
-  return 0
-}
-
 # THE MESSAGE AND THE CLOCK THAT PROMOTES IT CAN OUTLIVE EACH OTHER, and the
 # entry alone then reports a delivery nothing will make. So the unit is read
 # too, and "gone" is kept apart from "could not be read": one is a message that
@@ -15739,18 +14574,6 @@ timed_unit_state() { # $1 = unit basename -> live | gone | unreadable
   local state
   command -v systemctl >/dev/null 2>&1 || { printf 'unreadable'; return; }
   state="$(systemctl --user is-active "$1.timer" 2>/dev/null)" || true
-  case "$state" in
-    active|activating|reloading) printf 'live' ;;
-    inactive|failed|deactivating) printf 'gone' ;;
-    ''|unknown) printf 'unreadable' ;;
-    *) printf 'unreadable' ;;
-  esac
-}
-
-deferred_retry_state() { # $1 = unit basename -> live | gone | unreadable
-  local state
-  command -v systemctl >/dev/null 2>&1 || { printf 'unreadable'; return; }
-  state="$(systemctl --user is-active "$1.service" 2>/dev/null)" || true
   case "$state" in
     active|activating|reloading) printf 'live' ;;
     inactive|failed|deactivating) printf 'gone' ;;
@@ -15781,44 +14604,6 @@ timed_report() { # $1 window id, $2 name; one truthful line per pending timed se
       printf '%s\n' "timed send: 1 message came due $(human_seconds "$(( now - due ))") ago and is still parked, so its timer did not run — nothing will promote it; re-park it with gang at, or read it at $e"
     fi
   done <<<"$(timed_entries "$1")"
-}
-
-deferred_report() { # $1 window id; one truthful line per no-reply envelope
-  local e due now unit state marker
-  now="$(date +%s)"
-  case "$now" in ''|*[!0-9]*) return 0 ;; esac
-  while read -r e; do
-    [ -n "$e" ] || continue
-    if ! due="$(deferred_due_of "$e")"; then
-      printf 'deferred delivery: entry %s has no readable deadline; it will not be hidden from status, but its forced wake is unknown\n' "$e"
-      continue
-    fi
-    unit="$(timed_unit "$1" "${e##*/}")"
-    state="$(timed_unit_state "$unit")"
-    if [ "$due" -gt "$now" ]; then
-      case "$state" in
-        live) printf 'deferred delivery: 1 envelope owes no reply; joins the next ordinary delivery or is forced in %s\n' "$(human_seconds "$(( due - now ))")" ;;
-        gone) printf 'deferred delivery: 1 envelope owes no reply, but its forced-wake timer is GONE; it remains visible at %s\n' "$e" ;;
-        *) printf 'deferred delivery: 1 envelope owes no reply; timer health is unreadable for %s.timer and the entry remains at %s\n' "$unit" "$e" ;;
-      esac
-    else
-      marker="${e%/*}/.retry-exhausted-${e##*/}"
-      if [ -f "$marker" ]; then
-        printf 'deferred delivery: 1 envelope passed its deadline by %s; its retry budget was exhausted after a failed promotion attempt, and the entry remains visible at %s\n' \
-          "$(human_seconds "$(( now - due ))")" "$e"
-        continue
-      fi
-      state="$(deferred_retry_state "$unit")"
-      case "$state" in
-        live) printf 'deferred delivery: 1 envelope passed its deadline by %s; its retry service is live and the entry remains visible at %s\n' \
-          "$(human_seconds "$(( now - due ))")" "$e" ;;
-        gone) printf 'deferred delivery: 1 envelope passed its deadline by %s and its retry service is GONE for an unknown reason; the entry remains visible at %s\n' \
-                "$(human_seconds "$(( now - due ))")" "$e" ;;
-        *) printf 'deferred delivery: 1 envelope passed its deadline by %s; retry-service health is unreadable and the entry remains visible at %s\n' \
-          "$(human_seconds "$(( now - due ))")" "$e" ;;
-      esac
-    fi
-  done <<<"$(deferred_entries "$1")"
 }
 
 # THE TIMER GOES FIRST AND THE MESSAGE SECOND. A removed entry beside a live
@@ -15859,14 +14644,11 @@ cmd_at() { # park an attributed envelope now, deliver it when the clock passes
     [ -n "$fired_unit" ] \
       || die "at: --fire requires the --unit that armed it, so a stale timer cannot promote another message"
     case "$fire" in
-      .timed-[0-9]*|.deferred-[0-9]*) ;;
-      *) die "at: --fire was given '$fire', which is not the name of a timed or deferred entry" ;;
+      .timed-[0-9]*) ;;
+      *) die "at: --fire was given '$fire', which is not the name of a timed entry" ;;
     esac
     case "$fire" in */*) die "at: --fire takes an entry name, not a path" ;; esac
-    case "$fire" in
-      .timed-*) timed_fire "$name" "$fire" "$fired_unit" ;;
-      .deferred-*) deferred_fire "$name" "$fire" "$fired_unit" ;;
-    esac
+    timed_fire "$name" "$fire" "$fired_unit"
     return
   fi
   [ -z "$fired_unit" ] || die "at: --unit belongs to the internal --fire callback"
@@ -15898,8 +14680,8 @@ cmd_at() { # park an attributed envelope now, deliver it when the clock passes
   resolve "$name"
   [ -z "$SEND_WINDOW" ] || [ "$SEND_WINDOW" != "$AGENT_ID" ] \
     || refuse "at: '$name' resolves to this sending pane; a message that returns to its author is never intended"
-  reply_outgoing_classify "$SEND_WINDOW" "$AGENT_ID"
-  envelope "$SEND_WIRE" "$STDIN_BODY" "$([ "$MESSAGE_REPLY_TO" = - ] || printf '%s' "$MESSAGE_REPLY_TO")"
+  message_sender_classify "$SEND_WINDOW" "$AGENT_ID"
+  envelope "$SEND_WIRE" "$STDIN_BODY"
   frag="${STDIN_BODY%%$'\n'*}"
   [ "${#frag}" -le 40 ] || frag="${frag:0:40}…"
   # ATTRIBUTED NOW, DELIVERED LATER. The envelope is minted here, where the
@@ -15908,7 +14690,7 @@ cmd_at() { # park an attributed envelope now, deliver it when the clock passes
   # the clock has no pane of its own.
   lock_pane "$AGENT_ID"
   timed_write "$AGENT_ID" "$SEND_FROM" "$ENVELOPE" "$frag" "$due" \
-    "$MESSAGE_SENDER_TOKEN" "$MESSAGE_REPLY_MODE" "$MESSAGE_REPLY_TO" "$ENVELOPE_NONCE"
+    "$MESSAGE_SENDER_TOKEN" "$ENVELOPE_NONCE"
   entry="$TIMED_ENTRY"
   if ! timed_arm "$AGENT_ID" "$name" "$entry" "$due"; then
     rm -f -- "$entry"
@@ -16128,8 +14910,8 @@ cmd_interrupt() {
     # the caller runs inside the turn it is stopping, so a harness that ends
     # that turn by killing the tool call takes this process with it before the
     # reason is typed. That is the same verdict the stop itself is.
-    reply_outgoing_classify "$SEND_WINDOW" "$AGENT_ID"
-    envelope "$SEND_WIRE" "$reason" "$([ "$MESSAGE_REPLY_TO" = - ] || printf '%s' "$MESSAGE_REPLY_TO")"
+    message_sender_classify "$SEND_WINDOW" "$AGENT_ID"
+    envelope "$SEND_WIRE" "$reason"
   fi
   lock_pane "$AGENT_ID"
   # The reason is a delivery, so it clears a mark before the key rather than
@@ -16158,27 +14940,19 @@ cmd_interrupt() {
   # truthful place to hang it in today's two-valued turn fact, and inventing a
   # third value here would be redesigning the state this arc was told not to.
   turn_state_clear "$AGENT_ID"
-  # The interrupted turn ends here, so the replies it read close here; a
-  # close that fails is said, and the next prompt's boundary retries it.
-  reply_threads_close "$AGENT_ID" \
-    || printf 'interrupt: a reply read by the interrupted turn stays open until the next prompt closes it\n' >&2
   if [ "$have_m" -eq 1 ]; then
     wait_ready "$AGENT_ID" "${GANG_BOOT_TIMEOUT:-30}" || ready=$?
     [ "$ready" -eq 0 ] \
       || { printf '%s\n' "$reason" >&2
            die "interrupt: $GANG_INTERRUPT_KEY was sent to '$name' and its input box did not come back, so the message was NOT delivered and was NOT parked — it is printed above so it is not lost. Read the pane with gang capture $name"; }
-    reply_candidate_prepare "$AGENT_ID" "$ENVELOPE_NONCE" "$MESSAGE_SENDER_TOKEN" \
-      "$SEND_FROM" "$MESSAGE_REPLY_MODE" "$MESSAGE_REPLY_TO" "$ENVELOPE" \
-      || die "interrupt: reply provenance could not be recorded before the reason was delivered; nothing was typed"
     err="$(inject "$AGENT_ID" "$ENVELOPE" "" locked 2>&1)" || rc=$?
     if [ "$rc" -ne 0 ]; then
-      [ "$rc" -ne 3 ] || reply_candidates_abort
       printf '%s\n' "$reason" >&2
       [ -z "$err" ] || printf '%s\n' "$err" >&2
       exit "$rc"
     fi
-    reply_candidates_verified \
-      || printf '%s\n' "gang: the interrupt reason reached $name, but its reply provenance stayed ambiguous and Stop will fail closed" >&2
+    delivery_mark "$AGENT_ID" "$MESSAGE_SENDER_TOKEN" \
+      || printf '%s\n' "gang: the interrupt reason reached $name, but the delivered marker safe-to-drop reads could not be recorded" >&2
   fi
   lock_release
   printf '%s %s\n' \
@@ -17970,7 +16744,6 @@ cmd_explain() {
   [ -z "$tick_action" ] || printf 'tick action: %s\n' "$tick_action"
   explain_transitions_report "$AGENT_ID"
   explain_cache_compactions_report "$AGENT_ID"
-  reply_waived_report "$AGENT_ID"
 }
 
 # A WAIT IS A TEMPORARY TMUX BARRIER, NOT TEAM STATE. Each caller owns one
@@ -18509,8 +17282,6 @@ cmd_status() {
   # said that it is gone rather than printed as though it were still there.
   printf '%s\n' "$(colour "$C_DIM" "$(hitcher_phrase "$AGENT_ID")")"
   safe_to_drop_status "$AGENT_ID"
-  reply_obligation_status_report "$AGENT_ID"
-  reply_released_status_report "$AGENT_ID"
   tick_health_report
   action_status_report "$AGENT_ID"
   state_note_failed="$(tmux show-options -wqv -t "$AGENT_ID" @gl_state_note_failed 2>/dev/null)" || state_note_failed=""
@@ -18581,9 +17352,6 @@ cmd_status() {
   timed_report "$AGENT_ID" "$name" | while IFS= read -r timed_line; do
     printf '%s\n' "$(colour "$C_WORK" "$timed_line")"
   done
-  deferred_report "$AGENT_ID" | while IFS= read -r deferred_line; do
-    printf '%s\n' "$(colour "$C_WORK" "$deferred_line")"
-  done
   held="$(spool_held "$AGENT_ID")"
   if [ "$held" -ne 0 ]; then
     held_dir="$(spool_dir_of "$AGENT_ID")"
@@ -18637,7 +17405,7 @@ cmd_status() {
 # what it printed. A read by anyone else does not consume deliverable mail;
 # either kind of read may retire stale stable-sender ambiguity to an archive.
 cmd_mail() { # read a queue; its own agent's read archives what it consumes
-  local name="${1:-}" id rc=0 dir e n=0 held=0 deferred=0
+  local name="${1:-}" id rc=0 dir e n=0 held=0
   local self="" mine=0 claim label heading=waiting mail_archive="" archived_name="" self_lock=0
   [ $# -le 1 ] || usage_refuse "mail: unexpected argument '$2'"
   if [ -z "$name" ]; then
@@ -18659,20 +17427,14 @@ cmd_mail() { # read a queue; its own agent's read archives what it consumes
     printf '%s\n' "$(colour "$C_DIM" "no mail waiting for $name")"
     return 0
   fi
-  # Reading one's own mail is itself a waking turn. The lock spans deferred
-  # promotion, each claim rename, and archival: `sending-` means its holder
+  # Reading one's own mail is itself a waking turn. The lock spans each
+  # claim rename and archival: `sending-` means its holder
   # owns the pane lock. Without that span a drain can recover a live self-read
   # as a dead delivery worker and turn a readable message into a false kept
   # outcome. It also makes the read's initial glob a real snapshot.
   if [ "$mine" -eq 1 ]; then
     lock_pane "$id"
     self_lock=1
-    if [ "$(deferred_count "$id")" -gt 0 ]; then
-      if ! deferred_promote_all_locked "$id"; then
-        lock_release
-        die "mail: deferred envelopes could not join this read: $DEFERRED_PROMOTE_ERROR"
-      fi
-    fi
   fi
   # The glob is taken once, so an entry that lands mid-read is not one this read
   # printed and nothing here retires it.
@@ -18721,18 +17483,6 @@ cmd_mail() { # read a queue; its own agent's read archives what it consumes
     printf '%s\n' "$(colour "$C_WORK" "$heading #$n from $SPOOL_SENDER — $label")"
     printf '%s\n\n' "$SPOOL_BODY"
   done
-  # Another agent may inspect quiet mail without consuming or promoting it.
-  # The body already carries its accumulated-context marker; this heading adds
-  # the deadline state to the mailbox surface itself.
-  if [ "$mine" -eq 0 ]; then
-    for e in "$dir"/.deferred-[0-9]*; do
-      [ -f "$e" ] || continue
-      spool_read "$e"
-      deferred=$((deferred + 1))
-      printf '%s\n' "$(colour "$C_WORK" "deferred #$deferred from $SPOOL_SENDER — ${e##*/}")"
-      printf '%s\n\n' "$SPOOL_BODY"
-    done
-  fi
   spool_retire_gone_unverified_report "$id"
   # KEPT, NEVER CONSUMED, AND NAMED FOR WHICH KIND IT IS. A held entry is not
   # this read's to retire — nothing will deliver it, so a read that removed it
@@ -18774,7 +17524,7 @@ cmd_mail() { # read a queue; its own agent's read archives what it consumes
     rmdir -- "$mail_archive" "$ARCHIVE_DIR" 2>/dev/null || true
     mail_archive="" ARCHIVE_DIR=""
   fi
-  if [ "$n" -eq 0 ] && [ "$held" -eq 0 ] && [ "$deferred" -eq 0 ]; then
+  if [ "$n" -eq 0 ] && [ "$held" -eq 0 ]; then
     [ "$self_lock" -eq 0 ] || lock_release
     printf '%s\n' "$(colour "$C_DIM" "no mail waiting for $name")"
     return 0
@@ -18784,7 +17534,7 @@ cmd_mail() { # read a queue; its own agent's read archives what it consumes
     [ -z "$mail_archive" ] \
       || printf 'self-mail archived %s consumed message(s) at %s\n' "$n" "$mail_archive" >&2
   else
-    printf '%s\n' "$(colour "$C_DIM" "$n waiting for delivery, $deferred deferred until an ordinary delivery or its deadline, $held kept (not awaiting delivery), in $dir")"
+    printf '%s\n' "$(colour "$C_DIM" "$n waiting for delivery, $held kept (not awaiting delivery), in $dir")"
   fi
   [ "$self_lock" -eq 0 ] || lock_release
 }
@@ -18939,7 +17689,7 @@ roster_row_porcelain() { # name, collar, state, spooled, age seconds, session id
 
 roster_row() { # $1 window, $2 name, $3 current binary id;
                # exit 4 = the row printed with a state it could not read
-  local prof state detail="" spooled timed deferred age held skew="" mismatch probe_failed idle_notice reply_obligation usage_record usage_rc=0 usage_state usage_observed wake_record wake_rc=0 wake_reset now unread=0 staged staged_rc=0 parked_note parked_rc=0 compact_note compact_rc=0 mode_note mode_rc=1 run_rc=0 trust_pending trust_collar trust_dir trust_dir_word
+  local prof state detail="" spooled timed age held skew="" mismatch probe_failed idle_notice usage_record usage_rc=0 usage_state usage_observed wake_record wake_rc=0 wake_reset now unread=0 staged staged_rc=0 parked_note parked_rc=0 compact_note compact_rc=0 mode_note mode_rc=1 run_rc=0 trust_pending trust_collar trust_dir trust_dir_word
   prof="$(collar_read "$1")" || exit 1
   # This marker belongs to the preflight, which can terminate before or just
   # after hitch records its same requested identity. It is the recovery fact,
@@ -19034,8 +17784,6 @@ roster_row() { # $1 window, $2 name, $3 current binary id;
   fi
   timed="$(timed_count "$1")"
   [ "$timed" -eq 0 ] || detail="$detail timed=$timed"
-  deferred="$(deferred_count "$1")"
-  [ "$deferred" -eq 0 ] || detail="$detail deferred=$deferred"
   held="$(spool_held "$1")"
   [ "$held" -eq 0 ] || detail="$detail spool-held=$held"
   case "$(safe_to_drop_word "$1")" in
@@ -19057,11 +17805,6 @@ roster_row() { # $1 window, $2 name, $3 current binary id;
   case "$idle_notice" in
     present) detail="$detail idle-notice-failed" ;;
     malformed) detail="$detail idle-notice-failed=malformed" ;;
-  esac
-  reply_obligation="$(reply_obligation_roster_detail "$1")"
-  case "$reply_obligation" in
-    owed) detail="$detail reply-owed" ;;
-    unknown) detail="$detail reply-unknown" ;;
   esac
   usage_record="$(usage_limit_record_read "$1")" || usage_rc=$?
   if [ "$usage_rc" -eq 0 ]; then
@@ -19209,10 +17952,6 @@ cmd_hook() { # native harness events; facts are silent unless a light crosses
     # is no longer merely parked work. Keep @gl_recap_handled through this
     # turn: recap paint from the just-compacted transcript can outlive it.
     tmux set-option -uw -t "$TMUX_PANE" @gl_recap_pending 2>/dev/null || true
-    window="$(tmux display-message -p -t "$TMUX_PANE" '#{window_id}' 2>/dev/null)" \
-      || window=""
-    [ -z "$window" ] || ( reply_threads_close_if_ended "$window" ) || true
-    ( reply_prompt_observe "$TMUX_PANE" "$collar" "$payload" ) || true
     ( auto_resume_prompt_witness "$TMUX_PANE" "$collar" "$payload" ) || true
   fi
   if [ "$event" = Notification ]; then
@@ -19304,13 +18043,7 @@ sys.stdout.write(value)' \
             self_compact_dispatch "$window" "$collar" '' "$payload"
             [ "$SELF_COMPACT_DISPATCHED" = 1 ] \
               || spool_event "$window" "$collar" '' "$spool_payload"
-          fi
-          # LAST, AND FAIL CLOSED. The replies this turn read close only
-          # once every other fact of the boundary is recorded, so a Stop the
-          # adapter refuses for failed bookkeeping has not closed them; and a
-          # close that fails refuses the boundary itself, so the turn stays
-          # open and its replies stay answerable.
-          reply_threads_close "$window" || exit 1 ;;
+          fi ;;
     PreCompact) event_log_record "$TMUX_PANE" compaction.native-witnessed \
                   '{"phase":"pre"}' || exit 1
                 compaction_state_write "$TMUX_PANE" open
@@ -19646,15 +18379,15 @@ safe_to_drop_preconditions() { # $1 own window, $2 own token; 1 with SAFE_TO_DRO
   # ONE A MARK MAY CLOSE OVER. Held outcomes count: whether they reached this
   # agent is unknown, and a terminal fact must not be set over that.
   spool_existing "$1" || { SAFE_TO_DROP_ERROR="this window carries no spool identity"; return 1; }
-  for e in "$SPOOL_DIR"/[0-9]* "$SPOOL_DIR"/.deferred-* "$SPOOL_DIR"/.timed-* "$SPOOL_DIR"/sending-* "$SPOOL_DIR"/failed-* "$SPOOL_DIR"/unverified-* "$SPOOL_DIR"/interrupted-* "$SPOOL_DIR"/.writing-*; do
+  for e in "$SPOOL_DIR"/[0-9]* "$SPOOL_DIR"/.timed-* "$SPOOL_DIR"/sending-* "$SPOOL_DIR"/failed-* "$SPOOL_DIR"/unverified-* "$SPOOL_DIR"/interrupted-* "$SPOOL_DIR"/.writing-*; do
     [ -e "$e" ] || continue
-    SAFE_TO_DROP_ERROR="mail addressed to you is still waiting, in flight, or held ($(spool_count "$1") waiting, $(deferred_count "$1") deferred, $(timed_count "$1") timed, $(spool_held "$1") held) — take delivery of waiting mail (gang mail); held mail is settled only by its sender retiring or by your hitcher dropping you unmarked"
+    SAFE_TO_DROP_ERROR="mail addressed to you is still waiting, in flight, or held ($(spool_count "$1") waiting, $(timed_count "$1") timed, $(spool_held "$1") held) — take delivery of waiting mail (gang mail); held mail is settled only by its sender retiring or by your hitcher dropping you unmarked"
     return 1
   done
 }
 
 cmd_safe_to_drop() { # the one self-declared teardown authorization (ADR-0198)
-  local report="" self token name report_id rows rc=0 nonce state rtoken rest found=0 again
+  local report="" self token name report_id delivered report_token again
   while [ $# -gt 0 ]; do case "$1" in
     --report-to) [ $# -ge 2 ] || usage_refuse "safe-to-drop: --report-to needs a value"
                  [ -z "$report" ] || usage_refuse "safe-to-drop: --report-to may be passed only once"
@@ -19676,19 +18409,17 @@ cmd_safe_to_drop() { # the one self-declared teardown authorization (ADR-0198)
   report_id="$(win_id "$report")" || { rc=$?; win_id_missing "$rc" "safe-to-drop: no agent '$report' holds your report; nothing was marked"; }
   [ "$report_id" != "$self" ] \
     || refuse "safe-to-drop: a report delivered to yourself is not one anybody received; nothing was marked"
-  # THE REPORT IS PROVED FROM THE RECIPIENT, NOT CLAIMED BY THE SENDER. A reply
-  # record on its window, written by this registration, with prompt or delivery
-  # proof, is Gangline's own evidence that a message from you reached it. Which
-  # message was the report is yours to attest.
-  rows="$(reply_state_rows "$report_id")" || rc=$?
-  [ "$rc" -eq 0 ] \
-    || refuse "safe-to-drop: $(reply_rows_error "$rows") on $report's window, so delivery of your report cannot be proved; nothing was marked"
-  while read -r nonce state rtoken rest; do
-    [ "$rtoken" = "$token" ] || continue
-    case "$state" in prompt|verified|owed|complete|settled|discharged) found=1 ;; esac
-  done <<<"$rows"
-  [ "$found" -eq 1 ] \
-    || refuse "safe-to-drop: no message from this registration is proved delivered to $report (queued or held mail is not delivered); deliver your completion report first. Nothing was marked"
+  # THE REPORT IS PROVED FROM THE RECIPIENT, NOT CLAIMED BY THE SENDER. Every
+  # verified delivery stamps the recipient's window with the sender's
+  # registration, valued with the recipient's own; a stamp that matches both is
+  # Gangline's evidence that a message from you reached this registration of
+  # it. Which message was the report is yours to attest.
+  report_token="$(tmux show-options -wqv -t "$report_id" @gl_spool)" \
+    || refuse "safe-to-drop: $report's window could not be read, so delivery of your report cannot be proved; nothing was marked"
+  delivered="$(tmux show-options -wqv -t "$report_id" "$DELIVERED_PREFIX$token")" \
+    || refuse "safe-to-drop: $report's window could not be read, so delivery of your report cannot be proved; nothing was marked"
+  [ -n "$report_token" ] && [ "$delivered" = "$report_token" ] \
+    || refuse "safe-to-drop: no message from this registration is proved delivered to $report (queued mail is not delivered); deliver your completion report first. Nothing was marked"
   safe_to_drop_preconditions "$self" "$token" \
     || refuse "safe-to-drop: $SAFE_TO_DROP_ERROR. Nothing was marked"
   # THE SAME LOCK EVERY DELIVERY TAKES. Rechecked under it, so a message that
@@ -20295,8 +19026,6 @@ case "$cmd" in
   status)   cmd_status "$@" ;;
   explain)  cmd_explain "$@" ;;
   hook)     cmd_hook "$@" ;;
-  reply-obligations) cmd_reply_obligations "$@" ;;
-  reply-released) cmd_reply_released "$@" ;;
   capture)  cmd_capture "$@" ;;
   composer) cmd_composer "$@" ;;
   whoami)   cmd_whoami "$@" ;;

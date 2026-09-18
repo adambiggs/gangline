@@ -227,10 +227,9 @@ anything and sends it to the new agent after the startup contract, through the
 ordinary `gang send` path from the calling window. The message carries that
 window's observed identity, and it waits behind the contract wherever the
 contract waits, a first-run prompt included. It is sent as the agent's
-assignment: its envelope reads `assignment` after the nonce, its record
-follows the `--no-reply` rule (waived when fresh, a correlated reply when it
-answers the recipient), and the startup contract names it as the assignment
-whose reply is the completion report. Only a caller
+assignment: its envelope reads `assignment` after the nonce, and the startup
+contract names it as the assignment whose reply is the completion report. Only
+a caller
 inside the team has an identity to send it under; one outside is refused before
 launch and sends separately with `gang send --from`. Standard input is read as
 `gang send --stdin` reads it: a pipe, a file or a heredoc, never a terminal.
@@ -857,12 +856,14 @@ mark authorizes teardown only; it does not claim a task is complete. It is
 refused with exit 3, and nothing is recorded, unless all of these hold:
 
 - the caller is a registered agent running in its own pane;
-- `<name>` is another live agent whose window holds a reply record written by
-  the caller's current spool identity with prompt or delivery proof, which is
-  Gangline's evidence that a message from this registration reached it — the
-  agent attests that message was its completion report;
+- `<name>` is another live agent whose window option
+  `@gl_delivered_<token>`, named for the caller's current spool identity,
+  equals that window's own `@gl_spool`, which is Gangline's evidence that a
+  message from this registration reached its current registration — the agent
+  attests that message was its completion report. A send that ends
+  delivered-but-unverified sets no marker, so that report must be sent again;
 - every live window whose recorded hitcher is the caller is itself marked;
-- no mail for the caller is waiting, deferred, timed, being written, or held
+- no mail for the caller is waiting, timed, being written, or held
   with its delivery unsettled, and no self-compaction of its own is requested
   or dispatching, or unreadable. A deferred self-compaction request is written
   under the same pane lock.
@@ -910,7 +911,7 @@ operator outside a Gangline agent window defaults to the clearly claimed sender
 exits non-zero sends nothing and returns its status. The temporary draft is
 removed before delivery begins.
 
-### `gang send --to <name> [--from <sender>] [--live-only] [--supersede] [--no-reply] [--ack] --stdin`
+### `gang send --to <name> [--from <sender>] [--live-only] [--supersede] --stdin`
 
 Reads the full message body from standard input, which must be a pipe, a file,
 or a heredoc. A terminal is refused before anything is read: it ends a body only
@@ -936,135 +937,18 @@ Gangline wraps the body in a nonce-bound envelope,
 serializes writers per pane, verifies the paste changed the target composer,
 submits it, and reports success only after verification.
 
-An envelope from a sender Gangline observed carries message-scoped reply
-provenance. The target records immutable metadata before Enter; exact native
-prompt submission, positive delivery, and later reply settlement each write a
-separate monotonic proof option. Independent writers therefore cannot overwrite
-one another. A reply obligation arms when the exact native prompt proof matches
-that envelope: the prompt is the harness's own witness that the request entered
-the debtor's context, and it needs no second witness. The delivery proof is
-audit. A request record carrying only that proof, or no proof yet, is a message
-still in flight (the metadata lands before the paste, and a harness that queues
-typed input mid-turn submits it at a later boundary); it neither blocks Stop
-nor is repaired into absence. An orphaned or malformed record remains unknown
-and makes the native Stop helper fail closed. A record the sender stamped as a
-reply is audit rather than debt at every stage of its arrival evidence, so it
-never blocks.
+An envelope from a sender Gangline observed carries that sender's stable spool
+identity. Each verified delivery — typed into the composer, drained from the
+spool, or submitted by `gang interrupt -m` — sets the target window's
+`@gl_delivered_<token>` to the target's `@gl_spool`, which is the proof
+`safe-to-drop` reads. Gangline records no reply obligation: no message asks for
+an answer on the substrate's behalf, and Stop never waits on one.
 
-`--no-reply` says a fresh message asks for nothing back. Its envelope carries
-`no-reply` after the nonce, the recipient's record is stamped waived rather
-than request, and like a reply it is audit at every stage, so it never blocks
-Stop and `gang status` never reports it owed; `gang explain` names it as
-waived, read or not yet read. The recipient may still answer it in the turn
-that read it, and that answer is a reply that owes nothing in return. A
-message that already answers the recipient is a reply either way, so the flag
-then changes only what its envelope says.
-
-`--ack` says this message is a bare acknowledgement of replies read this turn,
-with nothing for its reader to act on. It is held for the reader's next
-ordinary delivery instead of waking them; the hold, its deadline service and
-its refusals are described under reply obligations below. Without it, a
-message sent in the turn that read a reply wakes its reader like any other.
-
-The next verified outbound message to a peer is correlated to every request
-from that peer the sender has read (its native prompt proof stands) and to
-every reply from that peer read in the current turn. A request with delivery
-proof alone is still queued in the harness, so a message crossing it is a
-fresh request rather than its answer, and the crossed request is owed once its
-prompt proof lands. The envelope carries the correlation, Gangline marks only
-those records settled when it accepts the reply, whether typed into the peer's
-composer or parked in the peer's spool behind a live turn, and the recipient
-classifies it as a reply rather than opening reciprocal debt. A reply record
-takes the same settlement proof when it is acknowledged or when the turn that
-read it ends: at its native Stop, at `gang interrupt`, or at the prompt that
-begins the next turn when no Stop closed the last one. An acknowledgement of a
-reply is therefore itself correlated and opens no debt, a thread closes on any
-acknowledgement, and a message sent in a later turn is a new request. The
-close is the last fact a Stop records and fails closed: a boundary that cannot
-write it is refused, so the turn stays open and its replies stay answerable. A
-message correlated only to reply records opens no debt but still wakes its peer,
-because the same records carry a ruling sent in the turn that read a report and a
-bare acknowledgement of it, and only the sender can tell which. `gang send --ack`
-declares the bare acknowledgement: it is held outside the waking queue after durable
-spool acceptance. `--ack` is refused before anything is typed on a message that
-answers a request record, because its peer is waiting for the answer, on a message
-that answers a waived record, which is owed nothing but may carry something to act
-on (an assignment's answer is its completion report), on a message that matches no
-thread, which is a fresh request, and beside `--live-only` or `--no-reply`. Deferred acknowledgements
-join the peer's next ordinary composer-verified Gangline drain ahead of current mail.
-The drain promotes them under their original stamps only after it proves a landing
-zone, so an older ordinary request and a held acknowledgement enter one bundle. A
-native prompt alone does not promote them or mint a follow-up acknowledgement turn;
-advisory hook stdout is not delivery proof. A transient timer begins
-an ordinary verified wake after thirty minutes. Even a suspend-delayed first callback
-attempts delivery once; after a failed attempt its service retries every five seconds
-for at most five minutes beyond the deadline. If that recovery window is exhausted,
-`status` distinguishes the retained entry's spent retry budget from a service that is
-gone for an unknown reason. If the spool cannot record the detailed handoff, the
-callback still stops rather than spinning and status uses that marker-less GONE
-verdict. If the initial
-timer cannot be armed, Gangline preserves immediate delivery instead of accepting an
-unbounded hold. The deferred entry and timer health stay visible to `status`, human
-`roster`, and `mail`. A `--supersede`
-that retires a deferred or ordinary reply hands its correlation to the replacement,
-but any inherited correlation keeps the replacement on the waking path; an `--ack`
-on such a replacement is set aside with a stderr line rather than refused, because
-the retirement is already prepared when the inheritance is known.
-
-A correlated reply discharges the request as soon as either arrival witness,
-the exact native prompt proof or positive delivery proof, stands beside it. The
-delivery proof is written only by the sending process that produced it, so a
-record missing that half cannot complete later and would otherwise block Stop
-with a demand the debtor has already met. The creditor's native prompt proof of
-the reply writes the same settlement, so a reply whose sending process died
-between typing and verification still settles when it is read. Every witness
-writes one immutable digest per record, so repeated or late witnesses rewrite
-the same proof. A settlement proof with neither arrival witness remains unknown
-and fails closed.
-Gangline does not parse the reply body: any genuine concise acknowledgement is
-enough, including one that says background work is still running and a fuller
-report will follow. Requests from different peers retain independent records.
-
-Every prompt-witnessed request record resolves its original stable sender
-token, whether or not its delivery proof has landed: a live sender keeps it
-owed and names the peer whose reply settles it, and an unreadable identity
-stays unknown. When the complete team-window inventory proves that token no longer
-exists, the record retires without inventing reply proof. The first conclusive query writes a monotonic retirement proof;
-later queries emit a `retired` audit row naming `sender-gone` without resolving
-the dead token again. The private Stop query, `status`, and `roster` share
-this query path, so any of them may be the reader that first latches the proof.
-`status` retains the message and witnessed sender as retirement history, and
-Stop may proceed if no live or ambiguous obligation remains. A fresh hitch with
-the same name has a different token and inherits nothing; failure to read the
-identity inventory remains unknown and fails closed.
-
-Unenveloped session-keyboard input and `self-declared:` envelopes create no
-peer obligation. They also do not clear, supersede, or mask one. Tool events,
-background-work notices, native steering, Stop recursion, compaction, and later
-turn boundaries likewise leave the per-message window options intact. `status`
-names each outstanding, retired, or ambiguous record and `roster` carries
-`reply-owed` or `reply-unknown` only for the blocking cases; the shared native
-Stop adapter permits idle when its private `reply-obligations` query contains no
-debt or ambiguity. While it does, the adapter refuses idle once per turn: the
-first Stop is refused with the record's name, and the re-Stop the harness marks
-with `stop_hook_active` is released through the private `reply-released`
-report, which leaves every record untouched, stamps the release on the window
-for `status` until the next native prompt, and raises a `reply-owed` state
-note to the notify target or, when none is declared, to the agent named
-`lead`. That Gangline-authored stop alert owes no reply, so it uses the same
-deadline-backed deferred path as an `--ack` acknowledgement and joins the notify target's next
-ordinary composer-verified Gangline delivery. State and input-stall alerts remain immediate because they report a
-condition that may require intervention. The next delivery's first Stop refuses idle again. A query that answers
-nothing inside the adapter's deadline is retried within it and then refused
-and released under the name `query-timeout`; that release stamps the window
-and raises its note before the state is read again, so a timeout is told even
-when the second reading finds nothing standing. Dropping the recipient window
-retires the tmux-owned records with the rest of that agent's ephemeral state.
-
-An upgraded three-line spool entry has no stable sender token, nonce, or reply
-correlation. Known Gangline control authors remain control mail. A peer-shaped
-legacy entry is delivered but retained as `reply-unknown`; Gangline will not
-invent correlation evidence to clear it.
+An upgraded three-line spool entry has no stable sender token or nonce. Known
+Gangline control authors remain control mail; a peer-shaped legacy entry is
+delivered but proves no delivery to `safe-to-drop`. A v2 entry written before
+reply tracking was removed may carry the modes `reply` or `waived` and a
+reply-to list; it is delivered as ordinary peer mail and the list is ignored.
 
 Gangline refuses a missing or occupied composer, a human draft, tmux pane mode,
 unknown state, and unsafe mid-turn input. Pane mode is operator-owned: Gangline
@@ -1542,10 +1426,10 @@ operator's tmux status formats.
 
 ### `gang mail [name]`
 
-Prints every message waiting for delivery in that agent's spool, every deferred
-no-reply envelope, then every kept record, each with its sender and its entry filename, each body
+Prints every message waiting for delivery in that agent's spool, then every
+kept record, each with its sender and its entry filename, each body
 exactly as it would go onto the wire. The summary separates messages waiting
-for delivery, active deferred entries, and kept records that Gangline will not deliver. A kept record
+for delivery and kept records that Gangline will not deliver. A kept record
 says which kind it is: one Gangline typed and could not confirm warns its reader
 they may have seen the body already, while an interrupted record says its
 delivery worker ended after claiming the bundle. An unverified or interrupted
@@ -1753,8 +1637,7 @@ Gangline did; the `box:` line says what is there at reading time.
 
 It also reports staged input and the current box reading, pending or failed
 self-compaction, the number of messages spooled for that target and how long
-the oldest has waited, deferred no-reply envelopes and their deadline/retry service
-health, held-message
+the oldest has waited, held-message
 details and their directory, a spool drain that could not be verified, a stall
 note that could not be accepted, live native-session loss, the last cooperative
 tick failure, and binary
@@ -2101,8 +1984,7 @@ Use `gang context <name>` when a reading is wanted. Each row compares the
 window's binary stamp with the invoked `gang` binary and visibly marks skew; the
 comparison runs only for this snapshot. A non-empty delivery queue reports both
 its depth as `spooled=N` and the age of its oldest waiting entry. A separate
-`deferred=N` reports no-reply envelopes waiting to join another wake, while
-`spool-held=N` reports kept records whose delivery will not be retried; neither is
+`spool-held=N` reports kept records whose delivery will not be retried; it is not
 queue depth. In a plain roster, an unverified or interrupted record whose exact
 stable sender identity is gone is archived before the row is printed and
 contributes to neither count. A fresh agent using the old sender name has a
@@ -2133,9 +2015,9 @@ word: `busy`, `waiting`, `idle`, `occupied`, `dead`, `bricked`, `session-lost`, 
 settle and one it could not read at all; the human row separates them and the
 porcelain word does not.
 unadopted windows and missing collars read `unadopted` and `collar-missing`.
-`spooled` is the deliverable-queue integer; deferred and kept records are deliberately
-absent from the fixed porcelain shape and remain visible as `deferred=N` and
-`spool-held=N` in the human row. Porcelain roster performs no retirement; it observes the fixed per-agent
+`spooled` is the deliverable-queue integer; kept records are deliberately
+absent from the fixed porcelain shape and remain visible as `spool-held=N` in
+the human row. Porcelain roster performs no retirement; it observes the fixed per-agent
 shape without the plain roster's archival side effect. `oldest_age_s` is integer
 seconds or `-` for an empty queue or an unreadable age. A row Gangline could not
 produce at all falls back
@@ -2460,7 +2342,7 @@ there, never in a harness-name branch in the core script.
 | `collar_live_session_id target` | optional independent probe of the native session currently holding the pane; print its exact id, or return nonzero when no safe reading is available. The cooperative tick compares it with the registered id and treats a contradiction as session loss |
 | `collar_harness_identity target` | optional positive root-process witness; print `pid<TAB>kernel-start-stamp` and return 0 only when the collar can demonstrate the pane root is its live harness, return 1 when no identity is recorded, or return 2 with a cause when unreadable. Gangline records it at hitch/adopt and may retry it once at the first native hook. A normal per-window tick makes one further persisted, read-only backfill only where no witness, lost verdict, or earlier tick attempt exists: it records a positive witness, attempted absence, or unreadable result without typing into or changing the native session. Once recorded, a later missing or changed witness is `!harness-lost!` |
 | `collar_auto_resume_record target notification-kind` | optional native recoverable-stream discriminator called on an idle notification; print one stable error-record identity, return 1 for ordinary idle or another error class, or return 2 when the native record cannot be read. A match receives one guarded continuation independently of `GANG_AUTO_RESUME`, whose percentage controls provider-reset wakes |
-| `collar_submitted_prompt target payload` | print the exact native prompt from a prompt-submission event so Gangline can correlate verified peer envelopes and prove whether its marked automatic continuation owns that turn |
+| `collar_submitted_prompt target payload` | print the exact native prompt from a prompt-submission event so Gangline can prove whether its marked automatic continuation owns that turn |
 
 The shipped Codex live-id probe asks tmux to run in the server's host namespace,
 then inspects the active pane process's open descriptors through `/proc`. It
@@ -2483,13 +2365,13 @@ command. They must not weaken sandboxing, approvals, or operator permissions.
 
 Codex trusts a native hook by its event and command string. It does **not**
 attest the contents of the executable named by that command. Thus trust once
-granted for Gangline's Codex Stop hook covers later in-place edits to
-`collars/plugins/codex-stop-hook.py` indefinitely. Changing the configured
-command or its path creates a new hash and requires native re-trust.
+granted for Gangline's Codex hooks covers later in-place edits to `bin/gang`
+indefinitely. Changing the configured command or its path creates a new hash
+and requires native re-trust.
 
 This is trust-on-first-use over a name, not over the code that runs. Anyone
-able to edit that helper can change what executes at every Codex turn end on
-this machine without a new Codex prompt. That grants no capability beyond a
+able to edit that executable can change what executes at every Codex hook
+event on this machine without a new Codex prompt. That grants no capability beyond a
 writer who can already alter the Gangline checkout and its collars; it is a
 boundary to state, not a sandbox Gangline claims to provide.
 

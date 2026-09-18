@@ -280,11 +280,19 @@ satisfied() {
       fi
       ;;
     briefed)
-      # The lead's delegation leaves the worker owing it a reply, and that debt
-      # stands until the worker reports. It is the arrival of the brief itself,
-      # not a guess from how busy the pane looks.
-      read_status
-      grep -q 'reply owed to lead' "$diag/status-$agent.txt"
+      # A verified delivery from the lead's registration marks the worker's
+      # window with the worker's own spool identity. It is the arrival of the
+      # brief itself, not a guess from how busy the pane looks.
+      if ! windows=$(tmux list-windows -a -F '#{@gl_agent} #{window_id} #{@gl_spool}' 2>> "$log"); then
+        printf 'PROBE-ERROR %s %s: tmux list-windows failed; see %s\n' \
+          "$agent" "$condition" "$log"
+        exit 1
+      fi
+      lead_spool=$(awk '$1 == "lead" { print $3 }' <<< "$windows")
+      agent_id=$(awk -v a="$agent" '$1 == a { print $2 }' <<< "$windows")
+      agent_spool=$(awk -v a="$agent" '$1 == a { print $3 }' <<< "$windows")
+      [ -n "$lead_spool" ] && [ -n "$agent_spool" ] &&
+        [ "$(tmux show-options -wqv -t "$agent_id" "@gl_delivered_$lead_spool")" = "$agent_spool" ]
       ;;
     reported)
       if ! gang capture "$agent" 80 > "$diag/capture-$agent.txt" 2>> "$log"; then

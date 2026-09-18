@@ -21,24 +21,8 @@ observe, so treat that sender as unverified.
 
 Messages are pushed to you at a turn boundary, so never poll for them.
 
-A message whose envelope reads `assignment` is the work you were hitched for.
-It is owed no acknowledgement: begin it in the turn that reads it, and your
-completion report is its reply. A message whose envelope reads `no-reply` is
-owed nothing.
-
-Any other verified message from a teammate is owed one concise reply or
-acknowledgement through Gangline. No literal wording is required: saying you are waiting on
-background work and will report later is enough, and so is any message you send
-that sender after reading theirs. A reply to one of your messages is owed
-nothing, and neither is an acknowledgement you send its sender in the turn that
-read it; a message you send in a later turn is a new request. Whatever pays
-that debt, an acknowledgement included, always wakes its reader, so send it
-without `--ack`. When you acknowledge a reply to one of your messages and leave
-its sender nothing to act on, send it with `gang send --ack`, and it waits for
-their next delivery instead of waking them; anything they must act on, a ruling
-included, goes without it. Session-keyboard input, including operator input,
-neither creates nor clears that debt. Gangline
-tracks the rest itself; `gang send` in `docs/reference.md` holds how.
+A message whose envelope reads `assignment` is the work you were hitched for:
+begin it in the turn that reads it, and your completion report is its reply.
 
 If a teammate's message crossed one you just sent, say so in your next reply
 and state what is already true before acting on the stale message.

@@ -17,7 +17,7 @@ dispatch_commands="$({
         for (i=1; i<=n; i++) print names[i]
       }
     '
-} | awk '$0 != "hook" && $0 != "reply-obligations" && $0 != "reply-released" && $0 != "__tick-worker" && $0 != "__usage-record-worker" && $0 != "__event-record-worker" && $0 != "__event-proof" && $0 != "-h" && $0 != "--help" && $0 != "help"' | sort -u)"
+} | awk '$0 != "hook" && $0 != "__tick-worker" && $0 != "__usage-record-worker" && $0 != "__event-record-worker" && $0 != "__event-proof" && $0 != "-h" && $0 != "--help" && $0 != "help"' | sort -u)"
 bare_error_commands="hitch trust adopt rename talk send at run flush mail interrupt compact context log limits wait-limit wait status explain capture composer whoami drop safe-to-drop down"
 meaningful_bare_commands="up roster attach teams alerts tick collars models roles config curfew notify usage cap upgrade"
 classified_commands="$(printf '%s\n' $bare_error_commands $meaningful_bare_commands | sort -u)"
@@ -123,8 +123,6 @@ contains "gang curfew help prints the new synopsis" \
   "$("$GANG" curfew --help)" "gang curfew"
 contains "gang roster help names its scripting mode" \
   "$("$GANG" roster --help)" "--porcelain"
-contains "gang send help names unread crossing semantics" \
-  "$("$GANG" send --help)" "crossing unread request"
 contains "gang rename help names immutable scope" \
   "$("$GANG" rename --help)" "launch scope also stays unchanged"
 contains "gang compact help names its native-idle witness" \
@@ -1048,8 +1046,8 @@ print(json.load(sys.stdin)["Stop"])
     sh -c "$command" </dev/null
     args="$(tr '\n' ' ' < "$install_root/bin/gang.args")"
     hook_receipts="$hook_receipts${hook_receipts:+ | }$install_name/$launch_var=$args"
-    contains "the Codex Stop event routes through its peer-reply helper" \
-      "$stop_command" "codex-stop-hook.py"
+    equal "the Codex Stop event routes through the plain native hook" \
+      "$command" "$stop_command"
   done
 done
 equal "Codex native hooks survive fresh and resumed launch paths" \

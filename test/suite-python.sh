@@ -54,9 +54,9 @@ suite_python3() { # stdout = the absolute python3 interpreter for this run
 
 # ONE PLACE TO PIN IT, BECAUSE A VARIABLE CANNOT REACH A SHEBANG. Half of the
 # python this suite runs is reached as `#!/usr/bin/env python3` — the shared
-# clock, the tick deadline, process identity, usage, the Codex stop-hook plugin
-# — so an exported path would fix the call sites a test wrote and leave every
-# program the product launches on the broken shim. A directory the run owns,
+# clock, the tick deadline, process identity and usage — so an exported path
+# would fix the call sites a test wrote and leave every program the product
+# launches on the broken shim. A directory the run owns,
 # ahead of the host's on PATH, is the one rule both halves obey.
 #
 # AND IT FORWARDS RATHER THAN LINKS. A virtual environment is a directory whose

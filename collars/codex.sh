@@ -23,24 +23,6 @@ if [ -n "${ROOT:-}" ] && [ -x "$ROOT/bin/gang" ]; then
     *[\'\"\\]*|*[[:cntrl:]]*) ;;
     *)
       _gl_codex_hook="[{ hooks = [{ type = \"command\", command = \"\\\"$ROOT/bin/gang\\\" hook\" }] }]"
-      # Codex runs this Stop handler instead of the generic gang hook. It
-      # blocks while verified peer reply debt or ambiguous provenance remains;
-      # every proved-clear boundary delegates back to `gang hook` so ordinary
-      # turn bookkeeping, spool delivery, and deferred compaction retain their
-      # existing owner.
-      # CODEX TRUSTS THIS EVENT/COMMAND STRING, NOT THE CONTENTS OF THE
-      # EXECUTABLE IT NAMES.  An in-place edit to codex-stop-hook.py therefore
-      # runs on later turns without a new native trust prompt; changing this
-      # command or its path mints a new hash and requires a person to trust it.
-      # This is trust-on-first-use over a name, not code attestation.  Do not
-      # add a changing version token here: it would impose a re-trust dialog on
-      # every helper edit.  A Gangline-side content check has no consumer yet;
-      # build one only if this boundary must become an enforced control.
-      # The native bound is the outer fuse for the helper. Its query and
-      # clear-boundary Gangline subprocesses each have their own smaller bound,
-      # so neither a wedged lock nor failed bookkeeping can hold Codex at Stop
-      # indefinitely.
-      _gl_codex_stop_hook="[{ hooks = [{ type = \"command\", command = \"python3 \\\"$_gl_codex_dir/plugins/codex-stop-hook.py\\\" \\\"$ROOT/bin/gang\\\"\", timeout = 15 }] }]"
       # SessionStart stdout is native extra developer context. It reaches
       # startup, resume, clear, and post-compaction starts without replacing
       # operator-configured developer instructions, and keeps this guidance in
@@ -54,11 +36,10 @@ if [ -n "${ROOT:-}" ] && [ -x "$ROOT/bin/gang" ]; then
       # agent reads IDLE and gang delivers into it. Codex declares no queue
       # evidence, so that delivery would be reported submitted when the harness
       # had parked it. Verified firing on 0.146.0.
-      for _gl_codex_event in UserPromptSubmit PostToolUse PermissionRequest \
+      for _gl_codex_event in UserPromptSubmit PostToolUse Stop PermissionRequest \
                              PreCompact PostCompact; do
         _gl_codex_hook_flags+=" -c 'hooks.$_gl_codex_event=$_gl_codex_hook'"
       done
-      _gl_codex_hook_flags+=" -c 'hooks.Stop=$_gl_codex_stop_hook'"
       GANG_LAUNCH="$GANG_LAUNCH$_gl_codex_hook_flags"
       GANG_RESUME_LAUNCH="$GANG_RESUME_LAUNCH$_gl_codex_hook_flags"
       # THIS IS THE ATTENDED FORM of the exact native launch whose hooks the
@@ -106,7 +87,7 @@ if [ -n "${ROOT:-}" ] && [ -x "$ROOT/bin/gang" ]; then
       # of active_turn a submission starts a new turn rather than steering the
       # finished one, which is where Codex's own TUI submits its queued input.
       GANG_SELF_COMPACT_WITNESS=native-idle
-      unset _gl_codex_hook _gl_codex_stop_hook _gl_codex_session_start_hook \
+      unset _gl_codex_hook _gl_codex_session_start_hook \
         _gl_codex_hook_flags _gl_codex_event
       ;;
   esac
@@ -304,8 +285,7 @@ GANG_COMPACT_CMD="/compact"
 GANG_USAGE_LIMIT_MAX_AGE=300
 
 # Codex carries the exact submitted composer body in UserPromptSubmit. Gangline
-# compares it with delivery evidence recorded before Enter; prompt text without
-# that independent candidate never creates peer reply debt.
+# compares it with the continuation it marked before Enter.
 collar_submitted_prompt() { # $1 target unused, $2 UserPromptSubmit payload
   printf '%s' "$2" | python3 -c '
 import json, sys
