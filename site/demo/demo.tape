@@ -52,10 +52,13 @@ Sleep 2s
 
 # Once delegation lands, attach to the actual harness panes. The work starts on
 # screen; the long inference stretch is cut rather than played in real time.
+# The probes ask Gangline what the team is doing rather than reading the agents'
+# prose: the reply the worker owes the lead is the brief arriving, and the
+# attributed envelope in the lead's pane is the report coming back.
 Hide
-Type `while ! gang capture worker 30 2>/dev/null | grep -q 'TASK.md'; do sleep 1; done; echo WORK-"STARTED"`
+Type "$GANG_DEMO_DIAG/probe.sh worker briefed 300 && $GANG_DEMO_DIAG/probe.sh worker busy 60"
 Enter
-Wait+Screen@300s /WORK-STARTED/
+Wait+Screen@420s /PROBE-READY worker busy/
 Type "clear"
 Enter
 Show
@@ -76,9 +79,9 @@ Sleep 1s
 
 # Time-lapse through implementation and the lead's handling of the attributed
 # completion report. Returning idle closes the lead's later turn.
-Type `while ! gang capture lead 80 2>/dev/null | grep -q '\[gang:worker#'; do sleep 1; done; while ! NO_COLOR=1 gang status lead 2>/dev/null | grep -q '~idle~'; do sleep 1; done; echo SHOW-"READY"`
+Type "$GANG_DEMO_DIAG/probe.sh lead reported 400 && $GANG_DEMO_DIAG/probe.sh lead idle 60"
 Enter
-Wait+Screen@300s /SHOW-READY/
+Wait+Screen@480s /PROBE-READY lead idle/
 Type "clear"
 Enter
 Show

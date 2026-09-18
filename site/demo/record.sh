@@ -29,6 +29,9 @@ export GANG_LOCK_DIR="$demo_tmux_root/locks"
 # instead of guessing a path, and its absence is how this script knows no team
 # was ever created.
 team_socket_record="$GANG_LOCK_DIR/teams/$demo_session"
+# The tape's readiness probes run from here, not from the demo root, where the
+# recorded agents would see a file that is not theirs.
+export GANG_DEMO_DIAG="$demo_diag"
 export GANG_ARCHIVE_DIR="$demo_tmux_root/archive"
 export XDG_STATE_HOME="$demo_tmux_root/state"
 # A generated follow-up occupies Claude Code's composer after the lead ends its
@@ -234,6 +237,90 @@ except BaseException:
     raise
 print("trusted demo root: %s" % project)
 SEED
+
+# The tape has to know when the recorded team has reached a stage before it can
+# film the next one. Ask Gangline what the agents are doing. A probe that greps a
+# pane for prose is asking the agents to phrase something a certain way: one such
+# probe waited for a filename the brief no longer puts on screen, and spun until
+# the tape timed out and deleted a recording of a team that had in fact finished.
+cat > "$demo_diag/probe.sh" <<'PROBE'
+#!/usr/bin/env bash
+# SPDX-License-Identifier: Apache-2.0
+# Wait for one recorded agent to reach a state, then print a marker the tape
+# waits on. Usage: probe.sh <agent> idle|busy|briefed|reported [seconds]
+#
+# briefed and reported stay true once they are true, which is why the tape waits
+# on one of them before it reads a momentary idle or busy: a probe for the moment
+# a turn starts can arrive after it and then spend its whole budget on a team
+# that has already moved on.
+set -euo pipefail
+
+agent=${1:?probe: agent name required}
+condition=${2:?probe: condition required}
+limit=${3:-280}
+diag=$(cd -- "$(dirname -- "$0")" && pwd)
+log=$diag/probe-$agent.log
+
+read_status() {
+  if ! NO_COLOR=1 gang status "$agent" > "$diag/status-$agent.txt" 2>> "$log"; then
+    printf 'PROBE-ERROR %s %s: gang status failed; see %s\n' \
+      "$agent" "$condition" "$log"
+    exit 1
+  fi
+}
+
+satisfied() {
+  case $condition in
+    idle | busy)
+      read_status
+      if grep -q '~idle~' "$diag/status-$agent.txt"; then
+        [ "$condition" = idle ]
+      else
+        [ "$condition" = busy ]
+      fi
+      ;;
+    briefed)
+      # The lead's delegation leaves the worker owing it a reply, and that debt
+      # stands until the worker reports. It is the arrival of the brief itself,
+      # not a guess from how busy the pane looks.
+      read_status
+      grep -q 'reply owed to lead' "$diag/status-$agent.txt"
+      ;;
+    reported)
+      if ! gang capture "$agent" 80 > "$diag/capture-$agent.txt" 2>> "$log"; then
+        printf 'PROBE-ERROR %s %s: gang capture failed; see %s\n' \
+          "$agent" "$condition" "$log"
+        exit 1
+      fi
+      grep -q '\[gang:worker#' "$diag/capture-$agent.txt"
+      ;;
+    *)
+      printf 'PROBE-ERROR %s %s: unknown condition\n' "$agent" "$condition"
+      exit 1
+      ;;
+  esac
+}
+
+waited=0
+while [ "$waited" -lt "$limit" ]; do
+  if satisfied; then
+    printf '%s %s %s satisfied after %ss\n' \
+      "$(date -u +%H:%M:%SZ)" "$agent" "$condition" "$waited" >> "$log"
+    printf 'PROBE-READY %s %s\n' "$agent" "$condition"
+    exit 0
+  fi
+  sleep 1
+  waited=$((waited + 1))
+done
+printf '%s %s %s gave up after %ss\n' \
+  "$(date -u +%H:%M:%SZ)" "$agent" "$condition" "$limit" >> "$log"
+# Say so on screen. An unmet condition that prints nothing is indistinguishable
+# from a team that never got there, and the tape's own timeout reports neither.
+printf 'PROBE-TIMEOUT %s %s: not reached in %ss; last reading under %s\n' \
+  "$agent" "$condition" "$limit" "$diag"
+exit 1
+PROBE
+chmod +x "$demo_diag/probe.sh"
 
 # Establish and prove the private socket before either native agent launches.
 # Ending its only proof session lets tmux exit; hitch then creates the recorded
