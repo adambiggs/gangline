@@ -24,11 +24,11 @@ Show
 # Native harnesses become ordinary named tmux windows.
 Type "gang hitch lead -c claude-code -d . -m sonnet -e high -r demo-lead"
 Enter
-Wait+Screen@120s /delivered startup contract to lead/
+Wait+Screen@240s /delivered startup contract to lead/
 Sleep 2s
 Type "gang hitch worker -c codex -d . -m gpt-5.6-terra -e high"
 Enter
-Wait+Screen@120s /delivered startup contract to worker/
+Wait+Screen@240s /delivered startup contract to worker/
 Sleep 2s
 
 # Talk opens a real editor; closing it delivers through Gangline's verified path.

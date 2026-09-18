@@ -23,6 +23,13 @@ export XDG_STATE_HOME="$demo_tmux_root/state"
 # A generated follow-up occupies Claude Code's composer after the lead ends its
 # turn, so Gangline correctly parks the worker report instead of overwriting it.
 export CLAUDE_CODE_ENABLE_PROMPT_SUGGESTION=false
+# Each recorded harness boots alongside the other one and the browser and
+# encoder this script starts, and under that load a harness can take longer to
+# reach a composer than the default foreground bound allows. A startup contract
+# that misses the bound is queued rather than typed, and nothing drains that
+# queue before the agent's first turn exists, so the recorded team would never
+# receive its brief.
+export GANG_BOOT_TIMEOUT=120
 # The recorder tty may have no usable systemd user bus. The exact private
 # server and session teardown below own this short-lived team's containment.
 export GANG_SCOPE=off
