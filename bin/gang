@@ -5859,7 +5859,7 @@ ALERT_BINDING_FD=""
 alert_binding_claim() { # serialize the server-global binding decision
   local root socket rc=0
   ALERT_BINDING_FD=""
-  socket="$(tmux display-message -p -t "=$SESSION" '#{socket_path}' 2>/dev/null)" \
+  socket="$(tmux display-message -p -t "=$SESSION" '#{socket_path}')" \
     || return 1
   root="$(cd -P "$(dirname "$socket")" 2>/dev/null && pwd)" \
     || { printf 'cannot resolve the tmux socket directory for alert binding updates\n' >&2; return 1; }
@@ -5922,22 +5922,44 @@ alert_binding_ensure() { # install Prefix+A only while its exact key is unclaime
   tmux set-option -u -t "=$SESSION:" @gl_alert_binding_conflict 2>/dev/null || true
 }
 
+alert_ui_failed() { # $1 the install step that failed; always status 1
+  printf 'could not %s\n' "$1" >&2
+  return 1
+}
+
+alert_ui_cause() { # $1 alert_ui_ensure's stderr -> one line, failed step first
+  local step="" rest="" line=""
+  while IFS= read -r line; do
+    [ -n "$line" ] || continue
+    [ -z "$step" ] || rest="${rest:+$rest; }$step"
+    step="$line"
+  done <<<"$1"
+  [ -n "$step" ] || step="no step reported a cause"
+  printf '%s%s' "$step" "${rest:+ ($rest)}"
+}
+
 alert_ui_ensure() { # migrate and install the non-stealing tmux alert center
+  # Every failing step names itself last, after whatever the step or tmux
+  # printed, so a caller can put the step and its cause on one line.
   local command claim_rc=0 rc=0
-  tick_paths_set || return 1
-  alert_legacy_windows_remove || return 1
-  alert_status_ensure || return 1
+  tick_paths_set || { alert_ui_failed "resolve the tick state directory"; return 1; }
+  alert_legacy_windows_remove || { alert_ui_failed "remove the legacy alert windows"; return 1; }
+  alert_status_ensure || { alert_ui_failed "update the status line"; return 1; }
   command="GANG_SESSION=$(option_shell_quote "$SESSION") GANG_CONFIG_DIR=$(option_shell_quote "$CONFIG_DIR") GANG_LOCK_DIR=$(option_shell_quote "${GANG_LOCK_DIR:-$GANGLINE_STATE_DEFAULT}") \"$(option_shell_quote "$ROOT/bin/gang")\" alerts --open"
-  alert_option_set @gl_alert_health "$TICK_HEALTH" || return 1
+  alert_option_set @gl_alert_health "$TICK_HEALTH" \
+    || { alert_ui_failed "record the health path"; return 1; }
   alert_binding_claim || claim_rc=$?
   if [ "$claim_rc" -eq 0 ]; then
-    alert_option_set @gl_alert_command "$command" || rc=$?
-    [ "$rc" -ne 0 ] || alert_binding_ensure || rc=$?
+    alert_option_set @gl_alert_command "$command" \
+      || { rc=$?; alert_ui_failed "record the alert command"; }
+    [ "$rc" -ne 0 ] || alert_binding_ensure \
+      || { rc=$?; alert_ui_failed "install the Prefix+A binding"; }
     alert_binding_claim_release
   else
     rc=1
+    alert_ui_failed "claim the Prefix+A binding"
   fi
-  alert_state_refresh || rc=$?
+  alert_state_refresh || { rc=$?; alert_ui_failed "refresh the alert widget"; }
   return "$rc"
 }
 
@@ -6687,7 +6709,18 @@ tick_full_pass_once() {
   local compact_note="" compact_rc=0 cache_rc=0 compacted=0
   local cursor="" last="" visited=0 total=0 partial=0
   local TICK_PASS=1 GLYPH_SOURCE=tick
-  alert_ui_ensure || { printf 'tick could not install the tmux alert center\n' >&2; rc=1; }
+  local alert_err="" alert_rc=0
+  # A tick alert keeps only the last line of the pass's output, and a failure
+  # that clears on the next pass leaves nothing else to read, so the failed
+  # step and what it printed travel on that one line.
+  { alert_err="$(alert_ui_ensure 2>&1 1>&3)" || alert_rc=$?; } 3>&1
+  if [ "$alert_rc" -ne 0 ]; then
+    printf 'tick could not install the tmux alert center: %s\n' \
+      "$(alert_ui_cause "$alert_err")" >&2
+    rc=1
+  elif [ -n "$alert_err" ]; then
+    printf '%s\n' "$alert_err" >&2
+  fi
   wins="$(tmux list-windows -t "=$SESSION" \
     -F '#{window_id} #{@gl_agent} #{@gl_collar} #{@gl_tick_alerts}')" \
     || { printf "tick could not list windows in session '%s'\n" "$SESSION" >&2; return 1; }
