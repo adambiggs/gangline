@@ -1,6 +1,6 @@
 # shellcheck shell=bash
 # SPDX-License-Identifier: Apache-2.0
-# Teardown authority: the safe-to-drop mark, its preconditions, delivery refusal, and who may drop whom.
+# Teardown authority: the safe-to-drop mark, its preconditions, delivery clearing it, and who may drop whom.
 #
 # A PART IS A FRAGMENT, NOT A SCRIPT. test/integration.sh sources this file
 # in order and it reads that shell's fixtures, helpers and counters.
@@ -144,48 +144,21 @@ td_as td-child safe-to-drop --report-to td-worker
 equal "marking again is idempotent" 0 "$td_rc"
 contains "marking again says so" "$td_out" "already marked"
 
-# A MARKED REGISTRATION ACCEPTS NO FURTHER DELIVERY, AND SAYS SO LOUDLY.
+# A DELIVERY TO A MARKED AGENT IS DELIVERED AND CLEARS THE MARK (#296). The
+# agent is alive and idle, and a message it takes is more work, so it is no
+# longer finished. It marks itself again when it is.
 td_send td-worker td-child "TD_LATE_WORK"
-equal "a send to a marked agent is refused" 3 "$td_rc"
-contains "the refusal names the mark" "$td_out" "has marked itself safe to drop"
-td_rc=0
-td_out="$(printf 'TD_LATE_LIVE' | "$GANG" send --to td-child --from tester --live-only --stdin 2>&1)" || td_rc=$?
-equal "a live-only send to a marked agent is refused" 3 "$td_rc"
-contains "the live-only refusal names the mark" "$td_out" "has marked itself safe to drop"
-td_rc=0
-td_out="$("$GANG" interrupt td-child -m TD_LATE_REASON --from tester 2>&1)" || td_rc=$?
-equal "an interrupt carrying a reason to a marked agent is refused" 3 "$td_rc"
-contains "the interrupt refusal names the mark" "$td_out" "has marked itself safe to drop"
-td_rc=0
-td_out="$(printf 'TD_LATE_TIMED' | "$GANG" at 1h --to td-child --from tester --stdin 2>&1)" || td_rc=$?
-if [ "$td_rc" -ne 0 ]; then
-  pass "a timed send to a marked agent is refused"
-else
-  fail "a timed send to a marked agent is refused" "$td_out"
-fi
-contains "the timed refusal names the mark" "$td_out" "has marked itself safe to drop"
-td_rc=0
-td_out="$("$GANG" compact td-child 2>&1)" || td_rc=$?
-equal "a compaction of a marked agent is refused" 3 "$td_rc"
-contains "the compaction refusal names the mark" "$td_out" "has marked itself safe to drop"
-td_as td-child compact --resume TD_LATE_RESUME
-equal "a marked agent's own compaction is refused" 3 "$td_rc"
-equal "the refused self-compaction records no request" "" \
-  "$(tmux show-options -wqv -t "$(window_id td-child)" @gl_self_compact_requested)"
-td_child_left=0
-for td_entry in "$td_child_spool"/* "$td_child_spool"/.[!.]*; do
-  [ -e "$td_entry" ] || [ -L "$td_entry" ] || continue
-  td_child_left=$((td_child_left + 1))
-done
-equal "nothing refused was parked for the marked agent" 0 "$td_child_left"
-excludes "nothing refused reached the marked pane" "$(pane_all td-child)" "TD_LATE"
-contains "the refused body is still the sender's to act on" "$td_out" "the body is still the sender's"
-
-# A RE-ADOPTION KEEPS THE REGISTRATION, SO IT CANNOT RESUME A MARKED AGENT.
-td_rc=0
-td_out="$("$GANG" adopt td-child -c droppable 2>&1)" || td_rc=$?
-equal "re-adopting a marked agent is refused" 3 "$td_rc"
-equal "the refused re-adoption keeps the mark" \
+equal "a send to a marked agent is delivered" 0 "$td_rc"
+# source-guard: producer@f0b86f95ae06: the body is unique to the send immediately above, whose exit 0 and the cleared mark asserted beside it are the independent witness that this delivery typed it rather than that unrelated text is on the screen
+contains "the delivered body reached the marked pane" "$(pane_all td-child)" "TD_LATE_WORK"
+equal "the delivery cleared the mark" "" "$(td_mark td-child)"
+equal "porcelain no longer names the mark" - "$(td_teardown_word td-child)"
+excludes "status no longer names the mark" "$("$GANG" status td-child)" "safe to drop"
+contains "the cleared mark is recorded as an event" \
+  "$("$GANG" log td-child --kind agent.unmarked)" '"cleared_by": "delivery"'
+td_as td-child safe-to-drop --report-to td-worker
+equal "the agent marks itself again once its mail is taken" 0 "$td_rc"
+equal "the new mark is the registration's spool identity" \
   "$(tmux show-options -wqv -t "$(window_id td-child)" @gl_spool)" "$(td_mark td-child)"
 
 # THE CHILD IS CLOSED OUT, SO ITS HITCHER MAY NOW MARK ITSELF — but not over
