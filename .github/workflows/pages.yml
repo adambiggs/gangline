@@ -28,8 +28,9 @@ jobs:
         run: |
           set -euo pipefail
           mkdir -p _site
-          cp site/index.html site/mushing-frames.js _site/
+          cp site/index.html site/field.js _site/
           cp site/demo.gif site/demo.mp4 site/demo-poster.jpg _site/
+          cp -R site/fonts _site/fonts
           # Install instructions point at the raw GitHub URL on purpose — what you
           # pipe is verifiably the repo file — so no /install copy is published.
           echo gangline.ai > _site/CNAME

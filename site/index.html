@@ -5,113 +5,173 @@
   <meta name="viewport" content="width=device-width,initial-scale=1">
   <title>Gangline — coding agents in one tmux session</title>
   <meta name="description" content="Gangline runs Claude Code, Codex, OpenCode, and Pi as named windows in one tmux session. Send work by name, watch it land, keep agents going for hours. No daemon, no database.">
+  <meta name="color-scheme" content="light dark">
+  <meta name="theme-color" content="#d6e6f7" media="(prefers-color-scheme: light)">
+  <meta name="theme-color" content="#071530" media="(prefers-color-scheme: dark)">
+  <link rel="preload" href="fonts/newsreader-latin.woff2" as="font" type="font/woff2" crossorigin>
+  <link rel="preload" href="fonts/instrument-sans-latin.woff2" as="font" type="font/woff2" crossorigin>
   <style>
-    :root {
-      color-scheme: light dark;
-      --snow:#fbf7ee; --ink:#3b261a; --accent:#9c455a; --dim:#705c4d; --term-dim:#c7b8a3;
-      --rule:#77593b66; --code:#eadfce;
-      --hero:#f1e5cf; --hero-dim:#564335; --hero-accent:#7c3244; --fold:#6c4930;
-      --art:#6c4930; --art-opacity:.24;
+    @font-face{font-family:'Newsreader';src:url('fonts/newsreader-latin.woff2') format('woff2');font-weight:200 800;font-style:normal;font-display:swap}
+    @font-face{font-family:'Newsreader';src:url('fonts/newsreader-italic-latin.woff2') format('woff2');font-weight:200 800;font-style:italic;font-display:swap}
+    @font-face{font-family:'Instrument Sans';src:url('fonts/instrument-sans-latin.woff2') format('woff2');font-weight:400 700;font-style:normal;font-display:swap}
+    @font-face{font-family:'Instrument Sans';src:url('fonts/instrument-sans-italic-latin.woff2') format('woff2');font-weight:400 700;font-style:italic;font-display:swap}
+
+    /* Dark: dusk on the trail — deep blue overhead, the last plum of light at
+       the horizon, and one lit window's worth of warmth. */
+    :root{
+      --bg:#06090f;--g1:#071530;--g2:#1f2860;--g3:#3d2444;
+      --bg2:rgba(255,255,255,.05);--ink:#e9eef7;--soft:#b2bed0;--mute:#7f8da0;--rule:rgba(255,255,255,.11);
+      --acc:#f0a23c;--acc-ink:#10131a;--glyph:233,238,247;--trail:132,170,214;
+      --serif:'Newsreader',Georgia,serif;--sans:'Instrument Sans',system-ui,sans-serif;--mono:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;
+      color-scheme:dark;
     }
-    * { box-sizing:border-box; }
-    body { margin:0; background:var(--snow); color:var(--ink); font:16px/1.65 ui-monospace,SFMono-Regular,Menlo,Consolas,monospace; }
-    main { max-width:48rem; margin:auto; padding:3rem 1.5rem 4rem; }
-    h1 { margin:0; font-size:2rem; }
-    h2 { margin-top:3rem; padding-bottom:.4rem; border-bottom:1px solid var(--rule); font-size:1rem; }
-    .tag,.dim,li { color:var(--dim); }
-    a { color:var(--accent); }
-    nav { margin:2rem 0; }
-    nav a { margin-right:1rem; }
-    pre { overflow:auto; padding:1rem; border:1px solid var(--rule); border-radius:.4rem; background:var(--code); }
-    code { font-family:inherit; }
-    :not(pre) > code { padding:.08rem .3rem; border:1px solid var(--rule); border-radius:.25rem; background:var(--code); color:var(--accent); }
-    li { margin:.5rem 0; }
-    .term { overflow:hidden; margin:2rem 0; border:1px solid var(--rule); border-radius:.4rem; background:#0f1115; }
-    .term video { display:block; width:100%; height:auto; }
-    .term p { margin:0; padding:.7rem 1rem; color:var(--term-dim); font-size:.8rem; }
-    footer { margin-top:4rem; padding-top:1rem; border-top:1px solid var(--rule); color:var(--dim); }
-    /* The hero is the area above the fold: the animation fills it edge to edge and ends on the fold rule. */
-    .hero { position:relative; isolation:isolate; overflow:hidden; display:flex; align-items:center; justify-content:center; min-height:26rem; min-height:clamp(26rem,72svh,42rem); padding:4rem 1.5rem 3rem; background:var(--hero); border-bottom:2px solid var(--fold); }
-    /* Title and tagline read as a dictionary entry: headword, pronunciation and part of speech, definition. */
-    .hero-copy { position:relative; z-index:1; max-width:40rem; text-align:left; }
-    .hero h1 { font-size:clamp(3.25rem,15vw,7.5rem); line-height:1; letter-spacing:-.04em; }
-    .hero .entry { margin:1rem 0 0; color:var(--hero-dim); }
-    .hero .def { max-width:34rem; margin:.4rem 0 0; font-size:1.125rem; }
-    .hero nav { margin:2.5rem 0 0; }
-    .hero nav a { display:inline-block; margin:0 1.1rem 0 0; color:var(--hero-accent); white-space:nowrap; }
-    /* Size container, so the frame can cover the hero at any aspect ratio. */
-    .mushing { position:absolute; z-index:-1; inset:0; overflow:hidden; container-type:size; opacity:var(--art-opacity); pointer-events:none; user-select:none; mask-image:linear-gradient(to bottom,transparent,#000 40%); }
-    .mushing pre { position:absolute; top:50%; left:50%; margin:0; padding:0; border:0; background:none; color:var(--art); overflow:visible; font:1.5rem/.82 ui-monospace,SFMono-Regular,Menlo,Consolas,monospace; font-size:max(2.15vw,1.5rem); font-size:max(2.15cqw,3.45cqh); letter-spacing:0; transform:translate(-50%,-50%) scaleY(1.34); }
-    @media (prefers-color-scheme: dark) {
-      :root { --snow:#211914; --ink:#f5eee0; --accent:#f09aac; --dim:#cebda5; --term-dim:#cebda5; --rule:#c9a98166; --code:#34271e;
-        --hero:#17110d; --hero-dim:#cebda5; --hero-accent:#f09aac; --fold:#a8845c; --art:#d9b586; --art-opacity:.25; }
+    /* Light: full daylight on snow — low sun crossing a cold field, with the
+       warmth kept for harness and sled. */
+    @media (prefers-color-scheme:light){:root{
+      --bg:#eef4fa;--g1:#d6e6f7;--g2:#f8ecd8;--g3:#bfd6e6;
+      --bg2:rgba(16,38,60,.05);--ink:#12202e;--soft:#44566a;--mute:#6d8096;--rule:rgba(16,38,60,.13);
+      --acc:#b4531c;--acc-ink:#fff;--glyph:44,70,96;--trail:70,110,150;color-scheme:light;
+    }}
+
+    *,*::before,*::after{box-sizing:border-box}
+    html{-webkit-text-size-adjust:100%}
+    body{margin:0;background:var(--bg);color:var(--ink);font-family:var(--sans);font-size:1.0625rem;line-height:1.65;-webkit-font-smoothing:antialiased}
+    a{color:var(--ink);text-decoration:none;transition:color 150ms}
+    a:hover{color:var(--acc)}
+    p a,li a{text-decoration:underline;text-decoration-color:var(--mute);text-underline-offset:.18em}
+    ::selection{background:var(--acc);color:var(--acc-ink)}
+    :focus-visible{outline:2px solid var(--acc);outline-offset:3px}
+    h1,h2,h3,p{margin:0}
+    .serif{font-family:var(--serif);font-optical-sizing:auto}
+    .mute{color:var(--mute)}
+    .soft{color:var(--soft)}
+
+    /* Background: tri-tone diagonal gradient + the snowfield canvas. */
+    .bgfx{position:fixed;inset:0;z-index:0;pointer-events:none;background:linear-gradient(135deg,var(--g1) 0%,var(--g2) 50%,var(--g3) 100%)}
+    .bgfx canvas{position:absolute;inset:0;width:100%;height:100%}
+    .wrap{position:relative;z-index:1;max-width:76rem;margin:0 auto;padding:0 clamp(1.5rem,5vw,4rem)}
+
+    .split{display:grid;grid-template-columns:minmax(0,5fr) minmax(0,7fr);gap:clamp(2rem,6vw,6rem)}
+    .sticky{position:sticky;top:0;height:100vh;display:flex;flex-direction:column;justify-content:space-between;padding:clamp(3rem,10vh,6rem) 0}
+    .name{font-size:clamp(2.5rem,5vw,3.25rem);font-weight:500;line-height:1.05;letter-spacing:-.01em}
+    .entry{margin-top:.5rem;color:var(--mute);font-size:.9375rem}
+    .entry .ipa{font-family:var(--mono);font-size:.875rem}
+    .statement{margin-top:2.5rem;font-size:clamp(1.5rem,2.2vw,1.875rem);line-height:1.3;max-width:26rem;text-wrap:pretty}
+    .sidenav{display:flex;flex-direction:column;gap:.75rem;margin-top:3.5rem;font-size:.8125rem;letter-spacing:.12em;text-transform:uppercase;font-weight:600}
+    .sidenav a{color:var(--mute)}
+    .sidenav a:hover{color:var(--ink)}
+    .links{display:flex;flex-wrap:wrap;gap:.5rem 1.5rem;font-size:.9375rem}
+    .links a{color:var(--mute)}
+
+    .flow{padding:clamp(3rem,10vh,6rem) 0 4rem}
+    .sec{max-width:38rem;scroll-margin-top:3rem}
+    .sec+.sec{margin-top:clamp(5rem,12vh,8rem)}
+    .h2{font-family:var(--serif);font-size:clamp(2rem,3vw,2.5rem);font-weight:500;line-height:1.1;letter-spacing:-.01em}
+    .lede{font-size:1.125rem;line-height:1.7;color:var(--soft);text-wrap:pretty}
+    .sec p+p{margin-top:1.5rem}
+    .sec h2+p{margin-top:1rem}
+    .sec .soft{text-wrap:pretty}
+
+    pre{margin:1.5rem 0 0;padding:1.25rem 1.5rem;background:var(--bg2);border:1px solid var(--rule);font-family:var(--mono);font-size:.875rem;line-height:1.6;overflow-x:auto;color:var(--ink)}
+    code{font-family:var(--mono);font-size:.9em}
+    :not(pre)>code{color:var(--ink)}
+
+    /* Demo: a flat surface, like the code blocks, with the caption under it. */
+    .term{margin-top:2rem;border:1px solid var(--rule);background:#05090f}
+    .term video{display:block;width:100%;height:auto}
+    .cap{margin-top:.75rem;color:var(--mute);font-size:.9375rem;text-wrap:pretty}
+
+    /* Capability list, on the ruled-row pattern the rest of the site uses. */
+    .items{margin:2rem 0 0;padding:0;list-style:none;border-top:1px solid var(--rule)}
+    .items li{margin:0;padding:1.75rem 0;border-bottom:1px solid var(--rule)}
+    .items h3{font-size:1.25rem;font-weight:600}
+    .items p{margin-top:.5rem;color:var(--soft);text-wrap:pretty}
+    .items+p{margin-top:2rem}
+
+    .ftr{margin-top:clamp(5rem,12vh,8rem);color:var(--mute);font-size:.9375rem}
+    .ftr .links{margin-bottom:.75rem}
+    .ftr p{text-wrap:pretty}
+
+    @media (max-width:900px){
+      .split{display:block}
+      .sticky{position:static;height:auto;padding:clamp(2.5rem,8vh,4rem) 0 0}
+      .statement{margin-top:1.5rem}
+      .sidenav{flex-direction:row;flex-wrap:wrap;gap:.75rem 1.5rem;margin-top:2rem}
+      .sticky .links{margin-top:2rem}
+      .flow{padding-top:clamp(3rem,8vh,4rem)}
+      .sec{max-width:none}
     }
-    @media (max-width: 430px) {
-      main { padding:2rem 1rem 3rem; }
-      .hero { min-height:clamp(24rem,64svh,36rem); padding:3rem 1rem 2.5rem; }
-      .hero nav a { margin-right:.8rem; }
-    }
+    @media (prefers-reduced-motion:reduce){*{transition:none!important}}
   </style>
-  <script src="mushing-frames.js" defer></script>
+  <script src="field.js" defer></script>
 </head>
 <body>
-<header class="hero">
-  <div class="mushing" aria-hidden="true"><pre id="mushing"></pre></div>
-  <div class="hero-copy">
-    <h1>gangline</h1>
-    <p class="entry"><span class="ipa">/ˈɡæŋˌlaɪn/</span> <i>noun</i></p>
-    <p class="def"><i>Mushing.</i> The line that joins several harnesses into one team.</p>
+<div class="bgfx" aria-hidden="true"><canvas id="field"></canvas></div>
+<div class="wrap">
+  <div class="split">
+    <header class="sticky">
+      <div>
+        <h1 class="serif name">gangline</h1>
+        <p class="entry"><span class="ipa">/ˈɡæŋˌlaɪn/</span> <i>noun</i></p>
+        <p class="serif statement"><i>Mushing.</i> The line that joins several harnesses into one team.</p>
+        <nav class="sidenav" aria-label="Sections">
+          <a href="#demo">Demo</a>
+          <a href="#start">Start</a>
+          <a href="#surface">What it does</a>
+          <a href="#long">Long sessions</a>
+        </nav>
+      </div>
+      <div class="links">
+        <a href="https://github.com/adambiggs/gangline">GitHub</a>
+        <a href="https://github.com/adambiggs/gangline/blob/main/docs/reference.md">Reference</a>
+        <a href="https://github.com/adambiggs/gangline/blob/main/CONSTITUTION.md">Constitution</a>
+      </div>
+    </header>
 
-    <nav>
-      <a href="#demo">demo</a>
-      <a href="#start">start</a>
-      <a href="#surface">what it does</a>
-      <a href="#long">long sessions</a>
-      <a href="https://github.com/adambiggs/gangline">github</a>
-    </nav>
-  </div>
-</header>
-<main>
-  <p>Gangline runs Claude Code, Codex, OpenCode, and Pi as named windows in one
-  tmux session, so they can hand each other work by name and you can watch the
-  whole thing happen.</p>
+    <main class="flow">
+      <section class="sec lede">
+        <p>Gangline runs Claude Code, Codex, OpenCode, and Pi as named windows in
+        one tmux session, so they can hand each other work by name and you can
+        watch the whole thing happen.</p>
+        <pre><code>curl -fsSL https://raw.githubusercontent.com/adambiggs/gangline/main/install.sh | sh</code></pre>
+      </section>
 
-  <pre><code>curl -fsSL https://raw.githubusercontent.com/adambiggs/gangline/main/install.sh | sh</code></pre>
+      <section id="demo" class="sec">
+        <h2 class="h2">Demo</h2>
+        <div class="term">
+          <video autoplay loop muted playsinline controls preload="metadata"
+                 poster="demo-poster.jpg"
+                 aria-label="An operator briefs a Claude Code lead with gang talk, watches it and a Codex worker build an animated terminal show through gang attach, then runs their colorful result.">
+            <source src="demo.mp4" type="video/mp4">
+          </video>
+        </div>
+        <p class="cap">Compose with <code>gang talk</code>, watch the real harnesses
+        build with <code>gang attach</code>, then run their result. Nothing here is
+        re-enacted.</p>
+      </section>
 
-  <section id="demo">
-    <h2>Demo</h2>
-    <div class="term">
-      <video autoplay loop muted playsinline controls preload="metadata"
-             poster="demo-poster.jpg"
-             aria-label="An operator briefs a Claude Code lead with gang talk, watches it and a Codex worker build an animated terminal show through gang attach, then runs their colorful result.">
-        <source src="demo.mp4" type="video/mp4">
-      </video>
-      <p>Compose with <code>gang talk</code>, watch the real harnesses build with
-      <code>gang attach</code>, then run their result. Nothing here is re-enacted.</p>
-    </div>
-  </section>
+      <section id="start" class="sec">
+        <h2 class="h2">Start</h2>
+        <p class="soft">First run each native harness directly to finish its normal
+        onboarding, sign-in, and repo-trust prompts; Gangline never answers security
+        choices. Then open a team in the repo the agents should work in.
+        <code>gang up</code> starts a Claude Code lead and drops you into its
+        window.</p>
 
-  <section id="start">
-    <h2>Start</h2>
-    <p>First run each native harness directly to finish its normal onboarding,
-    sign-in, and repo-trust prompts; Gangline never answers security choices.
-    Then open a team in the repo the agents should work in. <code>gang up</code>
-    starts a Claude Code lead and drops you into its window.</p>
-
-    <pre><code>cd ~/your/repo
+        <pre><code>cd ~/your/repo
 gang up -c claude-code -m sonnet -e high</code></pre>
 
-    <p>Codex may show a separate hook-review prompt on its first Gangline hitch:
-    running Codex alone cannot clear it because Gangline adds those hooks at
-    launch, and a changed hook path or command can raise the review again. If
-    hitch reports a first-run prompt, run <code>gang attach</code> from another
-    operator terminal, select the named <code>worker</code> window, and answer it
-    there. The original hitch will then finish. Ask the harness for a current
-    Codex model and one of the efforts listed beside it — the later example
-    reuses the two variables you set here — then add the agent and give it
-    something to do.</p>
+        <p class="soft">Codex may show a separate hook-review prompt on its first
+        Gangline hitch: running Codex alone cannot clear it because Gangline adds
+        those hooks at launch, and a changed hook path or command can raise the
+        review again. If hitch reports a first-run prompt, run
+        <code>gang attach</code> from another operator terminal, select the named
+        <code>worker</code> window, and answer it there. The original hitch will
+        then finish. Ask the harness for a current Codex model and one of the
+        efforts listed beside it — the later example reuses the two variables you
+        set here — then add the agent and give it something to do.</p>
 
-    <pre><code>gang models -c codex
+        <pre><code>gang models -c codex
 read -r -p "Codex model: " CODEX_MODEL
 read -r -p "Codex effort: " CODEX_EFFORT
 gang hitch worker -c codex -d "$PWD" -m "$CODEX_MODEL" -e "$CODEX_EFFORT"
@@ -121,95 +181,108 @@ Fix the failing parser test and report the proof.
 TASK
 
 gang roster</code></pre>
-  </section>
+      </section>
 
-  <section id="surface">
-    <h2>What it does</h2>
-    <ul>
-      <li><strong>Delivers work by name.</strong> A message is typed into that
-        agent's own terminal, signed with the sender's name. It reads like
-        anything else you would type there — no side channel, no protocol for
-        anyone to learn.</li>
-      <li><strong>Tells you what actually happened.</strong> A message is
-        reported delivered only once Gangline has seen it land and be
-        submitted, never on the strength of having typed it. Where a harness
-        lets it read the input box, it will not type over a line you half
-        finished. What it reports when a message does not land, and what makes
-        it refuse, is in the <a href="https://github.com/adambiggs/gangline/blob/main/docs/reference.md">reference</a>.</li>
-      <li><strong>Lets you read over their shoulder.</strong> Every agent is a
-        real tmux window. <code>gang attach</code> to watch one work,
-        <code>gang roster</code> to see who is busy and who is waiting.</li>
-      <li><strong>Adds and removes agents mid-run.</strong>
-        A fully specified <code>gang hitch</code> opens another harness on the
-        same repo, and <code>gang drop reviewer</code> closes it again.</li>
-      <li><strong>Gets a run through the night.</strong> An agent watching its
-        context fill can compact at a checkpoint it chooses and carry on, and
-        one that spends its provider quota can be woken when that quota
-        resets.</li>
-    </ul>
+      <section id="surface" class="sec">
+        <h2 class="h2">What it does</h2>
+        <ul class="items">
+          <li>
+            <h3>Delivers work by name</h3>
+            <p>A message is typed into that agent's own terminal, signed with the
+            sender's name. It reads like anything else you would type there — no
+            side channel, no protocol for anyone to learn.</p>
+          </li>
+          <li>
+            <h3>Tells you what actually happened</h3>
+            <p>A message is reported delivered only once Gangline has seen it land
+            and be submitted, never on the strength of having typed it. Where a
+            harness lets it read the input box, it will not type over a line you
+            half finished. What it reports when a message does not land, and what
+            makes it refuse, is in the <a href="https://github.com/adambiggs/gangline/blob/main/docs/reference.md">reference</a>.</p>
+          </li>
+          <li>
+            <h3>Lets you read over their shoulder</h3>
+            <p>Every agent is a real tmux window. <code>gang attach</code> to watch
+            one work, <code>gang roster</code> to see who is busy and who is
+            waiting.</p>
+          </li>
+          <li>
+            <h3>Adds and removes agents mid-run</h3>
+            <p>A fully specified <code>gang hitch</code> opens another harness on
+            the same repo, and <code>gang drop reviewer</code> closes it again.</p>
+          </li>
+          <li>
+            <h3>Gets a run through the night</h3>
+            <p>An agent watching its context fill can compact at a checkpoint it
+            chooses and carry on, and one that spends its provider quota can be
+            woken when that quota resets.</p>
+          </li>
+        </ul>
 
-    <p>What it deliberately isn't: there is no task graph, no supervisor, no
-    daemon, and no database. Gangline connects native agents; it does not manage
-    them. It hands out no work, chases nobody, enforces no deadline, and never
-    answers a permission prompt or loosens a harness's sandbox. Each agent keeps
-    the terminal, tools, permissions, and subscription it already had.</p>
+        <p class="soft">What it deliberately isn't: there is
+        no task graph, no supervisor, no daemon, and no database. Gangline connects
+        native agents; it does not manage them. It hands out no work, chases nobody,
+        enforces no deadline, and never answers a permission prompt or loosens a
+        harness's sandbox. Each agent keeps the terminal, tools, permissions, and
+        subscription it already had.</p>
 
-    <p>It is also not a replacement for whatever subagents your harness spawns
-    on its own — Gangline operates one level up. A subagent is created and owned
-    by a single harness session, and that ownership is what makes it one.
-    Gangline works between sessions instead: every agent in a team is a separate
-    top-level process running the harness's ordinary CLI in its own tmux window,
-    and one team can put Claude Code, Codex, OpenCode, and Pi side by side. That
-    is a difference in architecture; what each command does and refuses is in
-    the <a href="https://github.com/adambiggs/gangline/blob/main/docs/reference.md">reference</a>.</p>
-  </section>
+        <p class="soft">It is also not a replacement for whatever subagents your
+        harness spawns on its own — Gangline operates one level up. A subagent is
+        created and owned by a single harness session, and that ownership is what
+        makes it one. Gangline works between sessions instead: every agent in a team
+        is a separate top-level process running the harness's ordinary CLI in its
+        own tmux window, and one team can put Claude Code, Codex, OpenCode, and Pi
+        side by side. That is a difference in architecture; what each command does
+        and refuses is in the <a href="https://github.com/adambiggs/gangline/blob/main/docs/reference.md">reference</a>.</p>
+      </section>
 
-  <section id="long">
-    <h2>Long sessions</h2>
-    <p>A team that runs for hours hits two walls: the context window and the
-    provider limit. Gangline helps with both without taking the decision away
-    from the agent.</p>
+      <section id="long" class="sec">
+        <h2 class="h2">Long sessions</h2>
+        <p class="soft">A team that runs for hours hits two walls: the context
+        window and the provider limit. Gangline helps with both without taking the
+        decision away from the agent.</p>
 
-    <p>Context lights tell an agent once when it crosses yellow and once when
-    it crosses red. What it does about that is its own call: when it wants the
-    room back it runs <code>gang compact</code>, which fires the harness's real
-    compaction command — the same one you would type yourself. Each collar sizes
-    those edges for the model you hitched, so a team mixing harnesses gets
-    working lights with nothing configured:</p>
+        <p class="soft">Context lights tell an agent once when it crosses yellow and
+        once when it crosses red. What it does about that is its own call: when it
+        wants the room back it runs <code>gang compact</code>, which fires the
+        harness's real compaction command — the same one you would type yourself.
+        Each collar sizes those edges for the model you hitched, so a team mixing
+        harnesses gets working lights with nothing configured:</p>
 
-    <pre><code>gang hitch worker -c codex -m "$CODEX_MODEL" -e "$CODEX_EFFORT"</code></pre>
+        <pre><code>gang hitch worker -c codex -m "$CODEX_MODEL" -e "$CODEX_EFFORT"</code></pre>
 
-    <p>Set them yourself for one agent, or for the team, when you want edges of
-    your own — high, but below the point where the harness would compact on its
-    own:</p>
+        <p class="soft">Set them yourself for one agent, or for the team, when you
+        want edges of your own — high, but below the point where the harness would
+        compact on its own:</p>
 
-    <pre><code>gang hitch worker -c codex -m "$CODEX_MODEL" -e "$CODEX_EFFORT" --lights 50%,80%</code></pre>
+        <pre><code>gang hitch worker -c codex -m "$CODEX_MODEL" -e "$CODEX_EFFORT" --lights 50%,80%</code></pre>
 
-    <p>The provider limit is the other wall. When an agent's own usage crosses
-    the percentage you named, Gangline can set a one-shot wake for that window's
-    reset and send the agent back to work when it fires — so a team can carry on
-    across a limit with nobody at the keyboard:</p>
+        <p class="soft">The provider limit is the other wall. When an agent's own
+        usage crosses the percentage you named, Gangline can set a one-shot wake for
+        that window's reset and send the agent back to work when it fires — so a
+        team can carry on across a limit with nobody at the keyboard:</p>
 
-    <pre><code>GANG_AUTO_RESUME="97%" gang hitch worker -c claude-code -m sonnet -e high</code></pre>
+        <pre><code>GANG_AUTO_RESUME="97%" gang hitch worker -c claude-code -m sonnet -e high</code></pre>
 
-    <p>If you want the team to know the clock, declare one curfew. Yellow lands
-    halfway through the span and red after four-fifths, and agents whose harness
-    reports its own turn boundaries are told once at each edge. Nothing stops
-    automatically.</p>
+        <p class="soft">If you want the team to know the clock, declare one curfew.
+        Yellow lands halfway through the span and red after four-fifths, and agents
+        whose harness reports its own turn boundaries are told once at each edge.
+        Nothing stops automatically.</p>
 
-    <pre><code>gang curfew 2h</code></pre>
-  </section>
+        <pre><code>gang curfew 2h</code></pre>
+      </section>
 
-  <p class="dim">One Bash script over tmux. State dies with its window or
-  team.</p>
-
-  <footer>
-    <a href="https://github.com/adambiggs/gangline">source</a> ·
-    <a href="https://github.com/adambiggs/gangline/blob/main/docs/reference.md">reference</a> ·
-    <a href="https://github.com/adambiggs/gangline/blob/main/CONSTITUTION.md">constitution</a> ·
-    <a href="https://commons.wikimedia.org/wiki/File:Dogs_pulling_a_sled.webm">mushing backdrop adapted from <cite>Dogs pulling a sled</cite> by Jan Mosimann, CC BY 2.0</a> ·
-    Apache-2.0
-  </footer>
-</main>
+      <footer class="ftr">
+        <div class="links">
+          <a href="https://github.com/adambiggs/gangline">source</a>
+          <a href="https://github.com/adambiggs/gangline/blob/main/docs/reference.md">reference</a>
+          <a href="https://github.com/adambiggs/gangline/blob/main/CONSTITUTION.md">constitution</a>
+          <a href="https://github.com/adambiggs/gangline/blob/main/LICENSE">Apache-2.0</a>
+        </div>
+        <p>One Bash script over tmux. State dies with its window or team.</p>
+      </footer>
+    </main>
+  </div>
+</div>
 </body>
 </html>
