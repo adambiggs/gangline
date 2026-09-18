@@ -98,6 +98,12 @@
    * grid steps a cell the moment the offset passes one, and the translate
    * gives it back until the offset catches up. */
   const PARALLAX = 0.16;
+  /* Pulled past either end of the page, some browsers drag the fixed
+   * background along with the rubber band. The canvas runs OVER px past the
+   * top and bottom of the screen so there is field to show there; matrix
+   * row 0 sits that far above the screen, and the spare rows are only drawn
+   * while the page rests at, or is pulled past, that end. */
+  const OVER = 240;
   const step = (o) => { const whole = Math.floor(o); return { whole, frac: whole - o }; };
 
   /* Two things move the bodies. Drag: the liquid pulls them to a lag set by
@@ -160,6 +166,7 @@
   /* Add one body to the field: an ellipse of half-axes rx, ry at cx, cy,
    * in matrix coordinates, with a soft (1 - d²)² falloff. */
   const splat = (cx, cy, rx, ry, a, into = acc) => {
+    cy += OVER;
     const x0 = Math.max(0, Math.floor((cx - rx) / cw)), x1 = Math.min(cols - 1, Math.ceil((cx + rx) / cw));
     const y0 = Math.max(0, Math.floor((cy - ry) / ch)), y1 = Math.min(rows - 1, Math.ceil((cy + ry) / ch));
     for (let y = y0; y <= y1; y++) {
@@ -220,10 +227,10 @@
   const resize = () => {
     dpr = Math.min(2, devicePixelRatio || 1);
     W = innerWidth; H = innerHeight;
-    c.width = Math.round(W * dpr); c.height = Math.round(H * dpr);
+    c.width = Math.round(W * dpr); c.height = Math.round((H + 2 * OVER) * dpr);
     ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
     spriteCol = '';
-    cols = Math.ceil(W / cw) + 1; rows = Math.ceil(H / ch) + 2;
+    cols = Math.ceil(W / cw) + 1; rows = Math.ceil((H + 2 * OVER) / ch) + 2;
     acc = new Float32Array(cols * rows); cacc = new Float32Array(cols * rows);
     qx = new Float32Array(cols); qy = new Float32Array(rows);
     perBand = Math.ceil(W * H / 58000);
@@ -234,7 +241,7 @@
   const rgb = () => getComputedStyle(document.documentElement).getPropertyValue('--glyph').trim() || col;
 
   const draw = (dt) => {
-    ctx.clearRect(0, 0, W, H);
+    ctx.clearRect(0, 0, W, H + 2 * OVER);
     if (!rm) {
       f.t += dt;
       if (f.mx < -1e3) { f.mx = f.tx; f.my = f.ty; }
@@ -332,7 +339,7 @@
       const [ax, ay] = shape(cur);
       const rx = CUR_HALO_RX * breathe * ax, ry = CUR_HALO_RY * breathe * ay;
       const bx0 = Math.max(0, Math.floor((cx - rx) / cw)), bx1 = Math.min(cols - 1, Math.ceil((cx + rx) / cw));
-      const by0 = Math.max(0, Math.floor((cy - ry) / ch)), by1 = Math.min(rows - 1, Math.ceil((cy + ry) / ch));
+      const by0 = Math.max(0, Math.floor((cy + OVER - ry) / ch)), by1 = Math.min(rows - 1, Math.ceil((cy + OVER + ry) / ch));
       for (let y = by0; y <= by1; y++) cacc.fill(0, y * cols + bx0, y * cols + bx1 + 1);
       splat(cx, cy, CUR_RX * breathe * ax, CUR_RY * breathe * ay, CUR_A * pres, cacc);
       splat(cx, cy, rx, ry, CUR_HALO_A * pres, cacc);
@@ -358,12 +365,14 @@
       if (b.bottom < -FEATHER || b.top > H + FEATHER || b.right < -FEATHER || b.left > W + FEATHER) continue;
       anyQuiet = true;
       for (let x = 0; x < cols; x++) qx[x] = Math.max(qx[x], fade(x * cw + cw / 2, b.left, b.right));
-      for (let y = 0; y < rows; y++) qy[y] = Math.max(qy[y], fade(y * ch + shift + ch / 2, b.top, b.bottom));
+      for (let y = 0; y < rows; y++) qy[y] = Math.max(qy[y], fade(y * ch + shift - OVER + ch / 2, b.top, b.bottom));
     }
 
     ctx.save();
     ctx.translate(0, shift);
-    for (let y = 0; y < rows; y++) {
+    const y0 = rm || f.scroll <= 0 ? 0 : Math.max(0, Math.floor((OVER - shift) / ch) - 1);
+    const y1 = rm || f.scroll >= document.documentElement.scrollHeight - H - 1 ? rows : Math.min(rows, Math.ceil((OVER + H - shift) / ch) + 1);
+    for (let y = y0; y < y1; y++) {
       const py = y * ch, row = y * cols;
       for (let x = 0; x < cols; x++) {
         const px = x * cw;
@@ -383,6 +392,7 @@
     ctx.restore();
   };
 
+  c.style.top = -OVER + 'px'; c.style.height = `calc(100% + ${2 * OVER}px)`;
   addEventListener('resize', resize);
   resize();
   if (rm) { draw(0); return; }

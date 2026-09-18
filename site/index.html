@@ -57,6 +57,14 @@
     /* Background: tri-tone diagonal gradient + the snowfield canvas. */
     .bgfx{position:fixed;inset:0;z-index:0;pointer-events:none;background:linear-gradient(135deg,var(--g1) 0%,var(--g2) 50%,var(--g3) 100%)}
     .bgfx canvas{position:absolute;inset:0;width:100%;height:100%}
+    /* Safari drags the fixed background along when the page is pulled past
+       an end. These carry the gradient on from its top and bottom edges,
+       colour for colour, so the pull shows more of the same. */
+    .bgfx{container-type:size}
+    .bgfx::before,.bgfx::after{content:'';position:absolute;z-index:-1;height:50vh;width:calc(100vw + 100vh);width:calc(100cqw + 100cqh);
+      background:linear-gradient(90deg,var(--g1) 0%,var(--g2) 50%,var(--g3) 100%)}
+    .bgfx::before{bottom:100%;left:0}
+    .bgfx::after{top:100%;left:-100vh;left:-100cqh}
     .wrap{position:relative;z-index:1;max-width:76rem;margin:0 auto;padding:0 clamp(1.5rem,5vw,4rem)}
 
     .split{display:grid;grid-template-columns:minmax(0,5fr) minmax(0,7fr);gap:clamp(2rem,6vw,6rem)}
