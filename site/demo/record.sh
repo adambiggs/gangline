@@ -11,6 +11,12 @@ vhs_tmp=$(mktemp -d /tmp/gangline-vhs.XXXXXX)
 demo_tmux_root=$(mktemp -d /tmp/gangline-demo-tmux.XXXXXX)
 operator_config=${GANG_CONFIG_DIR:-${XDG_CONFIG_HOME:-$HOME/.config}/gangline}
 demo_config=$vhs_tmp/gangline-config
+# Diagnostics have to outlive the recording. The team's sockets, its panes and
+# the demo root all belong to this run and are gone the moment it ends, so a
+# failed take can only be read afterwards from a directory that is not part of
+# it. Resolve it before the private overrides below move XDG_STATE_HOME.
+demo_diag=${XDG_STATE_HOME:-$HOME/.local/state}/gangline-demo/$(date -u +%Y%m%dT%H%M%SZ)
+mkdir -p "$demo_diag"
 
 # A recorder may itself run inside an agent window. Make every bare tmux and
 # gang invocation resolve through the disposable server, and keep a second
@@ -18,6 +24,11 @@ demo_config=$vhs_tmp/gangline-config
 unset TMUX TMUX_PANE
 export TMUX_TMPDIR="$demo_tmux_root"
 export GANG_LOCK_DIR="$demo_tmux_root/locks"
+# hitch writes the socket it actually reached the team on under this root, asked
+# of the server rather than assembled from a label. Teardown reads it there
+# instead of guessing a path, and its absence is how this script knows no team
+# was ever created.
+team_socket_record="$GANG_LOCK_DIR/teams/$demo_session"
 export GANG_ARCHIVE_DIR="$demo_tmux_root/archive"
 export XDG_STATE_HOME="$demo_tmux_root/state"
 # A generated follow-up occupies Claude Code's composer after the lead ends its
@@ -66,14 +77,55 @@ for tool in vhs ffmpeg ttyd chromium tmux gang claude codex git python3; do
   }
 done
 
+# A recording that fails leaves the only account of why inside the panes that are
+# about to be deleted. Keep them first, and keep the scrollback: the interesting
+# line is rarely the last one.
+capture_demo_panes() {
+  local socket pane window
+  if [ ! -f "$team_socket_record" ]; then
+    echo "no demo team socket recorded; no panes to keep" >&2
+    return 0
+  fi
+  IFS= read -r socket < "$team_socket_record"
+  if ! tmux -S "$socket" list-panes -a -F '#{window_name} #{pane_id}' \
+    > "$demo_diag/panes.txt"; then
+    echo "could not list the demo team's panes on $socket" >&2
+    return 0
+  fi
+  while read -r window pane; do
+    tmux -S "$socket" capture-pane -p -S -2000 -t "$pane" \
+      > "$demo_diag/pane-$window.txt" ||
+      echo "could not capture demo pane $window ($pane)" >&2
+  done < "$demo_diag/panes.txt"
+  echo "kept the demo team's panes under $demo_diag" >&2
+}
+
+# Gangline ends its own team: this archives each window's pending spool and
+# reports what it could not remove, which a kill-session cannot. Deleting the
+# socket root without ending the session leaves a server nothing can reach any
+# more, still holding live agents.
+end_demo_team() {
+  if [ ! -f "$team_socket_record" ]; then
+    echo "no demo team was created; nothing to end" >&2
+    return 0
+  fi
+  GANG_SESSION="$demo_session" gang down "$demo_session"
+}
+
 cleanup() {
-  tmux -S "$demo_tmux_root/tmux-$(id -u)/default" \
-    has-session -t "=$demo_session" 2>/dev/null &&
-    tmux -S "$demo_tmux_root/tmux-$(id -u)/default" \
-      kill-session -t "=$demo_session" || true
+  local status=$?
+  [ "$status" -eq 0 ] || capture_demo_panes
+  local ended=0
+  end_demo_team || ended=$?
   rm -rf -- "$demo_root"
   rm -rf -- "$vhs_tmp"
   rm -rf -- "$demo_tmux_root"
+  [ "$ended" -eq 0 ] || {
+    echo "the recorded demo team did not end cleanly (gang down exit $ended);" \
+      "a server may still hold live agents — find it with" \
+      "\"pgrep -af -- '-s $demo_session'\" and check its /proc/PID/cwd" >&2
+    [ "$status" -ne 0 ] || exit 1
+  }
 }
 trap cleanup EXIT
 
