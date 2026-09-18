@@ -3455,6 +3455,46 @@ equal "an agent holding nothing may hitch the one teammate its ceiling allows" \
 equal "and a hitch given no role registers none" \
   "" "$(tmux show-options -wqv -t "$(window_id ceilfirst)" @gl_role)"
 
+# ADOPTION CREATES THE SAME LIVE CHILD RELATIONSHIP AS HITCH. A raw window is
+# not counted before registration, but the caller already holds ceilfirst, so
+# adopting it would cross the same ceiling and must refuse before writing any
+# Gangline identity. The explicit exception carries its reason into the same
+# lifecycle record a hitch uses.
+ceiling_adopt="$(ceiling_window ceiladopt)"
+ceiling_adopt_rc=0
+ceiling_adopt_out="$(TMUX_PANE="$ceiling_pane" \
+  "$GANG" adopt ceiladopt -c bash 2>&1)" || ceiling_adopt_rc=$?
+equal "adopt refuses a new child past the caller's live-hitch ceiling" \
+  3 "$ceiling_adopt_rc"
+contains "the adopt refusal names the child number and selected limit" \
+  "$ceiling_adopt_out" \
+  "'ceiladopt' would be live adoption number 2 and your ceiling, with no role recorded for this window, is 1"
+equal "a refused adoption writes no Gangline identity" "" \
+  "$(tmux show-options -wqv -t "$ceiling_adopt" @gl_agent)"
+tmux kill-window -t "$ceiling_adopt"
+
+ceiling_adopt_over="$(ceiling_window ceiladoptover)"
+ceiling_adopt_over_rc=0
+ceiling_adopt_over_out="$(TMUX_PANE="$ceiling_pane" \
+  "$GANG" adopt ceiladoptover -c bash \
+  --over-ceiling 'the adopted review must remain independent' 2>&1)" \
+  || ceiling_adopt_over_rc=$?
+equal "an adoption accepts a reason for exceeding the ceiling" \
+  0 "$ceiling_adopt_over_rc"
+equal "an adoption can name why it exceeds the ceiling" \
+  "$ceiling_token" \
+  "$(tmux show-options -wqv -t "$ceiling_adopt_over" @gl_hitched_by)"
+ceiling_adopt_over_log_rc=0
+ceiling_adopt_over_log="$($GANG log ceiladoptover --kind agent.hitched 2>&1)" \
+  || ceiling_adopt_over_log_rc=$?
+# source-guard: producer@ef1ed47c68f6: this is the captured status of the scoped gang log command immediately above
+equal "the adopted child's lifecycle record is readable" \
+  0 "$ceiling_adopt_over_log_rc"
+# source-guard: producer@ae345309b3ab: only the adopt override above carries this reason, and the reader is scoped to that child's agent.hitched event
+contains "the adopted child's lifecycle record retains the override reason" \
+  "$ceiling_adopt_over_log" "the adopted review must remain independent"
+tmux kill-window -t "$ceiling_adopt_over"
+
 ceiling_second_rc=0
 ceiling_second_out="$(TMUX_PANE="$ceiling_pane" \
   "$GANG" hitch ceilsecond -c bash -d /tmp 2>&1)" || ceiling_second_rc=$?
