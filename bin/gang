@@ -16245,7 +16245,7 @@ cmd_compact() {
     }
   fi
   [ "$cancel" -eq 0 ] || [ "$recover" -eq 0 ] \
-    || die "compact: --cancel and --recover are separate operations; pass one"
+    || usage_refuse "compact: --cancel and --recover are separate operations; pass one"
   [ "$cancel" -eq 0 ] || [ "$resume_given" -eq 0 ] \
     || usage_refuse "compact: --cancel withdraws a request and takes no --resume"
   [ "$recover" -eq 0 ] || [ "$resume_given" -eq 0 ] \

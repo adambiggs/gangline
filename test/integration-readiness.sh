@@ -743,7 +743,7 @@ contains "--resume replaces the default continuation" \
 compact_bad_rc=0
 "$GANG" compact compactable --resume "   " >/dev/null 2>&1 || compact_bad_rc=$?
 equal "a whitespace-only continuation is refused rather than typed" \
-  "1" "$compact_bad_rc"
+  "3" "$compact_bad_rc"
 
 # A PEER COMPACTION ANSWERS WHATEVER THE WINDOW ASKED FOR ITSELF. A refusal
 # left standing would keep flagging a stall that just ended, and a standing
