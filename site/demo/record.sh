@@ -52,7 +52,7 @@ export PATH
   exit 1
 }
 
-for tool in vhs ffmpeg ttyd chromium tmux gang claude codex git; do
+for tool in vhs ffmpeg ttyd chromium tmux gang claude codex git python3; do
   command -v "$tool" >/dev/null || {
     echo "missing demo dependency: $tool" >&2
     exit 1
@@ -136,6 +136,45 @@ Delegate TASK.md as one whole arc to the existing named worker with gang send.
 Do not spawn a native subagent. Stay idle while the worker owns the arc. When its
 attributed completion report starts your next turn, summarize the result and end.
 ROLE
+
+# Claude Code asks whether a directory is trusted the first time it opens one,
+# and an unanswered dialog stalls the whole recording. The demo root is built
+# from scratch under /tmp on every run, and the host empties /tmp at boot, so any
+# stored answer for it is pruned and the dialog returns on a cold host. Record
+# the answer for the one fixed path the guard above pins, before anything
+# launches an agent in it.
+claude_config="${CLAUDE_CONFIG_DIR:-$HOME}/.claude.json"
+[ -f "$claude_config" ] || {
+  echo "claude configuration not found: $claude_config" >&2
+  exit 1
+}
+python3 - "$claude_config" "$demo_root" <<'SEED'
+import json
+import os
+import sys
+import tempfile
+
+config_path, project = sys.argv[1], sys.argv[2]
+with open(config_path, encoding="utf-8") as handle:
+    config = json.load(handle)
+entry = config.setdefault("projects", {}).setdefault(project, {})
+if entry.get("hasTrustDialogAccepted") is True:
+    print("demo root already trusted: %s" % project)
+    sys.exit(0)
+entry["hasTrustDialogAccepted"] = True
+directory = os.path.dirname(config_path) or "."
+mode = os.stat(config_path).st_mode & 0o7777
+staged_fd, staged = tempfile.mkstemp(dir=directory, prefix=".claude.json.demo.")
+try:
+    with os.fdopen(staged_fd, "w", encoding="utf-8") as handle:
+        json.dump(config, handle, indent=2)
+    os.chmod(staged, mode)
+    os.replace(staged, config_path)
+except BaseException:
+    os.unlink(staged)
+    raise
+print("trusted demo root: %s" % project)
+SEED
 
 # Establish and prove the private socket before either native agent launches.
 # Ending its only proof session lets tmux exit; hitch then creates the recorded
