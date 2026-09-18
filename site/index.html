@@ -104,6 +104,12 @@
     .theme{position:fixed;top:1.1rem;right:1.25rem;z-index:2;appearance:none;border:0;background:none;padding:.25rem;margin:0;
       font:inherit;font-size:.7rem;line-height:1;color:var(--mute);cursor:pointer;opacity:.7;transition:color 150ms,opacity 150ms}
     .theme:hover{color:var(--ink);opacity:1}
+    /* Motion toggle: beside it, only where the browser makes the page ask
+       before it will report the phone's tilt, and only until answered. */
+    .motion{position:fixed;top:1.1rem;right:2.9rem;z-index:2;appearance:none;border:0;background:none;padding:.25rem;margin:0;
+      font:inherit;font-size:.7rem;line-height:1;color:var(--mute);cursor:pointer;opacity:.7;transition:color 150ms,opacity 150ms}
+    .motion:hover{color:var(--ink);opacity:1}
+    .motion[hidden]{display:none}
     .ftr .links{margin-bottom:.75rem}
     .ftr p{text-wrap:pretty}
 
@@ -138,6 +144,30 @@
       else { document.documentElement.dataset.theme = next; localStorage.setItem('theme', next); }
     } catch {}
     show(next);
+  });
+})();
+</script>
+<button class="motion" type="button" aria-label="Let the background follow the phone's tilt" title="Let the background follow the phone's tilt" hidden>∿</button>
+<script>
+(() => {
+  /* The field listens for deviceorientation on its own; this only asks the
+     browser for it where that is needed (iOS), on a tap, and keeps the
+     answer so a later visit asks again quietly instead of showing the glyph. */
+  const b = document.querySelector('.motion'); if (!b) return;
+  const E = window.DeviceOrientationEvent;
+  if (!E || typeof E.requestPermission !== 'function') return;
+  /* Desktop Safari has the same call and nothing to report; a touch screen
+     is the sign of a sensor. */
+  if (!(navigator.maxTouchPoints > 1 || matchMedia('(pointer: coarse)').matches)) return;
+  if (matchMedia('(prefers-reduced-motion: reduce)').matches) return;
+  const ask = () => E.requestPermission().then(r => r === 'granted');
+  const remember = (ok) => { try { localStorage.setItem('motion', ok ? 'on' : 'off'); } catch {} };
+  let kept = null; try { kept = localStorage.getItem('motion'); } catch {}
+  if (kept === 'off') return;
+  const offer = () => { b.hidden = false; };
+  if (kept === 'on') ask().then(ok => { if (!ok) offer(); }, offer); else offer();
+  b.addEventListener('click', () => {
+    ask().then(ok => { remember(ok); b.hidden = true; }, () => { b.hidden = true; });
   });
 })();
 </script>
