@@ -305,10 +305,28 @@ contains "the tiered assignment retains its body" "$(pane_all assign-read)" \
   "ASSIGN_READ"
 equal "the assignment record is waived, not a request" waived \
   "$(tmux show-options -wqv -t "$assign_id" "@gl_reply_$assign_nonce" | cut -d: -f4)"
-assign_wire="$(pane_all assign-read \
-  | grep -o "\[gang:reply-a#[^]]*\] ASSIGN_READ \[/gang:reply-a#[0-9a-f]*\]" | tail -1)" \
-  || assign_wire=""
-contains "the pane carries the assignment envelope" "$assign_wire" "] ASSIGN_READ [/gang:reply-a#"
+assign_wire="$(pane_all assign-read | awk -v nonce="$assign_nonce" '
+  {
+    opening_text = "[gang:reply-a#" nonce " assignment] tier: B"
+    start = index($0, opening_text)
+    if (start) {
+      opening = substr($0, start, length(opening_text))
+      want_body = 1
+    }
+    if (want_body) {
+      closing = "ASSIGN_READ [/gang:reply-a#" nonce "]"
+      at = index($0, closing)
+      if (at) {
+        wire = opening "\n" substr($0, at, length(closing))
+        want_body = 0
+      }
+    }
+  }
+  END { printf "%s", wire }
+')"
+# source-guard: producer@fd15ad6e85ec: the hitch above is the sole assignment producer, and its one nonce-bound reply record independently selects the envelope extracted here
+contains "the pane carries the assignment envelope" "$assign_wire" \
+  $'] tier: B\nASSIGN_READ [/gang:reply-a#'
 reply_prompt_event "$assign_pane" "$assign_wire"
 contains "explain shows the assignment was read and owes nothing" \
   "$($GANG explain assign-read)" \
