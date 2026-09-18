@@ -1496,7 +1496,7 @@ cat > "$tick_unreadable_bin/tmux" <<SH
 . "\$GANG_TEST_PATH_SHIM_GUARD"
 path_shim_guard '$tick_unreadable_real_tmux' "\$0" tmux || exit \$?
 case "\$*" in
-  'list-windows -a -F #{@gl_spool}')
+  'list-windows -a -F #{@gl_spool} #{@gl_spool_pending}')
     printf 'fixture cannot read the all-window spool register\n' >&2
     exit 1 ;;
 esac
