@@ -22,7 +22,7 @@
     :root{
       --bg:#06090f;--g1:#071530;--g2:#1f2860;--g3:#3d2444;
       --bg2:rgba(255,255,255,.05);--ink:#e9eef7;--soft:#b2bed0;--mute:#7f8da0;--rule:rgba(255,255,255,.11);
-      --acc:#f0a23c;--acc-ink:#10131a;--glyph:233,238,247;--trail:132,170,214;
+      --acc:#f0a23c;--acc-ink:#10131a;--glyph:233,238,247;--trail:132,170,214;--sel:rgba(132,170,214,.32);
       --serif:'Newsreader',Georgia,serif;--sans:'Instrument Sans',system-ui,sans-serif;--mono:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;
       color-scheme:dark;
     }
@@ -32,12 +32,12 @@
     @media (prefers-color-scheme:light){:root:not([data-theme=dark]){
       --bg:#e9f0f8;--g1:#b9d2ee;--g2:#eef3f9;--g3:#94b3d0;
       --bg2:rgba(16,38,60,.05);--ink:#12202e;--soft:#42546a;--mute:#6a7e96;--rule:rgba(16,38,60,.13);
-      --acc:#b4531c;--acc-ink:#fff;--glyph:24,46,74;--trail:64,104,148;color-scheme:light;
+      --acc:#b4531c;--acc-ink:#fff;--glyph:24,46,74;--trail:64,104,148;--sel:rgba(64,104,148,.22);color-scheme:light;
     }}
     :root[data-theme=light]{
       --bg:#e9f0f8;--g1:#b9d2ee;--g2:#eef3f9;--g3:#94b3d0;
       --bg2:rgba(16,38,60,.05);--ink:#12202e;--soft:#42546a;--mute:#6a7e96;--rule:rgba(16,38,60,.13);
-      --acc:#b4531c;--acc-ink:#fff;--glyph:24,46,74;--trail:64,104,148;color-scheme:light;
+      --acc:#b4531c;--acc-ink:#fff;--glyph:24,46,74;--trail:64,104,148;--sel:rgba(64,104,148,.22);color-scheme:light;
     }
 
     *,*::before,*::after{box-sizing:border-box}
@@ -46,7 +46,7 @@
     a{color:var(--ink);text-decoration:none;transition:color 150ms}
     a:hover{color:var(--acc)}
     p a,li a{text-decoration:underline;text-decoration-color:var(--mute);text-underline-offset:.18em}
-    ::selection{background:var(--acc);color:var(--acc-ink)}
+    ::selection{background:var(--sel)}
     :focus-visible{outline:2px solid var(--acc);outline-offset:3px}
     h1,h2,h3,p{margin:0}
     .serif{font-family:var(--serif);font-optical-sizing:auto}
@@ -86,9 +86,9 @@
        sit in its corner without scrolling with the code. It is quiet until
        the block is hovered or focused, and says so for a moment after a copy. */
     .code{position:relative;margin-top:1.5rem}
-    .code pre{margin:0;padding-right:4.5rem}
-    .copy{position:absolute;top:.6rem;right:.75rem;appearance:none;border:0;background:none;padding:.25rem .4rem;margin:0;
-      font:inherit;font-size:.6875rem;line-height:1;letter-spacing:.12em;text-transform:uppercase;font-weight:600;color:var(--mute);
+    .code pre{margin:0;padding-right:3.5rem}
+    .copy{position:absolute;top:.5rem;right:.5rem;appearance:none;border:0;background:none;padding:.2rem .3rem;margin:0;
+      font:inherit;font-size:.5625rem;line-height:1;letter-spacing:.1em;text-transform:uppercase;font-weight:600;color:var(--mute);
       cursor:pointer;opacity:0;transition:color 150ms,opacity 150ms}
     .code:hover .copy,.copy:focus-visible,.copy[data-done]{opacity:1}
     .copy:hover{color:var(--ink)}
