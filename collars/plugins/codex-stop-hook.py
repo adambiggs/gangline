@@ -186,7 +186,7 @@ def query(gang: str) -> list[Verdict]:
             if (
                 not NONCE.fullmatch(verdict.nonce)
                 or not AGENT.fullmatch(verdict.peer)
-                or verdict.detail != "sender-gone"
+                or verdict.detail not in ("sender-gone", "sender-marked")
             ):
                 raise ValueError("Gangline query returned a malformed retired record")
         elif verdict.status == "unknown":

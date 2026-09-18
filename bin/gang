@@ -8249,7 +8249,7 @@ reply_threads_close_if_ended() { # $1 window; a prompt is arriving
 }
 
 reply_obligation_query() { # calling window -> one or more four-field TSV verdicts
-  local rows="" rc=0 nonce state token witness mode digest replies live_rc=0 any=0
+  local rows="" rc=0 nonce state token witness mode digest replies live_rc=0 mark_rc=0 any=0
   rows="$(reply_state_rows "$1")" || rc=$?
   if [ "$rc" -ne 0 ]; then
     printf 'unknown\t-\t-\t%s\n' "$(reply_rows_error "$rows")"
@@ -8283,6 +8283,21 @@ reply_obligation_query() { # calling window -> one or more four-field TSV verdic
     # The prompt proof alone proves the debtor read the request, so it is owed
     # whether or not the sender's delivery proof has landed yet.
     live_rc=0; stable_agent_resolve "$token" || live_rc=$?
+    # A SENDER MARKED SAFE TO DROP ACCEPTS NO FURTHER DELIVERY (ADR-0198), so
+    # its request can never be answered and holding the debtor at Stop for it
+    # wedged that debtor until the sender was dropped. No proof is written:
+    # the registration still stands, and its drop retires the record as gone.
+    # Only a well-formed owed request is waived; any other state stays unknown.
+    if [ "$live_rc" -eq 0 ] && { [ "$state" = owed ] || [ "$state" = prompt ]; }; then
+      mark_rc=0; safe_to_drop_read "$STABLE_AGENT_WINDOW" || mark_rc=$?
+      case "$mark_rc" in
+        0) printf 'retired\t%s\t%s\tsender-marked\n' "$nonce" "$STABLE_AGENT_NAME"
+           continue ;;
+        1|2) ;;
+        *) printf 'unknown\t%s\t%s\tsender-mark-unreadable\n' "$nonce" "$STABLE_AGENT_NAME"
+           continue ;;
+      esac
+    fi
     case "$live_rc" in
       0) case "$state" in
            owed|prompt) printf 'owed\t%s\t%s\tlive\n' "$nonce" "$STABLE_AGENT_NAME" ;;
@@ -8385,7 +8400,10 @@ reply_obligation_status_report() { # $1 window; every debt or ambiguous record
     case "$status" in
       clear|'') ;;
       owed) printf '%s\n' "$(colour "$C_BAD" "reply owed to $peer (message $nonce; sender $detail)")" ;;
-      retired) printf '%s\n' "$(colour "$C_DIM" "reply obligation retired for $peer (message $nonce; sender gone)")" ;;
+      retired) case "$detail" in
+          sender-marked) printf '%s\n' "$(colour "$C_DIM" "reply obligation retired for $peer (message $nonce; sender marked itself safe to drop)")" ;;
+          *) printf '%s\n' "$(colour "$C_DIM" "reply obligation retired for $peer (message $nonce; sender gone)")" ;;
+        esac ;;
       unknown) printf '%s\n' "$(colour "$C_BAD" "reply obligation UNKNOWN (${nonce:-?} from ${peer:-?}: $detail); Stop fails closed")" ;;
     esac
   done <<<"$rows"

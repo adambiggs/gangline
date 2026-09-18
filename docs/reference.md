@@ -1016,7 +1016,11 @@ this query path, so any of them may be the reader that first latches the proof.
 `status` retains the message and witnessed sender as retirement history, and
 Stop may proceed if no live or ambiguous obligation remains. A fresh hitch with
 the same name has a different token and inherits nothing; failure to read the
-identity inventory remains unknown and fails closed.
+identity inventory remains unknown and fails closed. A live sender that has marked
+itself safe to drop accepts no further delivery, so its request cannot be
+answered: the query emits a `retired` row naming `sender-marked` and writes no
+proof, since the registration still stands and its drop retires the record as
+gone. A mark that cannot be read stays unknown and fails closed.
 
 Unenveloped session-keyboard input and `self-declared:` envelopes create no
 peer obligation. They also do not clear, supersede, or mask one. Tool events,
