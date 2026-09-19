@@ -1,6 +1,6 @@
 ---
 id: 0203
-status: proposed
+status: rejected
 date: 2026-09-17
 supersedes: []
 superseded-by: []
@@ -8,6 +8,9 @@ tags: [roles, hitch]
 ---
 
 # ADR-0203: A hitch refuses past a live-child ceiling selected by the hitcher's registered role
+
+Rejected: no incident of a child outliving its work was ever found, and 13 of
+36 recorded hitches overrode the ceiling.
 
 ## Context
 
