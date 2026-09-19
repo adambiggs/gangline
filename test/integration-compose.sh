@@ -1843,11 +1843,11 @@ collar_last_action() {
   return 1
 }
 COLLAR
-cat > "$vanish_collars/vanishroster.sh" <<COLLAR
+cat > "$vanish_collars/unreadableroster.sh" <<COLLAR
 # shellcheck shell=bash
 # shellcheck disable=SC2034
 . "$ROOT/collars/bash.sh"
-tmux kill-window -t "=\$GANG_SESSION:rostering" 2>/dev/null || true
+window_option() { return 1; }
 COLLAR
 cat > "$vanish_collars/vanishnow.sh" <<COLLAR
 # shellcheck shell=bash
@@ -1921,18 +1921,16 @@ contains "and flush says the recall key was not pressed" \
   "$vanish_flush" "was NOT pressed and nothing was recovered for 'flushing'"
 # AN ABSENCE THE ROW NEVER OBSERVED IS THE SAME LIE ONE COMMAND LOWER. The
 # roster reads each window's staged record to decide whether to say undelivered
-# input is waiting there. Read that record through a window that has gone and
-# the reader says so; discard its status and the row prints the quiet row it
-# prints for a window with nothing waiting, which is a claim about a window it
-# could not ask. The record below is really set before the window really dies,
-# so the omission the row must not make is an omission of something that was
-# there.
+# input is waiting there. The real window-loss cases above prove the option
+# reader; this row injects its unavailable verdict. Killing the window while
+# the collar loaded raced these reads against the valid whole-row fallback, so
+# the fixture sometimes tested only scheduler order.
 # ONE DEFECT, ONE FACE PER RECORD. The row reads three records to decide what
 # to say about this window, and each was read by something that turned a failure
 # into an absence — one at the caller, two inside the reader itself. All three
-# are really set below before the window really goes, so every omission the row
+# are really set below before their reads are refused, so every omission the row
 # must not make is an omission of something that was there.
-vanish_world rostering vanishroster
+vanish_world rostering unreadableroster
 env -u TMUX TMUX_TMPDIR="$vanish_root" tmux set-option -w -t "$vanish_id" @gl_staged \
   'a body gang recorded and never delivered'
 env -u TMUX TMUX_TMPDIR="$vanish_root" tmux set-option -w -t "$vanish_id" @gl_parked \
