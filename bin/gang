@@ -17825,7 +17825,7 @@ hook_uninterpretable() { # $1 = firing pane (may be empty), rest = what failed
 }
 
 cmd_hook() { # native harness events; facts are silent unless a light crosses
-  local payload event collar kind="" window="" waiting_rc=1
+  local payload fields event collar kind="" window="" waiting_rc=1
   local native_boundary_rc=3 spool_payload=""
   # THE EVENT IS THE PAYLOAD, SO ARGV IS AN INVOCATION GANG CANNOT READ. Every
   # other command answers unconsumed arity by dying; this one must not, because
@@ -17840,12 +17840,26 @@ cmd_hook() { # native harness events; facts are silent unless a light crosses
     exit 0
   fi
   payload="$(cat)" || payload=""
-  event="$(printf '%s' "$payload" \
-    | python3 -c 'import json,sys; print(json.load(sys.stdin).get("hook_event_name",""))' \
+  # ONE PARSE PER INVOCATION. The event name and a Notification's kind are read
+  # together, so a tool call pays one interpreter start rather than one per
+  # field. The kind is empty unless it is a nonempty string: printing whatever
+  # `.get` returns renders a null as None and a list as its repr, so a payload
+  # whose shape has changed would arrive as plausible text read as a kind this
+  # collar does not act on. Both readings are wrong in the same direction —
+  # quiet — so only a nonempty string is a kind at all.
+  fields="$(printf '%s' "$payload" \
+    | python3 -c 'import json, sys
+row = json.load(sys.stdin)
+kind = row.get("notification_type")
+if not isinstance(kind, str) or "\n" in kind:
+    kind = ""
+sys.stdout.write("%s\n%s" % (row.get("hook_event_name", ""), kind))' \
       2>/dev/null)" || {
     hook_uninterpretable "${TMUX_PANE:-}" "the payload is not readable JSON"
     exit 0
   }
+  event="${fields%%$'\n'*}"
+  case "$fields" in *$'\n'*) kind="${fields#*$'\n'}" ;; esac
   [ -n "$event" ] || {
     hook_uninterpretable "${TMUX_PANE:-}" "the payload carries no hook_event_name"
     exit 0
@@ -17863,11 +17877,21 @@ cmd_hook() { # native harness events; facts are silent unless a light crosses
   [ -n "${TMUX_PANE:-}" ] || exit 0
   collar="$(collar_read "$TMUX_PANE" 2>/dev/null)" || exit 0
   [ -n "$collar" ] || exit 0
-  hook_identity_assert "$TMUX_PANE" "$collar" "$payload"
-  # The hook crosses Codex's preflight exec boundary. A launch-time probe that
-  # found only that interpreter gets exactly this one chance to establish the
-  # real root; a quiet tick never converts a newly seen process into evidence.
-  ( load_collar "$collar"; harness_identity_hook_retry "$TMUX_PANE" ) || true
+  # IDENTITY IS ASSERTED AT TURN BOUNDARIES ONLY. The native session changes
+  # at a start, a resume or a /clear, and each of those is followed by a
+  # prompt submission before any tool runs, so two tool calls of one turn can
+  # never disagree about it; re-recording it on every PostToolUse cost three
+  # collar sources and two payload parses per tool call and could not observe
+  # a change.
+  case "$event" in
+    UserPromptSubmit|Stop)
+      hook_identity_assert "$TMUX_PANE" "$collar" "$payload"
+      # The hook crosses Codex's preflight exec boundary. A launch-time probe
+      # that found only that interpreter gets exactly this one chance to
+      # establish the real root; a quiet tick never converts a newly seen
+      # process into evidence.
+      ( load_collar "$collar"; harness_identity_hook_retry "$TMUX_PANE" ) || true ;;
+  esac
   if [ "$event" = UserPromptSubmit ]; then
     # A native submission is the positive witness that the recap continuation
     # is no longer merely parked work. Keep @gl_recap_handled through this
@@ -17876,18 +17900,6 @@ cmd_hook() { # native harness events; facts are silent unless a light crosses
     ( auto_resume_prompt_witness "$TMUX_PANE" "$collar" "$payload" ) || true
   fi
   if [ "$event" = Notification ]; then
-    # A FIELD OF THE WRONG TYPE IS NOT A VALUE. Printing whatever `.get`
-    # returns renders a null as None and a list as its repr, so a payload whose
-    # shape has changed arrives as plausible nonempty text and is read below as
-    # a kind this collar does not act on. Both readings are wrong in the same
-    # direction — quiet — so only a nonempty string is a kind at all.
-    kind="$(printf '%s' "$payload" \
-      | python3 -c 'import json, sys
-value = json.load(sys.stdin).get("notification_type")
-if not isinstance(value, str) or not value:
-    raise SystemExit(1)
-sys.stdout.write(value)' \
-        2>/dev/null)" || kind=""
     # A kind gang cannot read is not a kind outside the collar's declaration:
     # the second is an interpreted event this collar does not act on, and the
     # first is a Notification whose meaning is unavailable.

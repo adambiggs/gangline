@@ -1112,23 +1112,24 @@ PY
 }
 
 collar_session_id() { # $1 = tmux target, $2 = native hook payload
-  local value transcript
-  value="$(printf '%s' "$2" | python3 -c '
+  local fields value transcript
+  # One parse reads both fields: the id on the first line, then the transcript
+  # path (empty when the payload carries none) as the rest.
+  fields="$(printf '%s' "$2" | python3 -c '
 import json, sys
-value = json.load(sys.stdin).get("session_id", "")
-if not isinstance(value, str) or not value:
+row = json.load(sys.stdin)
+value = row.get("session_id", "")
+if not isinstance(value, str) or not value or "\n" in value:
     raise SystemExit(1)
-print(value)
-')" || return 1
-  transcript="$(printf '%s' "$2" | python3 -c '
-import json, sys
-value = json.load(sys.stdin).get("transcript_path")
-if value is None:
-    raise SystemExit(0)
-if not isinstance(value, str):
+transcript = row.get("transcript_path")
+if transcript is None:
+    transcript = ""
+if not isinstance(transcript, str):
     raise SystemExit(1)
-print(value, end="")
+sys.stdout.write(value + "\n" + transcript)
 ')" || return 1
+  value="${fields%%$'\n'*}" transcript=""
+  case "$fields" in *$'\n'*) transcript="${fields#*$'\n'}" ;; esac
   if [ -n "$transcript" ]; then
     tmux set-option -w -t "$1" @gl_session "$transcript" || return 1
   fi
