@@ -1721,6 +1721,14 @@ import sys
 
 real = "$stale_reap_real_python"
 args = sys.argv[1:]
+if (len(args) > 2 and args[1] == "--tick"
+        and os.environ.get("GANG_STALE_REAP_D_PID") == args[2]
+        and not os.path.exists(os.environ["GANG_STALE_REAP_D_DONE"])):
+    # An owner exiting while it is read: /proc refuses once, and by the time
+    # the reader looks again its link is gone.
+    open(os.environ["GANG_STALE_REAP_D_DONE"], "w").close()
+    os.unlink(os.environ["GANG_STALE_REAP_D_LOCK"])
+    raise SystemExit(2)
 if not args or args[0] != "-":
     os.execv(real, [real] + args)
 
@@ -1883,6 +1891,26 @@ wait "$stale_reap_released_pid" || stale_reap_released_rc=$?
 equal "a sender whose observed owner released takes the free lock" 0 "$stale_reap_released_rc"
 excludes "a released owner is not refused as a changed one" \
   "$(<"$RUN_ROOT/stale-reap-released.err")" "changed while Gangline was verifying"
+
+# AN OWNER UNREADABLE FOR AN INSTANT IS READ AGAIN. A live owner exiting while
+# a sender reads it can refuse its /proc files before it vanishes; the sender
+# reads the link once more and finds the lock free.
+tmux send-keys -t "$stale_reap_id" C-u
+stale_reap_exiting_pid="$(tmux display-message -p -t "$stale_reap_id" '#{pane_pid}')"
+ln -s "$stale_reap_exiting_pid" "$stale_reap_lock"
+stale_reap_exiting_rc=0
+printf 'MARK_STALE_REAP_EXITING' |
+  GANG_STALE_REAP_D_PID="$stale_reap_exiting_pid" \
+  GANG_STALE_REAP_D_LOCK="$stale_reap_lock" \
+  GANG_STALE_REAP_D_DONE="$RUN_ROOT/stale-reap-exiting-done" \
+  "$GANG" send --to stale-reap --from tester --stdin \
+  >"$RUN_ROOT/stale-reap-exiting.out" 2>"$RUN_ROOT/stale-reap-exiting.err" \
+  || stale_reap_exiting_rc=$?
+equal "the exiting-owner fixture refused one identity read" present \
+  "$([ -e "$RUN_ROOT/stale-reap-exiting-done" ] && printf present || printf absent)"
+equal "a sender whose owner was unreadable once takes the freed lock" 0 "$stale_reap_exiting_rc"
+excludes "a once-unreadable owner is not reported as unclassifiable" \
+  "$(<"$RUN_ROOT/stale-reap-exiting.err")" "unreadable process identity"
 rm -f -- "$RUN_ROOT/bin/rm" "$RUN_ROOT/bin/mv" "$RUN_ROOT/bin/python3"
 exec {stale_reap_b_ready_fd}>&-
 exec {stale_reap_b_release_fd}>&-

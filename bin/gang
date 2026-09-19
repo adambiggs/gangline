@@ -5083,7 +5083,14 @@ lock_pane() { # $1 = window id, $2 = optional send; held until release or exit
       unresolvable)
         refuse "the delivery lock for $name is held by pid $pid in a process namespace this command cannot see — retry from the host before removing it"
         ;;
-      *) die "cannot classify the owner of delivery lock $path — pid $pid has unreadable process identity; the lock was retained" ;;
+      *)
+        # An owner exiting as it is read can refuse /proc reads for an
+        # instant; read the link again once before calling it unreadable.
+        read_races=$((read_races + 1))
+        [ "$read_races" -le 1 ] \
+          || die "cannot classify the owner of delivery lock $path — pid $pid has unreadable process identity; the lock was retained"
+        continue
+        ;;
     esac
   # Two contenders can both observe a dead holder. The symlink itself cannot
   # compare-and-delete that owner: an unconditional rm after the first
