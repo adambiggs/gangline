@@ -1,288 +1,64 @@
 # Gangline
 
-Gangline runs Claude Code, Codex, OpenCode, and Pi as named windows in one tmux
-session, so they can hand each other work by name and you can watch the whole
-thing happen.
+Gangline runs Claude Code and Codex as named windows in one tmux session, so
+they can hand each other work by name and you can watch the whole thing happen.
 
-[![An operator briefs a Claude Code lead with gang talk, watches it and a Codex worker build an animated terminal show through gang attach, then runs their colorful result](site/demo.gif)](https://gangline.ai/#demo)
+[![Gangline demonstration](site/demo.gif)](https://gangline.ai/#demo)
 
-<p align="center"><em>Compose with <code>gang talk</code>, watch the real
-harnesses build with <code>gang attach</code>, then run their result. Nothing
-here is re-enacted.</em></p>
+Gangline provides a small set of shared primitives:
 
-A team is a tmux session, and each agent is one window running its harness's own
-CLI with the terminal, tools, permissions, subscription, and context an ordinary
-session of that harness has. Gangline supplies only the shared primitives:
+- start, attach to, observe, and stop native harnesses;
+- send attributed messages through their terminals and verify delivery; and
+- report a conservative state: `-busy-`, `~wait~`, `~idle~`, `!occupied!`, or
+  `?unknown?`.
 
-- start, attach, observe, and stop native harnesses;
-- send attributed messages through their terminal and verify delivery;
-- expose conservative -busy-, ~wait~, ~idle~, !occupied!, and ?unknown? state;
-- invoke each harness's native compaction, including Codex self-compaction;
-- optionally give agents yellow and red context, provider-usage, or team-time
-  lights; and
-- park an agent until a native provider-limit reset with one transient timer.
+What it deliberately is not: a task graph, supervisor, daemon, or database.
+Gangline connects native agents; it does not manage them. Each agent keeps the
+terminal, tools, permissions, and subscription it already had.
 
-It does not assign work, manage roles, enforce deadlines, patrol agents, or run a
-supervisor. Coordination remains visible in the native harnesses and under the
-operator's control.
+## Quick start
 
-## Install
+You need macOS or Linux, Bash, tmux 3.2 or later, Python 3, and either Claude
+Code or Codex. Run the harness you plan to use once first, so it can complete
+its normal sign-in and repository prompts.
 
-Gangline requires Bash, tmux, Python 3, a UTF-8 locale, and at least one
-supported harness.
+Install Gangline, move to a repository where the team should work, and start a
+team:
 
 ```sh
 curl -fsSL https://raw.githubusercontent.com/adambiggs/gangline/main/install.sh | sh
-```
-
-The bootstrap script installs the latest stable `gangline-v*` GitHub release,
-not the current `main` branch. Later, `gang upgrade --check` checks explicitly
-for a newer release and `gang upgrade` installs it. Other commands do not check
-the network. A branch checkout stays developer-owned: update it with Git rather
-than `gang upgrade`.
-
-Or run [`bin/gang`](bin/gang) directly from a clone. `gang collars` lists the
-available harness collars and marks which of them an agent can be resumed onto.
-
-## Start a team
-
-Before starting a team, run each native harness directly to finish its ordinary
-onboarding, authentication, and repository-trust prompts. Gangline never answers
-those security choices. The first Codex hitch through Gangline can raise an
-additional hook-review prompt because Gangline supplies the hook commands only at
-launch; running Codex by itself cannot pre-approve them, and a changed hook path
-or command can raise the review again. If a hitch reports a first-run prompt, run
-`gang attach` from another operator terminal, select that agent's named window,
-and answer it there. The original hitch will then finish delivering its queued
-contract.
-
-From the repository the agents should work in:
-
-```sh
+cd ~/src/my-project
 gang up -c claude-code -m sonnet -e high
 ```
 
-This hitches `lead` with Claude Code, attaches the shipped `lead` role brief,
-and joins its window. Omit `-c` to use `GANG_COLLAR` instead, and pass `-r` to
-select another role. Detach from tmux with `Ctrl-b d`.
-
-The lead hitches the agent who owns each arc with `gang hitch <name> -r worker`,
-which attaches the shipped `worker` brief: what an arc owner is answerable for,
-so the arc's own message carries only that arc. `gang roles` lists the briefs
-this installation has.
-
-Pass a model and effort at every hitch whose collar takes them; Gangline warns
-when a supported choice is omitted and lets the collar pick. Not every collar
-takes both — one that declares no effort spelling refuses `-e` rather than
-guessing — and `gang models` lists what a collar accepts. Claude Code's aliases
-are stable enough to name directly, as above. Ask the harness for Codex's rather
-than copying an id that changes:
-
-```sh
-gang models -c codex
-read -r -p "Codex model: " CODEX_MODEL
-read -r -p "Codex effort: " CODEX_EFFORT
-```
-
-Every Codex example below reuses those two variables. Add the agent, then send
-it work from this detached operator shell:
-
-```sh
-gang hitch worker -c codex -d "$PWD" -m "$CODEX_MODEL" -e "$CODEX_EFFORT"
-
-gang send --to worker --from operator --stdin <<'TASK'
-Inspect the failing parser tests, fix the root cause, and report the proof.
-TASK
-```
-
-Every message names its sender in a nonce-bound envelope. Inside the
-team, Gangline reads the sender from the calling window; outside callers name
-themselves with `--from`. Ordinary delivery succeeds only after the target
-composer visibly accepts the paste and submission.
-
-A target that cannot take input right now gets the message parked in its spool,
-and Gangline delivers it through the same verified path once the target can take
-it. `--live-only` refuses instead of parking when a message is only worth
-sending now.
-
-Observe and control the team without replacing the harness interface:
+`gang up` opens a tmux session and attaches you to a window named `lead`.
+Detach with `Ctrl-b d`; from the same directory, confirm the running team with:
 
 ```sh
 gang roster
-gang status worker
-gang alerts
-gang explain worker
-gang wait worker --until idle
-gang capture worker
-gang attach
-gang interrupt worker
-gang flush worker
-gang drop worker
-gang down gangline
 ```
 
-`gang wait` is for an operator shell or external script. A hitched agent in the
-target team ends its turn instead; delivery is push-based, and its report arrives
-at that boundary.
+Use `gang --help` for the command list and `gang <command> --help` for a
+command's options.
 
-`gang interrupt` stops a turn with the harness's own keystroke. `gang flush`
-recovers a message a harness parked in its own input queue. Active alerts show
-as a count in the tmux status line; Prefix+A lists them.
+## How it fits
 
-## Gangline and native subagents
+Gangline operates between native harness sessions. It does not replace
+subagents a harness creates for itself: those remain owned by their parent
+session. A Gangline team is a collection of independent top-level processes in
+tmux windows, which can use Claude Code and Codex side by side.
 
-Where a harness spawns subagents of its own, Gangline does not replace them; it
-operates one level up. A subagent is created and owned by a single harness
-session, and that ownership is what makes it a subagent. Gangline works between
-sessions instead: every agent in a team is a separate top-level process running
-the harness's ordinary CLI in its own tmux window, and one team can put Claude
-Code, Codex, OpenCode, and Pi side by side.
-
-That is a difference in architecture, not a list of promises. What each command
-does, what it refuses, and under which conditions belong to
-[`docs/reference.md`](docs/reference.md), which is the specification.
-
-## Ontology
-
-A **dog** — a model instance — wears a **harness**, its native CLI runtime
-(Claude Code, Codex, OpenCode, or Pi). Gangline fits the dog to the
-**gangline**, the tmux session, by its **collar**: the per-harness adapter in
-`collars/` that carries every piece of harness-specific knowledge. The
-**musher** — you — drives. `gang up` creates the **lead**, names its window
-`lead` by default, and attaches the shipped lead role unless the musher selects
-another. That role is launch prose; Gangline neither records nor manages it
-after delivery.
-
-*Harness* names only the runtime, never the instance running it.
-
-## Long sessions
-
-Every hitched agent receives [`CONTRACT.md`](CONTRACT.md), the terms it is held
-to, and the role brief it was hitched with. Goals and working agreements stay as
-ordinary prose in the native harnesses and messages.
-
-At a natural checkpoint an agent runs:
-
-```sh
-gang compact worker
-```
-
-Gangline submits the collar's native compaction command, at the turn boundary
-when the agent asks for itself. Failure remains visible in `gang status` and
-`gang roster`.
-
-Context lights default to the collar's own thresholds for the model being
-hitched, so a team mixing harnesses gets working lights on every agent with
-nothing configured. Override them for one agent, or per collar and model in
-operator configuration, with percentages that serve mixed windows or absolute
-tokens for a single observed one. Keep both edges high, but below the harness's
-observed automatic-compaction
-boundary:
-
-```sh
-gang hitch worker -c codex -m "$CODEX_MODEL" -e "$CODEX_EFFORT"
-gang hitch narrow -c codex -m "$CODEX_MODEL" -e "$CODEX_EFFORT" --lights 50%,80%
-gang hitch quiet  -c codex -m "$CODEX_MODEL" -e "$CODEX_EFFORT" --lights off
-```
-
-The native hook advises once when usage crosses yellow and once when it crosses
-red. Dropping below yellow starts a new context epoch. Lights are guidance only;
-the agent chooses the natural checkpoint. An absolute red threshold above the
-native window reports itself as invalid when that window is first readable.
-
-`GANG_CONTEXT_BANDS` replaces that fixed yellow/red pair for newly hitched
-agents with an ordered, named list and a short message for each edge. Leave it
-unset to retain the legacy defaults and wording exactly. A band note remains in
-an agent's context and is reread on later turns, so keep templates short. The
-operator map chooses exact `COLLAR/MODEL`, then `COLLAR/*`, then the mandatory
-`*` global default; `gang config` shows that order and a safe rendered sample.
-See [the operational guide](docs/operations.md#context-bands) for the template
-grammar, placeholder sources, and journal privacy rule.
-
-For an idle agent already past its first context-warning band, the cooperative
-tick is also a cache-expiry backstop. By default it submits one native
-compaction shortly before Claude Code's one-hour cache or Codex's thirty-minute
-cache expires, then records the submission for `gang explain`. It never acts on
-a busy, occupied, or spooled agent, and it will not compact again in that idle
-gap. Set `GANG_CACHE_COMPACTION=off` to opt out, or use a per-collar
-`COLLAR=TTL:MARGIN` map in the operator configuration. The setting is resolved
-when an agent is hitched, so change it before hitching the agents it should
-govern.
-
-An operator may also declare one optional curfew for the whole team:
-
-```sh
-gang curfew 2h
-gang curfew 17:30
-```
-
-Yellow appears halfway through the declared span and red after four-fifths.
-Hook-enabled agents receive each edge once. `gang curfew` shows the declaration
-and `gang curfew clear` removes it. Nothing stops automatically.
-
-Provider-usage lights use non-interactive sources declared by each collar, not
-screen scraping. They are optional too:
-
-```sh
-GANG_USAGE_LIGHTS="90%,95%" gang hitch worker -c codex \
-  -m "$CODEX_MODEL" -e "$CODEX_EFFORT"
-gang limits worker
-gang wait-limit worker
-```
-
-`gang usage` reports what each agent consumed: Gangline's launch record joined
-to ccusage's per-session token counts when that tool is installed, and the
-same table with its gaps named when it is not.
-
-`gang limits` reports native usage windows, reset times, and sample age. A
-provider-reset wait is one transient systemd user timer; it delivers an
-attributed continuation through the ordinary Gangline path and then disappears.
-
-`gang cap` keeps those windows over time, which no harness does: `gang cap
-watch` samples the weekly percentage each provider publishes, `gang cap` prints
-the last reading without spending a turn, and a threshold alerts once inside a
-provider window rather than on every pass. Every figure it stores is one a
-provider published; none is inferred from token volume, and a provider it could
-not read is reported as unread. Readings age out after eight weeks and `gang cap
-forget` removes the history outright.
-
-`GANG_AUTO_RESUME="97%"` arms that wait automatically, once per provider window,
-from the agent's own turn — so a team keeps working across provider windows with
-nobody at the keyboard:
-
-```sh
-GANG_AUTO_RESUME="97%" gang hitch worker -c claude-code -m sonnet -e high
-```
-
-On claude-code, a provider stream that ends with the native status-less
-`server_error` record receives one continuation without depending on the
-provider-reset threshold. If that continuation fails too, Gangline stops after
-that one hop and leaves the refusal in `status` rather than retrying.
-
-## Safety model
-
-Gangline is single-tenant and provides attribution, not authentication. It
-refuses ambiguous tmux targets, occupied native dialogs, non-empty composers,
-and state it cannot determine. It never answers permission prompts or weakens a
-harness sandbox.
-
-State lives in tmux options and dies with its window or team. There is no
-resident daemon, database, cloud service, or private agent protocol. Each
-Gangline invocation may leave one detached tick process behind only for the
-bounded pass it was born to finish; two per-team kernel locks, one queued pass
-and one running, and a hard deadline keep it ephemeral.
+Messages are typed into the recipient's own terminal and are reported as
+delivered only after Gangline sees them land. When it cannot establish the
+truth, it says so instead of guessing. Native dialogs remain native: Gangline
+will not answer a permission or trust prompt for you.
 
 ## Documentation
 
-- [`docs/reference.md`](docs/reference.md) — exact commands, environment, and
-  collar contract
-- [`docs/operations.md`](docs/operations.md) — unattended operation and recovery
-- [`docs/review-tiers.md`](docs/review-tiers.md) — how far a result is reviewed,
-  by whom, and for how many rounds
-- [`docs/benchmarks.md`](docs/benchmarks.md) — benchmark selection and validity
-  gates
-- [`CONSTITUTION.md`](CONSTITUTION.md) — binding project laws
-- [`docs/design.md`](docs/design.md) — the decisions that still shape the code
-- [`CONTRIBUTING.md`](CONTRIBUTING.md) — repository gates and contribution policy
+- [Reference](docs/reference.md) — commands and configuration
+- [Operations](docs/operations.md) — recovery and longer-running teams
+- [Design](docs/design.md) — decisions that shape the project
+- [Contributing](CONTRIBUTING.md) — local checks and commit conventions
+- [Security](SECURITY.md) — private vulnerability reporting
 
 Gangline is licensed under Apache-2.0.

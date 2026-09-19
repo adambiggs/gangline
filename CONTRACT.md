@@ -42,11 +42,6 @@ Hitch a teammate only when the result needs a harness you are not running, an
 owner whose judgment is independent of yours, or work that must outlive your
 session. Everything else is a subagent.
 
-How far a result must be reviewed, and by whom, follows from its tier, and the
-`tier:` line in your assignment names yours. `docs/review-tiers.md` in the
-Gangline checkout holds the two tiers, the round limit, and what each of them
-requires; ask whoever hitched you if that path is not one you can open.
-
 ## Owning work
 
 Finish the whole result assigned to you, including its review. You may hitch

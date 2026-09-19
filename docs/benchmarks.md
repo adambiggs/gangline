@@ -67,8 +67,8 @@ preflight is reviewable.
 
 ## Exclusions
 
-- LHTB is retired. The previous campaign was contaminated by grader, solution,
-  test, and verifier-output access; its results are not evidence.
+- Do not use an evaluation when the system being measured can access its task,
+  solution, test, or verifier output.
 - [SWE-bench Verified](https://openai.com/index/why-we-no-longer-evaluate-swe-bench-verified/)
   is saturated and contaminated at the frontier.
 - SWE-bench Pro is excluded because [OpenAI's audit](https://openai.com/index/separating-signal-from-noise-coding-evaluations/)

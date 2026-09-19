@@ -13,7 +13,7 @@ cannot be seen can still claim any name: a harness's sandboxed command surface
 strips the tmux environment, so its `--from` read exactly like a pane Gangline
 had watched.
 
-Every message names its sender and travels in a nonce-bound envelope. Gangline
+Every message names its sender and travels in an attributed envelope. Gangline
 reports delivery only after the target composer visibly accepted and submitted
 it. It reads the sender off the calling window where it can see one and refuses
 a claimed name there; a name it could not observe goes on the wire as
@@ -169,7 +169,7 @@ evidence. They assert state the command has already established, through
 immediate reads, event barriers or fake clocks, and `test/lint.sh` enforces the
 ban across `test/`. Where the behaviour under test is a timeout, a fake clock
 may be scaled rather than stopped, and the fixture records its measured margin.
-Real harness turns run only in the opt-in e2e lane.
+Real harness turns run only in the opt-in end-to-end test.
 
 ## A mandatory barrier stays inside the wait ceiling
 
