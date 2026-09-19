@@ -473,6 +473,7 @@ if ! unshare -Ur -m true 2>/dev/null; then
     "unprivileged user and mount namespaces are unavailable here (unshare -Ur -m)"
 else
   "$HITCH" usage-readonly-caller -c bash -d /tmp >/dev/null
+  "$HITCH" usage-readonly-target -c bash -d /tmp >/dev/null
   usage_readonly_id="$(window_id usage-readonly-caller)"
   usage_readonly_pane="$(tmux list-panes -t "$usage_readonly_id" -F '#{pane_id}')"
   usage_readonly_data="$RUN_ROOT/usage readonly-##-data"
@@ -483,7 +484,7 @@ else
       mount --bind "$1" "$1"
       mount -o remount,bind,ro "$1"
       env XDG_DATA_HOME="$1" PATH="$2" GANG_SESSION="$4" TMUX_TMPDIR="$5" \
-        TMUX="$6,0,0" TMUX_PANE="$7" "$3" drop usage-readonly-caller
+        TMUX="$6,0,0" TMUX_PANE="$7" "$3" drop usage-readonly-target
     ' usage-readonly-drop "$usage_readonly_data" "$usage_present" "$GANG" \
       "$GANG_SESSION" "$TMUX_TMPDIR" "$TMUX_SOCKET" "$usage_readonly_pane" 2>&1
   )" || fail "drop succeeds from a caller whose usage data root is read-only" \
@@ -495,7 +496,8 @@ else
     usage_readonly_recorded="$(python3 -c 'import json,sys; print(json.loads(open(sys.argv[1]).readline())["agent"])' "$usage_readonly_events")"
   fi
   equal "the server-side append records the agent dropped by a read-only caller" \
-    "usage-readonly-caller" "$usage_readonly_recorded"
+    "usage-readonly-target" "$usage_readonly_recorded"
+  "$GANG" drop usage-readonly-caller >/dev/null
 fi
 
 # A record that cannot be written is one stderr line, and the drop proceeds.

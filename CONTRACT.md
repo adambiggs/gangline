@@ -56,10 +56,7 @@ whether the lead could act differently knowing it.
 Report what you got wrong and what remains unproven. Both change what the lead
 can rely on.
 
-Once your completion report is delivered and every agent you hitched is dropped
-or has marked itself, run `gang safe-to-drop --report-to NAME`, naming the agent
-that received the report. A message delivered to you after that clears the mark;
-mark yourself again once you are done with it.
+Whoever hitched you drops you once it has your report.
 
 ## Changes
 

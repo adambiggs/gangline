@@ -635,16 +635,14 @@ wait_armed() { # the caller's channel is stored in a tmux pane-exited hook
 }
 
 # ---------------------------------------------------------------- scenario 3
-# A VERIFIED PEER MESSAGE REACHES CLAUDE'S MODEL TURN AND IS RECORDED AS
-# DELIVERED. The request is held at the stub so the delivery can be read while
-# the turn is open. The delivered marker it leaves on Claude's window is what
-# safe-to-drop reads as proof that a report arrived; after release, the native
-# Stop must let the real TUI become idle with no reply sent.
+# A VERIFIED PEER MESSAGE REACHES CLAUDE'S MODEL TURN. The request is held at
+# the stub so the turn is provably open when the send returns; after release,
+# the native Stop must let the real TUI become idle with no reply sent.
 scenario_peer() {
   world_up peer
   if ! booted peer; then world_down; return; fi
 
-  local peer=fox peer_window agent_window peer_pane agent_pane peer_token agent_spool rc=0
+  local peer=fox peer_window agent_window peer_pane agent_pane rc=0
   local request_body="$HOLD_MARKER peer request"
   EXTRA_AGENTS="$peer"
   GANG_TEST_COLLARS=1 "$GANG" hitch "$peer" -c bash -d "$WORK" \
@@ -682,16 +680,6 @@ scenario_peer() {
   equal "peer: the request was delivered through observed attribution" 0 "$rc"
   [ "$rc" -eq 0 ] || note "$(tail -3 "$RUN_ROOT/peer-request.out")"
   if ! await_held; then world_down; return; fi
-
-  peer_token="$(tmux show-options -wqv -t "$peer_window" @gl_spool)"
-  agent_spool="$(tmux show-options -wqv -t "$agent_window" @gl_spool)"
-  if [ -n "$peer_token" ] && [ -n "$agent_spool" ]; then
-    equal "peer: delivery marks the sender's token delivered to Claude's registration" \
-      "$agent_spool" "$(tmux show-options -wqv -t "$agent_window" "@gl_delivered_$peer_token")"
-  else
-    fail "peer: delivery marks the sender's token delivered to Claude's registration" \
-      "a registration token is unreadable: peer [$peer_token], Claude [$agent_spool]"
-  fi
 
   release_held
   settled "peer idle after the delivered turn" is_state idle
