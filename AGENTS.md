@@ -90,12 +90,9 @@ an operator request.
 | `docs/design.md` | the decisions that still shape the code |
 | `docs/reference.md` | exact commands, environment, and collar contract |
 | `docs/operations.md` | unattended operation and recovery |
-| `docs/review-tiers.md` | how far a result is reviewed, by whom, and for how many rounds |
 | `CONTRIBUTING.md` | setup, the gate, and commits |
 | `CHANGELOG.md` | release history owned by Release Please; never hand-edit |
 | `docs/benchmarks.md` | external benchmark selection guidance and validity gates |
-| `docs/records/` | dated implementation records; bodies stay historical and status headers stay current |
-| `docs/e2e-lane-calibration.md` | what the offline e2e lane's assertions were proven able to fail on, and when |
 
 `AGENTS.md` is canonical for every harness. `CLAUDE.md` imports it.
 Harness-specific repository settings earn a file only when that harness is
