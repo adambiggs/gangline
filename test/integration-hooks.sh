@@ -3505,7 +3505,7 @@ equal "a refused transient timer leaves no wake declaration" "" \
 # A repository-local hooksPath shadows the operator's global path, so the
 # tracked pre-push hook must delegate outward before it runs Gangline's gates.
 # An ambient legacy depth marker must not suppress either delegation or local
-# checks. Recursive chaining is an identity decision in Snubline's dispatcher.
+# checks. Recursive chaining is an identity decision of the global dispatcher.
 delegation_root="$RUN_ROOT/pre-push-delegation"
 delegation_hooks="$delegation_root/hooks"
 delegation_config="$delegation_root/gitconfig"
@@ -4037,17 +4037,16 @@ mkdir -p "$gate_root"
 : > "$gate_global"
 
 # These fixtures exercise Gangline's local hook, not a PATH-level git wrapper.
-# Remove only a wrapper directory carrying its installer's ownership marker;
-# without that marker, return the caller's PATH byte-for-byte.
-path_without_marked_git_wrapper() {
+# Remove only a directory whose git is a script rather than the real binary;
+# with none, return the caller's PATH byte-for-byte.
+path_without_git_wrapper() {
   local dir out="" saved_ifs="$IFS" found=0
   IFS=:
   set -f
   for dir in $PATH; do
     [ -n "$dir" ] || continue
     if [ -f "$dir/git" ] \
-       && head -n 5 "$dir/git" 2>/dev/null \
-          | grep -q '^# snubline-git-wrapper$'; then
+       && [ "$(head -c 2 "$dir/git" 2>/dev/null)" = '#!' ]; then
       found=1
       continue
     fi
@@ -4060,12 +4059,12 @@ path_without_marked_git_wrapper() {
     return
   }
   [ -n "$out" ] || {
-    printf 'test: PATH contains no git executable outside the marked wrapper\n' >&2
+    printf 'test: PATH contains no git executable outside a wrapper script\n' >&2
     return 1
   }
   printf '%s' "$out"
 }
-gate_git_path="$(path_without_marked_git_wrapper)"
+gate_git_path="$(path_without_git_wrapper)"
 
 gate_bare() { # $1 name
   local repo="$gate_root/$1.git"
