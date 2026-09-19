@@ -518,17 +518,9 @@ SH
     fi
     rm -f -- "$socket"
   done
-  # A ROLE IS A REGISTERED FACT ABOUT THE WINDOW, so these maps differ by exactly
-  # one option and nothing else. The older expectation was that a role changed
-  # nothing observable at all, which left every later reader with the window name
-  # to go by — and an agent is not what it is called. What that expectation was
-  # really guarding is unchanged and still asserted: a role must not move the
-  # session, the collar, the scope, the spool or any other registration.
-  local difference
-  difference="$(diff "$root/plain.map" "$root/role.map" | grep -E '^[<>] ' || true)"
-  equal "AC14 role registers the role it was given and changes nothing else" \
-    "< @gl_role ''
-> @gl_role lead" "$difference"
+  cmp -s "$root/plain.map" "$root/role.map" \
+    && pass "AC14 role leaves window and session mappings byte-identical" \
+    || fail "AC14 role leaves window and session mappings byte-identical" "$(diff -u "$root/plain.map" "$root/role.map" || true)"
 }
 
 ac15() {
@@ -606,14 +598,6 @@ ac16() {
     "Assign one owner per arc."
   contains "AC16 a second window on one result buys nothing" "$lead" \
     "a second window opened against the same result buys the team nothing"
-  contains "AC16 the lead's live-hitch ceiling is four by default" "$lead" \
-    "Four live hitches is your ceiling unless the operator has set another"
-  contains "AC16 the brief defers to the limit the refusal names" "$lead" \
-    "names the limit it applied"
-  contains "AC16 the ceiling is enforced rather than advisory" "$lead" \
-    '`gang hitch` refuses past it'
-  contains "AC16 an override carries a reason that survives the week" "$lead" \
-    "a reason you would defend a week later"
   contains "AC16 a review is not an arc and outside Tier A not a hitch" "$lead" \
     "A review is not an arc, and outside Tier A its reviewer is not a hitch."
   contains "AC16 no agent is hitched to watch, relay, or split" "$lead" \
@@ -986,13 +970,6 @@ ac26() {
       "$(pane_all role-ac26-msg | tr -s ' \n' '  ')" \
       "$(tr -s ' \n' '  ' < "$PRODUCT_ROOT/roles/worker.md")"
     submitted "AC26 the message-level worker contract was submitted" role-ac26-msg
-    # THE ROLE IS REGISTERED AS WELL AS DELIVERED, so what an agent was hitched
-    # as is a fact about its window rather than a paragraph in its context. A
-    # reading that went by the window name instead would answer for what an
-    # agent is called.
-    equal "AC26 the hitched role is registered on the agent's window" \
-      "worker" "$(tmux -S "$TMUX_SOCKET" show-options -wqv \
-        -t "$(window_id role-ac26-msg)" @gl_role)"
     drop_agent role-ac26-msg
   else
     fail "AC26 a role-less-option collar accepts the worker role" "$out"

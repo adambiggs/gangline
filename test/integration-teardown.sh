@@ -41,30 +41,15 @@ td_send() { # $1 from agent, $2 to agent, $3 body
 td_mark() { tmux show-options -wqv -t "$(window_id "$1")" @gl_safe_to_drop; }
 td_teardown_word() { "$GANG" roster --porcelain | awk -F '\t' -v n="$1" '$1 == n { print $9 }'; }
 
-# THIS PART STAGES A TREE DEEPER THAN THE DEFAULT LIVE-HITCH CEILING ALLOWS: one
-# lead holding four children at once, which is what makes a mark over a live
-# child, an orphan and a wedged agent all reachable from the same fixture. What
-# is under test here is who may drop whom, so the ceiling is switched off for it
-# rather than worked around; test/integration-hitch.sh is where the count itself
-# is driven. It is off per hitch and never exported: this file is sourced last
-# today, and an exemption that outlives its own staging would hand the next part
-# added after it a ceiling that silently does not apply.
-GANG_HITCH_CEILING=off "$HITCH" td-lead -c droppable -d /tmp >/dev/null
-GANG_HITCH_CEILING=off "$HITCH" td-peer -c droppable -d /tmp >/dev/null
-GANG_HITCH_CEILING=off TMUX_PANE="$(td_pane td-lead)" \
-  "$HITCH" td-worker -c droppable -d /tmp >/dev/null
-GANG_HITCH_CEILING=off TMUX_PANE="$(td_pane td-lead)" \
-  "$HITCH" td-wedged -c droppable -d /tmp >/dev/null
-GANG_HITCH_CEILING=off TMUX_PANE="$(td_pane td-lead)" \
-  "$HITCH" td-orphan -c droppable -d /tmp >/dev/null
-GANG_HITCH_CEILING=off TMUX_PANE="$(td_pane td-lead)" \
-  "$HITCH" td-orphan2 -c droppable -d /tmp >/dev/null
-GANG_HITCH_CEILING=off TMUX_PANE="$(td_pane td-worker)" \
-  "$HITCH" td-child -c droppable -d /tmp >/dev/null
-GANG_HITCH_CEILING=off TMUX_PANE="$(td_pane td-peer)" \
-  "$HITCH" td-other -c droppable -d /tmp >/dev/null
-GANG_HITCH_CEILING=off TMUX_PANE="$(td_pane td-lead)" \
-  "$HITCH" td-bare -c droppable -d /tmp >/dev/null
+"$HITCH" td-lead -c droppable -d /tmp >/dev/null
+"$HITCH" td-peer -c droppable -d /tmp >/dev/null
+TMUX_PANE="$(td_pane td-lead)" "$HITCH" td-worker -c droppable -d /tmp >/dev/null
+TMUX_PANE="$(td_pane td-lead)" "$HITCH" td-wedged -c droppable -d /tmp >/dev/null
+TMUX_PANE="$(td_pane td-lead)" "$HITCH" td-orphan -c droppable -d /tmp >/dev/null
+TMUX_PANE="$(td_pane td-lead)" "$HITCH" td-orphan2 -c droppable -d /tmp >/dev/null
+TMUX_PANE="$(td_pane td-worker)" "$HITCH" td-child -c droppable -d /tmp >/dev/null
+TMUX_PANE="$(td_pane td-peer)" "$HITCH" td-other -c droppable -d /tmp >/dev/null
+TMUX_PANE="$(td_pane td-lead)" "$HITCH" td-bare -c droppable -d /tmp >/dev/null
 # Readiness: every provenance stamp this part reasons from is already written.
 equal "the fixture tree records its hitchers" \
   "$(tmux show-options -wqv -t "$(window_id td-lead)" @gl_spool) $(tmux show-options -wqv -t "$(window_id td-worker)" @gl_spool) operator" \
@@ -291,8 +276,7 @@ tmux set-option -uw -t "$td_elsewhere_id" @gl_agent
 tmux set-option -uw -t "$td_elsewhere_id" @gl_spool
 # The control: the same pane with no registration is the operator's, and
 # drops a window nobody else would be allowed to.
-GANG_HITCH_CEILING=off TMUX_PANE="$(td_pane td-lead)" \
-  "$HITCH" td-victim -c droppable -d /tmp >/dev/null
+TMUX_PANE="$(td_pane td-lead)" "$HITCH" td-victim -c droppable -d /tmp >/dev/null
 td_rc=0
 td_out="$(TMUX_PANE="$td_elsewhere_pane" "$GANG" drop td-victim 2>&1)" || td_rc=$?
 equal "an unregistered pane of another session drops as the operator" 0 "$td_rc"
@@ -332,8 +316,7 @@ td_out="$(TMUX="$td_remote,1,0" TMUX_PANE="$td_collide_pane" "$GANG" drop td-oth
 equal "nor is it from a shell attached to that server" 3 "$td_rc"
 tmux -S "$td_remote" set-option -uw -t "$td_remote_win" @gl_agent
 tmux -S "$td_remote" set-option -uw -t "$td_remote_win" @gl_spool
-GANG_HITCH_CEILING=off TMUX_PANE="$(td_pane td-lead)" \
-  "$HITCH" td-victim2 -c droppable -d /tmp >/dev/null
+TMUX_PANE="$(td_pane td-lead)" "$HITCH" td-victim2 -c droppable -d /tmp >/dev/null
 td_rc=0
 td_out="$(GANG_TMUX_SOCKET="$td_remote" TMUX_PANE="$td_remote_pane" "$GANG" drop td-victim2 2>&1)" || td_rc=$?
 equal "an unregistered pane of another server drops as the operator" 0 "$td_rc"
@@ -480,7 +463,7 @@ td_rc=0
 td_out="$("$GANG" drop td-other 2>&1)" || td_rc=$?
 equal "the operator drops an unmarked agent another agent hitched" 0 "$td_rc"
 # A MARKED ROOT: its hitcher is the operator, and that is an ordinary mark.
-GANG_HITCH_CEILING=off "$HITCH" td-root -c droppable -d /tmp >/dev/null
+"$HITCH" td-root -c droppable -d /tmp >/dev/null
 td_send td-root td-bare "TD_ROOT_REPORT"
 equal "the root agent's report is delivered" 0 "$td_rc"
 td_as td-root safe-to-drop --report-to td-bare
@@ -503,15 +486,11 @@ contains "status says who may drop it" "$("$GANG" status td-root)" \
 #         td-gdone       marked, reported to td-done
 #         td-late        unmarked, hitched after td-done marked
 #       td-live          unmarked
-GANG_HITCH_CEILING=off "$HITCH" td-gp -c droppable -d /tmp >/dev/null
-GANG_HITCH_CEILING=off TMUX_PANE="$(td_pane td-gp)" \
-  "$HITCH" td-mid -c droppable -d /tmp >/dev/null
-GANG_HITCH_CEILING=off TMUX_PANE="$(td_pane td-mid)" \
-  "$HITCH" td-done -c droppable -d /tmp >/dev/null
-GANG_HITCH_CEILING=off TMUX_PANE="$(td_pane td-mid)" \
-  "$HITCH" td-live -c droppable -d /tmp >/dev/null
-GANG_HITCH_CEILING=off TMUX_PANE="$(td_pane td-done)" \
-  "$HITCH" td-gdone -c droppable -d /tmp >/dev/null
+"$HITCH" td-gp -c droppable -d /tmp >/dev/null
+TMUX_PANE="$(td_pane td-gp)" "$HITCH" td-mid -c droppable -d /tmp >/dev/null
+TMUX_PANE="$(td_pane td-mid)" "$HITCH" td-done -c droppable -d /tmp >/dev/null
+TMUX_PANE="$(td_pane td-mid)" "$HITCH" td-live -c droppable -d /tmp >/dev/null
+TMUX_PANE="$(td_pane td-done)" "$HITCH" td-gdone -c droppable -d /tmp >/dev/null
 td_send td-gdone td-done "TD_GDONE_REPORT"
 td_as td-gdone safe-to-drop --report-to td-done
 equal "the grandchild marks itself" 0 "$td_rc"
@@ -519,8 +498,7 @@ td_send td-done td-mid "TD_DONE_REPORT"
 td_as td-done safe-to-drop --report-to td-mid
 equal "the child over a marked grandchild marks itself" 0 "$td_rc"
 # A mark is refused over a live unmarked child, so this one arrives after it.
-GANG_HITCH_CEILING=off TMUX_PANE="$(td_pane td-done)" \
-  "$HITCH" td-late -c droppable -d /tmp >/dev/null
+TMUX_PANE="$(td_pane td-done)" "$HITCH" td-late -c droppable -d /tmp >/dev/null
 equal "the late grandchild is live" 1 "$(window_names | grep -cx td-late || :)"
 td_gp_token="$(tmux show-options -wqv -t "$(window_id td-gp)" @gl_spool)"
 td_as td-gp drop td-mid
@@ -549,8 +527,8 @@ equal "and the grandchild too" 0 "$td_rc"
 # name each other as hitcher. The drop must end, taking both. FUNCNEST bounds
 # the call so a walk that recursed without end dies here instead of eating
 # the host's memory.
-GANG_HITCH_CEILING=off "$HITCH" td-x -c droppable -d /tmp >/dev/null
-GANG_HITCH_CEILING=off "$HITCH" td-y -c droppable -d /tmp >/dev/null
+"$HITCH" td-x -c droppable -d /tmp >/dev/null
+"$HITCH" td-y -c droppable -d /tmp >/dev/null
 td_x_token="$(tmux show-options -wqv -t "$(window_id td-x)" @gl_spool)"
 td_y_token="$(tmux show-options -wqv -t "$(window_id td-y)" @gl_spool)"
 tmux set-option -w -t "$(window_id td-x)" @gl_hitched_by "$td_y_token"

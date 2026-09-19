@@ -12,11 +12,6 @@ Assign one owner per arc. That owner works it with its own subagents, so a
 second window opened against the same result buys the team nothing it did not
 already have.
 
-Four live hitches is your ceiling unless the operator has set another.
-`gang hitch` refuses past it and names the limit it applied, so read that
-refusal rather than counting on the number here; `--over-ceiling` takes a
-reason you would defend a week later, not a busy afternoon.
-
 A review is not an arc, and outside Tier A its reviewer is not a hitch. Never
 hitch an agent to watch another, to relay an arc's progress, or to split work
 its owner could have split inside its own harness.

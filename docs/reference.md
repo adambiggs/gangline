@@ -189,7 +189,7 @@ selects the harness. If a native first-run gate appears, `up` exposes it before
 waiting for startup-contract delivery, so answering that prompt remains the
 only operator step.
 
-### `gang hitch <name> [-c harness] [-d dir] [-m model] [-e effort] [-t|--task task] [-r|--role role] [-l|--lights lights] [--resume [session-id]] [--stdin] [--tier A|B] [--over-ceiling why]`
+### `gang hitch <name> [-c harness] [-d dir] [-m model] [-e effort] [-t|--task task] [-r|--role role] [-l|--lights lights] [--resume [session-id]] [--stdin] [--tier A|B]`
 
 Starts a native harness in a named tmux window and delivers one startup contract.
 That contract names the agent and carries `CONTRACT.md`, which holds the
@@ -212,15 +212,6 @@ If `$GANG_CONFIG_DIR/DOCTRINE.md` is present, readable,
 valid UTF-8 prose, the contract attributes and
 appends it byte-exactly. Every hitch carries doctrine; Gangline cannot infer
 which caller is the operator. `adopt` still injects no startup text.
-
-A hitch is refused once the calling agent already holds `GANG_HITCH_CEILING`
-live registered children, counted before the first tmux mutation so nothing is
-left behind. The ceiling is selected by the caller's registered `@gl_role`, which
-`hitch` writes from `-r`, and a role the map does not name is unbounded. Children
-already marked safe to drop still count, since the window is what the refusal
-asks for. The operator, whose shell carries no agent identity, is never bounded.
-`--over-ceiling <why>` hitches anyway and records the reason in that hitch's
-`agent.hitched` event; the reason is recorded whenever the flag is passed.
 
 With `--stdin`, `hitch` reads a message from standard input before it launches
 anything and sends it to the new agent after the startup contract, through the
@@ -538,13 +529,6 @@ startup text or retroactively add launch-time native hooks. A collar whose
 context source requires hitch-time identity may therefore report context
 unavailable.
 
-A new adoption is a live child of the agent that runs it, so it applies the
-same role-selected live-hitch ceiling as `gang hitch` before writing any window
-option. `--over-ceiling <why>` admits the same explicit exception and records
-its reason with the adopted child's `agent.hitched` event. Re-adoption repairs
-metadata rather than creating another child and therefore performs no new
-ceiling decision.
-
 A collar declaring `GANG_STOP_HOOK=1` cannot be adopted. That declaration is a
 promise about the exact launch command installing the native boundary, and an
 existing pane supplies no positive evidence that it started with that command.
@@ -560,12 +544,6 @@ hitcher's old name is never mistaken for it; the witnessed name is printed, and
 said to be gone, only when no live window claims the token. See `gang roster
 --porcelain` above for the full four-state vocabulary (`live`, `gone`,
 `operator`, `unrecorded`) every one of these commands shares.
-
-`@gl_role` is the one stamp the two commands do not share. Only hitch writes it,
-from `-r`, and it is empty when no role was named; `gang adopt` leaves it unset.
-The live-hitch ceiling reads it on the hitching window to choose which limit
-applies, so an adopted window, and a window whose role was not named again on a
-`--resume`, is bounded at the limit for a window with no role.
 
 Both hitch and adopt stamp the agent name in `@gl_agent` and the executable
 identity in `@gl_binary_id`. Reusing a window whose recorded identity names
@@ -2219,7 +2197,6 @@ Exactly these keys are settable:
 | `GANG_CHURN_WAIT` | `0.5` | stable-pane observation interval |
 | `GANG_ACTIVITY_WINDOW` | `5` | recent terminal-activity window |
 | `GANG_TURN_LIMIT` | `300` | native turn-fact bound and default `gang wait` boundary timeout |
-| `GANG_HITCH_CEILING` | `*=1 lead=4` | `off`, or whitespace-separated `ROLE=N` / `ROLE=off` entries; `N` is a positive whole count of live hitches one agent may hold. An exact role entry beats `*`, and a role named by neither is unbounded. The role is the caller's registered `@gl_role`, not its name; the operator is never bounded; `gang hitch --over-ceiling <why>` passes the ceiling and records the reason. |
 | `GANG_TICK_DEADLINE` | `60` | whole seconds, `60` to `3600`: the hard deadline that kills one cooperative tick worker; a pass stops visiting at two thirds of it and hands the rest of the roster to a successor |
 
 Collar declarations are refused because `load_collar` clears them before
