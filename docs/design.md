@@ -72,22 +72,6 @@ turn that tells the agent to re-read its brief and saved state, and `gang
 compact --resume` replaces that turn's text. No compaction lands idle; what the
 continuation asks the agent to re-read is operator prose, not Gangline state.
 
-## Contribution safety scanning lives outside the repository
-
-2026-08-12 · [fee26a8](https://github.com/adambiggs/gangline/commit/fee26a8)
-
-One pre-push gate scans every repository's pushed tree for personal data. A
-second scanner copy inside Gangline is a second thing to keep correct, and the
-copy that lags is the one that reports clean.
-
-Gangline carries no scanner, scanning CI or scanning tests. Its pre-push hook
-delegates to the executable global hook first and then runs its own lint and
-commit checks; an absent global hook is a no-op. A clone without the operator's
-gate pushes unscanned, and public CI runs no PII scan; that gap is accepted
-rather than closed with a vendored copy. The outer gate can spend minutes in
-inference, so it writes straight to the terminal rather than being captured and
-replayed, and its progress shows instead of reading as a hang.
-
 ## The contract rides the system prompt where a collar has one
 
 2026-08-12 · [eac1447](https://github.com/adambiggs/gangline/commit/eac1447)
