@@ -129,7 +129,7 @@ jobs:
       # coverage while the job kept going green. The probe refuses to guess, so
       # a bump that changes the answer fails here instead of going unnoticed.
       TMUX_RAW_VERSION: 3.2a
-      TMUX_RAW_PREFIX: /home/runner/.local/tmux-raw # snubline-ignore: home-path -- GitHub's published runner home, not a path from any private machine
+      TMUX_RAW_HOME_SUBDIR: .local/tmux-raw
     steps:
       - uses: actions/checkout@v5
 
@@ -137,7 +137,7 @@ jobs:
         id: tmux-raw
         uses: actions/cache@v4
         with:
-          path: ${{ env.TMUX_RAW_PREFIX }}
+          path: ~/${{ env.TMUX_RAW_HOME_SUBDIR }}
           key: tmux-${{ env.TMUX_RAW_VERSION }}-${{ runner.os }}-${{ runner.arch }}
 
       - name: Dependencies
@@ -168,14 +168,14 @@ jobs:
             "https://github.com/tmux/tmux/releases/download/$TMUX_RAW_VERSION/tmux-$TMUX_RAW_VERSION.tar.gz"
           tar -xzf /tmp/tmux-raw.tar.gz -C /tmp
           cd "/tmp/tmux-$TMUX_RAW_VERSION"
-          ./configure --prefix="$TMUX_RAW_PREFIX"
+          ./configure --prefix="$HOME/$TMUX_RAW_HOME_SUBDIR"
           make -j"$(nproc)"
           make install
 
       - name: Raw user-option bytes
         run: |
           set -eu
-          export PATH="$TMUX_RAW_PREFIX/bin:$PATH"
+          export PATH="$HOME/$TMUX_RAW_HOME_SUBDIR/bin:$PATH"
           tmux -V
           bytes="$(test/tmux-option-bytes.sh)"
           echo "user-option-control-bytes: $bytes"
@@ -190,7 +190,7 @@ jobs:
         timeout-minutes: 45
         run: |
           set -eu
-          export PATH="$TMUX_RAW_PREFIX/bin:$PATH"
+          export PATH="$HOME/$TMUX_RAW_HOME_SUBDIR/bin:$PATH"
           test/integration.sh
 
   release:

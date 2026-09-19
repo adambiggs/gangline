@@ -2234,7 +2234,8 @@ cat <<'JSON'
 ]}
 JSON
 SH
-cat > "$CODEX_CATALOG_STUB/home/config.toml" <<'TOML' # snubline-ignore: home-path -- fixture subpath under CODEX_CATALOG_STUB, not a user or machine home directory
+codex_stub_home="$CODEX_CATALOG_STUB/home"
+cat > "$codex_stub_home/config.toml" <<'TOML'
 model = "gpt-5.6-sol"
 TOML
 chmod +x "$CODEX_CATALOG_STUB/bin/codex"
