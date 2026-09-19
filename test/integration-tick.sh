@@ -1932,7 +1932,7 @@ equal "the next tick passes after a killed controller" 0 "$tick_controller_next_
 excludes "the deadline controller ignores an ambient clock executable" \
   "$(<"$ROOT/libexec/gang-tick-deadline")" "GANGLINE_CLOCK_HELPER"
 
-tick_deadline_bound_probe="$(python3 - "$ROOT/libexec/gang-tick-deadline" \
+tick_deadline_bound_probe="$(GANG_TICK_DEADLINE=60 python3 - "$ROOT/libexec/gang-tick-deadline" \
   "$ROOT/libexec/gang-clock" 2>/dev/null <<'PY'
 import runpy
 import subprocess
