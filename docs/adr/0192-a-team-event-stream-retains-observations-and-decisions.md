@@ -22,7 +22,10 @@ remain a small CLI artifact, not a watcher, database, or second transport.
 Gangline appends structured, monotonic event lines to its own event file and
 exposes the current team's filtered stream through `gang log`. Events carry
 the team, agent, kind, and event-specific facts; message bodies are not
-recorded. Two fixed-size generations bound retained diagnostic evidence. The
+recorded. A context reading is recorded only beside the band change it
+decided, because every hook reads the context and a row per reading records
+nothing the next one would not. Two fixed-size generations bound retained
+diagnostic evidence. The
 separate unpruned usage and cost record remains `gang usage`'s only history.
 
 ## Consequences

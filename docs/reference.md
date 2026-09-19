@@ -1734,7 +1734,9 @@ The caller stages a validated row in tmux and a host-side `run-shell` child perf
 append, so a sandboxed caller cannot write a private event stream. An append failure is loud,
 keeps the prepared row in tmux when no host-side record exists, and lets the lifecycle action
 finish: unavailable diagnostic storage must not strand a delivery, teardown, or tick. The missing
-row remains an explicit gap rather than evidence that the action did not occur.
+row remains an explicit gap rather than evidence that the action did not occur. A context
+reading is recorded as `context.read` beside the `context.band-changed` edge it decided, not on
+every hook.
 
 ### `gang usage [--all] [--daily [YYYY-MM-DD] | --since YYYY-MM-DD]`
 

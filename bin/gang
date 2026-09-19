@@ -11411,9 +11411,10 @@ context_measure() { # $1 window, collar loaded -> CONTEXT_USED/SIZE/PCT
 
 CONTEXT_LIGHT=""
 CONTEXT_LIGHT_ERROR=""
+CONTEXT_LIGHT_ARMED=""
 context_light_read() { # $1 = window, collar loaded; named band, or 1 below
   local threshold i last=0 name="" armed="" rc=0
-  CONTEXT_LIGHT="" CONTEXT_LIGHT_ERROR="" CONTEXT_LIGHT_INDEX=-1
+  CONTEXT_LIGHT="" CONTEXT_LIGHT_ERROR="" CONTEXT_LIGHT_INDEX=-1 CONTEXT_LIGHT_ARMED=""
   context_bands_for "$1" || return 1
   context_measure "$1" || rc=$?
   if [ "$rc" -ne 0 ]; then
@@ -11439,10 +11440,19 @@ context_light_read() { # $1 = window, collar loaded; named band, or 1 below
     fi
     return 3
   fi
-  event_log_record "$1" context.read \
-    "{\"reading\":\"$CONTEXT_USED/$CONTEXT_SIZE\",\"armed\":\"$armed\",\"band\":\"${CONTEXT_LIGHT:-below}\"}" \
-    || die 'context: the native reading was made but could not be recorded'
+  CONTEXT_LIGHT_ARMED="$armed"
   [ "$CONTEXT_LIGHT_INDEX" -ge 0 ] || return 1
+}
+
+# A READING IS RECORDED WHERE IT DECIDED SOMETHING. Every hook reads the
+# context, and recording each reading made context.read most of the event
+# stream while saying nothing the next reading would not; the reading behind a
+# band change is the one a later reader needs. Best-effort like every
+# diagnostic event: the edge it explains has already been decided.
+context_read_record() { # context_light_read measured this command's reading
+  [ -n "$CONTEXT_LIGHT_ARMED" ] || return 0
+  event_log_record "$TMUX_PANE" context.read \
+    "{\"reading\":\"$CONTEXT_USED/$CONTEXT_SIZE\",\"armed\":\"$CONTEXT_LIGHT_ARMED\",\"band\":\"${CONTEXT_LIGHT:-below}\"}"
 }
 
 # CACHE BANDS NEVER EMIT A HOOK NOTE.  Their high-water mark is only an input
@@ -11799,6 +11809,7 @@ context_bands_note() { # $1 collar; context_light_read already measured a custom
   tmux set-option -w -t "$TMUX_PANE" @gl_context_bands_fired "v1:$names" \; \
     set-option -w -t "$TMUX_PANE" @gl_context_light "$CONTEXT_LIGHT" \
     2>/dev/null || return 0
+  context_read_record
   for i in "${!CONTEXT_BAND_NAMES[@]}"; do
     [ "$i" -le "$CONTEXT_LIGHT_INDEX" ] || break
     [ "$i" -ge "$count" ] || continue
@@ -11823,9 +11834,9 @@ context_light_note() { # $1 collar; append an edge to ADVISORY_NOTE
     [ "$CONTEXT_BAND_CUSTOM" -eq 0 ] \
       || tmux set-option -uw -t "$TMUX_PANE" @gl_context_bands_fired 2>/dev/null || true
     if [ -n "$previous" ]; then
+      context_read_record
       event_log_record "$TMUX_PANE" context.band-changed \
-        "{\"from\":\"$previous\",\"to\":\"below\",\"reading_status\":1}" \
-        || die 'context: a light edge was decided but could not be recorded'
+        "{\"from\":\"$previous\",\"to\":\"below\",\"reading_status\":1}"
     fi
     if [ "$previous" = unavailable ]; then
       tmux set-option -uw -t "$TMUX_PANE" @gl_context_miss \; \
@@ -11914,9 +11925,9 @@ context_light_note() { # $1 collar; append an edge to ADVISORY_NOTE
   fi
   ADVISORY_NOTE="${ADVISORY_NOTE:+$ADVISORY_NOTE
 }$note"
+  context_read_record
   event_log_record "$TMUX_PANE" context.band-changed \
-    "{\"from\":\"${previous:-below}\",\"to\":\"$CONTEXT_LIGHT\",\"reading_status\":$rc}" \
-    || die 'context: a light edge was decided but could not be recorded'
+    "{\"from\":\"${previous:-below}\",\"to\":\"$CONTEXT_LIGHT\",\"reading_status\":$rc}"
 }
 
 USAGE_YELLOW=0
