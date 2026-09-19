@@ -10,7 +10,7 @@ event_kinds=(
   compaction.self-requested compaction.dispatched compaction.self-failed
   compaction.self-completed compaction.completed delivery.queued delivery.sending
   delivery.verified delivery.held delivery.interrupted delivery.archived
-  state.classified tick.passed tick.failed tick.deadline-killed alert.raised alert.cleared
+  state.classified tick.passed tick.failed tick.deadline-killed
   agent.hitched agent.dropped
 )
 
@@ -76,7 +76,7 @@ event_proof_out="$(event_gang __event-proof 2>&1)" || {
 }
 for event_kind in "${event_kinds[@]}"; do
   case "$event_kind" in
-    tick.*|alert.*) event_kind_log="$(event_gang log --kind "$event_kind" 2>&1)" ;;
+    tick.*) event_kind_log="$(event_gang log --kind "$event_kind" 2>&1)" ;;
     *) event_kind_log="$(event_gang log event-proof --kind "$event_kind" 2>&1)" ;;
   esac
   # source-guard: whole-surface@82834deea4df: the production proof driver and its reader filter are the complete evidence for this exact requested kind

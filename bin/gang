@@ -501,7 +501,6 @@ talk to agents
 watch agents
   roster    list the team and its state
   status    inspect one agent's state
-  alerts    inspect active team alerts
   tick      run one cooperative retry pass
   explain   show why a state was classified
   wait      wait for an agent boundary
@@ -1258,8 +1257,7 @@ gang tick
   across every hitched agent in the team.
 
   Other operational commands launch this pass
-  detached after their own result is settled;
-  alert inspection does not.
+  detached after their own result is settled.
   Use the explicit command for deterministic
   diagnostics and tests. It takes no arguments.
 
@@ -1274,26 +1272,6 @@ gang tick
   configured. A pass that has spent two thirds
   of the deadline stops visiting and records a
   cursor; the next tick starts after it.
-EOF
-      ;;
-    alerts) cat <<'EOF'
-gang alerts
-  Inspect the team's active alert conditions.
-
-  gang alerts [--porcelain]
-  gang alerts --open
-
-  The ordinary and porcelain reads do not
-  change alert state. --open is the alert-center
-  action used by Prefix+A: it marks current
-  alerts seen, prints the same list, and waits
-  for one key when it owns a terminal.
-
-  Seen is not resolved. Only recovery of the
-  condition clears an active alert. Porcelain
-  output is tab-separated:
-
-    kind  state  visibility  epoch  summary
 EOF
       ;;
     explain) cat <<'EOF'
@@ -4640,7 +4618,6 @@ on_exit() {
   spool_retire_abort
   lock_release
   event_claim_release
-  alert_binding_claim_release
   hitch_up_abort
   wait_hook_cleanup
   tick_launch
@@ -5476,14 +5453,13 @@ tick_session_live() { # cleanup/epilogue probe: no diagnostic may replace caller
 
 tick_paths_set() { # resolve the current team to its health/log directory
   TICK_DIR="" TICK_HEALTH="" TICK_LOG="" TICK_JOURNAL=""
-  TICK_CACHE_COMPACTION_JOURNAL="" TICK_ALERTS=""
+  TICK_CACHE_COMPACTION_JOURNAL=""
   tick_team_digest_set || return 1
   TICK_DIR="$(tick_state_root)/$TICK_TEAM_DIGEST"
   TICK_HEALTH="$TICK_DIR/health"
   TICK_LOG="$TICK_DIR/tick.log"
   TICK_JOURNAL="$TICK_DIR/transitions"
   TICK_CACHE_COMPACTION_JOURNAL="$TICK_DIR/cache-compactions"
-  TICK_ALERTS="$TICK_DIR/alerts"
   TICK_CURSOR="$TICK_DIR/cursor"
 }
 
@@ -5542,91 +5518,17 @@ tick_health_read() { # print state, epoch, message; 1 absent or unreadable
   tick_health_file_read "$TICK_HEALTH"
 }
 
-alert_health_read() { # 0 record, 1 no record yet, 2 unreadable/malformed
-  local file=""
-  file="$(tmux show-options -qv -t "=$SESSION:" @gl_alert_health 2>/dev/null)" \
-    || return 2
-  if [ -z "$file" ]; then
-    tick_paths_set || return 2
-    file="$TICK_HEALTH"
-  fi
-  [ -e "$file" ] || [ -L "$file" ] || return 1
-  tick_health_file_read "$file" || return 2
-}
-
-tick_health_store() { # guard held; $1 state, $2 message, optional $3 epoch
-  local state="$1" note="$2" at="${3:-}" tmp
-  local prior="" prior_state="" prior_note="" prior_rc=0
+tick_health_store() { # guard held; $1 state, $2 message
+  local state="$1" note="$2" at tmp
   tick_paths_set || return 1
   tick_state_prepare
   note="$(printf '%s' "$note" | config_sanitize)"
-  [ -n "$at" ] || at="$(date +%s)"
+  at="$(date +%s)"
   case "$at" in ''|*[!0-9]*) return 1 ;; esac
   tmp="$TICK_HEALTH.new.${BASHPID:-$$}"
   printf '%s\t%s\t%s\n' "$state" "$at" "$note" > "$tmp" \
     || return 1
-  # An absent record is a first pass. One that exists but cannot be read makes
-  # the transition unknown: a row guessed from it would read as a failure raised
-  # again, or drop the resolution of the failure it held.
-  if [ -e "$TICK_HEALTH" ] || [ -L "$TICK_HEALTH" ]; then
-    prior="$(tick_health_file_read "$TICK_HEALTH")" || prior_rc=$?
-  fi
   mv -f -- "$tmp" "$TICK_HEALTH" || { rm -f -- "$tmp"; return 1; }
-  if [ "$prior_rc" -ne 0 ]; then
-    tick_alert_history_lost
-    return 0
-  fi
-  [ -z "$prior" ] || IFS=$'\t' read -r prior_state _ prior_note <<<"$prior"
-  tick_alert_history_note "$prior_state" "$prior_note" "$state" "$note" "$at"
-}
-
-# A RESOLVED ALERT LEAVES A TRACE. Health holds one record, so a failure that a
-# later clean pass resolved vanished from every surface: the operator who missed
-# the red widget could not learn that a tick had failed, or why. Each change of
-# alert condition appends one row here under the same result guard that orders
-# health, so there is one writer and its rotation needs no claim. The history is
-# a best-effort journal: a row that cannot be written never fails the health
-# store it describes, and marks the history incomplete instead of leaving a gap
-# that reads as an uneventful stretch.
-tick_alert_history_note() { # guard held; $1 prior state, $2 prior note, $3 state, $4 note, $5 epoch
-  local size=""
-  case "$1:$3" in
-    ok:ok|:ok) return 0 ;;
-    failed:failed) [ "$2" != "$4" ] || return 0 ;;
-  esac
-  case "$1:$3" in
-    failed:ok) event_log_team_record alert.cleared '{"source":"tick-health"}' \
-                 || return 1 ;;
-    *:failed) event_log_team_record alert.raised '{"source":"tick-health"}' \
-                 || return 1 ;;
-  esac
-  # ROTATE BEFORE THE APPEND, AND ONLY ONTO A FILE. mv onto a directory moves
-  # the journal inside it, where no reader looks. A rotation that cannot land
-  # appends nothing: every row stays in place, the bound holds, and the history
-  # says it is incomplete. A size that cannot be read is such a rotation; read
-  # as zero, the journal would never rotate.
-  if [ -f "$TICK_ALERTS" ]; then
-    size="$(wc -c < "$TICK_ALERTS")" || size=""
-    size="${size//[!0-9]/}"
-    if [ -z "$size" ]; then
-      tick_alert_history_lost
-      return 0
-    fi
-  fi
-  if [ "${size:-0}" -gt "$GLYPH_JOURNAL_BOUND" ]; then
-    if [ -d "$TICK_ALERTS.1" ] || ! mv -f -- "$TICK_ALERTS" "$TICK_ALERTS.1"; then
-      tick_alert_history_lost
-      return 0
-    fi
-  fi
-  if ! { printf '%s\t%s\t%s\n' "$5" "$3" "$4" >> "$TICK_ALERTS"; } 2>/dev/null; then
-    tick_alert_history_lost
-    return 0
-  fi
-}
-
-tick_alert_history_lost() { # a transition went unrecorded; the reader says so
-  tmux set-option -t "=$SESSION:" @gl_alert_history_lost 1 2>/dev/null || true
 }
 
 tick_log_store() { # $1 ok|FAILED, $2 single-line detail; paths already prepared
@@ -5642,374 +5544,28 @@ tick_health_ok() { # optional $1 note for a pass that completed short of the ros
   tick_result_guard_wait || return 1
   tick_log_store ok "tick completed for $SESSION${note:+: $note}" || rc=$?
   [ "$rc" -ne 0 ] || tick_health_store ok "$note" || rc=$?
-  [ "$rc" -ne 0 ] || alert_state_refresh || rc=$?
   tick_result_guard_drop
   return "$rc"
 }
 
-alert_option_set() { # set one session option only when its value changes
-  local option="$1" value="$2" current=""
-  current="$(tmux show-options -qv -t "=$SESSION:" "$option" 2>/dev/null)" \
-    || current=""
-  [ "$current" = "$value" ] \
-    || tmux set-option -t "=$SESSION:" "$option" "$value" >/dev/null
-}
-
-alert_state_refresh() { # derive the status widget from current health and seen state
-  local record="" state="" at="" note="" seen="" active=0 unseen=0 widget=""
-  local read_rc=0 latched=""
-  record="$(alert_health_read 2>/dev/null)" || read_rc=$?
-  case "$read_rc" in
-    0) IFS=$'\t' read -r state at note <<<"$record" ;;
-    1) latched="$(tmux show-options -qv -t "=$SESSION:" \
-         @gl_alert_active 2>/dev/null)" || latched=""
-       if [ "$latched" = 1 ]; then
-         printf 'active alert health is missing; refusing to resolve it without a recovery record\n' >&2
-         return 1
-       fi ;;
-    2) printf 'alert health is unreadable or malformed; refusing to change active alert state\n' >&2
-       return 1 ;;
-    *) return 1 ;;
-  esac
-  if [ "$state" = failed ]; then
-    active=1
-    seen="$(tmux show-options -qv -t "=$SESSION:" @gl_alert_seen 2>/dev/null)" \
-      || seen=""
-    if [ "$seen" = 1 ]; then
-      widget='#[fg=yellow]alerts 1#[default]'
-    else
-      unseen=1
-      widget='#[fg=red,bold]alerts 1!#[default]'
-    fi
-  else
-    tmux set-option -u -t "=$SESSION:" @gl_alert_seen 2>/dev/null || true
-  fi
-  alert_option_set @gl_alert_active "$active" || return 1
-  alert_option_set @gl_alert_unseen "$unseen" || return 1
-  alert_option_set @gl_alert_widget "$widget"
-}
-
-alert_legacy_windows_remove() { # retire only windows marked by the old alert UI
-  local id="" marked=""
-  while read -r id marked; do
-    [ -n "$id" ] || continue
-    [ "$marked" = 1 ] || continue
-    tmux kill-window -t "$id" >/dev/null \
-      || { printf 'could not remove legacy alert window %s\n' "$id" >&2; return 1; }
-  done <<<"$(tmux list-windows -t "=$SESSION" \
-    -F '#{window_id} #{@gl_tick_alerts}' 2>/dev/null || :)"
-}
-
-alert_status_ensure() { # preserve status-right and replace only Gangline's segment
-  local right segment previous="" legacy_owned="" legacy=""
-  local legacy_re='#\([^)]*gang-tick-health\.sh[^)]*\)'
-  segment='#{E:@gl_alert_widget}'
-  right="$(tmux show-options -qv -t "=$SESSION:" status-right 2>/dev/null)" \
-    || return 1
-  previous="$(tmux show-options -qv -t "=$SESSION:" @gl_alert_status_segment 2>/dev/null)" \
-    || previous=""
-  legacy_owned="$(tmux show-options -qv -t "=$SESSION:" @gl_tick_health_segment 2>/dev/null)" \
-    || legacy_owned=""
-  if [ "$previous" = "$segment" ] && [[ "$right" == *"$segment"* ]] \
-     && [ -z "$legacy_owned" ]; then
-    return 0
-  fi
-  if [ -n "$previous" ]; then
-    while [[ "$right" == *"$previous"* ]]; do
-      right="${right%%"$previous"*}${right#*"$previous"}"
-    done
-  fi
-  if [ -n "$legacy_owned" ]; then
-    while [[ "$right" == *"$legacy_owned"* ]]; do
-      right="${right%%"$legacy_owned"*}${right#*"$legacy_owned"}"
-    done
-  else
-    # Early cooperative-tick builds recorded no owning option. Remove only the
-    # command-shaped legacy segment; unrelated operator text remains byte-for-byte.
-    while [[ "$right" =~ $legacy_re ]]; do
-      legacy="${BASH_REMATCH[0]}"
-      right="${right%%"$legacy"*}${right#*"$legacy"}"
-    done
-  fi
-  right="${right% }"
-  right="${right:+$right }$segment"
-  tmux set-option -t "=$SESSION:" status-right "$right" >/dev/null || return 1
-  tmux set-option -t "=$SESSION:" @gl_alert_status_segment "$segment" >/dev/null \
-    || return 1
-  tmux set-option -u -t "=$SESSION:" @gl_tick_health_segment 2>/dev/null || true
-}
-
-alert_binding_line() {
-  tmux list-keys -T prefix A 2>/dev/null
-}
-
-alert_binding_record_form() { # the bytes an option keeps for a rendered key
-  # tmux 3.4 rewrites $NAME to \$NAME when it stores an option value, while
-  # its key table keeps a bound command raw, so the list-keys line and the
-  # option that recorded it can differ on the same server. Passing the line
-  # through an option yields the form the record holds here, whatever the
-  # version's rewrite is.
-  local kept=""
-  tmux set-option -g @gl_alert_binding_probe "$1" >/dev/null 2>&1 || return 1
-  kept="$(tmux show-options -gqv @gl_alert_binding_probe 2>/dev/null)" || kept=""
-  tmux set-option -gu @gl_alert_binding_probe >/dev/null 2>&1 || true
-  printf '%s' "$kept"
-}
-
-alert_binding_owned() { # true when the live key is the one Gangline recorded
-  local actual="$1" owned="$2"
-  [ -n "$actual" ] && [ -n "$owned" ] || return 1
-  [ "$owned" = "$actual" ] && return 0
-  [ "$owned" = "$(alert_binding_record_form "$actual")" ]
-}
-
-ALERT_BINDING_FD=""
-ALERT_BINDING_ERROR=""
-
-alert_binding_claim() { # serialize the server-global binding decision
-  local root socket rc=0
-  ALERT_BINDING_FD=""
-  ALERT_BINDING_ERROR=""
-  socket="$(tmux display-message -p -t "=$SESSION" '#{socket_path}')" \
-    || return 1
-  root="$(cd -P "$(dirname "$socket")" 2>/dev/null && pwd)" \
-    || { printf 'cannot resolve the tmux socket directory for alert binding updates\n' >&2; return 1; }
-  exec {ALERT_BINDING_FD}<"$root" \
-    || { printf 'cannot open tmux socket directory %s for alert binding updates\n' "$root" >&2; return 1; }
-  "$ROOT/libexec/gang-process-identity" --lock-fd "$ALERT_BINDING_FD" \
-    >/dev/null 2>&1 || rc=$?
-  case "$rc" in
-    0)
-       if [ "${GANG_TEST_COLLARS:-}" = 1 ] \
-          && [ -n "${GANG_TEST_ALERT_BINDING_CLAIM_READY_FIFO:-}" ] \
-          && [ -n "${GANG_TEST_ALERT_BINDING_CLAIM_RELEASE_FIFO:-}" ]; then
-         printf x > "$GANG_TEST_ALERT_BINDING_CLAIM_READY_FIFO"
-         IFS= read -r _ < "$GANG_TEST_ALERT_BINDING_CLAIM_RELEASE_FIFO" || true
-         GANG_TEST_ALERT_BINDING_CLAIM_READY_FIFO=""
-         GANG_TEST_ALERT_BINDING_CLAIM_RELEASE_FIFO=""
-       fi
-       return 0 ;;
-    75) ALERT_BINDING_ERROR='another alert binding update is in flight on this tmux server' ;;
-    *) ALERT_BINDING_ERROR="the tmux socket directory lock at $root cannot be acquired for alert binding updates" ;;
-  esac
-  exec {ALERT_BINDING_FD}>&-
-  ALERT_BINDING_FD=""
-  return "$rc"
-}
-
-alert_binding_claim_release() {
-  if [ -n "${ALERT_BINDING_FD:-}" ]; then
-    exec {ALERT_BINDING_FD}>&-
-  fi
-  ALERT_BINDING_FD=""
-}
-
-alert_binding_ensure() { # install Prefix+A only while its exact key is unclaimed
-  local actual="" owned="" installed="" owned_version="" popup_command=""
-  actual="$(alert_binding_line)" || actual=""
-  owned="$(tmux show-options -gqv @gl_alert_binding 2>/dev/null)" || owned=""
-  owned_version="$(tmux show-options -gqv @gl_alert_binding_version 2>/dev/null)" \
-    || owned_version=""
-  if alert_binding_owned "$actual" "$owned" && [ "$owned_version" = 2 ]; then
-    tmux set-option -u -t "=$SESSION:" @gl_alert_binding_conflict 2>/dev/null || true
-    return 0
-  fi
-  if [ -n "$actual" ] && ! alert_binding_owned "$actual" "$owned"; then
-    tmux set-option -t "=$SESSION:" @gl_alert_binding_conflict \
-      'Prefix+A is already bound; Gangline left it unchanged' >/dev/null
-    return 0
-  fi
-  # The popup's TMUX value identifies the client session even on tmux 3.2a,
-  # where display-popup does not expand formats and leaves TMUX_PANE empty.
-  # Keeping formats out of this shell command makes its parsing version-neutral.
-  popup_command='command="$(tmux show-options -qv -t "" @gl_alert_command 2>/dev/null)" || command=; [ -z "$command" ] || sh -c "$command"'
-  tmux bind-key -T prefix A display-popup -E -w 80% -h 70% \
-    "$popup_command" \
-    >/dev/null || return 1
-  installed="$(alert_binding_line)" || return 1
-  [ -n "$installed" ] || return 1
-  tmux set-option -g @gl_alert_binding "$installed" >/dev/null || return 1
-  tmux set-option -g @gl_alert_binding_version 2 >/dev/null || return 1
-  tmux set-option -u -t "=$SESSION:" @gl_alert_binding_conflict 2>/dev/null || true
-}
-
-alert_ui_failed() { # $1 the install step that failed; always status 1
-  printf 'could not %s\n' "$1" >&2
-  return 1
-}
-
-alert_ui_cause() { # $1 alert_ui_ensure's stderr -> one line, failed step first
-  local step="" rest="" line=""
-  while IFS= read -r line; do
-    [ -n "$line" ] || continue
-    [ -z "$step" ] || rest="${rest:+$rest; }$step"
-    step="$line"
-  done <<<"$1"
-  [ -n "$step" ] || step="no step reported a cause"
-  printf '%s%s' "$step" "${rest:+ ($rest)}"
-}
-
-alert_ui_ensure() { # migrate and install the non-stealing tmux alert center
-  # Every failing step names itself last, after whatever the step or tmux
-  # printed, so a caller can put the step and its cause on one line.
-  local command claim_rc=0 rc=0
-  tick_paths_set || { alert_ui_failed "resolve the tick state directory"; return 1; }
-  alert_legacy_windows_remove || { alert_ui_failed "remove the legacy alert windows"; return 1; }
-  alert_status_ensure || { alert_ui_failed "update the status line"; return 1; }
-  command="GANG_SESSION=$(option_shell_quote "$SESSION") GANG_CONFIG_DIR=$(option_shell_quote "$CONFIG_DIR") GANG_LOCK_DIR=$(option_shell_quote "${GANG_LOCK_DIR:-$GANGLINE_STATE_DEFAULT}") \"$(option_shell_quote "$ROOT/bin/gang")\" alerts --open"
-  alert_option_set @gl_alert_health "$TICK_HEALTH" \
-    || { alert_ui_failed "record the health path"; return 1; }
-  alert_binding_claim || claim_rc=$?
-  if [ "$claim_rc" -eq 0 ] && [ "${GANG_TEST_COLLARS:-}" = 1 ] \
-     && [ -n "${GANG_TEST_ALERT_BINDING_POST_CLAIM_READY_FIFO:-}" ] \
-     && [ -n "${GANG_TEST_ALERT_BINDING_POST_CLAIM_RELEASE_FIFO:-}" ]; then
-    printf x > "$GANG_TEST_ALERT_BINDING_POST_CLAIM_READY_FIFO"
-    IFS= read -r _ < "$GANG_TEST_ALERT_BINDING_POST_CLAIM_RELEASE_FIFO" || true
-    GANG_TEST_ALERT_BINDING_POST_CLAIM_READY_FIFO=""
-    GANG_TEST_ALERT_BINDING_POST_CLAIM_RELEASE_FIFO=""
-  fi
-  if [ "$claim_rc" -eq 0 ]; then
-    alert_option_set @gl_alert_command "$command" \
-      || { rc=$?; alert_ui_failed "record the alert command"; }
-    [ "$rc" -ne 0 ] || alert_binding_ensure \
-      || { rc=$?; alert_ui_failed "install the Prefix+A binding"; }
-    alert_binding_claim_release
-  elif [ "$claim_rc" -eq 75 ] \
-       && [ -n "$(tmux show-options -qv -t "=$SESSION:" @gl_alert_command 2>/dev/null)" ]; then
-    # This session has already contributed its popup command, so another tick
-    # holding the server-global binding claim is doing the only remaining work.
-    # Reporting that ordinary serialization as a failed tick paints a false
-    # alert over a healthy team; a later tick still retries if its owner fails.
-    :
-  else
-    [ -z "$ALERT_BINDING_ERROR" ] || printf '%s\n' "$ALERT_BINDING_ERROR" >&2
-    rc=1
-    alert_ui_failed "claim the Prefix+A binding"
-  fi
-  alert_state_refresh || { rc=$?; alert_ui_failed "refresh the alert widget"; }
-  return "$rc"
-}
-
-alert_status_remove() { # remove only the segment recorded as Gangline-owned
-  local right="" segment=""
-  right="$(tmux show-options -qv -t "=$SESSION:" status-right 2>/dev/null)" \
-    || return 1
-  segment="$(tmux show-options -qv -t "=$SESSION:" @gl_alert_status_segment 2>/dev/null)" \
-    || segment=""
-  if [ -n "$segment" ]; then
-    while [[ "$right" == *"$segment"* ]]; do
-      right="${right%%"$segment"*}${right#*"$segment"}"
-    done
-    right="${right% }"
-    tmux set-option -t "=$SESSION:" status-right "$right" >/dev/null || return 1
-  fi
-  tmux set-option -u -t "=$SESSION:" @gl_alert_status_segment 2>/dev/null || true
-}
-
-alert_binding_release() { # called under claim: unbind only our exact last-team key
-  local name="" actual="" owned=""
-  while IFS= read -r name; do
-    [ "$name" = "$SESSION" ] && continue
-    [ -z "$name" ] || return 0
-  done <<<"$(tmux list-sessions \
-    -f '#{!=:#{@gl_alert_command},}' -F '#{session_name}' 2>/dev/null || :)"
-  if [ "${GANG_TEST_COLLARS:-}" = 1 ] \
-     && [ -n "${GANG_TEST_ALERT_BINDING_READY_FIFO:-}" ] \
-     && [ -n "${GANG_TEST_ALERT_BINDING_RELEASE_FIFO:-}" ]; then
-    printf x > "$GANG_TEST_ALERT_BINDING_READY_FIFO"
-    IFS= read -r _ < "$GANG_TEST_ALERT_BINDING_RELEASE_FIFO" || true
-  fi
-  actual="$(alert_binding_line)" || actual=""
-  owned="$(tmux show-options -gqv @gl_alert_binding 2>/dev/null)" || owned=""
-  if alert_binding_owned "$actual" "$owned"; then
-    tmux unbind-key -T prefix A >/dev/null || return 1
-  fi
-  tmux set-option -gu @gl_alert_binding 2>/dev/null || true
-  tmux set-option -gu @gl_alert_binding_version 2>/dev/null || true
-}
-
-alert_ui_remove() { # inverse of alert_ui_ensure; safe to repeat
-  local claim_rc=0 rc=0
-  alert_binding_claim || claim_rc=$?
-  if [ "$claim_rc" -ne 0 ]; then
-    [ -z "$ALERT_BINDING_ERROR" ] || printf '%s\n' "$ALERT_BINDING_ERROR" >&2
-    return 1
-  fi
-  alert_status_remove || rc=$?
-  if [ "$rc" -eq 0 ]; then
-    tmux set-option -u -t "=$SESSION:" @gl_alert_active 2>/dev/null || true
-    tmux set-option -u -t "=$SESSION:" @gl_alert_unseen 2>/dev/null || true
-    tmux set-option -u -t "=$SESSION:" @gl_alert_widget 2>/dev/null || true
-    tmux set-option -u -t "=$SESSION:" @gl_alert_seen 2>/dev/null || true
-    tmux set-option -u -t "=$SESSION:" @gl_alert_health 2>/dev/null || true
-    tmux set-option -u -t "=$SESSION:" @gl_alert_binding_conflict 2>/dev/null || true
-    alert_binding_release || rc=$?
-  fi
-  if [ "$rc" -eq 0 ]; then
-    tmux set-option -u -t "=$SESSION:" @gl_alert_command 2>/dev/null || rc=$?
-  fi
-  alert_binding_claim_release
-  return "$rc"
-}
-
-tick_failure_surface() { # $1 sanitized summary, $2 transition 0|1; never fatal
-  local note="$1" transition="$2"
-  alert_ui_ensure 2>/dev/null || true
-  [ "$transition" -eq 1 ] || return 0
-  tmux display-message -t "=$SESSION:" "gang: new alert: tick failed: $note" \
-    2>/dev/null || true
-}
-
-tick_health_fail() { # $1 complete worker diagnostic
-  local note="$1" previous="" previous_state="" previous_at=""
-  local transition=1 rc=0 latched=""
+tick_health_fail() { # $1 complete worker diagnostic; health keeps its last line
+  local note="$1" rc=0
   [ -n "$note" ] || note="the tick worker failed without a diagnostic"
   note="${note##*$'\n'}"
   tick_paths_set || return 1
   tick_result_guard_wait || return 1
-  previous="$(tick_health_file_read "$TICK_HEALTH" 2>/dev/null)" || previous=""
-  if [ -n "$previous" ]; then
-    IFS=$'\t' read -r previous_state previous_at _ <<<"$previous"
-    [ "$previous_state" != failed ] || transition=0
-  else
-    latched="$(tmux show-options -qv -t "=$SESSION:" \
-      @gl_alert_active 2>/dev/null)" || latched=""
-    [ "$latched" != 1 ] || transition=0
-  fi
   tick_log_store FAILED "$(printf '%s' "$1" | config_sanitize)" || rc=$?
-  if [ "$transition" -eq 0 ]; then
-    [ "$rc" -ne 0 ] || tick_health_store failed "$note" "$previous_at" || rc=$?
-  else
-    [ "$rc" -ne 0 ] || tick_health_store failed "$note" || rc=$?
-    [ "$rc" -ne 0 ] \
-      || tmux set-option -t "=$SESSION:" @gl_alert_seen 0 2>/dev/null || true
-  fi
-  [ "$rc" -ne 0 ] \
-    || tick_failure_surface "$(printf '%s' "$note" | config_sanitize)" "$transition" \
-    || rc=$?
+  [ "$rc" -ne 0 ] || tick_health_store failed "$note" || rc=$?
   tick_result_guard_drop
   return "$rc"
 }
 
-tick_health_warn() { # the next invocation carries the last failure on stderr
-  local record state at note
-  tick_session_live || return 0
-  record="$(tick_health_read)" || return 0
-  IFS=$'\t' read -r state at note <<<"$record"
-  [ "$state" = failed ] || return 0
-  # This lands on whatever command ran next, so it says what is stalled and
-  # where to look: every ordinary command starts a tick as it exits, whatever
-  # the last one did, and the first clean pass clears this record.
-  printf 'gang: last tick failed: %s — ticking continues and a clean pass clears this; run gang alerts for the failure\n' \
-    "$note" >&2
-}
-
-tick_health_report() {
+tick_health_report() { # roster and status: one line while the most recent tick failed
   local record state at note
   record="$(tick_health_read)" || return 0
   IFS=$'\t' read -r state at note <<<"$record"
   [ "$state" = failed ] || return 0
-  printf '%s\n' "$(colour "$C_BAD" "last tick failed: $note")"
+  printf '%s\n' "$(colour "$C_BAD" "tick failed: $note")"
 }
 
 tick_state_forget() { # health and the tick journals die with their team
@@ -6018,12 +5574,12 @@ tick_state_forget() { # health and the tick journals die with their team
     printf '%s\n' "$(colour "$C_BAD" "tick state files NOT removed: the team's state directory could not be resolved")" >&2
     return 1
   fi
-  # No current version writes a ticket; a team started under an older one
-  # can still hold it, and it would keep rmdir failing.
+  # Older versions wrote a ticket and alert history here; either would keep
+  # the retired team's state directory from being removed.
   if ! err="$(rm -f -- "$TICK_HEALTH" "$TICK_LOG" "$TICK_DIR/ticket" \
          "$TICK_JOURNAL" "$TICK_JOURNAL.1" \
          "$TICK_CACHE_COMPACTION_JOURNAL" "$TICK_CACHE_COMPACTION_JOURNAL.1" \
-         "$TICK_ALERTS" "$TICK_ALERTS.1" \
+         "$TICK_DIR/alerts" "$TICK_DIR/alerts.1" \
          "$TICK_DIR/context-events" "$TICK_DIR/context-events.1" 2>&1)"; then
     printf '%s\n' "$(colour "$C_BAD" "tick state files NOT all removed from $TICK_DIR: ${err##*$'\n'}")" >&2
     return 1
@@ -6046,7 +5602,7 @@ tick_lock_base_prepare() { lock_base "$TICK_LOCK_BASE"; }
 
 TICK_RESULT_GUARD_FD="" TICK_RESULT_GUARD_HELD=0
 
-tick_result_guard_wait() { # serialize result commits with the alert center's seen transition
+tick_result_guard_wait() { # serialize tick result commits
   [ "$TICK_RESULT_GUARD_HELD" -ne 1 ] || return 0
   tick_lock_paths_set || return 1
   [ -d "$TICK_LOCK_BASE" ] || tick_lock_base_prepare || return 1
@@ -6262,24 +5818,12 @@ tick_trust_reviews() { # retire only the transient review windows gang itself ma
 }
 
 tick_full_pass_once() {
-  local id agent collar special wins rc=0 pass_rc=0 err="" pending="" busy_rc=0
+  local id agent collar wins rc=0 pass_rc=0 err="" pending="" busy_rc=0
   local compact_note="" compact_rc=0 cache_rc=0 compacted=0
   local cursor="" last="" visited=0 total=0 partial=0 refreshed_state="" cause=""
   local TICK_PASS=1 GLYPH_SOURCE=tick
-  local alert_err="" alert_rc=0
-  # A tick alert keeps only the last line of the pass's output, and a failure
-  # that clears on the next pass leaves nothing else to read, so the failed
-  # step and what it printed travel on that one line.
-  { alert_err="$(alert_ui_ensure 2>&1 1>&3)" || alert_rc=$?; } 3>&1
-  if [ "$alert_rc" -ne 0 ]; then
-    printf 'tick could not install the tmux alert center: %s\n' \
-      "$(alert_ui_cause "$alert_err")" >&2
-    rc=1
-  elif [ -n "$alert_err" ]; then
-    printf '%s\n' "$alert_err" >&2
-  fi
   wins="$(tmux list-windows -t "=$SESSION" \
-    -F '#{window_id} #{@gl_agent} #{@gl_collar} #{@gl_tick_alerts}')" \
+    -F '#{window_id} #{@gl_agent} #{@gl_collar}')" \
     || { printf "tick could not list windows in session '%s'\n" "$SESSION" >&2; return 1; }
   tick_trust_reviews || rc=1
   # A PASS THAT CANNOT FINISH THE ROSTER INSIDE ITS BUDGET STOPS AND SAYS WHERE.
@@ -6296,10 +5840,9 @@ tick_full_pass_once() {
     IFS= read -r cursor < "$TICK_CURSOR" || cursor=""
   fi
   [ -z "$cursor" ] || wins="$(printf '%s\n' "$wins" | tick_roster_rotate "$cursor")"
-  total="$(printf '%s\n' "$wins" | awk '$1 != "" && $2 != "" && $3 != "" && $4 != 1 { n++ } END { print n + 0 }')"
-  while read -r id agent collar special; do
+  total="$(printf '%s\n' "$wins" | awk '$1 != "" && $2 != "" && $3 != "" { n++ } END { print n + 0 }')"
+  while read -r id agent collar; do
     [ -n "$id" ] || continue
-    [ "$special" != 1 ] || continue
     [ -n "$agent" ] && [ -n "$collar" ] || continue
     # The first visit is always made: a budget the pass cannot fit one visit in
     # would otherwise make progress zero and the cursor stationary.
@@ -6551,7 +6094,7 @@ cmd_tick_worker() { # internal pass under the team's run lock; 76 committed fail
   fi
   if [ "$rc" -eq 0 ]; then
     tick_health_ok "$note" && return 0
-    output="${output:+$output$'\n'}the tick completed but its health or alert state could not be written"
+    output="${output:+$output$'\n'}the tick completed but its health could not be written"
   fi
   if tick_health_fail "$output"; then
     [ -z "$output" ] || printf '%s\n' "$output" >&2
@@ -6630,231 +6173,6 @@ cmd_tick() { # public synchronous seam; one pass at a time per team, each self-d
   return 1
 }
 
-alert_key_hint() { # the alert center's tmux key, or why it has none
-  local conflict=""
-  conflict="$(tmux show-options -qv -t "=$SESSION:" \
-    @gl_alert_binding_conflict 2>/dev/null)" || conflict=""
-  if [ -n "$conflict" ]; then
-    printf 'open key unavailable: %s\n' "$conflict"
-  else
-    printf 'open in tmux: Prefix+A\n'
-  fi
-}
-
-ALERT_HISTORY_ROWS=10
-
-alert_history_report() { # the latest alert transitions, oldest first
-  local files=() current="" rows="" row tabs tab=$'\t' epoch state note lost=""
-  if ! tick_paths_set; then
-    printf '\nrecent alerts: unknown (the team state directory could not be resolved)\n'
-    return 0
-  fi
-  # LIST THE CURRENT GENERATION FIRST. A reader takes no lock and a rotation can
-  # land between these checks. In this order a rotation can add .1 to a listing
-  # that already names the moved file, whose read then fails as unknown; in the
-  # other order the first rotation hides both files and a journal with rows
-  # reads as no history. The history-lost read stays between the checks: it is
-  # where the test lands that rotation.
-  [ ! -f "$TICK_ALERTS" ] || current="$TICK_ALERTS"
-  lost="$(tmux show-options -qv -t "=$SESSION:" @gl_alert_history_lost 2>/dev/null)" \
-    || lost=""
-  [ ! -f "$TICK_ALERTS.1" ] || files+=("$TICK_ALERTS.1")
-  [ -z "$current" ] || files+=("$current")
-  if [ "${#files[@]}" -eq 0 ]; then
-    printf '\nno alert history\n'
-  elif ! rows="$(cat -- "${files[@]}" | tail -n "$ALERT_HISTORY_ROWS")"; then
-    printf '\nrecent alerts: unknown (the history at %s could not be read)\n' "$TICK_ALERTS"
-  else
-    printf '\nrecent alerts:\n'
-    while IFS= read -r row; do
-      # This writer emits three fields; any other count, an empty surplus field
-      # included, is a row it did not write. Tab is whitespace to read, which
-      # drops a trailing empty field, so the count is taken on the raw row.
-      tabs="${row//[!$tab]/}"
-      if [ "${#tabs}" -ne 2 ]; then printf '  unreadable history row\n'; continue; fi
-      epoch="${row%%"$tab"*}"
-      row="${row#*"$tab"}"
-      state="${row%%"$tab"*}"
-      note="${row#*"$tab"}"
-      case "$state:$epoch" in
-        failed:*[!0-9]*|ok:*[!0-9]*|failed:|ok:) printf '  unreadable history row\n' ;;
-        failed:*) printf '  %s raised: %s\n' "$epoch" "$note" ;;
-        ok:*) printf '  %s cleared\n' "$epoch" ;;
-        *) printf '  unreadable history row\n' ;;
-      esac
-    done <<<"$rows"
-  fi
-  [ "$lost" != 1 ] || printf '  incomplete: a transition could not be recorded\n'
-}
-
-cmd_alerts() { # read active conditions; --open changes only their seen state
-  local mode=read record="" state="" at="" note="" seen="" visibility=""
-  local conflict="" read_rc=0 latched="" open_guard=0 popup=0 cursor=""
-  case "$#:${1:-}" in
-    0:) ;;
-    1:--porcelain) mode=porcelain ;;
-    1:--open) mode=open ;;
-    *) usage_refuse "alerts: expected no arguments, --porcelain, or --open" ;;
-  esac
-  if ! session_live; then
-    [ "$mode" = porcelain ] \
-      || printf "no active alerts (session '%s' is not running)\n" "$SESSION"
-    return 0
-  fi
-  if [ "$mode" = open ]; then
-    tick_lock_paths_set || die "alerts: could not resolve the alert result guard"
-    tick_result_guard_wait || die "alerts: could not serialize the seen transition"
-    open_guard=1
-    if [ "${GANG_TEST_COLLARS:-}" = 1 ] \
-       && [ -n "${GANG_TEST_ALERT_OPEN_READY_FIFO:-}" ] \
-       && [ -n "${GANG_TEST_ALERT_OPEN_RELEASE_FIFO:-}" ]; then
-      printf x > "$GANG_TEST_ALERT_OPEN_READY_FIFO"
-      IFS= read -r _ < "$GANG_TEST_ALERT_OPEN_RELEASE_FIFO" || true
-    fi
-  fi
-  record="$(alert_health_read 2>/dev/null)" || read_rc=$?
-  case "$read_rc" in
-    0) IFS=$'\t' read -r state at note <<<"$record" ;;
-    1) latched="$(tmux show-options -qv -t "=$SESSION:" \
-         @gl_alert_active 2>/dev/null)" || latched=""
-       [ "$latched" != 1 ] \
-         || die "alerts: active alert health is missing; refusing to report recovery without a clean tick record" ;;
-    2) die "alerts: alert health is unreadable or malformed; refusing to report no active alerts" ;;
-    *) die "alerts: alert health could not be read" ;;
-  esac
-  if [ "$state" = failed ]; then
-    seen="$(tmux show-options -qv -t "=$SESSION:" @gl_alert_seen 2>/dev/null)" \
-      || seen=""
-    if [ "$mode" = open ] && [ "$seen" != 1 ]; then
-      tmux set-option -t "=$SESSION:" @gl_alert_seen 1 >/dev/null \
-        || die "alerts: could not mark the active alert seen"
-      alert_state_refresh \
-        || die "alerts: marked the alert seen but could not refresh its tmux status"
-      seen=1
-    fi
-    if [ "$open_guard" -eq 1 ]; then
-      tick_result_guard_drop
-      open_guard=0
-    fi
-    if [ "$seen" = 1 ]; then visibility=seen; else visibility=unseen; fi
-  elif [ "$open_guard" -eq 1 ]; then
-    tick_result_guard_drop
-    open_guard=0
-  fi
-  if [ "$mode" != porcelain ]; then
-    conflict="$(tmux show-options -qv -t "=$SESSION:" \
-      @gl_alert_binding_conflict 2>/dev/null)" || conflict=""
-  fi
-  if [ "$mode" = open ] && [ -t 0 ] && [ -t 1 ]; then
-    popup=1
-  fi
-  if [ "$state" = failed ]; then
-    if [ "$mode" = porcelain ]; then
-      printf 'tick\tactive\t%s\t%s\t%s\n' "$visibility" "$at" "$note"
-    else
-      printf '1 active alert (%s)\n\n' "$visibility"
-      printf '[%s] cooperative tick failed at %s\n' "$visibility" "$at"
-      if [ "$popup" -eq 1 ]; then
-        # The popup is a scrolling terminal the size of its interior. Rows
-        # that overflow it push the headline and the close key off the screen
-        # tmux repaints from, leaving the operator the tail of the note and no
-        # way to tell what it is or how to close it.
-        alert_note_fit "$note" "1 active alert ($visibility)" "" \
-          "[$visibility] cooperative tick failed at $at" \
-          ${conflict:+"" "open key unavailable: $conflict"} \
-          "" "Press any key to close."
-      else
-        printf '%s\n' "$note"
-      fi
-    fi
-  else
-    [ "$mode" = porcelain ] || printf "no active alerts for '%s'\n" "$SESSION"
-  fi
-  [ "$mode" != read ] || alert_history_report
-  if [ -n "$conflict" ] || [ "$mode" = read ]; then
-    printf '\n'
-    alert_key_hint
-  fi
-  if [ "$popup" -eq 1 ]; then
-    printf '\nPress any key to close.\n'
-    if [ "${GANG_TEST_COLLARS:-}" = 1 ] \
-       && [ -n "${GANG_TEST_ALERT_RENDER_READY_EVENT:-}" ]; then
-      # The terminal answers a cursor position request only after it has
-      # consumed every byte written before it, so the event fires once the
-      # popup screen holds the whole report, and only then: without a valid
-      # answer the event is withheld and the waiting proof fails at its own
-      # ceiling. That ceiling is the only one. A second, smaller deadline here
-      # would call a slow terminal a broken one, so the read carries none and
-      # the proof that owns the wait also owns ending this client. Echo is off
-      # around the answer so its bytes do not land on that screen.
-      stty -echo 2>/dev/null || true
-      printf '\033[6n'
-      cursor=""
-      IFS= read -r -s -d R -n 32 cursor || cursor=""
-      stty echo 2>/dev/null || true
-      if [[ "$cursor" =~ ^$'\033'\[[0-9]+\;[0-9]+$ ]]; then
-        tmux wait-for -S "$GANG_TEST_ALERT_RENDER_READY_EVENT"
-      else
-        printf 'gang: no cursor report from the terminal; render-ready withheld\n' >&2
-      fi
-    fi
-    IFS= read -r -n 1 _ || true
-  fi
-}
-
-alert_text_rows() { # $1 text, $2 columns -> the rows a terminal shows it on, one per line
-  # Every character stays whole, and a non-ASCII character counts as two
-  # columns: never fewer than the terminal draws, so no row spills over on a
-  # terminal at least two columns wide. A character counted wider than the
-  # whole terminal gets a row of its own and overflows it: below one column
-  # per character there is no row that holds it.
-  local cols="$2" row="" width=0 c w
-  while IFS= read -r -n 1 c; do
-    [ -n "$c" ] || continue
-    case "$c" in [[:ascii:]]) w=1 ;; *) w=2 ;; esac
-    [ "$w" -le "$cols" ] || w="$cols"
-    if [ "$width" -gt 0 ] && [ $((width + w)) -gt "$cols" ]; then
-      printf '%s\n' "$row"
-      row="" width=0
-    fi
-    row="$row$c" width=$((width + w))
-  done <<<"$1"
-  printf '%s\n' "$row"
-}
-
-alert_text_height() { # $1 text, $2 columns -> rows the terminal shows it on
-  alert_text_rows "$1" "$2" | wc -l | tr -d ' '
-}
-
-alert_note_fit() { # $1 note, $2.. the report's other lines -> the note rows that fit stdin's terminal
-  local note="$1" rows=0 cols=0 reserved=1 avail=0 wrapped="" count=0
-  local pointer_rows=0 shown=0 line
-  shift
-  read -r rows cols < <(stty size 2>/dev/null) || rows=0
-  case "$rows:$cols" in *[!0-9:]*|:*|*:|0:*|*:0) rows=0 ;; esac
-  if [ "$rows" -eq 0 ]; then
-    printf '(note hidden: size unknown; run gang alerts)\n'
-    return 0
-  fi
-  # The cursor row after the prompt, then every other line as the terminal
-  # wraps it; the blank lines arrive here as empty strings.
-  for line in "$@"; do
-    reserved=$((reserved + $(alert_text_height "$line" "$cols")))
-  done
-  avail=$((rows - reserved))
-  wrapped="$(alert_text_rows "$note" "$cols")"
-  count="$(printf '%s\n' "$wrapped" | wc -l | tr -d ' ')"
-  if [ "$count" -le "$avail" ]; then
-    printf '%s\n' "$note"
-    return 0
-  fi
-  pointer_rows="$(alert_text_height "(+$count lines; run gang alerts for the full note)" "$cols")"
-  [ "$avail" -ge "$pointer_rows" ] || return 0
-  shown=$((avail - pointer_rows))
-  [ "$shown" -eq 0 ] || printf '%s\n' "$wrapped" | sed -n "1,${shown}p"
-  printf '(+%s lines; run gang alerts for the full note)\n' "$((count - shown))"
-}
-
 tick_fd_lock() { # $1 fd, $2 "wait" to block: 0 taken, 1 held, other untried
   local rc=0
   # flock(1) on the descriptor is one small fork; where it is missing, as on
@@ -6871,7 +6189,7 @@ tick_fd_lock() { # $1 fd, $2 "wait" to block: 0 taken, 1 held, other untried
 tick_launch() { # queue one pass for the team unless one is already queued
   local rc=0
   [ -z "${GANG_TICK_INTERNAL:-}" ] || return 0
-  case "${cmd:-}" in alerts|tick|__tick-worker|__usage-record-worker) return 0 ;; esac
+  case "${cmd:-}" in tick|__tick-worker|__usage-record-worker) return 0 ;; esac
   case "${GANG_TEST_TICK_MODE:-}" in
     manual) [ "${GANG_TEST_COLLARS:-}" = 1 ] && return 0 ;;
   esac
@@ -14271,8 +13589,8 @@ cmd_event_proof() { # test-only driver for the production append and reader path
     || die '__event-proof is test-only'
   [ $# -eq 0 ] || die '__event-proof takes no arguments'
   session_live || die '__event-proof needs a live disposable team'
-  id="$(tmux list-windows -t "=$SESSION" -F '#{window_id} #{@gl_agent} #{@gl_tick_alerts}' \
-    | awk '$2 != "" && $3 != 1 { print $1; exit }')" || id=""
+  id="$(tmux list-windows -t "=$SESSION" -F '#{window_id} #{@gl_agent}' \
+    | awk '$2 != "" { print $1; exit }')" || id=""
   [ -n "$id" ] || die '__event-proof found no ordinary agent window'
   for kind in \
     context.read context.band-changed compaction.native-witnessed \
@@ -14283,7 +13601,7 @@ cmd_event_proof() { # test-only driver for the production append and reader path
     event_log_record_required "$id" "$kind" "{\"fixture\":\"$kind\"}" \
       || die "__event-proof could not append $kind"
   done
-  for kind in tick.passed tick.failed tick.deadline-killed alert.raised alert.cleared; do
+  for kind in tick.passed tick.failed tick.deadline-killed; do
     event_log_team_record_required "$kind" "{\"fixture\":\"$kind\"}" \
       || die "__event-proof could not append $kind"
   done
@@ -14559,7 +13877,7 @@ cmd_usage_record_worker() { # internal host-side append reached only through tmu
 }
 
 cmd_usage() { # token consumption per agent, joined from ccusage by native session id
-  local created=0 id special ids="" daily="" since="" all=0 report_args=()
+  local created=0 id ids="" daily="" since="" all=0 report_args=()
   while [ $# -gt 0 ]; do
     case "$1" in
       --all)
@@ -14582,11 +13900,10 @@ cmd_usage() { # token consumption per agent, joined from ccusage by native sessi
   if session_live; then
     created="$(usage_team_created)"
     [ -n "$created" ] || die "usage: could not read when session '$SESSION' was created"
-    while read -r id special; do
+    while read -r id; do
       [ -n "$id" ] || continue
-      [ "$special" != 1 ] || continue
       ids="${ids:+$ids }$id"
-    done < <(tmux list-windows -t "=$SESSION" -F '#{window_id} #{@gl_tick_alerts}')
+    done < <(tmux list-windows -t "=$SESSION" -F '#{window_id}')
   else
     printf '%s\n' "$(colour "$C_DIM" "no live team (session '$SESSION' not running); showing what was recorded for that name")"
   fi
@@ -16335,7 +15652,7 @@ cmd_whoami() {
 # in order, immediately above the row it explains, and a listing whose rows are
 # all readable still writes nothing there.
 cmd_roster() {
-  local porcelain=0 id name bare special wins current unread="" rc
+  local porcelain=0 id name bare wins current unread="" rc
   if [ $# -eq 1 ] && [ "$1" = --porcelain ]; then
     porcelain=1
   elif [ $# -ne 0 ]; then
@@ -16348,13 +15665,11 @@ cmd_roster() {
   fi
   if [ "$porcelain" -eq 0 ]; then
     tick_health_report
-    printf '%s\n' "$(colour "$C_DIM" "alerts: $(alert_key_hint)")"
   fi
   current="$(binary_id)"
-  wins="$(tmux list-windows -t "=$SESSION" -F '#{window_id} #W #{@gl_tick_alerts}')"
-  while read -r id name special; do
+  wins="$(tmux list-windows -t "=$SESSION" -F '#{window_id} #W')"
+  while read -r id name; do
     [ -n "$id" ] || continue
-    [ "$special" != 1 ] || continue
     bare="$(bare_name "$name")"
     rc=0
     if [ "$porcelain" -eq 1 ]; then
@@ -17212,7 +16527,7 @@ cmd_drop() {
 }
 
 cmd_down() { # inverse of up: end the whole team's session
-  local named="${1:-}" id raw special shown names="" self="" wait_ids="" ids=""
+  local named="${1:-}" id raw shown names="" self="" wait_ids="" ids=""
   local unit scope_units="" unissued_scopes="" orphan_scopes="" scope_rc=0 forget_rc=0
   [ $# -le 1 ] || usage_refuse "down: unexpected argument '$2'"
   [ "$named" = "$SESSION" ] \
@@ -17225,14 +16540,12 @@ cmd_down() { # inverse of up: end the whole team's session
      && [ "$GANGLINE_CALLER_SOCKET" = "${TMUX%%,*}" ]; then
     refuse "down: this shell is inside the tmux server that holds '$SESSION' and does not name a pane, so Gangline cannot tell whether it is running inside the team it would end. Run it from a shell outside tmux"
   fi
-  while read -r raw special; do
-    [ "$special" != 1 ] || continue
+  while read -r raw; do
     names="$names$(bare_name "$raw") "
-  done < <(tmux list-windows -t "=$SESSION" -F '#W #{@gl_tick_alerts}')
-  while read -r id special; do
-    [ "$special" != 1 ] || continue
+  done < <(tmux list-windows -t "=$SESSION" -F '#W')
+  while read -r id; do
     ids="${ids:+$ids$'\n'}$id"
-  done < <(tmux list-windows -t "=$SESSION" -F '#{window_id} #{@gl_tick_alerts}')
+  done < <(tmux list-windows -t "=$SESSION" -F '#{window_id}')
   while read -r id; do
     [ -n "$id" ] || continue
     unit="$(tmux show-options -wqv -t "$id" @gl_scope 2>/dev/null)" || unit=""
@@ -17264,8 +16577,6 @@ cmd_down() { # inverse of up: end the whole team's session
     [ -n "$id" ] || continue
     spool_archive_preflight "$id"
   done <<<"$ids"
-  alert_ui_remove \
-    || die "down: could not remove Gangline's tmux alert-center configuration; the team remains live"
   echo "$(colour "$C_OK" "ending '$SESSION':") $(colour "$C_DIM" "$names")"
   while read -r id; do
     [ -n "$id" ] || continue
@@ -17592,13 +16903,6 @@ fi
 context_bands_map "$GANG_CONTEXT_BANDS" || :
 team_route_resolve
 trap 'on_exit' EXIT
-if [ -z "${GANG_TICK_INTERNAL:-}" ] && [ "$cmd" != alerts ]; then
-  # Establish the invariant in this shell before tick_health_warn reads through
-  # a command substitution; assignments made inside that subshell cannot cache
-  # anything for the command or its later tick descendants.
-  if tick_session_live; then tick_team_digest_set || true; fi
-  tick_health_warn
-fi
 [ "$cmd" = hook ] || dirty_execution_warn
 # NO ARGUMENTS IS NOT A MISTAKE. An agent told to "run gang" is asking where it
 # is, and answering with the inventory on stderr at exit 1 tells it that asking
@@ -17655,7 +16959,6 @@ case "$cmd" in
   roster)   cmd_roster "$@" ;;
   attach)   cmd_attach "$@" ;;
   teams)    cmd_teams "$@" ;;
-  alerts)   cmd_alerts "$@" ;;
   tick)     cmd_tick "$@" ;;
   __tick-worker)
             [ "${GANG_TICK_INTERNAL:-}" = 1 ] \

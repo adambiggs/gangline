@@ -111,8 +111,8 @@ equal "a bricked state that survives to tick fails that pass" 1 \
 contains "the failing pass names the unusable agent and collar cause" \
   "$(<"$RUN_ROOT/state-unusable-tick.out")" \
   "unusable-state: state-raise remains bricked after a cooperative tick (fixture fatal turn)"
-contains "the alert center exposes the persistent unusable state" \
-  "$("$GANG" alerts --porcelain)" "fixture fatal turn"
+contains "roster reports the failed tick and its unusable-state cause" \
+  "$("$GANG" roster)" "tick failed: unusable-state: state-raise remains bricked"
 rm -f -- "$RUN_ROOT/state-notify-bricked" "$RUN_ROOT/state-notify-blocked"
 GANG_TEST_TICK_MODE=manual "$GANG" tick >/dev/null
 

@@ -19,7 +19,7 @@ dispatch_commands="$({
     '
 } | awk '$0 != "hook" && $0 != "__tick-worker" && $0 != "__usage-record-worker" && $0 != "__event-proof" && $0 != "-h" && $0 != "--help" && $0 != "help"' | sort -u)"
 bare_error_commands="hitch trust adopt rename talk send at run flush mail interrupt compact context log limits wait-limit wait status explain capture composer whoami drop down"
-meaningful_bare_commands="up roster attach teams alerts tick collars models roles config curfew notify usage cap upgrade"
+meaningful_bare_commands="up roster attach teams tick collars models roles config curfew notify usage cap upgrade"
 classified_commands="$(printf '%s\n' $bare_error_commands $meaningful_bare_commands | sort -u)"
 
 # ONE MONOTONIC READER AND ONE ELAPSED-SINCE DECISION. Callers retain their
@@ -237,7 +237,6 @@ arity_probes=(
   "roster|STRAY|roster: expected no arguments or --porcelain"
   "attach|STRAY|attach: takes no arguments"
   "teams|STRAY|teams: takes no arguments"
-  "alerts|STRAY|alerts: expected no arguments, --porcelain, or --open"
   "tick|STRAY|tick: takes no arguments"
   "drop|ghost STRAY|drop: unexpected argument 'STRAY'"
   "down|ghost STRAY|down: unexpected argument 'STRAY'"

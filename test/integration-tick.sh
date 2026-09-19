@@ -8,1177 +8,34 @@
 tick_original_session="$GANG_SESSION"
 tick_original_collars="${GANG_COLLARS:-}"
 
-# The popup stores this word in a tmux option before `sh -c` reads it. Keep
-# the byte proof adjacent to its consumer: a dollar must be encoded without
-# relying on tmux's option rewrite, while ordinary shell-significant bytes
-# still arrive exactly as they started.
-alert_ui_option_quote_program="$(awk '
-  /^shell_quote\(\) \{/ { keep=1 }
-  /^gang_root\(\) \{/ { exit }
-  keep { print }
-' "$GANG")"
-alert_ui_option_quote_program+=$'\nencoded="$(option_shell_quote "$OPTION_QUOTE_FIXTURE")" || exit 1\nOPTION_QUOTE_ENCODED="$encoded" sh -c \'sh -c "printf %s \\"${OPTION_QUOTE_ENCODED}\\""\'\n'
-alert_ui_option_quote_fixture="path \$ quote ' backtick \` hash # slash \\"
-alert_ui_option_quote_result="$(OPTION_QUOTE_FIXTURE="$alert_ui_option_quote_fixture" \
-  bash -c "$alert_ui_option_quote_program")"
-equal "the popup option word round-trips shell-significant bytes" \
-  "$alert_ui_option_quote_fixture" "$alert_ui_option_quote_result"
-
-# THE ALERT CENTER GETS ITS OWN TMUX SERVER. Key tables are server-global, so a
-# binding-conflict fixture on the substrate server would rewrite configuration
-# owned by the other integration parts. This exact private socket contains one
-# Gangline team and one inert survivor that keeps the server readable after
-# `down`, allowing the uninstall result itself to be observed.
-alert_ui_root="$RUN_ROOT/alert-ui-server"
-alert_ui_injected="/var/tmp/gangline-alert-injected-$$"
-alert_ui_session="quote'\`# \$(touch $alert_ui_injected)'"
-alert_ui_survivor="gang-alert-ui-survivor-$$"
-alert_ui_observer="gang-alert-ui-observer-$$"
-alert_ui_contender="gang-alert-ui-contender-$$"
-mkdir -p "$alert_ui_root"
-alert_ui_tmux() { env -u TMUX TMUX_TMPDIR="$alert_ui_root" tmux "$@"; }
-alert_ui_gang_for() {
-  local session="$1"
-  shift
-  TMUX_TMPDIR="$alert_ui_root" GANG_SESSION="$session" \
-    GANG_LOCK_DIR="${ALERT_UI_LOCK_DIR:-$RUN_ROOT/alert-ui-locks}" \
-    GANG_ARCHIVE_DIR="$RUN_ROOT/alert-ui-archive" \
-    XDG_STATE_HOME="$RUN_ROOT/alert-ui-state" "$GANG" "$@"
+# TICK RESULT ORDERING GETS ITS OWN TMUX SERVER. These fixtures hold a pass at
+# its health commit and drive a second team pass across it, so they run on an
+# exact private socket holding one adopted window, away from the substrate
+# team the later fixtures share.
+tick_order_root="$RUN_ROOT/tick-order-server"
+tick_order_session="gang-tick-order-$$"
+mkdir -p "$tick_order_root"
+tick_order_tmux() { env -u TMUX TMUX_TMPDIR="$tick_order_root" tmux "$@"; }
+tick_order_gang() {
+  TMUX_TMPDIR="$tick_order_root" GANG_SESSION="$tick_order_session" \
+    GANG_LOCK_DIR="$RUN_ROOT/tick-order-locks" \
+    GANG_ARCHIVE_DIR="$RUN_ROOT/tick-order-archive" \
+    XDG_STATE_HOME="$RUN_ROOT/tick-order-state" "$GANG" "$@"
 }
-alert_ui_gang() { alert_ui_gang_for "$alert_ui_session" "$@"; }
 
-alert_ui_tmux new-session -d -s "$alert_ui_session" -n caller \
+tick_order_tmux new-session -d -s "$tick_order_session" -n caller \
   "PS1='❯ ' exec bash --norc"
-alert_ui_tmux new-session -d -s "$alert_ui_survivor" -n survivor \
-  "PS1='❯ ' exec bash --norc"
-alert_ui_tmux new-session -d -s "$alert_ui_observer" -n observer \
-  "PS1='❯ ' exec bash --norc"
-alert_ui_tmux new-session -d -s "$alert_ui_contender" -n contender \
-  "PS1='❯ ' exec bash --norc"
-alert_ui_gang adopt caller -c bash >/dev/null
-alert_ui_caller_id="$(alert_ui_tmux list-windows -t "=$alert_ui_session" \
+tick_order_gang adopt caller -c bash >/dev/null
+tick_order_caller_id="$(tick_order_tmux list-windows -t "=$tick_order_session" \
   -F '#{window_id} #{@gl_agent}' | awk '$2 == "caller" { print $1 }')"
-equal "the alert-center fixture has one readiness-proven adopted window" \
-  caller "$(alert_ui_tmux show-options -wqv -t "$alert_ui_caller_id" @gl_agent)"
-
-# Prefix+A belongs to the operator until Gangline proves it is free. The first
-# pass must still install the status widget while recording the key conflict.
-alert_ui_tmux set-option -t "=$alert_ui_session:" status-right \
-  'operator-left operator-right'
-alert_ui_tmux bind-key -T prefix A display-message operator-A
-alert_ui_gang tick >/dev/null
-alert_ui_user_binding="$(alert_ui_tmux list-keys -T prefix A)"
-contains "alert-center install preserves a pre-existing Prefix+A binding" \
-  "$alert_ui_user_binding" "display-message operator-A"
-contains "the preserved key conflict remains inspectable" \
-  "$(alert_ui_tmux show-options -qv -t "=$alert_ui_session:" \
-    @gl_alert_binding_conflict)" "left it unchanged"
-contains "the roster names why the alert center has no key" \
-  "$(alert_ui_gang roster)" "open key unavailable:"
-
-# The binding claim locks the existing socket directory descriptor so callers
-# with different Gangline lock roots still agree. The former guard-file checks
-# protected against following a planted link; absence is the stronger contract
-# now that the claim creates no path at all. The crossed claim fixtures below
-# retain the evidence that this artifact-free lock still serializes callers.
-alert_ui_socket="$(alert_ui_tmux display-message -p \
-  -t "=$alert_ui_session" '#{socket_path}')"
-alert_ui_binding_root="$alert_ui_socket.gangline-locks"
-equal "the server-global binding claim creates no filesystem artifact" absent \
-  "$([ ! -e "$alert_ui_binding_root" ] && [ ! -L "$alert_ui_binding_root" ] \
-      && [ ! -e "$alert_ui_socket.gangline-alert-binding.guard" ] \
-      && [ ! -L "$alert_ui_socket.gangline-alert-binding.guard" ] \
-      && printf absent || printf present)"
-alert_ui_gang tick >/dev/null
-
-# Once the operator frees the proposal, the next ordinary pass owns it.
-alert_ui_tmux unbind-key -T prefix A
-alert_ui_gang tick >/dev/null
-equal "the installed popup records its current binding version" 2 \
-  "$(alert_ui_tmux show-options -gqv @gl_alert_binding_version)"
-
-# A released server already records the broken 2.8.0 key as Gangline-owned.
-# Recreate that exact upgrade state: a cooperative pass must replace its own
-# obsolete key while the existing foreign-binding guard above remains intact.
-alert_ui_tmux bind-key -T prefix A display-popup -E -w 80% -h 70% \
-  "GANG_SESSION=#{q:session_name} #{@gl_alert_command}"
-alert_ui_legacy_binding="$(alert_ui_tmux list-keys -T prefix A)"
-alert_ui_tmux set-option -g @gl_alert_binding "$alert_ui_legacy_binding"
-alert_ui_tmux set-option -gu @gl_alert_binding_version
-alert_ui_gang tick >/dev/null
-alert_ui_binding="$(alert_ui_tmux list-keys -T prefix A)"
-excludes "an upgrade replaces the exact still-owned 2.8.0 popup" \
-  "$alert_ui_binding" '#{q:session_name}'
-equal "the upgraded popup records its current binding version" 2 \
-  "$(alert_ui_tmux show-options -gqv @gl_alert_binding_version)"
-# tmux 3.4 quotes percent-bearing arguments when list-keys renders them, while
-# 3.2a prints the same popup dimensions bare. This display-only normalization
-# leaves the raw command below to prove the session-scoped invocation.
-alert_ui_binding_shape="${alert_ui_binding//\"/}"
-contains "the free Prefix+A key opens a tmux-native popup" \
-  "$alert_ui_binding_shape" "display-popup -E -h 70% -w 80%"
-contains "the popup resolves its client session's recorded alert command" \
-  "$alert_ui_binding" '@gl_alert_command'
-contains "the popup executes only the resolved session command" \
-  "$alert_ui_binding" 'sh -c'
-excludes "the popup command is independent of tmux format expansion" \
-  "$alert_ui_binding" '#{'
-alert_ui_installed_command="$(alert_ui_tmux show-options -qv \
-  -t "=$alert_ui_session:" @gl_alert_command)"
-contains "the session-local popup command contains the complete invocation" \
-  "$alert_ui_installed_command" "alerts --open"
-contains "the session-local command pins its shell-quoted session" \
-  "$alert_ui_installed_command" "GANG_SESSION="
-excludes "the session-local popup command leaves no dollar for tmux to rewrite" \
-  "$alert_ui_installed_command" '$'
-alert_ui_right_once="$(alert_ui_tmux show-options -qv \
-  -t "=$alert_ui_session:" status-right)"
-alert_ui_gang tick >/dev/null
-alert_ui_right_twice="$(alert_ui_tmux show-options -qv \
-  -t "=$alert_ui_session:" status-right)"
-equal "reinstalling the alert center is status-right idempotent" \
-  "$alert_ui_right_once" "$alert_ui_right_twice"
-equal "a repeat pass records no conflict on its own key" "" \
-  "$(alert_ui_tmux show-options -qv -t "=$alert_ui_session:" @gl_alert_binding_conflict)"
-equal "the installed status line contains one owned widget reference" 1 \
-  "$([[ "$alert_ui_right_twice" == *'#{E:@gl_alert_widget}'* \
-       && "$alert_ui_right_twice" != *'#{E:@gl_alert_widget}'*'#{E:@gl_alert_widget}'* ]] \
-      && printf 1 || printf other)"
-excludes "the status widget spawns no command on tmux repaints" \
-  "$alert_ui_right_twice" '#('
-
-# Simulate an upgrade from the old UI with both its owned status command and
-# its marked window still present. A retained failed health record is the old
-# active condition; migration must not manufacture a new transition from it.
-alert_ui_digest="$(python3 -c \
+equal "the tick-order fixture has one readiness-proven adopted window" \
+  caller "$(tick_order_tmux show-options -wqv -t "$tick_order_caller_id" @gl_agent)"
+tick_order_socket="$(tick_order_tmux display-message -p \
+  -t "=$tick_order_session" '#{socket_path}')"
+tick_order_digest="$(python3 -c \
   'import hashlib,sys; print(hashlib.sha256((sys.argv[1]+"\0"+sys.argv[2]).encode()).hexdigest()[:24])' \
-  "$alert_ui_socket" "$alert_ui_session")"
-alert_ui_health="$RUN_ROOT/alert-ui-state/gangline/tick/$alert_ui_digest/health"
-printf 'failed\t100\tlegacy tick failure\n' > "$alert_ui_health"
-alert_ui_legacy_segment="#('/stale/snapshot/gang-tick-health.sh' '/stale/health')"
-alert_ui_tmux set-option -t "=$alert_ui_session:" status-right \
-  "operator-left $alert_ui_legacy_segment operator-right"
-alert_ui_tmux set-option -t "=$alert_ui_session:" \
-  @gl_tick_health_segment "$alert_ui_legacy_segment"
-alert_ui_tmux set-option -u -t "=$alert_ui_session:" @gl_alert_status_segment
-alert_ui_tmux set-option -u -t "=$alert_ui_session:" @gl_alert_seen
-alert_ui_legacy_id="$(alert_ui_tmux new-window -d -P -F '#{window_id}' \
-  -t "=$alert_ui_session" -n gangline-alerts "exec bash --norc")"
-alert_ui_tmux set-option -w -t "$alert_ui_legacy_id" @gl_tick_alerts 1
-alert_ui_tmux set-option -w -t "$alert_ui_legacy_id" monitor-activity on
-alert_ui_tmux set-option -w -t "$alert_ui_legacy_id" monitor-bell on
-alert_ui_selected_before="$(alert_ui_tmux display-message -p \
-  -t "=$alert_ui_session:" '#{window_id}')"
-alert_ui_tmux set-option -w -t "$alert_ui_caller_id" @gl_collar missing-alert-collar
-alert_ui_legacy_rc=0
-alert_ui_gang tick >/dev/null 2>&1 || alert_ui_legacy_rc=$?
-equal "the retained legacy failure remains an active failing pass" 1 \
-  "$alert_ui_legacy_rc"
-equal "upgrade removes the exact marked legacy alert window" absent \
-  "$(if alert_ui_tmux list-windows -a -F '#{window_id}' \
-       | grep -Fx "$alert_ui_legacy_id" >/dev/null; then printf present; else printf absent; fi)"
-equal "legacy-window migration does not select another normal window" \
-  "$alert_ui_selected_before" \
-  "$(alert_ui_tmux display-message -p -t "=$alert_ui_session:" '#{window_id}')"
-alert_ui_migrated_right="$(alert_ui_tmux show-options -qv \
-  -t "=$alert_ui_session:" status-right)"
-excludes "upgrade removes the obsolete repaint command" \
-  "$alert_ui_migrated_right" '/stale/snapshot'
-contains "upgrade preserves the operator's left status content" \
-  "$alert_ui_migrated_right" operator-left
-contains "upgrade preserves the operator's right status content" \
-  "$alert_ui_migrated_right" operator-right
-contains "upgrade installs the static alert widget" \
-  "$alert_ui_migrated_right" '#{E:@gl_alert_widget}'
-equal "legacy active state migrates as active and unseen" '1 1' \
-  "$(alert_ui_tmux show-options -qv -t "=$alert_ui_session:" @gl_alert_active) $(alert_ui_tmux show-options -qv -t "=$alert_ui_session:" @gl_alert_unseen)"
-
-# Recovery is the only resolver. After it, a genuinely new transition supplies
-# one short display-message, and another failing pass supplies none. The PATH
-# seam logs the real tmux call without changing its result.
-alert_ui_tmux set-option -w -t "$alert_ui_caller_id" @gl_collar bash
-alert_ui_gang tick >/dev/null
-equal "recovery clears the migrated active and unseen counts" '0 0' \
-  "$(alert_ui_tmux show-options -qv -t "=$alert_ui_session:" @gl_alert_active) $(alert_ui_tmux show-options -qv -t "=$alert_ui_session:" @gl_alert_unseen)"
-
-alert_ui_tmux_bin="$RUN_ROOT/alert-ui-bin"
-alert_ui_message_ledger="$RUN_ROOT/alert-ui-display-messages"
-mkdir -p "$alert_ui_tmux_bin"
-cat > "$alert_ui_tmux_bin/tmux" <<SH
-#!/bin/sh
-. "\$GANG_TEST_PATH_SHIM_GUARD"
-path_shim_guard '$REAL_TMUX' "\$0" tmux || exit \$?
-case "\$*" in
-  *'gang: new alert: tick failed:'*) printf '%s\n' "\$*" >> '$alert_ui_message_ledger' ;;
-esac
-exec '$REAL_TMUX' "\$@"
-SH
-chmod +x "$alert_ui_tmux_bin/tmux"
-alert_ui_selected_before="$(alert_ui_tmux display-message -p \
-  -t "=$alert_ui_session:" '#{window_id}')"
-alert_ui_window_count="$(alert_ui_tmux list-windows -t "=$alert_ui_session" | wc -l | tr -d ' ')"
-alert_ui_tmux set-option -w -t "$alert_ui_caller_id" @gl_collar missing-alert-collar
-alert_ui_new_rc=0
-PATH="$alert_ui_tmux_bin:$PATH" alert_ui_gang tick >/dev/null 2>&1 \
-  || alert_ui_new_rc=$?
-equal "a new failing condition fails its synchronous tick" 1 "$alert_ui_new_rc"
-equal "a new transition sets active and unseen independently" '1 1' \
-  "$(alert_ui_tmux show-options -qv -t "=$alert_ui_session:" @gl_alert_active) $(alert_ui_tmux show-options -qv -t "=$alert_ui_session:" @gl_alert_unseen)"
-equal "a new transition emits one short tmux message" 1 \
-  "$(wc -l < "$alert_ui_message_ledger" | tr -d ' ')"
-equal "a new alert creates no window" "$alert_ui_window_count" \
-  "$(alert_ui_tmux list-windows -t "=$alert_ui_session" | wc -l | tr -d ' ')"
-equal "a new alert does not change the selected window" \
-  "$alert_ui_selected_before" \
-  "$(alert_ui_tmux display-message -p -t "=$alert_ui_session:" '#{window_id}')"
-
-alert_ui_row="$(alert_ui_gang alerts --porcelain)"
-IFS=$'\t' read -r alert_ui_kind alert_ui_state alert_ui_visibility \
-  alert_ui_at alert_ui_summary <<<"$alert_ui_row"
-equal "porcelain identifies the active condition kind" tick "$alert_ui_kind"
-equal "porcelain identifies unresolved lifecycle state" active "$alert_ui_state"
-equal "porcelain distinguishes the unseen state" unseen "$alert_ui_visibility"
-case "$alert_ui_at" in ''|*[!0-9]*) alert_ui_epoch=invalid ;; *) alert_ui_epoch=valid ;; esac
-equal "porcelain carries the alert transition epoch" valid "$alert_ui_epoch"
-contains "porcelain carries the failure summary" \
-  "$alert_ui_summary" "missing-alert-collar"
-
-# The alert list keeps what the tick raised and cleared, so a failure a later
-# pass resolved can still be read after the fact. Porcelain stays the active
-# conditions only.
-alert_ui_listing="$(alert_ui_gang alerts)"
-contains "the alert list carries a recent-alerts history" \
-  "$alert_ui_listing" "recent alerts:"
-alert_ui_history="${alert_ui_listing#*recent alerts:}"
-contains "the history records the raised failure" \
-  "$alert_ui_history" "raised: "
-contains "the raised history row carries the failure summary" \
-  "$alert_ui_history" "missing-alert-collar"
-equal "porcelain lists no history rows" 1 \
-  "$(alert_ui_gang alerts --porcelain | wc -l | tr -d ' ')"
-
-# Opening holds the same short result guard as recovery/new-failure commits.
-# The nonblocking kernel probe is immediate evidence that the seen mutation is
-# serialized, rather than a timing guess about a background process.
-alert_ui_open_ready="$RUN_ROOT/alert-ui-open-ready"
-alert_ui_open_release="$RUN_ROOT/alert-ui-open-release"
-alert_ui_open_wrong_locks="$RUN_ROOT/alert-ui-open-wrong-locks"
-alert_ui_open_command="$(alert_ui_tmux show-options -qv \
-  -t "=$alert_ui_session:" @gl_alert_command)"
-mkfifo "$alert_ui_open_ready" "$alert_ui_open_release"
-TMUX_TMPDIR="$alert_ui_root" GANG_SESSION="$alert_ui_session" \
-GANG_LOCK_DIR="$alert_ui_open_wrong_locks" \
-GANG_TEST_ALERT_OPEN_READY_FIFO="$alert_ui_open_ready" \
-GANG_TEST_ALERT_OPEN_RELEASE_FIFO="$alert_ui_open_release" \
-  sh -c "$alert_ui_open_command" \
-  > "$RUN_ROOT/alert-ui-open.out" &
-alert_ui_open_pid=$!
-IFS= read -r -N 1 _ < "$alert_ui_open_ready"
-alert_ui_result_guard="$RUN_ROOT/alert-ui-locks/tick/$alert_ui_digest.result.guard"
-exec {alert_ui_result_probe_fd}>>"$alert_ui_result_guard"
-alert_ui_result_probe_rc=0
-"$ROOT/libexec/gang-process-identity" --lock-fd \
-  "$alert_ui_result_probe_fd" >/dev/null 2>&1 || alert_ui_result_probe_rc=$?
-equal "opening owns the result transition guard before marking seen" \
-  75 "$alert_ui_result_probe_rc"
-exec {alert_ui_result_probe_fd}>&-
-equal "the installed popup command overrides an unrelated ambient lock root" \
-  absent \
-  "$([ ! -e "$alert_ui_open_wrong_locks/tick/$alert_ui_digest.result.guard" ] \
-      && [ ! -L "$alert_ui_open_wrong_locks/tick/$alert_ui_digest.result.guard" ] \
-      && printf absent || printf present)"
-equal "an in-flight open has not resolved or prematurely hidden the alert" '1 1' \
-  "$(alert_ui_tmux show-options -qv -t "=$alert_ui_session:" @gl_alert_active) $(alert_ui_tmux show-options -qv -t "=$alert_ui_session:" @gl_alert_unseen)"
-printf '\n' > "$alert_ui_open_release"
-alert_ui_open_rc=0
-wait "$alert_ui_open_pid" || alert_ui_open_rc=$?
-equal "the serialized alert open completes" 0 "$alert_ui_open_rc"
-equal "opening marks the alert seen without resolving it" '1 0' \
-  "$(alert_ui_tmux show-options -qv -t "=$alert_ui_session:" @gl_alert_active) $(alert_ui_tmux show-options -qv -t "=$alert_ui_session:" @gl_alert_unseen)"
-contains "opening leaves the failed health condition standing" \
-  "$(<"$alert_ui_health")" $'failed\t'
-alert_ui_seen_row="$(alert_ui_gang alerts --porcelain)"
-IFS=$'\t' read -r _ _ alert_ui_seen_visibility _ _ <<<"$alert_ui_seen_row"
-equal "the structured list reports an opened alert as seen" \
-  seen "$alert_ui_seen_visibility"
-
-# The installed key has to cross tmux's client command queue, its popup pty,
-# and a second shell before the alert command can run. Executing the recorded
-# command directly above does not cover that path: tmux 3.2a passes a popup's
-# shell-command literally, so a format token in that argument becomes a shell
-# comment and produces an empty popup that exits zero.
-#
-# script supplies a real attached client. Its input is a pipe kept open by this
-# shell. Every synchronization point is a tmux event: client-attached proves the
-# pty reached the server, the instrumented session option reports that the
-# installed binding resolved it, and its final event fires only after the alert
-# command returns. No delay, pane scrape, or polling stands in for completion.
-#
-# The popup is a scrolling pty: a note that wraps past its rows pushes the
-# headline off its screen, and tmux repaints the popup from that screen. A
-# full suite already ships enough collars for the note to overflow; a long
-# collar name makes every part selection render the same overflowing note.
-# Its first characters are two-byte so that a row boundary can fall inside
-# one of them.
-alert_ui_tmux set-option -u -t "=$alert_ui_session:" @gl_alert_seen
-printf -v alert_ui_e_acute '\303\251'
-printf -v alert_ui_long_collar_head '%040d' 0
-printf -v alert_ui_long_collar_tail '%0400d' 0
-alert_ui_long_collar="missing-alert-collar-${alert_ui_long_collar_head//0/$alert_ui_e_acute}${alert_ui_long_collar_tail//0/x}"
-alert_ui_tmux set-option -w -t "$alert_ui_caller_id" @gl_collar "$alert_ui_long_collar"
-alert_ui_attached_reset_rc=0
-PATH="$alert_ui_tmux_bin:$PATH" alert_ui_gang tick >/dev/null 2>&1 \
-  || alert_ui_attached_reset_rc=$?
-equal "the attached-client proof starts from an unresolved unseen alert" \
-  '1 1 1' \
-  "$alert_ui_attached_reset_rc $(alert_ui_tmux show-options -qv -t "=$alert_ui_session:" @gl_alert_active) $(alert_ui_tmux show-options -qv -t "=$alert_ui_session:" @gl_alert_unseen)"
-
-alert_ui_client_input="$RUN_ROOT/alert-ui-client-input"
-alert_ui_client_output="$RUN_ROOT/alert-ui-client-output"
-alert_ui_client_status="$RUN_ROOT/alert-ui-client-status"
-alert_ui_client_attached="alert-ui-client-attached-$$"
-alert_ui_popup_ready="alert-ui-popup-ready-$$"
-alert_ui_popup_release="alert-ui-popup-release-$$"
-alert_ui_popup_render_ready="alert-ui-popup-render-ready-$$"
-alert_ui_client_done="alert-ui-client-done-$$"
-alert_ui_client_exited="alert-ui-client-exited-$$"
-alert_ui_wrong_session_ledger="$RUN_ROOT/alert-ui-wrong-session-ran"
-alert_ui_client_path=":$PATH:"
-alert_ui_client_path="${alert_ui_client_path//":$RUN_ROOT/bin:"/:}"
-alert_ui_client_path="${alert_ui_client_path#:}"
-alert_ui_client_path="${alert_ui_client_path%:}"
-printf -v alert_ui_client_target '%q' "=$alert_ui_session"
-equal "the attached client excludes the suite's fake instant commands" absent \
-  "$([[ ":$alert_ui_client_path:" == *":$RUN_ROOT/bin:"* ]] \
-      && printf present || printf absent)"
-mkfifo "$alert_ui_client_input"
-exec 8<>"$alert_ui_client_input"
-# The client's terminal bytes pass through a reader on their way to the
-# capture file. It signals a tmux event the moment a named marker has been
-# written to the file, so a wait on that event is a wait on the file's
-# contents, not on time. A second program replays the capture up to a marker
-# as an 80x24 terminal and prints the popup's interior rows: what the
-# client's screen showed inside the popup at that point, and nothing outside
-# it. It refuses any control sequence it does not model instead of guessing.
-alert_ui_client_reader="$RUN_ROOT/alert-ui-capture-reader"
-alert_ui_client_screen="$RUN_ROOT/alert-ui-capture-screen"
-cat > "$alert_ui_client_screen" <<'PY'
-import re
-import sys
-import unicodedata
-
-ROWS, COLS = 24, 80
-TOP, BOTTOM, LEFT, RIGHT = 4, 17, 8, 69  # popup interior, 0-based, inclusive
-# tmux erases the panes before it draws the overlay, so the marker's own bytes
-# land on a screen the popup has been erased from and not yet drawn back onto.
-# The replay therefore runs to the end of the repaint that follows the marker,
-# whose last cell is the popup's bottom-right corner.
-CORNER = "┘"
-# Modes that change no cell: cursor keys, cursor visibility and shape, mouse
-# reporting, bracketed paste, and the application-escape mode.
-NEUTRAL_MODES = {1, 12, 25, 1000, 1002, 1003, 1004, 1005, 1006, 2004, 7727}
-
-raw = open(sys.argv[1], "rb").read()
-marker = sys.argv[2].encode()
-found = raw.find(marker)
-cut = raw.find(CORNER.encode(), found + len(marker)) if found >= 0 else -1
-if cut < 0:
-    print("marker-missing")
-    sys.exit(0)
-unsupported = []
-head = raw[:cut + len(CORNER.encode())]
-try:
-    text = head.decode("utf-8")
-except UnicodeDecodeError as bad:
-    unsupported.append("utf-8@%d" % bad.start)
-    text = head.decode("utf-8", "replace")
-screen = [[" "] * COLS for _ in range(ROWS)]
-row = col = 0
-top, bottom = 0, ROWS - 1
-saved = (0, 0)
-alternate = None
-pending = False
-
-
-def scroll_up(n):
-    for _ in range(n):
-        del screen[top]
-        screen.insert(bottom, [" "] * COLS)
-
-
-def scroll_down(n):
-    for _ in range(n):
-        del screen[bottom]
-        screen.insert(top, [" "] * COLS)
-
-
-def linefeed():
-    global row, pending
-    pending = False
-    if row == bottom:
-        scroll_up(1)
-    elif row < ROWS - 1:
-        row += 1
-
-
-CSI = re.compile(r"\x1b\[([0-9;?>]*)([ -/]*)([@-~])")
-OSC = re.compile(r"\x1b\][^\x07\x1b]*(?:\x07|\x1b\\)")
-i = 0
-while i < len(text):
-    ch = text[i]
-    if ch == "\x1b":
-        m = CSI.match(text, i)
-        if m:
-            params, inter, final = m.groups()
-            private = params[:1] if params[:1] in "?>" else ""
-            digits = params[len(private):]
-            nums = [int(x) if x else 0 for x in digits.split(";")] if digits else []
-            n = nums[0] if nums and nums[0] else 1
-            if inter or private == ">" and final not in "cq":
-                unsupported.append(m.group(0))
-            elif private == ">":
-                pass  # a request for the terminal's identity writes no cell
-            elif private == "?":
-                if final not in "hl" or not nums:
-                    unsupported.append(m.group(0))
-                elif nums == [1049]:
-                    if final == "h":
-                        alternate = ([line[:] for line in screen], row, col)
-                        for r in range(ROWS):
-                            screen[r] = [" "] * COLS
-                    elif alternate is not None:
-                        screen[:], row, col = alternate
-                        alternate = None
-                        pending = False
-                elif not all(mode in NEUTRAL_MODES for mode in nums):
-                    unsupported.append(m.group(0))
-            elif final in "Hf":
-                row = min(ROWS - 1, max(0, (nums[0] if nums else 1) - 1))
-                col = min(COLS - 1, max(0, (nums[1] if len(nums) > 1 else 1) - 1))
-                pending = False
-            elif final == "A":
-                row = max(0, row - n)
-                pending = False
-            elif final == "B":
-                row = min(ROWS - 1, row + n)
-                pending = False
-            elif final == "C":
-                col = min(COLS - 1, col + n)
-                pending = False
-            elif final == "D":
-                col = max(0, col - n)
-                pending = False
-            elif final == "G":
-                col = min(COLS - 1, n - 1)
-                pending = False
-            elif final == "d":
-                row = min(ROWS - 1, n - 1)
-                pending = False
-            elif final == "X":
-                for c in range(col, min(COLS, col + n)):
-                    screen[row][c] = " "
-            elif final == "K":
-                mode = nums[0] if nums else 0
-                rng = range(col, COLS) if mode == 0 else \
-                    range(0, col + 1) if mode == 1 else range(COLS)
-                for c in rng:
-                    screen[row][c] = " "
-            elif final == "J":
-                mode = nums[0] if nums else 0
-                if mode == 0:
-                    for c in range(col, COLS):
-                        screen[row][c] = " "
-                    for r in range(row + 1, ROWS):
-                        screen[r] = [" "] * COLS
-                elif mode == 1:
-                    for c in range(0, col + 1):
-                        screen[row][c] = " "
-                    for r in range(0, row):
-                        screen[r] = [" "] * COLS
-                else:
-                    for r in range(ROWS):
-                        screen[r] = [" "] * COLS
-            elif final == "r":
-                top = max(0, (nums[0] if nums and nums[0] else 1) - 1)
-                bottom = min(ROWS - 1, (nums[1] if len(nums) > 1 and nums[1] else ROWS) - 1)
-                row = col = 0
-                pending = False
-            elif final == "L":
-                if top <= row <= bottom:
-                    for _ in range(n):
-                        del screen[bottom]
-                        screen.insert(row, [" "] * COLS)
-            elif final == "M":
-                if top <= row <= bottom:
-                    for _ in range(n):
-                        del screen[row]
-                        screen.insert(bottom, [" "] * COLS)
-            elif final == "S":
-                scroll_up(n)
-            elif final == "T":
-                scroll_down(n)
-            elif final == "P":
-                line = screen[row]
-                del line[col:col + n]
-                line.extend([" "] * (COLS - len(line)))
-            elif final == "@":
-                line = screen[row]
-                line[col:col] = [" "] * n
-                del line[COLS:]
-            elif final == "m":
-                pass  # colour and attributes leave both the cells and the
-                # pending wrap alone
-            elif final == "c":
-                pass  # a request for the terminal's identity writes no cell
-            elif final == "t" and nums and nums[0] in (22, 23):
-                pass  # the window title stack holds no cell
-            else:
-                unsupported.append(m.group(0))
-            i = m.end()
-            continue
-        m = OSC.match(text, i)
-        if m:
-            i = m.end()
-            continue
-        nxt = text[i + 1] if i + 1 < len(text) else ""
-        if nxt in "()*+":
-            i += 3
-        elif nxt == "7":
-            saved = (row, col)
-            i += 2
-        elif nxt == "8":
-            row, col = saved
-            pending = False
-            i += 2
-        elif nxt in "=>":
-            i += 2
-        elif nxt == "M":
-            if row == top:
-                scroll_down(1)
-            elif row > 0:
-                row -= 1
-            pending = False
-            i += 2
-        elif nxt == "D":
-            linefeed()
-            i += 2
-        else:
-            unsupported.append(text[i:i + 2])
-            i += 2
-        continue
-    if ch == "\r":
-        col = 0
-        pending = False
-    elif ch == "\n":
-        linefeed()
-    elif ch == "\b":
-        col = max(0, col - 1)
-        pending = False
-    elif ch == "\t":
-        col = min(COLS - 1, (col // 8 + 1) * 8)
-        pending = False
-    elif ch in "\x00\x07":
-        pass
-    elif ch < " " or ch == "\x7f":
-        unsupported.append(ch)
-    else:
-        if unicodedata.category(ch) in ("Cf", "Mn", "Me") \
-                or unicodedata.east_asian_width(ch) in "WF":
-            unsupported.append(ch)  # this screen models one cell per character
-        if pending:
-            col = 0
-            linefeed()
-        screen[row][col] = ch
-        if col == COLS - 1:
-            pending = True
-        else:
-            col += 1
-    i += 1
-
-for r in range(TOP, BOTTOM + 1):
-    print("".join(screen[r][LEFT:RIGHT + 1]).rstrip())
-print("unsupported=%d%s" % (len(unsupported), "".join(" " + repr(u) for u in unsupported[:5])))
-print("frame=%s" % ("marker" if sys.argv[2] in "".join(screen[ROWS - 1]) else "other"))
-PY
-alert_ui_popup_marker_first="alert-ui-popup-witness-$$-first"
-alert_ui_popup_marker_second="alert-ui-popup-witness-$$-second"
-cat > "$alert_ui_client_reader" <<'PY'
-import os
-import subprocess
-import sys
-
-# A marker's event fires once the capture also holds the popup repaint that
-# follows it. tmux erases the panes before it draws the overlay, so the marker
-# alone names a screen the popup has been erased from; the corner is the last
-# cell that repaint writes.
-CORNER = "┘".encode()
-markers = [m.encode() for m in sys.argv[1:]]
-pending = [[m, False] for m in markers]
-keep = max([len(m) for m in markers] + [len(CORNER)]) - 1
-tail = b""
-while True:
-    chunk = os.read(0, 65536)
-    if not chunk:
-        break
-    view = memoryview(chunk)
-    while len(view):
-        view = view[os.write(1, view):]
-    window = tail + chunk
-    for entry in list(pending):
-        marker, seen = entry
-        start = 0
-        if not seen:
-            at = window.find(marker)
-            if at < 0:
-                continue
-            entry[1] = True
-            start = at + len(marker)
-        if window.find(CORNER, start) < 0:
-            continue
-        pending.remove(entry)
-        subprocess.run(
-            ["tmux", "wait-for", "-S", marker.decode() + "-seen"], check=True)
-    tail = window[-keep:] if keep > 0 else b""
-PY
-alert_ui_tmux set-hook -g client-attached \
-  "wait-for -S $alert_ui_client_attached"
-env -u TMUX TMUX_TMPDIR="$alert_ui_root" tmux wait-for "$alert_ui_client_attached" &
-alert_ui_client_attached_waiter=$!
-(
-  alert_ui_client_rc=0
-  TERM=xterm PATH="$alert_ui_client_path" script -qefc \
-    "stty rows 24 cols 80; unset TMUX; TMUX_TMPDIR='$alert_ui_root' tmux attach-session -t $alert_ui_client_target" \
-    /dev/null < "$alert_ui_client_input" 2>&1 \
-    | TMUX_TMPDIR="$alert_ui_root" python3 "$alert_ui_client_reader" \
-        "$alert_ui_popup_marker_first" "$alert_ui_popup_marker_second" \
-        > "$alert_ui_client_output" \
-    || alert_ui_client_rc=$?
-  printf '%s\n' "$alert_ui_client_rc" > "$alert_ui_client_status"
-  env -u TMUX TMUX_TMPDIR="$alert_ui_root" tmux wait-for -S "$alert_ui_client_exited"
-  exit "$alert_ui_client_rc"
-) &
-alert_ui_client_pid=$!
-wait "$alert_ui_client_attached_waiter"
-alert_ui_tmux set-hook -gu client-attached
-alert_ui_client_rows="$(alert_ui_tmux list-clients \
-  -F '#{session_name} #{@gl_agent} #{client_flags} #{client_width}x#{client_height}')"
-contains "the popup proof uses a real attached client with its own terminal" \
-  "$alert_ui_client_rows" "$alert_ui_session caller attached"
-
-# Bracket the session-local command that the product binding resolves with tmux
-# events. The server-global key remains byte-for-byte installed code: ready
-# proves its popup shell is alive before input is sent, and done can fire only
-# after alerts --open has rendered and returned. The tmux server inherited the
-# suite's bounded wait-for shim, so missing events fail loudly at its ceiling.
-alert_ui_tmux set-option -t "=$alert_ui_observer:" @gl_alert_command \
-  "printf wrong-session > '$alert_ui_wrong_session_ledger'; tmux wait-for -S $alert_ui_popup_ready; tmux wait-for $alert_ui_popup_release; tmux wait-for -S $alert_ui_client_done"
-alert_ui_tmux set-option -t "=$alert_ui_session:" @gl_alert_command \
-  "tmux wait-for -S $alert_ui_popup_ready; tmux wait-for $alert_ui_popup_release; GANG_TEST_ALERT_RENDER_READY_EVENT='$alert_ui_popup_render_ready' $alert_ui_installed_command; tmux wait-for -S $alert_ui_client_done"
-env -u TMUX TMUX_TMPDIR="$alert_ui_root" tmux wait-for "$alert_ui_popup_ready" &
-alert_ui_popup_ready_waiter=$!
-env -u TMUX TMUX_TMPDIR="$alert_ui_root" tmux wait-for "$alert_ui_client_done" &
-alert_ui_client_done_waiter=$!
-env -u TMUX TMUX_TMPDIR="$alert_ui_root" tmux wait-for "$alert_ui_popup_render_ready" &
-alert_ui_popup_render_ready_waiter=$!
-printf '\002A' >&8
-alert_ui_popup_ready_rc=0
-wait "$alert_ui_popup_ready_waiter" || alert_ui_popup_ready_rc=$?
-equal "Prefix+A starts the installed popup shell on the attached client" \
-  0 "$alert_ui_popup_ready_rc"
-alert_ui_tmux wait-for -S "$alert_ui_popup_release"
-alert_ui_popup_render_ready_rc=0
-wait "$alert_ui_popup_render_ready_waiter" || alert_ui_popup_render_ready_rc=$?
-equal "Prefix+A reaches the popup's rendered close gate before its close key" \
-  0 "$alert_ui_popup_render_ready_rc"
-if [ "$alert_ui_popup_render_ready_rc" -ne 0 ]; then
-  # This barrier is the only ceiling on the popup's wait for its terminal, so
-  # it also ends the client: a popup still waiting for an answer that never
-  # came consumes the close key instead of ending on it, and the checks below
-  # would then never reach their own verdicts.
-  alert_ui_popup_abandoned_rc=0
-  alert_ui_tmux kill-session -t "=$alert_ui_session:" \
-    || alert_ui_popup_abandoned_rc=$?
-  equal "the abandoned popup's client is torn down rather than waited on" \
-    0 "$alert_ui_popup_abandoned_rc"
-fi
-
-# The capture holds every byte tmux ever sent, including the popup's transient
-# incremental writes. The rendered state is what tmux repaints the popup from,
-# and render-ready fired only after tmux had consumed the whole report into
-# that screen. Changing a session option redraws every attached client in
-# full: panes, then status, then the overlay. The marker therefore arrives
-# mid-frame, on a screen whose panes have just been erased and whose popup has
-# not been drawn again yet, so both the event and the replay run on to the end
-# of that repaint. What the replayed screen then shows inside the popup is the
-# overlay's own repaint, drawn from the popup screen as it stands while the
-# popup waits for its key.
-alert_ui_tmux set-option -t "=$alert_ui_session:" status-left-length 64
-TMUX_TMPDIR="$alert_ui_root" tmux wait-for "$alert_ui_popup_marker_first-seen" &
-alert_ui_popup_marker_first_waiter=$!
-alert_ui_tmux set-option -t "=$alert_ui_session:" status-left \
-  "$alert_ui_popup_marker_first"
-alert_ui_popup_marker_first_rc=0
-wait "$alert_ui_popup_marker_first_waiter" || alert_ui_popup_marker_first_rc=$?
-TMUX_TMPDIR="$alert_ui_root" tmux wait-for "$alert_ui_popup_marker_second-seen" &
-alert_ui_popup_marker_second_waiter=$!
-alert_ui_tmux set-option -t "=$alert_ui_session:" status-left \
-  "$alert_ui_popup_marker_second"
-alert_ui_popup_marker_second_rc=0
-wait "$alert_ui_popup_marker_second_waiter" || alert_ui_popup_marker_second_rc=$?
-alert_ui_tmux set-option -u -t "=$alert_ui_session:" status-left
-alert_ui_tmux set-option -u -t "=$alert_ui_session:" status-left-length
-equal "the attached client repaints on each popup witness marker" '0 0' \
-  "$alert_ui_popup_marker_first_rc $alert_ui_popup_marker_second_rc"
-# The binding's 80% by 70% popup on the 80x24 client has a 62x14 interior;
-# the report reserves six of those rows, so the note gets seven rows and its
-# pointer the eighth.
-alert_ui_popup_screen="$(python3 "$alert_ui_client_screen" \
-  "$alert_ui_client_output" "$alert_ui_popup_marker_second")"
-alert_ui_popup_row() { printf '%s\n' "$alert_ui_popup_screen" | sed -n "${1}p"; }
-equal "the replayed client screen used only modelled control sequences" \
-  "unsupported=0" "$(alert_ui_popup_row 15)"
-equal "the replayed popup rows come from the marked repaint" \
-  "frame=marker" "$(alert_ui_popup_row 16)"
-equal "the attached client renders the active alert inside the popup" \
-  "1 active alert (seen)" "$(alert_ui_popup_row 1)"
-equal "the attached popup separates its headline from the transition" \
-  "" "$(alert_ui_popup_row 2)"
-contains "the attached popup states the failing transition" \
-  "$(alert_ui_popup_row 3)" "[seen] cooperative tick failed at "
-contains "the attached popup keeps the failure note inside its rows" \
-  "$(alert_ui_popup_row 4)" "gang: unknown collar 'missing-alert-collar-"
-contains "the attached popup points at the full note it cannot show" \
-  "$(alert_ui_popup_row 11)" "run gang alerts for the full note)"
-equal "the attached popup stays open for its documented close key" \
-  "Press any key to close." "$(alert_ui_popup_row 13)"
-equal "the attached popup ends on the row after its close key" \
-  "" "$(alert_ui_popup_row 14)"
-printf 'x' >&8
-alert_ui_client_done_rc=0
-wait "$alert_ui_client_done_waiter" || alert_ui_client_done_rc=$?
-alert_ui_tmux set-option -t "=$alert_ui_session:" @gl_alert_command \
-  "$alert_ui_installed_command"
-alert_ui_tmux set-option -u -t "=$alert_ui_observer:" @gl_alert_command
-equal "the attached popup runs its session-local alert command to completion" \
-  0 "$alert_ui_client_done_rc"
-equal "the attached popup does not resolve another session's command" absent \
-  "$([ ! -e "$alert_ui_wrong_session_ledger" ] \
-      && printf absent || printf present)"
-equal "Prefix+A on the attached client marks the active alert seen" '1 0' \
-  "$(alert_ui_tmux show-options -qv -t "=$alert_ui_session:" @gl_alert_active) $(alert_ui_tmux show-options -qv -t "=$alert_ui_session:" @gl_alert_unseen)"
-
-env -u TMUX TMUX_TMPDIR="$alert_ui_root" tmux wait-for "$alert_ui_client_exited" &
-alert_ui_client_exited_waiter=$!
-printf '\002d' >&8
-wait "$alert_ui_client_exited_waiter"
-alert_ui_client_rc="$(<"$alert_ui_client_status")"
-wait "$alert_ui_client_pid" || true
-exec 8>&-
-equal "the attached popup client detaches cleanly" 0 "$alert_ui_client_rc"
-equal "the real popup executes none of the hostile session name" absent \
-  "$([ ! -e "$alert_ui_injected" ] && printf absent || printf present)"
-rm -f -- "$alert_ui_injected"
-
-# The same report on a terminal the popup binding did not size. Narrow
-# columns wrap the fixed lines too, and a two-byte character can straddle a
-# row boundary; the report still has to end inside the terminal's rows with
-# its pointer whole and every character intact.
-alert_ui_direct_env="TMUX_TMPDIR=$(printf '%q' "$alert_ui_root") XDG_STATE_HOME=$(printf '%q' "$RUN_ROOT/alert-ui-state") GANG_ARCHIVE_DIR=$(printf '%q' "$RUN_ROOT/alert-ui-archive")"
-alert_ui_narrow_output="$RUN_ROOT/alert-ui-narrow-output"
-alert_ui_narrow_rc=0
-printf 'x' | TERM=xterm PATH="$alert_ui_client_path" script -qefc \
-  "stty rows 16 cols 20; $alert_ui_direct_env $alert_ui_installed_command" \
-  /dev/null > "$alert_ui_narrow_output" 2>&1 || alert_ui_narrow_rc=$?
-equal "the open report on a narrow terminal returns cleanly" 0 "$alert_ui_narrow_rc"
-alert_ui_narrow_shape="$(python3 - "$alert_ui_narrow_output" <<'PY'
-import sys
-raw = open(sys.argv[1], "rb").read()
-try:
-    text = raw.decode("utf-8")
-except UnicodeDecodeError:
-    print("split-character")
-    sys.exit(0)
-rows = 0
-for line in text.split("\r\n"):
-    width = sum(2 if ord(c) > 127 else 1 for c in line)
-    rows += max(1, -(-width // 20))
-print("fits" if rows <= 16 else "overflows by %d" % (rows - 16))
-PY
-)"
-equal "the narrow report keeps whole characters and ends inside the terminal" \
-  fits "$alert_ui_narrow_shape"
-alert_ui_narrow_flat="$(tr -d '\r\n' < "$alert_ui_narrow_output")"
-contains "the narrow report keeps its headline" \
-  "$alert_ui_narrow_flat" "1 active alert (seen)"
-contains "the narrow report keeps the note's start" \
-  "$alert_ui_narrow_flat" "unknown collar 'missing-alert-collar-"
-contains "the narrow report keeps its pointer whole" \
-  "$alert_ui_narrow_flat" "run gang alerts for the full note)"
-contains "the narrow report keeps its close key" \
-  "$alert_ui_narrow_flat" "Press any key to close."
-
-# A terminal that cannot be measured cannot bound the note, and a guessed
-# size would let the note scroll the popup again. The report then carries
-# only the pointer.
-alert_ui_unsized_bin="$RUN_ROOT/alert-ui-unsized-bin"
-mkdir -p "$alert_ui_unsized_bin"
-printf '#!/bin/sh\nexit 1\n' > "$alert_ui_unsized_bin/stty"
-chmod +x "$alert_ui_unsized_bin/stty"
-alert_ui_unsized_output="$RUN_ROOT/alert-ui-unsized-output"
-alert_ui_unsized_rc=0
-printf 'x' | TERM=xterm PATH="$alert_ui_client_path" script -qefc \
-  "stty rows 24 cols 80; PATH=$(printf '%q' "$alert_ui_unsized_bin"):\$PATH $alert_ui_direct_env $alert_ui_installed_command" \
-  /dev/null > "$alert_ui_unsized_output" 2>&1 || alert_ui_unsized_rc=$?
-equal "the open report on an unmeasurable terminal returns cleanly" 0 \
-  "$alert_ui_unsized_rc"
-alert_ui_unsized_flat="$(tr -d '\r\n' < "$alert_ui_unsized_output")"
-contains "the unmeasured report keeps its headline" \
-  "$alert_ui_unsized_flat" "1 active alert (seen)"
-contains "the unmeasured report says why the note is absent" \
-  "$alert_ui_unsized_flat" "(note hidden: size unknown; run gang alerts)"
-excludes "the unmeasured report prints no note row it cannot bound" \
-  "$alert_ui_unsized_flat" "unknown collar"
-contains "the unmeasured report keeps its close key" \
-  "$alert_ui_unsized_flat" "Press any key to close."
-
-# An unrelated session has no recorded command. Drive the installed popup from
-# a second real client and append only an inside-the-popup completion event to
-# its already asserted shell command. Even with an executable named alerts
-# on the server's PATH, the empty option must remain a no-op.
-alert_ui_unrelated_ledger="$RUN_ROOT/alert-ui-unrelated-alerts-ran"
-cat > "$RUN_ROOT/bin/alerts" <<SH
-#!/bin/sh
-printf called > '$alert_ui_unrelated_ledger'
-SH
-chmod +x "$RUN_ROOT/bin/alerts"
-alert_ui_unrelated_input="$RUN_ROOT/alert-ui-unrelated-client-input"
-alert_ui_unrelated_output="$RUN_ROOT/alert-ui-unrelated-client-output"
-alert_ui_unrelated_status="$RUN_ROOT/alert-ui-unrelated-client-status"
-alert_ui_unrelated_attached="alert-ui-unrelated-attached-$$"
-alert_ui_unrelated_done="alert-ui-unrelated-done-$$"
-alert_ui_unrelated_exited="alert-ui-unrelated-exited-$$"
-printf -v alert_ui_unrelated_target '%q' "=$alert_ui_observer"
-mkfifo "$alert_ui_unrelated_input"
-exec 9<>"$alert_ui_unrelated_input"
-alert_ui_tmux set-hook -g client-attached \
-  "wait-for -S $alert_ui_unrelated_attached"
-env -u TMUX TMUX_TMPDIR="$alert_ui_root" tmux wait-for "$alert_ui_unrelated_attached" &
-alert_ui_unrelated_attached_waiter=$!
-(
-  alert_ui_unrelated_rc=0
-  TERM=xterm PATH="$alert_ui_client_path" script -qefc \
-    "stty rows 24 cols 80; unset TMUX; TMUX_TMPDIR='$alert_ui_root' tmux attach-session -t $alert_ui_unrelated_target" \
-    /dev/null < "$alert_ui_unrelated_input" \
-    > "$alert_ui_unrelated_output" 2>&1 \
-    || alert_ui_unrelated_rc=$?
-  printf '%s\n' "$alert_ui_unrelated_rc" > "$alert_ui_unrelated_status"
-  env -u TMUX TMUX_TMPDIR="$alert_ui_root" tmux wait-for -S "$alert_ui_unrelated_exited"
-  exit "$alert_ui_unrelated_rc"
-) &
-alert_ui_unrelated_pid=$!
-wait "$alert_ui_unrelated_attached_waiter"
-alert_ui_tmux set-hook -gu client-attached
-# The completion event rides inside the popup's own shell argument, and that
-# argument cannot be recovered from list-keys: tmux 3.4 renders the product's
-# $command as \\$command, which its parser reads back as one backslash and an
-# expansion of the empty variable, so re-sourcing that rendering installs a
-# popup that never evaluates the option. This fixture carries its own copy of
-# the popup shell and binds it through argv, which no tmux version expands.
-# Binding the copy unchanged first proves it byte-for-byte against the
-# installed product key on whichever tmux runs the suite.
-alert_ui_popup_shell='command="$(tmux show-options -qv -t "" @gl_alert_command 2>/dev/null)" || command=; [ -z "$command" ] || sh -c "$command"'
-alert_ui_popup_bind() {
-  alert_ui_tmux bind-key -T prefix A display-popup -E -w 80% -h 70% "$1"
-}
-alert_ui_popup_bind "$alert_ui_popup_shell"
-equal "the fixture's popup shell is the installed product binding" \
-  "$alert_ui_binding" "$(alert_ui_tmux list-keys -T prefix A)"
-alert_ui_popup_bind "$alert_ui_popup_shell; tmux wait-for -S $alert_ui_unrelated_done"
-env -u TMUX TMUX_TMPDIR="$alert_ui_root" tmux wait-for "$alert_ui_unrelated_done" &
-alert_ui_unrelated_done_waiter=$!
-printf '\002A' >&9
-wait "$alert_ui_unrelated_done_waiter"
-alert_ui_popup_bind "$alert_ui_popup_shell"
-alert_ui_restored_binding="$(alert_ui_tmux list-keys -T prefix A)"
-equal "temporary popup instrumentation restores the exact owned binding" \
-  "$alert_ui_binding" "$alert_ui_restored_binding"
-env -u TMUX TMUX_TMPDIR="$alert_ui_root" tmux wait-for "$alert_ui_unrelated_exited" &
-alert_ui_unrelated_exited_waiter=$!
-printf '\002d' >&9
-wait "$alert_ui_unrelated_exited_waiter"
-alert_ui_unrelated_rc="$(<"$alert_ui_unrelated_status")"
-wait "$alert_ui_unrelated_pid" || true
-exec 9>&-
-rm -f -- "$RUN_ROOT/bin/alerts"
-equal "the unrelated popup client detaches cleanly" 0 \
-  "$alert_ui_unrelated_rc"
-equal "the installed popup executes no PATH fallback in an unrelated session" \
-  absent \
-  "$([ ! -e "$alert_ui_unrelated_ledger" ] \
-      && printf absent || printf present)"
-
-alert_ui_repeat_rc=0
-PATH="$alert_ui_tmux_bin:$PATH" alert_ui_gang tick >/dev/null 2>&1 \
-  || alert_ui_repeat_rc=$?
-equal "an unresolved repeat remains a failing tick" 1 "$alert_ui_repeat_rc"
-equal "a repeat does not make a seen active alert unseen again" '1 0' \
-  "$(alert_ui_tmux show-options -qv -t "=$alert_ui_session:" @gl_alert_active) $(alert_ui_tmux show-options -qv -t "=$alert_ui_session:" @gl_alert_unseen)"
-equal "a repeat failure emits no additional tmux message" 1 \
-  "$(wc -l < "$alert_ui_message_ledger" | tr -d ' ')"
-
-# Missing or malformed producer state is unknown, never recovery. Preserve the
-# last tmux counts and require the inspectable command to fail loudly until the
-# producer writes a valid record again.
-alert_ui_health_saved="$RUN_ROOT/alert-ui-health-saved"
-mv -- "$alert_ui_health" "$alert_ui_health_saved"
-alert_ui_missing_rc=0
-alert_ui_gang alerts > "$RUN_ROOT/alert-ui-missing.out" 2>&1 \
-  || alert_ui_missing_rc=$?
-equal "missing health cannot manufacture alert recovery" 1 \
-  "$alert_ui_missing_rc"
-contains "missing active health names the refused false recovery" \
-  "$(<"$RUN_ROOT/alert-ui-missing.out")" "refusing to report recovery"
-equal "missing health preserves the last active and seen counts" '1 0' \
-  "$(alert_ui_tmux show-options -qv -t "=$alert_ui_session:" @gl_alert_active) $(alert_ui_tmux show-options -qv -t "=$alert_ui_session:" @gl_alert_unseen)"
-mv -- "$alert_ui_health_saved" "$alert_ui_health"
-cp -- "$alert_ui_health" "$alert_ui_health_saved"
-printf 'not-a-health-record\n' > "$alert_ui_health"
-alert_ui_malformed_rc=0
-alert_ui_gang alerts > "$RUN_ROOT/alert-ui-malformed.out" 2>&1 \
-  || alert_ui_malformed_rc=$?
-equal "malformed health cannot manufacture alert recovery" 1 \
-  "$alert_ui_malformed_rc"
-contains "malformed health is named as unreadable state" \
-  "$(<"$RUN_ROOT/alert-ui-malformed.out")" "unreadable or malformed"
-equal "malformed health preserves the last active and seen counts" '1 0' \
-  "$(alert_ui_tmux show-options -qv -t "=$alert_ui_session:" @gl_alert_active) $(alert_ui_tmux show-options -qv -t "=$alert_ui_session:" @gl_alert_unseen)"
-printf 'ok\t123\t\t\n' > "$alert_ui_health"
-alert_ui_empty_ticket_rc=0
-alert_ui_gang alerts > "$RUN_ROOT/alert-ui-empty-ticket.out" 2>&1 \
-  || alert_ui_empty_ticket_rc=$?
-equal "an explicitly empty ordered ticket cannot manufacture recovery" \
-  1 "$alert_ui_empty_ticket_rc"
-contains "an empty ordered ticket is named as malformed health" \
-  "$(<"$RUN_ROOT/alert-ui-empty-ticket.out")" "unreadable or malformed"
-printf 'ok\t123\t\t999\njunk\n' > "$alert_ui_health"
-alert_ui_multiline_health_rc=0
-alert_ui_gang alerts > "$RUN_ROOT/alert-ui-multiline-health.out" 2>&1 \
-  || alert_ui_multiline_health_rc=$?
-equal "trailing health records cannot hide behind a clean prefix" \
-  1 "$alert_ui_multiline_health_rc"
-contains "a trailing health record is named as malformed health" \
-  "$(<"$RUN_ROOT/alert-ui-multiline-health.out")" "unreadable or malformed"
-printf 'ok\t123\t\t999\0\n' > "$alert_ui_health"
-alert_ui_nul_health_rc=0
-alert_ui_gang alerts > "$RUN_ROOT/alert-ui-nul-health.out" 2>&1 \
-  || alert_ui_nul_health_rc=$?
-equal "a NUL-corrupted clean record cannot manufacture recovery" \
-  1 "$alert_ui_nul_health_rc"
-contains "NUL-corrupted health is named as malformed" \
-  "$(<"$RUN_ROOT/alert-ui-nul-health.out")" "unreadable or malformed"
-
-# Corruption does not erase the last trustworthy active lifecycle. A failing
-# producer repairs its record, but must neither reopen the seen transition nor
-# emit a duplicate new-alert message. With the prior record unreadable the
-# transition is unknown: a history row would read as a second raised failure,
-# so the repair appends none and marks the history incomplete instead.
-alert_ui_alerts="${alert_ui_health%/health}/alerts"
-alert_ui_tmux set-option -u -t "=$alert_ui_session:" @gl_alert_history_lost
-alert_ui_rows_before="$(wc -l < "$alert_ui_alerts" | tr -d ' ')"
-alert_ui_corrupt_repeat_rc=0
-PATH="$alert_ui_tmux_bin:$PATH" alert_ui_gang tick >/dev/null 2>&1 \
-  || alert_ui_corrupt_repeat_rc=$?
-equal "a failed tick repairs corrupt active health as a failure" \
-  1 "$alert_ui_corrupt_repeat_rc"
-equal "repairing corrupt active health preserves its seen lifecycle" '1 0' \
-  "$(alert_ui_tmux show-options -qv -t "=$alert_ui_session:" @gl_alert_active) $(alert_ui_tmux show-options -qv -t "=$alert_ui_session:" @gl_alert_unseen)"
-equal "repairing corrupt active health emits no duplicate transition" 1 \
-  "$(wc -l < "$alert_ui_message_ledger" | tr -d ' ')"
-contains "the corrupt active record is repaired to inspectable failure" \
-  "$(<"$alert_ui_health")" $'failed\t'
-equal "repairing unreadable health appends no history row" \
-  "$alert_ui_rows_before" "$(wc -l < "$alert_ui_alerts" | tr -d ' ')"
-equal "repairing unreadable health marks the history incomplete" 1 \
-  "$(alert_ui_tmux show-options -qv -t "=$alert_ui_session:" @gl_alert_history_lost)"
-rm -f -- "$alert_ui_health_saved"
-
-alert_ui_tmux set-option -w -t "$alert_ui_caller_id" @gl_collar bash
-alert_ui_gang tick >/dev/null
-equal "a clean pass resolves the active alert" '0 0' \
-  "$(alert_ui_tmux show-options -qv -t "=$alert_ui_session:" @gl_alert_active) $(alert_ui_tmux show-options -qv -t "=$alert_ui_session:" @gl_alert_unseen)"
-equal "the resolved alert disappears from the structured list" 0 \
-  "$(alert_ui_gang alerts --porcelain | wc -l | tr -d ' ')"
-alert_ui_resolved="$(alert_ui_gang alerts)"
-contains "a resolved alert leaves its history readable" \
-  "$alert_ui_resolved" "recent alerts:"
-alert_ui_resolved_history="${alert_ui_resolved#*recent alerts:}"
-contains "the history keeps the resolved failure" \
-  "$alert_ui_resolved_history" "raised: "
-contains "the history records the pass that cleared it" \
-  "$alert_ui_resolved_history" " cleared"
-contains "the roster names the alert center key with no active alert" \
-  "$(alert_ui_gang roster)" "Prefix+A"
-
-alert_ui_tmux set-option -w -t "$alert_ui_caller_id" @gl_collar missing-alert-collar
-PATH="$alert_ui_tmux_bin:$PATH" alert_ui_gang tick >/dev/null 2>&1 || true
-equal "failure after recovery is a new unseen transition" '1 1' \
-  "$(alert_ui_tmux show-options -qv -t "=$alert_ui_session:" @gl_alert_active) $(alert_ui_tmux show-options -qv -t "=$alert_ui_session:" @gl_alert_unseen)"
-equal "the post-recovery transition emits exactly one new message" 2 \
-  "$(wc -l < "$alert_ui_message_ledger" | tr -d ' ')"
-
-# A clean pass over an unreadable prior record cannot tell a resolution from a
-# pass that resolved nothing, so it too appends no row and marks the history
-# incomplete. A pass refuses health it cannot read when it starts, so the
-# record turns unreadable while the pass is held at its commit.
-alert_ui_unread_ready="$RUN_ROOT/alert-ui-unread-ready"
-alert_ui_unread_release="$RUN_ROOT/alert-ui-unread-release"
-mkfifo "$alert_ui_unread_ready" "$alert_ui_unread_release"
-alert_ui_tmux set-option -u -t "=$alert_ui_session:" @gl_alert_history_lost
-alert_ui_rows_before="$(wc -l < "$alert_ui_alerts" | tr -d ' ')"
-alert_ui_tmux set-option -w -t "$alert_ui_caller_id" @gl_collar bash
-GANG_TEST_TICK_COMMIT_READY_FIFO="$alert_ui_unread_ready" \
-GANG_TEST_TICK_COMMIT_RELEASE_FIFO="$alert_ui_unread_release" \
-  alert_ui_gang tick > "$RUN_ROOT/alert-ui-unread.out" 2>&1 &
-alert_ui_unread_owner=$!
-IFS= read -r -N 1 _ < "$alert_ui_unread_ready"
-printf 'junk\n' > "$alert_ui_health"
-printf '\n' > "$alert_ui_unread_release"
-alert_ui_unread_rc=0
-wait "$alert_ui_unread_owner" || alert_ui_unread_rc=$?
-equal "a clean pass over health made unreadable at its commit completes" \
-  0 "$alert_ui_unread_rc"
-equal "a clean pass over unreadable health appends no history row" \
-  "$alert_ui_rows_before" "$(wc -l < "$alert_ui_alerts" | tr -d ' ')"
-equal "a clean pass over unreadable health marks the history incomplete" 1 \
-  "$(alert_ui_tmux show-options -qv -t "=$alert_ui_session:" @gl_alert_history_lost)"
-
-# THE LISTING NAMES THE CURRENT GENERATION FIRST. A reader takes no lock, and
-# the first rotation can land between its two existence checks; checked in the
-# other order, neither file is seen and a journal with rows reads as "no alert
-# history". The history-lost read is the one external command between the
-# checks, so this shim rotates the journal there. These assertions show what a
-# rotation at that read produces; they reach the window between the checks only
-# while the read stays between them.
-alert_ui_real_mv="$(command -v mv)"
-alert_ui_rotate_bin="$RUN_ROOT/alert-ui-rotate-bin"
-alert_ui_rotate_ledger="$RUN_ROOT/alert-ui-rotations"
-mkdir -p "$alert_ui_rotate_bin"
-cat > "$alert_ui_rotate_bin/tmux" <<SH
-#!/bin/sh
-. "\$GANG_TEST_PATH_SHIM_GUARD"
-path_shim_guard '$REAL_TMUX' "\$0" tmux || exit \$?
-case "\$*" in
-  *@gl_alert_history_lost*)
-    if [ -f '$alert_ui_alerts' ]; then
-      '$alert_ui_real_mv' -f -- '$alert_ui_alerts' '$alert_ui_alerts.1'
-      printf 'rotated\n' >> '$alert_ui_rotate_ledger'
-    fi ;;
-esac
-exec '$REAL_TMUX' "\$@"
-SH
-chmod +x "$alert_ui_rotate_bin/tmux"
-equal "the rotation fixture starts with one generation" absent \
-  "$(if [ -e "$alert_ui_alerts.1" ]; then printf present; else printf absent; fi)"
-alert_ui_rotated="$(PATH="$alert_ui_rotate_bin:$PATH" alert_ui_gang alerts)"
-equal "the journal rotated at the history-lost read" 1 \
-  "$(wc -l < "$alert_ui_rotate_ledger" | tr -d ' ')"
-excludes "a rotation at the history-lost read cannot read as no history" \
-  "$alert_ui_rotated" "no alert history"
-contains "a rotation at the history-lost read reads as unknown" \
-  "$alert_ui_rotated" "recent alerts: unknown"
-mv -- "$alert_ui_alerts.1" "$alert_ui_alerts"
-
-# A row with a surplus field, even an empty one, is not one this writer
-# produced. It is shown as unreadable rather than as a failure whose summary
-# swallowed the surplus. Tab is whitespace to read, so a split alone drops a
-# trailing empty field.
-cp -- "$alert_ui_alerts" "$RUN_ROOT/alert-ui-alerts-saved"
-printf '123\tfailed\tnote\textra\n' > "$alert_ui_alerts"
-alert_ui_surplus="$(alert_ui_gang alerts)"
-contains "a history row with a surplus field is unreadable" \
-  "$alert_ui_surplus" "unreadable history row"
-excludes "a surplus field is not read into the failure summary" \
-  "$alert_ui_surplus" "raised: note"
-printf '123\tfailed\tnote\t\n' > "$alert_ui_alerts"
-alert_ui_surplus="$(alert_ui_gang alerts)"
-contains "a history row with an empty surplus field is unreadable" \
-  "$alert_ui_surplus" "unreadable history row"
-excludes "an empty surplus field does not read as a transition" \
-  "$alert_ui_surplus" "raised: note"
-mv -- "$RUN_ROOT/alert-ui-alerts-saved" "$alert_ui_alerts"
-
-# ROTATION PRECEDES THE APPEND AND LANDS ONLY ON A FILE. A journal past its
-# bound is rotated before the next row. A rotation that cannot land keeps every
-# row in place, appends nothing and marks the history incomplete, so the bound
-# holds and the gap is visible; mv onto a directory would move the journal
-# inside it, where no reader looks.
-alert_ui_pad_journal() {
-  awk 'BEGIN { for (i = 0; i < 72000; i++) printf "%d\tok\t\n", 1000000000 + i }' \
-    > "$alert_ui_alerts"
-}
-cp -- "$alert_ui_alerts" "$RUN_ROOT/alert-ui-alerts-saved"
-alert_ui_pad_journal
-alert_ui_padded="$(wc -c < "$alert_ui_alerts" | tr -d ' ')"
-equal "the padded journal is past its bound" over \
-  "$(if [ "$alert_ui_padded" -gt 1048576 ]; then printf over; else printf within; fi)"
-mkdir -- "$alert_ui_alerts.1"
-alert_ui_tmux set-option -u -t "=$alert_ui_session:" @gl_alert_history_lost
-alert_ui_tmux set-option -w -t "$alert_ui_caller_id" @gl_collar missing-alert-collar
-alert_ui_dir_rotation_rc=0
-alert_ui_gang tick >/dev/null 2>&1 || alert_ui_dir_rotation_rc=$?
-equal "the transition over a directory generation is a failing tick" 1 \
-  "$alert_ui_dir_rotation_rc"
-equal "a rotation onto a directory keeps the journal in place" \
-  "$alert_ui_padded" "$(wc -c < "$alert_ui_alerts" | tr -d ' ')"
-equal "a rotation onto a directory moves nothing into it" "" \
-  "$(ls -A -- "$alert_ui_alerts.1")"
-equal "a rotation onto a directory marks the history incomplete" 1 \
-  "$(alert_ui_tmux show-options -qv -t "=$alert_ui_session:" @gl_alert_history_lost)"
-rm -rf -- "$alert_ui_alerts.1"
-
-alert_ui_mv_bin="$RUN_ROOT/alert-ui-mv-bin"
-alert_ui_mv_ledger="$RUN_ROOT/alert-ui-mv-refusals"
-mkdir -p "$alert_ui_mv_bin"
-cat > "$alert_ui_mv_bin/mv" <<SH
-#!/bin/sh
-. "\$GANG_TEST_PATH_SHIM_GUARD"
-path_shim_guard '$alert_ui_real_mv' "\$0" mv || exit \$?
-case "\$*" in
-  *alerts.1) printf '%s\n' "\$*" >> '$alert_ui_mv_ledger'; exit 1 ;;
-esac
-exec '$alert_ui_real_mv' "\$@"
-SH
-chmod +x "$alert_ui_mv_bin/mv"
-alert_ui_pad_journal
-alert_ui_tmux set-option -u -t "=$alert_ui_session:" @gl_alert_history_lost
-alert_ui_tmux set-option -w -t "$alert_ui_caller_id" @gl_collar bash
-PATH="$alert_ui_mv_bin:$PATH" alert_ui_gang tick >/dev/null
-equal "the clean transition attempted one refused rotation" 1 \
-  "$(wc -l < "$alert_ui_mv_ledger" | tr -d ' ')"
-equal "a refused rotation keeps the journal at its size" \
-  "$alert_ui_padded" "$(wc -c < "$alert_ui_alerts" | tr -d ' ')"
-equal "a refused rotation marks the history incomplete" 1 \
-  "$(alert_ui_tmux show-options -qv -t "=$alert_ui_session:" @gl_alert_history_lost)"
-
-# A SIZE THAT CANNOT BE READ IS A ROTATION THAT CANNOT LAND. Read as zero, a
-# journal that cannot be read was never rotated, and every transition appended
-# to it past its bound with no marker. It keeps its rows, gains none, and the
-# history says it is incomplete.
-chmod 200 -- "$alert_ui_alerts"
-equal "the write-only journal cannot be read" unreadable \
-  "$(if [ -r "$alert_ui_alerts" ]; then printf readable; else printf unreadable; fi)"
-alert_ui_tmux set-option -u -t "=$alert_ui_session:" @gl_alert_history_lost
-alert_ui_tmux set-option -w -t "$alert_ui_caller_id" @gl_collar missing-alert-collar
-alert_ui_unsized_rc=0
-alert_ui_gang tick >/dev/null 2>&1 || alert_ui_unsized_rc=$?
-chmod 600 -- "$alert_ui_alerts"
-equal "the transition over an unreadable journal is a failing tick" 1 \
-  "$alert_ui_unsized_rc"
-equal "a journal whose size cannot be read gains no row" \
-  "$alert_ui_padded" "$(wc -c < "$alert_ui_alerts" | tr -d ' ')"
-equal "a journal whose size cannot be read marks the history incomplete" 1 \
-  "$(alert_ui_tmux show-options -qv -t "=$alert_ui_session:" @gl_alert_history_lost)"
-mv -- "$RUN_ROOT/alert-ui-alerts-saved" "$alert_ui_alerts"
+  "$tick_order_socket" "$tick_order_session")"
+tick_order_health="$RUN_ROOT/tick-order-state/gangline/tick/$tick_order_digest/health"
 
 # A PASS OWNS THE RUN LOCK THROUGH ITS HEALTH COMMIT, AND A LAUNCH DURING IT IS
 # SERVED AFTERWARDS. Hold a failing pass at that exact seam, repair the
@@ -1186,47 +43,47 @@ mv -- "$RUN_ROOT/alert-ui-alerts-saved" "$alert_ui_alerts"
 # committing ahead of it, and its own pass then records the recovery. Taking
 # the queue lock and then the run lock waits out the queued pass, which holds
 # the first until it holds the second.
-alert_ui_queue_lock="$RUN_ROOT/alert-ui-locks/tick/$alert_ui_digest.queue"
-alert_ui_run_lock="$RUN_ROOT/alert-ui-locks/tick/$alert_ui_digest.run"
-alert_ui_queued_wait() {
-  flock "$alert_ui_queue_lock" true
-  flock "$alert_ui_run_lock" true
+tick_order_queue_lock="$RUN_ROOT/tick-order-locks/tick/$tick_order_digest.queue"
+tick_order_run_lock="$RUN_ROOT/tick-order-locks/tick/$tick_order_digest.run"
+tick_order_queued_wait() {
+  flock "$tick_order_queue_lock" true
+  flock "$tick_order_run_lock" true
 }
-alert_ui_commit_ready="$RUN_ROOT/alert-ui-commit-ready"
-alert_ui_commit_release="$RUN_ROOT/alert-ui-commit-release"
-alert_ui_commit_ledger="$RUN_ROOT/alert-ui-commit-ledger"
-mkfifo "$alert_ui_commit_ready" "$alert_ui_commit_release"
-alert_ui_tmux set-option -w -t "$alert_ui_caller_id" @gl_collar missing-alert-collar
-GANG_TEST_TICK_COMMIT_READY_FIFO="$alert_ui_commit_ready" \
-GANG_TEST_TICK_COMMIT_RELEASE_FIFO="$alert_ui_commit_release" \
-GANG_TEST_TICK_LEDGER="$alert_ui_commit_ledger" \
-  alert_ui_gang tick > "$RUN_ROOT/alert-ui-commit-owner.out" 2>&1 &
-alert_ui_commit_owner=$!
-IFS= read -r -N 1 _ < "$alert_ui_commit_ready"
-alert_ui_tmux set-option -w -t "$alert_ui_caller_id" @gl_collar bash
-GANG_TEST_TICK_MODE=async GANG_TEST_TICK_LEDGER="$alert_ui_commit_ledger" \
-  alert_ui_gang roster >/dev/null
-alert_ui_queued_rc=0
-flock -n "$alert_ui_queue_lock" true || alert_ui_queued_rc=$?
+tick_order_commit_ready="$RUN_ROOT/tick-order-commit-ready"
+tick_order_commit_release="$RUN_ROOT/tick-order-commit-release"
+tick_order_commit_ledger="$RUN_ROOT/tick-order-commit-ledger"
+mkfifo "$tick_order_commit_ready" "$tick_order_commit_release"
+tick_order_tmux set-option -w -t "$tick_order_caller_id" @gl_collar missing-order-collar
+GANG_TEST_TICK_COMMIT_READY_FIFO="$tick_order_commit_ready" \
+GANG_TEST_TICK_COMMIT_RELEASE_FIFO="$tick_order_commit_release" \
+GANG_TEST_TICK_LEDGER="$tick_order_commit_ledger" \
+  tick_order_gang tick > "$RUN_ROOT/tick-order-commit-owner.out" 2>&1 &
+tick_order_commit_owner=$!
+IFS= read -r -N 1 _ < "$tick_order_commit_ready"
+tick_order_tmux set-option -w -t "$tick_order_caller_id" @gl_collar bash
+GANG_TEST_TICK_MODE=async GANG_TEST_TICK_LEDGER="$tick_order_commit_ledger" \
+  tick_order_gang roster >/dev/null
+tick_order_queued_rc=0
+flock -n "$tick_order_queue_lock" true || tick_order_queued_rc=$?
 equal "a launch while the older result is uncommitted queues a pass" \
-  1 "$alert_ui_queued_rc"
-printf '\n' > "$alert_ui_commit_release"
-alert_ui_commit_owner_rc=0
-wait "$alert_ui_commit_owner" || alert_ui_commit_owner_rc=$?
-equal "the held pass commits its own failure" 1 "$alert_ui_commit_owner_rc"
-alert_ui_queued_wait
+  1 "$tick_order_queued_rc"
+printf '\n' > "$tick_order_commit_release"
+tick_order_commit_owner_rc=0
+wait "$tick_order_commit_owner" || tick_order_commit_owner_rc=$?
+equal "the held pass commits its own failure" 1 "$tick_order_commit_owner_rc"
+tick_order_queued_wait
 equal "the queued launch runs one pass after the held one" '1 1 ' \
-  "$(tr '\n' ' ' < "$alert_ui_commit_ledger")"
-equal "the newer recovery is the final alert state" '0 0' \
-  "$(alert_ui_tmux show-options -qv -t "=$alert_ui_session:" @gl_alert_active) $(alert_ui_tmux show-options -qv -t "=$alert_ui_session:" @gl_alert_unseen)"
+  "$(tr '\n' ' ' < "$tick_order_commit_ledger")"
 contains "the newer recovery is the final health record" \
-  "$(<"$alert_ui_health")" $'ok\t'
+  "$(<"$tick_order_health")" $'ok\t'
+excludes "the newer recovery leaves roster no tick failure to report" \
+  "$(tick_order_gang roster 2>&1)" "tick failed:"
 
 # Deadline/controller failures return after their worker is gone. Hold the
 # older parent at its failure commit and launch a later pass: it queues until
 # the parent has committed, so the older failure cannot overwrite recovery.
-alert_ui_bad_clock="$RUN_ROOT/alert-ui-bad-clock"
-cat > "$alert_ui_bad_clock" <<'SH'
+tick_order_bad_clock="$RUN_ROOT/tick-order-bad-clock"
+cat > "$tick_order_bad_clock" <<'SH'
 #!/bin/sh
 case "${1:-}" in
   now) printf '1\n'; exit 0 ;;
@@ -1234,188 +91,34 @@ case "${1:-}" in
   *) exit 2 ;;
 esac
 SH
-chmod +x "$alert_ui_bad_clock"
-alert_ui_parent_ready="$RUN_ROOT/alert-ui-parent-ready"
-alert_ui_parent_release="$RUN_ROOT/alert-ui-parent-release"
-mkfifo "$alert_ui_parent_ready" "$alert_ui_parent_release"
-GANG_TEST_CLOCK="$alert_ui_bad_clock" \
-GANG_TEST_TICK_PARENT_COMMIT_READY_FIFO="$alert_ui_parent_ready" \
-GANG_TEST_TICK_PARENT_COMMIT_RELEASE_FIFO="$alert_ui_parent_release" \
-  alert_ui_gang tick > "$RUN_ROOT/alert-ui-parent-failure.out" 2>&1 &
-alert_ui_parent_owner=$!
-IFS= read -r -N 1 _ < "$alert_ui_parent_ready"
-GANG_TEST_TICK_MODE=async alert_ui_gang roster >/dev/null
-alert_ui_parent_queued_rc=0
-flock -n "$alert_ui_queue_lock" true || alert_ui_parent_queued_rc=$?
+chmod +x "$tick_order_bad_clock"
+tick_order_parent_ready="$RUN_ROOT/tick-order-parent-ready"
+tick_order_parent_release="$RUN_ROOT/tick-order-parent-release"
+mkfifo "$tick_order_parent_ready" "$tick_order_parent_release"
+GANG_TEST_CLOCK="$tick_order_bad_clock" \
+GANG_TEST_TICK_PARENT_COMMIT_READY_FIFO="$tick_order_parent_ready" \
+GANG_TEST_TICK_PARENT_COMMIT_RELEASE_FIFO="$tick_order_parent_release" \
+  tick_order_gang tick > "$RUN_ROOT/tick-order-parent-failure.out" 2>&1 &
+tick_order_parent_owner=$!
+IFS= read -r -N 1 _ < "$tick_order_parent_ready"
+GANG_TEST_TICK_MODE=async tick_order_gang roster >/dev/null
+tick_order_parent_queued_rc=0
+flock -n "$tick_order_queue_lock" true || tick_order_parent_queued_rc=$?
 equal "a launch during an uncommitted controller failure queues a pass" \
-  1 "$alert_ui_parent_queued_rc"
-printf '\n' > "$alert_ui_parent_release"
-alert_ui_parent_rc=0
-wait "$alert_ui_parent_owner" || alert_ui_parent_rc=$?
-alert_ui_queued_wait
+  1 "$tick_order_parent_queued_rc"
+printf '\n' > "$tick_order_parent_release"
+tick_order_parent_rc=0
+wait "$tick_order_parent_owner" || tick_order_parent_rc=$?
+tick_order_queued_wait
 equal "the older controller failure still returns its own failure" \
-  1 "$alert_ui_parent_rc"
+  1 "$tick_order_parent_rc"
 contains "the older controller failure retains its diagnostic" \
-  "$(<"$RUN_ROOT/alert-ui-parent-failure.out")" \
+  "$(<"$RUN_ROOT/tick-order-parent-failure.out")" \
   "cannot compare the shared monotonic deadline"
-equal "an older controller failure cannot overwrite newer alert recovery" '0 0' \
-  "$(alert_ui_tmux show-options -qv -t "=$alert_ui_session:" @gl_alert_active) $(alert_ui_tmux show-options -qv -t "=$alert_ui_session:" @gl_alert_unseen)"
 contains "an older controller failure cannot overwrite newer health" \
-  "$(<"$alert_ui_health")" $'ok\t'
-
-# The binding table is server-global. Hold the first team's last-team snapshot
-# while a second team tries to configure itself; the binding claim must keep
-# that second team unconfigured until the first teardown finishes, after which
-# one retry installs a live binding rather than leaving a configured orphan.
-alert_ui_gang_for "$alert_ui_survivor" adopt survivor -c bash >/dev/null
-alert_ui_binding_ready="$RUN_ROOT/alert-ui-binding-ready"
-alert_ui_binding_release="$RUN_ROOT/alert-ui-binding-release"
-mkfifo "$alert_ui_binding_ready" "$alert_ui_binding_release"
-GANG_TEST_ALERT_BINDING_READY_FIFO="$alert_ui_binding_ready" \
-GANG_TEST_ALERT_BINDING_RELEASE_FIFO="$alert_ui_binding_release" \
-  alert_ui_gang down "$alert_ui_session" \
-  > "$RUN_ROOT/alert-ui-down.out" 2>&1 &
-alert_ui_down_owner=$!
-IFS= read -r -N 1 _ < "$alert_ui_binding_ready"
-alert_ui_cross_binding_rc=0
-ALERT_UI_LOCK_DIR="$RUN_ROOT/alert-ui-other-locks" \
-  alert_ui_gang_for "$alert_ui_survivor" tick >/dev/null 2>&1 \
-  || alert_ui_cross_binding_rc=$?
-equal "a team cannot configure across another team's binding teardown" \
-  1 "$alert_ui_cross_binding_rc"
-equal "the losing team publishes no command behind the teardown snapshot" "" \
-  "$(alert_ui_tmux show-options -qv -t "=$alert_ui_survivor:" @gl_alert_command)"
-equal "binding contention still surfaces its committed active alert" '1 1' \
-  "$(alert_ui_tmux show-options -qv -t "=$alert_ui_survivor:" @gl_alert_active) $(alert_ui_tmux show-options -qv -t "=$alert_ui_survivor:" @gl_alert_unseen)"
-contains "binding contention keeps the static status widget visible" \
-  "$(alert_ui_tmux show-options -qv -t "=$alert_ui_survivor:" status-right)" \
-  '#{E:@gl_alert_widget}'
-printf '\n' > "$alert_ui_binding_release"
-alert_ui_down_rc=0
-wait "$alert_ui_down_owner" || alert_ui_down_rc=$?
-equal "the serialized first-team teardown completes" 0 "$alert_ui_down_rc"
-alert_ui_gang_for "$alert_ui_survivor" tick >/dev/null
-alert_ui_survivor_binding="$(alert_ui_tmux list-keys -T prefix A)"
-alert_ui_survivor_command="$(alert_ui_tmux show-options -qv \
-  -t "=$alert_ui_survivor:" @gl_alert_command)"
-contains "the surviving team installs the popup after the teardown seam" \
-  "${alert_ui_survivor_binding//\"/}" \
-  "display-popup -E -h 70% -w 80%"
-equal "the surviving team's encoded command resolves to this gang binary" \
-  "$("$ROOT/bin/gang" --version)" \
-  "$(sh -c "${alert_ui_survivor_command% alerts --open} --version")"
-contains "the surviving team's command includes the complete alert invocation" \
-  "$alert_ui_survivor_command" \
-  "alerts --open"
-
-# An alert-center install that fails must say why in the alert itself. A tick
-# alert keeps only the last line of its pass's output, and the install's
-# failure was that last line with no cause: the step that failed, and what it
-# printed, appeared at most on earlier lines the alert drops. A live team whose
-# health record is malformed fails the install at its widget refresh, which
-# names that record as unreadable, while the rest of the pass succeeds.
-alert_ui_cause="gang-alert-cause-$$"
-alert_ui_tmux new-session -d -s "$alert_ui_cause" -n cause \
-  "PS1='❯ ' exec bash --norc"
-alert_ui_gang_for "$alert_ui_cause" adopt cause -c bash >/dev/null
-alert_ui_cause_digest="$(python3 -c \
-  'import hashlib,sys; print(hashlib.sha256((sys.argv[1]+"\0"+sys.argv[2]).encode()).hexdigest()[:24])' \
-  "$alert_ui_socket" "$alert_ui_cause")"
-alert_ui_cause_health="$RUN_ROOT/alert-ui-state/gangline/tick/$alert_ui_cause_digest/health"
-mkdir -p "${alert_ui_cause_health%/health}"
-printf 'malformed\n' > "$alert_ui_cause_health"
-alert_ui_cause_rc=0
-alert_ui_gang_for "$alert_ui_cause" tick > "$RUN_ROOT/alert-ui-cause.out" 2>&1 \
-  || alert_ui_cause_rc=$?
-equal "a tick that cannot install the alert center fails" 1 "$alert_ui_cause_rc"
-alert_ui_cause_note="$(cut -f3 "$alert_ui_cause_health")"
-equal "the alert names the failed install step and what that step printed" \
-  "tick could not install the tmux alert center: could not refresh the alert widget (alert health is unreadable or malformed; refusing to change active alert state)" \
-  "$alert_ui_cause_note"
-alert_ui_tmux kill-session -t "=$alert_ui_cause"
-
-# A successful binding claim protects the mutation after it returns, not merely
-# the helper that acquired it. Pause a harmless tick at that exact seam: a
-# second ordinary tick leaves the in-flight binding alone, while `down` from a
-# separate team must still be refused rather than remove its own alert state.
-alert_ui_post_claim_ready="$RUN_ROOT/alert-ui-post-claim-ready"
-alert_ui_post_claim_release="$RUN_ROOT/alert-ui-post-claim-release"
-mkfifo "$alert_ui_post_claim_ready" "$alert_ui_post_claim_release"
-alert_ui_gang_for "$alert_ui_contender" adopt contender -c bash >/dev/null
-alert_ui_survivor_right="$(alert_ui_tmux show-options -qv \
-  -t "=$alert_ui_survivor:" status-right)"
-alert_ui_survivor_counts="$(alert_ui_tmux show-options -qv \
-  -t "=$alert_ui_survivor:" @gl_alert_active) $(alert_ui_tmux show-options -qv \
-  -t "=$alert_ui_survivor:" @gl_alert_unseen)"
-alert_ui_survivor_command="$(alert_ui_tmux show-options -qv \
-  -t "=$alert_ui_survivor:" @gl_alert_command)"
-GANG_TEST_ALERT_BINDING_POST_CLAIM_READY_FIFO="$alert_ui_post_claim_ready" \
-GANG_TEST_ALERT_BINDING_POST_CLAIM_RELEASE_FIFO="$alert_ui_post_claim_release" \
-  alert_ui_gang_for "$alert_ui_survivor" tick \
-  > "$RUN_ROOT/alert-ui-claim-owner.out" 2>&1 &
-alert_ui_claim_owner=$!
-IFS= read -r -N 1 _ < "$alert_ui_post_claim_ready"
-# A second ordinary tick sees the server-global claim held, but that is not a
-# broken alert center: the first tick is actively installing it. The contender
-# must leave the binding to that owner without publishing a false health
-# failure, which is the path the recorder's status probes exercise.
-alert_ui_losing_tick_rc=0
-ALERT_UI_LOCK_DIR="$RUN_ROOT/alert-ui-fourth-locks" \
-  alert_ui_gang_for "$alert_ui_survivor" tick \
-  > "$RUN_ROOT/alert-ui-losing-tick.out" 2>&1 \
-  || alert_ui_losing_tick_rc=$?
-equal "a tick leaves an in-flight alert binding to its owner" \
-  0 "$alert_ui_losing_tick_rc"
-excludes "an in-flight alert binding is not a tick failure" \
-  "$(<"$RUN_ROOT/alert-ui-losing-tick.out")" \
-  "could not claim the Prefix+A binding"
-excludes "an in-flight alert binding emits no terminal diagnostic" \
-  "$(<"$RUN_ROOT/alert-ui-losing-tick.out")" \
-  "another alert binding update is in flight"
-alert_ui_losing_down_rc=0
-ALERT_UI_LOCK_DIR="$RUN_ROOT/alert-ui-third-locks" \
-  alert_ui_gang_for "$alert_ui_contender" down "$alert_ui_contender" \
-  > "$RUN_ROOT/alert-ui-losing-down.out" 2>&1 \
-  || alert_ui_losing_down_rc=$?
-equal "down refuses while another binding transaction owns the server" \
-  1 "$alert_ui_losing_down_rc"
-equal "a claim-refused down leaves the contender team live" present \
-  "$(if alert_ui_tmux has-session -t "=$alert_ui_contender" 2>/dev/null; then printf present; else printf absent; fi)"
-equal "a claim-refused down preserves status-right byte-for-byte" \
-  "$alert_ui_survivor_right" \
-  "$(alert_ui_tmux show-options -qv -t "=$alert_ui_survivor:" status-right)"
-equal "a claim-refused down preserves active and unseen state" \
-  "$alert_ui_survivor_counts" \
-  "$(alert_ui_tmux show-options -qv -t "=$alert_ui_survivor:" @gl_alert_active) $(alert_ui_tmux show-options -qv -t "=$alert_ui_survivor:" @gl_alert_unseen)"
-equal "a claim-refused down preserves its popup command" \
-  "$alert_ui_survivor_command" \
-  "$(alert_ui_tmux show-options -qv -t "=$alert_ui_survivor:" @gl_alert_command)"
-printf '\n' > "$alert_ui_post_claim_release"
-alert_ui_claim_owner_rc=0
-wait "$alert_ui_claim_owner" || alert_ui_claim_owner_rc=$?
-equal "the winning binding transaction completes after refused down" \
-  0 "$alert_ui_claim_owner_rc"
-alert_ui_gang_for "$alert_ui_contender" down "$alert_ui_contender" >/dev/null
-
-# `down` is the alert-center uninstall path. The inert observer keeps the
-# server alive so both exact binding removal and unrelated-session survival are
-# immediate evidence after the last configured team leaves.
-alert_ui_gang_for "$alert_ui_survivor" down "$alert_ui_survivor" >/dev/null
-equal "alert-center uninstall leaves the unrelated tmux session live" present \
-  "$(if alert_ui_tmux has-session -t "=$alert_ui_observer" 2>/dev/null; then printf present; else printf absent; fi)"
-equal "the last Gangline team removes only its owned Prefix+A binding" absent \
-  "$(if alert_ui_tmux list-keys -T prefix A >/dev/null 2>&1; then printf present; else printf absent; fi)"
-equal "the last Gangline team removes its binding version marker" "" \
-  "$(alert_ui_tmux show-options -gqv @gl_alert_binding_version)"
-equal "the last Gangline team removes its temporary binding probe" "" \
-  "$(alert_ui_tmux show-options -gqv @gl_alert_binding_probe)"
-equal "alert-center teardown leaves no binding-guard filesystem state" absent \
-  "$([ ! -e "$alert_ui_binding_root" ] && [ ! -L "$alert_ui_binding_root" ] \
-      && [ ! -e "$alert_ui_socket.gangline-alert-binding.guard" ] \
-      && [ ! -L "$alert_ui_socket.gangline-alert-binding.guard" ] \
-      && printf absent || printf present)"
-alert_ui_tmux kill-session -t "=$alert_ui_observer"
-unset -f alert_ui_tmux alert_ui_gang alert_ui_gang_for
+  "$(<"$tick_order_health")" $'ok\t'
+tick_order_gang down "$tick_order_session" >/dev/null
+unset -f tick_order_tmux tick_order_gang tick_order_queued_wait
 
 export GANG_SESSION="gangtick-test-$$"
 export GANG_TICK_DEADLINE_SECONDS=60
@@ -2849,7 +1552,9 @@ contains "health stays ok and names the partial pass" "$(<"$tick_part_dir/health
   $'ok\t'
 contains "the ok note counts what the pass visited against the roster" \
   "$(<"$tick_part_dir/health")" "partial pass: 1 of $tick_part_total agents visited"
-excludes "a partial pass is not a failed tick" "$("$GANG" status 2>&1)" 'last tick failed'
+excludes "a partial pass is not a failed tick" "$("$GANG" status 2>&1)" 'tick failed:'
+equal "the partial marker does not outlive the worker that read it" absent \
+  "$([ -e "$tick_part_dir/partial" ] && printf present || printf absent)"
 GANG_TEST_TICK_MODE=manual GANG_TEST_TICK_SOFT_BUDGET_S=0 \
   GANG_TEST_TICK_VISIT_LEDGER="$tick_part_ledger" "$GANG" tick >/dev/null
 GANG_TEST_TICK_MODE=manual GANG_TEST_TICK_SOFT_BUDGET_S=0 \
@@ -3326,25 +2031,9 @@ equal "controller TERM remains a surfaced tick failure" 1 \
   "$tick_controller_owner_rc"
 equal "controller TERM leaves no live process in the worker's group" 0 \
   "$(ps -e -o pgid=,stat= | awk -v g="$tick_controller_pgrp" '$1 == g && $2 !~ /^Z/' | wc -l | tr -d ' ')"
-# The next tick also repairs a health segment an obsolete snapshot installed.
-tmux set-option -t "=$GANG_SESSION:" status-right \
-  "operator-left #('/stale/snapshot/gang-tick-health.sh' '/stale/health') operator-right"
-tmux set-option -u -t "=$GANG_SESSION:" @gl_tick_health_segment
 tick_controller_next_rc=0
 "$GANG" tick >/dev/null || tick_controller_next_rc=$?
 equal "the next tick passes after a killed controller" 0 "$tick_controller_next_rc"
-
-tick_repaired_right="$(tmux show-options -qv -t "=$GANG_SESSION:" status-right)"
-excludes "a tick replaces a health segment owned by an obsolete snapshot" \
-  "$tick_repaired_right" "/stale/snapshot"
-contains "status repair preserves the operator's unrelated left segment" \
-  "$tick_repaired_right" "operator-left"
-contains "status repair preserves the operator's unrelated right segment" \
-  "$tick_repaired_right" "operator-right"
-contains "status repair installs the static alert widget" \
-  "$tick_repaired_right" '#{E:@gl_alert_widget}'
-excludes "status repair removes every tick command from repaint" \
-  "$tick_repaired_right" '#('
 contains "the deadline controller fixes the production budget at sixty seconds" \
   "$(<"$ROOT/libexec/gang-tick-deadline")" "DEADLINE_SECONDS = 60"
 excludes "the deadline controller ignores an ambient clock executable" \
@@ -3494,32 +2183,19 @@ tick_health_file="$XDG_STATE_HOME/gangline/tick/$tick_health_digest/health"
 tick_log_file="${tick_health_file%/*}/tick.log"
 contains "the failed tick writes its per-team health state" \
   "$(<"$tick_health_file")" $'failed\t'
-contains "status surfaces the last tick failure" \
-  "$("$GANG" status tick-restart 2>/dev/null)" "last tick failed:"
-contains "the attached-human status-right contains the static alert widget" \
-  "$(tmux show-options -qv -t "=$GANG_SESSION:" status-right)" \
-  '#{E:@gl_alert_widget}'
-equal "failure records one active unseen alert" '1 1' \
-  "$(tmux show-options -qv -t "=$GANG_SESSION:" @gl_alert_active) $(tmux show-options -qv -t "=$GANG_SESSION:" @gl_alert_unseen)"
-# The old expectation created a permanent normal window and raised activity and
-# bell on it. That behavior was the focus-stealing defect: an alert transition
-# now changes tmux options and one message, so any marked window is regression.
-equal "failure creates no dedicated alert window" 0 \
-  "$(tmux list-windows -t "=$GANG_SESSION" -F '#{@gl_tick_alerts}' | grep -c '^1$' || :)"
-excludes "roster has no alert pseudo-agent to filter" \
-  "$("$GANG" roster 2>/dev/null)" "gangline-alerts"
+tick_failed_note="$(cut -f3 "$tick_health_file")"
+contains "status surfaces the last tick failure with its note" \
+  "$("$GANG" status tick-restart 2>/dev/null)" "tick failed: $tick_failed_note"
+tick_failed_roster="$("$GANG" roster 2>/dev/null)"
+equal "roster prints exactly one tick-failure line" 1 \
+  "$(printf '%s\n' "$tick_failed_roster" | grep -c 'tick failed: ' || :)"
+contains "the roster's tick-failure line carries the recorded note" \
+  "$tick_failed_roster" "tick failed: $tick_failed_note"
 
 tick_next_err="$RUN_ROOT/tick-next.err"
 "$GANG" teams >/dev/null 2> "$tick_next_err"
-contains "the next Gangline invocation repeats the last tick failure" \
-  "$(<"$tick_next_err")" "last tick failed:"
-# The warning lands on an unrelated command, so it has to say whether anything
-# is stalled and where the caller goes next. Every ordinary command starts a
-# tick as it exits, health or not, and a clean pass clears the record.
-contains "the repeated failure says cooperative ticking continues" \
-  "$(<"$tick_next_err")" "ticking continues"
-contains "and names the command that reads the failure" \
-  "$(<"$tick_next_err")" "gang alerts"
+excludes "an ordinary command's stderr carries no tick-failure line" \
+  "$(<"$tick_next_err")" "tick failed"
 tick_isolation_rc=0
 GANG_TEST_TICK_MODE=sync "$GANG" teams >/dev/null 2>&1 || tick_isolation_rc=$?
 equal "a detached tick failure never changes its spawning command result" 0 "$tick_isolation_rc"
@@ -3531,16 +2207,8 @@ excludes "a later successful pass clears the health failure" \
 # source-guard: producer@5a0aff3445c2: the synchronous tick immediately above is the only writer in this fixture and an ok-prefixed record is its successful result
 equal "the clean pass records an ok log fixture" ok \
   "$(case "$(<"$tick_log_file")" in $'ok\t'*) printf ok ;; *) printf other ;; esac)"
-equal "a clean tick resolves active and unseen alert state" '0 0' \
-  "$(tmux show-options -qv -t "=$GANG_SESSION:" @gl_alert_active) $(tmux show-options -qv -t "=$GANG_SESSION:" @gl_alert_unseen)"
-# The former success-race assertions drove a one-shot alert body inside a
-# disposable window. Removing that process/window path eliminates the race
-# itself; these immediate native-state checks fail if either old artifact
-# returns, without constructing the defective surface as their fixture.
-equal "a clean tick has no alert body window to race" 0 \
-  "$(tmux list-windows -t "=$GANG_SESSION" -F '#{@gl_tick_alerts}' | grep -c '^1$' || :)"
-excludes "a clean tick keeps command substitution out of status repaint" \
-  "$(tmux show-options -qv -t "=$GANG_SESSION:" status-right)" '#('
+excludes "a clean pass clears the roster's tick-failure line" \
+  "$("$GANG" roster 2>/dev/null)" "tick failed:"
 
 # A CODEX SESSION BEFORE ITS FIRST TURN HOLDS ITS LOCK AND NO ROLLOUT. Codex
 # opens the thread-writer lock as the session opens but creates the rollout
@@ -3909,10 +2577,10 @@ equal "the unreadable quiet root is read once by tick" 2 \
 equal "an unreadable quiet root is not retried by later ticks" 2 \
   "$(tick_root_backfill_read_count "$tick_root_unreadable_id")"
 
-# Team teardown uninstalls the session's alert-center options and retires the
-# ephemeral health files with the session that gave them meaning. A file down
-# does not own keeps their directory in place: the team still ends, and the
-# leftover is named and fails the teardown instead of passing it silently.
+# Team teardown retires the ephemeral health files with the session that gave
+# them meaning. A file down does not own keeps their directory in place: the
+# team still ends, and the leftover is named and fails the teardown instead of
+# passing it silently.
 tick_state_foreign="${tick_health_file%/health}/foreign"
 : > "$tick_state_foreign"
 tick_down_rc=0
