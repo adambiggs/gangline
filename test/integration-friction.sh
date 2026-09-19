@@ -305,10 +305,9 @@ env -u GANG_TMUX_GUARD_AGENT TMUX="$friction_socket,0,0" \
 equal "the shipped recap reader rejects a nonempty post-recap draft" 1 \
   "$friction_draft_rc"
 
-# `gang trust` has to open the collar's native hook configuration directly;
-# a preflight prefix here would recreate the refusal instead of exposing the
-# menu an operator must answer. The stub reports its received arguments before
-# signalling the test, so the argument list is the native launch evidence.
+# `gang trust` has to open the collar's native hook configuration directly so
+# the operator can answer its menu. The stub reports its received arguments
+# before signalling the test, so the argument list is the native launch evidence.
 friction_trust_bin="$RUN_ROOT/friction-trust-bin"
 friction_trust_args="$RUN_ROOT/friction-trust-args"
 friction_trust_socket="$RUN_ROOT/friction-trust-socket"
@@ -332,8 +331,6 @@ friction_trust_window="$(printf '%s\n' "$friction_trust_out" \
   || { printf 'friction: attended trust command named no window [%s]\n' "$friction_trust_out" >&2; exit 1; }
 contains "the attended trust path opens the native hook configuration" \
   "$(<"$friction_trust_args")" 'hooks.PreCompact='
-excludes "the attended trust path does not put its preflight before the menu" \
-  "$(<"$friction_trust_args")" 'codex-hooks-preflight.py'
 equal "the attended trust hook path receives only the guarded tmux route" \
   "$friction_socket" "$(<"$friction_trust_socket")"
 equal "the attended trust hook path keeps its durable lock root" \
@@ -384,128 +381,6 @@ equal "the transient choice review remains unregistered before its menu is answe
 equal "a tick retires the composer-ready trust review that gang launched" "" \
   "$(tmux list-windows -t "=$GANG_SESSION" -F '#{window_id}' | \
     awk -v wanted="$friction_trust_choice_window" '$1 == wanted { print $1 }')"
-
-# A preflight refusal can die before or just after hitch records its identity,
-# so its marker must keep the attended recovery visible in either state.
-friction_hold_hooks=""
-for friction_event in SessionStart UserPromptSubmit PostToolUse PermissionRequest PreCompact PostCompact Stop; do
-  friction_hold_hooks="$friction_hold_hooks -c 'hooks.$friction_event=[{ hooks = [{ type = \"command\", command = \"/bin/true\" }] }]'"
-done
-friction_hold_ready="$RUN_ROOT/friction-hold-ready"
-mkfifo "$friction_hold_ready"
-friction_hold_pane="$(tmux new-window -d -P -F '#{pane_id}' -t "=$GANG_SESSION" -n hook-hold -c "$RUN_ROOT" \
-  "exec 9<>$friction_hold_ready
-exec env -u TMUX GANG_TMUX_SOCKET=\"\${TMUX%%,*}\" PATH=$CODEX_STUB/bin:\$PATH CODEX_UNTRUSTED=1 python3 $ROOT/collars/plugins/codex-hooks-preflight.py codex$friction_hold_hooks")"
-exec 8<"$friction_hold_ready"
-cat <&8 >/dev/null
-exec 8<&-
-equal "the held hook-trust pane remains unregistered" "" \
-  "$(tmux show-options -wqv -t "$friction_hold_pane" @gl_agent)"
-friction_hold_roster="$("$GANG" roster)"
-contains "a held hook-trust refusal remains visible in roster" \
-  "$friction_hold_roster" '!hook-trust!'
-contains "the held hook-trust roster row gives the attended re-grant command" \
-  "$friction_hold_roster" "gang trust codex -d $RUN_ROOT"
-
-# Exercise the printed recovery end to end against its original requested
-# window. The fixture's native stand-in reports the preflight hook list through
-# the shipped app-server stub, then keeps a real Codex-shaped composer alive.
-# The fixture writes its approval fact only after the separate review window is
-# closed, representing the operator's native approval; Gangline never sends
-# that approval itself.
-friction_rehitch_bin="$RUN_ROOT/friction-rehitch-bin"
-friction_rehitch_approval="$RUN_ROOT/friction-rehitch-approved"
-friction_rehitch_composer="$RUN_ROOT/friction-rehitch-composer.py"
-mkdir -p "$friction_rehitch_bin"
-cat > "$friction_rehitch_composer" <<'PY'
-#!/usr/bin/env python3
-import os
-import sys
-import termios
-import tty
-
-fd = sys.stdin.fileno()
-saved = termios.tcgetattr(fd)
-body = bytearray()
-
-
-def render():
-    os.write(sys.stdout.fileno(), b"\r\033[2K\xe2\x80\xba " + bytes(body))
-
-
-try:
-    tty.setraw(fd)
-    render()
-    while True:
-        char = os.read(fd, 1)
-        if not char:
-            break
-        if char in (b"\r", b"\n"):
-            body.clear()
-        elif char in (b"\x15", b"\x03"):
-            body.clear()
-        elif char in (b"\x08", b"\x7f"):
-            del body[-1:]
-        else:
-            body.extend(char)
-        render()
-finally:
-    termios.tcsetattr(fd, termios.TCSADRAIN, saved)
-PY
-chmod +x "$friction_rehitch_composer"
-cat > "$friction_rehitch_bin/codex" <<SH
-#!/bin/sh
-case " \$* " in
-  *' app-server '*)
-    if [ -e '$friction_rehitch_approval' ]; then
-    exec '$CODEX_STUB/bin/codex' "\$@"
-    fi
-    exec env CODEX_UNTRUSTED=1 '$CODEX_STUB/bin/codex' "\$@" ;;
-esac
-exec '$friction_rehitch_composer'
-SH
-chmod +x "$friction_rehitch_bin/codex"
-friction_rehitch_refusal_rc=0
-friction_rehitch_refusal="$(PATH="$friction_rehitch_bin:$CODEX_STUB/bin:$PATH" \
-  "$HITCH" trust-rehitch -c codex -d "$RUN_ROOT" 2>&1)" || friction_rehitch_refusal_rc=$?
-if [ "$friction_rehitch_refusal_rc" -ne 0 ]; then
-  pass "an untrusted Codex hitch leaves its original requested window held"
-else
-  fail "an untrusted Codex hitch leaves its original requested window held" \
-    "hitch unexpectedly succeeded [$friction_rehitch_refusal]"
-fi
-contains "an untrusted hitch directs the attended review to tick after its composer" \
-  "$friction_rehitch_refusal" "run gang tick after the composer appears"
-excludes "an untrusted hitch no longer asks the operator to quit Codex" \
-  "$friction_rehitch_refusal" "quit codex"
-friction_rehitch_id="$(window_id trust-rehitch)"
-equal "the original refused window carries its exact attended-trust marker" \
-  $'codex\t'"$RUN_ROOT" \
-  "$(tmux show-options -wqv -t "$friction_rehitch_id" @gl_hook_trust_pending)"
-equal "the original held trust refusal retains only its requested identity before re-hitch" trust-rehitch \
-  "$(tmux show-options -wqv -t "$friction_rehitch_id" @gl_agent)"
-friction_rehitch_roster="$("$GANG" roster)"
-contains "the original held trust refusal remains visible despite partial registration" \
-  "$friction_rehitch_roster" '!hook-trust!'
-friction_rehitch_trust="$(PATH="$friction_rehitch_bin:$CODEX_STUB/bin:$PATH" \
-  "$GANG" trust codex -d "$RUN_ROOT")"
-friction_rehitch_review="$(printf '%s\n' "$friction_rehitch_trust" \
-  | awk '{ for (i = 1; i <= NF; i++) if ($i ~ /^@[0-9]+$/) { print $i; exit } }')"
-[ -n "$friction_rehitch_review" ] \
-  || { printf 'friction: trust recovery opened no review window [%s]\n' "$friction_rehitch_trust" >&2; exit 1; }
-# This is the attended review's normal termination, not a Gangline cleanup of
-# the held refusal. The following exact original hitch must repurpose its pane.
-tmux kill-window -t "$friction_rehitch_review"
-: > "$friction_rehitch_approval"
-friction_rehitch_success="$(PATH="$friction_rehitch_bin:$CODEX_STUB/bin:$PATH" \
-  "$HITCH" trust-rehitch -c codex -d "$RUN_ROOT")"
-contains "the exact refused hitch succeeds after attended trust without drop" \
-  "$friction_rehitch_success" "hitched trust-rehitch"
-equal "the recovered original window is registered to its original name" trust-rehitch \
-  "$(tmux show-options -wqv -t "$friction_rehitch_id" @gl_agent)"
-equal "a successful re-hitch consumes only the held trust marker" "" \
-  "$(tmux show-options -wqv -t "$friction_rehitch_id" @gl_hook_trust_pending)"
-"$GANG" drop trust-rehitch >/dev/null
 
 "$GANG" down "$GANG_SESSION" >/dev/null
 export GANG_SESSION="$friction_original_session"

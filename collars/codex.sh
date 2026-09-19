@@ -12,24 +12,12 @@ GANG_RESUME_LAUNCH="codex resume {{session_id}} -c check_for_update_on_startup=f
 # claude-code.sh does: for a root bearing a quote, a backslash or a control
 # character it installs no hooks at all. A hookless launch loses turn-boundary
 # events; it does not execute a directory name.
-# THE PREFLIGHT IS PART OF THIS COLLAR, so it is found beside this file rather
-# than under the install root: a collar copied into GANG_COLLARS carries its own
-# helpers, and the copy answers for itself instead of reaching back into the
-# shipped one. The hook command still names $ROOT/bin/gang, because a hook has
-# to reach the Gangline that installed it.
-_gl_codex_dir="${BASH_SOURCE[0]%/*}"
 if [ -n "${ROOT:-}" ] && [ -x "$ROOT/bin/gang" ]; then
-  case "$ROOT$_gl_codex_dir" in
+  case "$ROOT" in
     *[\'\"\\]*|*[[:cntrl:]]*) ;;
     *)
       _gl_codex_hook="[{ hooks = [{ type = \"command\", command = \"\\\"$ROOT/bin/gang\\\" hook\" }] }]"
-      # SessionStart stdout is native extra developer context. It reaches
-      # startup, resume, clear, and post-compaction starts without replacing
-      # operator-configured developer instructions, and keeps this guidance in
-      # the collar that owns the yielding exec behavior it describes.
-      _gl_codex_session_start_hook="[{ hooks = [{ type = \"command\", command = \"sh \\\"$_gl_codex_dir/plugins/codex-session-start.sh\\\"\" }] }]"
       _gl_codex_hook_flags=""
-      _gl_codex_hook_flags+=" -c 'hooks.SessionStart=$_gl_codex_session_start_hook'"
       # PreCompact/PostCompact are wired for the same reason claude-code wires
       # them: @gl_turn is closed for the whole of a compaction, and the turn
       # witness outranks the pane, so without the bracket a compacting codex
@@ -42,26 +30,13 @@ if [ -n "${ROOT:-}" ] && [ -x "$ROOT/bin/gang" ]; then
       done
       GANG_LAUNCH="$GANG_LAUNCH$_gl_codex_hook_flags"
       GANG_RESUME_LAUNCH="$GANG_RESUME_LAUNCH$_gl_codex_hook_flags"
-      # THIS IS THE ATTENDED FORM of the exact native launch whose hooks the
-      # preflight verifies. `gang trust codex -d DIR` opens it in a disposable
-      # window when a changed install root needs the operator to answer Codex's
-      # review menu. It deliberately has no preflight prefix: a preflight would
-      # refuse before the native menu is drawn, and no Gangline path presses a
-      # trust choice on the operator's behalf.
-      GANG_TRUST_LAUNCH="$GANG_LAUNCH"
       # THE HOOKS INSTALLED ABOVE ARE WHAT CODEX ASKS ABOUT. Their command
       # carries this install root, so a new install, an upgrade or a worktree
       # presents hashes codex has never seen and it opens its hooks-review menu
-      # before drawing a composer. Nothing in Gangline can answer that menu, so
-      # an unattended hitch waits on a person until its foreground gate bound.
-      # The preflight runs
-      # in the pane ahead of the harness and turns that wait into an immediate,
-      # explained refusal; it grants no trust. It wraps only this branch,
-      # because a launch that installs no hooks raises no review.
-      _gl_codex_preflight="python3 '$_gl_codex_dir/plugins/codex-hooks-preflight.py'"
-      GANG_LAUNCH="$_gl_codex_preflight $GANG_LAUNCH"
-      GANG_RESUME_LAUNCH="$_gl_codex_preflight $GANG_RESUME_LAUNCH"
-      unset _gl_codex_preflight
+      # before drawing a composer. `gang trust codex -d DIR` opens this exact
+      # launch in a disposable window for the operator to answer that menu; no
+      # Gangline path presses a trust choice on the operator's behalf.
+      GANG_TRUST_LAUNCH="$GANG_LAUNCH"
       # The launch above passes a native Stop hook with -c, so this harness
       # announces its own turn boundaries to gang — which is what a spool needs
       # to drain, and what deferred self-compaction already relies on. Both are
@@ -87,12 +62,13 @@ if [ -n "${ROOT:-}" ] && [ -x "$ROOT/bin/gang" ]; then
       # of active_turn a submission starts a new turn rather than steering the
       # finished one, which is where Codex's own TUI submits its queued input.
       GANG_SELF_COMPACT_WITNESS=native-idle
-      unset _gl_codex_hook _gl_codex_session_start_hook \
-        _gl_codex_hook_flags _gl_codex_event
+      unset _gl_codex_hook _gl_codex_hook_flags _gl_codex_event
       ;;
   esac
 fi
-unset _gl_codex_dir
+GANG_HARNESS_PROMPT="When an exec call yields a running session, keep its session id and do not re-poll it on a timer. Do independent work first, and continue the session only when its result is needed. A yield is not completion evidence.
+
+Do not detach a long command expecting this Gangline window to wake itself. Plain background children do not survive Codex's exec boundary here, the sandbox may not reach the user service manager, and Gangline refuses self-addressed send and at messages."
 GANG_MODEL_OPT="-m"
 # CONTEXT-LIGHT DEFAULTS FOR A NARROW WINDOW. Observed 2026-08-24 on this
 # installation: a codex agent reports a 258k window, and every model this

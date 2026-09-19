@@ -659,11 +659,11 @@ gang trust <harness> -d <dir>
   -e, --effort effort for the review.
 
 This opens an unregistered window in the
-current team, with the collar's hook flags
-but no launch preflight. Attach, select the
-printed window, and answer the native menu.
-Gangline sends no trust-menu key. After its
-composer appears, gang tick retires this
+current team, with the collar's hook flags.
+Attach, select the printed window, and
+answer the native menu. Gangline sends no
+trust-menu key. After its composer
+appears, gang tick retires this
 marker-owned transient window.
 EOF
       ;;
@@ -1755,8 +1755,6 @@ load_collar() { # $1 = collar name; sets the GANG_* strategy surface
     ''|*[!0-9]*) die "collar '$1' has an invalid GANG_USAGE_LIMIT_MAX_AGE declaration" ;;
   esac
   [ -n "$GANG_LAUNCH" ] || die "collar '$1' sets no GANG_LAUNCH"
-  [ -z "$GANG_HARNESS_PROMPT" ] || [ -n "$GANG_ROLE_PROMPT_OPT" ] \
-    || die "collar '$1' declares GANG_HARNESS_PROMPT but no GANG_ROLE_PROMPT_OPT, so gang has no system-prompt option that can carry it"
   if [ -n "$GANG_RESUME_LAUNCH" ]; then
     case "$GANG_RESUME_LAUNCH" in
       *'{{session_id}}'*) ;;
@@ -2144,6 +2142,10 @@ Begin it in the turn that reads it. Do not acknowledge it; your completion repor
   else
     printf 'You are %s in Gangline. Read %s now, before anything else: it is the standing contract for this team, Gangline checked it at hitch time, and reading it again is how you recover it after a compaction. If you cannot read that file, say so and stop rather than improvising the contract.' \
       "$1" "$contract"
+    if [ -n "$GANG_HARNESS_PROMPT" ]; then
+      printf '\n\nHarness guidance (%s):\n\n%s' \
+        "$(config_path "$GANG_COLLAR_FILE" | config_sanitize)" "$GANG_HARNESS_PROMPT"
+    fi
     if [ -n "$ROLE_NAME" ]; then
       printf '\n\nYour role in this team is %s. Its brief follows; operator doctrine,\nwhere present, outranks it.\n\nRole brief (%s):\n\n%s' "$role" "$path" "$ROLE_BODY"
     fi
@@ -5665,10 +5667,11 @@ tick_identity_verify() { # $1 window, $2 collar; 0 match, 1 unavailable, 2 lost
 }
 
 # THE ROOT WITNESS IS RECORDED AT HITCH/ADOPT AND MAY BE RE-ESTABLISHED ON THE
-# FIRST NATIVE HOOK. Codex puts a preflight interpreter ahead of its real
-# harness, so the launch-time read can truthfully find no Codex process even
-# though the first hook comes from one. A later quiet process remains no health
-# evidence: only that one native boundary receives the bounded second read.
+# FIRST NATIVE HOOK. Hitch reads the root as soon as the window opens, which can
+# be before the launch shell has become the harness, so that read can truthfully
+# find no harness process even though the first hook comes from one. A later
+# quiet process remains no health evidence: only that one native boundary
+# receives the bounded second read.
 harness_identity_establish() { # $1 window, $2 = initial or hook; absence is visible, never a failure
   local observed="" rc=0
   tmux set-option -uw -t "$1" @gl_harness_identity 2>/dev/null || true
@@ -11578,27 +11581,11 @@ cmd_trust() { # an attended native hooks-review window; it never sends an answer
   tmux set-option -w -t "$id" @gl_hook_trust_review "$prof" 2>/dev/null || true
   printf '%s\n' "$(colour "$C_WORK" "opened attended hook-trust review $id for $prof — Gangline sent no menu key")"
   printf 'attach to team %s, then run: tmux select-window -t %s\n' "$SESSION" "$id"
-  printf 'answer the native menu yourself, then run gang tick to retire this transient review before re-running the refused hitch\n'
-}
-
-hook_trust_held_recovery() { # $1 dead window, $2 requested collar, $3 canonical directory, $4 requested name
-  local pending="" registered=""
-  # This is intentionally narrower than a generic dead-window cleanup. The
-  # preflight writes this exact tuple immediately before it holds its own
-  # pane; only that attributable refusal may be respawned by the ordinary
-  # re-hitch printed to the operator after an attended trust review.
-  pending="$(tmux show-options -wqv -t "$1" @gl_hook_trust_pending 2>/dev/null)" || pending=""
-  registered="$(tmux show-options -wqv -t "$1" @gl_agent 2>/dev/null)" || registered=""
-  # A preflight can die just before or just after hitch records the same
-  # requested name. Either is safe to resume only on this dead pane with the
-  # exact marker, collar, directory, and identity; a different registration is
-  # never a trust recovery. Optional collar/session diagnostics add no proof.
-  [ "$pending" = "$2"$'\t'"$3" ] \
-    && { [ -z "$registered" ] || [ "$registered" = "$4" ]; }
+  printf 'answer the native menu yourself, then run gang tick to retire this transient review before hitching\n'
 }
 
 hitch_launch() {
-  local name="" prof="${GANG_COLLAR:-claude-code}" dir="$PWD" model="" effort="" task="" missing="" role="" role_path="" id="" resume=0 resume_id="" resume_stamped="" launch_env collar_arg=0 pane_dead lookup_rc=0 opened_session=0 respawned=0 trust_recovery=0
+  local name="" prof="${GANG_COLLAR:-claude-code}" dir="$PWD" model="" effort="" task="" missing="" role="" role_path="" id="" resume=0 resume_id="" resume_stamped="" launch_env collar_arg=0 pane_dead lookup_rc=0 opened_session=0 respawned=0
   local lights="" lights_arg="" lights_given=0 lights_subject="" lights_from="" lights_note="" cache_compaction=off boot="${GANG_BOOT_TIMEOUT:-30}" gate_looks="${GANG_GATE_LOOKS:-60}"
   local bands="" bands_from="" bands_summary="" band_i bands_custom=0 cache_bands="" cache_bands_active=0 cache_bands_from="" cache_bands_summary="" cache_band_i cache_bands_custom=0 cache_notice="" context_lights_for_registration="" context_notice="" prior_bands=""
   local hitched_by="" use_stdin=0
@@ -11792,9 +11779,7 @@ hitch_launch() {
     # keeps remain-on-exit, so this refusal sits on the way out of one. "Already
     # exists" alone reads as a working agent and names no repair.
     if launch_dead "$id"; then
-      hook_trust_held_recovery "$id" "$prof" "$dir" "$name" \
-        || die "agent '$name' already exists and nothing is running in its window: clear it with 'gang drop $name', or relaunch the harness session it is stamped for with 'gang hitch $name --resume'"
-      trust_recovery=1
+      die "agent '$name' already exists and nothing is running in its window: clear it with 'gang drop $name', or relaunch the harness session it is stamped for with 'gang hitch $name --resume'"
     else
       die "agent '$name' already exists"
     fi
@@ -11957,7 +11942,7 @@ hitch_launch() {
     opened_session=1
   elif [ -n "$id" ]; then
     pane_dead="$(tmux display-message -p -t "$id" '#{pane_dead}' 2>/dev/null)" || pane_dead=""
-    { [ "$resume" -eq 1 ] || [ "$trust_recovery" -eq 1 ]; } && [ "$pane_dead" = 1 ] \
+    [ "$resume" -eq 1 ] && [ "$pane_dead" = 1 ] \
       || die "agent '$name' already exists and its pane is live; refusing to replace it with a resumed harness"
     tmux respawn-window -k -t "$id" -c "$dir" "$GANG_LAUNCH" \
       || die "could not relaunch '$name' in its held window"
@@ -11973,9 +11958,6 @@ hitch_launch() {
   # line is still in hand to name, and read it again from each registration,
   # because a launch can die at any point in this stretch and not only before it.
   ! launch_dead "$id" || die "$(launch_death_note "$name" "$id" "$GANG_LAUNCH")"
-  # A successful (including resumed) harness launch supersedes any held
-  # preflight marker left on this window by an earlier trust refusal.
-  tmux set-option -uw -t "$id" @gl_hook_trust_pending 2>/dev/null || true
   hitch_register "$id" "$name" automatic-rename off
   hitch_register "$id" "$name" allow-rename off
   hitch_register "$id" "$name" @gl_agent "$name"
@@ -15757,28 +15739,8 @@ roster_row_porcelain() { # name, collar, state, spooled, age seconds, session id
 
 roster_row() { # $1 window, $2 name, $3 current binary id;
                # exit 4 = the row printed with a state it could not read
-  local prof state detail="" spooled timed age held skew="" mismatch probe_failed usage_record usage_rc=0 usage_state usage_observed wake_record wake_rc=0 wake_reset now unread=0 staged staged_rc=0 parked_note parked_rc=0 compact_note compact_rc=0 mode_note mode_rc=1 run_rc=0 trust_pending trust_collar trust_dir trust_dir_word
+  local prof state detail="" spooled timed age held skew="" mismatch probe_failed usage_record usage_rc=0 usage_state usage_observed wake_record wake_rc=0 wake_reset now unread=0 staged staged_rc=0 parked_note parked_rc=0 compact_note compact_rc=0 mode_note mode_rc=1 run_rc=0
   prof="$(collar_read "$1")" || exit 1
-  # This marker belongs to the preflight, which can terminate before or just
-  # after hitch records its same requested identity. It is the recovery fact,
-  # so show it before treating that short-lived registration as an agent row.
-  trust_pending="$(tmux show-options -wqv -t "$1" @gl_hook_trust_pending 2>/dev/null)" || trust_pending=""
-  if [ -n "$trust_pending" ]; then
-    IFS=$'\t' read -r trust_collar trust_dir <<<"$trust_pending"
-    case "$trust_collar" in ''|*[!A-Za-z0-9._-]*) trust_collar="<unreadable>" ;; esac
-    case "$trust_dir" in
-      /*)
-        case "$trust_dir" in
-          *[[:cntrl:]]*) trust_dir_word="<unreadable>" ;;
-          *[!A-Za-z0-9_./:-]*) trust_dir_word="$(shell_quote "$trust_dir")" ;;
-          *) trust_dir_word="$trust_dir" ;;
-        esac ;;
-      *) trust_dir_word="<unreadable>" ;;
-    esac
-    printf '%-16s %-12s %s\n' "$2" "$trust_collar" \
-      "$(colour "$C_BAD" "!hook-trust! (run gang trust $trust_collar -d $trust_dir_word; no trust key was sent)")"
-    return
-  fi
   if [ -z "$prof" ]; then
     printf '%-16s %-12s %s\n' "$2" "-" "$(colour "$C_DIM" "unadopted")"
     return
@@ -16023,10 +15985,9 @@ sys.stdout.write("%s\n%s" % (row.get("hook_event_name", ""), kind))' \
   case "$event" in
     UserPromptSubmit|Stop|Notification)
       hook_identity_assert "$TMUX_PANE" "$collar" "$payload"
-      # The hook crosses Codex's preflight exec boundary. A launch-time probe
-      # that found only that interpreter gets exactly this one chance to
-      # establish the real root; a quiet tick never converts a newly seen
-      # process into evidence.
+      # A launch-time probe that found only the launch shell gets exactly this
+      # one chance to establish the real root; a quiet tick never converts a
+      # newly seen process into evidence.
       ( load_collar "$collar"; harness_identity_hook_retry "$TMUX_PANE" ) || true ;;
   esac
   if [ "$event" = UserPromptSubmit ]; then

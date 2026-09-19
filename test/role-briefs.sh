@@ -366,16 +366,13 @@ ac9() {
 # shellcheck shell=bash
 # shellcheck disable=SC2034
 . "$PRODUCT_ROOT/collars/bash.sh"
-GANG_HARNESS_PROMPT="UNDELIVERABLE_GUIDANCE"
+GANG_HARNESS_PROMPT="MARK_BRIEF_GUIDANCE"
 SH
-  out="$(GANG_CONFIG_DIR="$config" "$GANG" hitch role-ac9-bad -c promptless -d /tmp 2>&1)" \
-    || rc=$?
-  [ "$rc" -ne 0 ] && pass "AC9 harness guidance without a prompt option refuses" \
-    || fail "AC9 harness guidance without a prompt option refuses" "$out"
-  contains "AC9 refusal names the missing system-prompt declaration" "$out" \
-    "declares GANG_HARNESS_PROMPT but no GANG_ROLE_PROMPT_OPT"
-  excludes "AC9 refused harness guidance opens no window" "$(window_names)" \
-    "role-ac9-bad"
+  GANG_CONFIG_DIR="$config" "$GANG" hitch role-ac9-brief -c promptless -d /tmp >/dev/null
+  # source-guard: producer@cd7ceedfe0e7: the marker lives only in the collar file, which the pane never shows; only the typed startup brief can paint it
+  contains "AC9 harness guidance without a prompt option rides the startup brief" \
+    "$(pane_all role-ac9-brief)" "MARK_BRIEF_GUIDANCE"
+  drop_agent role-ac9-brief
 }
 
 ac10() {

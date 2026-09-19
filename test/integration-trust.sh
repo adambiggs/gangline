@@ -1,8 +1,7 @@
 # shellcheck shell=bash
 # SPDX-License-Identifier: Apache-2.0
 # An attended native hook-review path: it must compose the same Codex hooks as a
-# hitch, but it must omit the refusing preflight and leave every native choice to
-# the person at the pane.
+# hitch and leave every native choice to the person at the pane.
 
 trust_bin="$RUN_ROOT/trust-bin"
 trust_observer="$trust_bin/observe-input.py"
@@ -76,18 +75,11 @@ equal "the attended trust launch supplies hooks the recorded team route" \
   "$GANG_SESSION" "$(<"$trust_session")"
 contains "the attended window carries Codex's native hook-review prompt" \
   "$trust_capture" "Hooks need review"
-contains "the attended trust launch retains the SessionStart hook" \
-  "$(<"$trust_args")" "hooks.SessionStart="
-contains "the attended trust launch retains the Stop hook" \
-  "$(<"$trust_args")" "hooks.Stop="
-for trust_event in SessionStart UserPromptSubmit PostToolUse PermissionRequest \
+for trust_event in UserPromptSubmit PostToolUse PermissionRequest \
                    PreCompact PostCompact Stop; do
   contains "the attended trust launch retains the $trust_event hook" \
     "$(<"$trust_args")" "hooks.$trust_event="
 done
-excludes "the attended trust launch does not invoke the refusing preflight" \
-  "$(tmux display-message -p -t "$trust_window" '#{pane_start_command}')" \
-  "codex-hooks-preflight.py"
 equal "the attended trust window has no Gangline agent registration" "" \
   "$(tmux show-options -wqv -t "$trust_window" @gl_agent)"
 equal "no key reaches the attended native trust menu" "" "$(<"$trust_keys")"

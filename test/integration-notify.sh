@@ -238,7 +238,7 @@ SH
 state_codex_delayed_id="$(tmux new-window -d -P -F '#{window_id}' -t "=$GANG_SESSION" \
   -n state-codex-delayed "exec '$RUN_ROOT/codex' 600")"
 "$GANG" adopt state-codex-delayed -c state-codex-delayed >/dev/null
-equal "the early Codex preflight probe records no root" "" \
+equal "the early Codex identity probe records no root" "" \
   "$(tmux show-options -wqv -t "$state_codex_delayed_id" @gl_harness_identity)"
 contains "explain names an unestablished declared root probe" \
   "$("$GANG" explain state-codex-delayed)" "harness identity: not yet established"
