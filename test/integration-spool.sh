@@ -3640,7 +3640,7 @@ bin=${0%/*}
 PATH=${PATH#"$bin:"}
 if [ ! -e "$bin/fired" ]; then
   case "$*" in
-    *"list-windows -a -F #{@gl_spool} #{@gl_spool_pending}"*)
+    *"list-windows -a -F #{@gl_spool}"*)
       : > "$bin/fired"
       env -u TMUX GANG_SESSION="$STATEROOT_H_OTHER" \
         "$STATEROOT_H_GANG" hitch retirer -c bash -d /tmp > "$bin/retirer.out" 2>&1 \

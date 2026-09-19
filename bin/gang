@@ -7870,26 +7870,24 @@ spool_available() { # $1 = window id, $2 = target name; 0 = a parked message wou
 }
 
 SPOOL_TOKEN_HOLDERS=""
-spool_token_holders() { # $1 token, optional $2 = a window id that may hold it; 1 = unreadable
+spool_token_holders() { # $1 token, optional $2 = a window id that may hold it
   # THE TMUX SERVER IS THE REGISTER OF PUBLISHED SPOOL IDENTITIES. Nothing on
   # disk records which window a reservation was taken for, so "is this name
   # somebody else's" can only be answered by asking the windows. Reported as a
   # list rather than a yes/no because the refusals that use it have to name who
   # is holding it for an operator to be able to act.
-  local me="" wid wtok pending rows
+  local me="" wid wtok
   SPOOL_TOKEN_HOLDERS=""
   [ -n "$1" ] || return 0
   if [ -n "${2:-}" ]; then
     me="$(tmux display-message -p -t "$2" '#{window_id}' 2>/dev/null)" || me="$2"
   fi
-  rows="$(tmux list-windows -a \
-    -F '#{window_id} #{@gl_spool} #{@gl_spool_pending}' 2>/dev/null)" \
-    || return 1
-  while read -r wid wtok pending; do
-    [ "$wtok" = "$1" ] || [ "$pending" = "$1" ] || continue
+  while read -r wid wtok; do
+    [ -n "$wtok" ] || continue
+    [ "$wtok" = "$1" ] || continue
     [ -z "$me" ] || [ "$wid" != "$me" ] || continue
     SPOOL_TOKEN_HOLDERS="$SPOOL_TOKEN_HOLDERS $wid"
-  done <<< "$rows"
+  done <<< "$(tmux list-windows -a -F '#{window_id} #{@gl_spool}' 2>/dev/null || :)"
 }
 
 spool_mint() { # $1 = window id; the spool identity, minted where nothing races it
@@ -7917,20 +7915,11 @@ spool_mint() { # $1 = window id; the spool identity, minted where nothing races 
   # directory costs nothing downstream: spool_drain_dispatch returns on a count
   # of zero before it spawns a worker, so no native boundary is sent through the
   # pane lock for a queue that has never held anything.
-  local token pending root live spool_refusal pending_refusal nl=$'\n'
+  local token root live spool_refusal nl=$'\n'
   token="$(tmux show-options -wqv -t "$1" @gl_spool 2>/dev/null)" || token=""
-  pending="$(tmux show-options -wqv -t "$1" @gl_spool_pending 2>/dev/null)" \
-    || pending=""
   root="$(spool_root_of)"
   spool_root_prepare
   if [ -n "$token" ]; then
-    # A PROCESS MAY HAVE ENDED AFTER FINAL PUBLICATION but before clearing its
-    # provisional claim. The final identity owns the reservation now; keeping
-    # the second name buys no safety and would make later diagnostics describe
-    # an active mint that no longer exists.
-    [ -z "$pending" ] \
-      || tmux set-option -uw -t "$1" @gl_spool_pending \
-      || die "cannot clear the completed spool mint's provisional identity '$pending' from this window"
     # A TOKEN PUBLISHED BEFORE THIS RULE EXISTED HAS NO RESERVATION. gang is a
     # script read from disk, so an upgrade reaches a running team between one
     # command and the next: every window already up carries a name nothing on
@@ -7952,8 +7941,7 @@ spool_mint() { # $1 = window id; the spool identity, minted where nothing races 
     # existing directory, and returning on that would enrol two windows on one
     # spool, each draining the other's mail. That is the same harm as a repeated
     # mint, reached without needing a nonce collision, so it is refused here.
-    spool_token_holders "$token" "$1" \
-      || die "cannot read the tmux server's spool register while checking whether '$token' is already held"
+    spool_token_holders "$token" "$1"
     [ -z "$SPOOL_TOKEN_HOLDERS" ] \
       || die "this window's spool identity '$token' is already held by$SPOOL_TOKEN_HOLDERS — refusing to enrol two windows on one spool, where each would drain mail addressed to the other. Clear @gl_spool on this window, then adopt it again to be given one of its own"
     if mkdir -m 700 "$root/$token" 2>/dev/null; then
@@ -7973,12 +7961,6 @@ spool_mint() { # $1 = window id; the spool identity, minted where nothing races 
     state_root_retired_check "$root/$token" ""
     return 0
   fi
-  # A prior mint that never reached final publication owns no deliverable
-  # identity. Clear its provisional claim before drawing again; its empty
-  # reservation, if any, is now an ordinary orphan for the next sweep.
-  [ -z "$pending" ] \
-    || tmux set-option -uw -t "$1" @gl_spool_pending \
-    || die "cannot clear the interrupted spool mint's provisional identity '$pending' from this window"
   # WHAT A LIVE WINDOW HAS PUBLISHED IS TAKEN, RESERVED OR NOT. Until every
   # window predating the reservation rule has been dropped, a published token
   # with no directory is exactly the name this loop would otherwise consider
@@ -7986,39 +7968,22 @@ spool_mint() { # $1 = window id; the spool identity, minted where nothing races 
   # tmux server is the register of those names, so it is read here and the draw
   # avoids them. A window minting its own identity is not in this list yet, so
   # this cannot make a mint avoid itself.
-  live="$(tmux list-windows -a \
-    -F '#{@gl_spool} #{@gl_spool_pending}' 2>/dev/null)" || live=""
-  live="${live// /$'\n'}"
+  live="$(tmux list-windows -a -F '#{@gl_spool}' 2>/dev/null)" || live=""
   while :; do
     token="$(mint_nonce)"
     [ -n "$token" ] || die "cannot mint a spool identity for this window"
     case "$nl$live$nl" in
       *"$nl$token$nl"*) continue ;;
     esac
-    # PUBLISH THE IN-FLIGHT CLAIM BEFORE THE DIRECTORY EXISTS. The orphan
-    # sweep snapshots directories before it reads final and provisional
-    # claims: a reservation old enough to be in that snapshot therefore has a
-    # claim by the later read, while one created after the snapshot is outside
-    # that pass. This closes the create-then-publish gap without turning the
-    # provisional value into a deliverable spool identity.
-    pending_refusal="$(tmux set-option -w -t "$1" @gl_spool_pending "$token" 2>&1)" \
-      || die "cannot record the provisional spool identity for this window${pending_refusal:+ — $pending_refusal}"
-    if mkdir -m 700 "$root/$token" 2>/dev/null; then break; fi
-    pending_refusal="$(tmux set-option -uw -t "$1" @gl_spool_pending 2>&1)" \
-      || die "cannot withdraw the provisional spool identity $token after its reservation failed${pending_refusal:+ — $pending_refusal}"
+    mkdir -m 700 "$root/$token" 2>/dev/null && break
     [ -e "$root/$token" ] \
       || die "cannot reserve a spool identity under $root — every gang process delivering to this window has to agree on that path, so gang will not quietly pick another: point GANG_LOCK_DIR at somewhere writable."
   done
   # PUBLISHED SECOND. The reservation is what makes the name unrepeatable, so a
   # failure to publish must not leave one behind that nothing will ever release.
-  if ! spool_refusal="$(tmux set-option -w -t "$1" @gl_spool "$token" 2>&1)"; then
-    pending_refusal="$(tmux set-option -uw -t "$1" @gl_spool_pending 2>&1)" \
-      || die "cannot record the spool identity for this window${spool_refusal:+ — $spool_refusal}, and cannot withdraw its provisional identity $token${pending_refusal:+ — $pending_refusal}; the reservation was retained"
-    rmdir -- "$root/$token" 2>/dev/null || :
-    die "cannot record the spool identity for this window${spool_refusal:+ — $spool_refusal}"
-  fi
-  pending_refusal="$(tmux set-option -uw -t "$1" @gl_spool_pending 2>&1)" \
-    || die "the spool identity $token was published but its provisional claim could not be cleared${pending_refusal:+ — $pending_refusal}"
+  spool_refusal="$(tmux set-option -w -t "$1" @gl_spool "$token" 2>&1)" \
+    || { rmdir -- "$root/$token" 2>/dev/null || :
+         die "cannot record the spool identity for this window${spool_refusal:+ — $spool_refusal}"; }
   # CHECKED AFTER PUBLISHING. A retirement writes its marker and then reads the
   # claims windows publish: a claim published before that read is carried to
   # the new root by the retirer, and one published after it is taken back here.
@@ -9559,7 +9524,6 @@ spool_forget() { # $1 = window id; the spool dies with the window it belongs to
     || rmdir -- "$SPOOL_DIR" \
     || die "the spool directory $SPOOL_DIR still holds something gang could not archive, so it has not been deleted and nothing further has been ended — read what is in it, then remove it by hand"
   tmux set-option -uw -t "$1" @gl_spool 2>/dev/null || true
-  tmux set-option -uw -t "$1" @gl_spool_pending 2>/dev/null || true
 }
 
 # ORPHANS. A spool directory outlives the window that named it whenever the
@@ -9576,24 +9540,12 @@ spool_orphans() { # every spool directory no live window claims; 1 = cannot tell
   # tmux server, and a reading that failed is not an empty one. Answering a
   # failed read as "no window holds anything" would call every live agent's
   # spool an orphan, so the failure comes back to the caller to act on.
-  local root live e
-  local candidates=()
+  local root live
   SPOOL_ORPHANS=""; SPOOL_FOREIGN=""
   root="$(spool_root_of)"
   [ -d "$root" ] || return 0
-  # SNAPSHOT DIRECTORIES BEFORE CLAIMS. A mint publishes @gl_spool_pending,
-  # then creates its reservation, then publishes @gl_spool. Therefore every
-  # directory in this snapshot is either protected by one of the two claims
-  # when the later register read lands, or was already unclaimed. A directory
-  # created after this snapshot is not a candidate for this pass.
-  for e in "$root"/* "$root"/.[!.]* "$root"/..?*; do
-    [ -e "$e" ] || [ -L "$e" ] || continue
-    candidates[${#candidates[@]}]="$e"
-  done
-  live="$(tmux list-windows -a \
-    -F '#{@gl_spool} #{@gl_spool_pending}' 2>/dev/null)" || return 1
-  live="${live// /$'\n'}"
-  spool_classify "$root" "$live" snapshot "${candidates[@]}"
+  live="$(tmux list-windows -a -F '#{@gl_spool}' 2>/dev/null)" || return 1
+  spool_classify "$root" "$live"
 }
 
 spool_orphans_under() { # $1 spool root no live window can claim; every minted spool is an orphan
@@ -9602,20 +9554,9 @@ spool_orphans_under() { # $1 spool root no live window can claim; every minted s
   spool_classify "$1" ""
 }
 
-spool_classify() { # $1 root, $2 live tokens, optional snapshot + paths
+spool_classify() { # $1 spool root, $2 live tokens -> SPOOL_ORPHANS, SPOOL_FOREIGN
   local root="$1" live="$2" e token nl=$'\n'
-  local entries=()
-  shift 2
-  if [ "${1:-}" = snapshot ]; then
-    shift
-    entries=("$@")
-  else
-    for e in "$root"/* "$root"/.[!.]* "$root"/..?*; do
-      [ -e "$e" ] || [ -L "$e" ] || continue
-      entries[${#entries[@]}]="$e"
-    done
-  fi
-  for e in "${entries[@]}"; do
+  for e in "$root"/* "$root"/.[!.]* "$root"/..?*; do
     [ -e "$e" ] || [ -L "$e" ] || continue
     token="${e##*/}"
     # NOT A DIRECTORY GANG MINTED IS NOT A DIRECTORY GANG SWEEPS. A token is
@@ -9690,18 +9631,6 @@ spool_tokens_archive() { # $1 spool root, $2 newline-separated tokens; 1 = one w
   while IFS= read -r token; do
     [ -n "$token" ] || continue
     dir="$1/$token"
-    # REVALIDATE AT THE DESTRUCTIVE BOUNDARY. The bulk pass above is a
-    # candidate snapshot, not authority to delete forever after: a server can
-    # advance while it is classified, and the cost of a stale negative is a
-    # live agent's mail. Read both the final and provisional claims again for
-    # this exact token immediately before touching it. An unreadable register
-    # proves nothing and therefore leaves the directory in place.
-    if ! spool_token_holders "$token"; then
-      printf '%s\n' "$(colour "$C_BAD" "the candidate orphan $dir was NOT swept: gang could not re-read the tmux server's spool register immediately before archive")" >&2
-      rc=1
-      continue
-    fi
-    [ -z "$SPOOL_TOKEN_HOLDERS" ] || continue
     # THE SWEEP NEVER STOPS THE SESSION IT RUNS IN. A stray this cannot archive
     # is reported and left exactly where it is; dying here would make one
     # unaccountable directory refuse every `up` until a person removed it, and
