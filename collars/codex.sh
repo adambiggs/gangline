@@ -33,10 +33,8 @@ if [ -n "${ROOT:-}" ] && [ -x "$ROOT/bin/gang" ]; then
       # THE HOOKS INSTALLED ABOVE ARE WHAT CODEX ASKS ABOUT. Their command
       # carries this install root, so a new install, an upgrade or a worktree
       # presents hashes codex has never seen and it opens its hooks-review menu
-      # before drawing a composer. `gang trust codex -d DIR` opens this exact
-      # launch in a disposable window for the operator to answer that menu; no
-      # Gangline path presses a trust choice on the operator's behalf.
-      GANG_TRUST_LAUNCH="$GANG_LAUNCH"
+      # in the hitched window before drawing a composer. The operator answers it
+      # there; no Gangline path presses a trust choice on their behalf.
       # The launch above passes a native Stop hook with -c, so this harness
       # announces its own turn boundaries to gang — which is what a spool needs
       # to drain, and what deferred self-compaction already relies on. Both are

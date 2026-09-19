@@ -1,8 +1,8 @@
 # shellcheck shell=bash
 # SPDX-License-Identifier: Apache-2.0
-# Native recovery seams: automatic recap, scope-confirmed copy-mode, and the
-# attended hook-trust path. This part owns one separately named disposable
-# team; every wait below is signalled by a fixture event, never a clock.
+# Native recovery seams: automatic recap and scope-confirmed copy-mode. This
+# part owns one separately named disposable team; every wait below is signalled
+# by a fixture event, never a clock.
 
 friction_original_session="$GANG_SESSION"
 friction_original_collars="${GANG_COLLARS:-}"
@@ -304,83 +304,6 @@ env -u GANG_TMUX_GUARD_AGENT TMUX="$friction_socket,0,0" \
   "$ROOT/collars/codex.sh" "$friction_draft_pane" >/dev/null || friction_draft_rc=$?
 equal "the shipped recap reader rejects a nonempty post-recap draft" 1 \
   "$friction_draft_rc"
-
-# `gang trust` has to open the collar's native hook configuration directly so
-# the operator can answer its menu. The stub reports its received arguments
-# before signalling the test, so the argument list is the native launch evidence.
-friction_trust_bin="$RUN_ROOT/friction-trust-bin"
-friction_trust_args="$RUN_ROOT/friction-trust-args"
-friction_trust_socket="$RUN_ROOT/friction-trust-socket"
-friction_trust_lock="$RUN_ROOT/friction-trust-lock"
-friction_trust_channel="gang-friction-trust-$$"
-mkdir -p "$friction_trust_bin"
-cat > "$friction_trust_bin/codex" <<SH
-#!/bin/sh
-printf '%s\\n' "\$@" > '$friction_trust_args'
-printf '%s\\n' "\$GANG_TMUX_SOCKET" > '$friction_trust_socket'
-printf '%s\\n' "\$GANG_LOCK_DIR" > '$friction_trust_lock'
-tmux -S '$friction_socket' wait-for -S '$friction_trust_channel'
-exec bash --norc
-SH
-chmod +x "$friction_trust_bin/codex"
-friction_trust_out="$(PATH="$friction_trust_bin:$PATH" "$GANG" trust codex -d "$RUN_ROOT")"
-tmux wait-for "$friction_trust_channel"
-friction_trust_window="$(printf '%s\n' "$friction_trust_out" \
-  | awk '{ for (i = 1; i <= NF; i++) if ($i ~ /^@[0-9]+$/) { print $i; exit } }')"
-[ -n "$friction_trust_window" ] \
-  || { printf 'friction: attended trust command named no window [%s]\n' "$friction_trust_out" >&2; exit 1; }
-contains "the attended trust path opens the native hook configuration" \
-  "$(<"$friction_trust_args")" 'hooks.PreCompact='
-equal "the attended trust hook path receives only the guarded tmux route" \
-  "$friction_socket" "$(<"$friction_trust_socket")"
-equal "the attended trust hook path keeps its durable lock root" \
-  "$GANG_LOCK_DIR" "$(<"$friction_trust_lock")"
-contains "the attended trust command says it sent no menu key" \
-  "$friction_trust_out" 'sent no menu key'
-equal "the attended trust review is not registered as an agent" "" \
-  "$(tmux show-options -wqv -t "$friction_trust_window" @gl_agent)"
-
-# A trust-review window is a transient owned by the command, not an unadopted
-# agent. Its model and effort must therefore follow the refused hitch's choices
-# and a cooperative tick must retire it once its own collar positively sees the
-# composer that follows the operator's native menu answer.
-friction_trust_choice_args="$RUN_ROOT/friction-trust-choice-args"
-friction_trust_choice_launch="$RUN_ROOT/friction-trust-choice-launch.sh"
-friction_trust_choice_channel="gang-friction-trust-choice-$$"
-cat > "$friction_trust_choice_launch" <<SH
-#!/bin/sh
-printf '%s\\n' "\$@" > '$friction_trust_choice_args'
-tmux -S '$friction_socket' wait-for -S '$friction_trust_choice_channel'
-PS1='❯ ' exec bash --norc
-SH
-chmod +x "$friction_trust_choice_launch"
-cat > "$friction_collars/trust-review.sh" <<SH
-# shellcheck shell=bash
-# shellcheck disable=SC2034
-. "$ROOT/collars/bash.sh"
-GANG_TRUST_LAUNCH="'$friction_trust_choice_launch'"
-GANG_MODEL_OPT='--model'
-GANG_EFFORT_OPT='--effort='
-GANG_EFFORT_CMD="printf 'careful\\n'"
-collar_model_check() {
-  [ "\$1" = chosen-model ]
-}
-SH
-friction_trust_choice_out="$("$GANG" trust trust-review -d "$RUN_ROOT" \
-  -m chosen-model -e careful)"
-tmux wait-for "$friction_trust_choice_channel"
-friction_trust_choice_window="$(printf '%s\n' "$friction_trust_choice_out" \
-  | awk '{ for (i = 1; i <= NF; i++) if ($i ~ /^@[0-9]+$/) { print $i; exit } }')"
-[ -n "$friction_trust_choice_window" ] \
-  || { printf 'friction: choice trust command named no window [%s]\n' "$friction_trust_choice_out" >&2; exit 1; }
-equal "the attended trust launch receives the requested model and effort" \
-  $'--model\nchosen-model\n--effort=careful' "$(<"$friction_trust_choice_args")"
-equal "the transient choice review remains unregistered before its menu is answered" "" \
-  "$(tmux show-options -wqv -t "$friction_trust_choice_window" @gl_agent)"
-"$GANG" tick >/dev/null
-equal "a tick retires the composer-ready trust review that gang launched" "" \
-  "$(tmux list-windows -t "=$GANG_SESSION" -F '#{window_id}' | \
-    awk -v wanted="$friction_trust_choice_window" '$1 == wanted { print $1 }')"
 
 "$GANG" down "$GANG_SESSION" >/dev/null
 export GANG_SESSION="$friction_original_session"

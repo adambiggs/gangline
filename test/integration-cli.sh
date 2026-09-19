@@ -18,7 +18,7 @@ dispatch_commands="$({
       }
     '
 } | awk '$0 != "hook" && $0 != "__tick-worker" && $0 != "__usage-record-worker" && $0 != "__event-proof" && $0 != "-h" && $0 != "--help" && $0 != "help"' | sort -u)"
-bare_error_commands="hitch trust adopt rename talk send at run flush mail interrupt compact context log limits wait-limit wait status explain capture composer whoami drop down"
+bare_error_commands="hitch adopt rename talk send at run flush mail interrupt compact context log limits wait-limit wait status explain capture composer whoami drop down"
 meaningful_bare_commands="up roster attach teams tick collars models roles config curfew notify usage cap upgrade"
 classified_commands="$(printf '%s\n' $bare_error_commands $meaningful_bare_commands | sort -u)"
 
@@ -218,7 +218,6 @@ arity_probes=(
   "flush|ghost STRAY|flush: unexpected argument 'STRAY'"
   "at|--to ghost STRAY|at: unknown argument 'STRAY' — a message body is not an argument"
   "run|STRAY|run: expected -- <command>, --active, or --cancel <run-id>"
-  "trust|codex -d . STRAY|trust: unknown argument 'STRAY'"
   "mail|ghost STRAY|mail: unexpected argument 'STRAY'"
   "interrupt|ghost STRAY|interrupt: unexpected argument 'STRAY'"
   "compact|ghost STRAY|compact: unexpected argument 'STRAY'"
@@ -247,7 +246,6 @@ arity_probes=(
   "upgrade|STRAY|upgrade: unexpected argument 'STRAY'"
   "usage|STRAY|usage: unexpected argument 'STRAY'"
   "cap|STRAY|cap: unknown action 'STRAY'"
-  "trust|codex|trust: -d <dir> is required"
   "at|--to ghost --stdin|at: a time is required"
   "at|90m --to ghost --clear|at: --clear cancels every timed send parked for a target and takes nothing else"
   "interrupt|ghost -m|interrupt: -m needs a value"

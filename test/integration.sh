@@ -687,7 +687,7 @@ start_parallel_instruments() {
 # below names that closure before any fragment sources: a partial request that
 # omits one refuses with the exact parts to add, rather than failing later on a
 # raw tmux or missing-fixture read.
-integration_parts="cli substrate trust hitch compose spool readiness hooks notify usage events cap tick friction run teardown"
+integration_parts="cli substrate hitch compose spool readiness hooks notify usage events cap tick friction run teardown"
 integration_declared_parts="$integration_parts"
 integration_selector="${GANG_INTEGRATION_PARTS:-all}"
 IFS=, read -r -a integration_selected_parts <<< "$integration_selector"
@@ -707,7 +707,7 @@ integration_part_dependencies() { # $1 = selectable fragment, stdout = explicit 
   case "$1" in
     cli) printf '\n' ;;
     substrate|spool|notify|cap|tick|friction|teardown) printf 'cli\n' ;;
-    trust|run|hitch|compose|usage|events) printf 'cli substrate\n' ;;
+    run|hitch|compose|usage|events) printf 'cli substrate\n' ;;
     readiness) printf 'cli substrate compose\n' ;;
     hooks) printf 'cli substrate spool\n' ;;
     *) return 2 ;;
@@ -752,7 +752,6 @@ start_parallel_instruments
 integration_ran_parts=""
 integration_part cli && { integration_ran_parts="${integration_ran_parts:+$integration_ran_parts }cli"; . "$ROOT/test/integration-cli.sh"; }
 integration_part substrate && { integration_ran_parts="${integration_ran_parts:+$integration_ran_parts }substrate"; . "$ROOT/test/integration-substrate.sh"; }
-integration_part trust && { integration_ran_parts="${integration_ran_parts:+$integration_ran_parts }trust"; . "$ROOT/test/integration-trust.sh"; }
 integration_part hitch && { integration_ran_parts="${integration_ran_parts:+$integration_ran_parts }hitch"; . "$ROOT/test/integration-hitch.sh"; }
 integration_part compose && { integration_ran_parts="${integration_ran_parts:+$integration_ran_parts }compose"; . "$ROOT/test/integration-compose.sh"; }
 integration_part spool && { integration_ran_parts="${integration_ran_parts:+$integration_ran_parts }spool"; . "$ROOT/test/integration-spool.sh"; }
