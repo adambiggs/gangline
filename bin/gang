@@ -6056,17 +6056,7 @@ cmd_tick_worker() { # internal pass under the team's run lock; 76 committed fail
   session_live || return 0
   tick_team_digest_set || return 1
   tick_paths_set || return 1
-  # THE WORKER'S BUDGET IS THE CONFIGURED ONE, HANDED DOWN BY ITS CONTROLLER.
-  # The deadline controller exports the budget it enforces; the soft budget
-  # below spends that same number, so a worker started with any other value
-  # would stop its pass against a deadline nobody is enforcing.
-  tick_deadline_valid "$GANG_TICK_DEADLINE" || return 1
-  case "${GANG_TICK_DEADLINE_SECONDS:-}" in
-    "$GANG_TICK_DEADLINE") ;;
-    *) printf 'tick worker deadline budget %s is not the configured GANG_TICK_DEADLINE of %ss\n' \
-         "${GANG_TICK_DEADLINE_SECONDS:-unset}" "$GANG_TICK_DEADLINE" >&2; return 1 ;;
-  esac
-  TICK_SOFT_BUDGET_S=$((GANG_TICK_DEADLINE_SECONDS * 2 / 3))
+  TICK_SOFT_BUDGET_S=$((GANG_TICK_DEADLINE * 2 / 3))
   if [ "${GANG_TEST_COLLARS:-}" = 1 ] && [ -n "${GANG_TEST_TICK_SOFT_BUDGET_S:-}" ]; then
     TICK_SOFT_BUDGET_S="$GANG_TEST_TICK_SOFT_BUDGET_S"
   fi

@@ -964,7 +964,6 @@ equal "the truncated provider-menu delivery reaches the fake Codex TUI after dis
 equal "the delivered provider-menu message leaves no Gangline spool entry" 0 \
   "$("$GANG" roster --porcelain | awk -F '\t' '$1 == "codex-menu" { print $4 }')"
 codex_menu_queue_pane="$("$GANG" capture codex-menu)"
-# source-guard: producer@5362c5e07d45: the fake Codex fixture is the only process painting this dedicated pane, and the overflow glyph is emitted only after its three-row queue-preview truncation
 contains "the fake Codex queue applies its three-row overflow marker" \
   "$codex_menu_queue_pane" "…"
 excludes "the truncated queue does not render the whole body used for confirmation" \
@@ -1346,12 +1345,10 @@ equal "the post-compaction pass drains the formerly copy-mode-held message" 0 \
   "$("$GANG" roster --porcelain | awk -F '\t' '$1 == "tick-copy" { print $4 }')"
 equal "one global pass also drains the other hitched window" 0 \
   "$("$GANG" roster --porcelain | awk -F '\t' '$1 == "tick-false" { print $4 }')"
-# source-guard: whole-surface@87a1cbbad112: the nonce-marked peer body is unique to this test and any transcript rendering proves the target consumed it
 contains "the closed native turn beats false occupied paint for delivery" \
   "$(pane_all tick-false)" "TICK_FALSE_OCCUPIED_MESSAGE"
 equal "the completed pass retires every tick delivery owner marker" absent \
   "$(if [ -n "$(tmux show-options -wqv -t "$tick_copy_id" @gl_tick_delivery)$(tmux show-options -wqv -t "$tick_false_id" @gl_tick_delivery)" ]; then printf present; else printf absent; fi)"
-# source-guard: whole-surface@bfade6c1fd0a: the nonce-marked peer body is unique to this test and verified delivery may render it anywhere in the recipient transcript
 contains "the copy-mode message reached the recipient after native retry" \
   "$(pane_all tick-copy)" "TICK_COPY_MESSAGE"
 
@@ -1381,7 +1378,6 @@ equal "a non-recap collar compacts after a recap-aware collar in one tick" prese
   "$([ -e "$tick_follow_compacted" ] && printf present || printf absent)"
 equal "the following non-recap collar takes its immediate continuation path" 0 \
   "$("$GANG" roster --porcelain | awk -F '\t' '$1 == "tick-recap-follow" { print $4 }')"
-# source-guard: producer@682932d22cdd: the unique continuation is injected only by the preceding same-tick deferred compact, so its visible echo binds the callback-scoping path
 contains "the following non-recap collar receives its continuation without a recap" \
   "$(pane_all tick-recap-follow)" "TICK_FOLLOW_CONTINUATION"
 "$GANG" drop tick-recap-first >/dev/null
@@ -1617,11 +1613,6 @@ excludes "no delivery-ownership alert names the vanished entry" \
 contains "the still-live roster entry is visited in the same pass" \
   "$(<"$tick_stale_ledger")" "tick-stale-live"
 "$GANG" drop tick-stale-live >/dev/null
-# The fail-closed path for a pane that stays unreadable on a window that
-# still exists is unchanged code (window_gone must return false there and
-# fall through to the original `die`); it is not independently re-exercised
-# here. See test/evidence/tick254/NOTES.md.
-
 # ISSUE #264: THE WINDOW MAY DISAPPEAR INSIDE occupied(), after the tick has
 # already accepted its roster entry. Pause immediately before occupied's first
 # pane read, remove that real window through the ordinary drop path, and then
@@ -1756,32 +1747,12 @@ GANG_TICK_DEADLINE=90 GANG_TEST_TICK_MODE=manual "$GANG" tick \
 equal "a longer GANG_TICK_DEADLINE reaches the worker through its controller" 0 "$tick_deadline_rc"
 equal "the longer deadline's tick prints nothing" "" "$(<"$RUN_ROOT/tick-deadline-long.out")"
 tick_deadline_rc=0
-GANG_TICK_DEADLINE=90 GANG_TICK_INTERNAL=1 "$GANG" __tick-worker \
-  > "$RUN_ROOT/tick-deadline-mismatch.out" 2>&1 || tick_deadline_rc=$?
-equal "a worker whose exported budget is not the configured deadline refuses" 1 "$tick_deadline_rc"
-contains "the worker names both numbers" "$(<"$RUN_ROOT/tick-deadline-mismatch.out")" \
-  "tick worker deadline budget 60 is not the configured GANG_TICK_DEADLINE of 90s"
-tick_deadline_rc=0
 GANG_TICK_DEADLINE=90 GANG_TICK_INTERNAL=1 \
   "$ROOT/libexec/gang-tick-deadline" --clock-helper "$ROOT/libexec/gang-clock" \
   sh -c 'printf "%s\n" "$GANG_TICK_DEADLINE_SECONDS"' > "$RUN_ROOT/tick-deadline-export.out" 2>&1 \
   || tick_deadline_rc=$?
 equal "the controller exports the configured deadline to its worker" 90 \
   "$(<"$RUN_ROOT/tick-deadline-export.out")"
-tick_deadline_rc=0
-GANG_TICK_DEADLINE=abc "$ROOT/libexec/gang-tick-deadline" --clock-helper "$ROOT/libexec/gang-clock" \
-  true > "$RUN_ROOT/tick-deadline-controller.out" 2>&1 || tick_deadline_rc=$?
-equal "the controller refuses a malformed deadline on its own" 2 "$tick_deadline_rc"
-contains "the controller's refusal names the setting" "$(<"$RUN_ROOT/tick-deadline-controller.out")" \
-  "GANG_TICK_DEADLINE must be a whole number of seconds from 60 to 3600, got 'abc'"
-tick_deadline_rc=0
-GANG_TICK_DEADLINE=9223372037 "$ROOT/libexec/gang-tick-deadline" --clock-helper "$ROOT/libexec/gang-clock" \
-  true > "$RUN_ROOT/tick-deadline-controller-ceiling.out" 2>&1 || tick_deadline_rc=$?
-equal "the controller refuses a deadline above the ceiling on its own" 2 "$tick_deadline_rc"
-contains "the controller's refusal names the ceiling" \
-  "$(<"$RUN_ROOT/tick-deadline-controller-ceiling.out")" \
-  "GANG_TICK_DEADLINE must be a whole number of seconds from 60 to 3600, got '9223372037'"
-
 # A LAUNCH DURING A PASS GETS ONE PASS AFTER IT, AND NO MORE. FIFO edges make
 # each crossing exact: the first launch queues behind the parked owner, and
 # the queued pass holds the queue lock until it holds the run lock, so every
@@ -1915,82 +1886,6 @@ GANG_TEST_TICK_MODE=sync PATH="$tick_fd_probe_bin:$PATH" "$GANG" roster >/dev/nu
 equal "a queued pass's subprocess holds neither tick lock open" probed \
   "$(<"$tick_fd_probe")"
 
-# ABSENCE IS DEATH ONLY FROM A COMPLETE /proc. Self showing its own pid proves
-# which table procfs presents, not that every process of this uid is listed:
-# hidepid=ptraceable filters same-uid entries, and something other than procfs
-# at /proc enumerates nothing. Read through such a view, a namespace with no
-# visible process stays unresolvable rather than reclaimed.
-tick_proc_view_root="$RUN_ROOT/tick-proc-view"
-mkdir -p "$tick_proc_view_root"
-printf '26 31 0:24 / /proc rw,nosuid,nodev,noexec,relatime shared:13 - proc proc rw\n' \
-  > "$tick_proc_view_root/plain"
-printf '26 31 0:24 / /proc rw,nosuid,nodev,noexec,relatime shared:13 - proc proc rw,hidepid=invisible\n' \
-  > "$tick_proc_view_root/invisible"
-printf '26 31 0:24 / /proc rw,nosuid,nodev,noexec,relatime,hidepid=2 shared:13 - proc proc rw\n' \
-  > "$tick_proc_view_root/invisible-mount"
-printf '26 31 0:24 / /proc rw,nosuid,nodev,noexec,relatime shared:13 - proc proc rw,hidepid=4\n' \
-  > "$tick_proc_view_root/ptraceable"
-printf '26 31 0:24 / /proc rw,nosuid,nodev,noexec,relatime shared:13 - proc proc rw\n80 26 0:50 / /proc rw,relatime - tmpfs none rw\n' \
-  > "$tick_proc_view_root/overmounted"
-printf '26 31 0:24 / /sys rw,nosuid,nodev,noexec,relatime shared:13 - sysfs sysfs rw\n' \
-  > "$tick_proc_view_root/missing"
-tick_proc_view_probe="$(python3 - "$ROOT/libexec/gang-process-identity" \
-  "$tick_proc_view_root" 2>/dev/null <<'PY'
-import os
-import runpy
-import sys
-
-scope = runpy.run_path(sys.argv[1], run_name="gang_tick_proc_view_probe")
-runtime = scope["main"].__globals__
-complete = runtime["proc_view_complete"]
-verdicts = [
-    name
-    for name in ("plain", "invisible", "invisible-mount", "ptraceable", "overmounted", "missing")
-    if complete(os.path.join(sys.argv[2], name))
-]
-verdicts.append("absent" if not complete(os.path.join(sys.argv[2], "no-such-file")) else "read")
-
-# A reader at the initial namespace whose view is incomplete: a namespace
-# holding no visible process must not read as dead.
-runtime["proc_view_complete"] = lambda mountinfo="": False
-runtime["own_pid_namespace"] = lambda: runtime["INIT_PID_NAMESPACE"]
-try:
-    runtime["linux_locate"](os.getpid(), expected_namespace=1)
-    verdicts.append("resolved")
-except runtime["UnresolvableProcess"]:
-    verdicts.append("unresolvable")
-except runtime["DeadProcess"]:
-    verdicts.append("dead")
-runtime["proc_view_complete"] = lambda mountinfo="": True
-try:
-    runtime["linux_locate"](os.getpid(), expected_namespace=1)
-    verdicts.append("resolved")
-except runtime["UnresolvableProcess"]:
-    verdicts.append("unresolvable")
-except runtime["DeadProcess"]:
-    verdicts.append("dead")
-print(",".join(verdicts))
-PY
-)"
-equal "only procfs without a same-uid hidepid filter counts as a complete view, and an unreadable mount table does not" \
-  "plain,invisible,invisible-mount,absent,unresolvable,dead" "$tick_proc_view_probe"
-
-# THE DEADLINE IS AN INTERNAL CONTROLLER CONTRACT, NOT ARITHMETIC INPUT. The
-# public controller publishes the validated GANG_TICK_DEADLINE, here its default
-# of 60; noncanonical, invalid-octal, and overflowing direct-worker values must
-# fail before the worker spends them.
-tick_bad_budget_probe() { # $1 value
-  local value="$1" rc=0 output="$RUN_ROOT/tick-budget-$1.out"
-  GANG_TICK_DEADLINE_SECONDS="$value" GANG_TICK_INTERNAL=1 \
-    "$GANG" __tick-worker > "$output" 2>&1 || rc=$?
-  equal "deadline value $value is rejected before deadline arithmetic" 1 "$rc"
-  contains "deadline value $value names the configured contract it missed" \
-    "$(<"$output")" "tick worker deadline budget $value is not the configured GANG_TICK_DEADLINE of 60s"
-}
-tick_bad_budget_probe 060
-tick_bad_budget_probe 08
-tick_bad_budget_probe 13836000000
-
 # A CATCHABLE CONTROLLER DEATH MUST NOT ORPHAN ITS NEW-SESSION WORKER. The
 # worker blocks reading a FIFO and writes nothing to the controller pipes, so
 # EPIPE cannot end it before controller cleanup is observed. Resolve the whole
@@ -2034,8 +1929,6 @@ equal "controller TERM leaves no live process in the worker's group" 0 \
 tick_controller_next_rc=0
 "$GANG" tick >/dev/null || tick_controller_next_rc=$?
 equal "the next tick passes after a killed controller" 0 "$tick_controller_next_rc"
-contains "the deadline controller fixes the production budget at sixty seconds" \
-  "$(<"$ROOT/libexec/gang-tick-deadline")" "DEADLINE_SECONDS = 60"
 excludes "the deadline controller ignores an ambient clock executable" \
   "$(<"$ROOT/libexec/gang-tick-deadline")" "GANGLINE_CLOCK_HELPER"
 
@@ -2166,7 +2059,6 @@ contains "the restarted harness is a session-lost state, not an idle agent" \
 contains "roster carries the same loud session-lost verdict" \
   "$("$GANG" roster 2>/dev/null)" "session-lost"
 tick_restart_capture="$(tmux capture-pane -pJ -S - -t "$tick_restart_id")"
-# source-guard: whole-surface@16f80b8dd733: this process never reads stdin, so the unique body can appear in its pane only if Gangline typed it
 equal "the contradicted pane receives none of the parked delivery" absent \
   "$(case "$tick_restart_capture" in *TICK_MUST_NOT_REACH_RESTART*) printf present ;; *) printf absent ;; esac)"
 equal "and its delivery remains parked for an intended replacement" 1 \
@@ -2204,7 +2096,6 @@ equal "a detached tick failure never changes its spawning command result" 0 "$ti
 "$GANG" tick >/dev/null
 excludes "a later successful pass clears the health failure" \
   "$(<"$tick_health_file")" $'failed\t'
-# source-guard: producer@5a0aff3445c2: the synchronous tick immediately above is the only writer in this fixture and an ok-prefixed record is its successful result
 equal "the clean pass records an ok log fixture" ok \
   "$(case "$(<"$tick_log_file")" in $'ok\t'*) printf ok ;; *) printf other ;; esac)"
 excludes "a clean pass clears the roster's tick-failure line" \

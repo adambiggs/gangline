@@ -42,7 +42,6 @@ done
 equal "one hookless delivery is durable on disk" "1" "$nodrain_children"
 tmux send-keys -t "$nodrain_id" C-u
 "$GANG" tick >/dev/null
-# source-guard: whole-surface@bd9f7f28bb5a: the unique body can appear in this fixture pane only after the one queued producer is submitted
 contains "the cooperative tick delivers after the draft clears" \
   "$(pane nodrain)" "MARK_NOHOOK"
 nodrain_children=0
@@ -254,7 +253,6 @@ contains "including the message from the other sender" \
 # Both senders reach this spool from outside any Gangline window, so both are
 # self-declared: what this reads is that the spool keeps them APART, not that
 # either was observed.
-# source-guard: producer@189a33caafab: the send from 'other' is the only thing in this run attributed to that name, so its opening tag reaches this pane from that spool entry and nowhere else; the drain that put it there was already read out of the same capture two assertions above
 contains "each drained message keeps its own sender's attribution" \
   "$parker_drained" "[gang:self-declared:other#"
 excludes "a superseded message is never delivered" "$parker_drained" "MARK_STALE"
@@ -416,7 +414,6 @@ cross_barrier "$cross_holder_waiter" "the worker holding the pane lock to claim"
 cross_barrier "$cross_loser_waiter" "the crossed worker that lost to finish"
 contains "one crossed worker owns the whole queue before the loser finishes" \
   "$(cat "$RUN_ROOT/cross-holder-observed")" "claimed=3"
-# source-guard: producer@9213715b1b14: the fixture mv shim records the pane-lock symlink at each claim rename, and no other path writes this log
 equal "every crossed-dispatch claim occurs under the pane lock" "3" \
   "$(grep -c '^locked$' "$cross_log")"
 excludes "no crossed worker claims before owning the pane lock" \
@@ -427,13 +424,11 @@ tmux wait-for -U "$cross_holder_release"
 cross_barrier "$cross_winner_waiter" "the holding worker to finish its drain"
 rm -f -- "$RUN_ROOT/bin/mv"
 cross_pane="$(pane parker)"
-# source-guard: producer@e10d2a56bcab: the three unique markers above exist only in the queue released through the crossed workers, whose pane lock and claims were observed directly
 contains "the crossed workers submit the complete queue" \
   "$cross_pane" "MARK_CROSS_THREE"
 cross_order="$(printf '%s\n' "$cross_pane" |
   grep -oE 'MARK_CROSS_ONE|MARK_CROSS_TWO|MARK_CROSS_THREE' |
   awk '!seen[$0]++' | tr '\n' ' ')"
-# source-guard: producer@bc6b9765db17: the three unique queued markers are the only producers matched from the pane, and their committed spool stamps define the expected order
 equal "the crossed dispatch preserves one oldest-first bundle" \
   "MARK_CROSS_ONE MARK_CROSS_TWO MARK_CROSS_THREE " "$cross_order"
 excludes "the crossed dispatch leaves no second live bundle" \
@@ -505,7 +500,6 @@ unreadable_recovery_waiter=$!
 printf '%s' '{"hook_event_name":"Stop"}' |
   TMUX_PANE="$parker_pane_id" "$GANG" hook >/dev/null
 wait "$unreadable_recovery_waiter"
-# source-guard: producer@70b679da62cf: the recovered drain verifies Enter, and the earlier refused send never put this marker in the target pane
 contains "the next readable boundary delivers the waiting message" \
   "$(pane parker)" "MARK_UNREADABLE_BOUNDARY"
 excludes "and a verified drain clears the prior failure" \
@@ -2319,7 +2313,6 @@ contains "a reasoned interrupt still reports the collar key" \
 preempt_pane="$(pane preempt)"
 contains "the reason reaches the boundary created by the interrupt" \
   "$preempt_pane" "MARK_PREEMPT"
-# source-guard: whole-surface@1d850b75b50d: the claim is the SHAPE of the attribution rather than which body carries it — every producer of this string on this pane is a send or reason gang could not observe a window for, which is what is asserted
 contains "the interrupt reason carries sender attribution" \
   "$preempt_pane" "[gang:self-declared:tester#"
 contains "the reason never joins or consumes the existing queue" \
@@ -2347,10 +2340,8 @@ contains "a leading -m stops the calling window's own turn" \
   || fail "the self-targeted stop sends the collar-declared key" \
     "$RUN_ROOT/preempt-key is absent"
 self_reason_pane="$(pane preempt)"
-# source-guard: producer@1784c6b08bf6: the self-targeted interrupt above is the sole producer of MARK_SELF_REASON; no other sender, spool entry or fixture writes that literal
 contains "the self-targeted reason reaches the boundary it created" \
   "$self_reason_pane" "MARK_SELF_REASON"
-# source-guard: producer@ae27904d4c02: only a body whose sender is preempt itself carries this attribution, and the self-targeted reason is the one such body on this pane — every other envelope here is from tester, other or third
 contains "and carries the calling agent as its author" \
   "$self_reason_pane" "[gang:preempt#"
 contains "a self-targeted reason is never parked either" \
@@ -2595,7 +2586,6 @@ claimlost_followup="$(printf 'MARK_CLAIM_RECOVERED' |
   "$GANG" send --to claimlost --from tester --stdin)"
 contains "the recovered composer accepts a later delivery" \
   "$claimlost_followup" "delivered to claimlost"
-# source-guard: producer@2b587b5b7b8a: the follow-up envelope is the only producer of this unique marker, while the immediately preceding composer assertion independently proves recovery removed the claimed body before this send.
 contains "the later delivery reaches the private session once" \
   "$(pane claimlost)" "MARK_CLAIM_RECOVERED"
 "$GANG" drop claimlost >/dev/null
@@ -2703,10 +2693,8 @@ claimrace_interrupted_count="$(printf '%s\n' "$claimrace_interrupted_log" |
   grep -Fc "\"message_id\": \"$claimrace_message_id\"" || :)"
 claimrace_verified_count="$(printf '%s\n' "$claimrace_verified_log" |
   grep -Fc "\"message_id\": \"$claimrace_message_id\"" || :)"
-# source-guard: producer@5bbff6411e10: the exact interrupted spool filename independently proves this message id was reclassified, while the filtered log count proves its one durable interrupted event.
 equal "the recovered message has one interrupted terminal event" \
   1 "$claimrace_interrupted_count"
-# source-guard: whole-surface@e759630cc032: the complete delivery.verified log is filtered for this exact unique message id, so zero matches is the terminal-event absence under test.
 equal "the recovered message has no verified terminal event" \
   0 "$claimrace_verified_count"
 contains "status agrees that the recovered message is not deliverable" \
@@ -2758,7 +2746,6 @@ claimlarge_followup="$(printf 'MARK_LARGE_RECOVERED' |
   "$GANG" send --to claimlarge --from tester --stdin)"
 contains "the cleared large recovery composer accepts a later delivery" \
   "$claimlarge_followup" "delivered to claimlarge"
-# source-guard: producer@c5be2944590a: the later large-recovery envelope is the only producer of this unique marker, after the immediately preceding composer assertion proves the prior large body was cleared.
 contains "the later delivery reaches the recovered large private session" \
   "$(pane claimlarge)" "MARK_LARGE_RECOVERED"
 "$GANG" drop claimlarge >/dev/null
@@ -2779,7 +2766,6 @@ tmux send-keys -l -t "$claimexisting_id" "$claimexisting_body"
 equal "an interrupted recovery preserves the existing staged note" \
   'an earlier staged record owns this composer' \
   "$(tmux show-options -wqv -t "$claimexisting_id" @gl_staged)"
-# source-guard: producer@c5be2944590a: the staged-composer assertion consumes the uniquely named existing record after recovery has moved the independent sending claim.
 equal "an interrupted recovery leaves the existing staged composer untouched" \
   "$claimexisting_body" "$("$GANG" composer claimexisting)"
 contains "an interrupted recovery still records the claimed body separately" \
@@ -3266,7 +3252,6 @@ stateroot_guard_log="$(env -u GANG_LOCK_DIR GANG_TEST_COLLARS=1 \
     "$2/libexec/gang-tmux-guard/tmux" -S "" kill-server > "$3/stateroot-guard.out" 2>&1 || :
     cat "$1/tmux-guard.log" 2>/dev/null || :' sh \
   "$stateroot_base/a/run/$stateroot_uid/gangline" "$ROOT" "$RUN_ROOT")"
-# source-guard: whole-surface@bd0b5a81f900: the surface is only the log file under a directory this run just created, and the guard is the only writer of that file name
 contains "the tmux guard logs under the same default root gang resolves" \
   "$stateroot_guard_log" "kill-server"
 

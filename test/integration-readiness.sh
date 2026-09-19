@@ -1013,15 +1013,12 @@ equal "an unsupported self-compaction records no request" "" \
   "$(tmux show-options -wqv -t "$codex_race_id" @gl_self_compact_requested)"
 equal "and binds no witness verdict" "" \
   "$(tmux show-options -wqv -t "$codex_race_id" @gl_self_compact_witness)"
-# source-guard: producer@27a6b5d72fd8: the typed command names only gang compact; this refusal text is emitted only by gang's unsupported-witness branch
 contains "Codex self-compaction is refused as unsupported during its active turn" \
   "$(pane codex-stop-race)" "self-compaction unsupported on collar 'codex-stop-race'"
-# source-guard: producer@c0f626424478: the typed command never spells --resume; only the refusal names the peer form
 contains "and the refusal names the peer form that works" \
   "$(pane codex-stop-race)" "gang compact codex-stop-race --resume"
 excludes "the refusal no longer reads as a recorded request" \
   "$(pane codex-stop-race)" "recorded but NOT submitted"
-# source-guard: producer@8b6dcbb4e17a: the typed command contains a percent placeholder, so only its executed status print can produce the expanded RC_1 marker
 contains "the refusal returns nonzero" \
   "$(pane codex-stop-race)" "CODEX_COMPACT_RC_1"
 equal "the active-turn path never invokes the rejecting compact command" absent \
@@ -1175,7 +1172,6 @@ printf -v codex_race_command 'GANG_SESSION=%q GANG_COLLARS=%q %q compact; printf
 tmux send-keys -l -t "$codex_race_id" "$codex_race_command"
 tmux send-keys -t "$codex_race_id" Enter
 tmux wait-for "$codex_race_again"
-# source-guard: producer@d29d25a31d39: the typed command contains a percent placeholder, so only its executed status print can produce the expanded AGAIN_RC_1 marker
 contains "a self-call over a pre-rule request is refused" \
   "$(pane codex-stop-race)" "CODEX_AGAIN_RC_1"
 equal "and retires that request" "" \
@@ -1209,7 +1205,6 @@ printf -v codex_race_command 'GANG_SESSION=%q GANG_COLLARS=%q %q compact; printf
 tmux send-keys -l -t "$codex_race_id" "$codex_race_command"
 tmux send-keys -t "$codex_race_id" Enter
 tmux wait-for "$codex_race_third"
-# source-guard: producer@fad451c87bb4: the typed command contains a percent placeholder, so only its executed status print can produce the expanded THIRD_RC_1 marker
 contains "a self-call over a mismatched binding is refused" \
   "$(pane codex-stop-race)" "CODEX_THIRD_RC_1"
 equal "and keeps that request standing" "$codex_race_mismatch" \
@@ -1219,7 +1214,6 @@ equal "with its continuation" "MISMATCH_STEP" \
 contains "and writes the dispatcher's diagnostic, not a retirement" \
   "$(tmux show-options -wqv -t "$codex_race_id" @gl_self_compact_failed)" \
   "malformed or belongs to another request"
-# source-guard: producer@d622d935df75: the typed command never spells this phrase; only the refused self-call branch of gang emits it
 contains "the refusal says an untrusted request stands" \
   "$(pane codex-stop-race)" "witness binding gang cannot trust"
 excludes "and spools no retirement note for it" \
@@ -1280,7 +1274,6 @@ codex_race_drain_waiter=$!
 printf '%s' '{"hook_event_name":"Stop"}' |
   TMUX_PANE="$codex_race_pane" "$GANG" hook >/dev/null
 wait "$codex_race_drain_waiter"
-# source-guard: producer@c7e688f29e4f: the marker enters only as the external sender's body, so its target-pane appearance witnesses spool delivery
 contains "ordinary mail drains past the refusal" \
   "$(pane codex-stop-race)" "MARK_MAIL_PAST_FAILED_COMPACT"
 contains "mail delivery leaves the refusal on record" \
@@ -1462,7 +1455,6 @@ contains "the accepted peer mail remains visibly waiting" \
   "$native_idle_peer_out" "(1 waiting)"
 native_idle_record task_complete peer-turn >> "$native_idle_rollout"
 GANG_TEST_TICK_MODE=manual "$GANG" tick >/dev/null
-# source-guard: producer@736ef479c8b6: the fixture command never contains this marker; only the spooled envelope can paint it after the tick submits it
 contains "the terminal rollout record releases the peer delivery" \
   "$(pane native-idle)" "MARK_NATIVE_IDLE_PEER"
 excludes "and the delivered peer mail no longer remains in the spool" \
@@ -1496,7 +1488,6 @@ excludes "the Stop worker types nothing before the terminal record" \
 native_idle_record task_complete peer-auto >> "$native_idle_rollout"
 tmux wait-for -S "native-idle-poll-$$"
 wait "$native_idle_auto_waiter"
-# source-guard: producer@8f90518a86a4: the fixture command never contains this marker; only the spooled envelope can paint it after the Stop worker's bounded witness wait
 contains "the terminal record releases that worker without a manual tick" \
   "$(pane native-idle)" "MARK_NATIVE_IDLE_AUTO"
 excludes "the automatic release consumes the waiting message" \
@@ -1515,7 +1506,6 @@ else
   fail "a completed later turn does not leave the older boundary busy forever" \
     "$native_idle_stale_out"
 fi
-# source-guard: producer@bec89d535023: the fixture command never contains this marker; only the peer envelope can paint it after delivery
 contains "and the delivery lands" "$(pane native-idle)" "MARK_NATIVE_IDLE_STALE"
 
 # THE RECORDED BINDING OUTLIVES A COLLAR REWRITE. Presence of the Stop payload
@@ -1571,7 +1561,6 @@ rm -f -- "$native_idle_waiting_hold"
 native_idle_collar native-idle
 native_idle_record task_complete peer-reader-loss >> "$native_idle_rollout"
 GANG_TEST_TICK_MODE=manual "$GANG" tick >/dev/null
-# source-guard: producer@c7bb86e630d8: the fixture command never contains this marker; only the preserved spooled envelope can paint it after the restored reader releases delivery
 contains "the restored reader releases the preserved message" \
   "$(pane native-idle)" "MARK_NATIVE_IDLE_READER_LOSS"
 
@@ -1587,10 +1576,8 @@ tmux send-keys -l -t "$native_idle_id" "$native_idle_command"
 tmux send-keys -t "$native_idle_id" Enter
 tmux wait-for "$native_idle_requested"
 native_idle_request="$(tmux show-options -wqv -t "$native_idle_id" @gl_self_compact_requested)"
-# source-guard: producer@8567e88e6eb5: the typed command names only gang compact; only gang's scheduling branch prints this promise
 contains "a native-idle collar schedules the agent's own compaction" \
   "$(pane native-idle)" "self-compaction scheduled for the end of this turn"
-# source-guard: producer@02e231e0cab9: the typed command contains a percent placeholder, so only its executed status print can produce the expanded RC_0 marker
 contains "and the request returns zero" "$(pane native-idle)" "NATIVE_IDLE_RC_0"
 excludes "the self-request is not refused as unsupported" \
   "$(pane native-idle)" "self-compaction unsupported"
@@ -1623,7 +1610,6 @@ if [ -n "$native_idle_request" ]; then
     fail "the persisted end of the turn releases the deferred compaction" \
       "the worker exited without the collar command's execution artifact"
   fi
-  # source-guard: producer@fc11d595d585: the typed command never spells this marker; only the recorded --resume continuation gang injects after the compaction carries it
   contains "and the continuation follows it" "$(pane native-idle)" "NEXT_STEP_MARK"
   equal "the request is consumed" "" \
     "$(tmux show-options -wqv -t "$native_idle_id" @gl_self_compact_requested)"
@@ -1822,7 +1808,6 @@ contains "and the note still waits for the compacted context" \
   "$("$GANG" roster | grep '^native-idle ' || :)" "spooled=1"
 equal "the reader restored, the next boundary completes the request" present \
   "$([ -e "$native_idle_executed" ] && printf present || printf absent)"
-# source-guard: producer@b7a3655c58fa: the typed command never spells this marker; only the recorded --resume continuation gang injects after the compaction carries it
 contains "with its continuation" "$(pane native-idle)" "THIRD_STEP_MARK"
 equal "and clears the request" "" \
   "$(tmux show-options -wqv -t "$native_idle_id" @gl_self_compact_requested)"
@@ -2607,7 +2592,6 @@ contains "and leaves the mail rather than typing it behind the compaction" \
 GANG_TEST_TICK_MODE=manual "$GANG" tick >/dev/null
 excludes "the next tick delivers that mail" \
   "$("$GANG" status hookless)" "spooled:"
-# source-guard: whole-surface@2c8c4db77185: the nonce-marked peer body is unique to this test and verified delivery may render it anywhere in the recipient transcript
 contains "into the session" "$(pane hookless)" "MARK_HOOKLESS_BEHIND_COMPACTION"
 "$GANG" drop hookless >/dev/null 2>&1 || :
 
@@ -2659,7 +2643,6 @@ contains "and leaves it in the spool" \
 GANG_TEST_TICK_MODE=manual "$GANG" tick >/dev/null
 excludes "the next tick delivers the waiting mail" \
   "$("$GANG" status hookless-unknown)" "spooled:"
-# source-guard: whole-surface@c41aff295c10: the nonce-marked peer body is unique to this test and verified delivery may render it anywhere in the recipient transcript
 contains "into the session" "$(pane hookless-unknown)" "MARK_HOOKLESS_UNKNOWN_COMPACTION"
 "$GANG" drop hookless-unknown >/dev/null 2>&1 || :
 
@@ -2735,7 +2718,6 @@ contains "and leaves it in the spool" \
 GANG_TEST_TICK_MODE=manual "$GANG" tick >/dev/null
 excludes "the next tick delivers the waiting mail" \
   "$("$GANG" status hookless-blind)" "spooled:"
-# source-guard: whole-surface@55745cc66f05: the nonce-marked peer body is unique to this test and verified delivery may render it anywhere in the recipient transcript
 contains "into the session" "$(pane hookless-blind)" "MARK_HOOKLESS_BLIND_COMPACTION"
 
 # A PASS THAT STARTED NO WORKER STILL DRAINS when the same read fails. A
@@ -2765,7 +2747,6 @@ contains "which the retiring tick reports" \
   "$blind_hookless_tick" "could not read the self-compaction record for hookless-blind"
 excludes "that pass drains the spool" \
   "$("$GANG" status hookless-blind)" "spooled:"
-# source-guard: whole-surface@d82b76fdef91: the nonce-marked peer body is unique to this test and verified delivery may render it anywhere in the recipient transcript
 contains "and types the mail into the session" \
   "$(pane hookless-blind)" "MARK_HOOKLESS_BLIND_RETIRED"
 "$GANG" drop hookless-blind >/dev/null 2>&1 || :

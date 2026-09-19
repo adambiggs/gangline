@@ -55,7 +55,6 @@ friction_recap_trigger="$("$GANG" roster)"
 contains "the initial recap roster observes its still-visible native frame" \
   "$friction_recap_trigger" "recap"
 tmux wait-for "$friction_recap_channel"
-# source-guard: whole-surface@4cbc280c1601: the dedicated fixture starts empty and the only producer of this sentence is the automatic recap continuation armed directly above
 contains "the recap boundary submits one owned continuation" \
   "$(pane_all recap)" "Your context was just compacted."
 friction_recap_pending="$(tmux show-options -wqv -t "$friction_recap_id" @gl_recap_pending)"

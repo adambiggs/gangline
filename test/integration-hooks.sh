@@ -1852,7 +1852,6 @@ printf '%s' '{"hook_event_name":"Notification","notification_type":"idle_prompt"
 stall_first="$(pane_all stall-target)"
 contains "a native awaiting-input witness reaches the declared target" \
   "$stall_first" "stall: stall-raise is awaiting input (idle_prompt)"
-# source-guard: whole-surface@2ab9e960b128: the Gangline envelope marker is generated only by the accepted stall delivery and is absent from the target fixture's static prompt
 contains "the system-authored stall note is attributed to Gangline" \
   "$stall_first" "[gang:gangline#"
 excludes "a system-authored stall note does not impersonate the raising peer" \
@@ -2639,7 +2638,6 @@ excludes "and delivers nothing into the window it was aimed at" \
 GANG_TEST_NOW="$usage_wake_reset" PATH="$usage_timer_bin:$PATH" \
   "$GANG" wait-limit usage-lit --fire "$usage_wake_reset" \
   --unit "$usage_wake_unit" >/dev/null
-# source-guard: producer@db5579b969d6: the exact body is unique to the pending wake record, and the adjacent empty declaration proves this fire consumed that record through its success path rather than merely finding unrelated transcript text
 contains "the reset wake resumes through attributed verified delivery" \
   "$(pane_all usage-lit)" "Resume the assigned usage-light fixture."
 equal "a fired reset wake retires its tmux declaration" "" \
@@ -2683,7 +2681,6 @@ PATH="$usage_timer_bin:$PATH" "$GANG" wait-limit usage-lit --clear >/dev/null
 usage_race_out="$(GANG_TEST_FIRE_INSIDE="$usage_wake_reset" \
   PATH="$usage_timer_bin:$PATH" "$GANG" wait-limit usage-lit \
   --resume 'RACE_RESUME_BODY reached the agent.' 2>&1)"
-# source-guard: producer@e5814d337b24: the body is unique to this arming, and the emptied declaration asserted beside it is the independent witness that this callback consumed that record rather than that unrelated text is on the screen
 contains "a reset during arming is delivered, not stranded" \
   "$(pane_all usage-lit)" "RACE_RESUME_BODY reached the agent."
 equal "and leaves no declaration promising a wake that already fired" "" \
@@ -2935,7 +2932,6 @@ GANG_TURN_LIMIT="$auto_fire_turn_limit" \
   PATH="$usage_timer_bin:$PATH" \
   "$GANG" wait-limit auto-res --fire "$auto_fire_reset" \
   --unit "$auto_fire_unit" >/dev/null
-# source-guard: producer@8d3690d819ed: the needle is the default wake body, which only a fired wake types, and the emptied declaration asserted immediately below is the independent witness that this fire consumed that record rather than that unrelated text is on the screen
 contains "an auto-armed wake resumes the agent at the reset" \
   "$(pane_all auto-res)" "continue only if work remains"
 equal "and retires the declaration it consumed" "" \
@@ -3308,10 +3304,8 @@ PY
 auto_stream_before="$(pane_all auto-stream)"
 printf '%s' "$auto_stream_notification" |
   TMUX_PANE="$auto_stream_pane" "$GANG" hook >/dev/null
-# source-guard: whole-surface@124ef6746234: the claim is that these rejected native error shapes change no visible producer anywhere in the pane, so the complete unchanged surface is the intended evidence
 equal "a non-API top-level error and a newer sidechain API error submit no continuation" \
   "$auto_stream_before" "$(pane_all auto-stream)"
-# source-guard: producer@52289f6a66f8: auto_stream_notification independently supplies this exact transcript_path through the native payload immediately above
 equal "the Claude hook binds its exact transcript path" \
   "$auto_stream_transcript" \
   "$(tmux show-options -wqv -t "$auto_stream_id" @gl_session)"
@@ -3325,7 +3319,6 @@ JSONL
 printf '%s' "$auto_stream_notification" |
   TMUX_PANE="$auto_stream_pane" "$GANG" hook >/dev/null
 auto_stream_after="$(pane_all auto-stream)"
-# source-guard: producer@c4684922211a: @gl_auto_resume_error is asserted immediately below as the independent native-record witness that this hook produced the continuation
 contains "a structurally failed idle turn receives one continuation" \
   "$auto_stream_after" "A provider stream failure ended the previous turn"
 equal "the error UUID is the once-ever identity" "error-a" \
@@ -3361,7 +3354,6 @@ JSONL
 auto_stream_hop_before="$(pane_all auto-stream)"
 printf '%s' "$auto_stream_notification" |
   TMUX_PANE="$auto_stream_pane" "$GANG" hook >/dev/null
-# source-guard: whole-surface@3d7f5fabf28a: the one-hop claim forbids every new visible producer, so byte-equality of the complete pane is the intended evidence
 equal "a failed automatic continuation is not given a second hop" \
   "$auto_stream_hop_before" "$(pane_all auto-stream)"
 equal "the one-hop refusal closes that error UUID" "error-b" \
@@ -3374,7 +3366,6 @@ contains "roster carries the automatic-resume refusal" \
 auto_stream_hop_repeat="$(pane_all auto-stream)"
 printf '%s' "$auto_stream_notification" |
   TMUX_PANE="$auto_stream_pane" "$GANG" hook >/dev/null
-# source-guard: whole-surface@65b439e89ea7: the duplicate claim forbids every new visible producer, so byte-equality of the complete pane is the intended evidence
 equal "a repeated idle notification cannot retry the same error record" \
   "$auto_stream_hop_repeat" "$(pane_all auto-stream)"
 
@@ -3397,7 +3388,6 @@ JSONL
 auto_stream_unknown_before="$(pane_all auto-stream)"
 printf '%s' "$auto_stream_notification" |
   TMUX_PANE="$auto_stream_pane" "$GANG" hook >/dev/null
-# source-guard: whole-surface@f9b34c016ecf: fail-closed means this event may add no visible producer at all, so the complete unchanged pane is the intended evidence
 equal "unknown prompt ownership never opens another automatic hop" \
   "$auto_stream_unknown_before" "$(pane_all auto-stream)"
 contains "the refused unknown ownership remains operator-visible" \
@@ -4293,7 +4283,6 @@ subframe_id="$(window_id subframe)"
 subframe_pane="$(tmux list-panes -t "$subframe_id" -F '#{pane_id}')"
 paint_frame subframe "$ROOT/test/fixtures/claude-selected-subagent.txt"
 tmux set-option -w -t "$subframe_id" @gl_collar subframe-claude
-# source-guard: producer@379cefca318e: paint_frame returns only after the fixture signalled the barrier it raises once these exact rows are on screen, so the capture is the only producer of this line
 contains "the selected-subagent frame is on screen from the captured rows" \
   "$(pane subframe)" "Count slowly to 400"
 refuses "gang composer names the box as a subagent's rather than reporting none" \
@@ -4337,7 +4326,6 @@ excludes "a verified drain clears the recorded failure" \
   "$subframe_cleared_status" "spool drain NOT verified"
 excludes "and leaves nothing waiting behind it" \
   "$subframe_cleared_status" "spooled:"
-# source-guard: producer@51cf2d717ba9: the only writer of this marker into that pane is the drain under test; the sender parked the body and typed nothing, so its arrival on screen is that drain
 contains "the refused message is what arrived" \
   "$(pane subframe)" "MARK_SUBAGENT_FRAME"
 "$GANG" drop subframe >/dev/null
@@ -4351,7 +4339,6 @@ contains "the refused message is what arrived" \
 parentframe_id="$(window_id parentframe)"
 paint_frame parentframe "$ROOT/test/fixtures/claude-named-composer-parent.txt"
 tmux set-option -w -t "$parentframe_id" @gl_collar subframe-claude
-# source-guard: producer@902434da358b: paint_frame returns only after the fixture signalled the barrier it raises once these exact rows are on screen, so the capture is the only producer of this line
 contains "the titled parent frame is on screen from its captured rows" \
   "$(pane parentframe)" "Gangline probe contract"
 parentframe_composer_rc=0
@@ -4478,7 +4465,6 @@ contains "an expired bracket is still could-not-determine, not idle" \
   "$freeagent_state" "turn-bracket bound reached"
 excludes "and the entry the boundary never came for is gone from the queue" \
   "$("$GANG" status freeagent)" "spooled:"
-# source-guard: producer@63a2c55f7210: the sender parked this body and typed nothing, so the only writer of the marker into that pane is the drain the expiry dispatched
 contains "because the expiry offered the delivery opportunity nobody raised" \
   "$(pane freeagent)" "MARK_EXPIRY_FREE"
 
@@ -4516,7 +4502,6 @@ heldagent_waiter=$!
 wait "$heldagent_waiter"
 contains "an expired bracket over an occupied composer keeps its entry" \
   "$("$GANG" status heldagent)" "spooled: 1"
-# source-guard: whole-surface@4cbcee390303: the claim is that NOTHING wrote to this pane, so every visible byte is the evidence and any producer at all would falsify it
 equal "and the pane is byte-for-byte where it was" \
   "$heldagent_before" "$(pane heldagent)"
 excludes "so nothing of the parked body reached the screen" \

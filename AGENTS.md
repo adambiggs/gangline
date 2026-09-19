@@ -92,7 +92,6 @@ an operator request.
 | `docs/operations.md` | unattended operation and recovery |
 | `CONTRIBUTING.md` | setup, the gate, and commits |
 | `CHANGELOG.md` | release history owned by Release Please; never hand-edit |
-| `docs/benchmarks.md` | external benchmark selection guidance and validity gates |
 
 `AGENTS.md` is canonical for every harness. `CLAUDE.md` imports it.
 Harness-specific repository settings earn a file only when that harness is

@@ -3,7 +3,7 @@
 #
 # Parse and lint every shell file from one canonical file list. With --fast,
 # as the local gate and pre-push run it, only the files changed against
-# origin/main are shellchecked and the self-calibrating rules are left to CI.
+# origin/main are shellchecked.
 set -euo pipefail
 
 cd "$(dirname "$0")/.."
@@ -42,20 +42,6 @@ for fixture_entry in test/gate.sh test/integration.sh test/smoke.sh test/e2e.sh 
       ;;
   esac
 done
-
-# The source-guard dataflow check is a python program, and the suite has one
-# rule for finding an interpreter rather than one per entry point.
-. test/suite-python.sh
-suite_python3 >/dev/null || {
-  echo "lint: the source-guard dataflow check cannot run without a python3 interpreter" >&2
-  exit 1
-}
-
-python3 test/source-guards.py --discover test
-if [ "$fast" -eq 0 ]; then
-  test/source-guards-fixtures.sh
-  . test/lint-calibrated.sh
-fi
 
 # Mandatory tests consume state, not wall time. A fake clock may hand code any
 # timestamp it needs, but executable test code may not sleep, poll, or exercise

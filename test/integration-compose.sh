@@ -156,7 +156,6 @@ fi
   && pass "the lock owner released after lock_pane observed its symlink" \
   || fail "the lock owner released after lock_pane observed its symlink" \
     "the readlink seam never ran"
-# source-guard: producer@ebb53c70c9db: the unique marker is supplied only by the guarded send above, and the seam file independently proves the release occurred inside lock_pane
 contains "the released live lock still delivers exactly once" \
   "$(pane alpha)" "MARK_RELEASE_BETWEEN_L_AND_READLINK"
 [ ! -e "$alpha_delivery_lock" ] \
@@ -262,7 +261,6 @@ contains "composer prints what a human typed" \
 excludes "parking types nothing into the draft" "$(pane 1)" "MARK_DRAFT"
 tmux send-keys -t "$(window_id 1)" C-u
 "$GANG" tick >/dev/null
-# source-guard: whole-surface@550cc2e2558d: the unique body can appear in this fixture pane only after the queued producer is submitted
 contains "a later cooperative tick delivers after the draft clears" \
   "$(pane 1)" "MARK_DRAFT"
 
@@ -366,7 +364,6 @@ rm -f -- "$RUN_ROOT/queue-strand"
 tmux send-keys -t "$(window_id strand)" Enter
 wait "$queue_clear_waiter"
 "$GANG" tick >/dev/null
-# source-guard: whole-surface@eb33ff00ebb7: the unique second body has one queued producer and this tick is its only drain before teardown
 contains "the cooperative tick drains the parked-queue successor once the queue clears" \
   "$(pane_all strand)" "MARK_SECOND"
 "$GANG" drop strand >/dev/null
@@ -1420,11 +1417,9 @@ fi
 equal "a free steering composer accepts a busy send" "0" "$steer_rc"
 contains "the foreground send reports the verified mid-turn handoff" \
   "$steer_out" "collar-declared mid-turn input"
-# source-guard: producer@0a69b90f8810: this send is the sole MARK_STEER producer, and the adjacent claim log independently proves the pane handoff came from its attributed spool
 contains "the claimed mid-turn handoff reaches the target" "$(pane steer)" "MARK_STEER"
 excludes "the verified handoff retires its spool entry" \
   "$("$GANG" status steer)" "spooled:"
-# source-guard: producer@b7771528892a: MARK_STEER has one producer above, and the claim log plus retired spool bind every target-pane occurrence to that one handoff
 equal "the steering handoff submits exactly once" "1" \
   "$(pane steer | grep -o MARK_STEER | wc -l | tr -d ' ')"
 contains "the pane lock is live when the steering entry is read" \
@@ -1480,7 +1475,6 @@ compact_steer_waiter=$!
 printf '%s' '{"hook_event_name":"PostCompact"}' |
   TMUX_PANE="$steer_pane_id" "$GANG" hook >/dev/null
 wait "$compact_steer_waiter"
-# source-guard: producer@96108c54245a: MARK_COMPACT_STEER has one spooled producer, and the completed PostCompact barrier is its only permitted drain
 contains "PostCompact delivers the deferred peer steering once" \
   "$(pane steer)" "MARK_COMPACT_STEER"
 excludes "PostCompact retires the deferred peer spool" \
@@ -1529,10 +1523,8 @@ copy_release_waiter=$!
 printf '%s' '{"hook_event_name":"PostToolUse"}' |
   TMUX_PANE="$steer_pane_id" "$GANG" hook >/dev/null
 wait "$copy_release_waiter"
-# source-guard: producer@9d9ca4a93dff: MARK_COPY_MODE has one spooled producer, and the completed PostToolUse barrier after mode cancellation is its only successful drain
 contains "the next safe native opportunity delivers after copy-mode" \
   "$(pane steer)" "MARK_COPY_MODE"
-# source-guard: producer@11cf7ab17966: the single MARK_COPY_MODE entry was live before the completed release barrier and retired after it, binding every occurrence to one handoff
 equal "that deferred body submits exactly once" "1" \
   "$(pane steer | grep -o MARK_COPY_MODE | wc -l | tr -d ' ')"
 excludes "the deferred copy-mode entry is retired" \
@@ -1553,10 +1545,8 @@ printf '%s' '{"hook_event_name":"PostToolUse"}' |
 wait "$post_tool_waiter"
 equal "PostToolUse leaves the turn record continuously open" "open" \
   "$(tmux show-options -wqv -t "$steer_id" @gl_turn | cut -d' ' -f1)"
-# source-guard: producer@6628b93910fb: MARK_POST_TOOL has one spooled producer and the completed PostToolUse barrier is its only drain
 contains "the open-turn PostToolUse drains the free composer" \
   "$(pane steer)" "MARK_POST_TOOL"
-# source-guard: producer@7af7dd8d2694: the one MARK_POST_TOOL entry is retired beside an open turn only after the completed native barrier, binding every occurrence to that handoff
 equal "the stale-turn-shape handoff submits exactly once" "1" \
   "$(pane steer | grep -o MARK_POST_TOOL | wc -l | tr -d ' ')"
 excludes "and retires its attributed entry" "$("$GANG" status steer)" "spooled:"
@@ -1601,10 +1591,8 @@ wait "$park_only_waiter"
 equal "PostToolUse never reads a park-only composer while its turn is open" "" \
   "$(if [ -e "$RUN_ROOT/park-only-midturn-read" ]; then printf read; fi)"
 rm -f "$RUN_ROOT/park-only-watch"
-# source-guard: producer@a550dad49d99: MARK_PARK_ONLY has one spooled producer and the completed Stop barrier is its only permitted drain
 contains "the park collar drains at the idle boundary" \
   "$(pane park-only)" "MARK_PARK_ONLY"
-# source-guard: producer@f753d5255c86: the one MARK_PARK_ONLY entry cannot drain at PostToolUse and retires only after the completed Stop barrier
 equal "the park-only handoff submits exactly once" "1" \
   "$(pane park-only | grep -o MARK_PARK_ONLY | wc -l | tr -d ' ')"
 "$GANG" drop park-only >/dev/null

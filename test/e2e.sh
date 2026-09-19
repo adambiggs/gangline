@@ -623,7 +623,6 @@ scenario_turn() {
   # The lane never types that string — not in a prompt, not in an envelope, not
   # in the contract — so the only route from the stub to this surface is the
   # harness rendering the answer.
-  # source-guard: whole-surface@234c84c39d32: only the stub emits this numbered prefix and the lane never types it, so any producer that put it on the pane is the harness rendering that completion
   contains "turn: the harness rendered this turn's own completion" \
     "$("$GANG" capture "$AGENT" 200)" "$REPLY_PREFIX $HELD_SEQ"
   stub_sound turn
@@ -787,10 +786,8 @@ scenario_midturn() {
   # with its attribution intact.
   local sent_log
   sent_log="$(requests | grep -- "$token" || true)"
-  # source-guard: producer@7423509e937e: the unique courier token is composed by this scenario's single send, and requests retains only completed agent turns, so the matching line witnesses that delivery
   contains "midturn: the envelope reached the model on the agent's own turn" \
     "$sent_log" "$token"
-  # source-guard: producer@138278c64bc5: the same token-filtered completed agent turn can carry this courier attribution only from the single send above; title and token-count errands are excluded by requests
   contains "midturn: that same turn carried its sender's attribution" \
     "$sent_log" "gang:self-declared:courier"
   # THE ENVELOPE'S OWN TURN HAS TO FINISH TOO, and this is what catches a lane

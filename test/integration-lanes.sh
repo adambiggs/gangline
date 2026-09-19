@@ -530,11 +530,9 @@ SH
     <<<"$reaper_namespace_armed")"
   reaper_watcher_pidns="$(sed -n 's/.*\twatcher-pidns=\([^\t]*\).*/\1/p' \
     <<<"$reaper_namespace_armed")"
-  # source-guard: whole-surface@3388e2a61e37: the armed watcher is the log's only writer before release
   equal "the namespaced parent's watcher is armed from another cgroup" \
     "different" \
     "$([ -n "$reaper_parent_cgroup" ] && [ "$reaper_parent_cgroup" != "$reaper_watcher_cgroup" ] && printf different || printf same)"
-  # source-guard: whole-surface@a6710c760af6: the armed watcher is the log's only writer before release
   equal "and from outside the child PID namespace" "different" \
     "$([ -n "$reaper_parent_pidns" ] && [ "$reaper_parent_pidns" != "$reaper_watcher_pidns" ] && printf different || printf same)"
   tmux -S "$reaper_barrier_socket" wait-for -S reaper-namespace-hold

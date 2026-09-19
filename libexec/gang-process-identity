@@ -92,8 +92,7 @@ def own_pid_namespace() -> int:
     """This reader's pid namespace, from a /proc mounted for its own table: a
     procfs mounted for another namespace would show a different pid for self,
     and every conclusion drawn from it about absence would be about the wrong
-    table. This proves which table /proc shows, not that it lists all of it;
-    proc_view_complete answers that."""
+    table."""
     try:
         nspid = status_fields("/proc/self/status").get("NSpid", [])
         if not nspid or nspid[-1] != str(os.getpid()):
@@ -101,40 +100,6 @@ def own_pid_namespace() -> int:
         return pid_namespace("self")
     except (OSError, UnicodeError) as exc:
         raise UnknownProcess from exc
-
-
-# hidepid modes under which procfs still lists every process of the reader's
-# own uid. ptraceable (4) drops same-uid processes the reader cannot ptrace,
-# so absence there proves nothing.
-COMPLETE_HIDEPID = {"0", "off", "1", "noaccess", "2", "invisible"}
-
-
-def proc_view_complete(mountinfo: str = "/proc/self/mountinfo") -> bool:
-    """Whether the /proc this reader enumerates lists every process of its own
-    uid in its table. Only procfs itself enumerates a pid table, and only
-    without a hidepid mode that filters this user's own entries; anything
-    else at /proc, or no mount there, makes an absent owner unprovable."""
-    try:
-        with open(mountinfo, encoding="utf-8") as stream:
-            lines = stream.read().splitlines()
-    except (OSError, UnicodeError):
-        return False
-    top = None
-    for line in lines:
-        fields = line.split()
-        if len(fields) >= 6 and fields[4] == "/proc":
-            top = fields  # later lines are mounted over earlier ones
-    if top is None or "-" not in top:
-        return False
-    separator = top.index("-")
-    if len(top) < separator + 4 or top[separator + 1] != "proc":
-        return False
-    options = top[5].split(",") + top[separator + 3].split(",")
-    for option in options:
-        key, _, value = option.partition("=")
-        if key == "hidepid" and value not in COMPLETE_HIDEPID:
-            return False
-    return True
 
 
 def linux_locate(pid: int, expected_namespace=None, expected_token=None):
@@ -148,7 +113,7 @@ def linux_locate(pid: int, expected_namespace=None, expected_token=None):
     uid; any other reader cannot see every table, so for it such a record
     stays unresolvable rather than dead."""
     own_namespace = own_pid_namespace()
-    at_root = own_namespace == INIT_PID_NAMESPACE and proc_view_complete()
+    at_root = own_namespace == INIT_PID_NAMESPACE
     if expected_namespace is None:
         same_table = None
         try:

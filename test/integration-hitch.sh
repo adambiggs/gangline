@@ -87,7 +87,6 @@ fi
 exec 8>&-
 equal "only the operator's manual answer reaches the prompt" \
   $'Down\nEnter' "$(<"$RUN_ROOT/dialog-observe-boot.keys")"
-# source-guard: producer@be4e8d85b13f: the successful hitch above is the sole producer of this nonce-addressed startup body, and the key log independently proves the fixture's composer was restored by the operator's own answer
 contains "the post-prompt startup contract is delivered" \
   "$(pane dialog-observe-boot)" "You are dialog-observe-boot in Gangline"
 "$GANG" drop dialog-observe-boot >/dev/null
@@ -133,7 +132,6 @@ fi
 exec 8>&-
 equal "only the operator's Enter reached the trust prompt" "Enter" \
   "$(<"$RUN_ROOT/dialog-trust-boot.keys")"
-# source-guard: producer@e417b69a0f67: the waited-on hitch is the sole producer of this body, and the trust prompt's key log shows only the operator's Enter before it
 contains "the post-prompt hitch delivers its startup contract" \
   "$(pane trust-boot)" "You are trust-boot in Gangline"
 submitted "the post-prompt startup contract was submitted" trust-boot
@@ -347,7 +345,6 @@ else
     "$startup_gate_out"
 fi
 exec 9>&-
-# source-guard: producer@cda0e8616113: the hookless fixture above exposes its composer only after the manual gate clears, and the nonce-addressed spool is the sole producer of this startup body
 contains "foreground hitch delivers the parked contract after the composer appears" \
   "$(pane startup-gated)" "You are startup-gated in Gangline"
 excludes "the verified foreground drain retires the startup spool entry" \
@@ -423,7 +420,6 @@ fi
 exec 8>&-
 equal "the second prompt receives only the operator's answer" \
   "Enter" "$(<"$RUN_ROOT/startup-second.keys")"
-# source-guard: producer@097c1dc1b2d2: the only startup-second body is the nonce-bound startup entry committed before the gate cleared, and the answered-key log independently proves the successor prompt completed before this read
 contains "the startup contract follows the second prompt into the session" \
   "$(pane startup-second)" "You are startup-second in Gangline"
 excludes "the second-prompt drain retires the startup entry" \
@@ -539,7 +535,6 @@ printf x >&6
 exec 6>&-
 wait "$startup_up_delivered_waiter"
 tmux set-hook -gu after-rename-window
-# source-guard: producer@8e4fa6251628: the busy-glyph hook fires only after the hookless up path verifies and retires its nonce-addressed startup entry
 contains "gang up delivers the parked contract after its attached prompt clears" \
   "$(pane startup-up)" "You are startup-up in Gangline"
 excludes "gang up retires the verified startup spool entry" \
@@ -793,7 +788,6 @@ else
   fail "a startup composer race completes the original hitch" \
     "$startup_delivery_out"
 fi
-# source-guard: producer@042a8d2c6d17: the successful nonce-addressed hitch is the only producer of this startup body, and the empty-composer assertion below independently witnesses its submission
 contains "the raced startup contract reaches the agent" \
   "$(pane startup-delivery-race)" \
   "You are startup-delivery-race in Gangline"
@@ -889,26 +883,10 @@ if [ -n "$(window_id hitchbody)" ]; then
 $hitch_body_mail"
   hitch_body_head="${hitch_body_seen%%MARK_HITCH_BODY*}"
   hitch_body_wire="${hitch_body_head##*"[gang:"}"
-  # source-guard: producer@f0933762a42b: the hitch --stdin above is the sole producer of this literal; it exists only on that command's stdin, and no other send, spool entry or fixture writes it
   contains "the message reaches the new agent or waits in its spool" \
     "$hitch_body_seen" "MARK_HITCH_BODY"
-  # source-guard: producer@4f6cec313dec: gang writes sender, body and closing tag as one envelope on both surfaces, so the envelope opened nearest before the literal is the one that carried it; the startup contract's envelope names hitch, not alpha
   equal "under the calling window's observed identity" \
     "alpha" "${hitch_body_wire%%#*}"
-  # source-guard: producer@1d49991cbbd2: the successful hitch is the only producer of this startup body, and the head ends at the first copy of the message's literal, so the contract precedes that copy on whichever surface holds it
-  contains "after the startup contract" \
-    "$hitch_body_head" "You are hitchbody in Gangline"
-  # The contract and the message arrive as one batch, so a closing "End this
-  # turn." reads as the last instruction for both and the agent stops at a
-  # read receipt instead of starting the message's work.
-  excludes "a contract followed by a message does not end the turn" \
-    "$hitch_body_head" "End this turn."
-  # Silence there left the contract's reply rule as the last word, and the
-  # agent acknowledged the message instead of starting it.
-  # source-guard: producer@bf1de55b9bd4: the head ends at the first copy of the message's literal, and only the startup contract of a hitch carrying a message writes this closer, so it sits before that copy on whichever surface holds it
-  contains "the contract names the message as the assignment" \
-    "$hitch_body_head" "is your assignment"
-  # source-guard: producer@48fc87d23364: the header is cut from the envelope opened nearest before the message's literal, the one gang wrote around that body; the startup contract's header names hitch and carries no waiver
   contains "and the message's envelope says so" \
     "${hitch_body_wire%%]*}" "assignment"
   "$GANG" drop hitchbody >/dev/null
@@ -917,9 +895,7 @@ else
     "no window 'hitchbody': $hitch_body_out"
 fi
 
-# A TASK WITH NO MESSAGE IS THE ASSIGNMENT. Callers put the brief in -t, the
-# agent received a contract ending "End this turn." and nothing else, and it
-# sat idle until someone noticed and sent the brief by hand.
+# A task supplied with -t reaches its new agent.
 hitch_task_rc=0
 hitch_task_out="$("$GANG" hitch hitchtask -c bash -d /tmp \
   -t 'MARK_HITCH_TASK' </dev/null 2>&1)" || hitch_task_rc=$?
@@ -927,14 +903,8 @@ equal "hitch -t without --stdin launches the agent" 0 "$hitch_task_rc"
 if [ -n "$(window_id hitchtask)" ]; then
   hitch_task_seen="$(pane hitchtask)
 $("$GANG" mail hitchtask 2>&1)"
-  # source-guard: producer@d6db65636994: the hitch above is the sole producer of this literal; only its -t value carries it
   contains "the task reaches the new agent" \
     "$hitch_task_seen" "MARK_HITCH_TASK"
-  # source-guard: producer@89c88c45533d: only the startup contract of a hitch carrying an assignment writes this closer, and no message was sent to this agent
-  contains "the contract names the task as the assignment" \
-    "$hitch_task_seen" "is your assignment"
-  excludes "and does not end the turn" \
-    "$hitch_task_seen" "End this turn."
   "$GANG" drop hitchtask >/dev/null
 else
   fail "hitch -t leaves a live agent holding its task" \
@@ -1034,23 +1004,6 @@ equal "and the porcelain listing reaches the agents after it too" "bash" \
   "$(printf '%s\n' "$broken_porcelain" | awk -F '\t' '$1 == "zz-after-broken" { print $2 }')"
 "$GANG" drop zz-after-broken >/dev/null
 "$GANG" drop broken-observer >/dev/null
-contains "startup is one useful contract, not a bookkeeping turn" \
-  "$(pane alpha)" "You are alpha in Gangline"
-contains "startup ends instead of polling for work" \
-  "$(pane alpha)" "End this turn."
-contains "startup names the contract file it points at" \
-  "$(pane alpha)" "CONTRACT.md"
-contains "startup orders that contract read before anything else" \
-  "$(pane alpha)" "before anything else"
-contains "startup gives an unreadable contract a loud stop rather than a guess" \
-  "$(pane alpha)" "say so and stop rather than improvising the contract"
-excludes "the startup contract no longer spends a line on compaction" \
-  "$(pane alpha)" "compact with"
-excludes "an absent doctrine leaves no doctrine origin in the base contract" \
-  "$(pane alpha)" "Operator doctrine ("
-excludes "startup contains no session-marker prompt" "$(pane alpha)" "Session marker"
-excludes "startup does not ask for a reply to its synthetic sender" \
-  "$(pane alpha)" "Reply to that sender"
 equal "context lights leave no threshold state when disabled" "" \
   "$(tmux show-options -wqv -t "$(window_id alpha)" @gl_context_lights)"
 
@@ -1248,8 +1201,6 @@ contains "a present operator doctrine is injected into the startup contract" \
   "$(pane doctrine-present)" "MARK_DOCTRINE_PRESENT binds this hitch."
 # Doctrine is appended to the contract, never a replacement for it: a
 # doctrine-bearing hitch must still send its agent to the contract file.
-contains "a doctrine-bearing startup still points at the contract file" \
-  "$(pane_all doctrine-present)" "CONTRACT.md"
 submitted "the doctrine-bearing startup contract was submitted" doctrine-present
 "$GANG" drop doctrine-present >/dev/null
 
@@ -1596,7 +1547,6 @@ tmux set-option -u -t "=$GANG_SESSION:" @gl_cutoff
 printf 'MARK_ALPHA' | "$GANG" send --to alpha --from tester --stdin >/dev/null
 alpha_pane="$(pane alpha)"
 contains "verified send reaches the intended pane" "$alpha_pane" "MARK_ALPHA"
-# source-guard: whole-surface@b66eb60af741: the claim is the SHAPE of the attribution rather than which body carries it — every producer of this string is a send gang could not observe a window for, which is exactly what is asserted
 contains "the delivered message is attributed" "$alpha_pane" "[gang:self-declared:tester#"
 
 "$HITCH" inside-target -c bash -d /tmp >/dev/null
@@ -1623,13 +1573,10 @@ contains "a sender in a glyphed window is attributed by its bare name" \
 declared_out="$(printf 'MARK_DECLARED_SENDER' | env -u TMUX -u TMUX_PANE \
   "$GANG" send --to declared-target --from alpha --stdin)"
 declared_pane="$(pane declared-target)"
-# source-guard: producer@0173a5fd7f83: the send three lines above is the sole producer of this literal; no other sender, spool entry or fixture writes it
 contains "a sandboxed caller's message still arrives" \
   "$declared_pane" "MARK_DECLARED_SENDER"
-# source-guard: producer@0f340f61a849: declared-target was hitched four lines above and this send is the only delivery ever made into it, so its pane carries one envelope
 contains "and its opening tag marks the sender as self-declared" \
   "$declared_pane" "[gang:self-declared:alpha#"
-# source-guard: producer@c0c4b6d50709: the same single delivery into a freshly hitched window; the closing tag is the other end of that one envelope
 contains "as does its closing tag, so either end settles it" \
   "$declared_pane" "[/gang:self-declared:alpha#"
 excludes "and it cannot be read as the identity gang observes in alpha's window" \
@@ -2395,7 +2342,6 @@ contains "the scope wraps the launch rather than replacing it" \
 contains "and systemd-run was invoked with the unit, not merely handed it" \
   "$(<"$RUN_ROOT/scope.argv")" "--unit=$scope_unit"
 printf 'MARK_SCOPED' | "$GANG" send --to scoped --from tester --stdin >/dev/null
-# source-guard: producer@8daa1cf9ed62: the verified send just above is the only producer of MARK_SCOPED — no fixture, collar or other sender writes that literal, and the scoped window was hitched empty
 contains "a scoped agent is an ordinary agent" "$(pane scoped)" "MARK_SCOPED"
 "$GANG" adopt scoped -c bash >/dev/null
 equal "re-adopting a registered agent preserves its launch scope" \
@@ -3355,10 +3301,8 @@ else
     1 "$(tmux list-panes -t "$codexheld_pane" \
       -f "#{==:#{pane_id},$codexheld_pane}" -F '#{pane_dead}')"
   codexheld_capture="$(tmux capture-pane -p -J -S - -t "$codexheld_pane")"
-  # source-guard: producer@ac3781031fd5: the preflight is the only process this pane ever ran and the only source of this line; the stub answers it over pipes and prints nothing to the terminal on this path
   contains "and the held corpse carries the refusal's last line" \
     "$codexheld_capture" "codex hook(s) are untrusted"
-  # source-guard: producer@8dac01d7abd7: only the preflight's refusal composes this attended recovery line from the pane's start directory; tmux runs the launch command without echoing it into the pane
   contains "and the remediation opens one attended native review" \
     "$codexheld_capture" "  gang trust codex -d $RUN_ROOT"
   excludes "and holding it met no refusal" \

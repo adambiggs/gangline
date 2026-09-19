@@ -74,7 +74,6 @@ equal "the attended trust launch clears tmux's implicit server route" \
   unset "$(<"$trust_tmux_env")"
 equal "the attended trust launch supplies hooks the recorded team route" \
   "$GANG_SESSION" "$(<"$trust_session")"
-# source-guard: producer@06ad90b31a3a: the fixture codex wrapper is the only process this window runs and it prints the native-menu sentinel before signalling the test barrier
 contains "the attended window carries Codex's native hook-review prompt" \
   "$trust_capture" "Hooks need review"
 contains "the attended trust launch retains the SessionStart hook" \

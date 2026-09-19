@@ -9,7 +9,6 @@ import sys
 
 
 DEFAULT_DEADLINE_SECONDS = 60
-MAX_DEADLINE_SECONDS = 3600
 DEADLINE_SECONDS = DEFAULT_DEADLINE_SECONDS
 NANOSECONDS_PER_SECOND = 1_000_000_000
 CLOCK_HELPER_SECONDS = 1.0
@@ -97,25 +96,7 @@ def main() -> int:
         print("gang tick deadline: clock helper is not an executable absolute path", file=sys.stderr)
         return 2
 
-    # The budget is the operator's GANG_TICK_DEADLINE, handed down by the
-    # command that validated it; the worker checks the exported number against
-    # the same setting, so no caller can run it under a budget nobody enforces.
-    # The worker does shell arithmetic on these seconds, where a leading zero
-    # would read as octal, so one is refused here as well.
-    configured = os.environ.get("GANG_TICK_DEADLINE", str(DEFAULT_DEADLINE_SECONDS))
-    if (
-        not configured.isascii()
-        or not configured.isdigit()
-        or configured.startswith("0")
-        or not DEFAULT_DEADLINE_SECONDS <= int(configured, 10) <= MAX_DEADLINE_SECONDS
-    ):
-        print(
-            f"gang tick deadline: GANG_TICK_DEADLINE must be a whole number of seconds"
-            f" from {DEFAULT_DEADLINE_SECONDS} to {MAX_DEADLINE_SECONDS}, got '{configured}'",
-            file=sys.stderr,
-        )
-        return 2
-    DEADLINE_SECONDS = int(configured, 10)
+    DEADLINE_SECONDS = int(os.environ["GANG_TICK_DEADLINE"], 10)
 
     for caught in (signal.SIGHUP, signal.SIGINT, signal.SIGTERM, signal.SIGALRM):
         signal.signal(caught, handle_signal)

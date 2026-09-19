@@ -54,17 +54,14 @@ contains "explain distinguishes a collar with no root probe" \
 # never acquire a state-notification transition on its own.
 printf '%s' '{"hook_event_name":"Notification","notification_type":"idle_prompt"}' \
   | GANG_TEST_TICK_MODE=manual TMUX_PANE="$state_raise_pane" "$GANG" hook >/dev/null
-# source-guard: whole-surface@cf1c726b28e0: the state-alert wording is generated only by the new transition delivery and is absent from the fixture's static shell prompt
 excludes "ordinary idle_prompt does not claim the agent is blocked" \
   "$(pane_all state-lead)" "state-raise is blocked"
 
 printf '%s' yes > "$RUN_ROOT/state-notify-blocked"
 printf '%s' '{"hook_event_name":"Notification","notification_type":"idle_prompt"}' \
   | GANG_TEST_TICK_MODE=manual TMUX_PANE="$state_raise_pane" "$GANG" hook >/dev/null
-# source-guard: whole-surface@cf1c726b28e0: the blocked transition body is unique to the state-notification producer and the target pane can only receive it through attributed delivery
 contains "a qualified idle wake forwards a blocked transition to the lead" \
   "$(pane_all state-lead)" "state-raise is blocked"
-# source-guard: whole-surface@fc823991b6c2: Gangline's envelope attribution is rendered only after the state-transition delivery reaches this target pane
 contains "the automatic blocked transition is attributed to Gangline" \
   "$(pane_all state-lead)" "[gang:gangline#"
 excludes "an automatic transition does not impersonate its raising peer" \
@@ -78,7 +75,6 @@ if [ "$state_blocked_count" -eq 0 ]; then
   fail "a blocked transition exists before duplicate suppression is measured" \
     "no first transition body was delivered"
 else
-  # source-guard: whole-surface@7a7fc386b318: the count is taken from the one lead pane whose only producer of this phrase is the source's attributed blocked transition
   equal "one native wake transition does not duplicate its blocked note" \
     "$state_blocked_count" \
     "$(pane_all state-lead | grep -oF 'state-raise is blocked' | wc -l | tr -d ' ')"
@@ -92,7 +88,6 @@ printf '%s' '{"hook_event_name":"UserPromptSubmit"}' \
 printf '%s' yes > "$RUN_ROOT/state-notify-blocked"
 printf '%s' '{"hook_event_name":"Notification","notification_type":"idle_prompt"}' \
   | GANG_TEST_TICK_MODE=manual TMUX_PANE="$state_raise_pane" "$GANG" hook >/dev/null
-# source-guard: whole-surface@161b8e483516: the repeated occurrence count is valid only because the source fixture alone can deliver this agent-specific blocked phrase to the lead pane
 equal "a recovered then newly blocked agent raises a new transition" \
   "$(( state_blocked_count + 1 ))" \
   "$(pane_all state-lead | grep -oF 'state-raise is blocked' | wc -l | tr -d ' ')"
@@ -100,7 +95,6 @@ equal "a recovered then newly blocked agent raises a new transition" \
 printf '%s' yes > "$RUN_ROOT/state-notify-bricked"
 printf '%s' '{"hook_event_name":"Notification","notification_type":"idle_prompt"}' \
   | GANG_TEST_TICK_MODE=manual TMUX_PANE="$state_raise_pane" "$GANG" hook >/dev/null
-# source-guard: whole-surface@45e4631ce0f5: the fatal state phrase is emitted only by the qualified state-notification path for this source fixture
 contains "the same qualified wake forwards a bricked transition" \
   "$(pane_all state-lead)" "state-raise is bricked"
 state_unusable_tick_rc=0
@@ -138,7 +132,6 @@ if [[ "$state_lead_busy_status" == *"spooled:"* ]]; then
   printf '%s' '{"hook_event_name":"Stop"}' \
     | GANG_TEST_TICK_MODE=manual TMUX_PANE="$state_lead_pane" "$GANG" hook >/dev/null
   wait "$state_lead_drain_waiter"
-  # source-guard: whole-surface@07b669188430: the nonce-free transition body still originates solely in the source fixture and appears here only after the asserted spool drain
   contains "the parked blocked transition drains at the lead's verified boundary" \
     "$(pane_all state-lead)" "state-raise is blocked"
 else
@@ -167,7 +160,6 @@ GANG_TEST_TICK_MODE=manual "$GANG" tick \
   > "$RUN_ROOT/state-return-tick.out" 2>&1 || state_return_tick_rc=$?
 equal "a retained blocked transition keeps tick health failed" 1 \
   "$state_return_tick_rc"
-# source-guard: whole-surface@b0439db65780: this target did not exist at the native wake, so its only route to the historical alert is the tick's retained pending transition
 contains "a tick delivers the original transition after the lead returns" \
   "$(pane_all state-returned)" "state-return is blocked"
 equal "an accepted reconciliation retires the pending transition" "" \
@@ -183,7 +175,6 @@ if [ "$state_return_count" -eq 0 ]; then
   fail "a reconciled transition exists before repeated ticks are measured" \
     "no reconciled transition body was delivered"
 else
-  # source-guard: whole-surface@e2da1b0fcafe: only the retained state-note transition can add this exact phrase to the returned target's pane across repeated ticks
   equal "repeated ticks do not duplicate a returned-lead transition" \
     "$state_return_count" \
     "$(pane_all state-returned | grep -oF 'state-return is blocked' | wc -l | tr -d ' ')"
@@ -213,7 +204,6 @@ equal "the retained death is settled before reconciliation reads it" 1 \
   "$(tmux display-message -p -t "$state_dead_pane" '#{pane_dead}')"
 "$GANG" notify state-lead >/dev/null
 GANG_TEST_TICK_MODE=manual "$GANG" tick >/dev/null
-# source-guard: whole-surface@0eb1c792c6ce: only the dead-state transition producer names this unique agent as dead, whether the fast hook or the reconciler won
 contains "pane death reaches the lead no later than the next tick" \
   "$(pane_all state-lead)" "state-dead is dead"
 state_dead_count="$(pane_all state-lead | grep -oF 'state-dead is dead' | wc -l | tr -d ' ' || true)"
@@ -222,7 +212,6 @@ if [ "$state_dead_count" -eq 0 ]; then
   fail "a pane-death transition exists before hook and tick are compared" \
     "no pane-death transition body was delivered"
 else
-  # source-guard: whole-surface@1bf0a334df38: the count covers a phrase emitted solely by the one dead transition, so a second path can only be detected as a duplicate occurrence
   equal "the pane-died hook and tick share one dead transition" \
     "$state_dead_count" \
     "$(pane_all state-lead | grep -oF 'state-dead is dead' | wc -l | tr -d ' ')"
@@ -312,7 +301,6 @@ PY
     "$("$GANG" status state-codex)" "!harness-lost!"
   contains "explain distinguishes a lost identity from unavailable coverage" \
     "$("$GANG" explain state-codex)" "harness identity: lost"
-  # source-guard: whole-surface@bfeb5778c372: only the liveness reconciliation can send this agent-specific harness-lost body into the declared lead pane
   contains "a lost root process notifies the lead through reconciliation" \
     "$(pane_all state-lead)" "state-codex is harness-lost"
   state_lost_count="$(pane_all state-lead | grep -oF 'state-codex is harness-lost' | wc -l | tr -d ' ' || true)"
@@ -321,7 +309,6 @@ PY
     fail "a lost-root transition exists before repeated ticks are measured" \
       "no harness-lost transition body was delivered"
   else
-    # source-guard: whole-surface@aa79ce5c02fe: only the persisted lost transition can add this phrase to the lead pane during a repeated reconciliation pass
     equal "a persistent lost root does not notify once per tick" "$state_lost_count" \
       "$(pane_all state-lead | grep -oF 'state-codex is harness-lost' | wc -l | tr -d ' ')"
   fi

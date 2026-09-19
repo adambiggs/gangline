@@ -110,17 +110,13 @@ else
   fail "talk sends through the ordinary verified delivery path" \
     "$(tmux capture-pane -pt "$talk_pane")"
 fi
-# source-guard: whole-surface@e0ed4860e2f7: the terminal output is produced only by the talk invocation above, and the fresh disposable pane has no earlier output
 contains "talk's happy path prints the verified delivery verdict" \
   "$(tmux capture-pane -pt "$talk_pane")" "delivered to alpha as [gang:self-declared:operator]"
 excludes "deliberate talk flags add no warning to its happy path" \
   "$(tmux capture-pane -pt "$talk_pane")" "WARNING:"
-# source-guard: whole-surface@38b579e98109: the just-submitted talk body is the only new producer in alpha's pane, and the empty-composer assertion below independently witnesses submission
 contains "talk records its external human sender distinctly" \
   "$(pane alpha)" "[gang:self-declared:operator#"
-# source-guard: whole-surface@ac197782d7b9: the just-submitted talk body is the only new producer in alpha's pane, and the empty-composer assertion below independently witnesses submission
 contains "talk preserves the editor's first line" "$(pane alpha)" "MARK_TALK_FIRST"
-# source-guard: whole-surface@e6d25106a01c: the just-submitted talk body is the only new producer in alpha's pane, and the empty-composer assertion below independently witnesses submission
 contains "talk preserves the editor's second line" "$(pane alpha)" "MARK_TALK_SECOND"
 submitted "talk leaves the recipient's composer submitted" alpha
 tmux kill-window -t "$talk_pane"
@@ -1119,7 +1115,6 @@ else
   contains "the unregistered target refusal names adoption as the repair" \
     "$residue_target_out" "not a registered Gangline agent"
 fi
-# source-guard: whole-surface@f8a9746a76b8: a refused target must leave every visible pane byte unchanged regardless of producer
 equal "the unregistered target receives no message bytes" \
   "$residue_target_before" "$(pane residue-recovery)"
 refuses "collar residue without @gl_agent cannot send under a bare window name" \
@@ -1234,7 +1229,6 @@ else
   fail "delivery resolves the new identity immediately" \
     "send refused the agent under its renamed registration"
 fi
-# source-guard: producer@abe569643758: the successful send immediately above is the only producer of RENAMED_REACHES in this run
 contains "and the renamed target receives that message" \
   "$(tmux capture-pane -pJ -t "$registered_name_id")" "RENAMED_REACHES"
 # Teardown, not an assertion: a resolver that cannot find this window by its
@@ -1559,7 +1553,6 @@ for dialog_case in known trust; do
     "$(<"$RUN_ROOT/dialog-$dialog_case.park")" "is occupied (authority unknown)"
   equal "no key reached the $dialog_case menu through any of it" "" \
     "$(<"$RUN_ROOT/dialog-$dialog_case.keys")"
-  # source-guard: whole-surface@386affb9ca58: the claim is that NOTHING wrote to this pane, so every visible byte is the evidence and any producer would falsify it
   equal "and the $dialog_case menu is byte-for-byte where it was" \
     "$dialog_before" "$(pane "dialog-$dialog_case")"
   excludes "and no part of either body reached the screen" \
@@ -1659,7 +1652,6 @@ else
   fail "a collar declaring an authority-shaped legacy record loads" \
     "$dialog_external_load"
 fi
-# source-guard: whole-surface@9e916c8be644: the only thing that ever writes to this pane is the fixture painting the restored capture, so any producer of this line on it is that capture reaching the screen — which is the whole claim
 contains "the captured harness frame is what is on screen" \
   "$(pane dialog-external)" "Yes, allow external imports"
 equal "and the shipped Claude occupancy regex reads it as occupancy" \
@@ -1699,7 +1691,6 @@ dialog_await dialog-auto-nux ready
 tmux set-option -w -t "$(window_id dialog-auto-nux)" @gl_collar dialog-claude
 # A POSITIVE SCREEN WITNESS before the state assertion: dialog_start returns
 # only after the fixture has painted and signalled its native-ready barrier.
-# source-guard: producer@ac863bc3ccf6: dialog_start waits on the fixture signal sent only after this capture has been painted from the nominated file
 contains "the auto-mode NUX is painted over the fixture composer" \
   "$(pane dialog-auto-nux)" "Teach auto mode about your environment?"
 equal "the hookless NUX over a composer is occupied rather than idle" \

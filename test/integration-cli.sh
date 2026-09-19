@@ -1403,7 +1403,6 @@ equal "an unrelated captured dialog sharing no copy is recognised too" "1" \
 claude_narrow_band="$(tmux capture-pane -pJ -t "=$claude_narrow_session:narrow" \
   | sed -n '1p' | tr -cd '▔' | wc -m)"
 claude_captured_band="$(sed -n '1p' "$claude_nux_capture" | tr -cd '▔' | wc -m)"
-# source-guard: whole-surface@190aa57aa71c: this window is a session created two lines above whose single command paints one file this case wrote, so every row on the pane has the same producer and there is no second writer a reading could be confused between; the claim is about how much of that one painting the pane width left on screen, not about who drew any row of it
 equal "the narrow pane leaves only a remainder of the band on screen" "1" \
   "$([ "$claude_narrow_band" -gt 0 ] \
     && [ "$claude_narrow_band" -lt "$claude_captured_band" ] && printf 1 || printf 0)"
@@ -1595,7 +1594,6 @@ claude_brick_read="$(CLAUDE_TRANSCRIPT="$claude_brick_transcript" ROOT="$ROOT" \
     tmux() { printf "%s" "$CLAUDE_TRANSCRIPT"; }
     collar_bricked fixture
   ' fixture "$claude_collar")"
-# source-guard: producer@1eee9490261d: the exact transcript fixture independently supplies the newest top-level model_not_found record, followed only by records the native transcript marks non-semantic and one incomplete append
 equal "Claude keeps fatal model evidence across non-turn records and an in-flight append" \
   "selected model 'opus-5' was rejected (model_not_found)" "$claude_brick_read"
 
@@ -1611,7 +1609,6 @@ claude_recovery_read="$(CLAUDE_TRANSCRIPT="$claude_recovery_transcript" ROOT="$R
     output="$(collar_bricked fixture)"; rc=$?
     printf "%s\t%s" "$rc" "$output"
   ' fixture "$claude_collar")"
-# source-guard: producer@99fb655af212: the fixture supplies a real string-content user turn newer than the fatal assistant record
 equal "a real newer Claude user turn clears older fatal model evidence" \
   $'1\t' "$claude_recovery_read"
 
@@ -1627,7 +1624,6 @@ claude_malformed_read="$(CLAUDE_TRANSCRIPT="$claude_malformed_transcript" ROOT="
     output="$(collar_bricked fixture)"; rc=$?
     printf "%s\t%s" "$rc" "$output"
   ' fixture "$claude_collar")"
-# source-guard: producer@70b77ad72519: the fixture supplies a newline-terminated malformed record newer than the fatal assistant record
 equal "a complete malformed Claude record remains loud unknown evidence" \
   $'2\tbound Claude transcript is unreadable' "$claude_malformed_read"
 
@@ -1649,7 +1645,6 @@ claude_blocked_read="$(CLAUDE_TRANSCRIPT="$claude_blocked_transcript" ROOT="$ROO
     output="$(collar_blocked fixture)"; rc=$?
     printf "%s\t%s" "$rc" "$output"
   ' fixture "$claude_collar")"
-# source-guard: producer@5f3f4d796f76: this fixture alone puts a newest top-level API-error record, of a class the fatal reader does not own, at the tail
 equal "Claude reports a turn that ended on an unowned API error as blocked" \
   $'0\tClaude Code ended the latest turn on an API error (invalid_request)' \
   "$claude_blocked_read"
@@ -1661,7 +1656,6 @@ claude_blocked_not_bricked="$(CLAUDE_TRANSCRIPT="$claude_blocked_transcript" ROO
     output="$(collar_bricked fixture)"; rc=$?
     printf "%s\t%s" "$rc" "$output"
   ' fixture "$claude_collar")"
-# source-guard: producer@ac6db7d11c77: the same fixture holds an API-error class that only the blocked reader claims
 equal "a blocked turn is not reported as a fatal one" $'1\t' \
   "$claude_blocked_not_bricked"
 
@@ -1678,7 +1672,6 @@ claude_unnamed_read="$(CLAUDE_TRANSCRIPT="$claude_unnamed_transcript" ROOT="$ROO
     output="$(collar_blocked fixture)"; rc=$?
     printf "%s\t%s" "$rc" "$output"
   ' fixture "$claude_collar")"
-# source-guard: producer@ca5777110662: this fixture alone holds an API-error record carrying no error name at all
 equal "an API error the harness does not name is still blocked" \
   $'0\tClaude Code ended the latest turn on an API error it did not name' \
   "$claude_unnamed_read"
@@ -1694,7 +1687,6 @@ claude_blocked_model_read="$(CLAUDE_TRANSCRIPT="$claude_blocked_model_transcript
     output="$(collar_blocked fixture)"; rc=$?
     printf "%s\t%s" "$rc" "$output"
   ' fixture "$claude_collar")"
-# source-guard: producer@69b9342fd9a4: this fixture holds the selected-model failure class the fatal reader owns and the blocked reader must decline
 equal "the blocked reader declines a class the fatal reader owns" $'1\t' \
   "$claude_blocked_model_read"
 
@@ -1710,7 +1702,6 @@ claude_blocked_recovery_read="$(CLAUDE_TRANSCRIPT="$claude_blocked_recovery_tran
     output="$(collar_blocked fixture)"; rc=$?
     printf "%s\t%s" "$rc" "$output"
   ' fixture "$claude_collar")"
-# source-guard: producer@69c8884c0369: this fixture holds a real string-content user turn newer than the blocking API-error record
 equal "a real newer Claude user turn clears older blocking evidence" $'1\t' \
   "$claude_blocked_recovery_read"
 
@@ -1726,7 +1717,6 @@ claude_blocked_malformed_read="$(CLAUDE_TRANSCRIPT="$claude_blocked_malformed_tr
     output="$(collar_blocked fixture)"; rc=$?
     printf "%s\t%s" "$rc" "$output"
   ' fixture "$claude_collar")"
-# source-guard: producer@bf97e61b3b9f: this fixture holds a newline-terminated malformed record newer than the blocking API-error record
 equal "a complete malformed Claude record is unknown rather than blocked" \
   $'2\tbound Claude transcript is unreadable' "$claude_blocked_malformed_read"
 
@@ -1741,7 +1731,6 @@ claude_auto_fatal="$(CLAUDE_TRANSCRIPT="$claude_auto_fatal_transcript" ROOT="$RO
     output="$(collar_auto_resume_record fixture idle_prompt)"; rc=$?
     printf "%s\t%s" "$rc" "$output"
   ' fixture "$claude_collar")"
-# source-guard: producer@a38d42d05df7: the fixture supplies a complete fatal error record with an otherwise resumable UUID
 equal "Claude auto-resume refuses selected-model failures" $'1\t' \
   "$claude_auto_fatal"
 
@@ -1760,7 +1749,6 @@ claude_auto_tail_read="$(CLAUDE_TRANSCRIPT="$claude_auto_tail_transcript" ROOT="
     tmux() { printf "%s" "$CLAUDE_TRANSCRIPT"; }
     collar_auto_resume_record fixture idle_prompt
   ' fixture "$claude_collar")"
-# source-guard: producer@973709e65fa5: the fixture uniquely supplies latest-auto-error on its newest complete assistant, while the older non-object and unfinished suffix independently make a byte-zero or in-flight parse fail
 equal "Claude auto-resume reads only the newest relevant complete tail" \
   "latest-auto-error" "$claude_auto_tail_read"
 
@@ -1779,7 +1767,6 @@ claude_auto_bad_tail="$(CLAUDE_TRANSCRIPT="$claude_auto_bad_tail_transcript" ROO
     output="$(collar_auto_resume_record fixture idle_prompt)"; rc=$?
     printf "%s\t%s" "$rc" "$output"
   ' fixture "$claude_collar")"
-# source-guard: producer@8ae53ae485d5: the fixture's sole unreadable complete record is the malformed append after an otherwise resumable assistant, so status 2 witnesses that newer tail
 equal "Claude auto-resume keeps a malformed complete tail loud" \
   $'2\t' "$claude_auto_bad_tail"
 
@@ -1795,7 +1782,6 @@ claude_retry_read="$(CLAUDE_TRANSCRIPT="$claude_retry_transcript" ROOT="$ROOT" \
     output="$(collar_bricked fixture)"; rc=$?
     printf "%s\t%s" "$rc" "$output"
   ' fixture "$claude_collar")"
-# source-guard: producer@15da07e96e08: the exact transcript fixture independently supplies the newest top-level transient rate-limit record
 equal "Claude's transient rate-limit record is not fatal model evidence" \
   $'1\t' "$claude_retry_read"
 
@@ -1819,7 +1805,6 @@ claude_529_read="$(CLAUDE_TRANSCRIPT="$claude_529_transcript" ROOT="$ROOT" \
     tmux() { printf "%s" "$CLAUDE_TRANSCRIPT"; }
     collar_bricked fixture
   ' fixture "$claude_collar")"
-# source-guard: producer@c83f29d35b38: the fixture supplies the native terminal assistant record whose exact error/status pair the collar reads
 equal "Claude surfaces a terminal HTTP 529 turn" \
   "Claude Code ended the latest turn on HTTP 529 (server_error)" "$claude_529_read"
 
@@ -1834,7 +1819,6 @@ claude_other_server_error_read="$(CLAUDE_TRANSCRIPT="$claude_other_server_error_
     output="$(collar_bricked fixture)"; rc=$?
     printf "%s\\t%s" "$rc" "$output"
   ' fixture "$claude_collar")"
-# source-guard: producer@0bafed54f094: the fixture differs from the native 529 record only in apiErrorStatus, so absence is evidence that the collar did not generalize server_error
 equal "other Claude server errors remain nonfatal" \
   $'1\t' "$claude_other_server_error_read"
 
@@ -1866,7 +1850,6 @@ PY
     printf "%s\t%s\t%s\t%s" "$fatal_rc" "$fatal" "$blocked_rc" "$blocked"
   ' fixture "$claude_collar"
 }
-# source-guard: the fixture is the native terminal assistant record, built from
 # the observed field set rather than from any pane rendering of it
 for claude_stream_text in \
   "API Error: The response stopped arriving. The response above may be incomplete." \
@@ -1885,7 +1868,6 @@ claude_stream_with_status="$RUN_ROOT/claude-stream-with-status.jsonl"
 cat > "$claude_stream_with_status" <<'JSONL'
 {"type":"assistant","isSidechain":false,"isApiErrorMessage":true,"error":"server_error","apiErrorStatus":503,"message":{"content":[{"type":"text","text":"API Error: The response stopped arriving. The response above may be incomplete."}]}}
 JSONL
-# source-guard: producer@3de10462a30f: the fixture is the native record built here, and the reader is driven with the transcript path as its only input
 equal "the same sentence with an HTTP status is not the stream verdict" \
   $'1\t' \
   "$(CLAUDE_TRANSCRIPT="$claude_stream_with_status" ROOT="$ROOT" GANG_CONTEXT_LIGHTS=off bash -c '
@@ -1902,7 +1884,6 @@ cat > "$claude_stream_recovered" <<'JSONL'
 {"type":"assistant","isSidechain":false,"isApiErrorMessage":true,"error":"server_error","message":{"content":[{"type":"text","text":"API Error: The response stopped arriving. The response above may be incomplete."}]}}
 {"type":"user","isSidechain":false,"message":{"role":"user","content":"continue"}}
 JSONL
-# source-guard: producer@7084e8a7e4ed: the fixture is the native record pair built here, and the reader is driven with the transcript path as its only input
 equal "a real turn after a broken stream clears the old terminal verdict" \
   $'1\t' \
   "$(CLAUDE_TRANSCRIPT="$claude_stream_recovered" ROOT="$ROOT" GANG_CONTEXT_LIGHTS=off bash -c '
@@ -1992,7 +1973,6 @@ codex_action_read() { # $1 = rollout path
 }
 for codex_action_family in function_call custom_tool_call local_shell_call; do
   codex_action_rollout="$RUN_ROOT/codex-action-$codex_action_family.jsonl"
-  # source-guard: the fixture is the native rollout record shape — a
   # response_item envelope with its own timestamp and a payload naming the call
   printf '{"type":"response_item","timestamp":"2026-08-24T10:00:00.000Z","payload":{"type":"%s"}}\n' \
     "$codex_action_family" > "$codex_action_rollout"
@@ -2624,10 +2604,8 @@ guard_refuses "a teardown after a command separator is refused" \
 contains "a refusal names what it refused" "$guard_out" \
   "gang tmux guard: REFUSED kill-server"
 guard_log="$(<"$guard_state/tmux-guard.log")"
-# source-guard: whole-surface@6ba33fa8620c: the log is a file under a state directory this suite created for these cases, and the shim is the only writer of that file name
 contains "a refusal is logged under the caller's GANG_LOCK_DIR" \
   "$guard_log" $'\trefused\t'
-# source-guard: producer@9457807754c9: the separator case above is the only invocation in this suite whose argv is that command line, so the row carrying it was written by that refusal
 contains "and the log row carries the refused command" \
   "$guard_log" "tmux list-sessions ; kill-server"
 
@@ -2888,7 +2866,6 @@ for guard_first in installed checkout; do
   ) >/dev/null 2>&1 || guard_rc=$?
   equal "an ordinary command survives a second guard directory on PATH ($guard_first first)" \
     0 "$guard_rc"
-  # source-guard: whole-surface@e19cd4ffadb8: the log is truncated immediately above, and the only executable named tmux behind the two guard directories on that PATH is the fake that writes it
   equal "and reaches the real tmux exactly once ($guard_first first)" \
     "list-sessions" "$(cat "$guard_dup_log" 2>/dev/null)"
 done

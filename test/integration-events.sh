@@ -68,7 +68,6 @@ excludes "a long caller PATH does not overflow the event worker command" \
 event_hitch_log="$(event_gang log event-proof --kind agent.hitched 2>&1)" || {
   fail "event proof reads a live lifecycle event" "$event_hitch_log"
 }
-# source-guard: whole-surface@8791bccc2376: gang log is the reader under test, and only the production hitch above can append this team-scoped lifecycle row
 contains "event proof crosses the host boundary for hitch evidence" \
   "$event_hitch_log" '"kind": "agent.hitched"'
 event_proof_out="$(event_gang __event-proof 2>&1)" || {
@@ -79,7 +78,6 @@ for event_kind in "${event_kinds[@]}"; do
     tick.*) event_kind_log="$(event_gang log --kind "$event_kind" 2>&1)" ;;
     *) event_kind_log="$(event_gang log event-proof --kind "$event_kind" 2>&1)" ;;
   esac
-  # source-guard: whole-surface@82834deea4df: the production proof driver and its reader filter are the complete evidence for this exact requested kind
   if [[ "$event_kind_log" == *"\"kind\": \"$event_kind\""* ]]; then
     pass "production event proof reads $event_kind through gang log"
   else
@@ -94,7 +92,6 @@ excludes "the long ambient PATH does not overflow the usage worker command" \
 event_drop_log="$(event_gang log event-proof --kind agent.dropped 2>&1)" || {
   fail "event proof reads teardown evidence" "$event_drop_log"
 }
-# source-guard: whole-surface@8026fdc628c1: this post-teardown command is the reader under test, and the immediately preceding drop is its only row producer
 contains "event log remains readable after team teardown" \
   "$event_drop_log" '"kind": "agent.dropped"'
 
@@ -112,7 +109,6 @@ event_mutant_log="$(env GANG_SESSION="$event_mutant_team" XDG_DATA_HOME="$event_
   "$GANG" log event-mutant --kind delivery.verified 2>&1)" || {
   fail "event proof reads its mutant team" "$event_mutant_log"
 }
-# source-guard: whole-surface@d71f76500ad4: the deliberately omitted proof event and the complete filtered reader output establish that the mutation is observable
 if [[ "$event_mutant_log" == *'"kind": "delivery.verified"'* ]]; then
   fail "production event mutation is red" "a mutated delivery instrumentation still reached gang log"
 else

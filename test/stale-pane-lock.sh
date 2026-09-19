@@ -179,7 +179,6 @@ retry_held_rc=0
     "$(cat "$retry_held_ledger" 2>/dev/null)" >&2
   exit 1
 }
-# source-guard: whole-surface@2d9bcc5649a6: retry_held_err is the complete stderr from the single held-lock invocation above, so any visible producer of this exact refusal is valid evidence
 case "$(<"$retry_held_err")" in
   *'another Gangline process is delivering to pane — inspect it with gang capture pane before retrying'*) ;;
   *) printf 'exhausted send-mode retry changed the contention diagnostic: %s\n' \
