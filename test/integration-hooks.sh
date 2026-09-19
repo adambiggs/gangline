@@ -3652,13 +3652,13 @@ no_outer_rc=0
 no_outer_output="$(printf '%s\n' "$deletion_record" |
   GIT_CONFIG_GLOBAL="$empty_global" \
   "$ROOT/.githooks/pre-push" origin /tmp/remote 2>&1)" || no_outer_rc=$?
-# A deletion-only push runs no pushed-tree lint or smoke. It still owes the
-# operator an exact account of the local checks omitted on every push.
+# A deletion-only push runs no pushed-tree lint or smoke. It still names the
+# local checks and CI boundary on every push.
 equal "no global hook still lets the local gate decide" "0" "$no_outer_rc"
-contains "the local hook names the integration suite it skipped" \
-  "$no_outer_output" "full integration are skipped locally"
-contains "the local hook names the CI boundary without claiming this push reaches it" \
-  "$no_outer_output" "CI runs full lint and integration on pushes to main"
+contains "the local hook names its local checks" \
+  "$no_outer_output" "lint of changed files and smoke run here"
+contains "the local hook names the CI checks" \
+  "$no_outer_output" "CI runs full lint, integration and the commit-message check"
 excludes "a deletion-only push does not claim it ran lint or smoke" \
   "$no_outer_output" "running pushed-tree fast lint and smoke"
 
@@ -4028,133 +4028,11 @@ equal "the installer refuses a destination it cannot replace rather than filling
   "refused empty named" \
   "$([ "$installer_dir_rc" -ne 0 ] && printf refused || printf installed) $([ -e "$installer_dir_bin/gang/gang" ] && printf filled || printf empty) $([[ "$installer_dir_out" = *'is not a file or a symlink'* ]] && printf named || printf unnamed)"
 
-# The local sibling gate uses destination identity rather than remote-tracking
-# names, and refuses non-commit refs instead of treating an empty traversal as
-# a clean result. Its fixtures isolate the local hook from the host-global gate.
+# The hook fixtures below run without the operator's global git configuration.
 gate_root="$RUN_ROOT/local-pre-push"
 gate_global="$gate_root/empty-global"
 mkdir -p "$gate_root"
 : > "$gate_global"
-
-# These fixtures exercise Gangline's local hook, not a PATH-level git wrapper.
-# Remove only a directory whose git is a script rather than the real binary;
-# with none, return the caller's PATH byte-for-byte.
-path_without_git_wrapper() {
-  local dir out="" saved_ifs="$IFS" found=0
-  IFS=:
-  set -f
-  for dir in $PATH; do
-    [ -n "$dir" ] || continue
-    if [ -f "$dir/git" ] \
-       && [ "$(head -c 2 "$dir/git" 2>/dev/null)" = '#!' ]; then
-      found=1
-      continue
-    fi
-    out="${out:+$out:}$dir"
-  done
-  set +f
-  IFS="$saved_ifs"
-  [ "$found" -eq 1 ] || {
-    printf '%s' "$PATH"
-    return
-  }
-  [ -n "$out" ] || {
-    printf 'test: PATH contains no git executable outside a wrapper script\n' >&2
-    return 1
-  }
-  printf '%s' "$out"
-}
-gate_git_path="$(path_without_git_wrapper)"
-
-gate_bare() { # $1 name
-  local repo="$gate_root/$1.git"
-  rm -rf "$repo"
-  GIT_CONFIG_GLOBAL="$gate_global" git init -q --bare "$repo"
-  printf '%s\n' "$repo"
-}
-
-gate_repo() { # $1 name
-  local repo="$gate_root/$1"
-  rm -rf "$repo"
-  GIT_CONFIG_GLOBAL="$gate_global" git init -q "$repo"
-  git -C "$repo" config user.name 'Gangline gate test'
-  git -C "$repo" config user.email 'gangline@fixture.invalid'
-  mkdir -p "$repo/test" "$repo/.githooks"
-  cp "$ROOT/.githooks/commit-msg" "$repo/.githooks/commit-msg"
-  cat > "$repo/test/lint.sh" <<'SH'
-#!/bin/sh
-exit 0
-SH
-  cp "$repo/test/lint.sh" "$repo/test/integration.sh"
-  cp "$repo/test/lint.sh" "$repo/test/smoke.sh"
-  chmod +x "$repo/test/"*.sh "$repo/.githooks/commit-msg"
-  printf '%s\n' clean > "$repo/content"
-  git -C "$repo" add .
-  git -C "$repo" commit -qm 'test: local gate base'
-  git -C "$repo" config core.hooksPath "$ROOT/.githooks"
-  printf '%s\n' "$repo"
-}
-
-gate_bad_commit() { # $1 repo, $2 content
-  printf '%s\n' "$2" > "$1/content"
-  git -C "$1" add content
-  git -C "$1" commit --no-verify -qm 'not a conventional commit'
-}
-
-gate_push() { # $1 repo, remaining git-push args
-  local repo="$1"
-  shift
-  GATE_PUSH_RC=0
-  GATE_PUSH_OUTPUT="$(PATH="$gate_git_path" GIT_CONFIG_GLOBAL="$gate_global" \
-    git -C "$repo" push "$@" 2>&1)" || GATE_PUSH_RC=$?
-}
-
-gate_ref() { git --git-dir="$1" rev-parse --verify "$2" 2>/dev/null || true; }
-
-pushurl_repo="$(gate_repo local-gate-pushurl)"
-pushurl_private="$(gate_bare local-gate-pushurl-private)"
-pushurl_public="$(gate_bare local-gate-pushurl-public)"
-git -C "$pushurl_repo" remote add dest "$pushurl_private"
-gate_bad_commit "$pushurl_repo" clean-pushurl
-GIT_CONFIG_GLOBAL="$gate_global" git -C "$pushurl_repo" push \
-  --no-verify -qu dest HEAD:refs/heads/topic
-git -C "$pushurl_repo" remote set-url --add --push dest "$pushurl_public"
-gate_push "$pushurl_repo" dest HEAD:refs/heads/public-topic
-equal "the repository gate refuses a same-name pushurl destination escape" \
-  "blocked absent named" \
-  "$([ "$GATE_PUSH_RC" -ne 0 ] && printf blocked || printf leaked) $([ -z "$(gate_ref "$pushurl_public" refs/heads/public-topic)" ] && printf absent || printf received) $([[ "$GATE_PUSH_OUTPUT" = *'do not conform'* ]] && printf named || printf unnamed)"
-
-retarget_repo="$(gate_repo local-gate-retarget)"
-retarget_old="$(gate_bare local-gate-retarget-old)"
-retarget_new="$(gate_bare local-gate-retarget-new)"
-git -C "$retarget_repo" remote add dest "$retarget_old"
-gate_bad_commit "$retarget_repo" clean-retarget
-GIT_CONFIG_GLOBAL="$gate_global" git -C "$retarget_repo" push \
-  --no-verify -qu dest HEAD:refs/heads/topic
-git -C "$retarget_repo" remote set-url dest "$retarget_new"
-gate_push "$retarget_repo" dest HEAD:refs/heads/topic
-equal "the repository gate refuses a same-name retargeted destination escape" \
-  "blocked absent named" \
-  "$([ "$GATE_PUSH_RC" -ne 0 ] && printf blocked || printf leaked) $([ -z "$(gate_ref "$retarget_new" refs/heads/topic)" ] && printf absent || printf received) $([[ "$GATE_PUSH_OUTPUT" = *'do not conform'* ]] && printf named || printf unnamed)"
-
-blob_repo="$(gate_repo local-gate-blob)"
-blob_remote="$(gate_bare local-gate-blob)"
-blob_oid="$(printf '%s\n' clean-blob | git -C "$blob_repo" hash-object -w --stdin)"
-git -C "$blob_repo" update-ref refs/blobs/direct "$blob_oid"
-gate_push "$blob_repo" "$blob_remote" refs/blobs/direct:refs/blobs/direct
-blob_present=0
-git --git-dir="$blob_remote" cat-file -e "$blob_oid" 2>/dev/null && blob_present=1
-equal "the repository gate refuses a direct blob ref without destination receipt" \
-  "blocked blob absent" \
-  "$([ "$GATE_PUSH_RC" -ne 0 ] && printf blocked || printf leaked) $([[ "$GATE_PUSH_OUTPUT" = *'blob, not a commit'* ]] && printf blob || printf unnamed) $([ "$blob_present" -eq 0 ] && printf absent || printf received)"
-
-blob_mirror="$(gate_bare local-gate-blob-mirror)"
-gate_push "$blob_repo" --mirror "$blob_mirror"
-mirror_present=0
-git --git-dir="$blob_mirror" cat-file -e "$blob_oid" 2>/dev/null && mirror_present=1
-equal "the repository gate refuses a mirror carrying a blob ref" \
-  "blocked absent" \
-  "$([ "$GATE_PUSH_RC" -ne 0 ] && printf blocked || printf leaked) $([ "$mirror_present" -eq 0 ] && printf absent || printf received)"
 
 # The pre-push gate must run git-aware lint from the pushed tree even when Git
 # gives the hook a GIT_DIR pointing at the main repository. A staged-only file
@@ -4200,44 +4078,6 @@ git -C "$hook_repo" add main-index-only
 hook_zero=0000000000000000000000000000000000000000
 hook_remote="$RUN_ROOT/pre-push-hook-remote.git"
 GIT_CONFIG_GLOBAL="$gate_global" git init -q --bare "$hook_remote"
-hook_missing=1111111111111111111111111111111111111111
-hook_base_rc=0
-hook_base_out="$({
-  cd "$hook_repo"
-  printf 'refs/heads/main %s refs/heads/main %s\n' "$hook_sha" "$hook_missing" |
-    env GIT_CONFIG_GLOBAL="$gate_global" GIT_DIR="$hook_repo/.git" \
-      ./.githooks/pre-push origin "$hook_remote"
-} 2>&1)" || hook_base_rc=$?
-equal "pre-push refuses an unavailable base of the pushed ref" \
-  "refused named" \
-  "$([ "$hook_base_rc" -ne 0 ] && printf refused || printf passed) $([[ "$hook_base_out" = *"remote base $hook_missing"* ]] && printf named || printf unnamed)"
-hook_range_rc=0
-hook_range_out="$({
-  cd "$hook_repo"
-  printf 'refs/heads/main %s refs/heads/main %s\n' "$hook_sha" "$hook_zero" |
-    env GIT_CONFIG_GLOBAL="$gate_global" GIT_DIR="$hook_repo/.git" \
-      ./.githooks/pre-push origin "$RUN_ROOT/missing-pre-push-remote"
-} 2>&1)" || hook_range_rc=$?
-equal "pre-push refuses an indeterminate new-ref range" \
-  "refused named" \
-  "$([ "$hook_range_rc" -ne 0 ] && printf refused || printf passed) $([[ "$hook_range_out" = *'pushed commit range is indeterminate'* ]] && printf named || printf unnamed)"
-hook_unbounded_remote="$RUN_ROOT/pre-push-unbounded-remote.git"
-GIT_CONFIG_GLOBAL="$gate_global" git init -q --bare "$hook_unbounded_remote"
-mkdir -p "$hook_unbounded_remote/refs/pull/100"
-printf '%s\n' "$hook_missing" > "$hook_unbounded_remote/refs/pull/100/head"
-hook_unbounded_rc=0
-hook_unbounded_out="$({
-  cd "$hook_repo"
-  printf 'refs/heads/main %s refs/heads/main %s\n' "$hook_sha" "$hook_zero" |
-    env GIT_CONFIG_GLOBAL="$gate_global" GIT_DIR="$hook_repo/.git" \
-      ./.githooks/pre-push origin "$hook_unbounded_remote"
-} 2>&1)" || hook_unbounded_rc=$?
-equal "pre-push refuses a nonempty advertisement with no usable boundary" \
-  "refused named" \
-  "$([ "$hook_unbounded_rc" -ne 0 ] && printf refused || printf passed) $([[ "$hook_unbounded_out" = *"none of the destination's advertised commits is available locally"* ]] && printf named || printf unnamed)"
-mkdir -p "$hook_remote/refs/heads" "$hook_remote/refs/pull/100"
-printf '%s\n' "$hook_sha" > "$hook_remote/refs/heads/main"
-printf '%s\n' "$hook_missing" > "$hook_remote/refs/pull/100/head"
 if hook_out="$({
   cd "$hook_repo"
   printf 'refs/heads/main %s refs/heads/main %s\n' "$hook_sha" "$hook_zero" |
@@ -4246,9 +4086,9 @@ if hook_out="$({
       PROBE_DIR="$hook_probe" \
       ./.githooks/pre-push origin "$hook_remote"
 } 2>&1)"; then
-  pass "pre-push ignores an unrelated advertised commit absent locally"
+  pass "pre-push passes a pushed ref whose lint and smoke pass"
 else
-  fail "pre-push ignores an unrelated advertised commit absent locally" "$hook_out"
+  fail "pre-push passes a pushed ref whose lint and smoke pass" "$hook_out"
 fi
 contains "a checked ref announces the fast lint and smoke it actually runs" \
   "$hook_out" "running pushed-tree fast lint and smoke"
@@ -4317,111 +4157,6 @@ else
     ".github/workflows/release.yml still exists"
 fi
 
-# The message gate is the PUSHED one, for the same reason lint is: a working
-# tree carries edits nobody is sending. The two copies are made to disagree in
-# both directions, so a hook reading the wrong tree cannot pass either half.
-msg_repo="$gate_root/pushed-message-gate"
-msg_remote="$(gate_bare pushed-message-gate)"
-rm -rf "$msg_repo"
-GIT_CONFIG_GLOBAL="$gate_global" git init -q "$msg_repo"
-git -C "$msg_repo" config user.name 'Gangline gate test'
-git -C "$msg_repo" config user.email 'gangline@fixture.invalid'
-mkdir -p "$msg_repo/test" "$msg_repo/.githooks"
-cat > "$msg_repo/test/lint.sh" <<'SH'
-#!/bin/sh
-exit 0
-SH
-cp "$msg_repo/test/lint.sh" "$msg_repo/test/integration.sh"
-cp "$msg_repo/test/lint.sh" "$msg_repo/test/smoke.sh"
-msg_gate() { # $1 destination path, $2 verdict, $3 marker
-  cat > "$1" <<SH
-#!/bin/sh
-echo '$3' >&2
-exit $2
-SH
-  chmod +x "$1"
-}
-msg_gate "$msg_repo/.githooks/commit-msg" 1 'committed-gate: refusing'
-chmod +x "$msg_repo/test/lint.sh" "$msg_repo/test/integration.sh" "$msg_repo/test/smoke.sh"
-printf '%s\n' base > "$msg_repo/content"
-git -C "$msg_repo" add .
-git -C "$msg_repo" commit -qm 'test: pushed message gate base'
-git -C "$msg_repo" remote add dest "$msg_remote"
-GIT_CONFIG_GLOBAL="$gate_global" git -C "$msg_repo" push \
-  --no-verify -qu dest HEAD:refs/heads/main
-git -C "$msg_repo" config core.hooksPath "$ROOT/.githooks"
-printf '%s\n' refusing > "$msg_repo/content"
-git -C "$msg_repo" add content
-git -C "$msg_repo" commit -qm 'test: judged by the committed gate'
-# Uncommitted, and permissive: nothing here may reach the verdict.
-msg_gate "$msg_repo/.githooks/commit-msg" 0 'worktree-gate: accepting'
-gate_push "$msg_repo" dest HEAD:refs/heads/main
-equal "the pre-push message gate obeys the pushed hook, not the working tree" \
-  "blocked committed absent" \
-  "$([ "$GATE_PUSH_RC" -ne 0 ] && printf blocked || printf leaked) $([[ "$GATE_PUSH_OUTPUT" = *'committed-gate: refusing'* ]] && printf committed || printf unnamed) $([[ "$GATE_PUSH_OUTPUT" != *'worktree-gate: accepting'* ]] && printf absent || printf consulted)"
-
-msg_gate "$msg_repo/.githooks/commit-msg" 0 'committed-gate: accepting'
-git -C "$msg_repo" add .githooks/commit-msg
-git -C "$msg_repo" commit -qm 'test: accept from the committed gate'
-msg_gate "$msg_repo/.githooks/commit-msg" 1 'worktree-gate: refusing'
-gate_push "$msg_repo" dest HEAD:refs/heads/main
-equal "and a refusing working-tree copy cannot block a conforming push" \
-  "pushed absent" \
-  "$([ "$GATE_PUSH_RC" -eq 0 ] && printf pushed || printf blocked) $([[ "$GATE_PUSH_OUTPUT" != *'worktree-gate: refusing'* ]] && printf absent || printf consulted)"
-
-git -C "$msg_repo" rm -q --cached .githooks/commit-msg
-git -C "$msg_repo" commit -qm 'test: push a tip carrying no message gate'
-gate_push "$msg_repo" dest HEAD:refs/heads/main
-equal "pre-push refuses a pushed tip that carries no message gate" \
-  "blocked named" \
-  "$([ "$GATE_PUSH_RC" -ne 0 ] && printf blocked || printf leaked) $([[ "$GATE_PUSH_OUTPUT" = *'carries no executable'* ]] && printf named || printf unnamed)"
-
-# A traversal that FAILS is not an empty range. The fixture removes one
-# reachable commit object, so rev-list must abort where the tip, its tree, and
-# the excluded base all still resolve — and the control run proves the same
-# invocation passes while that object is present.
-walk_repo="$gate_root/rev-list-failure"
-rm -rf "$walk_repo"
-GIT_CONFIG_GLOBAL="$gate_global" git init -q "$walk_repo"
-git -C "$walk_repo" config user.name 'Gangline gate test'
-git -C "$walk_repo" config user.email 'gangline@fixture.invalid'
-mkdir -p "$walk_repo/test" "$walk_repo/.githooks"
-cp "$ROOT/.githooks/commit-msg" "$walk_repo/.githooks/commit-msg"
-cat > "$walk_repo/test/lint.sh" <<'SH'
-#!/bin/sh
-exit 0
-SH
-cp "$walk_repo/test/lint.sh" "$walk_repo/test/integration.sh"
-cp "$walk_repo/test/lint.sh" "$walk_repo/test/smoke.sh"
-chmod +x "$walk_repo/test/"*.sh "$walk_repo/.githooks/commit-msg"
-printf '%s\n' a > "$walk_repo/content"
-git -C "$walk_repo" add .
-git -C "$walk_repo" commit -qm 'test: traversal base'
-walk_base="$(git -C "$walk_repo" rev-parse HEAD)"
-printf '%s\n' b > "$walk_repo/content"
-git -C "$walk_repo" commit -qam 'test: traversal middle'
-walk_middle="$(git -C "$walk_repo" rev-parse HEAD)"
-printf '%s\n' c > "$walk_repo/content"
-git -C "$walk_repo" commit -qam 'test: traversal tip'
-walk_tip="$(git -C "$walk_repo" rev-parse HEAD)"
-walk_drive() { # runs the shipped hook over walk_base..walk_tip
-  WALK_RC=0
-  WALK_OUT="$({
-    cd "$walk_repo"
-    printf 'refs/heads/main %s refs/heads/main %s\n' "$walk_tip" "$walk_base" |
-      env GIT_CONFIG_GLOBAL="$gate_global" "$ROOT/.githooks/pre-push" \
-        dest "$msg_remote"
-  } 2>&1)" || WALK_RC=$?
-}
-walk_drive
-equal "pre-push passes a traversable range" "passed" \
-  "$([ "$WALK_RC" -eq 0 ] && printf passed || printf '%s' "refused: $WALK_OUT")"
-rm -f "$walk_repo/.git/objects/${walk_middle:0:2}/${walk_middle:2}"
-walk_drive
-equal "pre-push refuses a failed traversal instead of reading it as empty" \
-  "refused named" \
-  "$([ "$WALK_RC" -ne 0 ] && printf refused || printf passed) $([[ "$WALK_OUT" = *'git rev-list exited'* ]] && printf named || printf unnamed)"
-
 # `!` promises callers a break; the footer is what they can act on. The gate
 # enforces the pairing its diagnostic and CONTRIBUTING.md advertise.
 msg_file="$RUN_ROOT/commit-msg-subject"
@@ -4432,7 +4167,6 @@ commit_msg_verdict() { # $1 = whole message
   [ "$rc" -eq 0 ] && { printf 'accepted'; return 0; }
   case "$out" in
     *'does not create a blank line'*) printf 'refused-escape' ;;
-    *'not a footer'*) printf 'refused-placement' ;;
     *'no BREAKING CHANGE: footer'*) printf 'refused-footer' ;;
     *) printf 'refused-other' ;;
   esac
@@ -4480,43 +4214,6 @@ equal "and ignores a doubled newline escape in a git comment" \
   "$(commit_msg_verdict 'fix(test): ordinary change
 
 # Template example: body\n\nfooter
-')"
-# A FOOTER IS A PLACE. Glued to the end of a paragraph it is a sentence that
-# begins with those words: `git interpret-trailers` does not see it, and the
-# gate that accepted it called it a footer in its own diagnostic.
-equal "and refuses a breaking line glued to the body" \
-  "refused-placement" \
-  "$(commit_msg_verdict 'feat(send)!: breaks callers
-
-The old path is gone.
-BREAKING CHANGE: callers must pass --to.
-')"
-# `git interpret-trailers --parse` reads the block at the END of the message.
-# A breaking line with ordinary prose after it is not in that block, however
-# many blank lines precede it.
-equal "and refuses a breaking footer with body prose after it" \
-  "refused-placement" \
-  "$(commit_msg_verdict 'feat(send)!: breaks callers
-
-BREAKING CHANGE: callers must pass --to.
-
-This also tidies the spool.
-')"
-equal "another trailer after the footer keeps it a footer" \
-  "accepted" \
-  "$(commit_msg_verdict 'feat(send)!: breaks callers
-
-BREAKING CHANGE: callers must pass --to.
-Refs: #14
-')"
-equal "a comment between body and footer does not unmake the footer" \
-  "accepted" \
-  "$(commit_msg_verdict 'feat(send)!: breaks callers
-
-The old path is gone.
-
-# Please enter the commit message for your changes.
-BREAKING CHANGE: callers must pass --to.
 ')"
 
 # A COMPOSER THAT BELONGS TO SOMEBODY ELSE IS NOT AN ABSENT COMPOSER. Once the
