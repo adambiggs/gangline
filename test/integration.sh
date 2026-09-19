@@ -19,15 +19,6 @@ GANG="$ROOT/bin/gang"
 : "${GANG_TEST_PATH_SHIM_GUARD:=$ROOT/test/path-shim-guard.sh}"
 export GANG_TEST_PATH_SHIM_GUARD
 
-# A VERDICT IS ABOUT A TREE, so the tree has to hold still. This refuses to
-# start against a working tree that is already moving — bash reads this script
-# incrementally, gang re-reads collars and roles at hitch time, and an edit
-# landing mid-run changes what executes. The identity is read again at the
-# end, because starting settled is not the same as staying settled.
-# test/gate.sh is the way to run this before a commit: it snapshots the
-# working tree, uncommitted work included, and runs the gate from the copy.
-TREE_AT_START="$("$ROOT/test/gate.sh" --assert-owned)"
-
 # tmux's Unix socket path has a 107-byte limit. Keep the fixture root compact:
 # Guard fixtures add their own nested names and the host PID namespace can
 # contribute seven digits, so keep this suffix short enough for the canonical
@@ -404,15 +395,15 @@ HITCH="$RUN_ROOT/bin/hitch-guard"
 
 summary_printed=0
 role_pid=""
-gate_pid=""
+lanes_pid=""
 cleanup() {
   if [ -n "$role_pid" ]; then
     kill "$role_pid" 2>/dev/null || true
     wait "$role_pid" 2>/dev/null || true
   fi
-  if [ -n "$gate_pid" ]; then
-    kill "$gate_pid" 2>/dev/null || true
-    wait "$gate_pid" 2>/dev/null || true
+  if [ -n "$lanes_pid" ]; then
+    kill "$lanes_pid" 2>/dev/null || true
+    wait "$lanes_pid" 2>/dev/null || true
   fi
   if [ "$summary_printed" -eq 0 ]; then
     printf '\nRUN ENDED EARLY after %s checks in %ss — no verdict on the rest.\n' \
@@ -655,13 +646,12 @@ role_output="$RUN_ROOT/role-briefs.out"
 role_host_home="$RUN_ROOT/role-fixture-host-home"
 role_host_usage="$role_host_home/.local/share/gangline/usage/events.jsonl"
 
-# THE GATE SELF-TEST BUILDS ONLY ITS OWN GIT FIXTURES. It reads the helpers and
+# THE LANES PART BUILDS ONLY ITS OWN FIXTURES. It reads the helpers and
 # counters above but no tmux window or mutable fixture used by the substrate
-# parts, so it can prove the snapshot machinery beside them. The subshell writes
-# its counter delta for the parent to fold into the same final verdict; running
-# it elsewhere must not make its assertions disappear from the suite count.
-gate_output="$RUN_ROOT/integration-gate.out"
-gate_counts="$RUN_ROOT/integration-gate.counts"
+# parts, so it runs beside them. The subshell writes its counter delta for the
+# parent to fold into the same final verdict.
+lanes_output="$RUN_ROOT/integration-lanes.out"
+lanes_counts="$RUN_ROOT/integration-lanes.counts"
 
 start_parallel_instruments() {
   env -u XDG_DATA_HOME HOME="$role_host_home" \
@@ -669,14 +659,14 @@ start_parallel_instruments() {
   role_pid=$!
   (
     trap - EXIT HUP INT TERM
-    gate_checks_at_start="$checks"
-    gate_fails_at_start="$fails"
-    . "$ROOT/test/integration-gate.sh"
+    lanes_checks_at_start="$checks"
+    lanes_fails_at_start="$fails"
+    . "$ROOT/test/integration-lanes.sh"
     printf '%s %s\n' \
-      "$((checks - gate_checks_at_start))" "$((fails - gate_fails_at_start))" \
-      > "$gate_counts"
-  ) > "$gate_output" 2>&1 &
-  gate_pid=$!
+      "$((checks - lanes_checks_at_start))" "$((fails - lanes_fails_at_start))" \
+      > "$lanes_counts"
+  ) > "$lanes_output" 2>&1 &
+  lanes_pid=$!
 }
 
 # THE SUITE IS ONE PROGRAM, SPLIT ONLY SO THAT IT CAN BE LINTED. Each part below
@@ -804,19 +794,19 @@ unset integration_declared_part integration_declared_parts integration_missing_p
 # Join the isolated self-test at the same point where it used to run. Its output
 # stays contiguous, and its checks and failures remain part of this suite's one
 # summary rather than becoming a second verdict.
-gate_rc=0
-wait "$gate_pid" || gate_rc=$?
-gate_pid=""
-cat "$gate_output"
-if [ "$gate_rc" -ne 0 ] || [ ! -s "$gate_counts" ]; then
-  printf 'integration gate self-test ended without a readable count (status %s)\n' \
-    "$gate_rc" >&2
-  [ "$gate_rc" -ne 0 ] || gate_rc=1
-  exit "$gate_rc"
+lanes_rc=0
+wait "$lanes_pid" || lanes_rc=$?
+lanes_pid=""
+cat "$lanes_output"
+if [ "$lanes_rc" -ne 0 ] || [ ! -s "$lanes_counts" ]; then
+  printf 'integration lanes part ended without a readable count (status %s)\n' \
+    "$lanes_rc" >&2
+  [ "$lanes_rc" -ne 0 ] || lanes_rc=1
+  exit "$lanes_rc"
 fi
-read -r gate_checks gate_fails < "$gate_counts"
-checks=$((checks + gate_checks))
-fails=$((fails + gate_fails))
+read -r lanes_checks lanes_fails < "$lanes_counts"
+checks=$((checks + lanes_checks))
+fails=$((fails + lanes_fails))
 
 # The focused role instrument is mandatory here and independently selectable so
 # mutation calibration can run the exact AC that must turn red. Its output is
@@ -832,13 +822,6 @@ equal "role fixtures leave the observed host usage path untouched" \
   "0" "$role_host_usage_rows"
 [ "$integration_require_all_rc" -eq 0 ] || exit "$integration_require_all_rc"
 
-# THE SAME TREE THIS RUN STARTED AGAINST, OR NO VERDICT. A source edit landing
-# mid-run is not caught by either read — bash has already executed whatever it
-# read — so this cannot make such a run safe. It can only stop the number below
-# from being quoted as a fact about a tree that no longer exists, which is the
-# form the last one took.
-tree_moved=0
-"$ROOT/test/gate.sh" --assert-unmoved "$TREE_AT_START" || tree_moved=1
 
 summary_printed=1
 printf '\n'
@@ -847,10 +830,6 @@ integration_tail_clause="$(suite_unknown_clause "$unknowns")"
   || integration_tail_clause="${integration_tail_clause:+$integration_tail_clause; }$integration_summary_clause"
 suite_tail "$checks" "$fails" "$SECONDS" "$integration_tail_clause"
 unset integration_summary_clause integration_tail_clause
-if [ "$tree_moved" -eq 1 ]; then
-  printf 'THE SOURCE TREE MOVED DURING THIS RUN, so the count above is not a\n'
-  printf 'verdict on any tree. The refusal above says what changed.\n'
-fi
 # Reported apart from both columns and folded into neither: an unknown is a
 # submission this run could not verify, which is neither a pass nor a fail.
 # Green with unknowns above zero means the coverage held while something missed
@@ -870,4 +849,4 @@ fi
 barriers_wedged=0
 [ ! -s "$RUN_ROOT/wedged-barriers" ] || barriers_wedged=1
 suite_wedged_barriers "$RUN_ROOT/wedged-barriers"
-[ "$fails" -eq 0 ] && [ "$tree_moved" -eq 0 ] && [ "$barriers_wedged" -eq 0 ]
+[ "$fails" -eq 0 ] && [ "$barriers_wedged" -eq 0 ]

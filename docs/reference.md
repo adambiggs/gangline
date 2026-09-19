@@ -13,6 +13,16 @@ Run each harness directly once before starting a team. Its normal sign-in,
 repository, and trust prompts belong to that harness; Gangline does not answer
 them.
 
+## Repository gate
+
+`test/gate.sh` runs fast lint and smoke against the working tree, with one run
+per host at a time and a 900-second run limit. Its final line says `PASS`,
+`REFUSED`, or `UNKNOWN`. Fast lint checks files changed from `origin/main`; CI
+runs the full lint and integration suites.
+
+`test/release.sh` is the pre-release lane. It serializes on the same lock and
+runs lint, smoke, and full integration.
+
 ## Start and inspect a team
 
 Start in the repository where the agents should work:

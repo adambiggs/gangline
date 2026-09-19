@@ -110,13 +110,12 @@ team may be active.
 Never run an unaimed `tmux kill-server` or `tmux kill-session`. Experiments use
 an explicit private socket and exact disposable session names.
 
-Never kill a process because it holds a shared resource. A lock holder, a
-snapshot directory or a stale-looking suite is evidence that something is
-running, not evidence of whose it is. Resolve ownership first — read
-`/proc/PID/cwd`, or look for a file unique to your own tree — and kill only what
-matches. The gate's host lock and the snapshot directories it keeps are shared
-by every agent, so inference here ends someone else's work with no trace back to
-you.
+Never kill a process because it holds a shared resource. A lock holder or a
+stale-looking suite is evidence that something is running, not evidence of
+whose it is. Resolve ownership first — read `/proc/PID/cwd`, or look for a file
+unique to your own tree — and kill only what matches. The gate's host lock is
+shared by every agent, so inference here ends someone else's work with no trace
+back to you.
 
 Resolve ownership in a command that COMPLETES BEFORE the one that kills.
 `ls -l /proc/$p/cwd; kill $p` is not a check: both run, the kill lands, and the

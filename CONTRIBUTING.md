@@ -11,7 +11,9 @@ git config core.hooksPath .githooks
 ```
 
 Do not use `--no-verify`. New shell and Python files need an SPDX license
-identifier.
+identifier. `.githooks/pre-push` runs the operator's outer contribution gate,
+then fast lint and smoke on the pushed tree. CI runs full lint, integration,
+and the commit-message check on pushes to `main`.
 
 ## Check your change
 
@@ -21,8 +23,8 @@ Run the gate before committing:
 test/gate.sh
 ```
 
-From a Gangline agent pane, use `gang run -- test/gate.sh` instead. CI runs the
-full integration suite on pushes to `main`.
+The gate runs fast lint and smoke against the working tree. CI runs full lint
+and integration on pushes to `main`.
 
 ## Commit
 
