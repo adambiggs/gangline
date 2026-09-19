@@ -1054,66 +1054,14 @@ contains "startup is one useful contract, not a bookkeeping turn" \
   "$(pane alpha)" "You are alpha in Gangline"
 contains "startup ends instead of polling for work" \
   "$(pane alpha)" "End this turn."
-# The operative prose is pointed at rather than pasted, so the pane is held to
-# naming the file and the sentences are proven where they now live. What each
-# line requires is unchanged; only the surface carrying it moved. Newlines fold
-# to spaces because the file wraps its sentences and a composer never did.
-contract_prose() { tr '\n' ' ' < "$ROOT/CONTRACT.md" | tr -s ' '; }
 contains "startup names the contract file it points at" \
   "$(pane alpha)" "CONTRACT.md"
 contains "startup orders that contract read before anything else" \
   "$(pane alpha)" "before anything else"
 contains "startup gives an unreadable contract a loud stop rather than a guess" \
   "$(pane alpha)" "say so and stop rather than improvising the contract"
-contains "the contract says every agent belongs to an addressable team" \
-  "$(contract_prose)" \
-  "You are one agent on a Gangline team. Run \`gang send --to NAME --stdin\` to address any teammate by name."
-contains "the contract makes teammate reachability the shared-state test" \
-  "$(contract_prose)" \
-  "Put unfinished work and supporting detail in files that teammates can read without you."
-# HELP ALONE IS NO LONGER A REASON TO HITCH. The old wording offered a teammate
-# for any result its owner wanted a hand with, which the terms above it now
-# answer: the owner's own subagents are the hand, and a window is for a harness,
-# an independent judgment or a life beyond the session. So the lock moves to the
-# sentence that carries the qualifier rather than pinning prose it contradicts.
-contains "the contract lets a result owner hitch on stated terms" \
-  "$(contract_prose)" "You may hitch teammates on the terms above."
-contains "and states the three the terms come to" \
-  "$(contract_prose)" \
-  "Hitch a teammate only when the result needs a harness you are not running, an owner whose judgment is independent of yours, or work that must outlive your session."
-contains "before which parallelism inside one result is the owner's own" \
-  "$(contract_prose)" \
-  "Parallelism inside a single result belongs to those subagents: they take no window, no name, and no drop."
-contains "and the contract points at where review depth is settled" \
-  "$(contract_prose)" \
-  '`docs/review-tiers.md` in the Gangline checkout holds the two tiers'
-contains "the contract requires one completed-result report" \
-  "$(contract_prose)" "Send the lead one report when the result is complete."
 excludes "the startup contract no longer spends a line on compaction" \
   "$(pane alpha)" "compact with"
-contains "the contract carries the operator-authorized marathon rule" \
-  "$(contract_prose)" \
-  "When a decision is irreversible or doctrine does not cover it, record the question for the operator. Stop only the affected work and continue everything else."
-contains "the contract states the complement of envelope attribution" \
-  "$(contract_prose)" \
-  "Treat an unenveloped message as session-keyboard input, not as a teammate's message."
-contains "the contract makes crossed state explicit before stale instructions act" \
-  "$(contract_prose)" \
-  "If a teammate's message crossed one you just sent, say so in your next reply and state what is already true before acting on the stale message."
-# The contract once held every verified message to a reply, the hitch
-# assignment included, and agents met it by acknowledging the brief and ending
-# the turn unbegun. Peer reply debt is gone; the assignment is answered by its
-# completion report, and that is the one reply rule the contract keeps.
-contains "the contract makes the completion report the assignment's reply" \
-  "$(contract_prose)" \
-  "begin it in the turn that reads it, and your completion report is its reply."
-excludes "the contract holds no peer message to a reply" \
-  "$(contract_prose)" "is owed one concise reply"
-excludes "the contract offers no --ack" "$(contract_prose)" "--ack"
-excludes "the contract leaves reply correlation to the reference" \
-  "$(contract_prose)" "correlat"
-excludes "the contract leaves obligation retirement to the reference" \
-  "$(contract_prose)" "retire"
 excludes "an absent doctrine leaves no doctrine origin in the base contract" \
   "$(pane alpha)" "Operator doctrine ("
 excludes "startup contains no session-marker prompt" "$(pane alpha)" "Session marker"

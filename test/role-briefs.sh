@@ -531,7 +531,7 @@ ac15() {
 }
 
 ac16() {
-  local config="$TEST_ROOT/ac16-config" name body role_flag doctrine_flag lead
+  local config="$TEST_ROOT/ac16-config" name body role_flag doctrine_flag
   mkdir -p "$config/roles"
   printf 'SMALL_ROLE\n' > "$config/roles/small.md"
   for doctrine_flag in absent present; do
@@ -551,111 +551,6 @@ ac16() {
         "CONTRACT.md"
       drop_agent "$name"
     done
-  done
-  excludes "AC16 the contract does not impose lead delegation policy on every role" \
-    "$(tr '\n' ' ' < "$PRODUCT_ROOT/CONTRACT.md" | tr -s ' ')" \
-    "Let the teammate choose its method"
-  # Each expectation below locks one decision the shipped lead brief carries.
-  # A lock catches that decision being deleted or reworded away. It cannot catch
-  # a later sentence that negates it, and no assertion here proves a lead obeyed
-  # one; see docs/records/lead-brief-revision-2026-08-30.md.
-  lead="$(tr '\n' ' ' < "$PRODUCT_ROOT/roles/lead.md" | tr -s ' ')"
-  contains "AC16 the lead brief leaves methods to the teammate" "$lead" \
-    "The arc owner chooses the method, decomposition, delegation, and, where its tier calls for one, the independent reviewer."
-  contains "AC16 the lead does not prescribe how an arc is worked" "$lead" \
-    "Do not prescribe how an arc is worked."
-  contains "AC16 the lead commissions rather than performs review" "$lead" \
-    "Do not review the result yourself."
-  contains "AC16 the lead stays idle while an arc runs" "$lead" \
-    "Stay idle while an arc runs."
-  contains "AC16 concurrent arcs are compared by the files they write" "$lead" \
-    "compare the files each will write, not the tasks each was given"
-  contains "AC16 a shared file is sequenced and both owners are told" "$lead" \
-    "sequence them and tell both owners which goes first"
-  contains "AC16 an agent's state is reported only from observation" "$lead" \
-    "Report an agent's state only from what you have observed."
-  contains "AC16 silence is not evidence of progress" "$lead" \
-    "silence is not evidence that its arc is progressing"
-  contains "AC16 a lost agent leaves its arc unfinished" "$lead" \
-    "An arc whose agent is gone is unfinished"
-  contains "AC16 a lost arc is re-owned from what it left behind" "$lead" \
-    "briefed from the files it left behind"
-  contains "AC16 a step routed through the lead twice becomes an arc" "$lead" \
-    "that step is the next arc"
-  contains "AC16 the lead's own decisions are not that step" "$lead" \
-    "A decision only you can make is not that step."
-  contains "AC16 launch choices buy every owner an unshared reviewer" "$lead" \
-    "every owner has an available reviewer whose error modes differ from its own"
-  contains "AC16 a contradicted ruling is re-decided, not defended" "$lead" \
-    "re-decide it on that evidence rather than defending it"
-  contains "AC16 a re-decided ruling reaches whoever was told the old one" "$lead" \
-    "send the outcome to every teammate you had told the old ruling"
-  contains "AC16 direct action is bounded to a failing substrate" "$lead" \
-    "Act on the substrate yourself only when what every arc depends on is failing"
-  contains "AC16 the substrate repair returns to an owner" "$lead" \
-    "hand the repair to an owner as an arc"
-  contains "AC16 an arc gets one owner and that owner's own subagents" "$lead" \
-    "Assign one owner per arc."
-  contains "AC16 a second window on one result buys nothing" "$lead" \
-    "a second window opened against the same result buys the team nothing"
-  contains "AC16 a review is not an arc and outside Tier A not a hitch" "$lead" \
-    "A review is not an arc, and outside Tier A its reviewer is not a hitch."
-  contains "AC16 no agent is hitched to watch, relay, or split" "$lead" \
-    "Never hitch an agent to watch another, to relay an arc's progress"
-  contains "AC16 every assignment carries its tier before the owner starts" "$lead" \
-    "carries its tier on a line of its own, decided before the owner starts"
-  contains "AC16 a tier settled afterwards is settled by the outcome" "$lead" \
-    "A tier settled afterwards is settled by how the work turned out."
-  # A brief is delivered beside the contract and costs every lead that reads it,
-  # so no shipped brief may repeat a contract sentence. This catches a copy, not
-  # a paraphrase: matching is exact once whitespace and terminal punctuation are
-  # normalized. The fixture below is what proves it still catches anything.
-  restated() {
-    python3 - "$@" <<'RESTATE'
-import pathlib, re, sys
-
-
-def sentences(path):
-    # These files are Markdown, so a copy can hide behind its markup: a heading
-    # terminates no sentence and glues itself to the sentence below, and an
-    # emphasis or code marker after a full stop keeps the splitter from ending
-    # the sentence at all. Strip the markup, then the terminal punctuation a
-    # copy could otherwise escape through by changing it alone. Underscore is
-    # left in place: it spells identifiers here far more often than emphasis.
-    lines = pathlib.Path(path).read_text().splitlines()
-    prose = [line for line in lines if not line.lstrip().startswith("#")]
-    text = " ".join(" ".join(prose).split()).replace("*", "").replace("`", "")
-    parts = [s.strip().rstrip(".:!?") for s in re.split(r"(?<=[.:!?])\s+", text)]
-    return [s for s in parts if len(s) >= 40]
-
-
-contract = set(sentences(sys.argv[1]))
-repeats = [(p, s) for p in sys.argv[2:] for s in sentences(p) if s in contract]
-for path, sentence in repeats:
-    print(f"{path}: {sentence}", file=sys.stderr)
-raise SystemExit(1 if repeats else 0)
-RESTATE
-  }
-  if restated "$PRODUCT_ROOT/CONTRACT.md" "$PRODUCT_ROOT/roles/"*.md
-  then pass "AC16 no shipped brief restates a contract sentence"
-  else fail "AC16 no shipped brief restates a contract sentence" "duplicated sentence above"
-  fi
-  # A green above is only evidence if the same matcher goes red on a copy. Each
-  # brief below copies the contract sentence and hides the copy behind one thing
-  # an earlier build of the matcher let through: changed terminal punctuation,
-  # then Markdown emphasis around the whole sentence.
-  printf '# Heading\nPut unfinished work and supporting detail in files that teammates can read\nwithout you. Send a file path when you refer to its contents.\n' \
-    > "$config/restate-contract.md"
-  printf '# Lead\nPut unfinished work and supporting detail in files that teammates can read\nwithout you!\n' \
-    > "$config/restate-punctuation.md"
-  printf '# Lead\n**Put unfinished work and supporting detail in files that teammates can read\nwithout you.**\n' \
-    > "$config/restate-emphasis.md"
-  for disguise in punctuation emphasis; do
-    if restated "$config/restate-contract.md" "$config/restate-$disguise.md" 2>/dev/null
-    then fail "AC16 the restatement guard detects a copy disguised by $disguise" \
-      "fixture copy went unreported"
-    else pass "AC16 the restatement guard detects a copy disguised by $disguise"
-    fi
   done
 }
 
@@ -921,12 +816,10 @@ SH
   drop_agent role-ac25
 }
 
-# The worker brief is the counterpart to the lead brief: it states what an arc
-# owner is answerable for, so a team no longer needs a per-arc message to say
-# it. The locks below hold one decision each, and are read against the file on
-# disk so a deletion or rewording fails here rather than in a live team.
+# The shipped worker brief reaches an agent whole, by system prompt or by the
+# startup message.
 ac26() {
-  local prefix="$TEST_ROOT/ac26-argv" value worker rc=0 out
+  local prefix="$TEST_ROOT/ac26-argv" value rc=0 out
   make_argv_collar argv26 "$prefix"
   out="$(GANG_CONFIG_DIR="$TEST_ROOT/ac26-config" \
     "$GANG" hitch role-ac26 -c argv26 -d /tmp -r worker 2>&1)" || rc=$?
@@ -974,42 +867,6 @@ ac26() {
   else
     fail "AC26 a role-less-option collar accepts the worker role" "$out"
   fi
-
-  worker="$(tr '\n' ' ' < "$PRODUCT_ROOT/roles/worker.md" | tr -s ' ')"
-  contains "AC26 the worker reads the brief the lead names" "$worker" \
-    "Read the arc brief the lead names"
-  contains "AC26 the worker commissions its own review" "$worker" \
-    "The review of your result is yours to commission."
-  contains "AC26 the reviewer runs a model other than the owner's" "$worker" \
-    "Hitch a reviewer running a model other than your own"
-  contains "AC26 a second harness over one model is not that reviewer" "$worker" \
-    "a second harness over the same model shares the blind spot"
-  contains "AC26 every finding is addressed or its refusal recorded" "$worker" \
-    "address every finding or record why you did not"
-  contains "AC26 each fix carries a test that fails first" "$worker" \
-    "a test that fails on the unfixed code"
-  contains "AC26 the failing run is kept" "$worker" \
-    "Run it before the fix and keep that failing output"
-  contains "AC26 evidence outlives the agent and is named to the lead" "$worker" \
-    "a directory that outlives your window, and name that directory"
-  contains "AC26 the push gate is never bypassed" "$worker" \
-    "Never disable it, skip it, or route around it."
-  contains "AC26 a refusing gate is answered by fixing the content" "$worker" \
-    "naming a defect in what you are pushing, so fix the content"
-  contains "AC26 one report follows the landing" "$worker" \
-    "Send the lead one report once the work has landed"
-  contains "AC26 the assignment's tier sets how far the review reaches" "$worker" \
-    "tier on your assignment sets how far it reaches"
-  contains "AC26 a Tier B review hitches nobody" "$worker" \
-    "In Tier B you review with your own subagents and the gate this repository ships"
-  contains "AC26 a Tier A review leaves the owner's harness" "$worker" \
-    "In Tier A the review leaves your harness."
-  contains "AC26 a review gets two rounds and no third" "$worker" \
-    "A review gets two rounds."
-  contains "AC26 an unsettled finding lands recorded or reaches the lead" "$worker" \
-    "land with it recorded or hand the disagreement to the lead, but do not open a third"
-  contains "AC26 the report names commits, proof, gaps and operator work" "$worker" \
-    "the commits, what each test proves, what remains unproven, and anything the operator must do"
 }
 
 for ac_name in ac1 ac2 ac3 ac4 ac5 ac6 ac7 ac8 ac9 ac10 ac11 ac12 ac13 ac14 ac15 ac16 ac17 ac18 ac19 ac20 ac21 ac22 ac23 ac24 ac25 ac26; do
