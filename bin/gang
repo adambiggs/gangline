@@ -5124,6 +5124,8 @@ try:
 
     try:
         current = os.readlink(path)
+    except FileNotFoundError:
+        outcome(8, "released")
     except OSError:
         current = ""
     if current != expected:
@@ -5186,6 +5188,15 @@ PY
         ;;
       7:unresolvable)
         refuse "the delivery lock for $name names pid $pid in a process namespace this command can no longer see — retry from the host before removing it"
+        ;;
+      8:released)
+        # The owner released and exited between the owner read and this
+        # check, so the lock is free: resolved contention, retried like any
+        # other vanish rather than refused as a changed owner.
+        read_races=$((read_races + 1))
+        [ "$read_races" -le 1 ] \
+          || refuse "the delivery lock for $name disappeared twice while Gangline was resolving contention — inspect it with gang capture $name before retrying"
+        continue
         ;;
       *)
         die "cannot recover the stale delivery lock $path — ${reaper_result:-unknown reaper failure}. No delivery started"

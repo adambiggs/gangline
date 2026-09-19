@@ -1858,6 +1858,31 @@ printf 'release\n' >&"$stale_reap_a_release_fd"
 stale_reap_reader_rc=0
 wait "$stale_reap_reader_pid" || stale_reap_reader_rc=$?
 equal "the reaping self-read completes after the changed-owner refusal" 0 "$stale_reap_reader_rc"
+
+# A LINK RELEASED DURING THE OWNER CHECK IS A FREE LOCK, not a changed owner.
+# An ordinary holder can release and exit between a sender's readlink and its
+# identity read, so the sender sees a dead owner whose link is already gone.
+# The sender is paused in the helper after observing the dead owner; the link
+# is then removed as that release would. It must take the free lock.
+tmux send-keys -t "$stale_reap_id" C-u
+ln -s 99999999 "$stale_reap_lock"
+printf 'MARK_STALE_REAP_RELEASED' |
+  GANG_STALE_REAP_C_LOCK="$stale_reap_lock" \
+  GANG_STALE_REAP_C_DONE="$RUN_ROOT/stale-reap-released-done" \
+  GANG_STALE_REAP_C_READY="$stale_reap_c_ready" \
+  GANG_STALE_REAP_C_RELEASE="$stale_reap_c_release" \
+  "$GANG" send --to stale-reap --from tester --stdin \
+  >"$RUN_ROOT/stale-reap-released.out" 2>"$RUN_ROOT/stale-reap-released.err" &
+stale_reap_released_pid=$!
+IFS= read -r -t 10 -u "$stale_reap_c_ready_fd" _ \
+  || fail "the released-lock sender reaches the stale-owner helper" "no sender arrived"
+unlink "$stale_reap_lock"
+printf 'release\n' >&"$stale_reap_c_release_fd"
+stale_reap_released_rc=0
+wait "$stale_reap_released_pid" || stale_reap_released_rc=$?
+equal "a sender whose observed owner released takes the free lock" 0 "$stale_reap_released_rc"
+excludes "a released owner is not refused as a changed one" \
+  "$(<"$RUN_ROOT/stale-reap-released.err")" "changed while Gangline was verifying"
 rm -f -- "$RUN_ROOT/bin/rm" "$RUN_ROOT/bin/mv" "$RUN_ROOT/bin/python3"
 exec {stale_reap_b_ready_fd}>&-
 exec {stale_reap_b_release_fd}>&-
