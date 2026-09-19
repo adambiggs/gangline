@@ -629,59 +629,30 @@ cannot always be visited inside one worker deadline. Once the worker has spent
 two thirds of `GANG_TICK_DEADLINE` the pass stops before its next visit, records
 the last visited window as the team's cursor under its health directory, and
 reports the pass partial: health stays `ok` with a note counting the agents
-visited against the roster, and the worker arms one successor tick, on a fresh
-deadline, that starts after the cursor. That successor is a continuation and
-arms none of its own; a roster too large for two passes is finished by the
-ordinary post-command ticks, each of which starts after the cursor. The first
-visit of a pass is always made, so the cursor always advances. A pass that
-reaches everyone removes the cursor.
+visited against the roster. The next pass, launched by the next operational
+command, starts after the cursor. The first visit of a pass is always made, so
+the cursor always advances. A pass that reaches everyone removes the cursor.
 
-One per-team kernel flock serializes generation-lock metadata transactions; the
-generation symlink records worker ownership between them. The guard descriptor
-is closed before the cooperative pass and reopened for final owner release, so
-pass subprocesses cannot inherit exclusion. Metadata retirement holds the same
-guard across its decision and unlink. The empty guard file remains under
-`GANG_LOCK_DIR` until the operator removes that lock root. A concurrent
-candidate touches a dirty marker and exits immediately; the owner consumes that
-marker with one more pass. A marker set during that rerun is not consumed by
-the same owner: while it still holds the lock it arms one successor tick, in a
-session of its own, that waits on a pipe the owner holds and starts when the
-owner closes it after releasing the lock or dies holding it, so the pass a
-contender was promised still starts after its edge while no owner lives longer
-than two passes. The hand-over leaves nothing on disk. An owner that cannot arm
-that successor fails its tick and leaves the marker for the next one. Dead, zombie, and replaced
-generations are reclaimed.
-The record names the owner's pid namespace as well as its pid: a worker inside
-a sandbox with its own pid table records the number it sees there, and on the
-host that number belongs to an unrelated process. A contender in the initial
-namespace resolves the owner through `/proc`, so one that died with its
-sandbox is reclaimed and a live one is ordinary contention. Absence counts as
-death only where `/proc` is procfs for the contender's own table and no
-hidepid mode filters this user's entries; a contender in a namespace that
-cannot see the owner, or reading a narrower view, retains the lock, names what
-it cannot see, and exits with status 77 without touching health: it has not
-learned that a pass failed, only that it cannot read the owner, and a reader in
-the initial namespace resolves the same record on the next candidate.
-`gang tick` reports that outcome as a failure of the command, not of the team.
-A record without a namespace is resolved by pid
-and start token among the namespaces the contender can see. A recorded pid
-whose process now belongs to another user cannot be a tick worker for this
-team and is retired as a reused number.
+Two per-team kernel flocks under `GANG_LOCK_DIR/tick/` order the passes: a
+queue lock held by the one pass waiting to start, and a run lock held by the one
+pass running. A launch tries the queue lock without blocking. Refused, it
+returns at once, starting no tick and recording no event: the waiting pass has
+not started and serves it. Granted, it hands the descriptor to a detached
+`gang tick`, which ignores hangups and interrupts while it blocks on the run
+lock and lets go of the queue lock once it holds the run lock, before its pass
+starts. A launch that arrives while a pass runs therefore gets one pass after
+it unless that waiting pass is killed outright, and any number of such
+launches get exactly one. `gang tick` holds the run lock on a descriptor its
+deadline controller is started without, so no worker, tmux client or server
+started by a pass inherits it, and the kernel drops both locks when their
+holder ends however it ends. The result is committed under the run lock; the
+pass's events are recorded after it is released. The empty lock files remain
+under `GANG_LOCK_DIR` until the operator removes that lock root. `gang tick`
+itself waits for the run lock. The locks are taken with `flock(1)` where it is
+installed and through Python's `fcntl` where it is not.
 The internal worker accepts only the budget its controller exported, which is
 the validated `GANG_TICK_DEADLINE`; a caller cannot feed shell arithmetic a
-different deadline. A matching owner at least the hard worker deadline fails
-health instead of looking like clean contention. The lock stamp uses the same monotonic clock domain as
-the controller deadline, so suspend and wall-clock adjustment do not spend
-that budget. At twice the published budget, Linux may reclaim only an exact
-tick-worker leader: it sends one SIGKILL through a generation-bound pidfd,
-confirms exit for at most one second, and retires the unchanged lock. It never
-signals a bare PID or process-group number. A legacy pid-only lock is retired
-when the live PID is positively not a tick worker for this team, but never
-authorizes termination because it has no generation or monotonic acquisition
-stamp. Ambiguous identity, a tick-shaped live legacy owner, and failed
-termination retain the lock and fail loudly. Recovery begins on the next
-cooperative tick, invoked directly or launched by an operational command,
-rather than in a resident watcher.
+different deadline.
 
 The worker and its descendants are also killed by their owning deadline
 controller at `GANG_TICK_DEADLINE` seconds. HUP, INT, TERM, or ALRM caught by that controller
@@ -2192,7 +2163,7 @@ Exactly these keys are settable:
 | `GANG_CHURN_WAIT` | `0.5` | stable-pane observation interval |
 | `GANG_ACTIVITY_WINDOW` | `5` | recent terminal-activity window |
 | `GANG_TURN_LIMIT` | `300` | native turn-fact bound and default `gang wait` boundary timeout |
-| `GANG_TICK_DEADLINE` | `60` | whole seconds, `60` to `3600`: the hard deadline that kills one cooperative tick worker; a pass stops visiting at two thirds of it and hands the rest of the roster to a successor |
+| `GANG_TICK_DEADLINE` | `60` | whole seconds, `60` to `3600`: the hard deadline that kills one cooperative tick worker; a pass stops visiting at two thirds of it and the next pass resumes after it |
 
 Collar declarations are refused because `load_collar` clears them before
 sourcing the selected collar; put those values in a custom collar and point

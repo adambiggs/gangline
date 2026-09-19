@@ -1180,9 +1180,18 @@ equal "a journal whose size cannot be read marks the history incomplete" 1 \
   "$(alert_ui_tmux show-options -qv -t "=$alert_ui_session:" @gl_alert_history_lost)"
 mv -- "$RUN_ROOT/alert-ui-alerts-saved" "$alert_ui_alerts"
 
-# A pass owns the tick lock through its health commit. Hold a failing pass at
-# that exact seam, request another pass after repairing the condition, and
-# require the same owner to consume the dirty edge before its result returns.
+# A PASS OWNS THE RUN LOCK THROUGH ITS HEALTH COMMIT, AND A LAUNCH DURING IT IS
+# SERVED AFTERWARDS. Hold a failing pass at that exact seam, repair the
+# condition, and launch: the launch queues behind the held pass instead of
+# committing ahead of it, and its own pass then records the recovery. Taking
+# the queue lock and then the run lock waits out the queued pass, which holds
+# the first until it holds the second.
+alert_ui_queue_lock="$RUN_ROOT/alert-ui-locks/tick/$alert_ui_digest.queue"
+alert_ui_run_lock="$RUN_ROOT/alert-ui-locks/tick/$alert_ui_digest.run"
+alert_ui_queued_wait() {
+  flock "$alert_ui_queue_lock" true
+  flock "$alert_ui_run_lock" true
+}
 alert_ui_commit_ready="$RUN_ROOT/alert-ui-commit-ready"
 alert_ui_commit_release="$RUN_ROOT/alert-ui-commit-release"
 alert_ui_commit_ledger="$RUN_ROOT/alert-ui-commit-ledger"
@@ -1195,16 +1204,18 @@ GANG_TEST_TICK_LEDGER="$alert_ui_commit_ledger" \
 alert_ui_commit_owner=$!
 IFS= read -r -N 1 _ < "$alert_ui_commit_ready"
 alert_ui_tmux set-option -w -t "$alert_ui_caller_id" @gl_collar bash
-alert_ui_cross_rc=0
-alert_ui_gang tick >/dev/null 2>&1 || alert_ui_cross_rc=$?
-equal "a contender cannot pass while the older health result is uncommitted" \
-  0 "$alert_ui_cross_rc"
+GANG_TEST_TICK_MODE=async GANG_TEST_TICK_LEDGER="$alert_ui_commit_ledger" \
+  alert_ui_gang roster >/dev/null
+alert_ui_queued_rc=0
+flock -n "$alert_ui_queue_lock" true || alert_ui_queued_rc=$?
+equal "a launch while the older result is uncommitted queues a pass" \
+  1 "$alert_ui_queued_rc"
 printf '\n' > "$alert_ui_commit_release"
 alert_ui_commit_owner_rc=0
 wait "$alert_ui_commit_owner" || alert_ui_commit_owner_rc=$?
-equal "the committing owner reruns the crossed recovery before returning" \
-  0 "$alert_ui_commit_owner_rc"
-equal "the serialized health owner consumes one dirty rerun" '1 2 ' \
+equal "the held pass commits its own failure" 1 "$alert_ui_commit_owner_rc"
+alert_ui_queued_wait
+equal "the queued launch runs one pass after the held one" '1 1 ' \
   "$(tr '\n' ' ' < "$alert_ui_commit_ledger")"
 equal "the newer recovery is the final alert state" '0 0' \
   "$(alert_ui_tmux show-options -qv -t "=$alert_ui_session:" @gl_alert_active) $(alert_ui_tmux show-options -qv -t "=$alert_ui_session:" @gl_alert_unseen)"
@@ -1212,8 +1223,8 @@ contains "the newer recovery is the final health record" \
   "$(<"$alert_ui_health")" $'ok\t'
 
 # Deadline/controller failures return after their worker is gone. Hold the
-# older parent at its failure commit, let a later clean invocation commit, then
-# release the old parent: its lower result ticket must not overwrite recovery.
+# older parent at its failure commit and launch a later pass: it queues until
+# the parent has committed, so the older failure cannot overwrite recovery.
 alert_ui_bad_clock="$RUN_ROOT/alert-ui-bad-clock"
 cat > "$alert_ui_bad_clock" <<'SH'
 #!/bin/sh
@@ -1233,10 +1244,15 @@ GANG_TEST_TICK_PARENT_COMMIT_RELEASE_FIFO="$alert_ui_parent_release" \
   alert_ui_gang tick > "$RUN_ROOT/alert-ui-parent-failure.out" 2>&1 &
 alert_ui_parent_owner=$!
 IFS= read -r -N 1 _ < "$alert_ui_parent_ready"
-alert_ui_gang tick >/dev/null
+GANG_TEST_TICK_MODE=async alert_ui_gang roster >/dev/null
+alert_ui_parent_queued_rc=0
+flock -n "$alert_ui_queue_lock" true || alert_ui_parent_queued_rc=$?
+equal "a launch during an uncommitted controller failure queues a pass" \
+  1 "$alert_ui_parent_queued_rc"
 printf '\n' > "$alert_ui_parent_release"
 alert_ui_parent_rc=0
 wait "$alert_ui_parent_owner" || alert_ui_parent_rc=$?
+alert_ui_queued_wait
 equal "the older controller failure still returns its own failure" \
   1 "$alert_ui_parent_rc"
 contains "the older controller failure retains its diagnostic" \
@@ -2816,9 +2832,8 @@ contains "status reports the journal failure" \
 
 # A PASS THAT SPENDS ITS BUDGET STOPS, RECORDS A CURSOR, AND REPORTS PARTIAL.
 # Three hitched windows and a budget of zero seconds: every pass makes the one
-# visit it always owes, then stops. The manual tick mode arms no successor, so
-# the passes are driven here and the visit order shows the roster rotating from
-# the cursor. The budget under test is the worker's own soft share of its
+# visit it always owes, then stops. The passes are driven here, and the visit
+# order shows the roster rotating from the cursor. The budget under test is the worker's own soft share of its
 # deadline, read once per visit from the shell's whole-second clock, so a zero
 # budget is spent by the first visit and nothing here waits.
 tick_part_ledger="$RUN_ROOT/tick-partial-visits"
@@ -2850,8 +2865,6 @@ contains "health stays ok and names the partial pass" "$(<"$tick_part_dir/health
 contains "the ok note counts what the pass visited against the roster" \
   "$(<"$tick_part_dir/health")" "partial pass: 1 of $tick_part_total agents visited"
 excludes "a partial pass is not a failed tick" "$("$GANG" status 2>&1)" 'last tick failed'
-equal "the partial marker does not outlive the worker that read it" absent \
-  "$([ -e "$tick_part_dir/partial" ] && printf present || printf absent)"
 GANG_TEST_TICK_MODE=manual GANG_TEST_TICK_SOFT_BUDGET_S=0 \
   GANG_TEST_TICK_VISIT_LEDGER="$tick_part_ledger" "$GANG" tick >/dev/null
 GANG_TEST_TICK_MODE=manual GANG_TEST_TICK_SOFT_BUDGET_S=0 \
@@ -2875,30 +2888,6 @@ equal "a complete pass removes the cursor" absent \
   "$([ -e "$tick_part_dir/cursor" ] && printf present || printf absent)"
 contains "a complete pass records plain ok health" "$(<"$tick_part_dir/health")" $'ok\t'
 excludes "a complete pass leaves no partial note" "$(<"$tick_part_dir/health")" 'partial pass'
-# With successors armed, a partial pass hands the rest to one continuation that
-# arms none of its own: the roster is finished by two workers, not a chain. The
-# done fifo carries the successor's kind, so a successor that was not marked a
-# continuation, and so would arm another, is seen the moment it finishes.
-tick_part_done="$RUN_ROOT/tick-partial-done"
-mkfifo "$tick_part_done"
-exec 12<>"$tick_part_done"
-: > "$tick_part_ledger"
-tick_part_chain_rc=0
-GANG_TEST_TICK_MODE='' GANG_TEST_TICK_SOFT_BUDGET_S=0 \
-  GANG_TEST_TICK_SUCCESSOR_DONE_FIFO="$tick_part_done" \
-  GANG_TEST_TICK_VISIT_LEDGER="$tick_part_ledger" \
-  "$GANG" tick > "$RUN_ROOT/tick-partial-chain.out" 2>&1 || tick_part_chain_rc=$?
-equal "a partial pass with successors enabled returns before its successor runs" 0 "$tick_part_chain_rc"
-IFS= read -r -N 1 tick_part_kind <&12
-equal "the successor of a partial pass ran as a continuation" c "$tick_part_kind"
-equal "the continuation ran one more pass" 2 \
-  "$(wc -l < "$tick_part_ledger" | tr -d ' ')"
-equal "the continuation visits the agent after the cursor its predecessor left" 2 \
-  "$(sort -u "$tick_part_ledger" | wc -l | tr -d ' ')"
-equal "the continuation's own partial pass leaves its cursor for the next ordinary tick" present \
-  "$([ -e "$tick_part_dir/cursor" ] && printf present || printf absent)"
-exec 12<&-
-GANG_TEST_TICK_MODE=manual "$GANG" tick >/dev/null
 for tick_part_n in 1 2 3; do "$GANG" drop "tick-part-$tick_part_n" >/dev/null; done
 unset -f tick_part_window_of
 
@@ -3052,7 +3041,7 @@ contains "the refusal names the ceiling" "$(<"$RUN_ROOT/tick-deadline-ceiling.ou
 tick_deadline_rc=0
 GANG_TICK_DEADLINE=9223372037 "$GANG" tick > "$RUN_ROOT/tick-deadline-overflow.out" 2>&1 \
   || tick_deadline_rc=$?
-equal "a deadline that would overflow the lock arithmetic refuses the tick" 1 "$tick_deadline_rc"
+equal "a deadline that would overflow the deadline arithmetic refuses the tick" 1 "$tick_deadline_rc"
 contains "the overflowing value is refused by the ceiling" \
   "$(<"$RUN_ROOT/tick-deadline-overflow.out")" \
   "GANG_TICK_DEADLINE must be at most 3600 seconds, got 9223372037"
@@ -3083,7 +3072,7 @@ equal "a worker whose exported budget is not the configured deadline refuses" 1 
 contains "the worker names both numbers" "$(<"$RUN_ROOT/tick-deadline-mismatch.out")" \
   "tick worker deadline budget 60 is not the configured GANG_TICK_DEADLINE of 90s"
 tick_deadline_rc=0
-GANG_TICK_DEADLINE=90 GANG_TICK_INTERNAL=1 GANG_TICK_TICKET=1 \
+GANG_TICK_DEADLINE=90 GANG_TICK_INTERNAL=1 \
   "$ROOT/libexec/gang-tick-deadline" --clock-helper "$ROOT/libexec/gang-clock" \
   sh -c 'printf "%s\n" "$GANG_TICK_DEADLINE_SECONDS"' > "$RUN_ROOT/tick-deadline-export.out" 2>&1 \
   || tick_deadline_rc=$?
@@ -3103,761 +3092,138 @@ contains "the controller's refusal names the ceiling" \
   "$(<"$RUN_ROOT/tick-deadline-controller-ceiling.out")" \
   "GANG_TICK_DEADLINE must be a whole number of seconds from 60 to 3600, got '9223372037'"
 
-# A live holder is dirtied, not joined or piled up. FIFO edges make the exact
-# crossing deterministic: the contender runs only after the holder owns its
-# symlink and the holder cannot finish its first pass until released.
+# A LAUNCH DURING A PASS GETS ONE PASS AFTER IT, AND NO MORE. FIFO edges make
+# each crossing exact: the first launch queues behind the parked owner, and
+# the queued pass holds the queue lock until it holds the run lock, so every
+# launch before that point is already served and forks nothing. A launch after
+# it queues the next pass. Taking the queue lock and then the run lock waits
+# out whatever is queued.
 tick_ready_fifo="$RUN_ROOT/tick-ready"
 tick_release_fifo="$RUN_ROOT/tick-release"
+tick_ready2_fifo="$RUN_ROOT/tick-ready2"
+tick_release2_fifo="$RUN_ROOT/tick-release2"
 tick_ledger="$RUN_ROOT/tick-ledger"
-mkfifo "$tick_ready_fifo" "$tick_release_fifo"
+tick_events="$XDG_DATA_HOME/gangline/events/events.jsonl"
+mkfifo "$tick_ready_fifo" "$tick_release_fifo" "$tick_ready2_fifo" "$tick_release2_fifo"
+tick_event_lines() { # tick events so far; an absent log has none
+  if [ -e "$tick_events" ]; then grep -c '"tick\.' "$tick_events" || :; else printf '0\n'; fi
+}
 GANG_TEST_TICK_READY_FIFO="$tick_ready_fifo" \
 GANG_TEST_TICK_RELEASE_FIFO="$tick_release_fifo" \
 GANG_TEST_TICK_LEDGER="$tick_ledger" \
   "$GANG" tick > "$RUN_ROOT/tick-owner.out" 2> "$RUN_ROOT/tick-owner.err" &
 tick_owner_pid=$!
 IFS= read -r -N 1 _ < "$tick_ready_fifo"
-tick_lock_path="$(find "$GANG_LOCK_DIR/tick" -maxdepth 1 -type l -name '*.lock' -print)"
-"$GANG" tick >/dev/null
-equal "a concurrent candidate exits after touching one dirty marker" 1 \
-  "$(find "$GANG_LOCK_DIR/tick" -maxdepth 1 -type f -name '*.dirty' | wc -l | tr -d ' ')"
+# Earlier teams leave their free lock files behind; the parked owner's run
+# lock is the one a non-blocking attempt is refused.
+tick_run_lock=""
+for tick_lock_file in "$GANG_LOCK_DIR"/tick/*.run; do
+  flock -n "$tick_lock_file" true || tick_run_lock+="$tick_lock_file"$'\n'
+done
+tick_run_lock="${tick_run_lock%$'\n'}"
+tick_queue_lock="${tick_run_lock%.run}.queue"
+equal "the parked owner's run lock is the only one held" 1 \
+  "$(printf '%s\n' "$tick_run_lock" | grep -c '\.run$')"
+GANG_TEST_TICK_MODE=async \
+GANG_TEST_TICK_READY_FIFO="$tick_ready2_fifo" \
+GANG_TEST_TICK_RELEASE_FIFO="$tick_release2_fifo" \
+GANG_TEST_TICK_LEDGER="$tick_ledger" \
+  "$GANG" roster >/dev/null
+tick_queued_rc=0
+flock -n "$tick_queue_lock" true || tick_queued_rc=$?
+equal "a launch during a parked pass queues one pass" 1 "$tick_queued_rc"
+# A launch forks before it returns, and anything it forks inherits the queue
+# descriptor and waits behind the parked owner, so holders counted right after
+# the launches returned are complete. The queued pass starts children of its
+# own that inherit it too, so only holders without a holder ancestor count.
+tick_queue_holders() { # pids with the queue lock file open, one per line
+  local fd pid
+  for fd in /proc/[0-9]*/fd/*; do
+    [ "$(readlink "$fd")" = "$tick_queue_lock" ] || continue
+    pid="${fd#/proc/}"
+    printf '%s\n' "${pid%%/*}"
+  done 2>/dev/null | sort -u
+}
+tick_queue_roots() { # holders with no holder among their ancestors
+  local holders pid up stat
+  holders="$(tick_queue_holders)"
+  while IFS= read -r pid; do
+    [ -n "$pid" ] || continue
+    up="$pid"
+    while :; do
+      stat="$(<"/proc/$up/stat")" 2>/dev/null || { up=""; break; }
+      stat="${stat##*) }"
+      up="$(printf '%s\n' "$stat" | awk '{print $2}')"
+      [ "$up" -gt 1 ] || { up=""; break; }
+      ! grep -qx "$up" <<<"$holders" || break
+    done
+    [ -n "$up" ] || printf '%s\n' "$pid"
+  done <<<"$holders"
+}
+tick_queued_pid="$(tick_queue_roots)"
+[ "$(grep -c . <<<"$tick_queued_pid")" = 1 ] \
+  || fail "the queued pass is the queue lock's one root holder" "$tick_queued_pid"
+tick_events_before="$(tick_event_lines)"
+GANG_TEST_TICK_MODE=async GANG_TEST_TICK_LEDGER="$tick_ledger" "$GANG" roster >/dev/null
+GANG_TEST_TICK_MODE=async GANG_TEST_TICK_LEDGER="$tick_ledger" "$GANG" roster >/dev/null
+equal "launches behind a queued pass start no process" "$tick_queued_pid" \
+  "$(tick_queue_roots)"
+equal "launches behind a queued pass record no tick event" "$tick_events_before" \
+  "$(tick_event_lines)"
+# The queued pass is the only record of those launches, so the hangup that
+# ends the pane of the command that queued it must not end it.
+while IFS= read -r tick_holder_pid; do
+  kill -HUP "$tick_holder_pid" || :
+done < <(tick_queue_holders)
+exec {tick_ready2_fd}<>"$tick_ready2_fifo"
 printf '\n' > "$tick_release_fifo"
 wait "$tick_owner_pid"
-equal "the singleton consumes the dirty edge with exactly one rerun" "1 2 " \
+tick_hup_rc=0
+IFS= read -r -N 1 -t 30 -u "$tick_ready2_fd" _ || tick_hup_rc=$?
+exec {tick_ready2_fd}<&-
+equal "a queued pass survives the hangup of its launcher's pane" 0 "$tick_hup_rc"
+tick_queued_rc=0
+flock -n "$tick_queue_lock" true || tick_queued_rc=$?
+equal "the queued pass frees the queue before its pass starts" 0 "$tick_queued_rc"
+GANG_TEST_TICK_MODE=async GANG_TEST_TICK_LEDGER="$tick_ledger" "$GANG" roster >/dev/null
+printf '\n' > "$tick_release2_fifo"
+flock "$tick_queue_lock" true
+flock "$tick_run_lock" true
+equal "three launches around two passes run exactly one pass each after them" "1 1 1 " \
   "$(tr '\n' ' ' < "$tick_ledger")"
-equal "the completed singleton leaves no lock or dirty residue" 0 \
-  "$(find "$GANG_LOCK_DIR/tick" -maxdepth 1 \( -type l -name '*.lock' -o -type f -name '*.dirty' \) | wc -l | tr -d ' ')"
+equal "the served launches leave both tick locks free" "0 0" \
+  "$(rc=0; flock -n "$tick_queue_lock" true || rc=$?; printf '%s ' "$rc"
+     rc=0; flock -n "$tick_run_lock" true || rc=$?; printf '%s' "$rc")"
 
-# The ownership guard protects only lock-metadata transactions. It must be
-# closed before the worker enters its cooperative pass, or any subprocess that
-# outlives the worker can inherit the flock and wedge every later contender.
-# The first pass command opens the same guard independently; status zero means
-# no inherited open description still owns it.
-tick_guard_probe_bin="$RUN_ROOT/tick-guard-probe-bin"
-tick_guard_probe="$RUN_ROOT/tick-guard-probe"
-tick_guard_path="${tick_lock_path%.lock}.guard"
-tick_dirty_path="${tick_lock_path%.lock}.dirty"
-mkdir -p "$tick_guard_probe_bin"
+# NOTHING UNDER A PASS HOLDS A TICK LOCK. The pass starts its controller with
+# the run descriptor closed and closes the queue descriptor before that, so a subprocess that outlives the pass cannot wedge later
+# launches. A tmux shim run by the worker lists its own open descriptors.
+tick_fd_probe_bin="$RUN_ROOT/tick-fd-probe-bin"
+tick_fd_probe="$RUN_ROOT/tick-fd-probe"
+mkdir -p "$tick_fd_probe_bin"
 {
   printf '#!/usr/bin/env bash\n'
-  printf 'REAL=%q\n' "$(command -v rm)"
-  printf 'HELPER=%q\n' "$ROOT/libexec/gang-process-identity"
-  printf 'GUARD=%q\n' "$tick_guard_path"
-  printf 'DIRTY=%q\n' "$tick_dirty_path"
-  printf 'PROBE=%q\n' "$tick_guard_probe"
+  printf 'REAL=%q\n' "$(command -v tmux)"
+  printf 'RUN=%q\n' "$tick_run_lock"
+  printf 'QUEUE=%q\n' "$tick_queue_lock"
+  printf 'PROBE=%q\n' "$tick_fd_probe"
   cat <<'SH'
 . "$GANG_TEST_PATH_SHIM_GUARD"
-path_shim_guard "$REAL" "$0" rm || exit $?
-if [ "${1:-}" = -f ] && [ "${2:-}" = -- ] && [ "${3:-}" = "$DIRTY" ] \
-   && [ ! -e "$PROBE" ]; then
-  exec 9>"$GUARD"
-  rc=0
-  "$HELPER" --lock-fd 9 >/dev/null 2>&1 || rc=$?
-  printf '%s\n' "$rc" > "$PROBE"
-  exec 9>&-
-fi
-exec "$REAL" "$@"
-SH
-} > "$tick_guard_probe_bin/rm"
-chmod +x "$tick_guard_probe_bin/rm"
-tick_guard_probe_rc=0
-GANG_TICK_INTERNAL=1 PATH="$tick_guard_probe_bin:$PATH" \
-  "$GANG" __tick-worker > "$RUN_ROOT/tick-guard-probe.out" 2>&1 \
-  || tick_guard_probe_rc=$?
-equal "the guard probe worker completes its cooperative pass" 0 \
-  "$tick_guard_probe_rc"
-equal "a cooperative-pass subprocess inherits no tick ownership guard" 0 \
-  "$(<"$tick_guard_probe")"
-
-# A MARKER SET DURING THE RERUN IS NOT ANOTHER RERUN. The owner consumes one
-# dirty edge with one more pass; a candidate arriving during that rerun hands
-# its edge to a fresh worker instead of extending this one. A team whose
-# commands and hooks arrive faster than a pass completes otherwise keeps one
-# owner rerunning until the deadline kills it. The rm shim pauses the owner at
-# the start of its second pass — the removal of the consumed marker — so the
-# second contender's crossing is deterministic. On the third removal the shim
-# reports who is removing: the same worker, which is the unbounded loop's third
-# pass, or a fresh one, whose deadline controller's session it records. Every
-# outcome this shell waits for arrives on one event stream: a worker's first
-# pass, the shim's report, the owner's exit with its status, and the fresh
-# worker's completion. No branch is a timeout.
-tick_rerun_bin="$RUN_ROOT/tick-rerun-bin"
-tick_rerun_ready="$RUN_ROOT/tick-rerun-ready"
-tick_rerun_release="$RUN_ROOT/tick-rerun-release"
-tick_rerun_events="$RUN_ROOT/tick-rerun-events"
-tick_rerun_first_release="$RUN_ROOT/tick-rerun-first-release"
-tick_rerun_count="$RUN_ROOT/tick-rerun-count"
-tick_rerun_owner_worker="$RUN_ROOT/tick-rerun-owner-worker"
-tick_rerun_sessions="$RUN_ROOT/tick-rerun-sessions"
-tick_rerun_ledger="$RUN_ROOT/tick-rerun-ledger"
-mkdir -p "$tick_rerun_bin"
-mkfifo "$tick_rerun_ready" "$tick_rerun_release" \
-  "$tick_rerun_events" "$tick_rerun_first_release"
-{
-  printf '#!/usr/bin/env bash\n'
-  printf 'REAL=%q\n' "$(command -v rm)"
-  printf 'DIRTY=%q\n' "$tick_dirty_path"
-  printf 'READY=%q\n' "$tick_rerun_ready"
-  printf 'RELEASE=%q\n' "$tick_rerun_release"
-  printf 'EVENTS=%q\n' "$tick_rerun_events"
-  printf 'COUNT=%q\n' "$tick_rerun_count"
-  printf 'OWNER=%q\n' "$tick_rerun_owner_worker"
-  printf 'SESSIONS=%q\n' "$tick_rerun_sessions"
-  cat <<'SH'
-. "$GANG_TEST_PATH_SHIM_GUARD"
-path_shim_guard "$REAL" "$0" rm || exit $?
-# The worker removes the marker itself, so the shim's parent is the worker.
-# The fields after the command name in /proc/PID/stat are state, parent,
-# process group, session; $1 is the number of the wanted field, $2 the pid.
-proc_field() {
-  set -- "$1" $(sed 's/^.*) //' "/proc/$2/stat")
-  shift "$1"
-  printf '%s' "$1"
-}
-if [ "${1:-}" = -f ] && [ "${2:-}" = -- ] && [ "${3:-}" = "$DIRTY" ]; then
-  n=0
-  [ ! -e "$COUNT" ] || IFS= read -r n < "$COUNT"
-  n=$((n + 1))
-  printf '%s\n' "$n" > "$COUNT"
-  case "$n" in
-    2)
-      "$REAL" "$@" || exit $?
-      printf '%s %s\n' "$PPID" "$(proc_field 4 "$PPID")" > "$OWNER"
-      printf x > "$READY"
-      IFS= read -r _ < "$RELEASE"
-      exit 0 ;;
-    3)
-      IFS=' ' read -r owner_pid owner_session < "$OWNER"
-      if [ "$PPID" = "$owner_pid" ]; then
-        printf o > "$EVENTS"
-      else
-        controller="$(proc_field 2 "$PPID")"
-        printf '%s %s\n' "$owner_session" "$(proc_field 4 "$controller")" > "$SESSIONS"
-      fi ;;
-  esac
-fi
-exec "$REAL" "$@"
-SH
-} > "$tick_rerun_bin/rm"
-chmod +x "$tick_rerun_bin/rm"
-# Both fifos are opened read-write by this shell so no writer blocks on it.
-exec 7<>"$tick_rerun_events" 11<>"$tick_rerun_first_release"
-tick_rerun_owner_status=0
-{
-  GANG_TEST_TICK_MODE='' \
-  GANG_TEST_TICK_READY_FIFO="$tick_rerun_events" \
-  GANG_TEST_TICK_RELEASE_FIFO="$tick_rerun_first_release" \
-  GANG_TEST_TICK_SUCCESSOR_DONE_FIFO="$tick_rerun_events" \
-  GANG_TEST_TICK_LEDGER="$tick_rerun_ledger" PATH="$tick_rerun_bin:$PATH" \
-    "$GANG" tick > "$RUN_ROOT/tick-rerun-owner.out" 2> "$RUN_ROOT/tick-rerun-owner.err" \
-    || tick_rerun_owner_status=$?
-  printf 'e%s' "$tick_rerun_owner_status" >&7
-} &
-tick_rerun_owner_pid=$!
-IFS= read -r -N 1 _ <&7
-"$GANG" tick >/dev/null
-printf '\n' >&11
-IFS= read -r -N 1 _ < "$tick_rerun_ready"
-equal "the rerun begins by consuming the first dirty marker" 0 \
-  "$(find "$GANG_LOCK_DIR/tick" -maxdepth 1 -type f -name '*.dirty' | wc -l | tr -d ' ')"
-"$GANG" tick >/dev/null
-equal "a candidate arriving during the rerun leaves one dirty marker" 1 \
-  "$(find "$GANG_LOCK_DIR/tick" -maxdepth 1 -type f -name '*.dirty' | wc -l | tr -d ' ')"
-printf '\n' > "$tick_rerun_release"
-# The owner's exit and the third removal arrive in either order. A fresh
-# worker announces its first pass before its hold, so once the owner has
-# returned successfully that announcement is the one event still owed; an
-# owner that failed owes nothing more.
-tick_rerun_third="nobody" tick_rerun_owner_rc="unreturned" tick_rerun_event=""
-while :; do
-  IFS= read -r -N 1 tick_rerun_event <&7
-  case "$tick_rerun_event" in
-    x) tick_rerun_third="a fresh worker" ;;
-    o) tick_rerun_third="the same owner" ;;
-    e) IFS= read -r -N 1 tick_rerun_owner_rc <&7 ;;
-    *) fail "the hand-off event stream carries only known events" \
-         "unexpected event [$tick_rerun_event]"
-       break ;;
-  esac
-  [ "$tick_rerun_owner_rc" != unreturned ] || continue
-  [ "$tick_rerun_third" = nobody ] && [ "$tick_rerun_owner_rc" = 0 ] && continue
-  break
-done
-equal "a marker set during the rerun is handed to a fresh worker" \
-  "a fresh worker" "$tick_rerun_third"
-# The fresh worker is still held at its first pass, so an owner that has
-# returned did not wait for it: the synchronous caller got its bounded passes.
-equal "the owner returns while its successor is still in its first pass" 0 \
-  "$tick_rerun_owner_rc"
-equal "the fresh worker owns the lock the finished owner released" present \
-  "$([ -L "$tick_lock_path" ] && printf present || printf absent)"
-equal "the fresh worker consumed the handed-over marker before its pass" 0 \
-  "$(find "$GANG_LOCK_DIR/tick" -maxdepth 1 -type f -name '*.dirty' | wc -l | tr -d ' ')"
-equal "the owner ran at most one dirty rerun before handing over" "1 2 1 " \
-  "$(tr '\n' ' ' < "$tick_rerun_ledger")"
-# The owner's deadline kills its process group. A successor chain started in
-# that group would lose its controller to that kill and keep its worker.
-tick_rerun_owner_session="" tick_rerun_controller_session=""
-[ ! -s "$tick_rerun_sessions" ] \
-  || IFS=' ' read -r tick_rerun_owner_session tick_rerun_controller_session \
-       < "$tick_rerun_sessions"
-if [ -n "$tick_rerun_controller_session" ] \
-   && [ "$tick_rerun_controller_session" != "$tick_rerun_owner_session" ]; then
-  pass "the fresh worker's deadline controller runs outside the owner's session"
-else
-  fail "the fresh worker's deadline controller runs outside the owner's session" \
-    "owner session [$tick_rerun_owner_session], controller session [$tick_rerun_controller_session]"
-fi
-wait "$tick_rerun_owner_pid" || true
-printf '\n' >&11
-if [ "$tick_rerun_third" = "a fresh worker" ]; then
-  IFS= read -r -N 1 tick_rerun_event <&7
-  equal "the fresh worker completes its pass" d "$tick_rerun_event"
-else
-  fail "the fresh worker completes its pass" "no fresh worker was started"
-fi
-equal "the hand-off leaves no lock or dirty residue" 0 \
-  "$(find "$GANG_LOCK_DIR/tick" -maxdepth 1 \( -type l -name '*.lock' -o -type f -name '*.dirty' \) | wc -l | tr -d ' ')"
-exec 7<&- 11<&-
-rm -f -- "$tick_lock_path" "$tick_dirty_path"
-
-# A SUCCESSOR THAT CANNOT BE ARMED IS THE OWNER'S FAILURE. The owner arms the
-# successor while it still holds the lock and hears back that it is in place.
-# When that fails, the marker is left where the next tick consumes it, and the
-# owner says so with a failed tick rather than reporting a clean pass that
-# quietly dropped the edge it was handed. The python3 shim refuses only the
-# successor launcher, so every other helper the tick runs is the real one. It
-# hands through to the interpreter itself rather than to whatever `command -v`
-# found: a version-manager wrapper there puts the interpreter's own bin
-# directory ahead of this shim in the PATH of everything it starts, and the
-# deadline controller it starts is what runs the worker under test.
-tick_noarm_bin="$RUN_ROOT/tick-noarm-bin"
-tick_noarm_ready="$RUN_ROOT/tick-noarm-ready"
-tick_noarm_release="$RUN_ROOT/tick-noarm-release"
-tick_noarm_events="$RUN_ROOT/tick-noarm-events"
-tick_noarm_first_release="$RUN_ROOT/tick-noarm-first-release"
-tick_noarm_count="$RUN_ROOT/tick-noarm-count"
-tick_noarm_ledger="$RUN_ROOT/tick-noarm-ledger"
-mkdir -p "$tick_noarm_bin"
-mkfifo "$tick_noarm_ready" "$tick_noarm_release" \
-  "$tick_noarm_events" "$tick_noarm_first_release"
-{
-  printf '#!/usr/bin/env bash\n'
-  printf 'REAL=%q\n' "$(command -v rm)"
-  printf 'DIRTY=%q\n' "$tick_dirty_path"
-  printf 'READY=%q\n' "$tick_noarm_ready"
-  printf 'RELEASE=%q\n' "$tick_noarm_release"
-  printf 'COUNT=%q\n' "$tick_noarm_count"
-  cat <<'SH'
-. "$GANG_TEST_PATH_SHIM_GUARD"
-path_shim_guard "$REAL" "$0" rm || exit $?
-if [ "${1:-}" = -f ] && [ "${2:-}" = -- ] && [ "${3:-}" = "$DIRTY" ]; then
-  n=0
-  [ ! -e "$COUNT" ] || IFS= read -r n < "$COUNT"
-  n=$((n + 1))
-  printf '%s\n' "$n" > "$COUNT"
-  if [ "$n" -eq 2 ]; then
-    "$REAL" "$@" || exit $?
-    printf x > "$READY"
-    IFS= read -r _ < "$RELEASE"
-    exit 0
-  fi
-fi
-exec "$REAL" "$@"
-SH
-} > "$tick_noarm_bin/rm"
-{
-  printf '#!/usr/bin/env bash\n'
-  printf 'REAL=%q\n' "$(python3 -c 'import sys; print(sys.executable)')"
-  cat <<'SH'
-. "$GANG_TEST_PATH_SHIM_GUARD"
-path_shim_guard "$REAL" "$0" python3 || exit $?
-case "${1:-}:${2:-}" in -c:*start_new_session*) exit 1 ;; esac
-exec "$REAL" "$@"
-SH
-} > "$tick_noarm_bin/python3"
-chmod +x "$tick_noarm_bin/rm" "$tick_noarm_bin/python3"
-exec 7<>"$tick_noarm_events" 11<>"$tick_noarm_first_release"
-tick_noarm_owner_status=0
-{
-  GANG_TEST_TICK_MODE='' \
-  GANG_TEST_TICK_READY_FIFO="$tick_noarm_events" \
-  GANG_TEST_TICK_RELEASE_FIFO="$tick_noarm_first_release" \
-  GANG_TEST_TICK_LEDGER="$tick_noarm_ledger" PATH="$tick_noarm_bin:$PATH" \
-    "$GANG" tick > "$RUN_ROOT/tick-noarm-owner.out" 2> "$RUN_ROOT/tick-noarm-owner.err" \
-    || tick_noarm_owner_status=$?
-  printf 'e%s' "$tick_noarm_owner_status" >&7
-} &
-tick_noarm_owner_pid=$!
-IFS= read -r -N 1 _ <&7
-"$GANG" tick >/dev/null
-printf '\n' >&11
-IFS= read -r -N 1 _ < "$tick_noarm_ready"
-"$GANG" tick >/dev/null
-equal "a candidate during the rerun of the unarmable owner leaves one marker" 1 \
-  "$(find "$GANG_LOCK_DIR/tick" -maxdepth 1 -type f -name '*.dirty' | wc -l | tr -d ' ')"
-printf '\n' > "$tick_noarm_release"
-tick_noarm_owner_rc="unreturned" tick_noarm_event=""
-IFS= read -r -N 1 tick_noarm_event <&7
-[ "$tick_noarm_event" != e ] || IFS= read -r -N 1 tick_noarm_owner_rc <&7
-wait "$tick_noarm_owner_pid" || true
-equal "a tick whose successor cannot be armed fails" 1 "$tick_noarm_owner_rc"
-contains "and names the marker it left behind" \
-  "$(<"$RUN_ROOT/tick-noarm-owner.err")" \
-  "left for a successor tick that could not be armed"
-equal "the unarmable owner ran no third pass itself" "1 2 " \
-  "$(tr '\n' ' ' < "$tick_noarm_ledger")"
-equal "the unarmable owner still released the lock" absent \
-  "$([ -L "$tick_lock_path" ] && printf present || printf absent)"
-equal "the marker stays for the next tick" 1 \
-  "$(find "$GANG_LOCK_DIR/tick" -maxdepth 1 -type f -name '*.dirty' | wc -l | tr -d ' ')"
-tick_noarm_socket="$(tmux display-message -p -t "=$GANG_SESSION" '#{socket_path}')"
-tick_noarm_digest="$(python3 -c 'import hashlib,sys; print(hashlib.sha256((sys.argv[1]+"\0"+sys.argv[2]).encode()).hexdigest()[:24])' \
-  "$tick_noarm_socket" "$GANG_SESSION")"
-tick_noarm_health="$XDG_STATE_HOME/gangline/tick/$tick_noarm_digest/health"
-contains "the failed hand-off is the team's recorded tick health" \
-  "$(<"$tick_noarm_health")" $'failed\t'
-contains "and the health note says what was left behind" \
-  "$(<"$tick_noarm_health")" "could not be armed"
-"$GANG" tick >/dev/null
-equal "the next tick consumes the marker the failed hand-off left" 0 \
-  "$(find "$GANG_LOCK_DIR/tick" -maxdepth 1 \( -type l -name '*.lock' -o -type f -name '*.dirty' \) | wc -l | tr -d ' ')"
-contains "and restores the team's tick health" "$(<"$tick_noarm_health")" $'ok\t'
-exec 7<&- 11<&-
-rm -f -- "$tick_lock_path" "$tick_dirty_path"
-
-# A LIVE TICK OWNER MAY RELEASE AFTER -L BUT BEFORE READLINK. The shim is the
-# exact seam: tick_lock_acquire made its own failed ln and successful -L
-# observation before invoking this external readlink. The internal worker
-# keeps an expected lock fault off the health and alerts surfaces under test.
-tick_lock_race_bin="$RUN_ROOT/tick-lock-race-bin"
-tick_lock_race_seen="$RUN_ROOT/tick-lock-race-seen"
-mkdir -p "$tick_lock_race_bin"
-{
-  printf '#!/bin/sh\n'
-  printf 'REAL=%q\n' "$(command -v readlink)"
-  printf 'LOCK=%q\n' "$tick_lock_path"
-  printf 'SEEN=%q\n' "$tick_lock_race_seen"
-  cat <<'SH'
-. "$GANG_TEST_PATH_SHIM_GUARD"
-path_shim_guard "$REAL" "$0" readlink || exit $?
-if [ "${1:-}" = "$LOCK" ] && [ ! -e "$SEEN" ]; then
-  : > "$SEEN"
-  rm -f -- "$LOCK"
-fi
-exec "$REAL" "$@"
-SH
-} > "$tick_lock_race_bin/readlink"
-chmod +x "$tick_lock_race_bin/readlink"
-ln -s "$$" "$tick_lock_path"
-tick_lock_race_rc=0
-GANG_TICK_INTERNAL=1 PATH="$tick_lock_race_bin:$PATH" \
-  "$GANG" __tick-worker > "$RUN_ROOT/tick-lock-race.out" 2>&1 \
-  || tick_lock_race_rc=$?
-equal "a released live tick lock is retried atomically" 0 "$tick_lock_race_rc"
-equal "the tick owner released after the symlink observation" present \
-  "$([ -e "$tick_lock_race_seen" ] && printf present || printf absent)"
-equal "the retried tick worker releases its lock" absent \
-  "$([ ! -e "$tick_lock_path" ] && [ ! -L "$tick_lock_path" ] && printf absent || printf present)"
-
-# A PERSISTENT UNREADABLE OWNER REMAINS A FAULT. The vanished-owner retry must
-# not turn an actually malformed symlink into contention that resolved.
-ln -s not-a-pid "$tick_lock_path"
-tick_bad_lock_rc=0
-GANG_TICK_INTERNAL=1 "$GANG" __tick-worker \
-  > "$RUN_ROOT/tick-bad-lock.out" 2>&1 || tick_bad_lock_rc=$?
-equal "a present nonnumeric tick lock stays fail-closed" 1 "$tick_bad_lock_rc"
-contains "a present nonnumeric tick lock names its unreadable owner" \
-  "$(<"$RUN_ROOT/tick-bad-lock.out")" "unreadable pid 'not-a-pid'"
-equal "the malformed tick lock is not deleted" not-a-pid \
-  "$(readlink "$tick_lock_path")"
-rm -f -- "$tick_lock_path"
-
-# TWO RELEASES CANNOT TURN THE RETRY INTO A LOOP. The first readlink removes
-# the observed owner. The ln wrapper installs a replacement before the one
-# permitted retry, and the next readlink removes that owner too.
-tick_lock_bound_bin="$RUN_ROOT/tick-lock-bound-bin"
-tick_lock_bound_reads="$RUN_ROOT/tick-lock-bound-reads"
-tick_lock_bound_lns="$RUN_ROOT/tick-lock-bound-lns"
-mkdir -p "$tick_lock_bound_bin"
-{
-  printf '#!/bin/sh\n'
-  printf 'REAL=%q\n' "$(command -v readlink)"
-  printf 'LOCK=%q\n' "$tick_lock_path"
-  printf 'READS=%q\n' "$tick_lock_bound_reads"
-  cat <<'SH'
-. "$GANG_TEST_PATH_SHIM_GUARD"
-path_shim_guard "$REAL" "$0" readlink || exit $?
-if [ "${1:-}" = "$LOCK" ] && [ -L "$LOCK" ]; then
-  printf x >> "$READS"
-  rm -f -- "$LOCK"
-fi
-exec "$REAL" "$@"
-SH
-} > "$tick_lock_bound_bin/readlink"
-{
-  printf '#!/bin/sh\n'
-  printf 'REAL=%q\n' "$(command -v ln)"
-  printf 'LOCK=%q\n' "$tick_lock_path"
-  printf 'HOLDER=%q\n' "$$"
-  printf 'LNS=%q\n' "$tick_lock_bound_lns"
-  cat <<'SH'
-. "$GANG_TEST_PATH_SHIM_GUARD"
-path_shim_guard "$REAL" "$0" ln || exit $?
-last=''
-for arg in "$@"; do last=$arg; done
-if [ "$last" = "$LOCK" ]; then
-  lns=0
-  [ ! -f "$LNS" ] || IFS= read -r lns < "$LNS"
-  lns=$((lns + 1))
-  printf '%s\n' "$lns" > "$LNS"
-  [ "$lns" -ne 2 ] || "$REAL" -s "$HOLDER" "$LOCK"
-fi
-exec "$REAL" "$@"
-SH
-} > "$tick_lock_bound_bin/ln"
-chmod +x "$tick_lock_bound_bin/readlink" "$tick_lock_bound_bin/ln"
-ln -s "$$" "$tick_lock_path"
-tick_lock_bound_rc=0
-GANG_TICK_INTERNAL=1 PATH="$tick_lock_bound_bin:$PATH" \
-  "$GANG" __tick-worker > "$RUN_ROOT/tick-lock-bound.out" 2>&1 \
-  || tick_lock_bound_rc=$?
-equal "a tick lock that disappears twice fails at its retry bound" \
-  1 "$tick_lock_bound_rc"
-contains "the twice-vanished tick lock explains its bounded failure" \
-  "$(<"$RUN_ROOT/tick-lock-bound.out")" "disappeared twice"
-equal "the tick retry bound observes exactly two released owners" xx \
-  "$(<"$tick_lock_bound_reads")"
-
-# A REAL KILLED GENERATION IS RECLAIMABLE. Resolve the exact process and its
-# kernel generation before killing it, wait for that generation to disappear,
-# then plant its v2 record at the real team lock path. Retirement is authorized
-# only after the helper reports that exact generation dead.
-tick_dead_ready="$RUN_ROOT/tick-dead-ready"
-mkfifo "$tick_dead_ready"
-setsid python3 - "$tick_dead_ready" <<'PY' &
-import signal
-import sys
-
-with open(sys.argv[1], "w", encoding="utf-8") as ready:
-    ready.write("x")
-signal.pause()
-PY
-tick_dead_pid=$!
-IFS= read -r -N 1 _ < "$tick_dead_ready"
-tick_dead_identity="$("$ROOT/libexec/gang-process-identity" \
-  --tick "$tick_dead_pid" "$GANG_SESSION")"
-IFS=$'\t' read -r _ tick_dead_token tick_dead_pgrp _ _ _ _ tick_dead_namespace \
-  <<<"$tick_dead_identity"
-tick_dead_command="$(ps -o command= -p "$tick_dead_pid")"
-contains "the killed-owner fixture resolves its unique process before signalling" \
-  "$tick_dead_command" "$tick_dead_ready"
-kill -KILL "$tick_dead_pid"
-wait "$tick_dead_pid" 2>/dev/null || true
-tick_dead_state=0
-"$ROOT/libexec/gang-process-identity" --tick "$tick_dead_pid" "$GANG_SESSION" \
-  "$tick_dead_namespace" "$tick_dead_token" \
-  >/dev/null 2>&1 || tick_dead_state=$?
-equal "the killed-owner fixture proves the exact generation is dead" 1 \
-  "$tick_dead_state"
-ln -s "v3:$tick_dead_pid:$tick_dead_token:$tick_dead_pgrp:1:$tick_dead_namespace" \
-  "$tick_lock_path"
-tmux set-option -t "=$GANG_SESSION:" status-right \
-  "operator-left #('/stale/snapshot/gang-tick-health.sh' '/stale/health') operator-right"
-tmux set-option -u -t "=$GANG_SESSION:" @gl_tick_health_segment
-tick_dead_reclaim_rc=0
-"$GANG" tick >/dev/null 2>&1 || tick_dead_reclaim_rc=$?
-equal "a real dead generation is accepted as reclaimable evidence" \
-  0 "$tick_dead_reclaim_rc"
-equal "a real dead generation in the team tick lock is reclaimed" absent \
-  "$([ ! -e "$tick_lock_path" ] && [ ! -L "$tick_lock_path" ] && printf absent || printf present)"
-rm -f -- "$tick_lock_path" "${tick_lock_path%.lock}.dirty"
-
-# A ZOMBIE HAS EXITED EVEN WHILE ITS PID REMAINS ALLOCATED. waitid observes
-# the exit without reaping it, and only then publishes the PID to the test.
-tick_zombie_ready="$RUN_ROOT/tick-zombie-ready"
-mkfifo "$tick_zombie_ready"
-cat > "$RUN_ROOT/tick-zombie.py" <<'PY'
-import os
-import signal
-import sys
-
-child = os.fork()
-if child == 0:
-    os._exit(0)
-os.waitid(os.P_PID, child, os.WEXITED | os.WNOWAIT)
-with open(sys.argv[1], "w", encoding="utf-8") as ready:
-    ready.write(str(child) + "\n")
-signal.pause()
-PY
-python3 "$RUN_ROOT/tick-zombie.py" "$tick_zombie_ready" &
-tick_zombie_parent=$!
-IFS= read -r tick_zombie_pid < "$tick_zombie_ready"
-ln -s "$tick_zombie_pid" "$tick_lock_path"
-"$GANG" tick >/dev/null
-equal "a zombie owner is dead and its tick lock is reclaimed" absent \
-  "$([ ! -e "$tick_lock_path" ] && [ ! -L "$tick_lock_path" ] && printf absent || printf present)"
-
-# A NEW RECORD DISTINGUISHES PID ALLOCATION FROM THE RECORDED GENERATION.
-# The live shell is deliberately paired with an impossible start token; it
-# must not be dirtied or signalled as though it were the vanished owner.
-tick_shell_identity="$("$ROOT/libexec/gang-process-identity" --tick "$$" "$GANG_SESSION")"
-IFS=$'\t' read -r _ tick_shell_token tick_shell_pgrp _ _ _ _ tick_shell_namespace \
-  <<<"$tick_shell_identity"
-ln -s "v2:$$:$tick_shell_token:$tick_shell_pgrp:later" "$tick_lock_path"
-tick_bad_v2_rc=0
-GANG_TICK_INTERNAL=1 "$GANG" __tick-worker \
-  > "$RUN_ROOT/tick-bad-v2.out" 2>&1 || tick_bad_v2_rc=$?
-equal "an alphabetic v2 acquisition time is unreadable" 1 "$tick_bad_v2_rc"
-contains "the malformed v2 record is named before arithmetic" \
-  "$(<"$RUN_ROOT/tick-bad-v2.out")" "has an unreadable owner"
-equal "the malformed v2 record remains fail-closed" \
-  "v2:$$:$tick_shell_token:$tick_shell_pgrp:later" \
-  "$(readlink "$tick_lock_path")"
-rm -f -- "$tick_lock_path"
-
-ln -s "v2:$$:$tick_shell_token:$tick_shell_pgrp:$(tick_monotonic_ns):" \
-  "$tick_lock_path"
-tick_trailing_v2_rc=0
-GANG_TICK_INTERNAL=1 "$GANG" __tick-worker \
-  > "$RUN_ROOT/tick-trailing-v2.out" 2>&1 || tick_trailing_v2_rc=$?
-equal "a trailing empty v2 field is rejected by the record validator" \
-  1 "$tick_trailing_v2_rc"
-equal "the trailing-field record remains fail-closed" present \
-  "$([ -L "$tick_lock_path" ] && printf present || printf absent)"
-rm -f -- "$tick_lock_path"
-
-ln -s "v3:$$:0:$tick_shell_pgrp:$(date +%s):$tick_shell_namespace" \
-  "$tick_lock_path"
-"$GANG" tick >/dev/null
-equal "a generation mismatch is reclaimed without signalling the reused pid" absent \
-  "$([ ! -e "$tick_lock_path" ] && [ ! -L "$tick_lock_path" ] && printf absent || printf present)"
-
-# A RECORD IS ONE LINE. A line-oriented read would take a valid first line and
-# never see what followed it; the whole target is judged, not its prefix.
-tick_multiline_record="$(printf 'v3:%s:%s:%s:%s:%s\nreplacement' \
-  "$$" "$tick_shell_token" "$tick_shell_pgrp" "$(tick_monotonic_ns)" "$(cut -f 8 <<<"$tick_shell_identity")")"
-ln -s "$tick_multiline_record" "$tick_lock_path"
-tick_multiline_rc=0
-GANG_TICK_INTERNAL=1 "$GANG" __tick-worker \
-  > "$RUN_ROOT/tick-multiline.out" 2>&1 || tick_multiline_rc=$?
-equal "a lock record with a second line is a loud lock fault" 1 "$tick_multiline_rc"
-contains "the multi-line record is named as an unreadable owner" \
-  "$(<"$RUN_ROOT/tick-multiline.out")" "has an unreadable owner"
-equal "the multi-line record is retained unchanged" "$tick_multiline_record" \
-  "$(readlink "$tick_lock_path")"
-rm -f -- "$tick_lock_path" "${tick_lock_path%.lock}.dirty"
-
-# A PID ANOTHER USER OWNS IS NOT AN UNKNOWN OWNER. Every tick worker runs as
-# this user and proved its own /proc readable when it acquired, so a recorded
-# pid whose /proc now belongs to someone else was reused and cannot be a live
-# owner. Such a lock is retired, and the worker says why: it is not the
-# fail-closed "unreadable process identity" verdict, which stays for evidence
-# that genuinely cannot be read.
-tick_foreign_pid=""
-for tick_candidate in /proc/1 /proc/2 /proc/[0-9]*; do
-  tick_candidate="${tick_candidate#/proc/}"
-  tick_candidate_uid="$(awk '/^Uid:/ { print $2 }' "/proc/$tick_candidate/status" 2>/dev/null)"
-  [ -n "$tick_candidate_uid" ] || continue
-  [ "$tick_candidate_uid" != "$(id -u)" ] || continue
-  tick_foreign_pid="$tick_candidate"
-  break
-done
-if [ -z "$tick_foreign_pid" ]; then
-  unknown "a lock naming another user's pid is retired rather than retained" \
-    "every process visible here belongs to this user, so no foreign pid exists to plant"
-else
-  tick_foreign_helper_rc=0
-  "$ROOT/libexec/gang-process-identity" --tick "$tick_foreign_pid" "$GANG_SESSION" \
-    >/dev/null 2>&1 || tick_foreign_helper_rc=$?
-  equal "the identity helper classes another user's pid as foreign, not unknown" \
-    3 "$tick_foreign_helper_rc"
-  ln -s "$tick_foreign_pid" "$tick_lock_path"
-  tick_foreign_legacy_rc=0
-  GANG_TICK_INTERNAL=1 "$GANG" __tick-worker \
-    > "$RUN_ROOT/tick-foreign-legacy.out" 2>&1 || tick_foreign_legacy_rc=$?
-  equal "a legacy lock naming another user's pid is retired and the pass runs" \
-    0 "$tick_foreign_legacy_rc"
-  contains "the retired owner is named as another user's process" \
-    "$(<"$RUN_ROOT/tick-foreign-legacy.out")" \
-    "belongs to another user and cannot be a tick worker for this team; the stale lock was retired"
-  excludes "another user's pid is not reported as unreadable identity" \
-    "$(<"$RUN_ROOT/tick-foreign-legacy.out")" "unreadable process identity"
-  equal "the legacy foreign-owner lock is gone after the pass" absent \
-    "$([ ! -e "$tick_lock_path" ] && [ ! -L "$tick_lock_path" ] && printf absent || printf present)"
-  rm -f -- "$tick_lock_path" "${tick_lock_path%.lock}.dirty"
-  tick_foreign_token="$(sed 's/^.*) //' "/proc/$tick_foreign_pid/stat" | awk '{ print $20 }')"
-  ln -s "v2:$tick_foreign_pid:$tick_foreign_token:$tick_foreign_pid:1" "$tick_lock_path"
-  tick_foreign_v2_rc=0
-  "$GANG" tick >/dev/null 2>&1 || tick_foreign_v2_rc=$?
-  equal "a v2 lock naming another user's live generation is reclaimed" 0 "$tick_foreign_v2_rc"
-  equal "the v2 foreign-owner lock is gone after the pass" absent \
-    "$([ ! -e "$tick_lock_path" ] && [ ! -L "$tick_lock_path" ] && printf absent || printf present)"
-  rm -f -- "$tick_lock_path" "${tick_lock_path%.lock}.dirty"
-fi
-
-# A PID IS ONLY A NAME INSIDE ITS PID NAMESPACE. A worker in a sandbox with its
-# own pid table records the number it sees; on the host that number belongs to
-# an unrelated process. The record carries the owner's namespace, and a
-# contender in the initial namespace resolves it through /proc: a live owner is
-# ordinary contention, an owner that died with its sandbox is reclaimed because
-# no process in that namespace remains, and a contender inside a namespace that
-# cannot see the owner retains the lock and names the namespace it cannot see.
-tick_host_namespace="$(cut -f 8 <<<"$tick_shell_identity")"
-tick_reader_at_root=0
-[ "$tick_host_namespace" != "$((0xEFFFFFFC))" ] || tick_reader_at_root=1
-tick_namespace_run() { # a fresh pid table under this same uid, as a harness sandbox is
-  unshare --kill-child=SIGKILL -U --map-user="$(id -u)" --map-group="$(id -g)" \
-    -pf --mount-proc "$@"
-}
-tick_namespace_host_pid() { # $1 namespace inode, $2 pid inside it -> the host pid, or nothing
-  local status="" inner="" candidate=""
-  for status in /proc/[0-9]*/status; do
-    inner="$(awk '/^NSpid:/ { if (NF > 2) print $NF }' "$status" 2>/dev/null)" || continue
-    [ "$inner" = "$2" ] || continue
-    candidate="${status%/status}"
-    [ "$(readlink "$candidate/ns/pid" 2>/dev/null)" = "pid:[$1]" ] || continue
-    printf '%s' "${candidate#/proc/}"
-    return 0
+path_shim_guard "$REAL" "$0" tmux || exit $?
+if [ -n "${GANG_TICK_DEADLINE_SECONDS:-}" ] && [ ! -e "$PROBE" ]; then
+  held=""
+  for fd in /proc/$$/fd/*; do
+    case "$(readlink "$fd")" in "$RUN"|"$QUEUE") held="$held ${fd##*/}" ;; esac
   done
-  return 1
-}
-if ! tick_namespace_run true 2>/dev/null; then
-  unknown "a tick owner in a child pid namespace is resolved by namespace" \
-    "unprivileged pid namespaces are unavailable here (unshare -U --map-user -pf --mount-proc)"
-else
-  tick_ns_ready="$RUN_ROOT/tick-ns-ready"
-  mkfifo "$tick_ns_ready"
-  # The stand-in owner becomes a session leader before publishing the identity
-  # it sees of itself, so every field the record carries is settled. It wears
-  # the tick-worker role (argv tail and environment) so the reclaim path can
-  # be driven to its signal against it.
-  tick_namespace_run env GANG_TICK_INTERNAL=1 python3 - "$ROOT/libexec/gang-process-identity" \
-    "$GANG_SESSION" "$tick_ns_ready" __tick-worker <<'PY' &
-import os
-import signal
-import subprocess
-import sys
-
-os.setsid()
-with open(sys.argv[3], "w", encoding="utf-8") as ready:
-    subprocess.run(
-        [sys.argv[1], "--tick", str(os.getpid()), sys.argv[2]],
-        stdout=ready,
-        check=True,
-    )
-signal.pause()
-PY
-  tick_ns_launcher=$!
-  IFS=$'\t' read -r tick_ns_inner tick_ns_token tick_ns_pgrp _ _ tick_ns_role _ tick_ns_namespace \
-    < "$tick_ns_ready"
-  # Located through the host's own view rather than the job's process tree,
-  # which differs between an exec'd and a forked background launcher.
-  tick_ns_owner="$(tick_namespace_host_pid "$tick_ns_namespace" "$tick_ns_inner")" || tick_ns_owner=""
-  equal "the host finds exactly the stand-in owner behind the recorded namespace pid" python3 \
-    "$(cat "/proc/${tick_ns_owner:-0}/comm" 2>/dev/null)"
-  equal "the stand-in owner presents as a tick worker of this team" 1 "$tick_ns_role"
-  equal "the stand-in owner sees itself in a namespace other than the host's" different \
-    "$([ -n "$tick_ns_namespace" ] && [ "$tick_ns_namespace" != "$tick_host_namespace" ] && printf different || printf same)"
-  equal "the host resolves the namespaced owner to the identity it sees of itself" \
-    "$tick_ns_inner	$tick_ns_token	$tick_ns_pgrp" \
-    "$("$ROOT/libexec/gang-process-identity" --tick "$tick_ns_inner" "$GANG_SESSION" \
-        "$tick_ns_namespace" 2>/dev/null | cut -f 1-3)"
-  ln -s "v3:$tick_ns_inner:$tick_ns_token:$tick_ns_pgrp:$(tick_monotonic_ns):$tick_ns_namespace" \
-    "$tick_lock_path"
-  tick_ns_live_rc=0
-  GANG_TICK_INTERNAL=1 "$GANG" __tick-worker \
-    > "$RUN_ROOT/tick-ns-live.out" 2>&1 || tick_ns_live_rc=$?
-  equal "a live owner in a child pid namespace is contention, not a steal" 75 "$tick_ns_live_rc"
-  equal "the live namespaced owner keeps its lock" present \
-    "$([ -L "$tick_lock_path" ] && printf present || printf absent)"
-  equal "the live namespaced owner is marked dirty like any live owner" present \
-    "$([ -e "${tick_lock_path%.lock}.dirty" ] && printf present || printf absent)"
-  rm -f -- "$tick_lock_path" "${tick_lock_path%.lock}.dirty"
-  # An older worker inside the same kind of namespace wrote v2 records with no
-  # namespace at all. Read against the host table its pid is another user's
-  # process, or another generation; the start token still identifies it among
-  # the namespaces the host can see, so a live owner is contention, not a
-  # retired stale lock.
-  ln -s "v2:$tick_ns_inner:$tick_ns_token:$tick_ns_pgrp:$(tick_monotonic_ns)" \
-    "$tick_lock_path"
-  tick_ns_v2_rc=0
-  GANG_TICK_INTERNAL=1 "$GANG" __tick-worker \
-    > "$RUN_ROOT/tick-ns-v2.out" 2>&1 || tick_ns_v2_rc=$?
-  equal "a live v2 owner recorded from inside a child pid namespace is contention" \
-    75 "$tick_ns_v2_rc"
-  equal "the live namespaced v2 owner keeps its lock" present \
-    "$([ -L "$tick_lock_path" ] && printf present || printf absent)"
-  rm -f -- "$tick_lock_path" "${tick_lock_path%.lock}.dirty"
-  # Past the reclaim edge the same v2 owner must be killable: the pidfd is
-  # opened on the host pid the token resolved, and the record re-read from
-  # that pid must be judged in the owner's namespace, not the host's, or the
-  # expired worker is reported dead while it lives on unkillable.
-  tick_ns_kill_rc=0
-  "$ROOT/libexec/gang-process-identity" --kill "$tick_ns_inner" "$tick_ns_token" \
-    "$GANG_SESSION" "$ROOT/libexec/gang-clock" >/dev/null 2>&1 || tick_ns_kill_rc=$?
-  equal "an expired v2 owner located through a child namespace is signalled and confirmed dead" \
-    0 "$tick_ns_kill_rc"
-  equal "the signalled namespaced owner is gone from the host table" absent \
-    "$([ -d "/proc/${tick_ns_owner:-0}" ] && printf present || printf absent)"
-  ln -s "v3:$tick_ns_inner:$tick_ns_token:$tick_ns_pgrp:$(tick_monotonic_ns):$tick_ns_namespace" \
-    "$tick_lock_path"
-  # The observed production shape: the sandbox dies and takes its worker with
-  # it, leaving the namespace pid in the shared lock. Prove the exact
-  # generation gone the way the contender will, then reclaim.
-  kill -KILL "$tick_ns_owner" "$tick_ns_launcher" 2>/dev/null || true
-  wait "$tick_ns_launcher" 2>/dev/null || true
-  tick_ns_dead_rc=0
-  "$ROOT/libexec/gang-process-identity" --tick "$tick_ns_inner" "$GANG_SESSION" \
-    "$tick_ns_namespace" >/dev/null 2>&1 || tick_ns_dead_rc=$?
-  tick_ns_reclaim_rc=0
-  tick_ns_health_before="$(cat "$tick_part_dir/health" 2>/dev/null)"
-  "$GANG" tick > "$RUN_ROOT/tick-ns-dead.out" 2>&1 || tick_ns_reclaim_rc=$?
-  if [ "$tick_reader_at_root" -eq 1 ]; then
-    equal "no process remains in the dead namespace, which the host reads as death" \
-      1 "$tick_ns_dead_rc"
-    equal "an owner that died with its pid namespace is reclaimed by a host contender" \
-      0 "$tick_ns_reclaim_rc"
-    equal "the dead namespaced owner's lock is gone after the pass" absent \
-      "$([ ! -e "$tick_lock_path" ] && [ ! -L "$tick_lock_path" ] && printf absent || printf present)"
-  else
-    unknown "no process remains in the dead namespace, which the host reads as death" \
-      "this contender is itself outside the initial PID namespace"
-    unknown "an owner that died with its pid namespace is reclaimed by a host contender" \
-      "this contender is itself outside the initial PID namespace"
-    unknown "the dead namespaced owner's lock is gone after the pass" \
-      "this contender is itself outside the initial PID namespace"
-    equal "a non-initial reader cannot call an unseen namespace owner dead" \
-      4 "$tick_ns_dead_rc"
-    equal "a non-initial contender fails closed on the unseen namespace" \
-      1 "$tick_ns_reclaim_rc"
-    equal "an owner the contender cannot see leaves health exactly as it was" \
-      "$tick_ns_health_before" "$(cat "$tick_part_dir/health" 2>/dev/null)"
-    contains "the non-initial contender names the namespace it cannot see" \
-      "$(<"$RUN_ROOT/tick-ns-dead.out")" \
-      "in pid namespace $tick_ns_namespace, which this process cannot see; lock was retained"
-    equal "a non-initial contender retains the unseen namespace owner's lock" present \
-      "$([ -L "$tick_lock_path" ] && printf present || printf absent)"
-  fi
-  rm -f -- "$tick_lock_path" "${tick_lock_path%.lock}.dirty"
-
-  # The other direction: a contender inside a fresh pid table sees none of the
-  # host's processes, so a host-owned lock must be retained, not read as dead.
-  ln -s "v3:$$:$tick_shell_token:$tick_shell_pgrp:$(tick_monotonic_ns):$tick_host_namespace" \
-    "$tick_lock_path"
-  tick_ns_blind_rc=0
-  tick_ns_health_before="$(cat "$tick_part_dir/health" 2>/dev/null)"
-  tick_namespace_run env GANG_TICK_INTERNAL=1 "$GANG" __tick-worker \
-    > "$RUN_ROOT/tick-ns-blind.out" 2>&1 || tick_ns_blind_rc=$?
-  equal "a contender that cannot see the owner's namespace stops with the unseen-owner status" 77 "$tick_ns_blind_rc"
-  contains "the blind contender names the namespace it cannot see" \
-    "$(<"$RUN_ROOT/tick-ns-blind.out")" \
-    "in pid namespace $tick_host_namespace, which this process cannot see; lock was retained"
-  equal "the blind contender leaves health exactly as it was" \
-    "$tick_ns_health_before" "$(cat "$tick_part_dir/health" 2>/dev/null)"
-  equal "the host-owned lock survives a blind contender" present \
-    "$([ -L "$tick_lock_path" ] && printf present || printf absent)"
-  rm -f -- "$tick_lock_path" "${tick_lock_path%.lock}.dirty"
+  printf 'probed%s\n' "$held" > "$PROBE"
 fi
+exec "$REAL" "$@"
+SH
+} > "$tick_fd_probe_bin/tmux"
+chmod +x "$tick_fd_probe_bin/tmux"
+GANG_TEST_TICK_MODE=sync PATH="$tick_fd_probe_bin:$PATH" "$GANG" roster >/dev/null
+equal "a queued pass's subprocess holds neither tick lock open" probed \
+  "$(<"$tick_fd_probe")"
 
 # ABSENCE IS DEATH ONLY FROM A COMPLETE /proc. Self showing its own pid proves
 # which table procfs presents, not that every process of this uid is listed:
@@ -3919,499 +3285,69 @@ PY
 equal "only procfs without a same-uid hidepid filter counts as a complete view, and an unreadable mount table does not" \
   "plain,invisible,invisible-mount,absent,unresolvable,dead" "$tick_proc_view_probe"
 
-# THE KERNEL GUARD SERIALIZES RETIREMENT. The interpreter shim blocks one
-# contender after it holds the per-team flock and has read the stale record.
-# A second real worker must return contention without claiming or deleting the
-# same lock, which must remain unchanged until the first transaction completes.
-tick_reclaim_guard_race() { # $1 suffix, $2 planted record, $3 observed pid
-  local suffix="$1" planted="$2" observed_pid="$3"
-  local race_bin="$RUN_ROOT/tick-retire-$suffix-bin"
-  local identity_ready="$RUN_ROOT/tick-retire-$suffix-identity-ready"
-  local identity_release="$RUN_ROOT/tick-retire-$suffix-identity-release"
-  local wrapper_once="$RUN_ROOT/tick-retire-$suffix-once"
-  local first_pid first_rc=0 second_rc=0 ledger="$RUN_ROOT/tick-retire-$suffix-ledger"
-  mkdir -p "$race_bin"
-  mkfifo "$identity_ready" "$identity_release"
-  {
-    printf '#!/bin/sh\n'
-    printf 'REAL=%q\n' "$(command -v python3)"
-    printf 'HELPER=%q\n' "$ROOT/libexec/gang-process-identity"
-    printf 'TARGET=%q\n' "$observed_pid"
-    printf 'READY=%q\n' "$identity_ready"
-    printf 'RELEASE=%q\n' "$identity_release"
-    printf 'ONCE=%q\n' "$wrapper_once"
-    cat <<'SH'
-. "$GANG_TEST_PATH_SHIM_GUARD"
-path_shim_guard "$REAL" "$0" python3 || exit $?
-if [ "${1:-}" = "$HELPER" ] && [ "${2:-}" = --tick ] \
-   && [ "${3:-}" = "$TARGET" ] && [ ! -e "$ONCE" ]; then
-  : > "$ONCE"
-  printf x > "$READY"
-  IFS= read -r _ < "$RELEASE"
-fi
-exec "$REAL" "$@"
-SH
-  } > "$race_bin/python3"
-  chmod +x "$race_bin/python3"
-
-  ln -s "$planted" "$tick_lock_path"
-  GANG_TICK_INTERNAL=1 PATH="$race_bin:$PATH" \
-    "$GANG" __tick-worker > "$RUN_ROOT/tick-retire-$suffix-contender.out" 2>&1 &
-  first_pid=$!
-  IFS= read -r -N 1 _ < "$identity_ready"
-  GANG_TEST_TICK_LEDGER="$ledger" GANG_TICK_INTERNAL=1 \
-    "$GANG" __tick-worker > "$RUN_ROOT/tick-retire-$suffix-second.out" 2>&1 \
-    || second_rc=$?
-  equal "$suffix retirement guard rejects a simultaneous second owner" \
-    75 "$second_rc"
-  equal "$suffix retirement guard leaves the observed metadata unchanged" \
-    "$planted" "$(readlink "$tick_lock_path" 2>/dev/null || true)"
-  equal "$suffix retirement guard prevents the second worker pass" absent \
-    "$([ -e "$ledger" ] && printf present || printf absent)"
-  printf '\n' > "$identity_release"
-  wait "$first_pid" || first_rc=$?
-  equal "$suffix guarded retirement lets the first contender finish" 0 "$first_rc"
-  equal "$suffix guarded retirement releases its lock" absent \
-    "$([ -L "$tick_lock_path" ] && printf present || printf absent)"
-  rm -f -- "$tick_lock_path" "${tick_lock_path%.lock}.dirty"
-}
-
-tick_reclaim_guard_race dead-owner \
-  "v3:$tick_dead_pid:$tick_dead_token:$tick_dead_pgrp:1:$tick_dead_namespace" "$tick_dead_pid"
-tick_reclaim_guard_race replaced-generation \
-  "v3:$$:0:$tick_shell_pgrp:1:$tick_shell_namespace" "$$"
-
-# UNKNOWN PROCESS EVIDENCE IS NOT DEATH. One helper shim returns the unknown
-# verdict; the other appends the malformed empty field owned by the helper-output
-# validator. Both conditions must retain the observed lock.
-tick_identity_shape_probe() { # $1 suffix, $2 wrapper body
-  local suffix="$1" body="$2" probe_bin=""
-  local probe_rc=0
-  probe_bin="$RUN_ROOT/tick-$suffix-bin"
-  mkdir -p "$probe_bin"
-  {
-    printf '#!/bin/sh\n'
-    printf 'REAL=%q\n' "$(command -v python3)"
-    printf 'HELPER=%q\n' "$ROOT/libexec/gang-process-identity"
-    printf 'TARGET=%q\n' "$$"
-    printf '%s\n' '. "$GANG_TEST_PATH_SHIM_GUARD"'
-    printf '%s\n' 'path_shim_guard "$REAL" "$0" python3 || exit $?'
-    printf '%s\n' "$body"
-  } > "$probe_bin/python3"
-  chmod +x "$probe_bin/python3"
-  ln -s "v2:$$:$tick_shell_token:$tick_shell_pgrp:1" "$tick_lock_path"
-  GANG_TICK_INTERNAL=1 PATH="$probe_bin:$PATH" \
-    "$GANG" __tick-worker > "$RUN_ROOT/tick-$suffix.out" 2>&1 || probe_rc=$?
-  equal "$suffix process evidence remains a loud lock fault" 1 "$probe_rc"
-  equal "$suffix process evidence retains the observed lock" present \
-    "$([ -L "$tick_lock_path" ] && printf present || printf absent)"
-  rm -f -- "$tick_lock_path" "${tick_lock_path%.lock}.dirty"
-}
-
-# shellcheck disable=SC2016
-tick_identity_shape_probe unknown-identity '
-if [ "${1:-}" = "$HELPER" ] && [ "${2:-}" = --tick ] && [ "${3:-}" = "$TARGET" ]; then
-  exit 2
-fi
-exec "$REAL" "$@"'
-# shellcheck disable=SC2016
-tick_identity_shape_probe trailing-helper-field '
-if [ "${1:-}" = "$HELPER" ] && [ "${2:-}" = --tick ] && [ "${3:-}" = "$TARGET" ]; then
-  out="$("$REAL" "$@")" || exit $?
-  printf "%s\\t\\n" "$out"
-  exit 0
-fi
-exec "$REAL" "$@"'
-# shellcheck disable=SC2016
-tick_identity_shape_probe missing-helper-field '
-if [ "${1:-}" = "$HELPER" ] && [ "${2:-}" = --tick ] && [ "${3:-}" = "$TARGET" ]; then
-  out="$("$REAL" "$@")" || exit $?
-  TAB="$(printf "\t")"
-  printf "%s\n" "${out%"$TAB"*}"
-  exit 0
-fi
-exec "$REAL" "$@"'
-
 # THE DEADLINE IS AN INTERNAL CONTROLLER CONTRACT, NOT ARITHMETIC INPUT. The
 # public controller publishes the validated GANG_TICK_DEADLINE, here its default
 # of 60; noncanonical, invalid-octal, and overflowing direct-worker values must
-# fail before they can age a live lock.
+# fail before the worker spends them.
 tick_bad_budget_probe() { # $1 value
   local value="$1" rc=0 output="$RUN_ROOT/tick-budget-$1.out"
-  ln -s "v2:$$:$tick_shell_token:$tick_shell_pgrp:1" "$tick_lock_path"
   GANG_TICK_DEADLINE_SECONDS="$value" GANG_TICK_INTERNAL=1 \
     "$GANG" __tick-worker > "$output" 2>&1 || rc=$?
-  equal "deadline value $value is rejected before lock arithmetic" 1 "$rc"
+  equal "deadline value $value is rejected before deadline arithmetic" 1 "$rc"
   contains "deadline value $value names the configured contract it missed" \
     "$(<"$output")" "tick worker deadline budget $value is not the configured GANG_TICK_DEADLINE of 60s"
-  equal "deadline value $value retains the observed live lock" present \
-    "$([ -L "$tick_lock_path" ] && printf present || printf absent)"
-  rm -f -- "$tick_lock_path" "${tick_lock_path%.lock}.dirty"
 }
 tick_bad_budget_probe 060
 tick_bad_budget_probe 08
 tick_bad_budget_probe 13836000000
 
-# ROLLING UPGRADE SAFETY RETAINS A RECENT LEGACY OWNER. This live shell is not
-# a worker, but before the published budget expires the old record lacks the
-# evidence needed to call it stale.
-ln -s "$$" "$tick_lock_path"
-"$GANG" tick >/dev/null
-equal "a recent live legacy lock remains owned" "$$" \
-  "$(readlink "$tick_lock_path")"
-equal "a recent live legacy owner receives the cooperative dirty edge" present \
-  "$([ -e "${tick_lock_path%.lock}.dirty" ] && printf present || printf absent)"
-rm -f -- "$tick_lock_path" "${tick_lock_path%.lock}.dirty"
-
-# THE FIRST DERIVED EDGE IS HEALTH, NOT A KILL. A matching generation at 61s
-# is surfaced through the public seam while the 120s reclaim edge stays shut.
-tick_over_budget=$(( $(tick_monotonic_ns) - 61000000000 ))
-ln -s "v2:$$:$tick_shell_token:$tick_shell_pgrp:$tick_over_budget" \
-  "$tick_lock_path"
-tick_over_budget_rc=0
-"$GANG" tick > "$RUN_ROOT/tick-over-budget.out" 2>&1 \
-  || tick_over_budget_rc=$?
-equal "an over-budget live owner fails instead of returning silent contention" \
-  1 "$tick_over_budget_rc"
-contains "the over-budget failure names the worker and reclaim budgets" \
-  "$(<"$RUN_ROOT/tick-over-budget.out")" "generation-verified reclaim starts at 120s"
-equal "the first expiry edge retains the exact live generation" present \
-  "$([ -L "$tick_lock_path" ] && printf present || printf absent)"
-equal "an over-budget live owner still receives the cooperative dirty edge" present \
-  "$([ -e "${tick_lock_path%.lock}.dirty" ] && printf present || printf absent)"
-rm -f -- "$tick_lock_path" "${tick_lock_path%.lock}.dirty"
-"$GANG" tick >/dev/null
-
-# A LEGACY PID MAY NOW NAME A DIFFERENT LIVE PROCESS. The readiness-proven
-# Python parent is positively not a tick worker for this team, so it cannot be
-# the process that acquired a production legacy lock. The public seam must
-# retire that legacy incident and surface that no cooperative pass ran without
-# signalling the unrelated live generation.
-ln -s "$tick_zombie_parent" "$tick_lock_path"
-python3 - "$tick_lock_path" <<'PY'
-import os
-import sys
-import time
-
-then = time.time() - 120
-os.utime(sys.argv[1], (then, then), follow_symlinks=False)
-PY
-tick_legacy_reuse_rc=0
-"$GANG" tick > "$RUN_ROOT/tick-legacy-reuse.out" 2>&1 \
-  || tick_legacy_reuse_rc=$?
-equal "a reused live pid cannot retain an expired legacy tick lock" \
-  1 "$tick_legacy_reuse_rc"
-equal "the expired legacy lock is retired before recovery is reported" absent \
-  "$([ ! -e "$tick_lock_path" ] && [ ! -L "$tick_lock_path" ] && printf absent || printf present)"
-if kill -0 "$tick_zombie_parent" 2>/dev/null; then
-  pass "legacy PID-reuse migration does not signal the unrelated generation"
-else
-  fail "legacy PID-reuse migration does not signal the unrelated generation" \
-    "the readiness-proven process $tick_zombie_parent died"
-fi
-kill "$tick_zombie_parent"
-wait "$tick_zombie_parent" 2>/dev/null || true
-rm -f -- "$tick_lock_path" "${tick_lock_path%.lock}.dirty"
-"$GANG" tick >/dev/null
-
-# SIGKILL AUTHORIZATION IS HELD AT BOTH LAYERS. A readiness-proven unrelated
-# session leader has a valid generation record but no tick-worker role. The
-# shell contender and the pidfd helper must each refuse it independently.
-tick_bystander_ready="$RUN_ROOT/tick-bystander-ready"
-mkfifo "$tick_bystander_ready"
-setsid python3 - "$tick_bystander_ready" <<'PY' &
-import signal
-import sys
-
-with open(sys.argv[1], "w", encoding="utf-8") as ready:
-    ready.write("x")
-signal.pause()
-PY
-tick_bystander=$!
-IFS= read -r -N 1 _ < "$tick_bystander_ready"
-tick_bystander_identity="$("$ROOT/libexec/gang-process-identity" \
-  --tick "$tick_bystander" "$GANG_SESSION")"
-IFS=$'\t' read -r _ tick_bystander_token tick_bystander_pgrp \
-  tick_bystander_session _ tick_bystander_role tick_bystander_safe _ \
-  <<<"$tick_bystander_identity"
-equal "the kill-authorization bystander is its own process-group leader" \
-  "$tick_bystander" "$tick_bystander_pgrp"
-equal "the kill-authorization bystander is its own session leader" \
-  "$tick_bystander" "$tick_bystander_session"
-equal "the kill-authorization bystander lacks the tick-worker role" 0 \
-  "$tick_bystander_role"
-equal "the kill-authorization bystander is signal-capable on this host" 1 \
-  "$tick_bystander_safe"
-tick_bystander_old=$(( $(tick_monotonic_ns) - 120000000000 ))
-ln -s "v2:$tick_bystander:$tick_bystander_token:$tick_bystander_pgrp:$tick_bystander_old" \
-  "$tick_lock_path"
-tick_bystander_contender_rc=0
-GANG_TICK_INTERNAL=1 "$GANG" __tick-worker \
-  > "$RUN_ROOT/tick-bystander-contender.out" 2>&1 \
-  || tick_bystander_contender_rc=$?
-equal "the shell authorization gate refuses an unrelated expired leader" \
-  1 "$tick_bystander_contender_rc"
-equal "the shell authorization gate leaves the unrelated leader alive" live \
-  "$(if kill -0 "$tick_bystander" 2>/dev/null; then printf live; else printf dead; fi)"
-contains "the shell authorization gate emits its own refusal before the helper" \
-  "$(<"$RUN_ROOT/tick-bystander-contender.out")" \
-  "cannot be reclaimed safely: exact leader generation, tick-worker role, or session leadership is unknown"
-tick_bystander_helper_rc=0
-"$ROOT/libexec/gang-process-identity" --kill "$tick_bystander" \
-  "$tick_bystander_token" "$GANG_SESSION" "$ROOT/libexec/gang-clock" \
-  >/dev/null 2>&1 \
-  || tick_bystander_helper_rc=$?
-equal "the pidfd helper independently refuses a non-worker leader" \
-  2 "$tick_bystander_helper_rc"
-equal "the helper role gate leaves the unrelated leader alive" live \
-  "$(if kill -0 "$tick_bystander" 2>/dev/null; then printf live; else printf dead; fi)"
-kill "$tick_bystander" 2>/dev/null || true
-wait "$tick_bystander" 2>/dev/null || true
-rm -f -- "$tick_lock_path" "${tick_lock_path%.lock}.dirty"
-
-# THE PIDFD HELPER ALSO BINDS THE RECORDED START TOKEN. A real production
-# tick-worker satisfies every role, group, session, and platform gate, so only
-# the deliberately wrong generation token can prevent this signal.
-tick_token_ready="$RUN_ROOT/tick-token-ready"
-tick_token_release="$RUN_ROOT/tick-token-release"
-mkfifo "$tick_token_ready" "$tick_token_release"
-GANG_TEST_TICK_READY_FIFO="$tick_token_ready" \
-GANG_TEST_TICK_RELEASE_FIFO="$tick_token_release" \
-  "$GANG" tick > "$RUN_ROOT/tick-token-owner.out" 2>&1 &
-tick_token_owner=$!
-IFS= read -r -N 1 _ < "$tick_token_ready"
-tick_token_record="$(readlink "$tick_lock_path")"
-IFS=: read -r _ tick_token_worker tick_token_value _ _ tick_token_namespace \
-  <<<"$tick_token_record"
-tick_wrong_token_rc=0
-"$ROOT/libexec/gang-process-identity" --kill "$tick_token_worker" \
-  "${tick_token_value}x" "$GANG_SESSION" "$ROOT/libexec/gang-clock" \
-  "$tick_token_namespace" \
-  >/dev/null 2>&1 \
-  || tick_wrong_token_rc=$?
-equal "the pidfd helper refuses a mismatched generation token" \
-  1 "$tick_wrong_token_rc"
-tick_token_worker_state=0
-"$ROOT/libexec/gang-process-identity" --tick "$tick_token_worker" "$GANG_SESSION" \
-  >/dev/null 2>&1 || tick_token_worker_state=$?
-equal "the mismatched token leaves the exact worker generation alive" \
-  0 "$tick_token_worker_state"
-if [ "$tick_token_worker_state" -eq 0 ]; then
-  printf '\n' > "$tick_token_release"
-fi
-wait "$tick_token_owner" 2>/dev/null || true
-rm -f -- "$tick_lock_path" "${tick_lock_path%.lock}.dirty"
-"$GANG" tick >/dev/null
-
-# THE LOCK BUDGET USES THE CONTROLLER'S MONOTONIC CLOCK DOMAIN. A PATH-local
-# wall clock jumps five minutes after a real worker publishes its production
-# record. That input must neither age nor kill the still-in-budget generation.
-# The same held worker then crosses only the 60s monotonic health edge: it must
-# stay alive, retain its lock, and keep the dirty rerun request.
-tick_clock_ready="$RUN_ROOT/tick-clock-ready"
-tick_clock_release="$RUN_ROOT/tick-clock-release"
-tick_clock_bin="$RUN_ROOT/tick-clock-bin"
-tick_clock_helper="$RUN_ROOT/tick-monotonic-clock"
-mkdir -p "$tick_clock_bin"
-mkfifo "$tick_clock_ready" "$tick_clock_release"
-GANG_TEST_TICK_READY_FIFO="$tick_clock_ready" \
-GANG_TEST_TICK_RELEASE_FIFO="$tick_clock_release" \
-  "$GANG" tick > "$RUN_ROOT/tick-clock-owner.out" 2>&1 &
-tick_clock_owner=$!
-IFS= read -r -N 1 _ < "$tick_clock_ready"
-tick_clock_record="$(readlink "$tick_lock_path")"
-IFS=: read -r _ tick_clock_worker _ _ tick_clock_acquired _ \
-  <<<"$tick_clock_record"
-cat > "$tick_clock_helper" <<'SH'
-#!/bin/sh
-now="${GANG_TEST_CLOCK_NOW_NS:?}"
-[ -z "${GANG_TEST_CLOCK_WITNESS:-}" ] \
-  || printf '%s\n' "$now" >> "$GANG_TEST_CLOCK_WITNESS"
-case "${1:-}" in
-  now) [ "$#" -eq 1 ] || exit 2; printf '%s\n' "$now" ;;
-  elapsed)
-    [ "$#" -eq 3 ] || exit 2
-    [ "$now" -ge "$2" ] || exit 2
-    [ $(( now - $2 )) -ge "$3" ]
-    ;;
-  *) exit 2 ;;
-esac
-SH
-chmod +x "$tick_clock_helper"
-{
-  printf '#!/bin/sh\n'
-  printf 'REAL=%q\n' "$(command -v date)"
-  cat <<'SH'
-. "$GANG_TEST_PATH_SHIM_GUARD"
-path_shim_guard "$REAL" "$0" date || exit $?
-if [ "${1:-}" = +%s ]; then
-  now="$("$REAL" +%s)" || exit $?
-  printf '%s\n' "$((now + 300))"
-  exit 0
-fi
-exec "$REAL" "$@"
-SH
-} > "$tick_clock_bin/date"
-chmod +x "$tick_clock_bin/date"
-tick_clock_jump_rc=0
-GANG_TICK_INTERNAL=1 PATH="$tick_clock_bin:$PATH" \
-  GANG_TEST_CLOCK="$tick_clock_helper" \
-  GANG_TEST_CLOCK_WITNESS="$RUN_ROOT/tick-clock-witness" \
-  GANG_TEST_CLOCK_NOW_NS=$(( tick_clock_acquired + 30000000000 )) \
-  "$GANG" __tick-worker > "$RUN_ROOT/tick-clock-jump.out" 2>&1 \
-  || tick_clock_jump_rc=$?
-tick_clock_worker_state=0
-"$ROOT/libexec/gang-process-identity" --tick "$tick_clock_worker" "$GANG_SESSION" \
-  >/dev/null 2>&1 || tick_clock_worker_state=$?
-equal "a five-minute wall-clock step does not expire a monotonic lock" \
-  75 "$tick_clock_jump_rc"
-equal "the in-budget worker survives the wall-clock step" 0 \
-  "$tick_clock_worker_state"
-equal "the wall-clock step leaves the production owner record unchanged" \
-  "$tick_clock_record" "$(readlink "$tick_lock_path" 2>/dev/null || true)"
-contains "the lock decision reads the suite-only monotonic seam" \
-  "$(<"$RUN_ROOT/tick-clock-witness")" \
-  "$(( tick_clock_acquired + 30000000000 ))"
-
-if [ "$tick_clock_worker_state" -eq 0 ]; then
-  tick_clock_edge_rc=0
-  GANG_TICK_INTERNAL=1 GANG_TEST_CLOCK="$tick_clock_helper" \
-    GANG_TEST_CLOCK_NOW_NS=$(( tick_clock_acquired + 61000000000 )) \
-    "$GANG" __tick-worker \
-    > "$RUN_ROOT/tick-clock-edge.out" 2>&1 || tick_clock_edge_rc=$?
-  equal "the 60s edge reports health without killing the live worker" \
-    1 "$tick_clock_edge_rc"
-  tick_clock_edge_worker_state=0
-  "$ROOT/libexec/gang-process-identity" --tick "$tick_clock_worker" "$GANG_SESSION" \
-    >/dev/null 2>&1 || tick_clock_edge_worker_state=$?
-  equal "the 60s edge retains the exact worker generation" live \
-    "$(if [ "$tick_clock_edge_worker_state" -eq 0 ]; then printf live; else printf dead; fi)"
-  equal "the 60s edge retains the generation-bearing lock" present \
-    "$([ -L "$tick_lock_path" ] && printf present || printf absent)"
-  equal "the 60s edge preserves the cooperative dirty request" present \
-    "$([ -e "${tick_lock_path%.lock}.dirty" ] && printf present || printf absent)"
-  if [ "$tick_clock_edge_worker_state" -eq 0 ]; then
-    printf '\n' > "$tick_clock_release"
-  fi
-fi
-wait "$tick_clock_owner" 2>/dev/null || true
-rm -f -- "$tick_lock_path" "${tick_lock_path%.lock}.dirty"
-"$GANG" tick >/dev/null
-
-# AN EXPIRED GENERATION IS TERMINATED BY PIDFD, NEVER BY ITS BARE PROCESS
-# GROUP. Hold a real public worker after acquisition, then move only the
-# immutable acquisition stamp behind the derived reclaim edge. The contender
-# must surface recovery without claiming that it ran a pass.
-tick_expired_ready="$RUN_ROOT/tick-expired-ready"
-tick_expired_release="$RUN_ROOT/tick-expired-release"
-mkfifo "$tick_expired_ready" "$tick_expired_release"
-GANG_TEST_TICK_READY_FIFO="$tick_expired_ready" \
-GANG_TEST_TICK_RELEASE_FIFO="$tick_expired_release" \
-  "$GANG" tick > "$RUN_ROOT/tick-expired-owner.out" 2>&1 &
-tick_expired_owner=$!
-IFS= read -r -N 1 _ < "$tick_expired_ready"
-tick_expired_record="$(readlink "$tick_lock_path")"
-IFS=: read -r tick_expired_version tick_expired_pid tick_expired_token \
-  tick_expired_pgrp _ tick_expired_namespace <<<"$tick_expired_record"
-equal "the expiry fixture owns a generation-bearing production lock" v3 \
-  "$tick_expired_version"
-equal "the expiry fixture worker is its own process-group leader" \
-  "$tick_expired_pid" "$tick_expired_pgrp"
-tick_expired_old=$(( $(tick_monotonic_ns) - 120000000000 ))
-rm -f -- "$tick_lock_path"
-ln -s "v3:$tick_expired_pid:$tick_expired_token:$tick_expired_pgrp:$tick_expired_old:$tick_expired_namespace" \
-  "$tick_lock_path"
-tick_expired_rc=0
-"$GANG" tick > "$RUN_ROOT/tick-expired-reclaim.out" 2>&1 \
-  || tick_expired_rc=$?
-equal "an expired exact worker generation is reclaimed as a surfaced failure" \
-  1 "$tick_expired_rc"
-equal "pidfd-confirmed expiry retires the worker lock" absent \
-  "$([ ! -e "$tick_lock_path" ] && [ ! -L "$tick_lock_path" ] && printf absent || printf present)"
-tick_expired_generation_state=0
-"$ROOT/libexec/gang-process-identity" \
-  --tick "$tick_expired_pid" "$GANG_SESSION" \
-  "$tick_expired_namespace" "$tick_expired_token" >/dev/null 2>&1 \
-  || tick_expired_generation_state=$?
-equal "expiry leaves the real owner generation dead" \
-  1 "$tick_expired_generation_state"
-# Once expiry signals the owner, this branch is unreachable. If signalling does
-# not occur, restore the exact owner record and release its FIFO so the owned
-# worker exits and the later tick can retire the stale lock.
-if [ "$tick_expired_generation_state" -eq 0 ]; then
-  equal "an owner surviving expiry retains its exact record" \
-    "v3:$tick_expired_pid:$tick_expired_token:$tick_expired_pgrp:$tick_expired_old:$tick_expired_namespace" \
-    "$(readlink "$tick_lock_path" 2>/dev/null || true)"
-  rm -f -- "$tick_lock_path"
-  ln -s "$tick_expired_record" "$tick_lock_path"
-  printf '\n' > "$tick_expired_release"
-fi
-tick_expired_owner_rc=0
-wait "$tick_expired_owner" || tick_expired_owner_rc=$?
-equal "the expired worker owner reports the surfaced recovery failure" \
-  1 "$tick_expired_owner_rc"
-rm -f -- "$tick_lock_path" "${tick_lock_path%.lock}.dirty"
-"$GANG" tick >/dev/null
-
 # A CATCHABLE CONTROLLER DEATH MUST NOT ORPHAN ITS NEW-SESSION WORKER. The
-# worker publishes its production lock, then blocks reading a FIFO and writes
-# nothing to the controller pipes, so EPIPE cannot end it before controller
-# cleanup is observed. Resolve the whole relationship in completed reads before
-# signalling this exact controller.
+# worker blocks reading a FIFO and writes nothing to the controller pipes, so
+# EPIPE cannot end it before controller cleanup is observed. Resolve the whole
+# relationship from one completed process listing before signalling this
+# exact controller.
 tick_controller_ready="$RUN_ROOT/tick-controller-ready"
 tick_controller_release="$RUN_ROOT/tick-controller-release"
+tick_controller_ps="$RUN_ROOT/tick-controller-ps"
 mkfifo "$tick_controller_ready" "$tick_controller_release"
 GANG_TEST_TICK_READY_FIFO="$tick_controller_ready" \
 GANG_TEST_TICK_RELEASE_FIFO="$tick_controller_release" \
   "$GANG" tick > "$RUN_ROOT/tick-controller-owner.out" 2>&1 &
 tick_controller_owner=$!
 IFS= read -r -N 1 _ < "$tick_controller_ready"
-tick_controller_record="$(readlink "$tick_lock_path")"
-IFS=: read -r tick_controller_version tick_controller_worker \
-  tick_controller_token tick_controller_pgrp _ tick_controller_namespace \
-  <<<"$tick_controller_record"
-tick_controller_identity="$("$ROOT/libexec/gang-process-identity" \
-  --tick "$tick_controller_worker" "$GANG_SESSION" \
-  "$tick_controller_namespace" "$tick_controller_token")"
-IFS=$'\t' read -r _ _ _ tick_controller_session _ tick_controller_role _ \
-  <<<"$tick_controller_identity"
-tick_controller_pid="$(ps -o ppid= -p "$tick_controller_worker" | tr -d ' ')"
-tick_controller_command="$(ps -o command= -p "$tick_controller_pid")"
-equal "the controller-death fixture owns a generation-bearing lock" v3 \
-  "$tick_controller_version"
-equal "the controller-death fixture resolved its worker session leader" \
+ps -e -o pid=,ppid=,pgid=,stat=,args= > "$tick_controller_ps"
+# The controller descends from the owner this shell started; the worker is
+# its child and leads its own process group.
+tick_controller_pid="$(awk -v root="$tick_controller_owner" -v ctl="$ROOT/libexec/gang-tick-deadline" '
+  { parent[$1] = $2; line[$1] = $0 }
+  END {
+    for (p in line) {
+      if (index(line[p], ctl) == 0) continue
+      for (q = parent[p]; q > 1; q = parent[q]) if (q == root) { print p; break }
+    }
+  }' "$tick_controller_ps")"
+tick_controller_worker="$(awk -v ctl="$tick_controller_pid" '$2 == ctl { print $1 }' "$tick_controller_ps")"
+tick_controller_pgrp="$(awk -v w="$tick_controller_worker" '$1 == w { print $3 }' "$tick_controller_ps")"
+equal "the controller-death fixture resolved one worker under its own controller" 1 \
+  "$(printf '%s\n' "$tick_controller_worker" | grep -c '^[0-9][0-9]*$')"
+equal "the controller-death fixture's worker leads its own process group" \
   "$tick_controller_worker" "$tick_controller_pgrp"
-equal "the controller-death fixture resolved its worker session" \
-  "$tick_controller_worker" "$tick_controller_session"
-equal "the controller-death fixture resolved the tick-worker role" 1 \
-  "$tick_controller_role"
-contains "the resolved parent is this tree's deadline controller" \
-  "$tick_controller_command" "$ROOT/libexec/gang-tick-deadline"
-kill -TERM "$tick_controller_pid"
+if [ -n "$tick_controller_pid" ] && [ "$tick_controller_pgrp" = "$tick_controller_worker" ]; then
+  kill -TERM "$tick_controller_pid"
+fi
 tick_controller_owner_rc=0
 wait "$tick_controller_owner" || tick_controller_owner_rc=$?
 equal "controller TERM remains a surfaced tick failure" 1 \
   "$tick_controller_owner_rc"
-tick_controller_worker_rc=0
-"$ROOT/libexec/gang-process-identity" \
-  --tick "$tick_controller_worker" "$GANG_SESSION" \
-  "$tick_controller_namespace" "$tick_controller_token" >/dev/null 2>&1 \
-  || tick_controller_worker_rc=$?
-equal "controller TERM leaves no live worker generation" 1 \
-  "$tick_controller_worker_rc"
-"$GANG" tick >/dev/null
-equal "the next tick reclaims the controller's dead worker lock" absent \
-  "$([ ! -e "$tick_lock_path" ] && [ ! -L "$tick_lock_path" ] && printf absent || printf present)"
-
-# This branch is unreachable once controller cleanup terminates the worker. If
-# it remains alive, the exact generation and unchanged record observed above
-# identify the process this fixture owns; terminate it, then retire its lock.
-if [ "$tick_controller_worker_rc" -eq 0 ]; then
-  equal "the EPIPE negative control retained the same worker lock" \
-    "$tick_controller_record" "$(readlink "$tick_lock_path")"
-  kill -KILL "$tick_controller_worker" 2>/dev/null || true
-  "$GANG" tick >/dev/null
-fi
+equal "controller TERM leaves no live process in the worker's group" 0 \
+  "$(ps -e -o pgid=,stat= | awk -v g="$tick_controller_pgrp" '$1 == g && $2 !~ /^Z/' | wc -l | tr -d ' ')"
+# The next tick also repairs a health segment an obsolete snapshot installed.
+tmux set-option -t "=$GANG_SESSION:" status-right \
+  "operator-left #('/stale/snapshot/gang-tick-health.sh' '/stale/health') operator-right"
+tmux set-option -u -t "=$GANG_SESSION:" @gl_tick_health_segment
+tick_controller_next_rc=0
+"$GANG" tick >/dev/null || tick_controller_next_rc=$?
+equal "the next tick passes after a killed controller" 0 "$tick_controller_next_rc"
 
 tick_repaired_right="$(tmux show-options -qv -t "=$GANG_SESSION:" status-right)"
 excludes "a tick replaces a health segment owned by an obsolete snapshot" \
@@ -4428,73 +3364,6 @@ contains "the deadline controller fixes the production budget at sixty seconds" 
   "$(<"$ROOT/libexec/gang-tick-deadline")" "DEADLINE_SECONDS = 60"
 excludes "the deadline controller ignores an ambient clock executable" \
   "$(<"$ROOT/libexec/gang-tick-deadline")" "GANGLINE_CLOCK_HELPER"
-excludes "the generation killer ignores an ambient clock executable" \
-  "$(<"$ROOT/libexec/gang-process-identity")" "GANGLINE_CLOCK_HELPER"
-
-tick_death_bound_probe="$(python3 - "$ROOT/libexec/gang-process-identity" \
-  "$ROOT/libexec/gang-clock" <<'PY'
-import runpy
-import sys
-
-scope = runpy.run_path(sys.argv[1], run_name="gang_process_identity_probe")
-kill_generation = scope["kill_generation"]
-runtime = kill_generation.__globals__
-poll_calls = []
-signals = []
-
-
-class OnePoll:
-    def register(self, _fd, _events):
-        pass
-
-    def poll(self, _milliseconds):
-        poll_calls.append(1)
-        if len(poll_calls) > 1:
-            raise AssertionError("death confirmation polled more than once")
-        return []
-
-
-runtime["os"].pidfd_open = lambda pid: opened_pids.append(pid) or 99
-runtime["os"].close = lambda _fd: None
-runtime["signal"].pidfd_send_signal = lambda pidfd, signum: signals.append((pidfd, signum))
-runtime["select"].poll = OnePoll
-located_pids = []
-opened_pids = []
-
-
-def fake_locate(pid, namespace=None, token=None):
-    located_pids.append(pid)
-    return 77, 5, True
-
-
-def fake_record(pid, session, namespace=None, token=None, proc_pid=None):
-    # The kill path may resolve an owner once; after that only the pid its
-    # pidfd was opened on may be read, so a second resolution is a defect.
-    assert proc_pid == 77, f"record read without the pidfd's pid: {proc_pid}"
-    return ("python", "S", pid, pid, "token", 1, 1, 1, 5)
-
-
-runtime["linux_locate"] = fake_locate
-runtime["linux_record"] = fake_record
-runtime["clock_now_ns"] = lambda _path: 1
-runtime["clock_elapsed"] = lambda _path, _started, _duration: False
-bounded = kill_generation(41, "token", "team", sys.argv[2])
-
-
-def broken_clock(_path, _started, _duration):
-    raise runtime["ClockError"]
-
-
-runtime["clock_elapsed"] = broken_clock
-clock_failed = kill_generation(41, "token", "team", sys.argv[2])
-print(f"{bounded}:{len(poll_calls)}:{clock_failed}:{len(signals)}")
-print(f"{len(located_pids)}:{sorted(set(opened_pids))}")
-PY
-)"
-equal "death confirmation has one kernel fallback and names a post-signal clock fault" \
-  "3:1:4:2" "$(head -1 <<<"$tick_death_bound_probe")"
-equal "each kill resolves its owner once and signals only the pid its pidfd was opened on" \
-  "2:[77]" "$(tail -1 <<<"$tick_death_bound_probe")"
 
 tick_deadline_bound_probe="$(python3 - "$ROOT/libexec/gang-tick-deadline" \
   "$ROOT/libexec/gang-clock" 2>/dev/null <<'PY'

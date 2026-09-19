@@ -1,25 +1,10 @@
 #!/usr/bin/env python3
 # SPDX-License-Identifier: Apache-2.0
-"""Read one process generation, or terminate one exact Linux generation."""
+"""Read one process generation, or take one inherited flock."""
 
 import fcntl
 import os
-import select
-import signal
-import subprocess
 import sys
-
-
-# BLAST RADIUS: every ordinary gang command can reach this SIGKILL through its
-# detached tick. It may terminate only the pidfd-bound leader generation whose
-# start token was recorded in the expired lock. Never replace this with killpg:
-# a PGID is a bare reusable number and carries no process generation.
-RECLAIM_SIGNAL = signal.SIGKILL
-DEATH_CONFIRM_SECONDS = 1.0
-NANOSECONDS_PER_SECOND = 1_000_000_000
-# Measured 2026-08-31 on Linux 6.8.0: 40 owned paused Python leaders reached
-# dead/zombie 0.052-0.212ms after pidfd SIGKILL (median 0.084ms). This bound is
-# over 4,700x the measured maximum and is the fail-closed production budget.
 
 
 class DeadProcess(Exception):
@@ -43,41 +28,6 @@ class UnresolvableProcess(Exception):
 # recorded owner in a descendant namespace is death; anywhere else it is only
 # a namespace this reader cannot see.
 INIT_PID_NAMESPACE = 0xEFFFFFFC
-
-
-class ClockError(Exception):
-    pass
-
-
-def clock_helper(path: str, *arguments: str) -> subprocess.CompletedProcess:
-    try:
-        return subprocess.run(
-            [path, *arguments],
-            check=False,
-            stdout=subprocess.PIPE,
-            stderr=subprocess.DEVNULL,
-            text=True,
-            timeout=DEATH_CONFIRM_SECONDS,
-        )
-    except (OSError, subprocess.TimeoutExpired) as exc:
-        raise ClockError from exc
-
-
-def clock_now_ns(path: str) -> int:
-    result = clock_helper(path, "now")
-    value = result.stdout.strip()
-    if result.returncode != 0 or not value.isascii() or not value.isdigit():
-        raise ClockError
-    return int(value, 10)
-
-
-def clock_elapsed(path: str, started_ns: int, duration_ns: int) -> bool:
-    result = clock_helper(path, "elapsed", str(started_ns), str(duration_ns))
-    if result.returncode == 0:
-        return True
-    if result.returncode == 1:
-        return False
-    raise ClockError
 
 
 def pid_namespace(pid) -> int:
@@ -459,80 +409,10 @@ def print_tick(pid: int, expected_session: str, expected_namespace=None, expecte
     return 0
 
 
-def kill_generation(
-    pid: int,
-    expected_token: str,
-    expected_session: str,
-    clock_path: str,
-    expected_namespace=None,
-) -> int:
-    if sys.platform != "linux" or not hasattr(os, "pidfd_open") or not hasattr(signal, "pidfd_send_signal"):
-        return 2
-    try:
-        proc_pid, namespace, _nested = linux_locate(pid, expected_namespace, expected_token)
-    except DeadProcess:
-        return 1
-    except (UnknownProcess, ForeignProcess, UnresolvableProcess):
-        return 2
-    try:
-        pidfd = os.pidfd_open(proc_pid)
-    except ProcessLookupError:
-        return 1
-    except OSError:
-        return 2
-    try:
-        # THE PIDFD IS THE IDENTITY FROM HERE ON. The record is re-read from the
-        # very pid the descriptor was opened on, never located a second time:
-        # a second lookup could land on a different process while the
-        # descriptor stays bound to the first, and the signal would follow the
-        # descriptor. The namespace is the one the owner was located in: a
-        # record without one may name a pid in a table the token identified.
-        try:
-            current = linux_record(
-                pid, expected_session, namespace, expected_token, proc_pid=proc_pid
-            )
-        except DeadProcess:
-            return 1
-        except (UnknownProcess, ForeignProcess, UnresolvableProcess):
-            return 2
-        _command, _state, pgrp, session, token, _born, role, safe, _namespace = current
-        if token != expected_token:
-            return 1
-        if pgrp != pid or session != pid or role != 1 or safe != 1:
-            return 2
-        try:
-            started_ns = clock_now_ns(clock_path)
-        except ClockError:
-            return 2
-        try:
-            signal.pidfd_send_signal(pidfd, RECLAIM_SIGNAL)
-        except ProcessLookupError:
-            return 1
-        except OSError:
-            return 2
-        poller = select.poll()
-        poller.register(pidfd, select.POLLIN)
-        try:
-            duration_ns = round(DEATH_CONFIRM_SECONDS * NANOSECONDS_PER_SECOND)
-            if clock_elapsed(clock_path, started_ns, duration_ns):
-                return 3
-        except ClockError:
-            return 4
-        if not poller.poll(round(DEATH_CONFIRM_SECONDS * 1000)):
-            return 3
-        # Readability is the kernel's death notification for this open pidfd.
-        # It confirms exit of the bound generation without reopening /proc,
-        # whose files can disappear piecemeal while the parent reaps it.
-        return 0
-    finally:
-        os.close(pidfd)
-
-
 def lock_fd(fd: int, wait: bool = False) -> int:
-    """Take a flock inherited for one calling tick metadata transaction."""
+    """Take a flock on an inherited descriptor, waiting for it when asked."""
     try:
-        operation = fcntl.LOCK_EX if wait else fcntl.LOCK_EX | fcntl.LOCK_NB
-        fcntl.flock(fd, operation)
+        fcntl.flock(fd, fcntl.LOCK_EX if wait else fcntl.LOCK_EX | fcntl.LOCK_NB)
     except BlockingIOError:
         return 75
     except OSError:
@@ -552,7 +432,8 @@ def namespace_argument(value: str):
 def main() -> int:
     if len(sys.argv) == 3 and sys.argv[1] == "--lock-fd" and sys.argv[2].isdigit():
         return lock_fd(int(sys.argv[2]))
-    if len(sys.argv) == 3 and sys.argv[1] == "--lock-fd-wait" and sys.argv[2].isdigit():
+    if len(sys.argv) == 4 and sys.argv[1] == "--lock-fd" and sys.argv[2].isdigit() \
+            and sys.argv[3] == "wait":
         return lock_fd(int(sys.argv[2]), wait=True)
     if len(sys.argv) in (4, 5, 6) and sys.argv[1] == "--tick" and sys.argv[2].isdigit():
         try:
@@ -565,17 +446,6 @@ def main() -> int:
         return print_tick(int(sys.argv[2]), sys.argv[3], namespace, token)
     if len(sys.argv) == 3 and sys.argv[1] == "--codex" and sys.argv[2].isdigit():
         return print_codex(int(sys.argv[2]))
-    if len(sys.argv) in (6, 7) and sys.argv[1] == "--kill" and sys.argv[2].isdigit():
-        clock_path = sys.argv[5]
-        if not os.path.isabs(clock_path) or not os.access(clock_path, os.X_OK):
-            return 2
-        try:
-            namespace = namespace_argument(sys.argv[6] if len(sys.argv) == 7 else "")
-        except ValueError:
-            return 2
-        return kill_generation(
-            int(sys.argv[2]), sys.argv[3], sys.argv[4], clock_path, namespace
-        )
     return 2
 
 

@@ -100,9 +100,8 @@ def main() -> int:
     # The budget is the operator's GANG_TICK_DEADLINE, handed down by the
     # command that validated it; the worker checks the exported number against
     # the same setting, so no caller can run it under a budget nobody enforces.
-    # The worker's lock arithmetic multiplies these seconds in 64-bit shell
-    # integers, so the ceiling keeps that product in range; a leading zero
-    # would read as octal there and is refused as well.
+    # The worker does shell arithmetic on these seconds, where a leading zero
+    # would read as octal, so one is refused here as well.
     configured = os.environ.get("GANG_TICK_DEADLINE", str(DEFAULT_DEADLINE_SECONDS))
     if (
         not configured.isascii()

@@ -269,8 +269,8 @@ harness sandbox.
 State lives in tmux options and dies with its window or team. There is no
 resident daemon, database, cloud service, or private agent protocol. Each
 Gangline invocation may leave one detached tick process behind only for the
-bounded pass it was born to finish; a singleton lock, dirty rerun edge, and hard
-deadline keep it ephemeral.
+bounded pass it was born to finish; two per-team kernel locks, one queued pass
+and one running, and a hard deadline keep it ephemeral.
 
 ## Documentation
 

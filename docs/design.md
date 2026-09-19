@@ -264,3 +264,23 @@ Create a release call, as every release through 2.11.0 was. A release commit
 whose workflow files have fallen behind `main` publishes only once its tag
 exists, and that tag is pushed from outside Actions under a credential holding
 the workflow scope. Tag name and target stay Release Please's.
+
+## Tick passes are ordered by two kernel locks
+
+2026-09-18 · [#301](https://github.com/adambiggs/gangline/issues/301)
+
+Every command launches a tick, and most launches arrive during a pass. Each
+forked a detached gang, the deadline controller and a worker before finding the
+lock owned: about a second of CPU per launch on a seven-window team. Ownership
+was a minted ticket, a successor handed over a pipe and a dirty marker, retired
+by process-identity proofs.
+
+Each team has a queue flock and a run flock. A launch tries the queue lock
+without blocking; refused, it starts no tick and records nothing. Granted, a
+detached `gang tick` waits on the run lock, ignoring hangups, and releases the
+queue lock before its pass starts, so a launch during a pass gets exactly one
+pass after it. The run lock sits on a descriptor the pass never inherits, and
+the kernel releases both when their holder exits, so nothing is reclaimed.
+`gang tick` may wait for a running pass. A partial pass leaves its cursor for
+the next launch and no longer continues on its own. A `gang tick` hung outside
+its deadline-bounded worker holds the run lock until it is ended.
