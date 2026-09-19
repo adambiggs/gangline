@@ -2769,6 +2769,15 @@ excludes "that pass drains the spool" \
 contains "and types the mail into the session" \
   "$(pane hookless-blind)" "MARK_HOOKLESS_BLIND_RETIRED"
 "$GANG" drop hookless-blind >/dev/null 2>&1 || :
+# The retiring tick above failed on purpose, and every later command in the
+# suite would carry that failure on stderr until a clean pass clears it.
+blind_hookless_cleanup_rc=0
+GANG_TEST_TICK_MODE=manual "$GANG" tick >/dev/null \
+  || blind_hookless_cleanup_rc=$?
+equal "a clean pass follows the unreadable-record case" \
+  0 "$blind_hookless_cleanup_rc"
+excludes "and clears the failed health it left" \
+  "$("$GANG" roster 2>&1 >/dev/null)" "last tick failed"
 
 # Without the deferred declaration, the same self-call takes the direct path
 # and puts the native command into the tty while the caller's turn is active.
