@@ -138,11 +138,7 @@ run --cancel <id>` to stop only its own gate.
 
 At the end of each mandatory invocation, `test/gate.sh` prints queue time, the
 total wall time after heavy-lock acquisition, and the measured snapshot, lint,
-and smoke parts as `gate: TIMING` lines before its final verdict. Capture those
-lines in the change's durable `MEASURE.md` evidence. The five-minute rule is a
-suite policy verified from the total after lock acquisition, not a deadline that
-terminates the gate: move a healthy part that exceeds it intact to
-`test/release.sh`.
+and smoke parts as `gate: TIMING` lines before its final verdict.
 
 `test/release.sh` is the separate pre-release lane. It serializes on the same
 lock, requires one settled tree throughout lint, smoke, and the unchanged full

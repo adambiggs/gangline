@@ -1,311 +1,53 @@
 # Contributing
 
-Read `CONSTITUTION.md` and `AGENTS.md` before changing the repository. Their
-rules are binding.
+Read `CONSTITUTION.md` and `AGENTS.md` before changing the repository.
 
 ## Setup
 
-The Linux integration suite requires a reachable systemd user manager. Its
-detached reaper runs as a transient user service so it remains outside the
-execution cgroup and any child PID namespace that can end the suite process.
-`systemd-run --user --wait --pipe --collect --service-type=exec /bin/true`
-is the readiness probe; a failure means the suite cannot promise cleanup after
-an abrupt end and refuses to start.
-
-Enable the repository hooks:
+Enable the repository hooks, and do not bypass them with `--no-verify`:
 
 ```sh
 git config core.hooksPath .githooks
 ```
 
-The hooks are not enabled automatically. `.githooks/pre-push` is the
-authoritative list of local push gates: the operator's outer contribution gate,
-production and hook lint, the fast executable smoke, and commit messages. It
-names the test lint, checker self-tests, and full integration suite it skips;
-CI runs those checks on every push to `main`. Do not bypass the hook with
-`--no-verify`.
+`.githooks/pre-push` runs the operator's outer contribution gate, production and
+hook lint, the fast smoke, and the commit-message check. CI runs the rest on
+every push to `main`.
 
-Git opens the connection to the remote before the hook runs, and the outer
-contribution gate can spend minutes in inference while that connection sits
-idle. Configure SSH keepalives, or a green gate is followed by
-`Connection to github.com closed by remote host`, the ref never lands, and the
-retry pays for the gate again:
+That outer gate can spend minutes while git's connection to the remote sits
+idle. Configure SSH keepalives, or a green gate is followed by `Connection to
+github.com closed by remote host` and the ref never lands:
 
 ```sh
 git config --global core.sshCommand \
   'ssh -o ServerAliveInterval=30 -o ServerAliveCountMax=20'
 ```
 
-## Scope and implementation
+The Linux integration suite needs a reachable systemd user manager for its
+reaper; `systemd-run --user --wait --pipe --collect --service-type=exec /bin/true`
+is the probe.
 
-- Add only behaviour with a current, concrete consumer.
-- Keep harness-specific knowledge in `collars/`; do not branch on harness names
-  in `bin/gang` without the decision required by `CONSTITUTION.md`.
-- Do not add the machinery classes `CONSTITUTION.md` bans (laws 1, 7, and 8).
-- Prefer deletion when Gangline cannot make a surface safe or truthful.
-- A collar may drive a harness but must never disable its sandbox, bypass its
-  approvals, or otherwise lower the operator's security posture.
-- Put operator security choices in the operator's harness configuration, never
-  in a shipped collar.
-- Add an SPDX license identifier to every new shell or Python file.
+Add an SPDX license identifier to every new shell or Python file.
 
-## Decision records
-
-An ADR records one durable constraint. Read the
-[decision-record index](docs/adr/index.md) before changing one.
-
-Before drafting an ADR that introduces or interprets coordination or
-task-accounting state, read ADR-0001 and ADR-0005 and explain in the record how
-the decision remains compatible with both.
-
-An ADR is written to this template and to nothing else:
-
-```text
----
-id: NNNN
-status: proposed
-date: YYYY-MM-DD
-supersedes: []
-superseded-by: []
-tags: [a, b]
----
-
-# ADR-NNNN: <the decision, stated as a sentence>
-
-## Context
-## Decision
-## Consequences
-```
-
-**Context** states the forces in tension in a few sentences. It is not the
-investigation: not what was tried, measured, drafted, rejected, or reviewed, and
-not the order in which anything happened.
-
-**Decision** states what is decided, in the present tense and Gangline's voice.
-
-**Consequences** states what follows, including unwelcome results and the
-falsifier: the observation that would show the decision wrong. There is no fourth
-section. A rejected option belongs here only when taking it would break something
-named and therefore still binds.
-
-The budget is 200 words. A record over 400 must earn every word in review. Existing
-accepted records that exceed the budget are corpus debt, not precedent. Evidence
-belongs outside the record; the record states only the resulting property that is
-checkable from the tree.
-
-Ids are permanent. Nothing is renumbered or reused, and a gap remains a gap. A
-superseded record keeps a one-line tombstone naming its replacement and loses its
-body; git retains the former body.
-
-A record is born `proposed` and binds nothing: no living artifact cites it as
-settled authority, no test asserts its constraint, and no record names it in a
-relationship list. The accepted corpus predates this creation rule. Revise a
-proposed body in place. Only the operator accepts a record, in a change that alters
-status metadata and nothing else. A proposal aimed at an accepted record names that
-fact in Context and leaves both relationship lists empty until acceptance.
-
-Existing accepted records whose Context does not state forces specific to that
-decision, or that carry a `Founding-import placeholder` instead of a falsifier,
-are corpus debt, not precedent. A successor states its own forces and supplies the
-concrete observation.
-
-An accepted decision is superseded by a new record rather than rewritten.
-Distilling an accepted body to this template changes no decision and is not a
-rewrite. A decision that cannot fit without losing its falsifier contains more
-than one constraint; split it and spend another id.
-
-Before editing `bin/gang`, resolve the executable on `PATH`:
+## The gate
 
 ```sh
-readlink -f "$(command -v gang)"
+test/gate.sh                 # from a plain shell
+gang run -- test/gate.sh     # from a Gangline agent pane
 ```
 
-If it resolves into this checkout, every save is immediately live for all users
-of that executable. Keep edits and checkpoints small.
+The gate runs `test/lint.sh` and `test/smoke.sh` against a private snapshot of
+the working tree, uncommitted work included, and prints its verdict on the last
+line. From an agent pane, commit only after Gangline delivers the run's result.
+`test/integration.sh` is the full suite; CI runs it on every push to `main`.
 
-## Tests
+`test/release.sh` runs lint, smoke and full integration against one settled
+tree. Before merging a Release Please pull request, confirm Release Please
+created it, approve its `action_required` run, and require its `release` job to
+pass on the current head SHA.
 
-Run the repository gate:
-
-```sh
-test/gate.sh
-```
-
-From a Gangline agent pane, run the same gate through the recoverable host
-service instead:
-
-```sh
-gang run -- test/gate.sh
-```
-
-Do not commit until Gangline delivers that run's terminal result. If the turn
-ends first, `gang run --active` shows the owned gate and its exact cancellation
-command; `gang run --cancel <id>` stops only that owned service. A direct agent
-invocation of `test/gate.sh` refuses before it can wait invisibly on the heavy
-lock.
-
-It snapshots the working tree, uncommitted work included, into a private copy,
-commits it there, and runs `test/lint.sh` and `test/smoke.sh` from that copy.
-The complete gate is therefore runnable before a commit, and no edit landing
-mid-run can change what executes. `test/lint.sh` and `test/integration.sh`
-still run directly against an already-settled tree, and refuse one they would
-not own.
-
-Lint runs concurrently with smoke so lint's full runtime is not added to the
-mandatory critical path. A normal failure does not skip the other mandatory
-evidence; a watchdog expiry cancels the concurrent branch so the gate can
-release the host lock promptly. At its end, the gate prints a `TIMING` line for
-its queue time, total suite wall time, and each measured part: snapshot, lint,
-and smoke. The five-minute rule is enforced by the suite total: a healthy
-mandatory run must stay below five minutes after acquiring the heavy lock.
-Record those lines in the change's durable `MEASURE.md` evidence, not in
-standing documentation. If a part cannot meet the policy, keep its assertions
-and move it to the pre-release lane.
-
-### The pre-release integration lane
-
-```sh
-test/release.sh
-```
-
-`test/release.sh` takes the same heavy-test lock and runs lint, smoke, and the
-unchanged full integration suite against one settled tree. It is the required
-pre-release proof: before merging a Release Please pull request, the merger
-must confirm that the pull request is Release Please-created. The workflow's
-`release-please--` head-branch predicate merely selects a candidate; it does
-not prove that origin. Because the configured action uses the default
-`GITHUB_TOKEN`, the merger must select **Approve workflows to run** when the
-pull-request run is `action_required`, then verify that the `release` job ran
-this command and passed on the current pull-request head SHA. The repository
-adds no aggregate runtime deadline to that lane. Repository rules or branch
-protection are an operator configuration choice, so this merger procedure
-remains required unless the operator installs matching enforcement.
-
-Each mandatory step has a 300-second quiet budget. A quiet step is reported
-with its process tree and last 30 lines, then its private process group is ended
-and the heavy-test lock is released. Set
-`GANG_GATE_QUIET_SECONDS` to a positive number of seconds to change that
-operating point for a slower host. Every completed line starts a new silent
-phase. A runnable process group may receive one equal grace at that phase's
-first expiry; a blocked group stalls at one quiet budget, and the second expiry
-always stalls, so silent CPU activity is bounded to two budgets.
-
-The following rules are mandatory:
-
-- Executable tests must not sleep, poll for eventual state, test timeout
-  behaviour, or use wall-clock delay as evidence, except for the scaled gate
-  watchdog calibration below.
-- Use an immediate fake clock when time is an input.
-- Assert state that the command has already established.
-- Keep unknown distinct from both pass and fail. A negative assertion must
-  not pass because its fixture produced no value.
-- Treat panes, captures, transcripts, and logs as combined surfaces. A positive
-  text claim against one must name whether the whole surface is the intended
-  evidence or identify an independent producer witness. `test/source-guards.py`
-  discovers capture producers and positive `contains`, `equal`, quiet `grep`,
-  `[[ … ]]`, wrapper, and `case` guards. For entered text, an
-  empty composer after verified Enter is the producer witness; for execution,
-  prefer an artifact only execution can create; for timing, assert both sides
-  of the boundary. A later feature can otherwise supply an old guard's text
-  without changing either feature or guard incorrectly. A legitimate claim
-  about any visible source uses the adjacent, statement-fingerprinted
-  `source-guard: whole-surface@DIGEST: rationale`; a conjunctive source witness
-  uses `source-guard: producer@DIGEST: rationale`. Run the checker once without
-  the annotation to get the exact forms it will accept. The introduction-time
-  migration ledger is closed to new entries: copying, moving, changing, or
-  deleting one of its reviewed assertions requires a fresh inline decision.
-- Reach python through `test/suite-python.sh`. A version-manager shim resolves
-  `python3` by reading a version file under `$HOME`, and `test/integration.sh`
-  gives the run a private `$HOME`, so the interpreter is resolved to an absolute
-  path once before that line and pinned onto `PATH` — which is also how a
-  `#!/usr/bin/env python3` program reaches it. Do not add a second resolution,
-  and do not prepend an interpreter directory by hand to get a run to pass.
-- Use a private tmux server and disposable session for integration tests. Never
-  address the live `gangline` session.
-- Real harness turns are explicit operator smoke tests, not mandatory tests. Run
-  them in a separately named disposable tmux session. Never enroll the
-  development agent to test Gangline.
-- Preserve existing assertions as required by `AGENTS.md`.
-
-The gate watchdog fixtures are the sole timeout-behaviour exception. The
-blocked and pulsing controls scale the quiet budget to 1 second and join the
-nested gate's own verdict event. The CPU-progress controls use a measured 10s
-quiet budget: a 15s runnable child proves the one grace, while a 30s child must
-stall at the 20s hard ceiling. An independent 120-second fixture ceiling turns
-a missing event into a named failure and performs ownership-checked cleanup; it
-is not evidence that a child finished. `GANG_TEST_GATE_EVENT_CEILING` may lower
-that ceiling only for a red fixture that deliberately removes the event. The
-fixtures record those values beside the 300-second production budget and
-104-second measured healthy output gap. The pulsing control emits every 0.3
-seconds for six renewals, 1.8 times its quiet budget, to prove completed output
-starts new silent phases. Changing the production value requires a fresh
-healthy output-gap measurement; changing the scaled values or fixture ceiling
-requires remeasuring the fixture snapshot and updating its margin.
-
-`test/lint.sh` enforces the shell timing ban across `test/` and executable CI
-helpers. `.github/workflows/shell.yml` enforces the suite ceiling.
-
-### The offline end-to-end lane
-
-```sh
-test/e2e.sh            # every scenario
-test/e2e.sh bricked    # one by name
-```
-
-`test/e2e.sh` is the sanctioned real-harness smoke in executable form. It boots
-a real claude-code TUI in a disposable tmux session on a private socket and
-points it at `test/e2e/stub.py`, a local server speaking the Anthropic Messages
-dialect, so a run needs no network, no account, and no money. It proves what a
-fixture cannot: that the collar, the pane reading, the native hooks, and the
-turn bracket still describe the harness that is installed.
-
-It is opt-in locally and is not wired into `test/gate.sh`, push CI, or pull
-request CI, because a real boot costs seconds and the lane holds a turn open on
-purpose. The isolated `offline e2e` workflow runs it daily and on dispatch after
-installing the current npm `latest` claude-code release. This keeps harness
-drift visible without turning a real TUI into a mandatory contribution gate.
-On a failed run the workflow retains each scenario's pane, request log, stub
-output, harness transcript, and measured tmux geometry for seven days; on
-success the runner's ephemeral copies die with the job. A local caller that
-sets `GANG_E2E_ARTIFACT_DIR` owns that directory and removes it after its
-evidence is no longer needed.
-
-The lane takes the host's heavy-test lock itself, the same way the gate does, so
-it never runs beside the mandatory suite; that lock file is a shared inode
-created on first use and deliberately never unlinked, because removing it after
-unlocking lets the next run lock a fresh file beside a waiter still holding the
-old one.
-
-`test/lint.sh` exempts this one file from the timing ban, and refuses if the
-gate, the suites it calls, hooks, or any workflow except the isolated e2e
-workflow names the lane. It also requires that workflow to expose exactly the
-schedule and dispatch triggers. That tripwire reads those files for the lane's
-name; a call assembled from a variable or reached through a helper it does not
-name would pass it. Keeping the lane out of mandatory paths is the rule, and
-the check catches the ordinary way of breaking it.
-
-Every wait is bounded, including the heavy lock and the release of a held turn,
-and each prints the reads it actually used, so a lane drifting toward its budget
-is visible before it flakes. Exhausting a budget fails the run on its own; a
-bound nobody can spend is only informational.
-
-The stub's request log is the instrument: assertions read what entered the
-model's context rather than what a pane appeared to show. It distinguishes the
-agent's own turns from the harness's side errands, and arrival from completion,
-because the harness also counts tokens and titles sessions with bodies that
-quote the same text. An assertion against the unfiltered log is a claim about
-whichever request happened to carry the words.
-
-To prove the offline claim rather than assume it, run the lane in a network
-namespace that has loopback and nothing else:
-
-```sh
-unshare -rn sh -c 'ip link set lo up; exec test/e2e.sh'
-```
-
-Inside it a route to any external address does not exist and DNS cannot
-resolve, so a harness that had quietly depended on reaching a provider fails
-there instead of passing here.
+`test/e2e.sh` boots a real claude-code TUI against a local stub server. It is
+opt-in and runs daily in CI; it never gates a commit.
 
 ## Commits
 
@@ -318,91 +60,28 @@ Use Conventional Commits:
 Allowed types are `build`, `chore`, `ci`, `docs`, `feat`, `fix`, `perf`,
 `refactor`, `revert`, `style`, and `test`. Use a lowercase scope when present.
 Pair `!` with a `BREAKING CHANGE:` footer that tells callers what to update.
+Pull request titles follow the same format.
 
 A commit message describes the change, not the process that produced it: no
-agent, reviewer, session, harness, or model names, no attribution trailers, and
-no provenance at all. Where a change came from, who found it, and on which pass
-are facts about how this repository is worked on rather than about the change,
-and a rephrasing that keeps the fact while dropping the name is still process.
-The change describes itself.
+agent, reviewer, session, harness or model names, no attribution trailers. The
+body states what failed, what changed, and what proves it.
 
-Pull request titles must also be Conventional Commits. Commit bodies should state
-what failed, what changed, and what proves the result. Marker changes must name
-the harness version that was observed and add it to the collar's verified pins.
+Stage exact paths with `git add -- <paths>` in a shared checkout, and never
+commit or discard another contributor's work.
 
-When multiple contributors share a checkout:
-
-- Assign one writer per file.
-- Inspect the worktree before staging.
-- Stage exact paths with `git add -- <paths>`; do not use `git add -A` in a dirty
-  shared tree.
-- Do not commit, discard, or rewrite another contributor's work.
-- Land a green checkpoint before handing a file to another writer.
+Release Please owns release commits, tags, `version.txt`, package metadata and
+`CHANGELOG.md`; never edit them by hand.
 
 ## Public content
 
-The local pre-push hook delegates to the operator's installed Snubline gate,
-which is the only PII scan Gangline runs — there is no CI backstop, so a clone
-without that gate installed pushes unscanned. That gate runs the operator-installed
-`~/.config/snubline/pii-scan`, never a copy from this repository. Issue and pull
-request bodies reach no hook at all, so scan them, and anything else you are
-about to publish, with that configured scanner first:
+The pre-push hook's Snubline gate is the only PII scan; there is no CI
+backstop. Issue and pull request bodies reach no hook, so scan them first:
 
 ```sh
-scanner="$(git config --global --path --get snubline.scanner.pii.path)" || {
-  echo "Snubline scanner is not configured" >&2
-  exit 1
-}
-"$scanner" --stdin < body.txt
+snub scan-text < body.txt
 ```
-
-### A closing comment on an already-closed issue is silently dropped
-
-`gh issue close --comment` on an issue that is already closed refuses the close,
-discards the comment with it, and still exits 0. A loop closing several issues
-therefore reads as success while publishing nothing on the ones that were
-already shut, and no status distinguishes the two.
-
-A `Closes #N` footer closes its issue the moment the commit reaches the default
-branch, so landing a branch and then closing its issues by hand is exactly the
-order that meets this. Comment with `gh issue comment` where a footer has
-already closed the issue, and read the issue back rather than trusting the close
-command's status.
-
-## Releases
-
-- Release Please owns release commits, tags, GitHub Releases, and `CHANGELOG.md`.
-- Do not edit `CHANGELOG.md` manually or add changelog entries to ordinary pull
-  requests.
-- `.release-please-manifest.json` is the version source. Release commits update
-  `version.txt` and the npm and PyPI package metadata with it; do not add another
-  version source or bump these files independently.
-- The npm and PyPI stubs are not published packages. Install with `install.sh`.
-- Keep GitHub Actions permission to create pull requests enabled so Release
-  Please can maintain its release PR.
-- Before merging a Release Please pull request, follow the pre-release procedure
-  above: confirm the PR's origin, approve an `action_required` run, then require
-  its `release` workflow job to pass on the current head SHA. That job runs
-  `test/release.sh`, preserving the full integration assertions outside the
-  five-minute contribution gate.
-
-## Documentation and measurement
-
-- Use **Gangline** for the project and `gang` for the command.
-- Use *hitch* for adding an agent; never *hire*.
-- Put command syntax and configuration in `docs/reference.md`, operations in
-  `docs/operations.md`, and product purpose in `README.md`.
-- Do not write changing counts, versions, sizes, or tallies into documentation.
-  Point to the command that reports them.
-- When a default changes, read every section describing its semantics; a literal
-  search alone is insufficient.
-- Measure the same executable, path, environment, and substrate the product uses.
-- Require fixture readiness as an immediate observable before asserting product
-  state.
-- Report "could not determine" when evidence is absent or contradictory. Never
-  spend missing evidence as a conservative pass.
 
 ## License
 
 Contributions are submitted under Apache-2.0 unless the pull request explicitly
-states otherwise. No contributor license agreement is required.
+states otherwise.

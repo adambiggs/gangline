@@ -617,9 +617,8 @@ gate_verdict() { # $1 = exit status, $2 = 1 if the gate reached a decision
   printf 'gate: VERDICT %s (status %s)\n' "$word" "$1"
 }
 
-# Every mandatory invocation reports the observation that enforces the
-# five-minute suite policy. A report does not kill work: slow evidence remains
-# visible and is moved to the pre-release lane instead of being suppressed.
+# Every mandatory invocation reports how long each part took. A report does
+# not kill work.
 gate_record_part_timing() { # $1 part name, $2 EPOCHREALTIME start
   local name="$1" started="$2" ended elapsed
   ended="$EPOCHREALTIME"

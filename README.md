@@ -100,14 +100,10 @@ team, Gangline reads the sender from the calling window; outside callers name
 themselves with `--from`. Ordinary delivery succeeds only after the target
 composer visibly accepts the paste and submission.
 
-A target that cannot take input right now gets the message parked by default:
-it waits in the target's spool. Native delivery opportunities, `gang tick`, and
-the cooperative pass launched by other operational Gangline commands retry it
-through the same verified path. A collar may declare that a free composer
-accepts native mid-turn steering; attribution still lands in the spool before
-the first keystroke. Drafts and tmux copy-mode remain parked, then drain after
-their gates clear and the next cooperative pass runs. `--live-only` refuses
-instead of parking when a message is only worth sending now.
+A target that cannot take input right now gets the message parked in its spool,
+and Gangline delivers it through the same verified path once the target can take
+it. `--live-only` refuses instead of parking when a message is only worth
+sending now.
 
 Observe and control the team without replacing the harness interface:
 
@@ -129,14 +125,9 @@ gang down gangline
 target team ends its turn instead; delivery is push-based, and its report arrives
 at that boundary.
 
-`gang interrupt` sends the keystroke the harness's collar declares for stopping
-a turn. `gang flush` recovers a message a harness parked in its own input queue,
-reading the reloaded composer back against what Gangline recorded before
-submitting it. Cooperative-tick failures appear as a compact active count in
-the existing tmux status line. Unseen alerts are visually distinct; Prefix+A
-opens the full list in an on-demand popup when that key was free, without
-creating or selecting another tmux window. Reading the list never resolves a
-condition—recovery does.
+`gang interrupt` stops a turn with the harness's own keystroke. `gang flush`
+recovers a message a harness parked in its own input queue. Active alerts show
+as a count in the tmux status line; Prefix+A lists them.
 
 ## Gangline and native subagents
 
@@ -166,9 +157,9 @@ after delivery.
 
 ## Long sessions
 
-Agents receive one short startup contract: their Gangline name, how to send,
-and how to request native compaction. Goals, roles, and working agreements stay
-as ordinary prose in the native harnesses and messages.
+Every hitched agent receives [`CONTRACT.md`](CONTRACT.md), the terms it is held
+to, and the role brief it was hitched with. Goals and working agreements stay as
+ordinary prose in the native harnesses and messages.
 
 At a natural checkpoint an agent runs:
 
@@ -176,10 +167,9 @@ At a natural checkpoint an agent runs:
 gang compact worker
 ```
 
-Gangline submits the collar's native compaction command. Codex cannot submit
-`/compact` while its own turn is active, so a self-request is recorded and the
-native Stop hook submits it once at the turn boundary. Failure remains visible
-in `gang status` and `gang roster`.
+Gangline submits the collar's native compaction command, at the turn boundary
+when the agent asks for itself. Failure remains visible in `gang status` and
+`gang roster`.
 
 Context lights default to the collar's own thresholds for the model being
 hitched, so a team mixing harnesses gets working lights on every agent with
