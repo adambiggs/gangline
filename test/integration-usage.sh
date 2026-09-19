@@ -101,7 +101,7 @@ usage_claude_id="11111111-aaaa-4bbb-8ccc-000000000001"
 usage_codex_id="22222222-bbbb-4ccc-8ddd-000000000002"
 usage_stray_id="33333333-cccc-4ddd-8eee-000000000003"
 # --- The launch record hitch registers -------------------------------------
-"$HITCH" usage-alpha -c bash -d /tmp -t 'github:gangline#421' --tier B >/dev/null
+"$HITCH" usage-alpha -c bash -d /tmp -t 'github:gangline#421' >/dev/null
 usage_alpha_id="$(window_id usage-alpha)"
 # THE TEAM IS READ ONLY AFTER THIS PART HAS HITCHED INTO IT. This part may
 # begin after the previous part dropped the session's last window, which is
