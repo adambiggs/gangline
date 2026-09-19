@@ -1900,8 +1900,7 @@ vanish_down() { # the private server must outlive the vanished window, then be
 
 vanish_run() { # $1.. = gang argv; its output and its status, on stdout
   local rc=0
-  PATH="$ROOT/libexec/gang-tmux-guard:$PATH" \
-    TMUX_TMPDIR="$vanish_root" GANG_SESSION="$vanish_session" \
+  TMUX_TMPDIR="$vanish_root" GANG_SESSION="$vanish_session" \
     GANG_COLLARS="$vanish_collars" GANG_TEST_COLLARS='' \
     "$GANG" "$@" 2>&1 || rc=$?
   printf '%s\n' "--status $rc"

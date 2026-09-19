@@ -4583,30 +4583,31 @@ stamp_binary_id() { # $1 = window id, optional $2 = agent name being hitched
 
 # TMUX ANSWERS A WINDOW THAT IS GONE EXACTLY AS IT ANSWERS AN OPTION THAT WAS
 # NEVER SET: status 0 and an empty line. Nothing in the answer says which it
-# was, so a consumer that reads the value alone reports an absence it never
-# observed. Gangline's tmux guard is what tells the two apart — it witnesses the
-# target before the read and refuses to hand back an empty value it cannot vouch
-# for — and this is the consumer side of it, keeping the three answers apart so
-# a caller can say "unset", "gone", and "the server stopped answering" as the
-# different things they are. Without the guard on PATH every read is status 0
-# and the distinction does not exist; that is the ambiguity this reads through,
-# not a fault in it.
+# was, so an empty value is checked against the window itself, and a window
+# that cannot be listed against the server, so a caller can say "unset",
+# "gone", and "the server stopped answering" as the different things they are.
+# That costs one tmux call on an empty answer and two on a missing window.
 window_option() { # $1 window, $2 option; print the value.
                   # 0 read, 1 target unavailable, 2 the server did not answer
   local value rc=0
   value="$(tmux show-options -wqv -t "$1" "$2" 2>/dev/null)" || rc=$?
-  case "$rc" in
-    0) printf '%s' "$value" ;;
-    2) return 2 ;;
-    *) return 1 ;;
-  esac
+  if [ "$rc" -eq 0 ] && [ -n "$value" ]; then
+    printf '%s' "$value"
+    return 0
+  fi
+  if tmux list-windows -t "$1" -f 0 -F '#{window_id}' >/dev/null 2>&1; then
+    [ "$rc" -eq 0 ] || return 1
+    return 0
+  fi
+  tmux display-message -p '#{socket_path}' >/dev/null 2>&1 || return 2
+  return 1
 }
 
 # A COMMAND THAT CANNOT READ ITS TARGET SAYS SO IN ITS OWN WORDS. The bare reads
 # this replaces ended their command on a shell status, which reaches an operator
-# as the guard's line and a nonzero exit with nothing from gang about what was
-# and was not done. The caller supplies that clause because only it knows what
-# it had already printed or was about to press.
+# as a nonzero exit with nothing from gang about what was and was not done. The
+# caller supplies that clause because only it knows what it had already printed
+# or was about to press.
 option_unreadable() { # $1 = window_option status, $2 option, $3 the caller's
                       # clause; never returns
   case "$1" in
