@@ -382,15 +382,14 @@ shipped_collar_override="$RUN_ROOT/no-operator-collars"
 collars="$(GANG_TEST_COLLARS='' GANG_COLLARS="$shipped_collar_override" \
   "$GANG" collars | cut -f1 | tr '\n' ' ')"
 equal "the public collar list is the supported harness set" \
-  "claude-code codex opencode pi " "$collars"
+  "claude-code codex " "$collars"
 # WHICH COLLARS CAN BE RESUMED, said where -c is chosen. Both halves are needed:
 # a launch line with a session slot and a collar that witnesses the id to put in
 # it. Asserted per collar rather than as one blob, so a collar losing the
 # capability names itself.
 collar_caps="$(GANG_TEST_COLLARS='' GANG_COLLARS="$shipped_collar_override" \
   "$GANG" collars)"
-for collar_cap_row in "claude-code resume" "codex resume" \
-                      "opencode resume" "pi no-resume"; do
+for collar_cap_row in "claude-code resume" "codex resume"; do
   equal "gang collars marks ${collar_cap_row% *} ${collar_cap_row#* }" \
     "${collar_cap_row#* }" \
     "$(printf '%s\n' "$collar_caps" | awk -F '\t' -v n="${collar_cap_row% *}" \
@@ -2286,41 +2285,8 @@ codex_old_python_config="$(GANG_MODEL='' CODEX_HOME="$CODEX_CATALOG_STUB/home" \
   PATH="$CODEX_CATALOG_STUB/bin:$PATH" sh -c "$codex_effort_cmd")"
 equal "a configured model needs the config reader and says so by silence" \
   "" "$codex_old_python_config"
-# opencode and pi refuse -e by declaring nothing: their native effort forms
-# are unverified, and an unverified spelling must not reach a launch line.
-for unverified_collar in opencode pi; do
-  unverified_file="$ROOT/collars/$unverified_collar.sh"
-  unverified_effort="$(GANG_TEST_COLLARS='' ROOT="$ROOT" bash -c \
-    '. "$1"; printf "%s" "${GANG_EFFORT_OPT:-}"' fixture "$unverified_file")"
-  equal "the $unverified_collar collar declares no effort spelling until one is verified" \
-    "" "$unverified_effort"
-done
 
-MODEL_LIST_STUB="$RUN_ROOT/model-list-stub"
-mkdir -p "$MODEL_LIST_STUB"
-cat > "$MODEL_LIST_STUB/opencode" <<'SH'
-#!/bin/sh
-printf 'anthropic/claude-sonnet\nopenai/gpt-5\n'
-SH
-cat > "$MODEL_LIST_STUB/pi" <<'SH'
-#!/bin/sh
-cat <<'ROWS'
-provider   model           context  max-out  thinking  images
-anthropic  claude-sonnet  200K     64K      yes       yes
-openai     gpt-5           400K     128K     yes       yes
-ROWS
-SH
-chmod +x "$MODEL_LIST_STUB/opencode" "$MODEL_LIST_STUB/pi"
-opencode_models="$(PATH="$MODEL_LIST_STUB:$PATH" \
-  bash -c '. "$1"; collar_models' fixture "$ROOT/collars/opencode.sh")"
-equal "the OpenCode collar preserves native provider/model ids" \
-  $'anthropic/claude-sonnet\nopenai/gpt-5' "$opencode_models"
-pi_models="$(PATH="$MODEL_LIST_STUB:$PATH" \
-  bash -c '. "$1"; collar_models' fixture "$ROOT/collars/pi.sh")"
-equal "the Pi collar joins its native provider and model columns" \
-  $'anthropic/claude-sonnet\nopenai/gpt-5' "$pi_models"
-
-for otel_collar in bash claude-code codex opencode pi; do
+for otel_collar in bash claude-code codex; do
   otel_attributes="$(name=limitsmith \
     OTEL_RESOURCE_ATTRIBUTES='service.name=operator,team=observability' \
     GANG_TEST_COLLARS='' bash -c '
@@ -2472,11 +2438,9 @@ refuses "duplicate native model ids make the collar catalog unreadable" \
   "returned a model catalog Gangline cannot interpret" \
   "$GANG" models -c malformed-models
 
-# ONE UNREADABLE ROW USED TO COST THE WHOLE COLLAR. opencode's OpenRouter
-# provider spells ids with a `~` routing prefix that this vocabulary cannot use,
-# and refusing the catalog over them blocked every opencode hitch on the host —
-# including hitches for models on providers whose rows read fine. The requested
-# model's row is the only one that has to be usable.
+# ONE UNREADABLE ROW COSTS ONLY THAT ROW. A provider can spell ids with a `~`
+# routing prefix that this vocabulary cannot use; the requested model's row is
+# the only one that has to be usable.
 cat > "$RUN_ROOT/collars/skippable-models.sh" <<SH
 # shellcheck shell=bash
 # shellcheck disable=SC2034

@@ -2695,7 +2695,7 @@ compaction_state_write() { # $1 = window id, $2 = open|closed
 
 # A REFUSED COMPACTION RAISES PreCompact AND NEVER PostCompact, so the opening
 # event cannot be trusted to be paired. claude-code declines a short session with
-# "Not enough messages to compact" and pi with "Nothing to compact"; the bracket
+# "Not enough messages to compact"; the bracket
 # then stays open over an idle agent until it ages out, and every reader above it
 # reports busy for that whole window.
 #
@@ -10909,11 +10909,10 @@ advisory_reply() { # $1 event, $2 collar; emit at most one native hook payload
 # three-way `collar_model_check`: 0 recognized, 1 unrecognized, 2 unknown.
 # Recognition is deliberately not availability; only the provider can answer
 # whether this account may use a recognized full model name.
-# A ROW GANG CANNOT READ COSTS THAT ROW, NOT THE COLLAR. opencode's OpenRouter
-# provider spells some ids with a `~` routing prefix, which this vocabulary has
-# no use for; refusing the catalog over them blocked every opencode hitch on the
-# host, including hitches for models on other providers that read fine. The
-# model a caller actually asked for is the only row that has to be usable, so an
+# A ROW GANG CANNOT READ COSTS THAT ROW, NOT THE COLLAR. A provider can spell
+# some ids in a form this vocabulary has no use for, such as a `~` routing
+# prefix, and refusing the catalog over them would block hitches for models whose
+# rows read fine. The model a caller actually asked for is the only row that has to be usable, so an
 # unreadable row is dropped and named instead. What stays fatal is what leaves
 # no readable catalog behind: a producer whose every row is unusable, and a
 # repeated id, where the ambiguity is over which row wins rather than whether a

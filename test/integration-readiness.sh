@@ -2910,7 +2910,7 @@ tmux set-option -uw -t "$refused_id" @gl_turn
 # pane for a collar that cannot tell a refused read from an absent box, and
 # that backstop would cover for a shipped collar losing the distinction — a
 # covered-for collar still reports a pane it never read as a pane with no box.
-for refused_collar in bash claude-code codex opencode pi; do
+for refused_collar in bash claude-code codex; do
   refused_collar_rc=0
   rm -f -- "$RUN_ROOT/refuse-count"
   (
@@ -2942,7 +2942,7 @@ cat > "$RUN_ROOT/collar-refusal-stand-ins" <<'SH'
 die() { printf 'gang: %s\n' "$*" >&2; exit 1; }
 refuse() { printf 'gang: %s\n' "$*" >&2; exit 3; }
 SH
-for refused_collar in bash claude-code opencode pi; do
+for refused_collar in bash claude-code; do
   refused_ctx_rc=0
   rm -f -- "$RUN_ROOT/refuse-count" "$RUN_ROOT/refuse-log"
   refused_ctx_err="$(

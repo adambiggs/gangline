@@ -1786,21 +1786,13 @@ contains "refused because the turn is still running, not for some other reason" 
 excludes "and nothing was typed into it" "$(pane stubborn)" "MARK_MIDTURN"
 "$GANG" drop stubborn >/dev/null
 
-# The shipped harnesses that stop on Escape say so themselves; the ones whose
-# interrupt gang has not observed declare nothing and refuse the command.
+# The shipped harnesses that stop on Escape say so themselves.
 for stopping_collar in claude-code codex; do
   stopping_file="$ROOT/collars/$stopping_collar.sh"
   stopping_key="$(GANG_TEST_COLLARS='' ROOT="$ROOT" GANG_CONTEXT_LIGHTS=off bash -c \
     '. "$1"; printf "%s" "${GANG_INTERRUPT_KEY:-}"' fixture "$stopping_file")"
   equal "the $stopping_collar collar declares the key that stops its turn" \
     "Escape" "$stopping_key"
-done
-for unstopping_collar in opencode pi; do
-  unstopping_file="$ROOT/collars/$unstopping_collar.sh"
-  unstopping_key="$(GANG_TEST_COLLARS='' ROOT="$ROOT" bash -c \
-    '. "$1"; printf "%s" "${GANG_INTERRUPT_KEY:-}"' fixture "$unstopping_file")"
-  equal "the $unstopping_collar collar declares no interrupt key until one is verified" \
-    "" "$unstopping_key"
 done
 
 # A WINDOW THAT GOES BETWEEN TWO READS IS NOT AN OPTION THAT WAS NEVER SET.
