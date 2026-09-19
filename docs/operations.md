@@ -127,8 +127,7 @@ It retains observations and decisions, not message bodies, in
 are kept; the next rotation removes the older one. This is a bounded diagnostic aid, not a
 watcher or recovery loop. It does not overlap the unpruned usage and cost history at
 `gangline/usage/events.jsonl`: use `gang usage` for that record. If an event append fails,
-Gangline names the missing record and preserves its tmux staging buffer when possible, but lets
-the lifecycle action finish; a broken diagnostic sink must not strand a delivery, teardown, or
+Gangline names the missing record on stderr but lets the lifecycle action finish; a broken diagnostic sink must not strand a delivery, teardown, or
 tick. Treat that warning as an explicit gap in the timeline. Copy both generations of the event
 file before its retention window if an incident needs a longer record.
 

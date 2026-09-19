@@ -45,17 +45,17 @@ else
 fi
 
 # The helper fixture checks the format and filter in isolation. This separate
-# private team drives the production staging, host-side run-shell append, and
-# `gang log` reader for every kind; its lifecycle edge remains readable after
+# private team drives the production append and `gang log` reader for every
+# kind; its lifecycle edge remains readable after
 # teardown. The deliberate logger mutation removes one production append, so
 # the proof is red if an expected event stops reaching the reader.
 event_team="gang-events-proof-$$"
 event_data="$RUN_ROOT/event-proof-data"
 event_gang() { env GANG_SESSION="$event_team" XDG_DATA_HOME="$event_data" "$GANG" "$@"; }
 # A harness PATH can accumulate package and plugin directories until tmux
-# refuses a run-shell command that embeds it. The event worker needs only its
-# interpreters and the guarded tmux route; inflate the caller PATH past that
-# historical boundary while requiring the lifecycle row to cross normally.
+# refuses a run-shell command that embeds it. The teardown usage worker below
+# still crosses run-shell with a PATH of its own; inflate the caller PATH past
+# that historical boundary while requiring every row to be recorded normally.
 event_long_path="$PATH"
 for ((event_path_copy = 0; event_path_copy < 40; event_path_copy++)); do
   event_long_path="$RUN_ROOT/event-path-component:$event_long_path"

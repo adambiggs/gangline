@@ -1730,13 +1730,12 @@ saw and what Gangline did, while `gang usage` answers token and teardown history
 retains the current and one prior 8 MiB event generation; rotation removes the older one.
 Appends take one short file lock and perform no scan,
 so a tick cannot grow the log without bound or perform retention work proportional to history.
-The caller stages a validated row in tmux and a host-side `run-shell` child performs the
-append, so a sandboxed caller cannot write a private event stream. An append failure is loud,
-keeps the prepared row in tmux when no host-side record exists, and lets the lifecycle action
-finish: unavailable diagnostic storage must not strand a delivery, teardown, or tick. The missing
-row remains an explicit gap rather than evidence that the action did not occur. A context
-reading is recorded as `context.read` beside the `context.band-changed` edge it decided, not on
-every hook.
+The command that decided an event appends it directly, so a sandboxed agent records events
+only where its sandbox grants that directory. An append failure is one warning on stderr, and
+the lifecycle action finishes: unavailable diagnostic storage must not strand a delivery,
+teardown, tick or hook. The missing row remains an explicit gap rather than evidence that the
+action did not occur. A context reading is recorded as `context.read` beside the
+`context.band-changed` edge it decided, not on every hook.
 
 ### `gang usage [--all] [--daily [YYYY-MM-DD] | --since YYYY-MM-DD]`
 

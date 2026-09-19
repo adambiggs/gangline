@@ -7458,7 +7458,7 @@ alert_note_fit() { # $1 note, $2.. the report's other lines -> the note rows tha
 
 tick_launch() { # isolate a post-command candidate from the command's own result
   [ -z "${GANG_TICK_INTERNAL:-}" ] || return 0
-  case "${cmd:-}" in alerts|tick|__tick-worker|__usage-record-worker|__event-record-worker) return 0 ;; esac
+  case "${cmd:-}" in alerts|tick|__tick-worker|__usage-record-worker) return 0 ;; esac
   tick_session_live || return 0
   case "${GANG_TEST_TICK_MODE:-}" in
     manual) [ "${GANG_TEST_COLLARS:-}" = 1 ] && return 0 ;;
@@ -15265,127 +15265,11 @@ json_text() { # one JSON string; event facts never interpolate unescaped diagnos
 }
 
 # One event stream supersedes a pile of mutable tmux options as the diagnostic
-# record. The caller prepares a validated JSON line, then a tmux run-shell
-# child appends it in the server's host mount namespace. That crossing is the
-# same one used by usage records: an agent's sandbox can observe the team but
-# cannot be assumed to share the host's durable data filesystem.
-event_record_tmux() { # host worker only: target the socket handed across at the lifecycle edge
-  case "${GANG_EVENT_RECORD_SOCKET:-}" in
-    /*) tmux -S "$GANG_EVENT_RECORD_SOCKET" "$@" ;;
-    *) tmux "$@" ;;
-  esac
-}
-
-event_log_append_worker() { # $1 staging buffer, $2 event path
-  event_record_tmux save-buffer -b "$1" - \
-    | "$GANGLINE_EVENTS_HELPER" append-record --events "$2"
-}
-
-event_record_worker_path() { # only the interpreters and guarded tmux route the host worker needs
-  local path="" tool resolved dir
-  for tool in tmux python3 bash; do
-    resolved="$(command -v "$tool")" || return 1
-    case "$resolved" in /*/*) dir="${resolved%/*}" ;; *) return 1 ;; esac
-    case ":$path:" in
-      *":$dir:"*) ;;
-      *) path="${path:+$path:}$dir" ;;
-    esac
-  done
-  for dir in /usr/local/bin /usr/bin /bin; do
-    case ":$path:" in
-      *":$dir:"*) ;;
-      *) path="${path:+$path:}$dir" ;;
-    esac
-  done
-  printf '%s' "$path"
-}
-
-cmd_event_record_worker() { # internal host-side append reached only through tmux run-shell
-  local out="" rc=0
-  [ "${GANG_EVENT_RECORD_INTERNAL:-}" = 1 ] \
-    || die '__event-record-worker is internal; run gang log'
-  [ $# -eq 4 ] \
-    || die 'internal event record worker needs a staging buffer, event path, report buffer, and token'
-  out="$(event_log_append_worker "$1" "$2" 2>&1)" || rc=$?
-  case "$rc" in
-    0) printf 'gang-event-report %s recorded\n%s\n' "$4" "$out" ;;
-    *) printf 'gang-event-report %s kept\n%s\n' "$4" "$out" ;;
-  esac | event_record_tmux load-buffer -b "$3" -
-}
-
-event_log_append_prepared() { # $1 complete prepared JSON line, $2 event path
-  local prepared="$1" events="$2" token buffer report command worker_path out="" head detail="" socket="" run_err=""
-  token="$(mint_message_nonce)$(mint_message_nonce)"
-  buffer="gang-event-$token"
-  report="gang-event-report-$token"
-  socket="${TMUX%%,*}"
-  if [[ "$socket" != /* ]]; then
-    # A caller outside tmux can still address a private server through
-    # TMUX_TMPDIR or its team route. The worker must receive that resolved
-    # socket explicitly: run-shell's host environment has neither guarantee.
-    if ! socket="$(tmux display-message -p -t "=$SESSION" '#{socket_path}')"; then
-      printf 'gang: event record could not resolve the live team socket for %s\n' "$SESSION" >&2
-      return 1
-    fi
-  fi
-  case "$socket" in /*) ;; *)
-    printf 'gang: event record received no absolute socket for live team %s\n' "$SESSION" >&2
-    return 1 ;;
-  esac
-  # `set-buffer` carries this already-validated one-line JSON directly. A
-  # staging pipe through `load-buffer` is a second composition boundary: a
-  # harness can observe it as the startup delivery itself and refuse the real
-  # envelope before it reaches the pane.
-  if ! tmux set-buffer -b "$buffer" -- "$prepared"$'\n'; then
-    printf 'gang: event record could not be staged; durable destination was %s\n' "$events" >&2
-    return 1
-  fi
-  # The host append is bookkeeping for the current command, not fresh team
-  # activity. Mark it internal so it cannot recalculate a tick team identity
-  # or run a health warning while recording that warning's event.
-  worker_path="$(event_record_worker_path)" || {
-    printf 'gang: event record could not resolve the guarded tmux, Python, and Bash worker path\n' >&2
-    return 1
-  }
-  command="GANG_EVENT_RECORD_INTERNAL=1 GANG_TICK_INTERNAL=1 GANG_SESSION=$(option_shell_quote "$SESSION")"
-  command+=" GANG_CONFIG_DIR=$(option_shell_quote "$CONFIG_DIR")"
-  command+=" PATH=$(option_shell_quote "$worker_path") HOME=$(option_shell_quote "${HOME:-}")"
-  command+=" GANG_EVENT_RECORD_SOCKET=$(option_shell_quote "$socket") TMUX= TMUX_PANE="
-  command+=" \"$(option_shell_quote "$ROOT/bin/gang")\" __event-record-worker"
-  command+=" \"$(option_shell_quote "$buffer")\" \"$(option_shell_quote "$events")\""
-  command+=" \"$(option_shell_quote "$report")\" \"$(option_shell_quote "$token")\""
-  if ! run_err="$(tmux run-shell "$command" 2>&1)"; then
-    printf 'gang: event record could not start a host-side append; durable destination was %s and the prepared line remains in tmux buffer %s\n' \
-      "$events" "$buffer" >&2
-    [ -z "$run_err" ] || printf 'gang: event record host append detail: %s\n' "$run_err" >&2
-    return 1
-  fi
-  if ! out="$(tmux save-buffer -b "$report" -)"; then
-    printf 'gang: event record left no host-side report; whether %s was appended is unknown and the prepared line remains in tmux buffer %s while this server lives\n' \
-      "$events" "$buffer" >&2
-    return 1
-  fi
-  head="${out%%$'\n'*}"
-  tmux delete-buffer -b "$report" \
-    || printf 'gang: event record report buffer %s could not be removed; it dies with the tmux server\n' "$report" >&2
-  case "$head" in
-    "gang-event-report $token recorded")
-      tmux delete-buffer -b "$buffer" \
-        || printf 'gang: event record was appended, but staging buffer %s could not be removed; it dies with the tmux server\n' "$buffer" >&2
-      return 0 ;;
-    "gang-event-report $token kept")
-      printf 'gang: event record was not appended to %s; the prepared line remains in tmux buffer %s while this server lives\n' \
-        "$events" "$buffer" >&2
-      [ "$out" = "$head" ] || detail="${out#*$'\n'}"
-      [ -z "$detail" ] || printf 'gang: event record host append detail: %s\n' \
-        "$(printf '%s' "$detail" | config_sanitize)" >&2
-      return 1 ;;
-    *)
-      printf 'gang: event record report buffer %s did not identify this append; whether %s was appended is unknown and staging buffer %s remains\n' \
-        "$report" "$events" "$buffer" >&2
-      return 1 ;;
-  esac
-}
+# record. Each record is appended directly, under the stream's own lock, by the
+# command that decided it. An agent whose sandbox cannot write the durable data
+# directory gets the append's refusal as a warning, and the operator grants the
+# path; routing every event through a host-side tmux run-shell instead cost a
+# full gang start per event on every hook.
 
 EVENT_LOG_TEAM_CREATED=""
 EVENT_LOG_TEAM_CREATED_READY=0
@@ -15400,7 +15284,7 @@ event_log_team_created_set() { # cache the one live team incarnation for this co
 }
 
 event_log_record_required() { # $1 window/pane, $2 kind, $3 JSON facts
-  local created agent prepared
+  local created agent
   event_log_team_created_set || {
     printf 'gang: event %s was not recorded: the live team creation epoch is unreadable\n' "$2" >&2
     return 1
@@ -15408,12 +15292,8 @@ event_log_record_required() { # $1 window/pane, $2 kind, $3 JSON facts
   created="$EVENT_LOG_TEAM_CREATED"
   agent="$(agent_name_of "$1" 2>/dev/null)" || agent="$1"
   [ "${GANG_TEST_EVENT_MUTANT:-}" != "$2" ] || return 0
-  prepared="$("$GANGLINE_EVENTS_HELPER" prepare --team "$SESSION" --team-created "$created" --agent "$agent" \
-    --kind "$2" --facts "$3" 2>&1)" || {
-      printf 'gang: event %s for %s could not be prepared: %s\n' "$2" "$agent" "$prepared" >&2
-      return 1
-    }
-  event_log_append_prepared "$prepared" "$(event_log_path)" || {
+  "$GANGLINE_EVENTS_HELPER" append --events "$(event_log_path)" --team "$SESSION" \
+    --team-created "$created" --agent "$agent" --kind "$2" --facts "$3" || {
       printf 'gang: event %s for %s was not recorded\n' "$2" "$agent" >&2
       return 1
     }
@@ -15426,19 +15306,15 @@ event_log_record() { # best-effort diagnostic record; lifecycle work remains aut
 }
 
 event_log_team_record_required() { # $1 kind, $2 JSON facts
-  local created prepared
+  local created
   event_log_team_created_set || {
     printf 'gang: team event %s was not recorded: the live team creation epoch is unreadable\n' "$1" >&2
     return 1
   }
   created="$EVENT_LOG_TEAM_CREATED"
   [ "${GANG_TEST_EVENT_MUTANT:-}" != "$1" ] || return 0
-  prepared="$("$GANGLINE_EVENTS_HELPER" prepare --team "$SESSION" --team-created "$created" --agent '@team' \
-    --kind "$1" --facts "$2" 2>&1)" || {
-      printf 'gang: team event %s could not be prepared: %s\n' "$1" "$prepared" >&2
-      return 1
-    }
-  event_log_append_prepared "$prepared" "$(event_log_path)" || {
+  "$GANGLINE_EVENTS_HELPER" append --events "$(event_log_path)" --team "$SESSION" \
+    --team-created "$created" --agent '@team' --kind "$1" --facts "$2" || {
       printf 'gang: team event %s was not recorded\n' "$1" >&2
       return 1
     }
@@ -15450,7 +15326,7 @@ event_log_team_record() { # best-effort diagnostic record; lifecycle work remain
   return 0
 }
 
-cmd_event_proof() { # test-only driver for the production staging, host append, and reader path
+cmd_event_proof() { # test-only driver for the production append and reader path
   local id kind
   [ "${GANG_TEST_COLLARS:-}" = 1 ] \
     || die '__event-proof is test-only'
@@ -15579,6 +15455,25 @@ usage_events_append_worker() { # $1 tmux buffer, $2 events, $3 fallback root
   return 1
 }
 
+usage_record_worker_path() { # only the interpreters and guarded tmux route the host worker needs
+  local path="" tool resolved dir
+  for tool in tmux python3 bash; do
+    resolved="$(command -v "$tool")" || return 1
+    case "$resolved" in /*/*) dir="${resolved%/*}" ;; *) return 1 ;; esac
+    case ":$path:" in
+      *":$dir:"*) ;;
+      *) path="${path:+$path:}$dir" ;;
+    esac
+  done
+  for dir in /usr/local/bin /usr/bin /bin; do
+    case ":$path:" in
+      *":$dir:"*) ;;
+      *) path="${path:+$path:}$dir" ;;
+    esac
+  done
+  printf '%s' "$path"
+}
+
 usage_events_record() { # $1 drop|down, rest = window ids; never refuses a teardown
   local how="$1" id events fallback_root created prepared buffer report token command worker_path out head rc=0; shift
   events="$(usage_events_path)"
@@ -15629,7 +15524,7 @@ usage_events_record() { # $1 drop|down, rest = window ids; never refuses a teard
   # run-shell expands tmux formats before invoking the shell. Rebuild every
   # caller-supplied byte through a word containing neither '#' nor '$', just as
   # popup commands do, so paths and settings cannot become tmux syntax.
-  worker_path="$(event_record_worker_path)" || {
+  worker_path="$(usage_record_worker_path)" || {
     printf 'gang: usage event not written: could not resolve the guarded tmux, Python, and Bash worker path\n' >&2
     return 0
   }
@@ -18984,8 +18879,6 @@ case "$cmd" in
             cmd_tick_worker "$@" ;;
   __usage-record-worker)
             cmd_usage_record_worker "$@" ;;
-  __event-record-worker)
-            cmd_event_record_worker "$@" ;;
   __event-proof)
             cmd_event_proof "$@" ;;
   drop)     cmd_drop "$@" ;;

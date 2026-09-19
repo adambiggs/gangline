@@ -6,7 +6,6 @@ import argparse
 import fcntl
 import json
 import os
-import subprocess
 import sys
 
 
@@ -18,31 +17,25 @@ class EventError(Exception):
 # lock spans only one append and possible rename.  The reader takes the same
 # lock, so it never calls an interleaved/partial JSON line evidence.
 GENERATION_BYTES = 8 * 1024 * 1024
-CLOCK_HELPER = os.path.join(os.path.dirname(os.path.abspath(__file__)), "gang-clock")
+
+
+def shared_clock_ns():
+    """Run the one shared clock seam in this process instead of spawning it."""
+    path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "gang-clock")
+    try:
+        with open(path, encoding="utf-8") as source:
+            code = compile(source.read(), path, "exec")
+    except OSError as err:
+        raise EventError(f"cannot load the shared monotonic clock: {err}") from err
+    clock = {"__name__": "gang_clock"}
+    exec(code, clock)
+    return clock["now_ns"]()
 
 
 def whole(value, field):
     if not isinstance(value, int) or isinstance(value, bool) or value < 0:
         raise EventError(f"{field} must be a non-negative whole number")
     return value
-
-
-def monotonic_ns():
-    """Read the one shared clock seam instead of selecting a local domain."""
-    try:
-        result = subprocess.run(
-            [CLOCK_HELPER, "now"],
-            check=False,
-            stdout=subprocess.PIPE,
-            stderr=subprocess.PIPE,
-            text=True,
-        )
-    except OSError as err:
-        raise EventError(f"cannot read the shared monotonic clock: {err}") from err
-    value = result.stdout.strip()
-    if result.returncode != 0 or not value.isascii() or not value.isdigit():
-        raise EventError("the shared monotonic clock is unreadable")
-    return int(value, 10)
 
 
 def facts(value):
@@ -60,7 +53,7 @@ def prepared_event(args):
         raise EventError("team, agent, and kind are required")
     return {
         "v": 2,
-        "monotonic_ns": monotonic_ns(),
+        "monotonic_ns": shared_clock_ns(),
         "team": args.team,
         "team_created": whole(args.team_created, "team_created"),
         "agent": args.agent,
@@ -107,37 +100,6 @@ def write_record(events, data):
 
 def event(args):
     write_record(args.events, encoded(prepared_event(args)))
-
-
-def prepare(args):
-    print(encoded(prepared_event(args)).decode(), end="")
-
-
-def recorded(raw):
-    try:
-        row = json.loads(raw)
-    except ValueError as err:
-        raise EventError(f"prepared event is not JSON: {err}") from err
-    if not isinstance(row, dict) or row.get("v") != 2:
-        raise EventError("prepared event is not a version 2 record")
-    if not isinstance(row.get("team"), str) or not row["team"]:
-        raise EventError("prepared event has no team")
-    if not isinstance(row.get("agent"), str) or not row["agent"]:
-        raise EventError("prepared event has no agent")
-    if not isinstance(row.get("kind"), str) or not row["kind"]:
-        raise EventError("prepared event has no kind")
-    whole(row.get("team_created"), "prepared event team_created")
-    whole(row.get("monotonic_ns"), "prepared event monotonic_ns")
-    if not isinstance(row.get("facts"), dict):
-        raise EventError("prepared event facts are not an object")
-    return row
-
-
-def append_record(args):
-    raw = sys.stdin.read()
-    if raw.count("\n") != 1 or not raw.endswith("\n"):
-        raise EventError("prepared event must be one newline-terminated JSON line")
-    write_record(args.events, encoded(recorded(raw)))
 
 
 def matching(row, args):
@@ -192,16 +154,13 @@ def read(args):
 def main():
     parser = argparse.ArgumentParser(prog="gang-events")
     commands = parser.add_subparsers(dest="command", required=True)
-    for name in ("append", "prepare"):
-        append = commands.add_parser(name)
-        append.add_argument("--events", required=name == "append")
-        append.add_argument("--team", required=True)
-        append.add_argument("--team-created", type=int, required=True)
-        append.add_argument("--agent", required=True)
-        append.add_argument("--kind", required=True)
-        append.add_argument("--facts", required=True)
-    append_record_parser = commands.add_parser("append-record")
-    append_record_parser.add_argument("--events", required=True)
+    append = commands.add_parser("append")
+    append.add_argument("--events", required=True)
+    append.add_argument("--team", required=True)
+    append.add_argument("--team-created", type=int, required=True)
+    append.add_argument("--agent", required=True)
+    append.add_argument("--kind", required=True)
+    append.add_argument("--facts", required=True)
     query = commands.add_parser("read")
     query.add_argument("--events", required=True)
     query.add_argument("--team", required=True)
@@ -212,10 +171,6 @@ def main():
     args = parser.parse_args()
     if args.command == "append":
         event(args)
-    elif args.command == "prepare":
-        prepare(args)
-    elif args.command == "append-record":
-        append_record(args)
     else:
         read(args)
 
