@@ -66,6 +66,14 @@ or has marked itself, run `gang safe-to-drop --report-to NAME`, naming the agent
 that received the report. A message delivered to you after that clears the mark;
 mark yourself again once you are done with it.
 
+## Changes
+
+A change that adds a flag, mode, refusal, precondition or config key names the
+incident that requires it in its commit message. Deleting beats adding.
+
+When you review a change, ask what it added that no incident justifies and what
+could be deleted instead, not what else could go wrong.
+
 ## The marathon rule
 
 Never halt the team to wait for the operator. Resolve reversible questions

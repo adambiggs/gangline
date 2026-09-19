@@ -25,11 +25,7 @@ system prompt and a running agent keeps the copy it launched with; where none is
 declared the agent is pointed at the path, so an edit reaches it the next time it
 reads the file. Editing it can therefore change what a live team is held to.
 
-## Preserve guards
-
-An existing assertion records a decision. Changing its expectation requires
-showing why the old behavior was wrong; deleting it requires the same proof.
-Do not edit a test merely because it blocks a behavior change.
+## Evidence
 
 Green is not sufficient when a fixture produced no evidence, and a check that
 prints only on success produced none: its failure is an absent line, which reads
@@ -53,33 +49,12 @@ not coordinate work or supervise agents.
 - Do not record changing counts, versions, sizes, or tallies in standing docs.
   Point to the command that measures them.
 
-Durable constraints belong in the decision-record corpus under
-[`docs/adr/`](docs/adr/index.md), written to the strict template in
-`CONTRIBUTING.md`.
-
-## Enable hooks before committing
-
-```sh
-git config core.hooksPath .githooks
-```
-
-Do not bypass them. Use Conventional Commits as specified in
-`CONTRIBUTING.md`.
+A decision that still shapes the code and had an incident, a measured cost or
+a real alternative behind it is recorded in [`docs/adr/`](docs/adr/index.md).
 
 ## Use the shortest proof
 
-Run the ordinary gate at coherent checkpoints:
-
-```sh
-test/gate.sh
-```
-
-It copies the working tree — uncommitted work included — into a private
-snapshot and runs `test/lint.sh`, `test/smoke.sh`, and `test/integration.sh`
-from the copy, so
-the complete gate is runnable *before* a commit. Run `test/lint.sh` and
-`test/integration.sh` directly only against a tree that is already settled;
-they refuse a tree they would not own and say so.
+Run the gate `CONTRIBUTING.md` names at coherent checkpoints.
 
 Mandatory tests contain no sleeps, polling, or timeout scenarios and must remain
 well below their hard ceiling. Use immediate state, event barriers, or fake
@@ -116,7 +91,7 @@ an operator request.
 | `docs/reference.md` | exact commands, environment, and collar contract |
 | `docs/operations.md` | unattended operation and recovery |
 | `docs/review-tiers.md` | how far a result is reviewed, by whom, and for how many rounds |
-| `CONTRIBUTING.md` | repository gates, commits, releases, and measurement |
+| `CONTRIBUTING.md` | setup, the gate, and commits |
 | `CHANGELOG.md` | release history owned by Release Please; never hand-edit |
 | `docs/benchmarks.md` | external benchmark selection guidance and validity gates |
 | `docs/records/` | dated implementation records; bodies stay historical and status headers stay current |

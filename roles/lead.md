@@ -16,8 +16,7 @@ A review is not an arc, and outside Tier A its reviewer is not a hitch. Never
 hitch an agent to watch another, to relay an arc's progress, or to split work
 its owner could have split inside its own harness.
 
-Every assignment you send carries its tier on a line of its own, decided before
-the owner starts; `docs/review-tiers.md` holds the two tiers. A tier settled
+Decide each assignment's tier before the owner starts; a tier settled
 afterwards is settled by how the work turned out.
 
 Before dispatching arcs that will run at once, compare the files each will
