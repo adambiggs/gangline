@@ -1,5 +1,109 @@
 # Changelog
 
+## [3.0.0](https://github.com/adambiggs/gangline/compare/gangline-v2.16.0...gangline-v3.0.0) (2026-09-19)
+
+
+### ⚠ BREAKING CHANGES
+
+* **send:** gang send no longer accepts --ack or --no-reply and the hidden reply-obligations and reply-released commands are gone; drop those flags from callers.
+
+### Features
+
+* add daily usage attribution ([ac92dfc](https://github.com/adambiggs/gangline/commit/ac92dfc281fcc0eba2995dae365d8bb952e7275a)), closes [#278](https://github.com/adambiggs/gangline/issues/278)
+* **compact:** alert on a stuck compaction and recover it with gang ([7305725](https://github.com/adambiggs/gangline/commit/730572569824b937867a774c8aedd40a3383fe61)), closes [#276](https://github.com/adambiggs/gangline/issues/276)
+* **compact:** let an agent withdraw its own standing self-compaction ([758414a](https://github.com/adambiggs/gangline/commit/758414a2aa7937f749504eb09132076ea8effe41)), closes [#273](https://github.com/adambiggs/gangline/issues/273)
+* **drop:** add the safe-to-drop mark and hitcher-scoped agent drops ([3655cea](https://github.com/adambiggs/gangline/commit/3655cea01fdf06cc5e7312e3843ace78db90d7c5))
+* **drop:** let a root agent drop an unmarked orphan with --orphan ([45ac7b3](https://github.com/adambiggs/gangline/commit/45ac7b3e0253e92e0d7f2f2ce487e0c119548bed)), closes [#274](https://github.com/adambiggs/gangline/issues/274)
+* expose quota history and pace ([de54108](https://github.com/adambiggs/gangline/commit/de54108567b1e8d3d87d22a564fb9e11cf7bfab0)), closes [#279](https://github.com/adambiggs/gangline/issues/279) [#280](https://github.com/adambiggs/gangline/issues/280)
+* **hitch:** refuse past a live-hitch ceiling ([d4e8380](https://github.com/adambiggs/gangline/commit/d4e8380f0c9b625c5d8d3165e73ee2ca94c2255c))
+* **hitch:** send the hitch brief as an assignment its report answers ([be0d990](https://github.com/adambiggs/gangline/commit/be0d990ac1c41f0ea6f99b156f362fac6f313969)), closes [#266](https://github.com/adambiggs/gangline/issues/266)
+* **roster:** resolve hitch provenance by witnessed identity everywhere ([b8c76de](https://github.com/adambiggs/gangline/commit/b8c76dea25229df2bbfeee545d1a0070eda20a08))
+* **send:** delete peer reply debt ([fb9c9c8](https://github.com/adambiggs/gangline/commit/fb9c9c8e852cf8b156a530a8f9d0f74a06bd580a))
+* **site:** add a copy button to every code block ([f9992f4](https://github.com/adambiggs/gangline/commit/f9992f458e4439ba73466dca93c8add753a1695e))
+* **site:** add a theme toggle, a snowy-morning light palette, and an author credit ([10be0af](https://github.com/adambiggs/gangline/commit/10be0af6acde21a101cc79e4aefa110c09418311))
+* **site:** cast the line halo as a drop shadow on dark ink ([8922747](https://github.com/adambiggs/gangline/commit/8922747f636cc44d2f01f72782e1d1d1930f2501))
+* **site:** darken the light-mode line ink a little ([a9c2ea1](https://github.com/adambiggs/gangline/commit/a9c2ea12412b48c2fe3c99e2cdecebf6289503c2))
+* **site:** link the landing page to the published docs ([68a0f50](https://github.com/adambiggs/gangline/commit/68a0f50159b11f5d80adf9011239800f2f2caad4)), closes [#297](https://github.com/adambiggs/gangline/issues/297)
+* **site:** project the field as vertical lines with goop bodies ([5511cb7](https://github.com/adambiggs/gangline/commit/5511cb7c75eb5eb97352539aa2e549628a1060d2))
+* **site:** redesign gangline.ai around a projected snowfield ([642df92](https://github.com/adambiggs/gangline/commit/642df920d05f9a741c86db32bc821c463ae1e408))
+* **site:** render the repository docs at /docs ([e858ea4](https://github.com/adambiggs/gangline/commit/e858ea4be65f272683e7e641ef695c8bc1e4348b)), closes [#297](https://github.com/adambiggs/gangline/issues/297)
+* **site:** set code in JetBrains Mono, a little smaller ([8914602](https://github.com/adambiggs/gangline/commit/8914602857a5a10189ad8a9ddaffbbbef8719707))
+* **site:** spread the field's bodies evenly ([b95b7ef](https://github.com/adambiggs/gangline/commit/b95b7ef438b67cbdd032fbf0f0a7af4556ba8d3c))
+* **site:** tip the tray with the phone ([e8c6353](https://github.com/adambiggs/gangline/commit/e8c6353bb2a607f310ca5d930ec78906e4de1df0))
+* **state:** keep runtime state in the uid's runtime directory ([69c2846](https://github.com/adambiggs/gangline/commit/69c284659dfb73a3ce4011ca720a0d40fc0f76f1)), closes [#265](https://github.com/adambiggs/gangline/issues/265)
+
+
+### Bug Fixes
+
+* **adopt:** enforce the live-child ceiling ([580cd8f](https://github.com/adambiggs/gangline/commit/580cd8fbeed3dda81758464dc80dc92fafd552cd)), closes [#290](https://github.com/adambiggs/gangline/issues/290)
+* **ci:** install ripgrep for main integration ([8679079](https://github.com/adambiggs/gangline/commit/8679079d69c6a472056dd14904af1b21f84c2480))
+* **cli:** refuse argument errors with the command's usage line ([bf74af7](https://github.com/adambiggs/gangline/commit/bf74af7fe98108f44192dd3a141a62f3cadf7608)), closes [#260](https://github.com/adambiggs/gangline/issues/260)
+* **codex:** identify a session that has native sub-agents open ([5780781](https://github.com/adambiggs/gangline/commit/578078112773306bee4eefc3c5f2cfe3f5bb2ffd)), closes [#259](https://github.com/adambiggs/gangline/issues/259)
+* **collars:** ask for the owed reply without --ack ([e9f06d8](https://github.com/adambiggs/gangline/commit/e9f06d8ffadac0564c947cd60e9ddaf98582334b))
+* **compact:** read every line of the recovery key declaration ([a04aeec](https://github.com/adambiggs/gangline/commit/a04aeec356167c91ffa9b39e8457c50966ddcb8f)), closes [#276](https://github.com/adambiggs/gangline/issues/276)
+* **compact:** read recovery keys as words, never as patterns ([c62c27f](https://github.com/adambiggs/gangline/commit/c62c27ff2f4b4bb45ef688e0d0abb27c390eef82)), closes [#276](https://github.com/adambiggs/gangline/issues/276)
+* **compact:** refuse --cancel with --recover before withdrawing ([525c2aa](https://github.com/adambiggs/gangline/commit/525c2aa8f6f5b82e084c59fc7f1a7dc9df15a56c)), closes [#276](https://github.com/adambiggs/gangline/issues/276)
+* **compact:** refuse conflicting arguments as argument errors ([9f3a583](https://github.com/adambiggs/gangline/commit/9f3a583dbf240ca971e95fbb4e2a9702af774cc2))
+* **compact:** withdraw a self-compaction under the pane lock ([6a93a5f](https://github.com/adambiggs/gangline/commit/6a93a5f8b1fb0f340ae304311823798701a093d8)), closes [#273](https://github.com/adambiggs/gangline/issues/273)
+* declare release lane dependencies ([576d459](https://github.com/adambiggs/gangline/commit/576d459b08ab1a1a785b2b86abee39d0f8fc7068))
+* **delivery:** preserve terminal outcome consistency ([7af934f](https://github.com/adambiggs/gangline/commit/7af934f2bcb677f84c3826a97b5e223752a37d04)), closes [#256](https://github.com/adambiggs/gangline/issues/256) [#257](https://github.com/adambiggs/gangline/issues/257)
+* **delivery:** reclaim dead namespaced pane locks ([c2b8452](https://github.com/adambiggs/gangline/commit/c2b8452da0ca04cd2f78cb604ef8ba2bed9a42f0)), closes [#275](https://github.com/adambiggs/gangline/issues/275)
+* **demo:** allow the recorded harnesses longer to reach a composer ([4d18989](https://github.com/adambiggs/gangline/commit/4d18989694e85cadf73cc1726b7b1e58688ef78a))
+* **demo:** ask the recorded team for a restrained finale ([1dafb42](https://github.com/adambiggs/gangline/commit/1dafb42e35d74913c3124d36397beb029a5deac5))
+* **demo:** end the recorded team before deleting its socket ([d47f8fa](https://github.com/adambiggs/gangline/commit/d47f8fa58e21db92bbc6ff21c1f47948a364ef22))
+* **demo:** record clean alert and harness output ([956dc2c](https://github.com/adambiggs/gangline/commit/956dc2cdfedfacd83bb52db17c550f8c9376e806))
+* **demo:** record the demo root's trust answer before recording ([21bf368](https://github.com/adambiggs/gangline/commit/21bf3685e7ddc2ebb650aca609a1b4c2225e717f))
+* **demo:** wait on Gangline's view of the recorded team, not its prose ([65c264e](https://github.com/adambiggs/gangline/commit/65c264eff5b1fd1cba18096afced52650e3f1df8))
+* **drop:** refuse --orphan when the safe-to-drop mark cannot be read ([ef3a883](https://github.com/adambiggs/gangline/commit/ef3a883d22e71de6b8f5e17bc44f32045b272662)), closes [#274](https://github.com/adambiggs/gangline/issues/274)
+* **drop:** settle the windows a dropped hitcher hitched ([3f458d8](https://github.com/adambiggs/gangline/commit/3f458d87df291c52fcff737ce9dd1a0d2796fc4a)), closes [#289](https://github.com/adambiggs/gangline/issues/289)
+* **events:** bound host worker environments ([fc4d829](https://github.com/adambiggs/gangline/commit/fc4d829abedbffd6754e126ce250f0efd6d38391)), closes [#270](https://github.com/adambiggs/gangline/issues/270)
+* **gate:** bind tree identity to its worktree, not only its commit ([55037bc](https://github.com/adambiggs/gangline/commit/55037bc5a16b53c5424afaa01dad7f2129a8e3a9))
+* **gate:** bound grace for runnable quiet work ([5f73222](https://github.com/adambiggs/gangline/commit/5f73222b9310a8f1c45f6b384ecfb1b2cd1eac93)), closes [#267](https://github.com/adambiggs/gangline/issues/267)
+* **gate:** never default lock scope to host, refuse an unverifiable binding ([86e4519](https://github.com/adambiggs/gangline/commit/86e45196119c819e222f8fe91f16e6b15b5881e4))
+* **gate:** report a lock holder's pid by namespace reach, not by guess ([db3e595](https://github.com/adambiggs/gangline/commit/db3e595fcac911753a36ed113e8725ea822c6e61))
+* **gate:** verify tree binding around the snapshot copy, not the whole run ([3c19fb4](https://github.com/adambiggs/gangline/commit/3c19fb4aa99dd7523fc77af6928adeb73ce34f1f))
+* harden quota observability edges ([bec3865](https://github.com/adambiggs/gangline/commit/bec3865593967596b5623b4d7c173633c14a8c03))
+* **hitch:** deliver a -t task as the assignment when no message follows ([8876466](https://github.com/adambiggs/gangline/commit/88764669638c6f5933cbbcd9e4b1314e456f7ba9)), closes [#271](https://github.com/adambiggs/gangline/issues/271)
+* **hitch:** remove the live-hitch ceiling ([c9d34af](https://github.com/adambiggs/gangline/commit/c9d34af54578ce76e933ce9b7c176bb182363757)), closes [#299](https://github.com/adambiggs/gangline/issues/299)
+* **hitch:** require assignment review tiers ([3e6b77c](https://github.com/adambiggs/gangline/commit/3e6b77ccf31896c8765b537a7be453ca3b4e2d1d)), closes [#291](https://github.com/adambiggs/gangline/issues/291)
+* **hook:** bind identity from the idle Notification that closes a dead turn ([7e9c2be](https://github.com/adambiggs/gangline/commit/7e9c2be4b6d1a73a0471bc9efd72069437342666)), closes [#300](https://github.com/adambiggs/gangline/issues/300)
+* **hooks:** waive a reply owed to a sender marked safe to drop ([cf7542c](https://github.com/adambiggs/gangline/commit/cf7542ce968d903a113a1e131d36ca87a9a74c0e)), closes [#294](https://github.com/adambiggs/gangline/issues/294)
+* **run:** survive requester identity changes ([956b0ba](https://github.com/adambiggs/gangline/commit/956b0bada2da195595ca2002c22ff6183458066a))
+* **safe-to-drop:** deliver to a marked agent and clear its mark ([456cbd7](https://github.com/adambiggs/gangline/commit/456cbd74692c2fcef83744322bc045a8d5549654)), closes [#296](https://github.com/adambiggs/gangline/issues/296)
+* **send:** retry held delivery locks ([0ad1b78](https://github.com/adambiggs/gangline/commit/0ad1b782be164c2c6014aa18cd0d37eed6d42b7f)), closes [#261](https://github.com/adambiggs/gangline/issues/261)
+* **send:** say what is true when --ack answers a waived message ([a3267b0](https://github.com/adambiggs/gangline/commit/a3267b0e8f0c1269fa7627c60c89f46407922146)), closes [#292](https://github.com/adambiggs/gangline/issues/292)
+* **site:** carry the background past the ends of the page ([303b767](https://github.com/adambiggs/gangline/commit/303b7675f6ba722dac767deef1b44d81d3190670))
+* **site:** wrap long lines in code blocks instead of clipping them ([fb6e7c6](https://github.com/adambiggs/gangline/commit/fb6e7c686c450e7e06f977264b8bbf9be581ab22))
+* **spool:** protect minting reservations from sweeps ([f3321aa](https://github.com/adambiggs/gangline/commit/f3321aaec7c924ffca3cadb662f5cacf652494d8))
+* **stall:** resume recoverable stream drops ([e92d69f](https://github.com/adambiggs/gangline/commit/e92d69fd119d53ef22d5a7b4bfbffccca7329ace)), closes [#295](https://github.com/adambiggs/gangline/issues/295)
+* **startup:** recover trust reviews and boot receipts ([d4e2611](https://github.com/adambiggs/gangline/commit/d4e2611beccb775997032317f31068fcebba7e6d)), closes [#252](https://github.com/adambiggs/gangline/issues/252) [#253](https://github.com/adambiggs/gangline/issues/253)
+* **stop-hook:** spend remaining fuse on release ([726b262](https://github.com/adambiggs/gangline/commit/726b262f9547fc831f94b04d4f21c4af10824367)), closes [#272](https://github.com/adambiggs/gangline/issues/272)
+* **test:** give copied gang trees the state-root file gang now sources ([d926071](https://github.com/adambiggs/gangline/commit/d9260713a3dd771857df24fd18f0cc2a09eb8ec6))
+* **tick:** accept superseded healthy passes ([fccb509](https://github.com/adambiggs/gangline/commit/fccb5093b89bec91824b5183b44bc5a886ad62cf))
+* **tick:** archive unclaimed spools ([0fb95fc](https://github.com/adambiggs/gangline/commit/0fb95fc751db2285db9a38fbc428c1cd12c88e6e))
+* **tick:** backfill root witness once ([da53a94](https://github.com/adambiggs/gangline/commit/da53a94081409b07d46a2357b729958b4d43803f))
+* **tick:** name the failed alert-center step in the tick alert ([51dc725](https://github.com/adambiggs/gangline/commit/51dc725acca8b33f058cbe36fe7f33ecb0a9e88a))
+* **tick:** skip gone occupancy targets ([0ba830a](https://github.com/adambiggs/gangline/commit/0ba830a9e6ddd498562f948a62a6886502adc9e0)), closes [#264](https://github.com/adambiggs/gangline/issues/264)
+* **tick:** skip windows marked safe to drop when choosing compaction ([db2b259](https://github.com/adambiggs/gangline/commit/db2b2595062a0929b8501d6495502b063048833a)), closes [#288](https://github.com/adambiggs/gangline/issues/288)
+* **tick:** stop busy() from reading past a window busy_painted found gone ([e0fb9a3](https://github.com/adambiggs/gangline/commit/e0fb9a3d980fe13dd5c60efa86f774eeb305161f))
+* **tick:** treat a window dropped mid-pass as gone, not unreadable ([2c76ae6](https://github.com/adambiggs/gangline/commit/2c76ae6834a52ffeb82c421a2e135c97114f5a2a))
+
+
+### Performance Improvements
+
+* **context:** record a context reading only beside the band change it decided ([160a683](https://github.com/adambiggs/gangline/commit/160a683233c3c230ee2fb21af5c4e5cae53272ed)), closes [#300](https://github.com/adambiggs/gangline/issues/300)
+* **events:** append each event directly and delete the host relay ([d06d5a2](https://github.com/adambiggs/gangline/commit/d06d5a209fec2075f449677085dd413d28ad3f76)), closes [#300](https://github.com/adambiggs/gangline/issues/300)
+* **hook:** parse the payload once and assert identity only at turn boundaries ([5567472](https://github.com/adambiggs/gangline/commit/5567472d3947f6f0d87cc3973c7566f6e828df14)), closes [#300](https://github.com/adambiggs/gangline/issues/300)
+
+
+### Reverts
+
+* **site:** keep code blocks scrolling rather than wrapping ([4ee818c](https://github.com/adambiggs/gangline/commit/4ee818ca5f533823cea8bc3681be80509d6f87c6))
+* **spool:** remove provisional minting claims ([f2eb6b4](https://github.com/adambiggs/gangline/commit/f2eb6b4eabca2340e9d50a910851f8bd97c748af))
+* **spool:** remove the mint sweep race check ([a1f5b6c](https://github.com/adambiggs/gangline/commit/a1f5b6c009eb7c37929f7aa219d7e223c22edd61))
+* **tick:** remove the orphan spool retention check ([00b1255](https://github.com/adambiggs/gangline/commit/00b1255da83377e145b5159be2b633229022f15d))
+* **tick:** stop sweeping orphan spools on every tick ([24e51a1](https://github.com/adambiggs/gangline/commit/24e51a1d573a6651becd367aa15bfd2547147dea))
+
 ## [2.16.0](https://github.com/adambiggs/gangline/compare/gangline-v2.15.0...gangline-v2.16.0) (2026-09-14)
 
 
