@@ -9,7 +9,7 @@ joins.
 
 [![Gangline demonstration](site/demo.gif)](https://gangline.ai/#demo)
 
-The two pillars are:
+Gangline brings together:
 
 - one harmonious mushing team: named native sessions and attributed, verified
   delivery; and
@@ -45,14 +45,14 @@ gang roster
 Use `gang --help` for the command list and `gang <command> --help` for a
 command's options.
 
-## The two pillars
+## One team, long-horizon work
 
-Pillar one is more than tmux windows beside one another: Gangline delivers
+One team is more than tmux windows beside one another: Gangline delivers
 attributed messages through each recipient's terminal and reports delivery only
 after it sees them accepted. It works between top-level native sessions; it
 does not replace a harness's own subagents.
 
-Pillar two is a team that can work for the long haul. Context and cache bands,
+Long-horizon work keeps a team moving for the long haul. Context and cache bands,
 provider caps, and curfews make capacity visible; harness and model choice let
 the team spend quota and cost deliberately. `gang roster`, `gang capture`, and
 `gang status` give a human direct evidence after a long run, so they can decide
