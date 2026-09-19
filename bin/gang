@@ -12947,7 +12947,7 @@ hitch_launch() {
   hitch_register "$id" "$name" @gl_model "$model"
   hitch_register "$id" "$name" @gl_effort "$effort"
   hitch_register "$id" "$name" @gl_dir "$dir"
-  hitch_register "$id" "$name" @gl_task "$task"
+  hitch_register "$id" "$name" @gl_task "${task:0:200}"
   hitch_register "$id" "$name" @gl_hitched_at "$(date +%s)"
   event_log_record "$id" agent.hitched \
     "{\"collar\":\"$prof\",\"resume\":$resume,\"scope\":\"${SCOPE_UNIT:-off}\"}" \
@@ -14458,7 +14458,6 @@ launch_record_check() { # $1 = task label; refuse what a record line cannot carr
   case "$1" in
     *[$'\001'-$'\037'$'\177']*) die "hitch: task '$(printf '%s' "$1" | config_sanitize)' has control characters gang will not record" ;;
   esac
-  [ "${#1}" -le 200 ] || die "hitch: task is longer than 200 characters; pass a longer brief on stdin with --stdin, or a task naming a file to read"
 }
 
 usage_events_path() { printf '%s' "${XDG_DATA_HOME:-$HOME/.local/share}/gangline/usage/events.jsonl"; }

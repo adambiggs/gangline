@@ -941,6 +941,18 @@ else
     "no window 'hitchtask': $hitch_task_out"
 fi
 
+# A LONG TASK IS NOT REFUSED; the recorded label keeps its first 200 characters.
+hitch_long_task="$(printf 'x%.0s' $(seq 1 201))"
+hitch_long_rc=0
+"$GANG" hitch hitchlong -c bash -d /tmp -t "$hitch_long_task" </dev/null >/dev/null 2>&1 \
+  || hitch_long_rc=$?
+equal "hitch takes a task longer than 200 characters" 0 "$hitch_long_rc"
+if [ -n "$(window_id hitchlong)" ]; then
+  equal "and records its first 200 characters as the label" "${hitch_long_task:0:200}" \
+    "$(tmux show-options -wqv -t "$(window_id hitchlong)" @gl_task)"
+  "$GANG" drop hitchlong >/dev/null
+fi
+
 # The message rides out a first-run prompt as the contract does. Send refuses to
 # type into the prompt and queues the message behind the parked contract, so the
 # end of hitch's wait no longer takes the message with it.

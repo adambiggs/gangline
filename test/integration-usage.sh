@@ -136,11 +136,6 @@ usage_bad_task_out="$("$HITCH" usage-bad-task -c bash -d /tmp -t $'a\tb' 2>&1)" 
   && fail "hitch refuses a task label with a control character" "hitch succeeded: [$usage_bad_task_out]" \
   || contains "hitch refuses a task label with a control character" \
        "$usage_bad_task_out" "control characters"
-usage_long_task="$(printf 'x%.0s' $(seq 1 201))"
-usage_long_task_out="$("$HITCH" usage-long-task -c bash -d /tmp -t "$usage_long_task" 2>&1)" \
-  && fail "hitch refuses a task label longer than 200 characters" "hitch succeeded: [$usage_long_task_out]" \
-  || contains "hitch refuses a task label longer than 200 characters" \
-       "$usage_long_task_out" "longer than 200"
 excludes "a refused task label leaves no window behind" \
   "$(window_names)" "usage-bad-task"
 
