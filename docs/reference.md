@@ -1135,13 +1135,12 @@ deleting the spool. Empty queues create no archive directory.
 
 A window that dies any other way — an external `kill-window`, or a tmux server
 that goes away with every window option in it — leaves its spool directory
-behind with nothing pointing at it. Cooperative tick and the hitch that opens a
-session sweep those: a directory no live window claims is archived down the
-same path and removed; the session-opening sweep reports its work on stdout.
-What cannot be archived, and what Gangline did not mint, are named and left
-untouched, and `roster` names whatever remains under the spool root so a person
-can read and retire it. A window list that cannot be read is reported rather
-than treated as "nobody holds anything", and fails the tick health pass.
+behind with nothing pointing at it. The hitch that opens a session sweeps those:
+a directory no live window claims is archived down the same path, removed, and
+reported on stdout. What it cannot archive, and what Gangline did not mint, are
+named and left untouched, and `roster` names whatever remains under the spool
+root so a person can read and retire it. A window list that cannot be read is
+reported rather than treated as "nobody holds anything".
 
 One tmux server per `GANG_LOCK_DIR`. The spool root is keyed by that directory
 and the register of live spool identities is the tmux server's window list, so a

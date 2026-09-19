@@ -6775,7 +6775,6 @@ tick_full_pass_once() {
   wins="$(tmux list-windows -t "=$SESSION" \
     -F '#{window_id} #{@gl_agent} #{@gl_collar} #{@gl_tick_alerts}')" \
     || { printf "tick could not list windows in session '%s'\n" "$SESSION" >&2; return 1; }
-  spool_sweep_orphans || rc=1
   tick_trust_reviews || rc=1
   # A PASS THAT CANNOT FINISH THE ROSTER INSIDE ITS BUDGET STOPS AND SAYS WHERE.
   # One visit costs on the order of a second of tmux round trips, so a large
@@ -9583,8 +9582,7 @@ spool_orphan_report() { # one line naming what is under the spool root and unown
   #
   # AND ONLY WHERE THERE IS SOMETHING TO READ. An orphan holding nothing is a
   # spool identity whose window is gone, with no mail in it and nothing to
-  # lose; the next cooperative tick or session opening sweeps it, and until
-  # then the only
+  # lose; the next session opening sweeps it, and until then the only
   # instruction this line can give is to ignore it. Repeated on every roster
   # for as long as the team stays up, that is what teaches an operator to skim
   # the whole class — including the line that names mail no other command can
@@ -9593,9 +9591,9 @@ spool_orphan_report() { # one line naming what is under the spool root and unown
   #
   # REPORTING IS NOT REMOVING. Going quiet here is not permission to delete the
   # directory: the token it names is a reservation, and this read covers one
-  # tmux server, so a window on another one may still be holding it. Only a
-  # cooperative or session-opening sweep removes it, after reading every live
-  # claim on the server Gangline is operating.
+  # tmux server, so a window on another one may still be holding it. Only the
+  # sweep at a session opening removes, where the server being read is the one
+  # gang has just proved it can talk to.
   local root token entries n line
   root="$(spool_root_of)"
   spool_orphans || {
@@ -9653,18 +9651,17 @@ EOF
 }
 
 spool_sweep_orphans() { # archive and retire every spool no live window claims
-  # THE WHOLE SERVER'S WINDOW REGISTER IS THE SAFETY BOUNDARY. This may run
-  # after a session is created, when the only new claim is the spool just
-  # minted, or from a cooperative tick while many teams and relaunching windows
-  # are live. In both cases a directory is retired only when that one complete
-  # register names no window holding it. An unreadable register proves nothing.
-  local root token rc=0
+  # RUN WHERE THE ANSWER IS CHEAPEST AND SAFEST: immediately after a session is
+  # created, when the server this reads is one gang has just proved it can talk
+  # to and the only spool gang owns is the one it has just minted. Every other
+  # directory under the root belonged to a window that is gone.
+  local root token
   root="$(spool_root_of)"
   spool_orphans || {
     printf '%s\n' "$(colour "$C_BAD" "orphaned spools were NOT swept: gang could not read the tmux server's window list, so it cannot tell a dead session's spool from a live agent's — read $root by hand")" >&2
-    return 1
+    return 0
   }
-  spool_tokens_archive "$root" "$SPOOL_ORPHANS" || rc=1
+  spool_tokens_archive "$root" "$SPOOL_ORPHANS" || :
   [ "$SPOOL_ARCHIVED" -eq 0 ] \
     || printf '%s\n' "$(colour "$C_WORK" "swept $SPOOL_ARCHIVED orphaned spool director(ies) from $root — they belonged to windows that are gone")"
   while IFS= read -r token; do
@@ -9673,7 +9670,6 @@ spool_sweep_orphans() { # archive and retire every spool no live window claims
   done <<EOF
 $SPOOL_FOREIGN
 EOF
-  return "$rc"
 }
 
 spool_drain() { # $1 window id; whole queue oldest-first; optional $2 = locked
@@ -13746,11 +13742,7 @@ hitch_launch() {
   # its mail is the archive — `drop` and `down` never ran for it. Sweeping on
   # every hitch would ask the same question again for every later agent; asking
   # it once, where a team starts, is where the answer can have changed.
-  # Session opening keeps its historical best-effort behavior: its own hitch
-  # must not be refused because an unrelated orphan could not be archived.
-  # Cooperative tick is the strict path that records the same failure in team
-  # health and retries it on a later pass.
-  [ "$opened_session" -eq 0 ] || spool_sweep_orphans || :
+  [ "$opened_session" -eq 0 ] || spool_sweep_orphans
   team_socket_record "$SESSION"
   # WRITTEN ON EVERY HITCH, INCLUDING THE EMPTY ONE. A `--resume` respawns the
   # window it is registered to, and window options outlive a respawn — so a
