@@ -1742,7 +1742,7 @@ load_collar() { # $1 = collar name; sets the GANG_* strategy surface
   # A name missing here is one a previously loaded collar keeps answering for
   # the next, and `declare -F` is how each of them is asked whether it exists.
   unset -f collar_context collar_context_lights collar_input collar_overlay \
-    collar_session_id collar_live_session_id collar_harness_identity collar_models collar_model_check collar_bricked collar_blocked collar_waiting collar_queued collar_advisory collar_dismiss_advisory \
+    collar_session_id collar_live_session_id collar_harness_identity collar_models collar_model_check collar_bricked collar_blocked collar_queued collar_advisory collar_dismiss_advisory \
     collar_last_action collar_cache_stamp collar_usage_limits collar_usage_limits_error \
     collar_auto_resume_record collar_submitted_prompt collar_native_idle \
     collar_recap_boundary 2>/dev/null || true
@@ -4063,207 +4063,6 @@ blocked() { # $1 window, collar loaded; 0 blocked, 1 absent, 2 unknown
       return 2 ;;
     *) die "collar_blocked in $GANG_COLLAR_FILE returned unknown verdict $rc" ;;
   esac
-}
-
-WAITING_WHAT="background-work witness unavailable"
-
-waiting_read() { # $1 window -> 0 waiting, 1 absent, 2 unknown; sets WAITING_WHAT
-  local record kind what
-  WAITING_WHAT="background-work witness unavailable"
-  record="$(tmux show-options -wqv -t "$1" @gl_waiting 2>/dev/null)" || record=""
-  [ -n "$record" ] || return 1
-  IFS=$'\t' read -r kind what <<<"$record"
-  case "$kind" in
-    waiting)
-      [ -n "$what" ] || { WAITING_WHAT="the stored waiting witness is empty"; return 2; }
-      WAITING_WHAT="$what"
-      return 0 ;;
-    unknown)
-      [ -n "$what" ] || what="the stored waiting probe failure has no cause"
-      WAITING_WHAT="$what"
-      return 2 ;;
-    *) WAITING_WHAT="the stored waiting witness has an unknown verdict"; return 2 ;;
-  esac
-}
-
-# EVERY WRITER MOVES THE COUNT BEFORE ITS RECORD. @gl_waiting_gen counts the
-# writes to the record, and a re-probing reader writes only while the count it
-# judged still stands, testing it in the same command as each write. One
-# command list is not one step: the server runs it a command at a time, and a
-# waiting after-set-option hook yields the client's queue between two of them,
-# so a reader can land inside a hook's write. With the count moved first, a
-# reader that lands there finds its judged count gone and writes nothing, and
-# the hook's record is the last one written. A retirement moves the count even
-# where no record is left: a reader that finds the source gone empties the
-# record before it moves the count, so an empty record is no sign that the
-# count has moved. A count only moves forward, so unlike a stamp it never comes
-# back to a value a reader judged; only a count this file did not write can
-# repeat one. A failed command ends the list and leaves the old record trusted
-# for at most one re-probe age.
-waiting_clear() { # $1 window; a new native event retires the old Stop witness
-  tmux set-option -wF -t "$1" @gl_waiting_gen "#{e|+:#{@gl_waiting_gen},1}" \; \
-    set-option -w -t "$1" @gl_waiting_at "$(date +%s)" \; \
-    set-option -uw -t "$1" @gl_waiting 2>/dev/null || true
-}
-
-# A WAITING RECORD AGES. It is one reading taken at Stop, and an idle window may
-# send no further native event: the held work can finish and the record would
-# name it indefinitely. Each record is stamped so the next state reader can take
-# a fresh bounded reading of one older than this and retire it if refuted.
-WAITING_REPROBE_AFTER=60
-
-waiting_store() { # $1 window, $2 record
-  tmux set-option -wF -t "$1" @gl_waiting_gen "#{e|+:#{@gl_waiting_gen},1}" \; \
-    set-option -w -t "$1" @gl_waiting_at "$(date +%s)" \; \
-    set-option -w -t "$1" @gl_waiting "$2" 2>/dev/null || true
-}
-
-WAITING_GEN=""
-WAITING_AT=""
-
-# $1 window; sets WAITING_GEN and WAITING_AT. A reader takes both before it
-# reads the record: a retirement that lands after the record read would leave
-# the reader holding a record no longer stored under the retirement's fresh
-# stamp, too young to re-probe. The count is read first, so a write that lands
-# between any two of the three reads moves the count past the one judged and
-# the reader's write is refused. A stamp read before the record is never newer
-# than the record, so at worst it spends one probe that the count refuses.
-waiting_mark() {
-  WAITING_GEN="$(tmux show-options -wqv -t "$1" @gl_waiting_gen 2>/dev/null)" || WAITING_GEN=""
-  WAITING_AT="$(tmux show-options -wqv -t "$1" @gl_waiting_at 2>/dev/null)" || WAITING_AT=""
-}
-
-# -> 0 when the record read after waiting_mark is due a fresh probe
-waiting_stale() {
-  local now
-  case "$WAITING_AT" in ''|*[!0-9]*) return 0 ;; esac
-  now="$(date +%s)"
-  # A stamp from the future was not written by this clock; it proves no age.
-  [ "$((10#$WAITING_AT))" -le "$now" ] || return 0
-  [ "$((now - 10#$WAITING_AT))" -ge "$WAITING_REPROBE_AFTER" ]
-}
-
-# A HELD PROCESS TREE IS NOT WORK when the per-hitch scope that owned it is
-# gone. A leaked sandbox child can remain visible to collar_waiting long after
-# systemd collected the registered harness scope; retaining that older process
-# witness made copy-mode look like an ordinary wait forever. The manager's
-# current answer corroborates only scoped launches. An unreadable manager stays
-# unknown rather than turning a potentially live scope into absence.
-WAITING_SCOPE_WHAT=""
-waiting_scope_live() { # $1 window; 0 active/not scoped, 1 registered scope gone, 2 unreadable
-  local unit="" rc=0
-  WAITING_SCOPE_WHAT=""
-  unit="$(tmux show-options -wqv -t "$1" @gl_scope 2>/dev/null)" || {
-    WAITING_SCOPE_WHAT="the registered launch scope could not be read"
-    return 2
-  }
-  [ -n "$unit" ] || return 0
-  case "$unit" in "gangline-$SESSION-"*.scope) ;;
-    *) WAITING_SCOPE_WHAT="the registered launch scope has an unreadable identity '$unit'"; return 2 ;;
-  esac
-  scope_systemctl_connect || {
-    WAITING_SCOPE_WHAT="the systemd user manager cannot read registered launch scope $unit"
-    return 2
-  }
-  scope_unit_active "$unit" || rc=$?
-  case "$rc" in
-    0) return 0 ;;
-    1) return 1 ;;
-    *) WAITING_SCOPE_WHAT="registered launch scope $unit has unreadable active state '${SCOPE_ACTIVE_STATE:-no state}'"; return 2 ;;
-  esac
-}
-
-# $1 window, $2 collar, $3 Stop payload, optional $4 the count a reader read
-# before the record it judged stale; cache one bounded probe
-waiting_refresh() {
-  local raw="" header="" output="" rc=0 scope_rc=0 source="collar '$2'" record="" judged="" now="" bump=""
-  waiting_scope_live "$1" || scope_rc=$?
-  case "$scope_rc" in
-    0) ;;
-    1) record="" ;;
-    2) record="unknown"$'\t'"$WAITING_SCOPE_WHAT" ;;
-    *) die "internal: waiting_scope_live returned unknown verdict $scope_rc" ;;
-  esac
-  # CONTAIN THE OPTIONAL RELOAD. Stop's universal turn boundary has always
-  # survived a collar removed after hitch; a derived-state reader cannot make
-  # that boundary depend on the file still existing. Capturing stderr also
-  # keeps a malformed load distinct from a clean absent verdict below.
-  if [ "$scope_rc" -eq 0 ]; then
-    raw="$( {
-      load_collar "$2"
-      if declare -F collar_waiting >/dev/null; then
-        printf 'declared:'
-        collar_waiting "$1" "$3"
-      else
-        printf 'absent:'
-      fi
-    } 2>&1)" || rc=$?
-  fi
-  header="${raw%%:*}"
-  if [ "$scope_rc" -eq 0 ] && { [ "$header" != absent ] || [ "$rc" -ne 0 ]; }; then
-    if [ "$header" = declared ]; then
-      output="${raw#*:}"
-    else
-      output="$raw"
-      rc=2
-    fi
-    output="$(printf '%s' "$output" | config_sanitize)"
-    case "$rc" in
-      0)
-        if [ -n "$output" ]; then
-          record="waiting"$'\t'"$output"
-        else
-          record="unknown"$'\t'"collar_waiting in $source reported held background work without naming its witness"
-        fi ;;
-      1)
-        [ -z "$output" ] \
-          || record="unknown"$'\t'"collar_waiting in $source printed a witness while reporting no held background work" ;;
-      2)
-        [ -n "$output" ] || output="collar_waiting in $source reported unknown without a cause"
-        record="unknown"$'\t'"$output" ;;
-      *) record="unknown"$'\t'"collar_waiting in $source returned unknown verdict $rc" ;;
-    esac
-  fi
-  # A HOOK PASSES NO COUNT: it is the newer event, and its reading always stands.
-  if [ "$#" -lt 4 ]; then
-    if [ -n "$record" ]; then
-      waiting_store "$1" "$record"
-    else
-      waiting_clear "$1"
-    fi
-    return 0
-  fi
-  # A READER WRITES ONLY OVER THE RECORD IT JUDGED. Its probe runs outside any
-  # lock, so a hook can store a newer record or retire this one while the probe
-  # is held, and every writer moves the count first. Each write below tests the
-  # judged count and writes in one set-option, so nothing can land between the
-  # test and the write; a read followed by a write let a hook land between them
-  # and be undone. The count moves last, since the reader's own bump would
-  # refute its other writes, and once it has moved a second reader that judged
-  # the same count writes nothing. A count this file writes is a number or
-  # empty, so a judged count with any other byte is tested as "still not a
-  # number" and never enters the format; bumping one yields empty, which is
-  # not. A list that fails part way can leave the scratch option, under a name
-  # no other process uses.
-  case "$4" in
-    *[!0-9]*) judged="#{m:*[!0-9]*,#{@gl_waiting_gen}}" ;;
-    *) judged="#{==:#{@gl_waiting_gen},$4}" ;;
-  esac
-  now="$(date +%s)"
-  bump="#{?$judged,#{e|+:#{@gl_waiting_gen},1},#{@gl_waiting_gen}}"
-  if [ -n "$record" ]; then
-    tmux set-option -w -t "$1" "@gl_waiting_next_$$" "$record" \; \
-      set-option -wF -t "$1" @gl_waiting \
-        "#{?$judged,#{@gl_waiting_next_$$},#{@gl_waiting}}" \; \
-      set-option -wF -t "$1" @gl_waiting_at "#{?$judged,$now,#{@gl_waiting_at}}" \; \
-      set-option -wF -t "$1" @gl_waiting_gen "$bump" \; \
-      set-option -uw -t "$1" "@gl_waiting_next_$$" 2>/dev/null || true
-  else
-    tmux set-option -wF -t "$1" @gl_waiting "#{?$judged,,#{@gl_waiting}}" \; \
-      set-option -wF -t "$1" @gl_waiting_at "#{?$judged,$now,#{@gl_waiting_at}}" \; \
-      set-option -wF -t "$1" @gl_waiting_gen "$bump" \
-      2>/dev/null || true
-  fi
 }
 
 # WHAT AN AGENT HAS ACTUALLY DONE, AS TWO AGES AND NO VERDICT. A delivery can be
@@ -11585,7 +11384,7 @@ cmd_trust() { # an attended native hooks-review window; it never sends an answer
 }
 
 hitch_launch() {
-  local name="" prof="${GANG_COLLAR:-claude-code}" dir="$PWD" model="" effort="" task="" missing="" role="" role_path="" id="" resume=0 resume_id="" resume_stamped="" launch_env collar_arg=0 pane_dead lookup_rc=0 opened_session=0 respawned=0
+  local name="" prof="${GANG_COLLAR:-claude-code}" dir="$PWD" model="" effort="" task="" missing="" role="" role_path="" id="" resume=0 resume_id="" resume_stamped="" launch_env collar_arg=0 pane_dead lookup_rc=0 opened_session=0
   local lights="" lights_arg="" lights_given=0 lights_subject="" lights_from="" lights_note="" cache_compaction=off boot="${GANG_BOOT_TIMEOUT:-30}" gate_looks="${GANG_GATE_LOOKS:-60}"
   local bands="" bands_from="" bands_summary="" band_i bands_custom=0 cache_bands="" cache_bands_active=0 cache_bands_from="" cache_bands_summary="" cache_band_i cache_bands_custom=0 cache_notice="" context_lights_for_registration="" context_notice="" prior_bands=""
   local hitched_by="" use_stdin=0
@@ -11946,7 +11745,6 @@ hitch_launch() {
       || die "agent '$name' already exists and its pane is live; refusing to replace it with a resumed harness"
     tmux respawn-window -k -t "$id" -c "$dir" "$GANG_LAUNCH" \
       || die "could not relaunch '$name' in its held window"
-    respawned=1
   else
     id="$(tmux new-window -d -P -F '#{window_id}' -t "=$SESSION" -n "$name" -c "$dir" "$GANG_LAUNCH")" \
       || die "could not open a window for '$name' in session '$SESSION'"
@@ -11965,11 +11763,6 @@ hitch_launch() {
   hitched_by="$(hitched_by_of)"
   hitch_register "$id" "$name" @gl_hitched_by "${hitched_by%%$'\t'*}"
   hitch_register "$id" "$name" @gl_hitched_by_name "${hitched_by#*$'\t'}"
-  # Window options survive a resume respawn. A held resource belonged to the
-  # old native process; only the new launch's own Stop may witness another. A
-  # window opened here holds no record, and a reader re-probes only a record,
-  # so no reader can have judged its stamp and it is left without one.
-  [ "$respawned" -eq 0 ] || waiting_clear "$id"
   hitch_register "$id" "$name" @gl_root "$ROOT"
   # THE REGISTERED NAME MAY MOVE. Keep the cgroup's immutable launch identity
   # on the window that owns it, so no later lifecycle path has to reconstruct a
@@ -14463,7 +14256,7 @@ turn_abandoned_event() { # $1 = window id, $2 = the fact turn_witness recorded
 }
 
 state_now() { # $1 = window id, collar loaded -> the state, in words
-  local state busy_rc=0 bricked_rc=0 blocked_rc=0 waiting_rc=1 recap_rc=1 recap_pending_rc=1 abandoned=0 mismatch="" harness_lost=""
+  local state busy_rc=0 bricked_rc=0 blocked_rc=0 recap_rc=1 recap_pending_rc=1 abandoned=0 mismatch="" harness_lost=""
   STATE_NOW_RESULT=""
   STATE_CLASSIFICATION_EVIDENCE=unknown
   # PANE DEATH IS TMUX'S DIRECT ANSWER, not a screen classification. A held
@@ -14605,25 +14398,7 @@ state_now() { # $1 = window id, collar loaded -> the state, in words
          printf '%s\n' "$state"
          return 0
        fi
-       waiting_rc=0
-       waiting_mark "$1"
-       waiting_read "$1" || waiting_rc=$?
-       # A stale record is re-probed here, with no Stop payload to pass, and the
-       # reading is written only while the count read before that record still
-       # stands; every hook moves the count before its record, so a native
-       # event that crosses the probe is never overwritten by the reading it
-       # refuted.
-       if [ "$waiting_rc" -ne 1 ] && waiting_stale "$1"; then
-         waiting_refresh "$1" "$(collar_read "$1")" "" "$WAITING_GEN"
-         waiting_rc=0
-         waiting_read "$1" || waiting_rc=$?
-       fi
-       case "$waiting_rc" in
-         0) STATE_CLASSIFICATION_EVIDENCE="waiting-reader"; state="~wait~ ($WAITING_WHAT)" ;;
-         1) STATE_CLASSIFICATION_EVIDENCE="$BUSY_EVIDENCE"; state="~idle~" ;;
-         2) STATE_CLASSIFICATION_EVIDENCE="waiting-reader"; state="?unknown? ($WAITING_WHAT)" ;;
-         *) die "internal: waiting_read returned unknown verdict $waiting_rc" ;;
-       esac ;;
+       STATE_CLASSIFICATION_EVIDENCE="$BUSY_EVIDENCE"; state="~idle~" ;;
     2) STATE_CLASSIFICATION_EVIDENCE="$BUSY_EVIDENCE"; state="?unknown? ($BUSY_EXPIRED_WHAT)" ;;
     *) die "internal: busy returned unknown verdict $busy_rc" ;;
   esac
@@ -15922,7 +15697,7 @@ hook_uninterpretable() { # $1 = firing pane (may be empty), rest = what failed
 }
 
 cmd_hook() { # native harness events; facts are silent unless a light crosses
-  local payload fields event collar kind="" window="" waiting_rc=1
+  local payload fields event collar kind="" window=""
   local native_boundary_rc=3 spool_payload=""
   # THE EVENT IS THE PAYLOAD, SO ARGV IS AN INVOCATION GANG CANNOT READ. Every
   # other command answers unconsumed arity by dying; this one must not, because
@@ -16008,7 +15783,6 @@ sys.stdout.write("%s\n%s" % (row.get("hook_event_name", ""), kind))' \
     }
   fi
   tmux set-option -uw -t "$TMUX_PANE" @gl_hook_failed 2>/dev/null || true
-  [ "$event" = Stop ] || waiting_clear "$TMUX_PANE"
   case "$event" in
     Stop|PostCompact)
       window="$(tmux display-message -p -t "$TMUX_PANE" '#{window_id}' 2>/dev/null)" \
@@ -16043,14 +15817,7 @@ sys.stdout.write("%s\n%s" % (row.get("hook_event_name", ""), kind))' \
           turn_state_write "$TMUX_PANE" closed
           compaction_state_settle "$TMUX_PANE"
           stall_clear "$TMUX_PANE"
-          waiting_refresh "$TMUX_PANE" "$collar" "$payload"
-          waiting_rc=0
-          waiting_read "$TMUX_PANE" || waiting_rc=$?
-          case "$waiting_rc" in
-            0) glyph_write "$TMUX_PANE" "~wait~" ;;
-            1) glyph_write "$TMUX_PANE" "~idle~" ;;
-            2) glyph_write "$TMUX_PANE" "?unknown?" ;;
-          esac
+          glyph_write "$TMUX_PANE" "~idle~"
           wait_signal_registered "$window" "$TMUX_PANE"
           tmux set-option -w -t "$TMUX_PANE" @gl_context_ready 1 2>/dev/null || true
           # One native boundary starts one delivery action, and a standing
@@ -16250,7 +16017,6 @@ cmd_adopt() { # register an EXISTING tmux window as a gang agent
     event_log_record "$id" agent.hitched \
       "{\"collar\":$(json_text "$collar"),\"adopt\":true}"
   fi
-  waiting_clear "$id"
   stamp_binary_id "$id"
   state_note_clear "$id"
   harness_identity_establish "$id"

@@ -1369,9 +1369,9 @@ native_idle_busy="$RUN_ROOT/native-idle-busy"
 native_idle_rollout="$RUN_ROOT/native-idle-rollout.jsonl"
 native_idle_nohold="$RUN_ROOT/native-idle-nohold"
 native_idle_hold_ok="$RUN_ROOT/native-idle-hold-ok"
-native_idle_waiting_hold="$RUN_ROOT/native-idle-waiting-hold"
-native_idle_waiting_entered="native-idle-waiting-entered-$$"
-native_idle_waiting_release="native-idle-waiting-release-$$"
+native_idle_boundary_hold="$RUN_ROOT/native-idle-boundary-hold"
+native_idle_boundary_entered="native-idle-boundary-entered-$$"
+native_idle_boundary_release="native-idle-boundary-release-$$"
 native_idle_collar() { # $1 = native-idle (with its reader) or unavailable (without)
   cat > "$RUN_ROOT/collars/codex-native-idle.sh" <<SH
 # shellcheck shell=bash
@@ -1390,13 +1390,15 @@ collar_input() {
   [ ! -e "$native_idle_busy" ] || { printf ''; return; }
   native_idle_real_input "\$1"
 }
-collar_waiting() {
-  if [ -e "$native_idle_waiting_hold" ]; then
-    tmux wait-for -S "$native_idle_waiting_entered"
-    tmux wait-for "$native_idle_waiting_release"
-  fi
-  return 1
-}
+# The Stop hook sources this file to read the boundary's witness before it
+# dispatches the detached worker; only that read waits while the marker exists.
+case " \${FUNCNAME[*]} " in
+  *" native_idle_boundary_write "*)
+    if [ -e "$native_idle_boundary_hold" ]; then
+      tmux wait-for -S "$native_idle_boundary_entered"
+      tmux wait-for "$native_idle_boundary_release"
+    fi ;;
+esac
 SH
   [ "$1" = native-idle ] || return 0
   cat >> "$RUN_ROOT/collars/codex-native-idle.sh" <<SH
@@ -1527,8 +1529,8 @@ excludes "and nothing is typed" "$(pane native-idle)" "MARK_NATIVE_IDLE_REBIND"
 native_idle_collar native-idle
 
 # THE STOP WORKER KEEPS THE RECORDED BINDING TOO. Hold the synchronous hook
-# after it records the payload but before it dispatches the detached worker,
-# then remove the reader. The worker must surface that missing witness and
+# while it reads the boundary's witness, before it dispatches the detached
+# worker, then remove the reader. The worker must surface that missing witness and
 # leave the accepted message waiting rather than type through it.
 native_idle_record task_started peer-reader-loss > "$native_idle_rollout"
 printf '%s' '{"hook_event_name":"UserPromptSubmit","turn_id":"peer-reader-loss"}' |
@@ -1539,15 +1541,15 @@ native_idle_reader_loss_out="$(printf 'MARK_NATIVE_IDLE_READER_LOSS' |
 contains "the reader-loss fixture first accepts mail into the spool" \
   "$native_idle_reader_loss_out" "queued for native-idle"
 tmux send-keys -t "$native_idle_id" C-u
-: > "$native_idle_waiting_hold"
+: > "$native_idle_boundary_hold"
 tmux wait-for "gang-spool-drain-$native_idle_id" &
 native_idle_reader_loss_waiter=$!
 printf '%s' '{"hook_event_name":"Stop","turn_id":"peer-reader-loss","transcript_path":"'"$native_idle_rollout"'"}' |
   TMUX_PANE="$native_idle_pane" "$GANG" hook >/dev/null &
 native_idle_reader_loss_hook=$!
-tmux wait-for "$native_idle_waiting_entered"
+tmux wait-for "$native_idle_boundary_entered"
 native_idle_collar unavailable
-tmux wait-for -S "$native_idle_waiting_release"
+tmux wait-for -S "$native_idle_boundary_release"
 wait "$native_idle_reader_loss_hook"
 wait "$native_idle_reader_loss_waiter"
 contains "a Stop worker records the missing reader" \
@@ -1557,7 +1559,7 @@ contains "and leaves the accepted message waiting" \
   "$("$GANG" roster | grep '^native-idle ' || :)" "spooled=1"
 excludes "and types nothing without that reader" \
   "$(pane native-idle)" "MARK_NATIVE_IDLE_READER_LOSS"
-rm -f -- "$native_idle_waiting_hold"
+rm -f -- "$native_idle_boundary_hold"
 native_idle_collar native-idle
 native_idle_record task_complete peer-reader-loss >> "$native_idle_rollout"
 GANG_TEST_TICK_MODE=manual "$GANG" tick >/dev/null

@@ -220,7 +220,6 @@ SH
 tick_compacted="$RUN_ROOT/tick-compacted"
 tick_cache_ledger="$RUN_ROOT/tick-cache-compactions"
 tick_cache_stamp="$RUN_ROOT/tick-cache-transcript"
-tick_scope_stale="$RUN_ROOT/tick-scope-stale"
 mkdir -p "$RUN_ROOT/collars"
 export GANG_COLLARS="$RUN_ROOT/collars"
 cat > "$RUN_ROOT/collars/tick-native.sh" <<SH
@@ -231,10 +230,6 @@ GANG_LAUNCH="ENV='$RUN_ROOT/tick-bashrc' bash --posix"
 GANG_STOP_HOOK=1
 GANG_SELF_COMPACT=deferred
 GANG_COMPACT_CMD="printf 'TICK_COMPACT\\n'; : > '$tick_compacted'"
-collar_waiting() {
-  [ -e "$tick_scope_stale" ] || return 1
-  printf 'stale bwrap witness'
-}
 SH
 cat > "$RUN_ROOT/collars/tick-cache.sh" <<SH
 # shellcheck shell=bash
@@ -1231,40 +1226,11 @@ equal "copy-mode leaves the peer message parked" 1 \
   "$("$GANG" roster --porcelain | awk -F '\t' '$1 == "tick-copy" { print $4 }')"
 contains "copy-mode leaves the self-compaction request standing" \
   "$("$GANG" status tick-copy)" "self-compaction requested"
-tick_scope_bin="$RUN_ROOT/tick-scope-bin"
-tick_real_systemctl="$(command -v systemctl)"
-mkdir -p "$tick_scope_bin"
-cat > "$tick_scope_bin/systemctl" <<SH
-#!/bin/sh
-. "\$GANG_TEST_PATH_SHIM_GUARD"
-path_shim_guard '$tick_real_systemctl' "\$0" systemctl || exit \$?
-case " \$* " in
-  *' show --property=Version --value '*) printf 'fixture-manager\n' ;;
-  *' is-active '*) printf 'inactive\n'; exit 3 ;;
-  *) exit 1 ;;
-esac
-SH
-chmod +x "$tick_scope_bin/systemctl"
-# The original incident left a process witness after its cgroup was collected.
-# Make that one stale record explicit: a fresh manager read must retire it even
-# while copy-mode keeps the pane operator-owned.
-tmux set-option -w -t "$tick_copy_id" @gl_scope \
-  "gangline-$GANG_SESSION-tick-copy-0123456789abcdef.scope"
-tmux set-option -w -t "$tick_copy_id" @gl_waiting $'waiting\tstale bwrap witness'
-tmux set-option -w -t "$tick_copy_id" @gl_waiting_at 0
-tmux set-option -w -t "$tick_copy_id" @gl_waiting_gen 1
-: > "$tick_scope_stale"
-tick_copy_scope_roster="$(PATH="$tick_scope_bin:$PATH" "$GANG" roster)"
-contains "a gone registered scope retires the stale wait verdict" \
-  "$tick_copy_scope_roster" "tick-copy        tick-native  ~idle~"
-excludes "a gone registered scope does not retain its leaked process witness" \
-  "$tick_copy_scope_roster" "stale bwrap witness"
+tick_copy_roster="$("$GANG" roster)"
 contains "copy-mode is surfaced as generic operator-owned pane state" \
-  "$tick_copy_scope_roster" "pane-mode=active (attach and leave it before continuing)"
+  "$tick_copy_roster" "pane-mode=active (attach and leave it before continuing)"
 excludes "copy-mode is not prescribed a mode-specific recovery key" \
-  "$tick_copy_scope_roster" "send-keys -X cancel"
-tmux set-option -uw -t "$tick_copy_id" @gl_scope
-rm -f -- "$tick_scope_stale"
+  "$tick_copy_roster" "send-keys -X cancel"
 equal "neither copy-mode action typed before a later invocation" absent \
   "$([ ! -e "$tick_compacted" ] && printf absent || printf present)"
 
