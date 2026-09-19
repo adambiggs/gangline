@@ -4,7 +4,7 @@
 > implementation record. Superseded in part at `fee26a8`: Gangline carries no PII
 > scanner, so §5's account of the hook and its fixture step naming
 > `tools/pii-scan` describe a file that no longer exists. The body is left as it
-> was written; see [ADR-0062](../adr/0062-pii-prevention-belongs-to-snubline.md).
+> was written; see [ADR-0006](../adr/0006-host-global-contribution-safety-belongs-to-snubline.md).
 > Superseded again at `f8410f8`: the "Suite isolation" requirement under
 > Cross-cutting requirements asked for a second config-root pin, and an
 > assertion to prove it, against a future fixture that would drop the first pin.
@@ -16,14 +16,14 @@
 > name, so each shipped with the self-target fallback instead, and the operator
 > has ruled that behaviour the design — an agent reading or stopping its own
 > state should not have to know its own name. See
-> [ADR-0080](../adr/0080-a-missing-name-is-a-self-target.md).
+> “A missing name is a self target”.
 > Superseded again in 2.0: §7's `gang usage` — the command that drove a
 > harness's own usage page through its composer — is deleted, along with the
 > `GANG_USAGE_CMD`, `GANG_USAGE_CONFIRM_KEY`, `GANG_USAGE_RENDER` and
 > `GANG_USAGE_DISMISS_KEY` collar declarations it consumed. `gang limits` reads
 > the same quota from each collar's non-interactive source. The known-dialog
 > registry this document specifies is deleted in 2.0 as well; see
-> [ADR-0031](../adr/0031-occupancy-is-not-authority.md).
+> [ADR-0008](../adr/0008-occupancy-is-not-authority.md).
 
 Nine operator-directed changes, each born from friction observed in a live
 marathon session. This document is the implementation contract: it leaves no
@@ -168,7 +168,7 @@ gang send --to <name> [--from <sender>] [--live-only] [--supersede] --stdin
 
 `--spool` is deprecated rather than removed. Gangline is published, the flag is
 documented in `docs/reference.md`, and
-[ADR-0053](../adr/0053-rename-compatibility-depends-on-whether-a-name-is-published.md)
+“Rename compatibility depends on whether a name is published”
 sets the precedent: after publication an external name is
 preserved through normal deprecation. Announcing the no-op on stderr keeps it
 from being a silent lie about what the flag did.
@@ -250,7 +250,7 @@ the target with neither. The ordering is the whole safety property.
 The glob is `[0-9]*`, so an entry a concurrent drain has already claimed as
 `sending-…` is untouched. That is correct: a claimed entry is one whose body may
 already have reached the pane, and
-[ADR-0026](../adr/0026-a-refused-delivery-is-parked-a-failed-one-is-not.md) forbids
+[ADR-0017](../adr/0017-a-refused-delivery-is-parked-a-failed-one-is-not.md) forbids
 treating such a message as recallable. Supersession retires what is still waiting, not what is
 already gone.
 
@@ -339,7 +339,7 @@ status alone.
 
 `--supersede` drops **every** message the same sender has waiting for that
 target, not only ones on the same subject. That is what the code does and what
-[ADR-0026](../adr/0026-a-refused-delivery-is-parked-a-failed-one-is-not.md) says; what
+[ADR-0017](../adr/0017-a-refused-delivery-is-parked-a-failed-one-is-not.md) says; what
 is missing is the operator-facing caution, and
 its absence has already cost a message — an amendment batch was destroyed by a
 later `--supersede` from the same sender on an unrelated topic.
@@ -354,7 +354,7 @@ sentence:
 
 **Do not add topic scoping.** A subject, thread, or topic key would be a
 coordination schema, and
-[ADR-0001](../adr/0001-gangline-provides-substrate-without-coordinating-work.md)
+“Gangline provides substrate without coordinating work”
 forbids exactly that: Gangline defines no reporting protocol and
 no message taxonomy. The sender knows which of its own messages are still
 relevant; the substrate does not and should not learn.
@@ -372,7 +372,7 @@ it as not verified.
 Every step of that was right, and the spec changes no mechanism:
 
 - Holding rather than re-sending is the rule
-  ([ADR-0026](../adr/0026-a-refused-delivery-is-parked-a-failed-one-is-not.md)): Gangline
+  ([ADR-0017](../adr/0017-a-refused-delivery-is-parked-a-failed-one-is-not.md)): Gangline
   never sends a message a second time on the chance the first did not arrive.
   A false negative in this direction is the safe one; a second copy is not.
 - `flush` refusing was right too. By the time it ran, the harness had drained
@@ -410,7 +410,7 @@ not become a reason to deliver again.
   `--spool`, and the NOT-parked degradation with its reason. Present tense, no
   account of the change.
 - **"A refused delivery may be spooled, a failed one may not"**
-  ([ADR-0026](../adr/0026-a-refused-delivery-is-parked-a-failed-one-is-not.md))
+  ([ADR-0017](../adr/0017-a-refused-delivery-is-parked-a-failed-one-is-not.md))
   — retitle to **"A refused delivery is parked, a failed one is not"** and edit
   the body so parking is the default and `--live-only` is the explicit probe.
   Delete `Spooling is opt-in per send,` and state instead that a profile whose
@@ -438,7 +438,7 @@ harnesses themselves witness it; nothing carries that witness anywhere.
 ### What may not be built
 
 No patrol, no timer, no watcher (`CONSTITUTION.md` law 7,
-[ADR-0044](../adr/0044-each-predicate-selects-one-freshest-owned-witness.md)). The only sources are native hook
+“Each predicate selects one freshest owned witness”). The only sources are native hook
 deliveries. Gangline translates a fact it was handed and stops.
 
 ### There is no lead
@@ -648,7 +648,7 @@ assertion depends on timing.
 - `docs/operations.md` — stall lights under unattended operation: what raises
   them per harness, and the honest statement that codex 0.145.0 witnesses only
   permission requests.
-- [ADR-0050](../adr/0050-a-stall-light-is-a-harness-s-own-witness-forwarded.md):
+- “A stall light is a harness's own witness, forwarded”:
 
   > ## A stall light is a harness's own witness, forwarded
   >
@@ -992,7 +992,7 @@ pane painted to look like a numbered menu. No real harness.
     pane is byte-identical afterwards.
 
 Guard-order requirement
-([ADR-0069](../adr/0069-a-guard-witnesses-the-artifact-and-witnesses-it-in-order.md)):
+(“A guard witnesses the artifact, and witnesses it in order”):
 tests 2, 3, 5, 8, and 12 must be shown to go red against a build that has the
 defect each one names — for 5, a build that confirms without re-reading the
 marker — and not merely against the pre-feature build. Record that in the commit
@@ -1015,7 +1015,7 @@ body.
   are witnessed; an unknown codex dialog can be refused with no stall note at
   all. Keep the prompt-injection reasoning and state this coverage limit next to
   the refusal rule.
-- [ADR-0031](../adr/0031-occupancy-is-not-authority.md) — the sentence "Gangline does
+- [ADR-0008](../adr/0008-occupancy-is-not-authority.md) — the sentence "Gangline does
   not autonomously answer native dialogs" is no longer true and must be
   rewritten, not annotated. Replacement for that sentence:
 
@@ -1195,7 +1195,7 @@ clean. Both discriminate; the toplevel does not.
 `test/lint.sh` bans wall-time constructs in `test/*.sh`; the stub is written to
 a temporary directory and never matches that glob, so no exemption is needed.
 
-Per [ADR-0069](../adr/0069-a-guard-witnesses-the-artifact-and-witnesses-it-in-order.md),
+Per “A guard witnesses the artifact, and witnesses it in order”,
 the test is not proven until its provenance assertions have been seen
 to fail against the unmodified `git archive` hook. That hook false-greens on the
 exit status (`rc=0`) under the real leaked `GIT_DIR`, while `gitdir` names the
@@ -1337,7 +1337,7 @@ compact — so it joins that item's table.
 `docs/reference.md` — the command, the raw-output guarantee, per-profile
 availability, why roster carries no column, and `@gl_key` described as minted by
 any hitch of a profile declaring `GANG_SESSION_KEY`.
-[ADR-0033](../adr/0033-context-lights-are-minimal-and-their-default-is-the-collar-s-per-model.md)
+“Context lights are minimal, and their default is the collar's per model”
 states that the same computation is
 exposed on demand as a query, which reads whether or not lights are enabled,
 because signalling and asking are different acts.

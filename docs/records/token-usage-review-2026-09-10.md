@@ -28,7 +28,7 @@ not identify is identifiable and is the single largest measured lever.
    `GANG_CONTEXT_LIGHTS=claude-code/*=10%,20% codex/*=collar`. On a 1M window
    that is 100k yellow and 200k red. Codex keeps its collar default of
    75%,90% of its 258,400 window (194k / 233k). Lights are advisory hook
-   messages emitted once per context epoch (ADR-0033); nothing acts on them
+   messages emitted once per context epoch (“Context lights are minimal, and their default is the collar's per model”); nothing acts on them
    but the agent.
 
 2. **The GPT-5.6 272k surcharge cannot occur here.** Every Codex call in the
@@ -68,24 +68,24 @@ not identify is identifiable and is the single largest measured lever.
 
 6. **The 600k trajectories are real but are not mostly inbound briefs.**
    42 of 503 Claude sessions exceeded 400k context and 219 exceeded 200k; the
-   largest reached 638k. ADR-0072 recorded two lanes where the larger share was
+   largest reached 638k. “A message is charged to the receiver; doctrine owns brevity” recorded two lanes where the larger share was
    inbound brief. In aggregate owner sessions are 56.8% tool results, 34.9%
    tool inputs (commands, file writes), 4.4% Gangline envelopes, 2.4% assistant
    text by characters. The report's premise that observations dominate holds
-   for owners; ADR-0072's diagnosis does not generalise.
+   for owners; “A message is charged to the receiver; doctrine owns brevity”'s diagnosis does not generalise.
 
 7. **Caching is not the problem.** Cache reads are 98.2% of tokens in the
    `gang usage` event records, 98% of Claude context tokens, and 97.8% of
    Codex input tokens. The report is right to move past this.
 
 8. **The Stop adapter is not a poll.** It refuses idle once per turn while a
-   peer reply is owed and then releases (ADR-0148 to ADR-0151). About ninety
+   peer reply is owed and then releases (“Claude's native Stop-block cap remains enabled” to “A boundary that cannot prove one close refuses the turn”). About ninety
    refusals or timeouts occurred in thirty days of Claude sessions.
    Negligible.
 
 9. **Observation pruning has no Gangline surface.** Neither Claude Code nor
    Codex exposes tool-result masking to a user; both offer only native
-   compaction, which Gangline already drives (`gang compact`, ADR-0078).
+   compaction, which Gangline already drives (`gang compact`, ADR-0005).
    Building a pruner, a scheduler, a risk scorer, a gate-result cache, a
    status index, or a per-call telemetry ledger would breach Constitution
    laws 1 and 7. The report's "prune continuously" lever is a doctrine line

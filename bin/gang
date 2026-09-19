@@ -2153,7 +2153,7 @@ contract_file() { # -> winning contract path on stdout, operator first
 # Never pasted into a composer: the contract rides the collar's system-prompt
 # option where one is declared, and is pointed at as a file where none is.
 # Either way hitch proves the file present and prose. See
-# docs/adr/0070-the-contract-rides-the-system-prompt-where-a-collar-has-one.md.
+# docs/adr/0007-the-contract-rides-the-system-prompt-where-a-collar-has-one.md.
 contract_read() { # vet the contract slot, into CONTRACT_FILE and CONTRACT_BODY
   local display
   CONTRACT_FILE="$(contract_file)"
@@ -4195,8 +4195,7 @@ waiting_clear() { # $1 window; a new native event retires the old Stop witness
 # A WAITING RECORD AGES. It is one reading taken at Stop, and an idle window may
 # send no further native event: the held work can finish and the record would
 # name it indefinitely. Each record is stamped so the next state reader can take
-# a fresh bounded reading of one older than this, as ADR 0044 retires refuted
-# state at a reading.
+# a fresh bounded reading of one older than this and retire it if refuted.
 WAITING_REPROBE_AFTER=60
 
 waiting_store() { # $1 window, $2 record
@@ -7596,7 +7595,7 @@ hitcher_tag() { # $1 window -> one compact roster/explain token: hitcher=NAME,
   esac
 }
 
-# SAFE-TO-DROP IS ONE SELF-ATTESTED TERMINAL FACT (ADR-0198). Its value is the
+# SAFE-TO-DROP IS ONE SELF-ATTESTED TERMINAL FACT. Its value is the
 # spool token of the registration that set it, so it is honoured only while the
 # window still carries that token: a mark cannot outlive the registration that
 # made it. A delivery clears it (#296), since a message the agent takes is more
@@ -11666,7 +11665,7 @@ cache_compaction_candidate() { # $1 window, $2 collar; 0 ready, 1 no, 2 diagnost
        return 2 ;;
     *) die "internal: cache_compaction_for returned unknown status $config_rc" ;;
   esac
-  # A registration marked safe to drop has declared its work done (ADR-0198).
+  # A registration marked safe to drop has declared its work done.
   # Compacting it would spend tokens on an agent awaiting teardown, and the
   # compaction's delivery would clear the mark that authorizes that teardown.
   safe_to_drop_read "$1" || mark_rc=$?
@@ -18068,7 +18067,7 @@ safe_to_drop_preconditions() { # $1 own window, $2 own token; 1 with SAFE_TO_DRO
   done
 }
 
-cmd_safe_to_drop() { # the one self-declared teardown authorization (ADR-0198)
+cmd_safe_to_drop() { # the one self-declared teardown authorization
   local report="" self token name report_id delivered report_token again
   while [ $# -gt 0 ]; do case "$1" in
     --report-to) [ $# -ge 2 ] || usage_refuse "safe-to-drop: --report-to needs a value"

@@ -47,8 +47,6 @@ GROUPS = [
         ("docs/adr/index.md", "adr/index.html", "Decision records"),
     ]),
 ]
-# Kept only so old links reach the index; its page is the index's.
-ALIASES = {"docs/DECISIONS.md": "adr/index.html"}
 # Files under site/ are published at the site root beside the landing page.
 SITE_ASSETS = "site/"
 
@@ -96,7 +94,6 @@ class Site:
         self.out = Path(out)
         self.pages = pages()
         self.by_source = {s: o for s, o, _, _ in self.pages}
-        self.by_source.update(ALIASES)
         self.md = MarkdownIt("commonmark", {"html": True}).enable(["table", "strikethrough"])
         self.ids = {}  # output page -> set of element ids
 

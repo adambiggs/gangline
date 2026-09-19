@@ -76,7 +76,7 @@ selected Claude entries with model/input/output/cache fields. Gangline can use
 the two native-session views together without parsing harness transcripts.
 ccusage's documented Codex reader remains experimental, and there is still no
 common Claude-plus-Codex per-turn row Gangline can join for last-turn cost
-without taking transcript parsing back from ccusage, which ADR-0152 forbids.
+without taking transcript parsing back from ccusage, which “Gangline joins ccusage output by native session identity” forbids.
 
 ## Data Gangline already has but does not surface
 
@@ -92,7 +92,7 @@ without taking transcript parsing back from ccusage, which ADR-0152 forbids.
   rate-outlier flag, but no rate measurement feeds one.
 - The cap sample's provider reset is a stable window key. Samples sharing it can
   support a labelled slope/projection without deriving a provider percentage
-  from tokens, preserving ADR-0184.
+  from tokens, preserving “Recorded usage percentages are the ones a provider published”.
 - Account quota is shared with remote agents and other consumers. Local ccusage
   and usage events can attribute this host's activity, but can never be the
   denominator or pace input for the account-window projection.
@@ -144,8 +144,8 @@ gang limits --history
 gang usage --all
 ```
 
-The behavior is specified by ADR-0034, ADR-0152 through ADR-0156, ADR-0184,
-ADR-0185, `docs/records/usage-spec.md`, and the `gang limits`, `gang usage`, and
+The behavior is specified by “Provider usage is a collar-native observation”, “Gangline joins ccusage output by native session identity” through “Quota and outcome policy stay outside usage accounting”, “Recorded usage percentages are the ones a provider published”,
+“A usage threshold alerts once inside the window it measures”, `docs/records/usage-spec.md`, and the `gang limits`, `gang usage`, and
 `gang cap` sections of `docs/reference.md`. Implementation evidence is in
 `bin/gang` (`cmd_limits`, `cmd_usage`, and roster's usage flags),
 `libexec/gang-usage` (fresh join and unconditional model sum), and

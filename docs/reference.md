@@ -825,7 +825,7 @@ cannot be read, the drop refuses and nothing is removed.
 
 ### `gang safe-to-drop --report-to <name>`
 
-Marks the calling agent's current registration safe to drop (ADR-0198). The
+Marks the calling agent's current registration safe to drop. The
 mark authorizes teardown only; it does not claim a task is complete. It is
 refused with exit 3, and nothing is recorded, unless all of these hold:
 

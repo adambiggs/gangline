@@ -120,7 +120,7 @@ total and state plainly that last-turn cost is unavailable.
 
 **Estimated saving:** 0 by itself. The signal can later support turn-level
 rotation experiments, but building transcript parsers into Gangline would add
-the churn ADR-0152 deliberately delegates to ccusage.
+the churn “Gangline joins ccusage output by native session identity” deliberately delegates to ccusage.
 
 ## Implementation choice for this arc
 
