@@ -28,7 +28,7 @@ REPO = Path(__file__).resolve().parent.parent
 GITHUB = "https://github.com/adambiggs/gangline"
 
 # Navigation order: what a new operator reads first, then the project's own
-# rules, then the decision records. Each entry is (source, output, nav label).
+# rules and design. Each entry is (source, output, nav label).
 GROUPS = [
     ("Start", [
         ("README.md", "index.html", "Overview"),
@@ -42,9 +42,7 @@ GROUPS = [
         ("CONTRIBUTING.md", "contributing.html", "Contributing"),
         ("docs/benchmarks.md", "benchmarks.html", "Benchmarks"),
         ("docs/e2e-lane-calibration.md", "e2e-lane-calibration.html", "E2E lane calibration"),
-    ]),
-    ("Decisions", [
-        ("docs/adr/index.md", "adr/index.html", "Decision records"),
+        ("docs/design.md", "design.html", "Design"),
     ]),
 ]
 # Files under site/ are published at the site root beside the landing page.
@@ -52,11 +50,8 @@ SITE_ASSETS = "site/"
 
 
 def pages():
-    """Every published page as (source, output, label, group)."""
-    out = [(s, o, l, g) for g, entries in GROUPS for s, o, l in entries]
-    for p in sorted((REPO / "docs/adr").glob("[0-9]*.md")):
-        out.append((f"docs/adr/{p.name}", f"adr/{p.stem}.html", None, "Decisions"))
-    return out
+    """Every published page as (source, output, label)."""
+    return [e for _, entries in GROUPS for e in entries]
 
 
 def slugify(text, seen):
@@ -72,28 +67,12 @@ def inline_text(token):
     return "".join(c.content for c in token.children or [] if c.type in ("text", "code_inline"))
 
 
-def front_matter(text):
-    """Split a leading '---' block into simple key: value pairs."""
-    if not text.startswith("---\n"):
-        return {}, text
-    end = text.find("\n---\n", 4)
-    if end < 0:
-        return {}, text
-    meta = {}
-    for line in text[4:end].splitlines():
-        k, _, v = line.partition(":")
-        v = v.strip()
-        if v.startswith("[") and v.endswith("]"):
-            v = [x.strip() for x in v[1:-1].split(",") if x.strip()]
-        meta[k.strip()] = v
-    return meta, text[end + 5:]
-
 
 class Site:
     def __init__(self, out):
         self.out = Path(out)
         self.pages = pages()
-        self.by_source = {s: o for s, o, _, _ in self.pages}
+        self.by_source = {s: o for s, o, _ in self.pages}
         self.md = MarkdownIt("commonmark", {"html": True}).enable(["table", "strikethrough"])
         self.ids = {}  # output page -> set of element ids
 
@@ -120,7 +99,7 @@ class Site:
         return f"{GITHUB}/{kind}/main/{path}{frag}"
 
     def render(self, source, here):
-        meta, text = front_matter((REPO / source).read_text(encoding="utf-8"))
+        text = (REPO / source).read_text(encoding="utf-8")
         tokens = self.md.parse(text)
         seen, toc, title, ids = {}, [], None, set()
         for i, t in enumerate(tokens):
@@ -144,38 +123,15 @@ class Site:
         # Tables scroll inside their own box rather than widening a phone page.
         body = body.replace('<table class="tbl">', '<div class="tblwrap"><table>').replace("</table>", "</table></div>")
         self.ids[here] = ids
-        return title or source, meta, toc, body
+        return title or source, toc, body
 
-    def meta_line(self, meta, source, here):
-        if not meta:
-            return ""
-        bits = []
-        if meta.get("status"):
-            bits.append(f'<span class="st">{html.escape(meta["status"])}</span>')
-        if meta.get("date"):
-            bits.append(html.escape(meta["date"]))
-        for key, word in (("supersedes", "supersedes"), ("superseded-by", "superseded by")):
-            refs = meta.get(key) or []
-            if isinstance(refs, str):
-                refs = [refs]
-            links = []
-            for ref in refs:
-                hits = sorted((REPO / "docs/adr").glob(f"{ref}-*.md"))
-                if not hits:
-                    sys.exit(f"docsite: {source}: {key} names unknown record {ref}")
-                links.append(f'<a href="{self.rel(here, "adr/" + hits[0].stem + ".html")}">{html.escape(ref)}</a>')
-            if links:
-                bits.append(f"{word} {', '.join(links)}")
-        return f'<p class="meta">{" · ".join(bits)}</p>' if bits else ""
-
-    def nav(self, here, current_group, toc):
+    def nav(self, here, toc):
         out = []
         for group, entries in GROUPS:
             out.append(f'<p class="grp">{group}</p><ul>')
             for s, o, label in entries:
-                on = o == here or (group == current_group == "Decisions" and here.startswith("adr/"))
                 cur = ' aria-current="page"' if o == here else ""
-                out.append(f'<li{" class=on" if on else ""}><a href="{self.rel(here, o)}"{cur}>{label}</a>')
+                out.append(f'<li{" class=on" if o == here else ""}><a href="{self.rel(here, o)}"{cur}>{label}</a>')
                 if o == here and toc:
                     out.append('<ul class="toc">' + "".join(
                         f'<li><a href="#{a}">{html.escape(t)}</a></li>' for a, t in toc) + "</ul>")
@@ -185,14 +141,13 @@ class Site:
 
     def build(self):
         template = (REPO / "tools/docsite.html").read_text(encoding="utf-8")
-        for source, here, label, group in self.pages:
-            title, meta, toc, body = self.render(source, here)
+        for source, here, _ in self.pages:
+            title, toc, body = self.render(source, here)
             root = self.rel(here, "/")
             page = (template
                     .replace("{{title}}", html.escape(title))
                     .replace("{{root}}", "" if root == "." else root + "/")
-                    .replace("{{nav}}", self.nav(here, group, toc))
-                    .replace("{{meta}}", self.meta_line(meta, source, here))
+                    .replace("{{nav}}", self.nav(here, toc))
                     .replace("{{source}}", f"{GITHUB}/blob/main/{source}")
                     .replace("{{body}}", body))
             dest = self.out / "docs" / here

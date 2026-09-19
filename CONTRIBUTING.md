@@ -69,6 +69,9 @@ body states what failed, what changed, and what proves it.
 Stage exact paths with `git add -- <paths>` in a shared checkout, and never
 commit or discard another contributor's work.
 
+A decision that still shapes the code is recorded as a paragraph in
+[`docs/design.md`](docs/design.md), landed with the change.
+
 Release Please owns release commits, tags, `version.txt`, package metadata and
 `CHANGELOG.md`; never edit them by hand.
 

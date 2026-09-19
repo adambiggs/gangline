@@ -50,7 +50,7 @@ not coordinate work or supervise agents.
   Point to the command that measures them.
 
 A decision that still shapes the code and had an incident, a measured cost or
-a real alternative behind it is recorded in [`docs/adr/`](docs/adr/index.md).
+a real alternative behind it is recorded in [`docs/design.md`](docs/design.md).
 
 ## Use the shortest proof
 
@@ -87,7 +87,7 @@ an operator request.
 | `README.md` | what Gangline is and why it exists |
 | `CONSTITUTION.md` | binding project laws |
 | `CONTRACT.md` | the standing terms every hitched agent is held to |
-| `docs/adr/` | durable decision records and their index |
+| `docs/design.md` | the decisions that still shape the code |
 | `docs/reference.md` | exact commands, environment, and collar contract |
 | `docs/operations.md` | unattended operation and recovery |
 | `docs/review-tiers.md` | how far a result is reviewed, by whom, and for how many rounds |

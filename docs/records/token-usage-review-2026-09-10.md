@@ -85,7 +85,7 @@ not identify is identifiable and is the single largest measured lever.
 
 9. **Observation pruning has no Gangline surface.** Neither Claude Code nor
    Codex exposes tool-result masking to a user; both offer only native
-   compaction, which Gangline already drives (`gang compact`, ADR-0005).
+   compaction, which Gangline already drives (`gang compact`; see [Native continuation owns compaction recovery](../design.md#native-continuation-owns-compaction-recovery)).
    Building a pruner, a scheduler, a risk scorer, a gate-result cache, a
    status index, or a per-call telemetry ledger would breach Constitution
    laws 1 and 7. The report's "prune continuously" lever is a doctrine line

@@ -282,7 +282,7 @@ deadline keep it ephemeral.
 - [`docs/benchmarks.md`](docs/benchmarks.md) — benchmark selection and validity
   gates
 - [`CONSTITUTION.md`](CONSTITUTION.md) — binding project laws
-- [`docs/adr/index.md`](docs/adr/index.md) — durable decision records
+- [`docs/design.md`](docs/design.md) — the decisions that still shape the code
 - [`CONTRIBUTING.md`](CONTRIBUTING.md) — repository gates and contribution policy
 
 Gangline is licensed under Apache-2.0.

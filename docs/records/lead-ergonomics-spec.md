@@ -4,7 +4,7 @@
 > implementation record. Superseded in part at `fee26a8`: Gangline carries no PII
 > scanner, so §5's account of the hook and its fixture step naming
 > `tools/pii-scan` describe a file that no longer exists. The body is left as it
-> was written; see [ADR-0006](../adr/0006-host-global-contribution-safety-belongs-to-snubline.md).
+> was written; see [Host-global contribution safety belongs to Snubline](../design.md#host-global-contribution-safety-belongs-to-snubline).
 > Superseded again at `f8410f8`: the "Suite isolation" requirement under
 > Cross-cutting requirements asked for a second config-root pin, and an
 > assertion to prove it, against a future fixture that would drop the first pin.
@@ -23,7 +23,7 @@
 > `GANG_USAGE_DISMISS_KEY` collar declarations it consumed. `gang limits` reads
 > the same quota from each collar's non-interactive source. The known-dialog
 > registry this document specifies is deleted in 2.0 as well; see
-> [ADR-0008](../adr/0008-occupancy-is-not-authority.md).
+> [Occupancy is not authority](../design.md#occupancy-is-not-authority).
 
 Nine operator-directed changes, each born from friction observed in a live
 marathon session. This document is the implementation contract: it leaves no
@@ -250,7 +250,7 @@ the target with neither. The ordering is the whole safety property.
 The glob is `[0-9]*`, so an entry a concurrent drain has already claimed as
 `sending-…` is untouched. That is correct: a claimed entry is one whose body may
 already have reached the pane, and
-[ADR-0017](../adr/0017-a-refused-delivery-is-parked-a-failed-one-is-not.md) forbids
+[A refused delivery is parked, a failed one is not](../design.md#a-refused-delivery-is-parked-a-failed-one-is-not) forbids
 treating such a message as recallable. Supersession retires what is still waiting, not what is
 already gone.
 
@@ -339,7 +339,7 @@ status alone.
 
 `--supersede` drops **every** message the same sender has waiting for that
 target, not only ones on the same subject. That is what the code does and what
-[ADR-0017](../adr/0017-a-refused-delivery-is-parked-a-failed-one-is-not.md) says; what
+[A refused delivery is parked, a failed one is not](../design.md#a-refused-delivery-is-parked-a-failed-one-is-not) says; what
 is missing is the operator-facing caution, and
 its absence has already cost a message — an amendment batch was destroyed by a
 later `--supersede` from the same sender on an unrelated topic.
@@ -372,7 +372,7 @@ it as not verified.
 Every step of that was right, and the spec changes no mechanism:
 
 - Holding rather than re-sending is the rule
-  ([ADR-0017](../adr/0017-a-refused-delivery-is-parked-a-failed-one-is-not.md)): Gangline
+  ([A refused delivery is parked, a failed one is not](../design.md#a-refused-delivery-is-parked-a-failed-one-is-not)): Gangline
   never sends a message a second time on the chance the first did not arrive.
   A false negative in this direction is the safe one; a second copy is not.
 - `flush` refusing was right too. By the time it ran, the harness had drained
@@ -410,7 +410,7 @@ not become a reason to deliver again.
   `--spool`, and the NOT-parked degradation with its reason. Present tense, no
   account of the change.
 - **"A refused delivery may be spooled, a failed one may not"**
-  ([ADR-0017](../adr/0017-a-refused-delivery-is-parked-a-failed-one-is-not.md))
+  ([A refused delivery is parked, a failed one is not](../design.md#a-refused-delivery-is-parked-a-failed-one-is-not))
   — retitle to **"A refused delivery is parked, a failed one is not"** and edit
   the body so parking is the default and `--live-only` is the explicit probe.
   Delete `Spooling is opt-in per send,` and state instead that a profile whose
@@ -1015,7 +1015,7 @@ body.
   are witnessed; an unknown codex dialog can be refused with no stall note at
   all. Keep the prompt-injection reasoning and state this coverage limit next to
   the refusal rule.
-- [ADR-0008](../adr/0008-occupancy-is-not-authority.md) — the sentence "Gangline does
+- [Occupancy is not authority](../design.md#occupancy-is-not-authority) — the sentence "Gangline does
   not autonomously answer native dialogs" is no longer true and must be
   rewritten, not annotated. Replacement for that sentence:
 

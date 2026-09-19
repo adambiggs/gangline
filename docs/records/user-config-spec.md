@@ -7,7 +7,7 @@
 > acceptance. Sections 1.4 and 1.6 also promoted environment-only implementation
 > seams into persistent configuration; their tables below reflect the narrower
 > landed allowlist. The body is left as it was written; see
-> [ADR-0007](../adr/0007-the-contract-rides-the-system-prompt-where-a-collar-has-one.md) and
+> [The contract rides the system prompt where a collar has one](../design.md#the-contract-rides-the-system-prompt-where-a-collar-has-one) and
 > “Persistent config exposes operator choices, not implementation seams”.
 
 Four coupled changes: a user configuration file behind the `GANG_*` environment
@@ -860,8 +860,8 @@ behaviour:
 - `docs/operations.md` — two recovery entries: a malformed config refusing every
   command including hooks (§1.10), and a startup contract too large for the
   target pane failing at delivery (§2.6).
-- The decision-record corpus — three records in the house voice:
-  - [ADR-0002](../adr/0002-configuration-is-parsed-never-sourced.md) — the file mirrors the environment
+- The design decisions — three in the house voice:
+  - [Configuration is parsed, never sourced](../design.md#configuration-is-parsed-never-sourced) — the file mirrors the environment
     names, the environment stays authoritative, an unknown key is fatal.
   - “Doctrine is the operator's, and every hitch carries it” — core ships the
     slot and no content; Gangline does not infer an operator it cannot see.
