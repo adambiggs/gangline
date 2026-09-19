@@ -4,7 +4,7 @@
 > implementation record. Superseded in part at `fee26a8`: Gangline carries no PII
 > scanner, so §5's account of the hook and its fixture step naming
 > `tools/pii-scan` describe a file that no longer exists. The body is left as it
-> was written; see [Host-global contribution safety belongs to Snubline](../design.md#host-global-contribution-safety-belongs-to-snubline).
+> was written.
 > Superseded again at `f8410f8`: the "Suite isolation" requirement under
 > Cross-cutting requirements asked for a second config-root pin, and an
 > assertion to prove it, against a future fixture that would drop the first pin.

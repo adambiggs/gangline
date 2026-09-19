@@ -72,7 +72,7 @@ turn that tells the agent to re-read its brief and saved state, and `gang
 compact --resume` replaces that turn's text. No compaction lands idle; what the
 continuation asks the agent to re-read is operator prose, not Gangline state.
 
-## Host-global contribution safety belongs to Snubline
+## Contribution safety scanning lives outside the repository
 
 2026-08-12 · [fee26a8](https://github.com/adambiggs/gangline/commit/fee26a8)
 

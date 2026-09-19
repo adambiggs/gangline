@@ -77,12 +77,7 @@ Release Please owns release commits, tags, `version.txt`, package metadata and
 
 ## Public content
 
-The pre-push hook's Snubline gate is the only PII scan; there is no CI
-backstop. Issue and pull request bodies reach no hook, so scan them first:
-
-```sh
-snub scan-text < body.txt
-```
+Do not commit personal data: home paths, hostnames, credentials or addresses.
 
 ## License
 

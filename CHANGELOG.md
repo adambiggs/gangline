@@ -626,7 +626,7 @@
 * **hooks:** `
 * **config:** remove GANG_ACTIVITY_LIMIT and GANG_CLEAR_PRESSES from Gangline config files; they remain environment-only implementation seams.
 * **occupancy:** remove GANG_OCCUPIED_LIMIT from Gangline config files; timed occupancy decay no longer exists.
-* tools/pii-scan is gone and the pii-scan CI job with it. A clone that invoked either has no in-repo replacement; use the operator's installed Snubline scanner. Repository push and pull-request CI no longer scan for PII shapes at all.
+* tools/pii-scan is gone and the pii-scan CI job with it. A clone that invoked either has no in-repo replacement; scan with a tool installed outside the repository. Repository push and pull-request CI no longer scan for PII shapes at all.
 
 ### Features
 
@@ -737,7 +737,7 @@
 
 ### Code Refactoring
 
-* remove PII scanning; Snubline owns the gate ([fee26a8](https://github.com/adambiggs/gangline/commit/fee26a88b2686255f2c76a32e03e4caa91372da6))
+* remove PII scanning; the gate lives outside the repository ([fee26a8](https://github.com/adambiggs/gangline/commit/fee26a88b2686255f2c76a32e03e4caa91372da6))
 
 ## [1.0.0](https://github.com/adambiggs/gangline/compare/gangline-v0.8.0...gangline-v1.0.0) (2026-08-08)
 
