@@ -819,7 +819,7 @@ refuses "a self-send is refused under the intent it violates" \
 equal "a refused self-send types nothing" "$self_before" "$(pane identity)"
 
 tmux set-option -w -t "$identity_id" @gl_session_id bogus-native-id
-printf '%s' '{"hook_event_name":"PostToolUse","session_id":"native-identity-123"}' \
+printf '%s' '{"hook_event_name":"UserPromptSubmit","session_id":"native-identity-123"}' \
   | TMUX_PANE="$identity_pane" "$GANG" hook
 contains "status exposes a native session identity mismatch" \
   "$("$GANG" status identity)" \

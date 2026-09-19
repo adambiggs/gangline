@@ -17641,9 +17641,11 @@ sys.stdout.write("%s\n%s" % (row.get("hook_event_name", ""), kind))' \
   # prompt submission before any tool runs, so two tool calls of one turn can
   # never disagree about it; re-recording it on every PostToolUse cost three
   # collar sources and two payload parses per tool call and could not observe
-  # a change.
+  # a change. A turn that dies mid-response fires no Stop, so its idle
+  # Notification is that turn's closing boundary and the only payload that
+  # binds the transcript the failed-turn reader opens.
   case "$event" in
-    UserPromptSubmit|Stop)
+    UserPromptSubmit|Stop|Notification)
       hook_identity_assert "$TMUX_PANE" "$collar" "$payload"
       # The hook crosses Codex's preflight exec boundary. A launch-time probe
       # that found only that interpreter gets exactly this one chance to
