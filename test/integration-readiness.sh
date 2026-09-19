@@ -3450,20 +3450,3 @@ case "$(cat "$guardpath_file")" in
        "PATH began [$(cut -c1-80 < "$guardpath_file")]" ;;
 esac
 "$GANG" drop guarded >/dev/null
-
-# THE OPERATOR'S SWITCH IS REAL. With the guard off nothing is prepended, so an
-# agent's PATH is exactly what it would have been — which is also what makes
-# the assertion above a statement about this feature and not about tmux.
-rm -f -- "$guardpath_file"
-guardpath_chan="guardpath-off-$$"
-cat > "$RUN_ROOT/collars/guardpath.sh" <<SH
-# shellcheck shell=bash
-# shellcheck disable=SC2034
-. "$ROOT/collars/bash.sh"
-GANG_LAUNCH=": ; printf '%s' \"\\\$PATH\" > $guardpath_file; tmux wait-for -S $guardpath_chan; PS1='❯ ' bash --norc"
-SH
-GANG_TMUX_GUARD=off "$HITCH" unguarded -c guardpath -d /tmp >/dev/null
-tmux wait-for "$guardpath_chan"
-contains "GANG_TMUX_GUARD=off still keeps the agent's tmux guard on PATH" \
-  "$(cat "$guardpath_file")" "$ROOT/libexec/gang-tmux-guard"
-"$GANG" drop unguarded >/dev/null

@@ -7,8 +7,8 @@ set -euo pipefail
 # This focused lane owns the tmux server and Gangline roots it creates below;
 # no route or team selection inherited from an agent pane may survive into it.
 unset TMUX TMUX_PANE GANG_TMUX_SOCKET GANG_TMUX_GUARD_AGENT \
-  GANG_TMUX_GUARD_LOG_DIR GANG_CONFIG_DIR GANG_SESSION GANG_COLLARS \
-  GANG_LOCK_DIR GANG_ARCHIVE_DIR GANG_SCOPE GANG_TMUX_GUARD
+  GANG_CONFIG_DIR GANG_SESSION GANG_COLLARS \
+  GANG_LOCK_DIR GANG_ARCHIVE_DIR GANG_SCOPE
 
 TEST_ROOT="$(mktemp -d "${TMPDIR:-/tmp}/gangline-role-test.XXXXXX")"
 TMUX_SOCKET="$TEST_ROOT/tmux-$(id -u)/gangline"

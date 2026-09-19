@@ -76,7 +76,7 @@ fail() { # $1 = exit status, rest = message
   exit "$code"
 }
 
-GANG_CONFIG_KEYS='GANG_COLLAR GANG_SESSION GANG_COLLARS GANG_LOCK_DIR GANG_ARCHIVE_DIR GANG_CONTEXT_LIGHTS GANG_CONTEXT_BANDS GANG_CACHE_BANDS GANG_CACHE_COMPACTION GANG_USAGE_LIGHTS GANG_AUTO_RESUME GANG_SCOPE GANG_TMUX_GUARD GANG_BOOT_TIMEOUT GANG_GATE_LOOKS GANG_CHURN_WAIT GANG_ACTIVITY_WINDOW GANG_TURN_LIMIT GANG_TICK_DEADLINE'
+GANG_CONFIG_KEYS='GANG_COLLAR GANG_SESSION GANG_COLLARS GANG_LOCK_DIR GANG_ARCHIVE_DIR GANG_CONTEXT_LIGHTS GANG_CONTEXT_BANDS GANG_CACHE_BANDS GANG_CACHE_COMPACTION GANG_USAGE_LIGHTS GANG_AUTO_RESUME GANG_SCOPE GANG_BOOT_TIMEOUT GANG_GATE_LOOKS GANG_CHURN_WAIT GANG_ACTIVITY_WINDOW GANG_TURN_LIMIT GANG_TICK_DEADLINE'
 GANG_COLLAR_KEYS='GANG_LAUNCH GANG_RESUME_LAUNCH GANG_TRUST_LAUNCH GANG_MODEL_OPT GANG_MODEL_ALIASES GANG_EFFORT_OPT GANG_EFFORT_CMD GANG_ROLE_PROMPT_OPT GANG_HARNESS_PROMPT GANG_BUSY_REGEX GANG_OCCUPIED_REGEX GANG_QUEUED_REGEX GANG_QUEUE_RECALL_KEY GANG_INTERRUPT_KEY GANG_COMPACT_RECOVER_KEYS GANG_STOP_HOOK GANG_STALL_TYPES GANG_QUIET_AT_REST GANG_MIDTURN_INPUT GANG_COMPACT_CMD GANG_SELF_COMPACT GANG_SELF_COMPACT_WITNESS GANG_USAGE_LIGHT_INTERVAL GANG_USAGE_LIMIT_MAX_AGE'
 CONFIG_DIR="" CONFIG_FILE="" CONFIG_ORIGINS="" CONFIG_SEEN=""
 
@@ -315,7 +315,7 @@ export GANGLINE_PROCESS_UID
 
 # ONE DEFAULT STATE ROOT FOR EVERY PROCESS ON THE HOST. The rule, and why it
 # does not read XDG_RUNTIME_DIR, is in the sourced file; the tmux guard sources
-# the same one. GANG_LOCK_DIR still overrides it at every use.
+# the same one to find where its refusals are logged. GANG_LOCK_DIR still overrides it at every use.
 # shellcheck source=libexec/gang-state-root
 . "$ROOT/libexec/gang-state-root" \
   || die "cannot read $ROOT/libexec/gang-state-root, which says where Gangline keeps its runtime state; reinstall gangline"
@@ -387,11 +387,6 @@ GANG_SCOPE="${GANG_SCOPE:-off}"
 case "$GANG_SCOPE" in
   on|off) ;;
   *) die "GANG_SCOPE must be on or off, got '$GANG_SCOPE'$(config_origin_note GANG_SCOPE)" ;;
-esac
-GANG_TMUX_GUARD="${GANG_TMUX_GUARD:-on}"
-case "$GANG_TMUX_GUARD" in
-  on|off) ;;
-  *) die "GANG_TMUX_GUARD must be on or off, got '$GANG_TMUX_GUARD'$(config_origin_note GANG_TMUX_GUARD)" ;;
 esac
 GANG_STALL_REPEAT=600
 
@@ -8445,7 +8440,7 @@ run_start() { # argv follows --
     --property="ExecStopPost=$post"
     --setenv="GANG_SESSION=$SESSION" --setenv="GANG_CONFIG_DIR=$CONFIG_DIR"
     --setenv="GANG_LOCK_DIR=${GANG_LOCK_DIR:-$GANGLINE_STATE_DEFAULT}"
-    --setenv="GANG_ARCHIVE_DIR=$(archive_root)" --setenv="GANG_TMUX_GUARD=$GANG_TMUX_GUARD"
+    --setenv="GANG_ARCHIVE_DIR=$(archive_root)"
     --setenv="XDG_STATE_HOME=$state_home" --setenv="HOME=$HOME"
     --setenv="GANG_RUN_TEAM_ROOT=$RUN_TEAM_ROOT"
     --setenv="PATH=$RUN_PATH" --setenv="TMPDIR=$RUN_TMPDIR")
@@ -12737,18 +12732,14 @@ tmux_guard_dir() { printf '%s/libexec/gang-tmux-guard' "$ROOT"; }
 # shell under it — on the original PATH. That reads as a guard that is installed
 # and is not.
 tmux_guard_wrap() {
-  local dir log_dir
+  local dir
   dir="$(tmux_guard_dir)"
   [ -x "$dir/tmux" ] || {
     printf 'gang: WARNING: %s/tmux is missing or not executable, so this agent launches without the guard against ending its own team'"'"'s tmux server. Reinstall gangline before hitching an agent.\n' \
       "$dir" >&2
     return 0
   }
-  log_dir="${GANG_LOCK_DIR:-$GANGLINE_STATE_DEFAULT}"
-  # A launch-time `off` cannot remove the shim from an agent. The shim may
-  # honour that explicit override only outside an agent context; this marker
-  # closes the interval before hitch records @gl_agent on the new window.
-  GANG_LAUNCH="export PATH=$(shell_quote "$dir"):\$PATH; export GANG_TMUX_GUARD_LOG_DIR=$(shell_quote "$log_dir"); export GANG_TMUX_GUARD_AGENT=1; $GANG_LAUNCH"
+  GANG_LAUNCH="export PATH=$(shell_quote "$dir"):\$PATH; export GANG_TMUX_GUARD_AGENT=1; $GANG_LAUNCH"
 }
 
 scope_launch_wrap() { # $1 = agent name; mint its immutable per-hitch scope
@@ -18485,7 +18476,6 @@ config_effective() { # $1 settable key -> the value its consumers read
     GANG_SESSION) printf '%s' "$SESSION" ;;
     GANG_COLLARS) printf '%s' "${GANG_COLLARS:-}" ;;
     GANG_LOCK_DIR) printf '%s' "${GANG_LOCK_DIR:-$GANGLINE_STATE_DEFAULT}" ;;
-    GANG_TMUX_GUARD) printf '%s' "$GANG_TMUX_GUARD" ;;
     GANG_ARCHIVE_DIR) printf '%s' "$(archive_root)" ;;
     GANG_CONTEXT_LIGHTS) printf '%s' "$GANG_CONTEXT_LIGHTS" ;;
     GANG_CONTEXT_BANDS) printf '%s' "$GANG_CONTEXT_BANDS" ;;

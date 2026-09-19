@@ -40,8 +40,8 @@ set -uo pipefail
 # beside a real team. Clear the explicit Gangline route and team selection too;
 # this lane creates its own private session and roots below.
 unset TMUX TMUX_PANE GANG_TMUX_SOCKET GANG_TMUX_GUARD_AGENT \
-  GANG_TMUX_GUARD_LOG_DIR GANG_CONFIG_DIR GANG_SESSION GANG_COLLARS \
-  GANG_LOCK_DIR GANG_ARCHIVE_DIR GANG_SCOPE GANG_TMUX_GUARD
+  GANG_CONFIG_DIR GANG_SESSION GANG_COLLARS \
+  GANG_LOCK_DIR GANG_ARCHIVE_DIR GANG_SCOPE
 
 ROOT="$(cd -P "$(dirname "$0")/.." && pwd)"
 BRIEF_MODE=shipped

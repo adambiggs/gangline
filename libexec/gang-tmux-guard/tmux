@@ -1,520 +1,145 @@
 #!/bin/sh
 # SPDX-License-Identifier: Apache-2.0
 #
-# THE GUARD ON THE ONE PROCESS WHOSE DEATH ENDS THE WHOLE TEAM. Inside a tmux
-# pane $TMUX names the current server and silently outranks TMUX_TMPDIR, so
-# `env TMUX_TMPDIR=<sandbox> tmux kill-server` — a command that reads as aimed
-# at a sandbox — addresses the live server instead. On 2026-08-17 that took a
-# whole team while the disposable server it meant to end survived.
+# THE GUARD ON THE ONE PROCESS WHOSE DEATH ENDS THE WHOLE TEAM. Gang puts this
+# shim at the front of an agent's PATH, so it sees what that agent's shells run
+# and nothing else. It refuses kill-server and kill-session when they would
+# reach the team's launch socket or the host's `default` or `gangline` server,
+# and hands every other invocation to the real tmux untouched.
 #
-# Gang cannot intercept every tmux invocation an agent might make, and this does
-# not pretend to: it is a shim gang puts at the front of an agent's PATH, so it
-# sees what that agent's shells run and nothing else. What it decides is one
-# question — does the socket this teardown would reach carry a Gangline agent
-# window? That fact lives on the tmux server itself. The team record remains a
-# useful corroborating hint, but an agent testing Gangline has to override its
-# GANG_SESSION and GANG_LOCK_DIR, so it must never be the only evidence that
-# the guard uses to protect a server.
-#
-# A SERVER THAT ANSWERS BUT CANNOT BE CLASSIFIED FAILS CLOSED. An unreachable
-# explicit private socket still reaches real tmux for its ordinary error. Every
-# teardown verdict is written under the configured, launch-time team, and
-# default roots when distinct, because a caller can redirect the configured
-# root while testing and a verdict only there leaves no forensics behind.
+# Each refusal answers a teardown that reached a live team by an implicit
+# route: $TMUX silently outranking TMUX_TMPDIR (#147), a guard that trusted a
+# caller-supplied GANG_SESSION or GANG_LOCK_DIR (#165), and a TMUX_TMPDIR that
+# did not exist, which tmux replaces with /tmp without a word (#187). So the
+# target is worked out from the command line and the socket rules alone.
 set -u
-
-guard_dir=$(CDPATH= cd -P "$(dirname "$0")" && pwd) || guard_dir=""
 
 # EVERY GUARD ON PATH IS SKIPPED, NOT JUST THIS ONE. Excluding only its own
 # directory made two shims select each other: an installed guard and a checkout
-# guard both ahead of tmux left each one re-execing the other forever, and
-# because the real tmux is resolved before the command is dispatched, an
-# ordinary `tmux list-sessions` hung the same way a teardown did. A guard is
-# recognised the way the integration suite already recognises one — a `#!`
-# script rather than the tmux binary — narrowed to the directory name gang
-# installs it under, so a fixture that legitimately puts a shell script called
-# tmux on PATH is still the tmux this shim runs.
-guard_is_guard() { # $1 candidate directory
-  case "$1" in
-    gang-tmux-guard|*/gang-tmux-guard) ;;
-    *) return 1 ;;
-  esac
-  [ "$(head -c 2 "$1/tmux" 2>/dev/null)" = '#!' ]
-}
-
+# guard both ahead of tmux left each one re-execing the other forever. A guard
+# is a `#!` script in a directory named gang-tmux-guard, so a fixture that puts
+# a shell script called tmux on PATH is still the tmux this shim runs.
 real_tmux=""
 saved_ifs=$IFS
 IFS=:
 for entry in $PATH; do
   [ -n "$entry" ] || entry=.
+  [ -x "$entry/tmux" ] && [ ! -d "$entry/tmux" ] || continue
   case "$entry" in
-    "$guard_dir") continue ;;
+    gang-tmux-guard|*/gang-tmux-guard)
+      first=""
+      IFS= read -r first < "$entry/tmux" || :
+      case "$first" in '#!'*) continue ;; esac ;;
   esac
-  if [ -x "$entry/tmux" ] && [ ! -d "$entry/tmux" ]; then
-    guard_is_guard "$entry" && continue
-    real_tmux="$entry/tmux"
-    break
-  fi
+  real_tmux="$entry/tmux"
+  break
 done
 IFS=$saved_ifs
 
 [ -n "$real_tmux" ] || {
-  printf 'gang tmux guard: no tmux on PATH beyond this shim (%s)\n' "$guard_dir" >&2
+  printf 'gang tmux guard: no tmux on PATH beyond this shim (%s)\n' "$0" >&2
   exit 127
 }
 
-guard_wait_socket=""
-run_real() {
-  if [ -n "$guard_wait_socket" ]; then
-    exec "$real_tmux" -S "$guard_wait_socket" "$@"
-  fi
-  exec "$real_tmux" "$@"
-}
-
-# STDERR CAN BE THROWN AWAY BY THE COMMAND BEING REFUSED. Duplicate each
-# guard-owned refusal onto stdout whenever stderr is not a terminal. Agent
-# harnesses capture both streams into ordinary files, so requiring stdout itself
-# to be a tty would reproduce the silent refusal that this surface prevents.
-guard_say() { # $1 complete diagnostic line
-  printf '%s\n' "$1" >&2
-  if [ ! -t 2 ]; then
-    printf '%s\n' "$1"
-  fi
-}
-
-# THE LOG ROOT IS FIXED AT HITCH TIME. A test may redirect its ordinary state
-# root, but its teardown verdict must still outlive that redirection. Gang
-# exports the UID it already read for this invocation; a direct tmux call has
-# no such cache and resolves its caller here as before.
-case "${GANGLINE_PROCESS_UID:-}" in
-  ''|*[!0-9]*) guard_uid="$(id -u 2>/dev/null || echo 0)" ;;
-  *) guard_uid="$GANGLINE_PROCESS_UID" ;;
+case " $* " in
+  *" kill-se"*|*" wait-for "*) ;;
+  *) exec "$real_tmux" "$@" ;;
 esac
-# The default root is the one bin/gang resolves, from the file both source.
-# Losing it costs only where a verdict is logged, never the verdict, so the
-# guard says so and keeps guarding rather than refusing every tmux call.
-if [ -n "$guard_dir" ] && [ -r "$guard_dir/../gang-state-root" ]; then
-  # shellcheck source=libexec/gang-state-root
-  . "$guard_dir/../gang-state-root"
-  gangline_state_root_resolve "$guard_uid"
-  default_guard_state=$GANGLINE_STATE_DEFAULT
-else
-  guard_say "gang tmux guard: cannot read ${guard_dir:-its own directory}/../gang-state-root, so its verdicts are logged under /tmp/gangline-$guard_uid, which may not be where gang keeps this team's state; reinstall gangline"
-  default_guard_state="/tmp/gangline-$guard_uid"
-fi
-guard_state="${GANG_LOCK_DIR:-$default_guard_state}"
-team_guard_state="${GANG_TMUX_GUARD_LOG_DIR:-$default_guard_state}"
 
-note_append() { # $1 state, $2 verdict, rest = argv
-  note_state=$1
-  note_verdict=$2
-  shift 2
-  [ -d "$note_state" ] || return 0
-  printf '%s\t%s\t%s\t%s\t%s\n' \
-    "$(date -u +%Y-%m-%dT%H:%M:%SZ 2>/dev/null || echo unknown-time)" \
-    "$note_verdict" "${GANG_SESSION:-unknown-session}" "${TMUX_PANE:-no-pane}" "tmux $*" \
-    >> "$note_state/tmux-guard.log" 2>/dev/null || true
-}
-
-note() { # $1 verdict, rest = argv, appended where it outlives the pane
-  verdict=$1
-  shift
-  note_append "$guard_state" "$verdict" "$@"
-  [ "$team_guard_state" = "$guard_state" ] \
-    || note_append "$team_guard_state" "$verdict" "$@"
-  [ "$guard_state" = "$default_guard_state" ] \
-    || [ "$team_guard_state" = "$default_guard_state" ] \
-    || note_append "$default_guard_state" "$verdict" "$@"
-  # CHECKED AFTER WRITING. A root retired while this guard ran keeps the line,
-  # and the root that replaced it gets it too, so the log every later process
-  # reads misses nothing written after the marker.
-  [ -n "${GANGLINE_STATE_MARKER:-}" ] || return 0
-  for note_old in "$guard_state" "$team_guard_state" "$default_guard_state"; do
-    [ -e "$note_old/$GANGLINE_STATE_MARKER" ] || continue
-    gangline_state_root_resolve "$guard_uid"
-    case "$GANGLINE_STATE_DEFAULT" in
-      "$guard_state"|"$team_guard_state"|"$default_guard_state") ;;
-      *) note_append "$GANGLINE_STATE_DEFAULT" "$verdict" "$@" ;;
-    esac
-    return 0
-  done
-}
-
-# RETAIN ONLY TMUX'S SOCKET SELECTORS. The actual target is asked of tmux below;
-# duplicating tmux's path rules here is the defect this guard exists to avoid.
+# Socket selectors belong to tmux's global option prefix; once a command begins,
+# a word such as wait-for's `-S` is that command's own flag. A `;` word starts
+# the next command, which may itself be a teardown.
 socket=""
 socket_specified=0
 label=""
-seen_command=""
+command=""
+teardown=""
 prev=""
-unknown_global=""
+at_command=1
 for word in "$@"; do
   if [ -n "$prev" ]; then
     case "$prev" in
       -S) socket=$word ;;
       -L) label=$word ;;
-      -f|-c|-T) : ;;
     esac
     prev=""
     continue
   fi
-  # Socket selectors belong to tmux's global option prefix. Once the command
-  # begins, a word such as wait-for's `-S` is that command's own flag.
-  [ -z "$seen_command" ] || continue
-  case "$word" in
-    -S) socket_specified=1; prev=-S ;;
-    -L) prev=-L ;;
-    -f|-c|-T) prev=$word ;;
-    -f?*|-c?*|-T?*) : ;;
-    -S*) socket_specified=1; socket=${word#-S} ;;
-    -L*) label=${word#-L} ;;
-    --) : ;;
-    -*) flags=${word#-}
-        while [ -n "$flags" ]; do
-          flag=${flags%"${flags#?}"}
-          case "$flag" in 2|C|D|l|N|u|v|V) ;; *) unknown_global=$word; break ;; esac
-          flags=${flags#?}
-        done ;;
-    *) [ -n "$seen_command" ] || seen_command=$word ;;
-  esac
+  if [ -z "$command" ]; then
+    case "$word" in
+      -S) socket_specified=1; prev=-S; continue ;;
+      -S*) socket_specified=1; socket=${word#-S}; continue ;;
+      -L) prev=-L; continue ;;
+      -L*) label=${word#-L}; continue ;;
+      -f|-c|-T) prev=$word; continue ;;
+      -*) continue ;;
+    esac
+  fi
+  if [ "$at_command" -eq 1 ]; then
+    [ -n "$command" ] || command=$word
+    case "$word" in kill-ser*|kill-ses*) teardown=$word ;; esac
+    at_command=0
+  fi
+  [ "$word" != ';' ] || at_command=1
 done
 
-# WAIT-FOR IS THE ONE NONDESTRUCTIVE TMUX PRIMITIVE AN AGENT LAUNCH NEEDS.
-# Test collars and user shells use it as an event barrier. Since TMUX itself is
-# withheld, route only this verb through the launch-time socket. Every teardown
-# and mutation still reaches tmux's unoccupied default unless it is explicitly
-# aimed, where the ordinary guard classification below applies.
-if [ "$socket_specified" -eq 0 ] && [ -z "$label" ] \
-   && [ -z "${TMUX:-}" ] && [ "$seen_command" = wait-for ] \
-   && [ "${GANG_TMUX_GUARD_AGENT:-}" = 1 ]; then
+# WAIT-FOR IS THE ONE TMUX PRIMITIVE AN AGENT'S SHELLS NEED FROM THE TEAM'S
+# SERVER. Test collars and user shells use it as an event barrier, and TMUX is
+# withheld from the pane, so an unaimed wait-for goes to the launch socket.
+if [ "$command" = wait-for ] && [ -z "$teardown" ] \
+   && [ "$socket_specified" -eq 0 ] && [ -z "$label" ] && [ -z "${TMUX:-}" ]; then
   case "${GANG_TMUX_SOCKET:-}" in
-    /*) socket=$GANG_TMUX_SOCKET; guard_wait_socket=$GANG_TMUX_SOCKET ;;
+    /*) exec "$real_tmux" -S "$GANG_TMUX_SOCKET" "$@" ;;
   esac
 fi
+[ -n "$teardown" ] || exec "$real_tmux" "$@"
 
-# `tmux -S "$scratch_socket"` is only explicit when the variable has a value.
-# An empty value is tmux's default-server spelling in practice, which turns a
-# failed fixture setup into a command against the caller's team. Refuse before
-# every other branch, including an override: a scratch teardown with no socket
-# was never an intentional request to use the default socket.
-guard_refuse_empty_socket() {
-  note refused-empty-socket "$@"
-  guard_say "gang tmux guard: REFUSED — -S needs a nonempty socket path. An empty scratch-socket variable may fall back to tmux's default server; create and pass the private socket explicitly."
-  exit 3
-}
-[ "$socket_specified" -eq 0 ] || [ -n "$socket" ] || guard_refuse_empty_socket "$@"
-
-# AN OVERRIDE BELONGS TO A DETACHED OPERATOR, NEVER TO AN AGENT. `hitch`
-# marks the launch before its @gl_agent registration is written, closing that
-# short launch race; the option check also protects an already registered pane
-# whose environment predates the marker. This is still not a security boundary
-# against a process that bypasses PATH, but it removes the accidental one-word
-# bypass that killed a live team.
-guard_agent_context() {
-  [ "${GANG_TMUX_GUARD_AGENT:-}" = 1 ] && return 0
-  [ -n "${TMUX_PANE:-}" ] || return 1
-  guard_pane_agent="$("$real_tmux" show-options -wqv -t "$TMUX_PANE" @gl_agent 2>/dev/null)" \
-    || guard_pane_agent=""
-  [ -n "$guard_pane_agent" ]
-}
-
-# AN UNKNOWN GLOBAL FLAG MAY TAKE A VALUE. Treating that value as the command
-# lets a later destructive verb pass unclassified when tmux learns a new global
-# option before this guard does. Agent launches fail closed until the parser is
-# taught the option; detached operator clients retain tmux's native handling.
-if [ -n "$unknown_global" ] && guard_agent_context; then
-  note refused-unclassified-global-option "$@"
-  guard_say "gang tmux guard: REFUSED — tmux global option '$unknown_global' is not classified by this guard, so an agent invocation cannot safely determine which later word is the command. Update Gangline before using that option from an agent pane."
-  exit 3
-fi
-
-if [ "${GANG_TMUX_GUARD:-on}" = off ]; then
-  if guard_agent_context; then
-    note refused-agent-override "$@"
-    guard_say 'gang tmux guard: REFUSED — GANG_TMUX_GUARD=off is not honoured from a Gangline agent pane. Run an intentional whole-team teardown from a detached operator shell; an agent must use a nonempty private -S socket.'
-    exit 3
-  fi
-  note override "$@"
-  run_real "$@"
-fi
-
-missing_tmpdir=""
-if [ -z "$socket" ] && [ -n "${TMUX_TMPDIR:-}" ] \
-   && [ ! -d "$TMUX_TMPDIR" ]; then
-  # $TMUX still wins when no command-line selector was supplied, so a missing
-  # TMUX_TMPDIR is irrelevant in that case. -L selects through TMUX_TMPDIR and
-  # therefore remains dangerous even inside a pane; -S was excluded above.
-  if [ -n "$label" ] || [ -z "${TMUX:-}" ]; then
-    missing_tmpdir=$TMUX_TMPDIR
-  fi
-fi
-
-guard_refuse_missing_tmpdir() {
-  note refused-missing-tmux-tmpdir "$@"
-  if [ -n "$socket" ]; then
-    guard_say "$(printf 'gang tmux guard: REFUSED — TMUX_TMPDIR names a directory that does not exist: %s. tmux resolved this invocation to %s instead. Create the directory before using it, or aim the command with a nonempty -S socket. A detached operator context may use an explicit override; an agent pane cannot.' \
-      "$missing_tmpdir" "$socket")"
-  else
-    guard_say "$(printf 'gang tmux guard: REFUSED — TMUX_TMPDIR names a directory that does not exist: %s. tmux may silently use its default socket instead. Create the directory before using it, or aim the command with a nonempty -S socket. A detached operator context may use an explicit override; an agent pane cannot.' \
-      "$missing_tmpdir")"
-  fi
-  exit 3
-}
-
-guard_refuse_unreadable_server() {
-  note refused-unreadable-server "$@"
-  guard_say "$(printf 'gang tmux guard: REFUSED — Gangline could not read the window registrations on %s, so it will not tear down a server whose team state it cannot determine. Inspect the socket; a detached operator context may use an explicit override, but an agent pane cannot.' \
-    "$socket")"
-  exit 3
-}
-
-# TMUX 3.2A'S QUIET WINDOW-OPTION READ DOES NOT EXPOSE ITS TARGET. Both an
-# unset option on a readable window and the same read against a missing window
-# exit zero with no output. `list-windows -t` does retain that observation, so
-# take it immediately before an explicitly targeted quiet read and carry its
-# nonzero status to the caller instead of spending absence as an unset option.
-option_read_window=""
-option_read_quiet=""
-option_read_target=""
-case "$seen_command" in
-  show-options)
-    option_read_command=""
-    option_read_prev=""
-    for word in "$@"; do
-      if [ -z "$option_read_command" ]; then
-        [ "$word" != "$seen_command" ] || option_read_command=1
-        continue
-      fi
-      if [ -n "$option_read_prev" ]; then
-        option_read_target=$word
-        option_read_prev=""
-        continue
-      fi
-      case "$word" in
-        -t) option_read_prev=-t ;;
-        -t*) option_read_target=${word#-t} ;;
-        -*) option_read_flags=${word#-}
-            case "$option_read_flags" in *w*) option_read_window=1 ;; esac
-            case "$option_read_flags" in *q*) option_read_quiet=1 ;; esac ;;
-      esac
-    done ;;
-esac
-
-observe_option_window() { # $1 explicit target; return tmux's availability status
-  if [ -n "$socket" ]; then
-    "$real_tmux" -S "$socket" list-windows -t "$1" \
-      -f 0 -F '#{window_id}' >/dev/null 2>&1
-  elif [ -n "$label" ]; then
-    "$real_tmux" -L "$label" list-windows -t "$1" \
-      -f 0 -F '#{window_id}' >/dev/null 2>&1
-  else
-    "$real_tmux" list-windows -t "$1" \
-      -f 0 -F '#{window_id}' >/dev/null 2>&1
-  fi
-}
-
-observe_option_server() { # return whether the selected tmux server answers
-  if [ -n "$socket" ]; then
-    "$real_tmux" -S "$socket" display-message \
-      -p '#{socket_path}' >/dev/null 2>&1
-  elif [ -n "$label" ]; then
-    "$real_tmux" -L "$label" display-message \
-      -p '#{socket_path}' >/dev/null 2>&1
-  else
-    "$real_tmux" display-message -p '#{socket_path}' >/dev/null 2>&1
-  fi
-}
-
-case "$seen_command" in
-  kill-server|kill-session) ;;
-  *) [ -z "$missing_tmpdir" ] || guard_refuse_missing_tmpdir "$@"
-     if [ -n "$option_read_window" ] && [ -n "$option_read_quiet" ] \
-        && [ -n "$option_read_target" ]; then
-       option_read_rc=0
-       observe_option_window "$option_read_target" || option_read_rc=$?
-       if [ "$option_read_rc" -ne 0 ]; then
-         if observe_option_server; then
-           note unavailable-window-option "$@"
-           printf 'gang tmux guard: window option target %s is unavailable; refusing to report an empty value because tmux cannot distinguish it from an unset option.\n' \
-             "$option_read_target" >&2
-           exit 1
-         fi
-         note unavailable-window-option-server "$@"
-         printf 'gang tmux guard: the tmux server for window option target %s is unavailable, so its option record could not be read.\n' \
-           "$option_read_target" >&2
-         exit 2
-       fi
-     fi
-     run_real "$@" ;;
-esac
-
-# ASK THE CLIENT THAT WILL RUN THE COMMAND. A successful display-message is
-# tmux's own answer under -S, -L, $TMUX, TMUX_TMPDIR, and its fallback rules.
-# An explicit socket remains in `socket` if nothing answers there, so the
-# longstanding aimed-and-gone path can still reach tmux for its ordinary error.
-resolved_socket=""
-if [ -n "$socket" ]; then
-  resolved_socket="$("$real_tmux" -S "$socket" display-message \
-    -p '#{socket_path}' 2>/dev/null)" || resolved_socket=""
-elif [ -n "$label" ]; then
-  resolved_socket="$("$real_tmux" -L "$label" display-message \
-    -p '#{socket_path}' 2>/dev/null)" || resolved_socket=""
+# The socket this teardown reaches, worked out the way tmux works it out:
+# -S as given, else $TMUX, else the label (default `default`) under
+# TMUX_TMPDIR, or under /tmp when that directory does not exist.
+uid="${GANGLINE_PROCESS_UID:-$(id -u)}"
+host_dir="/tmp/tmux-$uid"
+if [ "$socket_specified" -eq 1 ]; then
+  target=$socket
+  case "$target" in ''|/*) ;; *) target="$PWD/$target" ;; esac
+elif [ -z "$label" ] && [ -n "${TMUX:-}" ]; then
+  target=${TMUX%%,*}
 else
-  resolved_socket="$("$real_tmux" display-message \
-    -p '#{socket_path}' 2>/dev/null)" || resolved_socket=""
-fi
-if [ -n "$resolved_socket" ]; then
-  socket=$resolved_socket
-elif [ -z "$socket" ] && [ -z "$label" ] && [ -n "${TMUX:-}" ]; then
-  # With neither command-line selector, tmux could not answer about this pane's
-  # own server. Preserve the only path known to be in play so the unreadable-
-  # server branch fails closed. A failed -L probe still names its label, not
-  # this pane's server, and takes the ordinary unreachable-target path below.
-  socket=${TMUX%%,*}
-fi
-[ -z "$missing_tmpdir" ] || guard_refuse_missing_tmpdir "$@"
-
-if [ -z "$resolved_socket" ]; then
-  if [ -n "${TMUX:-}" ] && [ "$socket" = "${TMUX%%,*}" ]; then
-    guard_refuse_unreadable_server "$@"
-  fi
-  note fall-open-unreachable-socket "$@"
-  run_real "$@"
+  dir=/tmp
+  [ -z "${TMUX_TMPDIR:-}" ] || [ ! -d "$TMUX_TMPDIR" ] || dir=${TMUX_TMPDIR%/}
+  target="$dir/tmux-$uid/${label:-default}"
 fi
 
-# THE RECORD IS A HINT, NEVER AUTHORITY. A live server's window registrations
-# below decide the guard. Keeping the record lets its usual team name enrich a
-# verdict, but a sandbox override that makes it vanish cannot make a teardown
-# safe.
-recorded_team=""
-session="${GANG_SESSION:-}"
-case "$session" in
-  ''|*/*|.|..) ;;
-  *) team_record="$guard_state/teams/$session"
-     if [ -f "$team_record" ]; then
-       IFS= read -r team_socket < "$team_record" || team_socket=""
-       [ "$team_socket" != "$socket" ] || recorded_team="$session"
-     fi ;;
+# `-S "$scratch_socket"` with an empty variable reaches tmux's default server,
+# which turns a failed fixture setup into a teardown of the caller's team.
+case "$target" in
+  '') why='-S names no socket, so tmux would use its default server' ;;
+  "${GANG_TMUX_SOCKET:-/}") why="$target is this team's launch socket" ;;
+  "$host_dir/default"|"$host_dir/gangline") why="$target is the host's own tmux server" ;;
+  *) exec "$real_tmux" "$@" ;;
 esac
 
-# This is read through the real tmux, never the shim: an invocation only gains
-# protection from a registration the server itself still has. Return 0 with
-# protected_session set, 1 if no Gangline window is there, or 2 if the reading
-# itself failed. The latter is not permission to tear down an unknown server.
-protected_session=""
-guard_agent_on_socket() { # $1 socket, optional $2 session target
-  guard_socket=$1
-  guard_target=${2:-}
-  if [ -n "$guard_target" ]; then
-    guard_rows="$("$real_tmux" -S "$guard_socket" list-windows -t "$guard_target" \
-      -f '#{!=:#{@gl_agent},}' -F '#{session_name}' 2>/dev/null)" || return 2
-  else
-    guard_rows="$("$real_tmux" -S "$guard_socket" list-windows -a \
-      -f '#{!=:#{@gl_agent},}' -F '#{session_name}' 2>/dev/null)" || return 2
-  fi
-  protected_session=""
-  while IFS= read -r guard_session; do
-    [ -n "$guard_session" ] || continue
-    protected_session="$guard_session"
-    return 0
-  done <<EOF
-$guard_rows
-EOF
-  return 1
-}
-
-guard_unreadable_server() {
-  # Reaching this branch means display-message already proved a live server at
-  # `socket`, but its registrations could not be read. That is unknown, not
-  # evidence that teardown is safe. A socket with no answering server takes the
-  # earlier fall-open path and lets tmux report its ordinary connection error.
-  guard_refuse_unreadable_server "$@"
-}
-
-guard_team_name() {
-  [ -n "$recorded_team" ] && [ "$recorded_team" = "$protected_session" ] \
-    && { printf '%s' "$recorded_team"; return; }
-  printf '%s' "$protected_session"
-}
-
-if [ "$seen_command" = kill-server ]; then
-  guard_rc=0
-  guard_agent_on_socket "$socket" || guard_rc=$?
-  case "${guard_rc:-0}" in
-    1) note fall-open-no-gangline-agent "$@"; run_real "$@" ;;
-    2) guard_unreadable_server "$@" ;;
-  esac
-  team="$(guard_team_name)"
-  note refused "$@"
-  guard_say "$(printf 'gang tmux guard: REFUSED — this kill-server would end %s, the tmux server holding team '\''%s'\'' and every agent in it.' \
-    "$socket" "$team")"
-  guard_say 'Inside a pane $TMUX names this server and outranks TMUX_TMPDIR, so a sandbox-looking command still lands here.'
-  guard_say "$(printf 'Aim it: naming this socket changes nothing — kill-server is refused for any socket carrying an agent window. It opens once none does, so end them first (gang drop <name> per agent window) and the same command passes. To end the whole team on purpose, run gang down %s from a shell without this guard on its PATH.' \
-    "$team")"
-  guard_say 'A detached operator context may use GANG_TMUX_GUARD=off; an agent pane cannot.'
-  exit 3
+# Refusals only, under the caller's state root, so a fixture that redirects
+# GANG_LOCK_DIR keeps its rows out of the live log.
+state_root=${GANG_LOCK_DIR:-}
+if [ -z "$state_root" ] && [ -r "$(dirname "$0")/../gang-state-root" ]; then
+  # shellcheck source=libexec/gang-state-root
+  . "$(dirname "$0")/../gang-state-root"
+  gangline_state_root_resolve "$uid"
+  state_root=$GANGLINE_STATE_DEFAULT
+fi
+if [ -n "$state_root" ] && [ -d "$state_root" ]; then
+  printf '%s\trefused\t%s\t%s\ttmux %s\n' \
+    "$(date -u +%Y-%m-%dT%H:%M:%SZ)" "${GANG_SESSION:-unknown-session}" \
+    "${TMUX_PANE:-no-pane}" "$*" >> "$state_root/tmux-guard.log"
 fi
 
-# KILL-SESSION IS DECIDED BY THE TARGET'S OWN WINDOWS. No -t is this pane's
-# session, so any Gangline registration on the reached server is enough to
-# refuse it. An explicit -t is allowed only when that target session itself has
-# none; another disposable session sharing a server remains a valid teardown.
-target=""
-prev=""
-for word in "$@"; do
-  if [ -n "$prev" ]; then
-    [ "$prev" != -t ] || target=$word
-    prev=""
-    continue
-  fi
-  case "$word" in
-    -t) prev=-t ;;
-    -t*) target=${word#-t} ;;
-  esac
-done
-
-if [ -z "$target" ]; then
-  guard_rc=0
-  guard_agent_on_socket "$socket" || guard_rc=$?
-  case "$guard_rc" in
-    1) note fall-open-no-gangline-agent "$@"; run_real "$@" ;;
-    2) guard_unreadable_server "$@" ;;
-  esac
-  team="$(guard_team_name)"
-  note refused "$@"
-  guard_say "$(printf 'gang tmux guard: REFUSED — this kill-session names no target, so it ends the session this pane is in: team '\''%s'\'' on %s.' \
-    "$team" "$socket")"
-  guard_say "$(printf 'Aim it: kill-session opens on a target session that carries no agent window; naming this one changes nothing while it does. End its agents first (gang drop <name> per agent window), or run gang down %s from a shell without this guard on its PATH to end the whole team on purpose.' \
-    "$team")"
-  guard_say 'A detached operator context may use GANG_TMUX_GUARD=off; an agent pane cannot.'
-  exit 3
-fi
-
-guard_rc=0
-guard_agent_on_socket "$socket" "$target" || guard_rc=$?
-case "$guard_rc" in
-  0) team="$(guard_team_name)"
-     note refused "$@"
-     guard_say "$(printf 'gang tmux guard: REFUSED — this kill-session targets team '\''%s'\'' itself, on %s.' \
-       "$team" "$socket")"
-     guard_say "$(printf 'Aim it: kill-session opens on a target session that carries no agent window; naming this one changes nothing while it does. End its agents first (gang drop <name> per agent window), or run gang down %s from a shell without this guard on its PATH to end the whole team on purpose.' \
-       "$team")"
-     guard_say 'A detached operator context may use GANG_TMUX_GUARD=off; an agent pane cannot.'
-     exit 3 ;;
-  2) guard_unreadable_server "$@" ;;
-esac
-
-# The target is verified free of Gangline windows. Read the whole server only
-# to explain the normal, useful case where a disposable session shares it; a
-# failure here does not erase the target-specific proof that made this safe.
-guard_rc=0
-guard_agent_on_socket "$socket" || guard_rc=$?
-case "$guard_rc" in
-  0) team="$(guard_team_name)"
-     note allowed-on-team-server "$@"
-     printf 'gang tmux guard: this kill-session is on %s, the same tmux server that holds team '\''%s'\''. Running it: it names another session.\n' \
-       "$socket" "$team" >&2 ;;
-  1) note fall-open-no-gangline-agent "$@" ;;
-  2) note allowed-verified-target "$@" ;;
-esac
-run_real "$@"
+# An agent harness may discard stderr, so the refusal goes to stdout as well
+# whenever stderr is not a terminal.
+say() {
+  printf '%s\n' "$1" >&2
+  [ -t 2 ] || printf '%s\n' "$1"
+}
+say "gang tmux guard: REFUSED $teardown: $why."
+say 'Aim it with -S at a private socket you created, or end a team with gang down from a shell that is not an agent pane.'
+exit 3

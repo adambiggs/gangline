@@ -32,8 +32,8 @@ test/gate.sh --assert-owned >/dev/null
 # scripts selectively, so a sourced helper would make an omitted copy fail
 # after the test has already started.
 fixture_environment_boundary='unset TMUX TMUX_PANE GANG_TMUX_SOCKET GANG_TMUX_GUARD_AGENT \
-  GANG_TMUX_GUARD_LOG_DIR GANG_CONFIG_DIR GANG_SESSION GANG_COLLARS \
-  GANG_LOCK_DIR GANG_ARCHIVE_DIR GANG_SCOPE GANG_TMUX_GUARD'
+  GANG_CONFIG_DIR GANG_SESSION GANG_COLLARS \
+  GANG_LOCK_DIR GANG_ARCHIVE_DIR GANG_SCOPE'
 for fixture_entry in test/gate.sh test/integration.sh test/smoke.sh test/e2e.sh \
   test/leadeval.sh test/role-briefs.sh test/tmux-option-bytes.sh; do
   fixture_head="$(sed -n '1,140p' "$fixture_entry")"

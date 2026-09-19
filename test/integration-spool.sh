@@ -3207,45 +3207,16 @@ equal "outside a test the bases are /tmp and /run/user" \
     . "$1/libexec/gang-state-root"
     gangline_state_root_resolve "$2"
     printf "|%s|" "$GANGLINE_STATE_LEGACY"' sh "$ROOT" "$stateroot_uid")"
-stateroot_guard_log="$(env -u GANG_LOCK_DIR -u GANG_TMUX_GUARD_LOG_DIR GANG_TEST_COLLARS=1 \
+stateroot_guard_log="$(env -u GANG_LOCK_DIR GANG_TEST_COLLARS=1 \
   GANG_TEST_STATE_BASES="$stateroot_base/a/tmp:$stateroot_base/a/run" \
   GANGLINE_PROCESS_UID="$stateroot_uid" sh -c '
     mkdir -p "$1"
-    "$2/libexec/gang-tmux-guard/tmux" -S "$3/no-such-socket" kill-server > "$3/stateroot-guard.out" 2>&1 || :
+    "$2/libexec/gang-tmux-guard/tmux" -S "" kill-server > "$3/stateroot-guard.out" 2>&1 || :
     cat "$1/tmux-guard.log" 2>/dev/null || :' sh \
   "$stateroot_base/a/run/$stateroot_uid/gangline" "$ROOT" "$RUN_ROOT")"
 # source-guard: whole-surface@bd0b5a81f900: the surface is only the log file under a directory this run just created, and the guard is the only writer of that file name
 contains "the tmux guard logs under the same default root gang resolves" \
   "$stateroot_guard_log" "kill-server"
-
-# A guard that resolved the /tmp root before a retirement marked it. The tmux
-# it runs marks the root on its first call, before the guard logs its verdict.
-mkdir -p "$stateroot_base/i/tmp" "$stateroot_base/i/run/$stateroot_uid/gangline" "$stateroot_base/i/bin"
-mkdir -m 700 "$stateroot_base/i/tmp/gangline-$stateroot_uid"
-cat > "$stateroot_base/i/bin/tmux" <<'EOF'
-#!/bin/sh
-bin=${0%/*}
-PATH=${PATH#"$bin:"}
-[ -e "$STATEROOT_I_OLD/retired" ] \
-  || printf 'gangline runtime state moved to %s\n' "$STATEROOT_I_NEW" > "$STATEROOT_I_OLD/retired"
-exec tmux "$@"
-EOF
-chmod +x "$stateroot_base/i/bin/tmux"
-env -u GANG_LOCK_DIR -u GANG_TMUX_GUARD_LOG_DIR GANG_TEST_COLLARS=1 \
-  GANG_TEST_STATE_BASES="$stateroot_base/i/tmp:$stateroot_base/i/run" \
-  GANGLINE_PROCESS_UID="$stateroot_uid" PATH="$stateroot_base/i/bin:$PATH" \
-  STATEROOT_I_OLD="$stateroot_base/i/tmp/gangline-$stateroot_uid" \
-  STATEROOT_I_NEW="$stateroot_base/i/run/$stateroot_uid/gangline" \
-  "$ROOT/libexec/gang-tmux-guard/tmux" -S "$RUN_ROOT/no-such-socket" kill-server \
-  > "$RUN_ROOT/stateroot-guard-i.out" 2>&1 || :
-if [ -f "$stateroot_base/i/tmp/gangline-$stateroot_uid/retired" ]; then
-  pass "the guard's tmux marked the root while the guard ran"
-else
-  fail "the guard's tmux marked the root while the guard ran" "$(cat "$RUN_ROOT/stateroot-guard-i.out")"
-fi
-# source-guard: whole-surface@bd0b5a81f900: the surface is only the log file under a directory this run just created, and the guard is the only writer of that file name
-contains "a guard that resolved a root retired under it also logs under the new root" \
-  "$(cat "$stateroot_base/i/run/$stateroot_uid/gangline/tmux-guard.log" 2>&1)" "kill-server"
 
 # Retirement: a /tmp root whose only recorded team is gone, holding one spool
 # with mail, is archived and moved aside when a session opens.

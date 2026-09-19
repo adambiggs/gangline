@@ -1136,35 +1136,21 @@ or `tmux -L <name>`. Because agents run under the operator's uid, an absolute
 client explicitly aimed with the internal socket value can still reach that
 server; the socket isolation is not a privilege boundary.
 
-With `GANG_TMUX_GUARD=on`, the default, `hitch` puts a `tmux` shim at the front
-of every agent's `PATH`. For teardown it asks tmux for `#{socket_path}`, then
-asks that server for its live `@gl_agent` window registrations. A `kill-server`
-is refused when any registration is present; a `kill-session` is refused when
-it names a registered session or names no session. A server that answers the
-socket probe but whose registrations cannot be read refuses too: unknown team
-state is not permission to tear it down. A team record can corroborate the
-displayed name, but is not protective authority: a Gangline test may
-legitimately replace `GANG_SESSION` and `GANG_LOCK_DIR` with a fresh sandbox.
-An aimed private session with no registration runs, loudly when it shares a
-server with one. An unreachable explicit private socket reaches real tmux for
-its ordinary error. A refusal whose stderr is not a terminal is repeated on
-stdout, including when both streams are captured by an agent harness.
+`hitch` puts a `tmux` shim at the front of every agent's `PATH`. It refuses a
+`kill-server` or `kill-session` that would reach the team's launch socket, the
+host's `default` or `gangline` server, or the default server through an empty
+`-S`, and hands every other invocation to tmux untouched. The socket is worked
+out the way tmux works it out: `-S` as given, else `$TMUX`, else the `-L` label
+under `TMUX_TMPDIR`. tmux 3.2a silently ignores a `TMUX_TMPDIR` whose directory
+is absent and uses `/tmp` instead, so the shim does the same, and an unaimed
+teardown under a missing sandbox root is refused as the host's own server. A
+refusal exits 3, is repeated on stdout when stderr is not a terminal, and is
+appended to `tmux-guard.log` in the runtime state root, `GANG_LOCK_DIR`.
 
-tmux 3.2a silently ignores a `TMUX_TMPDIR` whose directory is absent and uses
-its normal socket root instead. The guard therefore refuses every command that
-would resolve through such a root, before fixture traffic can reach another
-server. An explicit `-S` remains aimed, and an unqualified command inside a pane
-still follows `$TMUX`; neither depends on `TMUX_TMPDIR`.
-
-It is a guardrail, not a boundary: a detached, unregistered operator context
-may put `GANG_TMUX_GUARD=off` in front of one command, and that use is recorded.
-The same value is refused from a hitched agent pane, including the small launch
-interval before its `@gl_agent` registration, so it cannot become an accidental
-agent bypass. Every teardown verdict — refusal, override, or fall-open — is
-appended to `tmux-guard.log` under the caller's `GANG_LOCK_DIR` and the original
-team log root `hitch` exported as `GANG_TMUX_GUARD_LOG_DIR`; the default root is
-also used when distinct. `GANG_TMUX_GUARD_LOG_DIR` is internal launch provenance,
-not an operator configuration key. Those records outlive the pane that asked.
+It is a guardrail, not a boundary: an absolute client, or a teardown aimed at
+another socket, is not governed. `gang down` from an agent pane on the team's
+own server is refused with the rest; end a team from a shell that is not an
+agent pane.
 
 The guard addresses that 2026-08-17 class. It does not explain the 2026-08-24
 session death, where every tmux call in both live agents' transcripts was

@@ -30,8 +30,8 @@ set -euo pipefail
 # server next to a real team. Clear Gangline's explicit route and team
 # selection as well: this lane establishes every private value it needs below.
 unset TMUX TMUX_PANE GANG_TMUX_SOCKET GANG_TMUX_GUARD_AGENT \
-  GANG_TMUX_GUARD_LOG_DIR GANG_CONFIG_DIR GANG_SESSION GANG_COLLARS \
-  GANG_LOCK_DIR GANG_ARCHIVE_DIR GANG_SCOPE GANG_TMUX_GUARD
+  GANG_CONFIG_DIR GANG_SESSION GANG_COLLARS \
+  GANG_LOCK_DIR GANG_ARCHIVE_DIR GANG_SCOPE
 
 ROOT="$(cd -P "$(dirname "$0")/.." && pwd)"
 GANG="$ROOT/bin/gang"
@@ -242,15 +242,6 @@ teardown() {
     settle "stub exit" not_running "$STUB_PID" || leaked=1
   fi
   if [ -n "${TMUX_SOCKET:-}" ] && [ -S "$TMUX_SOCKET" ]; then
-    # END THE AGENT BEFORE ASKING FOR THE SERVER. Gangline's tmux guard refuses
-    # any kill-server aimed at a socket carrying a window with @gl_agent set,
-    # and it is right to: those are live agents, whoever started them. This lane
-    # hitches one, so its own teardown was refused, and because the status below
-    # was thrown away the refusal surfaced only as a leak — a tmux server and a
-    # live harness per run, with nothing in the report naming the cause. Drop
-    # what this lane hitched and the refusal is untrue rather than unenforced;
-    # the last window going takes the server with it, and the kill-server below
-    # is then the ordinary belt-and-braces on a socket that carries nobody.
     # A SWALLOWED kill-server IS INDISTINGUISHABLE FROM A SERVER THAT NEVER
     # DIED, and this lane runs a real harness inside that server. Ask the socket
     # rather than trusting the exit status of the command that was supposed to

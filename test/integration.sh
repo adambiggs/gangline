@@ -13,8 +13,8 @@ ROOT="$(cd -P "$(dirname "$0")/.." && pwd)"
 # In particular, a fixture-only collar must never become the live team's collar
 # inventory through an inherited tick or hook child.
 unset TMUX TMUX_PANE GANG_TMUX_SOCKET GANG_TMUX_GUARD_AGENT \
-  GANG_TMUX_GUARD_LOG_DIR GANG_CONFIG_DIR GANG_SESSION GANG_COLLARS \
-  GANG_LOCK_DIR GANG_ARCHIVE_DIR GANG_SCOPE GANG_TMUX_GUARD
+  GANG_CONFIG_DIR GANG_SESSION GANG_COLLARS \
+  GANG_LOCK_DIR GANG_ARCHIVE_DIR GANG_SCOPE
 GANG="$ROOT/bin/gang"
 : "${GANG_TEST_PATH_SHIM_GUARD:=$ROOT/test/path-shim-guard.sh}"
 export GANG_TEST_PATH_SHIM_GUARD

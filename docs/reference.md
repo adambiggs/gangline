@@ -2187,7 +2187,6 @@ Exactly these keys are settable:
 | `GANG_USAGE_LIGHTS` | `off` | `off` or increasing provider-used thresholds such as `90%,95%` |
 | `GANG_AUTO_RESUME` | `off` | `off` or one provider-used percentage such as `97%` at which a reset wake is armed automatically |
 | `GANG_SCOPE` | `off` | `off`, or `on` to launch each hitched harness, and the tmux server gang forks, in its own transient systemd user scope |
-| `GANG_TMUX_GUARD` | `on` | `on` enables normal guard enforcement. `off` is an explicit, logged override only from a detached, unregistered operator context; it cannot remove the shim from a hitched agent or bypass it from an agent pane. |
 | `GANG_BOOT_TIMEOUT` | `30` | initial startup readiness bound; after a positively identified gate, one foreground observation slice in seconds |
 | `GANG_GATE_LOOKS` | `60` | observations of an unanswered native first-run prompt before `hitch` stops waiting and exits 4 |
 | `GANG_CHURN_WAIT` | `0.5` | stable-pane observation interval |
@@ -2202,26 +2201,15 @@ sourcing the selected collar; put those values in a custom collar and point
 variables are refused. Any malformed file refuses every command, including
 native hooks; recovery is in `docs/operations.md`.
 
-`hitch` also exports `GANG_TMUX_GUARD_LOG_DIR` and `GANG_TMUX_SOCKET` into
-guarded agent launches. The first is the launch-time team log root, retained
-when a test redirects `GANG_LOCK_DIR` so each teardown verdict remains
-attributable. The second lets the shim route only a bare `tmux wait-for` after
-`TMUX` has been removed. Both are internal launch values, not settable
-configuration keys.
-
-Every hitched agent receives the tmux shim, including when its launch
-environment has `GANG_TMUX_GUARD=off`. The shim records and honours that
-override only outside a Gangline agent context, for example a detached operator
-shell. A pane registered with `@gl_agent` (and the brief launch interval before
-that registration) refuses it. If stderr is not a terminal, the shim also
-prints its refusal on stdout, including when an agent harness captures both
-streams. `GANG_TMUX_SOCKET` is not a privilege boundary: a same-uid process can
-explicitly aim an unguarded client at it, while unaimed clients receive no team
-route. A tmux global option the shim does not recognize is refused from an agent
-context, because its following value could otherwise hide a destructive verb.
-Fixture and test teardown must use a nonempty explicit `tmux -S` socket; an
-empty socket is refused rather than allowed to fall back to tmux's default
-server.
+`hitch` also exports `GANG_TMUX_SOCKET` into agent launches, so the tmux shim
+can refuse teardown of the team's own server and route a bare `tmux wait-for`
+there after `TMUX` has been removed. It is an internal launch value, not a
+settable configuration key, and not a privilege boundary: a same-uid process
+can explicitly aim an unguarded client at it, while unaimed clients receive no
+team route. If stderr is not a terminal, the shim also prints its refusal on
+stdout, including when an agent harness captures both streams. Fixture and test
+teardown must use a nonempty explicit `tmux -S` socket; an empty socket is
+refused rather than allowed to fall back to tmux's default server.
 
 Doctrine is never written by Gangline. It must be a readable regular file with
 no NUL, no controls other than tab and newline, and valid UTF-8. Byte count does

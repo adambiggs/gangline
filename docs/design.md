@@ -193,13 +193,15 @@ kill aimed at a sandbox reached the live server and ended a 13-agent team. A
 team on a private socket also looked ended from any shell that had lost that
 environment.
 
-The tmux guard asks tmux which server an invocation would reach and authorizes
-teardown only from that server's live `@gl_agent` registrations; caller records
-may corroborate but never authorize. An absent `TMUX_TMPDIR` refuses every
-unaimed tmux command. `hitch` records the team's socket so `gang teams` and
+The tmux guard works out which socket a teardown would reach from the command
+line and tmux's own socket rules, and refuses `kill-server` and `kill-session`
+on the team's launch socket, the host's `default` and `gangline` servers, and an
+empty `-S`; a caller's records and variables can add a refusal, never an
+authorization. Every other command passes untouched, so an ordinary tmux call
+pays no probe. `hitch` records the team's socket so `gang teams` and
 `gang attach` can find it, and they ask the server rather than believe the
-record. Unreadable registrations refuse teardown. The guard is a guardrail, not
-a boundary: one variable still runs the command anyway.
+record. The guard is a guardrail, not a boundary: an absolute client is not
+governed.
 
 ## Every option reader reports failure instead of clearing or omitting state
 
