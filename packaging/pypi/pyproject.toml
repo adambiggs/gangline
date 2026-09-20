@@ -1,0 +1,20 @@
+[build-system]
+# >=77 for the PEP 639 SPDX license expression below; the license table form it
+# replaces is deprecated from that release on.
+requires = ["setuptools>=77"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "gangline"
+version = "0.9.0"
+description = "Reserved. https://gangline.ai"
+# No license-files: LICENSE lives at the repo root, outside this project dir.
+license = "Apache-2.0"
+readme = "README.md"
+requires-python = ">=3.9"
+
+[project.urls]
+Homepage = "https://gangline.ai"
+
+[tool.setuptools]
+py-modules = ["gangline"]

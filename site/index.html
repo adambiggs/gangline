@@ -1,0 +1,364 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <title>Gangline — CLI agents connected in tmux</title>
+  <meta name="description" content="Start Claude Code and Codex agents in tmux, deliver attributed messages, and inspect long-running sessions.">
+  <meta name="color-scheme" content="light dark">
+  <script>try{const t=localStorage.getItem('theme');if(t==='light'||t==='dark')document.documentElement.dataset.theme=t}catch{}</script>
+  <meta name="theme-color" content="#b9d2ee" media="(prefers-color-scheme: light)">
+  <meta name="theme-color" content="#071530" media="(prefers-color-scheme: dark)">
+  <link rel="preload" href="fonts/newsreader-latin.woff2" as="font" type="font/woff2" crossorigin>
+  <link rel="preload" href="fonts/instrument-sans-latin.woff2" as="font" type="font/woff2" crossorigin>
+  <style>
+    @font-face{font-family:'Newsreader';src:url('fonts/newsreader-latin.woff2') format('woff2');font-weight:200 800;font-style:normal;font-display:swap}
+    @font-face{font-family:'Newsreader';src:url('fonts/newsreader-italic-latin.woff2') format('woff2');font-weight:200 800;font-style:italic;font-display:swap}
+    @font-face{font-family:'Instrument Sans';src:url('fonts/instrument-sans-latin.woff2') format('woff2');font-weight:400 700;font-style:normal;font-display:swap}
+    @font-face{font-family:'Instrument Sans';src:url('fonts/instrument-sans-italic-latin.woff2') format('woff2');font-weight:400 700;font-style:italic;font-display:swap}
+    @font-face{font-family:'JetBrains Mono';src:url('fonts/jetbrains-mono-latin.woff2') format('woff2');font-weight:400;font-style:normal;font-display:swap}
+
+    /* Dark: dusk on the trail — deep blue overhead, the last plum of light at
+       the horizon, and one lit window's worth of warmth. */
+    :root{
+      --bg:#06090f;--g1:#071530;--g2:#1f2860;--g3:#3d2444;
+      --bg2:rgba(255,255,255,.05);--ink:#e9eef7;--soft:#b2bed0;--mute:#7f8da0;--rule:rgba(255,255,255,.11);
+      --acc:#f0a23c;--acc-ink:#10131a;--glyph:233,238,247;--live:240,162,60;--trail:132,170,214;--sel:rgba(132,170,214,.32);--ts:0 1px 2px rgba(0,0,0,.45);
+      --serif:'Newsreader',Georgia,serif;--sans:'Instrument Sans',system-ui,sans-serif;--mono:'JetBrains Mono',ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;
+      color-scheme:dark;
+    }
+    /* Light: a snowy morning on the trail — ice-blue sky, snow lit white-blue,
+       shadowed snow in the low corner, and the warmth kept for harness and
+       sled. It follows the system unless data-theme pins a choice. */
+    @media (prefers-color-scheme:light){:root:not([data-theme=dark]){
+      --bg:#e9f0f8;--g1:#b9d2ee;--g2:#eef3f9;--g3:#94b3d0;
+      --bg2:rgba(16,38,60,.05);--ink:#12202e;--soft:#42546a;--mute:#6a7e96;--rule:rgba(16,38,60,.13);
+      --acc:#b4531c;--acc-ink:#fff;--glyph:24,46,74;--live:180,83,28;--trail:64,104,148;--sel:rgba(64,104,148,.22);--ts:0 1px 1px rgba(255,255,255,.55);color-scheme:light;
+    }}
+    :root[data-theme=light]{
+      --bg:#e9f0f8;--g1:#b9d2ee;--g2:#eef3f9;--g3:#94b3d0;
+      --bg2:rgba(16,38,60,.05);--ink:#12202e;--soft:#42546a;--mute:#6a7e96;--rule:rgba(16,38,60,.13);
+      --acc:#b4531c;--acc-ink:#fff;--glyph:24,46,74;--live:180,83,28;--trail:64,104,148;--sel:rgba(64,104,148,.22);--ts:0 1px 1px rgba(255,255,255,.55);color-scheme:light;
+    }
+
+    *,*::before,*::after{box-sizing:border-box}
+    html{-webkit-text-size-adjust:100%;scroll-behavior:smooth}
+    /* With a mouse or trackpad the page stops dead at its ends rather than
+       rubber-banding. Touch keeps its native bounce and pull-to-refresh. */
+    @media (hover:hover) and (pointer:fine){html{overscroll-behavior-y:none}}
+    body{margin:0;text-shadow:var(--ts);background:var(--bg);color:var(--ink);font-family:var(--sans);font-size:1.0625rem;line-height:1.65;-webkit-font-smoothing:antialiased}
+    /* Links in running text are underlined, faintly, and the underline
+       comes up to full ink on hover. No other link is underlined: grey
+       navigation comes up to full ink on hover. */
+    a{color:var(--ink);text-decoration:none;transition:color 150ms,text-decoration-color 150ms}
+    p a,li a{text-decoration:underline;text-decoration-color:var(--mute);text-decoration-thickness:1px;text-underline-offset:.18em}
+    p a:hover,li a:hover{text-decoration-color:var(--ink)}
+    ::selection{background:var(--sel)}
+    :focus-visible{outline:2px solid var(--acc);outline-offset:3px}
+    h1,h2,h3,p{margin:0}
+    .serif{font-family:var(--serif);font-optical-sizing:auto}
+    .mute{color:var(--mute)}
+    .soft{color:var(--soft)}
+
+    /* Background: tri-tone diagonal gradient + the snowfield canvas. */
+    .bgfx{position:fixed;inset:0;z-index:0;pointer-events:none;background:linear-gradient(135deg,var(--g1) 0%,var(--g2) 50%,var(--g3) 100%)}
+    .bgfx canvas{position:absolute;inset:0;width:100%;height:100%}
+    /* Safari drags the fixed background along when the page is pulled past
+       an end. These carry the gradient on from its top and bottom edges,
+       colour for colour, so the pull shows more of the same. */
+    .bgfx{container-type:size}
+    .bgfx::before,.bgfx::after{content:'';position:absolute;z-index:-1;height:50vh;width:calc(100vw + 100vh);width:calc(100cqw + 100cqh);
+      background:linear-gradient(90deg,var(--g1) 0%,var(--g2) 50%,var(--g3) 100%)}
+    .bgfx::before{bottom:100%;left:0}
+    .bgfx::after{top:100%;left:-100vh;left:-100cqh}
+    .wrap{position:relative;z-index:1;max-width:76rem;margin:0 auto;padding:0 clamp(1.5rem,5vw,4rem)}
+
+    .split{display:grid;grid-template-columns:minmax(0,5fr) minmax(0,7fr);gap:clamp(2rem,6vw,6rem)}
+    .sticky{position:sticky;top:0;height:100vh;display:flex;flex-direction:column;justify-content:space-between;padding:clamp(3rem,10vh,6rem) 0}
+    .name{font-size:clamp(2.5rem,5vw,3.25rem);font-weight:500;line-height:1.05;letter-spacing:-.01em}
+    .entry{margin-top:.5rem;color:var(--mute);font-size:.9375rem}
+    .entry .ipa{font-family:var(--mono);font-size:.875rem}
+    .statement{margin-top:2.5rem;font-size:clamp(1.5rem,2.2vw,1.875rem);line-height:1.3;max-width:26rem;text-wrap:pretty}
+    .sidenav{display:flex;flex-direction:column;align-items:flex-start;gap:.75rem;margin-top:3.5rem;font-size:.8125rem;letter-spacing:.12em;text-transform:uppercase;font-weight:600}
+    .sidenav a{color:var(--mute)}
+    .sidenav a:hover{color:var(--ink)}
+    .links{display:flex;flex-wrap:wrap;gap:.5rem 1.5rem;font-size:.9375rem}
+    .links a{color:var(--mute)}
+    .links a:hover{color:var(--ink)}
+
+    .flow{padding:clamp(3rem,10vh,6rem) 0 4rem}
+    .sec{max-width:38rem;scroll-margin-top:3rem}
+    .sec+.sec{margin-top:clamp(5rem,12vh,8rem)}
+    .h2{font-family:var(--serif);font-size:clamp(2rem,3vw,2.5rem);font-weight:500;line-height:1.1;letter-spacing:-.01em}
+    .lede{font-size:1.125rem;line-height:1.7;color:var(--soft);text-wrap:pretty}
+    .sec p+p{margin-top:1.5rem}
+    .sec h2+p{margin-top:1rem}
+    .sec .soft{text-wrap:pretty}
+
+    pre{margin:1.5rem 0 0;padding:1.25rem 1.5rem;background:var(--bg2);border:1px solid var(--rule);font-family:var(--mono);font-size:.75rem;line-height:1.7;overflow-x:auto;color:var(--ink)}
+    code{font-family:var(--mono);font-size:.875em}
+    :not(pre)>code{color:var(--ink)}
+    /* Copy buttons: each code block is wrapped by script so the button can
+       sit in its corner without scrolling with the code. It is quiet until
+       the block is hovered or focused, and says so for a moment after a copy. */
+    .code{position:relative;margin-top:1.5rem}
+    .code pre{margin:0;padding-right:3.5rem}
+    .copy{position:absolute;top:.5rem;right:.5rem;appearance:none;border:0;background:none;padding:.2rem .3rem;margin:0;
+      font:inherit;font-size:.5625rem;line-height:1;letter-spacing:.1em;text-transform:uppercase;font-weight:600;color:var(--mute);
+      cursor:pointer;opacity:0;transition:color 150ms,opacity 150ms}
+    .code:hover .copy,.copy:focus-visible,.copy[data-done]{opacity:1}
+    .copy:hover{color:var(--ink)}
+    .copy[data-done]{color:var(--acc)}
+    @media (hover:none){.copy{opacity:.7}}
+
+    /* Demo: a flat surface, like the code blocks, with the caption under it. */
+    .term{margin-top:2rem;border:1px solid var(--rule);background:#05090f}
+    .term video{display:block;width:100%;height:auto}
+    .cap{margin-top:.75rem;color:var(--mute);font-size:.9375rem;text-wrap:pretty}
+
+    /* Capability list, on the ruled-row pattern the rest of the site uses. */
+    .items{margin:2rem 0 0;padding:0;list-style:none;border-top:1px solid var(--rule)}
+    .items li{margin:0;padding:1.75rem 0;border-bottom:1px solid var(--rule)}
+    .items h3{font-size:1.25rem;font-weight:600}
+    .items p{margin-top:.5rem;color:var(--soft);text-wrap:pretty}
+    .items+p{margin-top:2rem}
+
+    .ftr{margin-top:clamp(5rem,12vh,8rem);color:var(--mute);font-size:.9375rem}
+    .ftr .by{margin-top:.75rem}
+    .ftr .by a{color:var(--mute)}
+    .ftr .by a:hover{color:var(--ink)}
+
+    /* Theme toggle: one glyph, top right. ◐ follows the system, ○ pins light, ● pins dark. */
+    .theme{position:fixed;top:1.1rem;right:1.25rem;z-index:2;appearance:none;border:0;background:none;padding:.25rem;margin:0;
+      font:inherit;font-size:.7rem;line-height:1;color:var(--mute);cursor:pointer;opacity:.7;transition:color 150ms,opacity 150ms}
+    .theme:hover{color:var(--ink);opacity:1}
+    /* Motion toggle: beside it, only where the browser makes the page ask
+       before it will report the phone's tilt, and only until answered. */
+    .motion{position:fixed;top:1.1rem;right:2.9rem;z-index:2;appearance:none;border:0;background:none;padding:.25rem;margin:0;
+      font:inherit;font-size:.7rem;line-height:1;color:var(--mute);cursor:pointer;opacity:.7;transition:color 150ms,opacity 150ms}
+    .motion:hover{color:var(--ink);opacity:1}
+    .motion[hidden]{display:none}
+    .ftr .links{margin-bottom:.75rem}
+    .ftr p{text-wrap:pretty}
+
+    @media (max-width:900px){
+      .split{display:block}
+      .sticky{position:static;height:auto;padding:clamp(2.5rem,8vh,4rem) 0 0}
+      .statement{margin-top:1.5rem}
+      .sidenav{flex-direction:row;flex-wrap:wrap;gap:.75rem 1.5rem;margin-top:2rem}
+      .sticky .links{margin-top:2rem}
+      .flow{padding-top:clamp(3rem,8vh,4rem)}
+      .sec{max-width:none}
+    }
+    @media (prefers-reduced-motion:reduce){*{transition:none!important}html{scroll-behavior:auto}}
+  </style>
+  <script src="field.js" defer></script>
+</head>
+<body>
+<div class="bgfx" aria-hidden="true"><canvas id="field"></canvas></div>
+<button class="theme" type="button" aria-label="Theme: follows system" title="Theme: follows system">◐</button>
+<script>
+(() => {
+  const b = document.querySelector('.theme'); if (!b) return;
+  const order = ['auto', 'light', 'dark'];
+  const face = { auto: ['◐', 'follows system'], light: ['○', 'light'], dark: ['●', 'dark'] };
+  const show = (mode) => { b.textContent = face[mode][0]; b.title = b.ariaLabel = 'Theme: ' + face[mode][1]; };
+  const current = () => document.documentElement.dataset.theme || 'auto';
+  show(current());
+  b.addEventListener('click', () => {
+    const next = order[(order.indexOf(current()) + 1) % order.length];
+    try {
+      if (next === 'auto') { delete document.documentElement.dataset.theme; localStorage.removeItem('theme'); }
+      else { document.documentElement.dataset.theme = next; localStorage.setItem('theme', next); }
+    } catch {}
+    show(next);
+  });
+})();
+</script>
+<script>
+(() => {
+  const video = document.querySelector('#demo-video');
+  const source = document.querySelector('#demo-source');
+  if (!video || !source) return;
+  const media = matchMedia('(prefers-color-scheme: dark)');
+  const apply = () => {
+    const dark = document.documentElement.dataset.theme === 'dark' ||
+      (!document.documentElement.dataset.theme && media.matches);
+    const suffix = dark ? '' : '-light';
+    if (source.src.endsWith(`demo${suffix}.mp4`)) return;
+    source.src = `demo${suffix}.mp4`;
+    video.poster = `demo-poster${suffix}.jpg`;
+    video.load();
+    video.play().catch(() => {});
+  };
+  new MutationObserver(apply).observe(document.documentElement, { attributes: true, attributeFilter: ['data-theme'] });
+  media.addEventListener('change', apply);
+  apply();
+})();
+</script>
+<button class="motion" type="button" aria-label="Let the background follow the phone's tilt" title="Let the background follow the phone's tilt" hidden>∿</button>
+<script>
+(() => {
+  /* The field listens for deviceorientation on its own; this only asks the
+     browser for it where that is needed (iOS), on a tap, and keeps the
+     answer so a later visit asks again quietly instead of showing the glyph. */
+  const b = document.querySelector('.motion'); if (!b) return;
+  const E = window.DeviceOrientationEvent;
+  if (!E || typeof E.requestPermission !== 'function') return;
+  /* Desktop Safari has the same call and nothing to report; a touch screen
+     is the sign of a sensor. */
+  if (!(navigator.maxTouchPoints > 1 || matchMedia('(pointer: coarse)').matches)) return;
+  if (matchMedia('(prefers-reduced-motion: reduce)').matches) return;
+  const ask = () => E.requestPermission().then(r => r === 'granted');
+  const remember = (ok) => { try { localStorage.setItem('motion', ok ? 'on' : 'off'); } catch {} };
+  let kept = null; try { kept = localStorage.getItem('motion'); } catch {}
+  if (kept === 'off') return;
+  const offer = () => { b.hidden = false; };
+  if (kept === 'on') ask().then(ok => { if (!ok) offer(); }, offer); else offer();
+  b.addEventListener('click', () => {
+    ask().then(ok => { remember(ok); b.hidden = true; }, () => { b.hidden = true; });
+  });
+})();
+</script>
+<div class="wrap">
+  <div class="split">
+    <header class="sticky">
+      <div>
+        <h1 class="serif name" data-blob>gangline</h1>
+        <p class="entry"><span class="ipa">/ˈɡæŋˌlaɪn/</span> <i>noun</i></p>
+        <p class="serif statement"><i>Mushing.</i> The line that joins several harnesses into one team, and keeps it pulling together.</p>
+        <nav class="sidenav" aria-label="Sections">
+          <a href="#demo">Demo</a>
+          <a href="#start">Start</a>
+          <a href="#surface">One team</a>
+          <a href="#long">Long-running work</a>
+        </nav>
+      </div>
+      <div class="links">
+        <a href="https://github.com/adambiggs/gangline">GitHub</a>
+        <a href="docs/">Docs</a>
+        <a href="docs/reference.html">Reference</a>
+        <a href="docs/constitution.html">Design principles</a>
+      </div>
+    </header>
+
+    <main class="flow" data-quiet>
+      <section class="sec lede">
+        <p>Gangline starts Claude Code and Codex in named tmux windows. It
+        delivers attributed messages only after the recipient terminal accepts
+        them, and keeps context and provider limits visible during unattended
+        work.</p>
+        <pre><code>curl -fsSL https://raw.githubusercontent.com/adambiggs/gangline/main/install.sh | sh</code></pre>
+      </section>
+
+      <section id="demo" class="sec">
+        <h2 class="h2">One team, working</h2>
+        <div class="term">
+          <video id="demo-video" autoplay loop muted playsinline controls preload="metadata"
+                 poster="demo-poster.jpg"
+                 aria-label="A small Gangline team working in native terminal windows.">
+            <source id="demo-source" src="demo.mp4" type="video/mp4">
+          </video>
+        </div>
+        <p class="cap">Native harnesses, working as one team.</p>
+      </section>
+
+      <section id="start" class="sec">
+        <h2 class="h2">Start</h2>
+        <p class="soft">Claude Code and Codex are first-class today; a collar is how
+        another harness joins. You need macOS or Linux, Bash, tmux 3.2 or later,
+        Python 3, and a supported harness. Run it once to complete its normal
+        sign-in and repository prompts, then open a team where it will work.</p>
+
+        <pre><code>cd ~/your/repo
+gang up -c claude-code -m sonnet -e high</code></pre>
+
+        <p class="soft"><code>gang up</code> starts a team and attaches you to its
+        <code>lead</code> window. Detach with <code>Ctrl-b d</code>, then confirm the
+        team is running with <code>gang roster</code>. Add named agents only when
+        the work calls for them.</p>
+      </section>
+
+      <section id="surface" class="sec">
+        <h2 class="h2">One team</h2>
+        <ul class="items">
+          <li>
+            <h3>One team in tmux</h3>
+            <p>Named native harness sessions share a tmux team and hand work to one
+            another by name, keeping their terminals, tools, and permissions.</p>
+          </li>
+          <li>
+            <h3>Verified delivery</h3>
+            <p>Delivery counts only after Gangline sees the recipient terminal
+            accept it. The sender is attributed; unsafe delivery is refused.</p>
+          </li>
+          <li>
+            <h3>First-class, then collars</h3>
+            <p><code>Claude Code</code> and <code>Codex</code> are native sessions,
+            not simulations. A collar joins another harness without flattening it.</p>
+          </li>
+        </ul>
+
+        <p class="soft">Gangline provides mechanisms, not work policy. A lead is
+        the fixed first role; other role briefs and optional operator guidance
+        are replaceable. There is no task graph, supervisor, daemon, or database.</p>
+
+        <p class="soft">Gangline works between top-level sessions, so each harness
+        keeps its strengths. See the <a href="docs/reference.html">reference</a>
+        for commands and refusals.</p>
+      </section>
+
+      <section id="long" class="sec">
+        <h2 class="h2">Long-running work</h2>
+        <p class="soft">Context and cache bands, provider caps, and curfews make
+        capacity visible. Choose a harness and model per job to spend provider
+        quota and cost deliberately.</p>
+
+        <p class="soft"><code>gang roster</code>, <code>gang capture</code>, and
+        <code>gang status</code> show the evidence needed to decide whether to
+        resume or remove an agent. The
+        <a href="docs/operations.html">operations guide</a> covers recovery.</p>
+      </section>
+
+      <footer class="ftr">
+        <div class="links">
+          <a href="https://github.com/adambiggs/gangline">source</a>
+          <a href="docs/">docs</a>
+          <a href="docs/reference.html">reference</a>
+          <a href="docs/constitution.html">design principles</a>
+          <a href="https://github.com/adambiggs/gangline/blob/main/LICENSE">Apache-2.0</a>
+        </div>
+        <p>A Bash CLI for tmux-based agent teams.</p>
+        <p class="by">Made by <a href="https://adambig.gs" rel="author">Adam Biggs</a>.</p>
+      </footer>
+    </main>
+  </div>
+</div>
+<script>
+(() => {
+  /* One copy button per code block. The clipboard call needs a secure page;
+     where it is missing or refused, the code is selected instead so a
+     keyboard copy still works. */
+  for (const pre of document.querySelectorAll('pre')) {
+    const box = document.createElement('div'); box.className = 'code';
+    pre.replaceWith(box); box.append(pre);
+    const b = document.createElement('button'); b.type = 'button'; b.className = 'copy';
+    b.textContent = 'Copy'; b.setAttribute('aria-label', 'Copy to clipboard');
+    box.append(b);
+    let timer = 0;
+    const said = (msg) => {
+      b.textContent = msg; b.dataset.done = '';
+      clearTimeout(timer); timer = setTimeout(() => { b.textContent = 'Copy'; delete b.dataset.done; }, 1600);
+    };
+    const select = () => { const r = document.createRange(); r.selectNodeContents(pre); const s = getSelection(); s.removeAllRanges(); s.addRange(r); };
+    b.addEventListener('click', () => {
+      /* No trailing newline: a pasted command should wait for Enter, not run. */
+      const text = pre.textContent.replace(/\s+$/, '');
+      if (navigator.clipboard && navigator.clipboard.writeText) navigator.clipboard.writeText(text).then(() => said('Copied'), () => { select(); said('Selected'); });
+      else { select(); said('Selected'); }
+    });
+  }
+})();
+</script>
+</body>
+</html>

@@ -1,0 +1,91 @@
+#!/usr/bin/env bash
+# SPDX-License-Identifier: Apache-2.0
+#
+# The fast push-triggered CI checks. Enable in a clone with:
+#   git config core.hooksPath .githooks
+#
+# The repository-local path delegates outward first so it cannot shadow an
+# operator's host-global contribution gate.
+set -euo pipefail
+
+unset GIT_DIR GIT_WORK_TREE GIT_INDEX_FILE GIT_OBJECT_DIRECTORY GIT_COMMON_DIR GIT_PREFIX
+
+root="$(git rev-parse --show-toplevel)"
+cd "$root"
+
+fail=0
+n_ref=0
+tmp="$(mktemp -d "${TMPDIR:-/tmp}/gangline-pre-push.XXXXXX")"
+cleanup() {
+  ( unset GIT_DIR GIT_WORK_TREE GIT_INDEX_FILE GIT_OBJECT_DIRECTORY GIT_COMMON_DIR GIT_PREFIX
+    local w
+    for w in "$tmp"/tree-*; do
+      [ -d "$w" ] && git worktree remove --force "$w" 2>/dev/null
+    done ) || true
+  rm -rf -- "$tmp"
+}
+trap cleanup EXIT HUP INT TERM
+cat > "$tmp/stdin"
+
+outer="$(git config --global --get core.hooksPath 2>/dev/null || true)"
+if [ -n "$outer" ]; then
+  case "$outer" in
+    /*) outer_dir="$outer" ;;
+    *) outer_dir="$root/$outer" ;;
+  esac
+  own_dir="$(cd .githooks && pwd -P)"
+  resolved_outer=""
+  if [ -d "$outer_dir" ]; then
+    resolved_outer="$(cd "$outer_dir" && pwd -P)"
+  fi
+  if [ -n "$resolved_outer" ] && [ "$resolved_outer" = "$own_dir" ]; then
+    echo "pre-push: global hook path resolves to this repository hook; suppressing outward delegation" >&2
+  elif [ -n "$resolved_outer" ] \
+       && [ -f "$outer_dir/pre-push" ] && [ -x "$outer_dir/pre-push" ]; then
+    # The outer gate runs first so a failure here cannot skip it, and it writes
+    # straight to the terminal: a host-global gate that spends minutes in
+    # inference reports its progress while it runs, and holding that back until
+    # the local gate finishes makes a live push look hung.
+    outer_rc=0
+    "$outer_dir/pre-push" "$@" < "$tmp/stdin" || outer_rc=$?
+    if [ "$outer_rc" -ne 0 ]; then
+      echo "pre-push: outer gate refused with status $outer_rc" >&2
+      exit "$outer_rc"
+    fi
+  fi
+fi
+
+echo "pre-push: lint of changed files and smoke run here; CI runs full lint, integration and the commit-message check." >&2
+
+while read -r local_ref local_sha _remote_ref _remote_sha \
+      || [ -n "${local_sha:-}" ]; do
+  case "${local_sha:-0}" in *[!0]*) ;; *) continue ;; esac
+
+  # Lint what is being PUSHED, not what is lying in the working tree. Those are
+  # different trees whenever anything is uncommitted, and linting the wrong one
+  # gives both false answers: a red hook over work-in-progress nobody is
+  # sending, or a green one over a commit nobody read.
+  n_ref=$((n_ref + 1))
+  work="$tmp/tree-$n_ref"
+  ( unset GIT_DIR GIT_WORK_TREE GIT_INDEX_FILE GIT_OBJECT_DIRECTORY GIT_COMMON_DIR GIT_PREFIX
+    git worktree add --detach --quiet "$work" "$local_sha" ) || {
+    echo "pre-push: cannot check out $local_sha into a worktree, so nothing was linted" >&2
+    fail=1; continue
+  }
+  if [ -x "$work/test/lint.sh" ] && [ -x "$work/test/smoke.sh" ]; then
+    echo "pre-push: running pushed-tree fast lint and smoke for $local_ref." >&2
+    ( unset GIT_DIR GIT_WORK_TREE GIT_INDEX_FILE GIT_OBJECT_DIRECTORY GIT_COMMON_DIR GIT_PREFIX
+      cd "$work" && ./test/lint.sh --fast && ./test/smoke.sh ) || fail=1
+  else
+    echo "pre-push: $local_sha does not carry executable test/lint.sh and test/smoke.sh gates" >&2
+    fail=1
+  fi
+  ( unset GIT_DIR GIT_WORK_TREE GIT_INDEX_FILE GIT_OBJECT_DIRECTORY GIT_COMMON_DIR GIT_PREFIX
+    git worktree remove --force "$work" ) 2>/dev/null || true
+done < "$tmp/stdin"
+
+if [ "$fail" -ne 0 ]; then
+  echo "pre-push: refusing — lint or smoke failed." >&2
+  echo "          push anyway with: git push --no-verify" >&2
+  exit 1
+fi

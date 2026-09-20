@@ -1,0 +1,216 @@
+#!/usr/bin/env python3
+# SPDX-License-Identifier: Apache-2.0
+"""Render the repository's Markdown documentation as the site's /docs pages.
+
+The Markdown files are the only source: GitHub shows them as they are and this
+renders the same bytes. A relative link to a published document becomes a link
+to its page; one to any other repository file becomes a GitHub link, so every
+link that works on GitHub works here. Every link the output carries between
+its own pages is then resolved, fragment included, and the build fails on the
+first one that does not land.
+
+    tools/docsite OUT_DIR      # writes OUT_DIR/docs/...
+
+Needs markdown-it-py.
+"""
+
+import html
+import posixpath
+import re
+import sys
+import unicodedata
+from pathlib import Path
+from urllib.parse import urlsplit
+
+from markdown_it import MarkdownIt
+
+REPO = Path(__file__).resolve().parent.parent
+GITHUB = "https://github.com/adambiggs/gangline"
+
+# Navigation order: getting started, then project design. Each entry is
+# (source, output, nav label).
+GROUPS = [
+    ("Start", [
+        ("README.md", "index.html", "Overview"),
+        ("docs/reference.md", "reference.html", "Reference"),
+        ("docs/operations.md", "operations.html", "Operations"),
+    ]),
+    ("Project", [
+        ("CONSTITUTION.md", "constitution.html", "Constitution"),
+        ("CONTRIBUTING.md", "contributing.html", "Contributing"),
+        ("docs/design.md", "design.html", "Design"),
+    ]),
+]
+# Files under site/ are published at the site root beside the landing page.
+SITE_ASSETS = "site/"
+HTML_URL_ATTR = re.compile(
+    r'(?P<prefix>\b(?:href|src|srcset)\s*=\s*)(?P<quote>["\'])(?P<value>.*?)(?P=quote)',
+    re.IGNORECASE,
+)
+
+
+def pages():
+    """Every published page as (source, output, label)."""
+    return [e for _, entries in GROUPS for e in entries]
+
+
+def slugify(text, seen):
+    """GitHub's heading anchor, so a #fragment written for GitHub lands here."""
+    s = unicodedata.normalize("NFC", text).lower().strip()
+    s = re.sub(r"[^\w\- ]", "", s).replace(" ", "-")
+    n = seen.get(s, 0)
+    seen[s] = n + 1
+    return s if n == 0 else f"{s}-{n}"
+
+
+def inline_text(token):
+    return "".join(c.content for c in token.children or [] if c.type in ("text", "code_inline"))
+
+
+
+class Site:
+    def __init__(self, out):
+        self.out = Path(out)
+        self.pages = pages()
+        self.by_source = {s: o for s, o, _ in self.pages}
+        self.md = MarkdownIt("commonmark", {"html": True}).enable(["table", "strikethrough"])
+        self.ids = {}  # output page -> set of element ids
+
+    def rel(self, here, target):
+        """A link from output page `here` to site path `target` (docs/-relative
+        unless it starts with '/', which means the site root)."""
+        base = posixpath.dirname(posixpath.join("docs", here))
+        dest = target[1:] if target.startswith("/") else posixpath.join("docs", target)
+        return posixpath.relpath(dest or ".", base or ".")
+
+    def rewrite(self, url, source, here):
+        parts = urlsplit(url)
+        if parts.scheme or parts.netloc or url.startswith("#") or not parts.path:
+            return url
+        frag = f"#{parts.fragment}" if parts.fragment else ""
+        path = posixpath.normpath(posixpath.join(posixpath.dirname(source), parts.path))
+        if path in self.by_source:
+            return self.rel(here, self.by_source[path]) + frag
+        if path.startswith(SITE_ASSETS) and (REPO / path).is_file():
+            return self.rel(here, "/" + path[len(SITE_ASSETS):])
+        if not (REPO / path).exists():
+            sys.exit(f"docsite: {source}: link to missing file {url}")
+        kind = "tree" if (REPO / path).is_dir() else "blob"
+        return f"{GITHUB}/{kind}/main/{path}{frag}"
+
+    def rewrite_html(self, text, source, here):
+        """Rewrite URL-bearing attributes Markdown leaves inside raw HTML."""
+        def attr(match):
+            name = match["prefix"].split("=", 1)[0].strip().lower()
+            value = match["value"]
+            if name == "srcset":
+                entries = []
+                for candidate in value.split(","):
+                    url, separator, descriptor = candidate.strip().partition(" ")
+                    entries.append(self.rewrite(url, source, here) + separator + descriptor)
+                value = ", ".join(entries)
+            else:
+                value = self.rewrite(value, source, here)
+            return match["prefix"] + match["quote"] + value + match["quote"]
+
+        return HTML_URL_ATTR.sub(attr, text)
+
+    def render(self, source, here):
+        text = (REPO / source).read_text(encoding="utf-8")
+        tokens = self.md.parse(text)
+        seen, toc, title, ids = {}, [], None, set()
+        for i, t in enumerate(tokens):
+            if t.type == "heading_open":
+                label = inline_text(tokens[i + 1])
+                slug = slugify(label, seen)
+                t.attrSet("id", slug)
+                ids.add(slug)
+                if t.tag == "h1" and title is None:
+                    title = label
+                elif t.tag == "h2":
+                    toc.append((slug, label))
+            if t.type == "table_open":
+                t.attrSet("class", "tbl")
+            if t.type in ("html_block", "html_inline"):
+                t.content = self.rewrite_html(t.content, source, here)
+            for c in t.children or []:
+                if c.type == "link_open":
+                    c.attrSet("href", self.rewrite(c.attrGet("href"), source, here))
+                elif c.type == "image":
+                    c.attrSet("src", self.rewrite(c.attrGet("src"), source, here))
+        body = self.md.renderer.render(tokens, self.md.options, {})
+        # Tables scroll inside their own box rather than widening a phone page.
+        body = body.replace('<table class="tbl">', '<div class="tblwrap"><table>').replace("</table>", "</table></div>")
+        self.ids[here] = ids
+        return title or source, toc, body
+
+    def nav(self, here, toc):
+        out = []
+        for group, entries in GROUPS:
+            out.append(f'<p class="grp">{group}</p><ul>')
+            for s, o, label in entries:
+                cur = ' aria-current="page"' if o == here else ""
+                out.append(f'<li{" class=on" if o == here else ""}><a href="{self.rel(here, o)}"{cur}>{label}</a>')
+                if o == here and toc:
+                    out.append('<ul class="toc">' + "".join(
+                        f'<li><a href="#{a}">{html.escape(t)}</a></li>' for a, t in toc) + "</ul>")
+                out.append("</li>")
+            out.append("</ul>")
+        return "".join(out)
+
+    def build(self):
+        template = (REPO / "tools/docsite.html").read_text(encoding="utf-8")
+        for source, here, _ in self.pages:
+            title, toc, body = self.render(source, here)
+            root = self.rel(here, "/")
+            page = (template
+                    .replace("{{title}}", html.escape(title))
+                    .replace("{{root}}", "" if root == "." else root + "/")
+                    .replace("{{nav}}", self.nav(here, toc))
+                    .replace("{{source}}", f"{GITHUB}/blob/main/{source}")
+                    .replace("{{body}}", body))
+            dest = self.out / "docs" / here
+            dest.parent.mkdir(parents=True, exist_ok=True)
+            dest.write_text(page, encoding="utf-8")
+        return self.check()
+
+    def check(self):
+        """Resolve every same-site href and src in the whole output, the
+        landing page's included, fragment and all."""
+        bad, count = [], 0
+        attr = re.compile(r'\s(?P<name>href|src|srcset)=(?P<quote>["\'])(?P<value>.*?)(?P=quote)', re.IGNORECASE)
+        id_attr = re.compile(r'\sid="([^"]*)"')
+        for f in sorted(self.out.rglob("*.html")):
+            text = f.read_text(encoding="utf-8")
+            here = f.relative_to(self.out).as_posix()
+            for match in attr.finditer(text):
+                urls = [match["value"]]
+                if match["name"].lower() == "srcset":
+                    urls = [candidate.strip().partition(" ")[0] for candidate in urls[0].split(",")]
+                for url in urls:
+                    url = html.unescape(url)
+                    parts = urlsplit(url)
+                    if parts.scheme or parts.netloc:
+                        continue
+                    count += 1
+                    target = (f.parent / parts.path).resolve() if parts.path else f.resolve()
+                    if target.is_dir():
+                        target = target / "index.html"
+                    if not target.is_file():
+                        bad.append(f"{here}: {url} (no such file)")
+                        continue
+                    if parts.fragment:
+                        if target.suffix == ".html":
+                            known = set(id_attr.findall(target.read_text(encoding="utf-8")))
+                            if parts.fragment not in known:
+                                bad.append(f"{here}: {url} (no such anchor)")
+        for b in bad:
+            print(f"docsite: broken link {b}", file=sys.stderr)
+        print(f"docsite: {len(self.pages)} pages, {count} same-site links, {len(bad)} broken")
+        return 1 if bad else 0
+
+
+if __name__ == "__main__":
+    if len(sys.argv) != 2:
+        sys.exit("usage: tools/docsite OUT_DIR")
+    sys.exit(Site(sys.argv[1]).build())

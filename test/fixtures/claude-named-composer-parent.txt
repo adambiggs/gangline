@@ -1,0 +1,6 @@
+────────────────────────────────────────────────────── Gangline probe contract ─
+❯
+────────────────────────────────────────────────────────────────────────────────
+  ctx 59k/1000k 5%
+  ⏵⏵ auto mode on (shift+tab to cycle) · ← for agents · /tasks to see subagen…
+                                                                           /rc

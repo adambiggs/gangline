@@ -1,0 +1,1573 @@
+# shellcheck shell=bash
+# SPDX-License-Identifier: Apache-2.0
+# Real tmux substrate: lifecycle, observation, verified attributed delivery, custom-collar precedence and migration, and native session identity.
+#
+# A PART IS A FRAGMENT, NOT A SCRIPT. test/integration.sh sources this file
+# in order and it reads that shell's fixtures, helpers and counters.
+# Real tmux substrate: lifecycle, observation, verified attributed delivery and
+# exact-name addressing. Gangline's command returns only after the state checked
+# below has been established.
+printf 'unset BASHPID\n' > "$RUN_ROOT/no-bashpid"
+BASH_ENV="$RUN_ROOT/no-bashpid" \
+  "$HITCH" alpha -c bash -d /tmp >/dev/null
+excludes "a collar with no launch choices emits no impossible-choice warning" \
+  "$(<"$RUN_ROOT/hitch-stderr")" "hitching 'alpha' without"
+alpha_id="$(window_id alpha)"
+# Keep the Bash stand-in's composer immediately observable for ordinary
+# large contracts while leaving the explicit pane-overflow fixture far
+# beyond the grid below.
+tmux resize-window -t "$alpha_id" -x 80 -y 30
+equal "a hitched first turn writes the raw busy window glyph" \
+  "-alpha-" "$(tmux display-message -p -t "$alpha_id" '#{window_name}')"
+contains "Bash 3.2 can lock and deliver the startup contract" \
+  "$(pane alpha)" "You are alpha in Gangline"
+contains "hitch creates an observable idle agent" "$($GANG status alpha)" "~idle~"
+equal "an idle observation writes the raw slack window glyph" \
+  "~alpha~" "$(tmux display-message -p -t "$alpha_id" '#{window_name}')"
+contains "roster lists the hitched collar" "$($GANG roster)" "alpha"
+contains "roster is an immediate snapshot" \
+  "$(GANG_CHURN_WAIT=not-a-duration $GANG roster)" "alpha"
+
+alpha_tmux_pane="$(tmux list-panes -t "$alpha_id" -F '#{pane_id}')"
+contains "whoami prints the collar field under its 1.0 name" \
+  "$(TMUX_PANE="$alpha_tmux_pane" "$GANG" whoami)" "collar: bash"
+contains "bare status targets the calling agent window" \
+  "$(TMUX_PANE="$alpha_tmux_pane" "$GANG" status)" "~idle~"
+contains "bare capture targets the calling agent window" \
+  "$(TMUX_PANE="$alpha_tmux_pane" "$GANG" capture)" \
+  "You are alpha in Gangline"
+equal "bare capture --composer targets the calling agent window" "" \
+  "$(TMUX_PANE="$alpha_tmux_pane" "$GANG" capture --composer)"
+
+# Non-terminal `send` reads its body directly and never launches an editor.
+cat > "$RUN_ROOT/send-editor" <<SH
+#!/bin/sh
+# SPDX-License-Identifier: Apache-2.0
+: > "$RUN_ROOT/send-editor-opened"
+printf '%s\\n' 'MARK_SEND_FIRST' 'MARK_SEND_SECOND' > "\$1"
+SH
+chmod +x "$RUN_ROOT/send-editor"
+printf 'MARK_PIPE_BODY\n' \
+  | env EDITOR="$RUN_ROOT/send-editor" "$GANG" send alpha --from operator >/dev/null
+contains "non-terminal send reads the body from stdin" "$(pane alpha)" "MARK_PIPE_BODY"
+excludes "non-terminal send does not launch the editor" \
+  "$(test -e "$RUN_ROOT/send-editor-opened" && printf opened)" "opened"
+
+# A disposable tmux window is the operator terminal. Its own TMUX_PANE is
+# deliberately absent: this is a human outside the team, so send's default
+# sender must be the clearly claimed `operator`, not a fictitious agent.
+send_done="send-done-$$"
+cat > "$RUN_ROOT/send-terminal" <<SH
+#!/usr/bin/env bash
+# SPDX-License-Identifier: Apache-2.0
+unset TMUX_PANE
+GANG_SESSION="$GANG_SESSION" VISUAL= EDITOR="$RUN_ROOT/send-editor" NO_COLOR=1 \
+  "$GANG" send alpha --from operator --live-only
+rc=\$?
+printf '%s\\n' "\$rc" > "$RUN_ROOT/send-rc"
+tmux wait-for -S "$send_done"
+exec bash --norc
+SH
+chmod +x "$RUN_ROOT/send-terminal"
+send_pane="$(tmux new-window -d -P -F '#{pane_id}' -t "=$GANG_SESSION" \
+  -n send-terminal "$RUN_ROOT/send-terminal")"
+tmux wait-for "$send_done"
+send_rc="$(<"$RUN_ROOT/send-rc")"
+if [ "$send_rc" = 0 ]; then
+  pass "terminal send uses the ordinary verified delivery path"
+else
+  fail "terminal send uses the ordinary verified delivery path" \
+    "$(tmux capture-pane -pt "$send_pane")"
+fi
+contains "terminal send prints the verified delivery verdict" \
+  "$(tmux capture-pane -pt "$send_pane")" "delivered to alpha as [gang:self-declared:operator]"
+excludes "terminal send adds no warning to its happy path" \
+  "$(tmux capture-pane -pt "$send_pane")" "WARNING:"
+contains "terminal send records its external human sender distinctly" \
+  "$(pane alpha)" "[gang:self-declared:operator#"
+contains "terminal send preserves the editor's first line" "$(pane alpha)" "MARK_SEND_FIRST"
+contains "terminal send preserves the editor's second line" "$(pane alpha)" "MARK_SEND_SECOND"
+submitted "terminal send leaves the recipient's composer submitted" alpha
+tmux kill-window -t "$send_pane"
+
+# Calibrate custom-directory precedence against a state with no shadow file,
+# then make the custom bash collar emit a marker the shipped fixture cannot.
+shadow_dir="$RUN_ROOT/shadow-collars"
+mkdir -p "$shadow_dir"
+excludes "the shipped bash collar cannot emit the shadow marker" \
+  "$(GANG_COLLARS="$shadow_dir" "$GANG" capture --composer alpha)" "CUSTOM_COLLAR_MARKER"
+cat > "$shadow_dir/bash.sh" <<SH
+# shellcheck shell=bash
+# shellcheck disable=SC2034
+. "$ROOT/collars/bash.sh"
+_shadow_real="\$(declare -f collar_input)"
+eval "shadow_real_input \${_shadow_real#collar_input}"
+collar_input() {
+  [ ! -e "$RUN_ROOT/shadow-marker-on" ] || { printf 'CUSTOM_COLLAR_MARKER'; return; }
+  shadow_real_input "\$1"
+}
+SH
+GANG_COLLARS="$shadow_dir" "$HITCH" shadowed -c bash -d /tmp >/dev/null
+: > "$RUN_ROOT/shadow-marker-on"
+equal "a custom collar directory shadows the shipped collar" \
+  "CUSTOM_COLLAR_MARKER" \
+  "$(GANG_COLLARS="$shadow_dir" "$GANG" capture --composer shadowed)"
+"$GANG" drop shadowed >/dev/null
+
+# The fixture clock is an instrument, so this run says exactly which bytes it
+# ran under rather than leaving the reader to trust the name.
+sleep_stub_sha="$(shasum -a 256 "$RUN_ROOT/bin/sleep" | awk '{print $1}')"
+printf 'instrument sleep=%s sha256=%s spec-sha256=%s\n' \
+  "$RUN_ROOT/bin/sleep" "$sleep_stub_sha" \
+  '7bcb73df5cc4fc1836ff62846464f5d5b530ccaa074b84ad22951c6f6775c7fd'
+
+GANG_CONTEXT_LIGHTS=off "$HITCH" ctx-agent -c ctx-known -d /tmp >/dev/null
+ctx_agent_id="$(window_id ctx-agent)"
+ctx_agent_pane="$(tmux list-panes -t "$ctx_agent_id" -F '#{pane_id}')"
+equal "named context prints the collar reading byte-for-byte" \
+  "42k/200k (21%)" "$("$GANG" context ctx-agent)"
+equal "bare context targets the calling agent window" \
+  "42k/200k (21%)" "$(TMUX_PANE="$ctx_agent_pane" "$GANG" context)"
+equal "context answers while context lights are off" \
+  "42k/200k (21%)" "$(GANG_CONTEXT_LIGHTS=off "$GANG" context ctx-agent)"
+"$HITCH" ctx-failing -c ctx-fail -d /tmp >/dev/null
+excludes "roster carries no context reading column" \
+  "$("$GANG" roster)" "42k/200k"
+
+ctx_fail_stdout="$RUN_ROOT/context-fail.stdout"
+ctx_fail_stderr="$RUN_ROOT/context-fail.stderr"
+if "$GANG" context ctx-failing >"$ctx_fail_stdout" 2>"$ctx_fail_stderr"; then
+  fail "a collar context failure stays non-zero" "context unexpectedly succeeded"
+else
+  pass "a collar context failure stays non-zero"
+fi
+equal "a collar context failure fabricates no reading" "" "$(<"$ctx_fail_stdout")"
+contains "a collar context failure keeps its own diagnostic" \
+  "$(<"$ctx_fail_stderr")" "fixture context unavailable"
+
+"$HITCH" ctx-missing -c ctx-none -d /tmp >/dev/null
+refuses "a missing collar_context names the collar" \
+  "collar 'ctx-none' declares no collar_context" \
+  "$GANG" context ctx-missing
+
+# Usage reads token consumption for the whole team and does not take an agent
+# name or type into a composer.
+refuses "the usage verb refuses a name it cannot consume" \
+  "usage: unexpected argument 'alpha'" "$GANG" usage alpha
+excludes "the usage verb types nothing into an agent composer" \
+  "$(pane alpha)" "/usage"
+
+alpha_before_bare_help="$(pane alpha)"
+alpha_composer_before_bare_help="$($GANG capture --composer alpha)"
+for incoherent_bare in hitch adopt send drop; do
+  if incoherent_output="$(TMUX_PANE="$alpha_tmux_pane" "$GANG" "$incoherent_bare" 2>&1)"; then
+    fail "bare gang $incoherent_bare refuses inside an agent" \
+      "command unexpectedly succeeded: [$incoherent_output]"
+  else
+    contains "bare gang $incoherent_bare prints help inside an agent" \
+      "$incoherent_output" "gang $incoherent_bare"
+  fi
+done
+# A COMMAND THAT TAKES ONE AGENT NAME DEFAULTS TO THE CALLER. Bare flush and
+# interrupt inside an agent window therefore resolve to that agent rather than
+# printing a synopsis, and each then refuses on something the fixture's own
+# collar does not declare — which is the evidence that a target was resolved at
+# all. drop, down, adopt, hitch and send's recipient stay without a self default
+# on purpose and remain in the loop above.
+for self_bare in flush:GANG_QUEUED_REGEX interrupt:GANG_INTERRUPT_KEY; do
+  self_bare_cmd="${self_bare%%:*}"
+  self_bare_decl="${self_bare#*:}"
+  if self_bare_out="$(TMUX_PANE="$alpha_tmux_pane" "$GANG" "$self_bare_cmd" 2>&1)"; then
+    fail "bare gang $self_bare_cmd targets the calling agent" \
+      "command unexpectedly succeeded: [$self_bare_out]"
+  else
+    contains "bare gang $self_bare_cmd targets the calling agent" \
+      "$self_bare_out" "declares no $self_bare_decl"
+    excludes "bare gang $self_bare_cmd prints no synopsis inside an agent" \
+      "$self_bare_out" "gang $self_bare_cmd"
+  fi
+done
+equal "incoherent bare commands leave the calling pane untouched" \
+  "$alpha_before_bare_help" "$(pane alpha)"
+equal "incoherent bare commands leave the composer untouched" \
+  "$alpha_composer_before_bare_help" "$($GANG capture --composer alpha)"
+"$GANG" drop ctx-agent >/dev/null
+"$GANG" drop ctx-failing >/dev/null
+"$GANG" drop ctx-missing >/dev/null
+
+outside_status="$(env -u TMUX_PANE "$GANG" status 2>&1 || true)"
+contains "bare status outside an agent prints its synopsis" \
+  "$outside_status" "gang status"
+contains "bare status outside an agent explains why self is unavailable" \
+  "$outside_status" "this shell is not a Gangline agent window"
+
+for meaningful_command in roster collars config curfew; do
+  if meaningful_output="$($GANG "$meaningful_command" 2>&1)"; then
+    excludes "bare gang $meaningful_command keeps its ordinary meaning" \
+      "$meaningful_output" "gang — drive native CLI agents in tmux"
+  else
+    fail "bare gang $meaningful_command keeps its ordinary meaning" \
+      "$meaningful_output"
+  fi
+done
+binary_stamp="$(tmux show-options -wqv -t "$alpha_id" @gl_binary_id)"
+if [[ "$binary_stamp" =~ ^cksum:[0-9]+:[0-9]+$ ]]; then
+  pass "hitch stamps the documented binary identity"
+else
+  fail "hitch stamps the documented binary identity" "got [$binary_stamp]"
+fi
+excludes "status is quiet when the stamped binary is current" \
+  "$("$GANG" status alpha)" "binary-skew"
+excludes "roster is quiet when the stamped binary is current" \
+  "$("$GANG" roster)" "binary-skew"
+tmux set-option -w -t "$alpha_id" @gl_binary_id cksum:1:2
+contains "status warns when the running window has another binary identity" \
+  "$("$GANG" status alpha)" "binary-skew (cksum:1:2 != current $binary_stamp)"
+contains "roster warns when the running window has another binary identity" \
+  "$("$GANG" roster)" "binary-skew (cksum:1:2 != current $binary_stamp)"
+tmux set-option -w -t "$alpha_id" @gl_binary_id "$binary_stamp"
+
+installed_root="$RUN_ROOT/installed"
+mkdir -p "$installed_root/bin"
+cp -R "$ROOT/collars" "$installed_root/collars"
+cp -R "$ROOT/libexec" "$installed_root/libexec"
+cp "$GANG" "$installed_root/bin/gang"
+installed_gang="$installed_root/bin/gang"
+excludes "byte-identical Gangline copies compare as current" \
+  "$("$installed_gang" status alpha)" "binary-skew"
+printf '\n# fixture changes the executable bytes\n' >> "$installed_gang"
+changed_stamp="$(cksum "$installed_gang" | awk '{ print "cksum:" $1 ":" $2 }')"
+contains "an uncommitted executable change produces binary skew" \
+  "$("$installed_gang" status alpha)" \
+  "binary-skew ($binary_stamp != current $changed_stamp)"
+
+dirty_root="$RUN_ROOT/dirty-checkout"
+mkdir -p "$dirty_root/bin"
+# gang_root resolves the executing checkout physically. Keep this fixture's
+# expected path in the same identity domain when TMPDIR traverses a symlink
+# (macOS exposes /var/folders through /private/var/folders).
+dirty_root="$(cd -P "$dirty_root" && pwd)"
+cp -R "$ROOT/collars" "$dirty_root/collars"
+cp -R "$ROOT/libexec" "$dirty_root/libexec"
+cp "$GANG" "$dirty_root/bin/gang"
+git -C "$dirty_root" init -q
+git -C "$dirty_root" add -- bin/gang collars libexec
+git -C "$dirty_root" -c user.name=fixture -c user.email=fixture@example.invalid \
+  commit -qm 'test: clean executable witness'
+dirty_head="$(git -C "$dirty_root" rev-parse HEAD)"
+excludes "a clean checkout executable emits no dirty-execution warning" \
+  "$("$dirty_root/bin/gang" whoami 2>&1 || true)" "executing dirty"
+printf '\n# named dirty-execution mutant\n' >> "$dirty_root/bin/gang"
+excludes "a dirty live executable stays quiet on ordinary command dispatch" \
+  "$("$dirty_root/bin/gang" collars 2>&1)" "executing dirty"
+dirty_warning="$("$dirty_root/bin/gang" whoami 2>&1 || true)"
+contains "whoami warns about a dirty live executable" \
+  "$dirty_warning" "WARNING: executing dirty $dirty_root/bin/gang"
+contains "the dirty warning names the HEAD its bytes diverged from" \
+  "$dirty_warning" "$dirty_head"
+git -C "$dirty_root" checkout -q -- bin/gang
+excludes "restoring the executable to HEAD removes the warning" \
+  "$("$dirty_root/bin/gang" whoami 2>&1 || true)" "executing dirty"
+
+tmux set-option -uw -t "$alpha_id" @gl_binary_id
+contains "status warns when a pre-witness window is unstamped" \
+  "$("$GANG" status alpha)" "binary-skew (window unstamped; current $binary_stamp)"
+contains "roster warns when a pre-witness window is unstamped" \
+  "$("$GANG" roster)" "binary-skew (window unstamped; current $binary_stamp)"
+tmux set-option -w -t "$alpha_id" @gl_binary_id "$binary_stamp"
+
+mkdir -p "$RUN_ROOT/no-identity"
+cat > "$RUN_ROOT/no-identity/git" <<'SH'
+#!/bin/sh
+# SPDX-License-Identifier: Apache-2.0
+exit 127
+SH
+chmod +x "$RUN_ROOT/no-identity/git"
+contains "a broken git command cannot abort roster" \
+  "$(PATH="$RUN_ROOT/no-identity:$PATH" "$GANG" roster)" "alpha"
+cat > "$RUN_ROOT/no-identity/cksum" <<'SH'
+#!/bin/sh
+# SPDX-License-Identifier: Apache-2.0
+exit 127
+SH
+chmod +x "$RUN_ROOT/no-identity/cksum"
+unavailable_status="$(PATH="$RUN_ROOT/no-identity:$PATH" "$GANG" status alpha)"
+contains "an unavailable witness is explicit without aborting status" \
+  "$unavailable_status" \
+  "binary-identity unavailable (window $binary_stamp; current unavailable)"
+contains "an unavailable witness does not abort roster" \
+  "$(PATH="$RUN_ROOT/no-identity:$PATH" "$GANG" roster)" \
+  "binary-identity unavailable (window $binary_stamp; current unavailable)"
+
+adopted_id="$(tmux new-window -d -P -F '#{window_id}' -t "=$GANG_SESSION" \
+  -n adopted "PS1='❯ ' bash --norc")"
+"$GANG" adopt adopted -c bash >/dev/null
+equal "adopt stamps the current binary identity" "$binary_stamp" \
+  "$(tmux show-options -wqv -t "$adopted_id" @gl_binary_id)"
+equal "a registration made outside an agent window records the operator" \
+  operator "$(tmux show-options -wqv -t "$adopted_id" @gl_hitched_by)"
+contains "and status says so rather than naming an agent" \
+  "$("$GANG" status adopted)" "hitched by the operator"
+contains "roster tags the operator sentinel rather than naming an agent" \
+  "$("$GANG" roster)" "hitcher=operator"
+contains "status --why reports the operator sentinel too" \
+  "$("$GANG" status --why adopted)" "hitched by the operator"
+equal "porcelain roster reports the operator hitcher state with no invented name" \
+  "operator	-" \
+  "$("$GANG" roster --porcelain | awk -F'\t' '$1=="adopted"{print $7"\t"$8}')"
+"$GANG" drop adopted >/dev/null
+
+# A CLOSED TURN FOLLOWED BY NORMAL TUI CHROME IS STILL A CLOSED TURN. Once an
+# activity-only episode reaches its bound, the old classifier kept the state
+# unknown for as long as the pane continued to redraw, even with the harness's
+# own empty composer visibly restored. Drive the clocks as inputs: the bracket
+# and activity hold are old, while one direct pty write makes the post-turn
+# chrome current. The drafted control keeps the same recent paint from becoming
+# permission to call a non-empty composer idle.
+cat > "$RUN_ROOT/collars/post-turn-chrome.sh" <<SH
+# shellcheck shell=bash
+# shellcheck disable=SC2034
+. "$ROOT/collars/bash.sh"
+GANG_QUIET_AT_REST=1
+eval "\$(declare -f collar_input | sed '1s/collar_input/post_turn_chrome_real_input/')"
+collar_input() {
+  if [ -e "$RUN_ROOT/post-turn-chrome.draft" ]; then
+    printf 'a draft still owns this box'
+    return 0
+  fi
+  post_turn_chrome_real_input "\$1"
+}
+SH
+"$HITCH" post-turn-chrome -c post-turn-chrome -d /tmp >/dev/null
+post_turn_chrome_id="$(window_id post-turn-chrome)"
+post_turn_chrome_old=$(( $(date +%s) - 400 ))
+post_turn_chrome_clock="$RUN_ROOT/post-turn-chrome-clock"
+cat > "$post_turn_chrome_clock" <<'SH'
+#!/bin/sh
+case "${1:-}" in
+  now) printf '%s\n' 400000000001 ;;
+  elapsed) [ $(( 400000000001 - $2 )) -ge "$3" ] ;;
+  *) exit 2 ;;
+esac
+SH
+chmod +x "$post_turn_chrome_clock"
+tmux set-option -w -t "$post_turn_chrome_id" @gl_turn \
+  "closed v2:1"
+tmux set-option -w -t "$post_turn_chrome_id" @gl_activity_only_since \
+  "$post_turn_chrome_old"
+post_turn_chrome_tty="$(tmux display-message -p -t "$post_turn_chrome_id" '#{pane_tty}')"
+printf '\npost-turn chrome\n' > "$post_turn_chrome_tty"
+equal "an empty composer settles a closed turn despite recent pane chrome" \
+  "~idle~" \
+  "$(GANG_TEST_CLOCK="$post_turn_chrome_clock" \
+    GANG_ACTIVITY_WINDOW=100000 GANG_ACTIVITY_LIMIT=0 \
+    "$GANG" status post-turn-chrome | sed -n '1p')"
+: > "$RUN_ROOT/post-turn-chrome.draft"
+equal "recent pane chrome cannot settle a drafted composer" \
+  "?unknown? (turn-bracket closed while the pane kept being written to)" \
+  "$(GANG_TEST_CLOCK="$post_turn_chrome_clock" \
+    GANG_ACTIVITY_WINDOW=100000 GANG_ACTIVITY_LIMIT=0 \
+    "$GANG" status post-turn-chrome | sed -n '1p')"
+post_turn_clock_fail="$RUN_ROOT/post-turn-clock-fail"
+printf '#!/bin/sh\nexit 2\n' > "$post_turn_clock_fail"
+chmod +x "$post_turn_clock_fail"
+rm -f -- "$RUN_ROOT/post-turn-chrome.draft"
+tmux set-option -w -t "$post_turn_chrome_id" @gl_turn \
+  "open v2:1"
+tmux set-option -w -t "$post_turn_chrome_id" @gl_activity_only_since "v2:1"
+post_turn_clock_rc=0
+GANG_TEST_CLOCK="$post_turn_clock_fail" GANG_ACTIVITY_WINDOW=100000 \
+  "$GANG" status post-turn-chrome > "$RUN_ROOT/post-turn-clock.out" \
+  2> "$RUN_ROOT/post-turn-clock.err" || post_turn_clock_rc=$?
+equal "an unreadable activity clock preserves the status command" \
+  0 "$post_turn_clock_rc"
+contains "an unreadable activity clock leaves the pane state unknown" \
+  "$(<"$RUN_ROOT/post-turn-clock.out")" "?unknown?"
+contains "an unreadable activity clock remains visible to the operator" \
+  "$(<"$RUN_ROOT/post-turn-clock.err")" \
+  "cannot compare the activity-only bound"
+"$GANG" drop post-turn-chrome >/dev/null
+
+# WHO CREATED THIS AGENT, RESOLVED RATHER THAN REMEMBERED. The stamp is the
+# hitcher's @gl_spool token, which `gang rename` deliberately preserves, so the
+# name reported is whatever that window is called NOW. A bare name would have
+# gone stale at the first rename — that is the case driven below, along with the
+# only one the witnessed name is for: the hitcher's window no longer exists.
+# $TMUX_PANE is how gang answers "which window am I in", so it is the input that
+# makes this registration come from an agent's window rather than a terminal.
+origin_id="$(tmux new-window -d -P -F '#{window_id}' -t "=$GANG_SESSION" \
+  -n hitch-origin "PS1='❯ ' bash --norc")"
+"$GANG" adopt hitch-origin -c bash >/dev/null
+equal "adoption records its active pane path through list-panes" \
+  "$PWD" "$(tmux show-options -wqv -t "$origin_id" @gl_dir)"
+origin_pane="$(tmux list-panes -t "$origin_id" -F '#{pane_id}')"
+origin_token="$(tmux show-options -wqv -t "$origin_id" @gl_spool)"
+helper_id="$(tmux new-window -d -P -F '#{window_id}' -t "=$GANG_SESSION" \
+  -n hitch-helper "PS1='❯ ' bash --norc")"
+TMUX_PANE="$origin_pane" "$GANG" adopt hitch-helper -c bash >/dev/null
+equal "a registration made from an agent's window records that agent's spool identity" \
+  "$origin_token" "$(tmux show-options -wqv -t "$helper_id" @gl_hitched_by)"
+equal "and witnesses the name it had at the time" "hitch-origin" \
+  "$(tmux show-options -wqv -t "$helper_id" @gl_hitched_by_name)"
+contains "status resolves the identity to a name" \
+  "$("$GANG" status hitch-helper)" "hitched by hitch-origin"
+contains "roster resolves the same live identity" \
+  "$("$GANG" roster)" "hitcher=hitch-origin"
+contains "status --why resolves the same live identity" \
+  "$("$GANG" status --why hitch-helper)" "hitched by hitch-origin"
+equal "porcelain roster reports the live hitcher state and current name" \
+  "live	hitch-origin" \
+  "$("$GANG" roster --porcelain | awk -F'\t' '$1=="hitch-helper"{print $7"\t"$8}')"
+
+# A FAILED LIVENESS CHECK IS NOT EVIDENCE OF ABSENCE. hitch-origin is still the
+# exact live window it was above; only the tmux call that enumerates live
+# windows is made to fail. Reading "gone" here would be inventing a departure
+# nothing established, so this must read "unknown" instead.
+mkdir -p "$RUN_ROOT/no-window-listing"
+cat > "$RUN_ROOT/no-window-listing/tmux" <<SH
+#!/bin/sh
+if [ "\$1" = list-windows ] && [ "\$2" = -a ] && [ "\$3" = -F ] && \\
+   [ "\$4" = '#{@gl_spool} #{@gl_agent}' ]; then
+  exit 1
+fi
+exec "$RUN_ROOT/waitbin/tmux" "\$@"
+SH
+chmod +x "$RUN_ROOT/no-window-listing/tmux"
+unreadable_status="$(PATH="$RUN_ROOT/no-window-listing:$PATH" "$GANG" status hitch-helper)"
+contains "a failed liveness check reads as unknown, not gone" \
+  "$unreadable_status" "hitcher unknown"
+excludes "and never claims the still-live parent has departed" \
+  "$unreadable_status" "whose window is gone"
+contains "roster renders the same unknown rather than inventing gone" \
+  "$(PATH="$RUN_ROOT/no-window-listing:$PATH" "$GANG" roster)" "hitcher=unknown"
+contains "status --why renders the same unknown too" \
+  "$(PATH="$RUN_ROOT/no-window-listing:$PATH" "$GANG" status --why hitch-helper)" \
+  "hitcher unknown"
+equal "porcelain roster reports unknown with the witnessed name, not gone" \
+  "unknown	hitch-origin" \
+  "$(PATH="$RUN_ROOT/no-window-listing:$PATH" "$GANG" roster --porcelain \
+    | awk -F'\t' '$1=="hitch-helper"{print $7"\t"$8}')"
+
+"$GANG" rename hitch-origin hitch-renamed >/dev/null
+contains "which is the hitcher's CURRENT name after a rename, not the stale one" \
+  "$("$GANG" status hitch-helper)" "hitched by hitch-renamed"
+contains "roster follows the same rename, by token rather than by remembered name" \
+  "$("$GANG" roster)" "hitcher=hitch-renamed"
+equal "porcelain roster follows the rename too" \
+  "live	hitch-renamed" \
+  "$("$GANG" roster --porcelain | awk -F'\t' '$1=="hitch-helper"{print $7"\t"$8}')"
+"$GANG" drop hitch-renamed >/dev/null
+contains "and falls back to the name last witnessed once that window is gone" \
+  "$("$GANG" status hitch-helper)" "hitched by hitch-origin, whose window is gone"
+contains "roster renders the gone parent explicitly rather than dropping the tag" \
+  "$("$GANG" roster)" "hitcher=hitch-origin(gone)"
+contains "status --why renders the gone parent explicitly too" \
+  "$("$GANG" status --why hitch-helper)" "hitched by hitch-origin, whose window is gone"
+equal "porcelain roster reports the gone hitcher state with the witnessed name" \
+  "gone	hitch-origin" \
+  "$("$GANG" roster --porcelain | awk -F'\t' '$1=="hitch-helper"{print $7"\t"$8}')"
+
+# SAME NAME, DIFFERENT LINEAGE. A hitcher's window is gone, and a fresh, unrelated
+# agent is later hitched under the exact same display name. Resolution reads the
+# witnessed spool token, so the old child must keep reporting its true, gone
+# parent rather than being silently reattached to the new live window that
+# happens to answer to the same name.
+lineage_impostor_id="$(tmux new-window -d -P -F '#{window_id}' -t "=$GANG_SESSION" \
+  -n hitch-origin "PS1='❯ ' bash --norc")"
+"$GANG" adopt hitch-origin -c bash >/dev/null
+excludes "the impostor is a fresh spool identity, not the old one" \
+  "$(tmux show-options -wqv -t "$lineage_impostor_id" @gl_spool)" "$origin_token"
+contains "the old child still reports its true, gone parent" \
+  "$("$GANG" status hitch-helper)" "hitched by hitch-origin, whose window is gone"
+contains "roster does not reattach the child to the new same-named window" \
+  "$("$GANG" roster)" "hitcher=hitch-origin(gone)"
+equal "porcelain roster agrees: gone, not the impostor's live token" \
+  "gone	hitch-origin" \
+  "$("$GANG" roster --porcelain | awk -F'\t' '$1=="hitch-helper"{print $7"\t"$8}')"
+"$GANG" drop hitch-origin >/dev/null
+"$GANG" drop hitch-helper >/dev/null
+
+# NOTHING STAMPED AT ALL — a pre-provenance or otherwise unrecorded agent. This
+# must read as its own honest word, never as though it had no hitcher (which
+# would look identical to the operator sentinel) and never by inventing one.
+"$GANG" hitch legacy -c bash -d /tmp >/dev/null
+legacy_id="$(window_id legacy)"
+tmux set-option -wu -t "$legacy_id" @gl_hitched_by
+tmux set-option -wu -t "$legacy_id" @gl_hitched_by_name
+contains "status is explicit about an unrecorded hitcher rather than silent" \
+  "$("$GANG" status legacy)" "hitcher not recorded"
+contains "roster tags the unrecorded hitcher rather than guessing" \
+  "$("$GANG" roster)" "hitcher=unrecorded"
+contains "status --why reports the same unrecorded provenance" \
+  "$("$GANG" status --why legacy)" "hitcher not recorded"
+equal "porcelain roster reports unrecorded with no invented name" \
+  "unrecorded	-" \
+  "$("$GANG" roster --porcelain | awk -F'\t' '$1=="legacy"{print $7"\t"$8}')"
+"$GANG" drop legacy >/dev/null
+
+# ADOPTION NAMES A HARNESS ALREADY RUNNING IN THE WINDOW. A held corpse still
+# has a window name, and before this precondition adopt registered that empty
+# window, minted its spool, and reported it as an agent. The pane's own fifo is
+# the death barrier: EOF settles process exit before the immediate tmux read.
+mkfifo "$RUN_ROOT/adopt-dead.fifo"
+adopt_dead_id="$(tmux new-window -d -P -F '#{window_id}' \
+  -t "=$GANG_SESSION" -n adopt-dead \
+  "exec 9<>$RUN_ROOT/adopt-dead.fifo; PS1='❯ ' exec bash --norc")"
+adopt_dead_pane="$(tmux list-panes -t "$adopt_dead_id" -F '#{pane_id}')"
+exec 3<"$RUN_ROOT/adopt-dead.fifo"
+tmux set-option -w -t "$adopt_dead_id" remain-on-exit on
+tmux send-keys -l -t "$adopt_dead_pane" 'exit 23'
+tmux send-keys -t "$adopt_dead_pane" Enter
+cat <&3 >/dev/null
+exec 3<&-
+tmux run-shell true >/dev/null
+equal "the refused-adopt fixture has no running pane" 1 \
+  "$(tmux display-message -p -t "$adopt_dead_id" '#{pane_dead}')"
+adopt_dead_before="$(tmux show-options -wv -t "$adopt_dead_id")"
+refuses "adopt refuses a window where no harness is running" \
+  "nothing is running in window 'adopt-dead'" \
+  "$GANG" adopt adopt-dead -c bash
+equal "refusing a dead window leaves every window option unchanged" \
+  "$adopt_dead_before" \
+  "$(tmux show-options -wv -t "$adopt_dead_id")"
+tmux kill-window -t "$adopt_dead_id"
+
+# A REFUSAL MUST PRECEDE ADOPTION'S FIRST MUTATION. These settings are stamped
+# only after the window becomes an agent, but their parsers can reject the
+# operator's configuration. Rejecting one after registration says adoption
+# failed while leaving a named agent and a fresh spool identity behind.
+adopt_invalid_id="$(tmux new-window -d -P -F '#{window_id}' \
+  -t "=$GANG_SESSION" -n adopt-invalid "PS1='❯ ' bash --norc")"
+equal "the refused-adopt fixture is a live unregistered window" \
+  "$adopt_invalid_id|0" \
+  "$(tmux display-message -p -t "$adopt_invalid_id" '#{window_id}|#{pane_dead}')"
+adopt_invalid_before="$(tmux show-options -wv -t "$adopt_invalid_id")"
+refuses "adopt validates automatic resume before changing the window" \
+  "GANG_AUTO_RESUME must be off or one percentage" \
+  env GANG_AUTO_RESUME=90 "$GANG" adopt adopt-invalid -c bash
+equal "a refused automatic-resume setting leaves every window option unchanged" \
+  "$adopt_invalid_before" \
+  "$(tmux show-options -wv -t "$adopt_invalid_id")"
+tmux kill-window -t "$adopt_invalid_id"
+
+# THE OPERATOR-FACING HALF of the clipped-composer reading. A box that outgrew
+# its pane is drawn and is taking input; what it lacks is room to render. Naming
+# that a harness which never drew a box sends the reader after the wrong thing,
+# and it is the reading that let a stranded paste look like a dead harness.
+clipped_agent_rule="$(printf '─%.0s' $(seq 40))"
+{ printf 'transcript %s\n' 1 2 3 4 5 6
+  printf '%s\n' "$clipped_agent_rule"
+  printf '%s\n' '❯ a pasted body that outgrew'
+  printf '%s\n' '  the rows this pane had for'
+  printf '%s' '  it, so the box never closes'
+} > "$RUN_ROOT/clipped-agent-frame"
+tmux new-window -d -t "=$GANG_SESSION" -n clipped-agent \
+  "cat '$RUN_ROOT/clipped-agent-frame'; cat" >/dev/null
+refuses "adopt cannot promise a launch-installed Stop hook it did not observe" \
+  "existing window gives Gangline no proof that exact hook is present" \
+  "$GANG" adopt clipped-agent -c claude-code
+clipped_collar_dir="$RUN_ROOT/clipped-collars"
+mkdir -p "$clipped_collar_dir"
+cat > "$clipped_collar_dir/clipped-claude.sh" <<SH
+# shellcheck shell=bash
+. "$ROOT/collars/claude-code.sh"
+GANG_STOP_HOOK=""
+SH
+GANG_COLLARS="$clipped_collar_dir" \
+  "$GANG" adopt clipped-agent -c clipped-claude >/dev/null
+clipped_agent_read="$(GANG_COLLARS="$clipped_collar_dir" \
+  "$GANG" capture --composer clipped-agent 2>&1 || true)"
+contains "gang capture --composer names a box its pane was too short to show" \
+  "$clipped_agent_read" "taller than its pane"
+excludes "gang capture --composer does not blame the harness for a box it did draw" \
+  "$clipped_agent_read" "has not drawn its input box"
+"$GANG" drop clipped-agent >/dev/null
+
+adopt_alias_id="$(tmux new-window -d -P -F '#{window_id}' -t "=$GANG_SESSION" \
+  -n adopt-alias "PS1='❯ ' bash --norc")"
+refuses "the removed adopt collar flag is an unknown argument" \
+  "adopt: unknown argument '-p'" \
+  "$GANG" adopt adopt-alias -p bash
+equal "the refused adopt leaves the window unregistered" "" \
+  "$(tmux show-options -wqv -t "$adopt_alias_id" @gl_agent)"
+tmux kill-window -t "$adopt_alias_id"
+
+# composer reads the box through the collar's styled reading, not the raw
+# pane; a freshly hitched agent's box is definitively empty
+equal "capture --composer prints nothing for an empty box" \
+  "" "$("$GANG" capture --composer alpha)"
+
+mkdir -p "$RUN_ROOT/collars"
+export GANG_COLLARS="$RUN_ROOT/collars"
+
+# Adoption establishes identity; it is not a state query. A collar whose pane
+# reader refuses must still be adoptable, with unknown as the honest initial
+# glyph, while the explicit status command keeps failing loudly on that reader.
+cat > "$RUN_ROOT/collars/adopt-unreadable.sh" <<SH
+# shellcheck shell=bash
+# shellcheck disable=SC2034
+. "$ROOT/collars/bash.sh"
+collar_input() {
+  : > "$RUN_ROOT/adopt-state-reader-called"
+  return 3
+}
+SH
+adopt_unreadable_id="$(tmux new-window -d -P -F '#{window_id}' \
+  -t "=$GANG_SESSION" -n adopt-unreadable "PS1='❯ ' bash --norc")"
+adopt_unreadable_rc=0
+"$GANG" adopt adopt-unreadable -c adopt-unreadable >/dev/null 2>&1 \
+  || adopt_unreadable_rc=$?
+equal "adoption does not fail on an unrelated state observation" \
+  0 "$adopt_unreadable_rc"
+equal "the adopted identity is complete despite its unreadable state" \
+  "adopt-unreadable|adopt-unreadable" \
+  "$(tmux show-options -wqv -t "$adopt_unreadable_id" @gl_agent)|$(tmux show-options -wqv -t "$adopt_unreadable_id" @gl_collar)"
+equal "adoption does not call the collar's state reader" absent \
+  "$([ ! -e "$RUN_ROOT/adopt-state-reader-called" ] && printf absent || printf called)"
+equal "an adopted window with no state observation starts unknown" \
+  "?adopt-unreadable?" \
+  "$(tmux display-message -p -t "$adopt_unreadable_id" '#{window_name}')"
+refuses "an explicit state observation still fails loudly" \
+  "cannot read the composer" "$GANG" status adopt-unreadable
+"$GANG" drop adopt-unreadable >/dev/null
+
+# Native session identity is a window fact, and every renewal consumes that
+# exact fact rather than directory recency. This fixture exposes the common
+# hook payload shape without launching a real harness.
+cat > "$RUN_ROOT/collars/identity.sh" <<SH
+# shellcheck shell=bash
+# shellcheck disable=SC2034
+. "$ROOT/collars/bash.sh"
+GANG_LAUNCH="sh -c 'PS1=\"❯ \" exec bash --norc' fresh-identity"
+GANG_RESUME_LAUNCH="sh -c 'PS1=\"❯ \" exec bash --norc' resume-{{session_id}}"
+collar_session_id() {
+  [ ! -e "$RUN_ROOT/identity-stderr-on" ] || printf 'COLLAR-IDENTITY-STDERR\n' >&2
+  printf '%s' "\$2" | python3 -c 'import json,sys; print(json.load(sys.stdin)["session_id"])'
+}
+SH
+"$HITCH" identity -c identity -d /tmp >/dev/null
+identity_id="$(window_id identity)"
+identity_pane="$(tmux list-panes -t "$identity_id" -F '#{pane_id}')"
+: > "$RUN_ROOT/identity-stderr-on"
+printf '%s' '{"hook_event_name":"Stop","session_id":"native-identity-123"}' \
+  | TMUX_PANE="$identity_pane" "$GANG" hook \
+    2> "$RUN_ROOT/identity-hook.err"
+rm -f -- "$RUN_ROOT/identity-stderr-on"
+equal "a hook suppresses collar identity diagnostics" "" \
+  "$(<"$RUN_ROOT/identity-hook.err")"
+equal "the first native hook stamps its exact harness session id" \
+  "native-identity-123" \
+  "$(tmux show-options -wqv -t "$identity_id" @gl_session_id)"
+equal "hitch records the window's Gangline agent identity" "identity" \
+  "$(tmux show-options -wqv -t "$identity_id" @gl_agent)"
+
+# Codex consumes that same native payload directly. This registered window has
+# the aborted-hitch/adopt shape: no startup nonce and no rollout binding. The
+# first hook must stamp both facts without a sessions-tree search.
+codex_payload_file="$RUN_ROOT/codex-payload-session.jsonl"
+cat > "$codex_payload_file" <<'JSONL'
+{"type":"session_meta","payload":{"id":"codex-payload-123"}}
+{"payload":{"type":"token_count","info":{"last_token_usage":{"total_tokens":60000},"model_context_window":300000}}}
+JSONL
+codex_payload_id="$(tmux new-window -d -P -F '#{window_id}' \
+  -t "=$GANG_SESSION" -n codex-payload "PS1='❯ ' bash --norc")"
+tmux set-option -w -t "$codex_payload_id" @gl_agent codex-payload
+tmux set-option -w -t "$codex_payload_id" @gl_collar codex
+codex_payload_pane="$(tmux list-panes -t "$codex_payload_id" -F '#{pane_id}')"
+equal "the codex payload fixture begins with no native session binding" "|" \
+  "$(tmux show-options -wqv -t "$codex_payload_id" @gl_session_id)|$(tmux show-options -wqv -t "$codex_payload_id" @gl_session)"
+printf '%s' \
+  "{\"hook_event_name\":\"Stop\",\"session_id\":\"codex-payload-123\",\"transcript_path\":\"$codex_payload_file\"}" \
+  | TMUX_PANE="$codex_payload_pane" "$GANG" hook
+equal "a first Codex hook stamps an agent that has no startup nonce" \
+  "codex-payload-123" \
+  "$(tmux show-options -wqv -t "$codex_payload_id" @gl_session_id)"
+equal "the Codex hook binds its native transcript path for context" \
+  "$codex_payload_file" \
+  "$(tmux show-options -wqv -t "$codex_payload_id" @gl_session)"
+equal "Codex context uses the hook-bound transcript without a nonce" \
+  "60k/300k (20%)" "$($GANG context codex-payload)"
+"$GANG" drop codex-payload >/dev/null
+
+# Calibrate the parser's failure direction: a native-looking payload with the
+# identity field absent must remain UNSTAMPED rather than borrowing any other
+# hook or cwd fact.
+codex_missing_id="$(tmux new-window -d -P -F '#{window_id}' \
+  -t "=$GANG_SESSION" -n codex-missing-id "PS1='❯ ' bash --norc")"
+tmux set-option -w -t "$codex_missing_id" @gl_agent codex-missing-id
+tmux set-option -w -t "$codex_missing_id" @gl_collar codex
+codex_missing_pane="$(tmux list-panes -t "$codex_missing_id" -F '#{pane_id}')"
+printf '%s' \
+  "{\"hook_event_name\":\"Stop\",\"transcript_path\":\"$codex_payload_file\"}" \
+  | TMUX_PANE="$codex_missing_pane" "$GANG" hook
+equal "a Codex payload missing session_id calibrates to UNSTAMPED" "" \
+  "$(tmux show-options -wqv -t "$codex_missing_id" @gl_session_id)"
+equal "a rejected Codex payload does not half-bind its transcript" "" \
+  "$(tmux show-options -wqv -t "$codex_missing_id" @gl_session)"
+"$GANG" drop codex-missing-id >/dev/null
+
+identity_report="$(TMUX_PANE="$identity_pane" "$GANG" whoami)"
+contains "whoami names the agent" "$identity_report" "agent: identity"
+contains "whoami names the pane" "$identity_report" "pane: $identity_pane"
+contains "whoami names the collar" "$identity_report" "collar: identity"
+contains "whoami names the stamped native session" "$identity_report" \
+  "harness session id: native-identity-123"
+contains "whoami names the latest live payload id" "$identity_report" \
+  "live payload id: native-identity-123"
+contains "whoami names the team" "$identity_report" "team session: $GANG_SESSION"
+
+self_before="$(pane identity)"
+refuses "a self-send is refused under the intent it violates" \
+  "a message that returns to its author is never intended" \
+  bash -c 'printf SELF_RETURN | TMUX_PANE="$1" "$2" send identity' \
+  fixture "$identity_pane" "$GANG"
+equal "a refused self-send types nothing" "$self_before" "$(pane identity)"
+
+tmux set-option -w -t "$identity_id" @gl_session_id bogus-native-id
+printf '%s' '{"hook_event_name":"UserPromptSubmit","session_id":"native-identity-123"}' \
+  | TMUX_PANE="$identity_pane" "$GANG" hook
+contains "status exposes a native session identity mismatch" \
+  "$("$GANG" status identity)" \
+  "stamped 'bogus-native-id' != live 'native-identity-123'"
+contains "roster exposes a native session identity mismatch" \
+  "$("$GANG" roster)" "identity-mismatch="
+mismatch_before="$(pane alpha)"
+refuses "a mismatched pane cannot send under the window's authority" \
+  "identity mismatch" bash -c \
+  'printf MISMATCH_SPOKE | TMUX_PANE="$1" "$2" send alpha' \
+  fixture "$identity_pane" "$GANG"
+equal "the mismatch refusal types nothing into its target" \
+  "$mismatch_before" "$(pane alpha)"
+tmux set-option -w -t "$identity_id" @gl_session_id native-identity-123
+printf '%s' '{"hook_event_name":"Stop","session_id":"native-identity-123"}' \
+  | TMUX_PANE="$identity_pane" "$GANG" hook
+excludes "a matching next hook repairs the visible mismatch" \
+  "$("$GANG" roster)" "identity-mismatch="
+
+drop_identity_out="$("$GANG" drop identity)"
+contains "drop prints the parting native session id before destroying its window" \
+  "$drop_identity_out" "session id: native-identity-123"
+contains "drop prints the exact explicit-id relaunch line" "$drop_identity_out" \
+  "gang hitch identity --resume native-identity-123"
+# The id belongs to the harness this window ran, and hitch resolves a missing
+# -c from the caller's ambient collar, so a relaunch line without the collar
+# hands the id to whichever harness the operator happens to type from. Claude
+# also keys its resume on the working directory.
+contains "the relaunch line names the collar the id was recorded under" \
+  "$drop_identity_out" "gang hitch identity --resume native-identity-123 -c identity"
+contains "and the directory the harness resumes from" \
+  "$drop_identity_out" " -d /tmp"
+"$GANG" hitch identity -c identity -d "$RUN_ROOT" \
+  --resume native-identity-123 >/dev/null
+contains "explicit resume substitutes the quoted identity from any cwd" \
+  "$(tmux display-message -p -t "$(window_id identity)" '#{pane_start_command}')" \
+  "resume-native-identity-123"
+"$GANG" drop identity >/dev/null
+# A relative -d names a directory only from the hitching caller's cwd, so the
+# hitch records the absolute directory it led to and the relaunch line works
+# wherever the operator runs it.
+(cd "$RUN_ROOT" && "$HITCH" reldir -c identity -d . >/dev/null)
+tmux set-option -w -t "$(window_id reldir)" @gl_session_id native-reldir-123
+contains "a relative -d is relaunched from the absolute directory it named" \
+  "$("$GANG" drop reldir)" " -d $(printf '%q' "$RUN_ROOT")"
+refuses "bare resume without a surviving stamped window refuses loudly" \
+  "gang hitch identity --resume <session-id>" \
+  "$GANG" hitch identity -c identity -d /tmp --resume
+equal "a refused stamp-less resume launches nothing" "" "$(window_id identity)"
+
+# A CONTRADICTED STAMP IS NOT SOMETHING TO QUOTE. Sends from such a pane
+# already fail closed; a parting line offering --resume <that id> makes the
+# same claim in the place an operator acts on it.
+"$HITCH" contradicted -c identity -d /tmp >/dev/null
+contradicted_id="$(window_id contradicted)"
+tmux set-option -w -t "$contradicted_id" @gl_session_id stamped-identity-1
+tmux set-option -w -t "$contradicted_id" @gl_session_mismatch \
+  "stamped 'stamped-identity-1' != live 'live-identity-2'"
+contradicted_out="$("$GANG" drop contradicted)"
+contains "a contradicted stamp parts as the mismatch it is" \
+  "$contradicted_out" "MISMATCH (stamped 'stamped-identity-1' != live 'live-identity-2')"
+excludes "not as a relaunch into a conversation it is not running" \
+  "$contradicted_out" "--resume stamped-identity-1"
+
+"$HITCH" survivor -c identity -d /tmp >/dev/null
+survivor_id="$(window_id survivor)"
+survivor_pane="$(tmux list-panes -t "$survivor_id" -F '#{pane_id}')"
+printf '%s' '{"hook_event_name":"Stop","session_id":"surviving-native-id"}' \
+  | TMUX_PANE="$survivor_pane" "$GANG" hook
+refuses "explicit resume refuses a different session over a stamped window" \
+  "stamped for harness session 'surviving-native-id', not requested session 'other-native-id'" \
+  "$GANG" hitch survivor -c identity -d /tmp --resume other-native-id
+tmux set-option -w -t "$survivor_id" remain-on-exit on
+# A BARRIER THAT NEEDS THE TMUX SERVER CANNOT REPORT ON THE TMUX SERVER. What
+# this waits for is a pane's shell reaching its exit. The signal goes down a
+# pipe this run owns rather than through a client call into that server. The
+# trap writes one byte from
+# the pane's own shell, and the read below returns on that byte, so neither side
+# of the barrier is a tmux client and a busy server cannot swallow it. It is
+# still an event and not a clock: the read blocks on the byte exactly as the
+# channel blocked on the signal, and no wall time is spent either way.
+survivor_dead="$RUN_ROOT/survivor-dead"
+mkfifo "$survivor_dead"
+printf -v survivor_exit 'trap %q EXIT; exit' "printf x > $survivor_dead"
+tmux send-keys -l -t "$survivor_id" "$survivor_exit"
+tmux send-keys -t "$survivor_id" Enter
+# A WRITER THAT OPENED AND CLOSED WITHOUT WRITING IS NOT A SHELL THAT REACHED
+# ITS TRAP, and under set -e an empty read would end the run rather than say so.
+survivor_signal=""
+survivor_read_rc=0
+IFS= read -r -n 1 survivor_signal < "$survivor_dead" || survivor_read_rc=$?
+equal "the surviving window announced its own exit before it was read back" \
+  "0 x" "$survivor_read_rc $survivor_signal"
+"$HITCH" survivor -c identity -d /tmp --resume >/dev/null
+contains "bare resume reads the stamp from a surviving dead window" \
+  "$(tmux display-message -p -t "$survivor_id" '#{pane_start_command}')" \
+  "resume-surviving-native-id"
+"$GANG" drop survivor >/dev/null
+
+# A BARRIER NOBODY SIGNALS MUST GO RED, NOT QUIET. Every barrier above learns
+# its event from `tmux wait-for`, a client call with no timeout.
+# test/integration.sh puts a ceiling on a tmux shim in the bin directory this
+# run owns and already leads PATH with.
+#
+# THIS IS THE ONE CHECK HERE WHOSE SUBJECT IS A TIMEOUT, so its clock is scaled
+# rather than stopped: stopping it would assert that an expiry which never
+# happens reports correctly. THE MARGIN, MEASURED 2026-08-24 on a loaded box:
+#
+#   signalled barrier, waiter already blocked   ~10ms
+#   this fixture's ceiling                      1s
+#   the suite's ceiling                         120s
+#
+# A hundredfold over the transport it is bounding, and a hundredth of the budget
+# a real barrier gets, so this spends a second to prove the second is enough.
+barrier_probe_ledger="$RUN_ROOT/barrier-probe-ledger"
+barrier_probe_channel="test-never-signalled-$$"
+barrier_probe_rc=0
+# ITS OWN LEDGER. The shim writes an expiry where the run's summary reads it and
+# refuses to end green; a probe that deliberately expires must not leave that
+# record behind, or this check would make its own run red.
+barrier_probe_out="$(GANG_TEST_WAIT_CEILING=1 \
+  GANG_TEST_WAIT_LEDGER="$barrier_probe_ledger" \
+  tmux wait-for "$barrier_probe_channel" 2>&1)" || barrier_probe_rc=$?
+equal "a barrier nothing signals is cut off instead of parking the run" \
+  "111" "$barrier_probe_rc"
+contains "and the cut-off says the barrier was never signalled" \
+  "$barrier_probe_out" "BARRIER NEVER SIGNALLED"
+contains "and names the channel that was waited on" \
+  "$barrier_probe_out" "$barrier_probe_channel"
+contains "and writes that channel where a dying pane cannot take it" \
+  "$(<"$barrier_probe_ledger")" "$barrier_probe_channel"
+equal "the run's own barrier ledger is untouched by the probe" "" \
+  "$(cat "$RUN_ROOT/wedged-barriers" 2>/dev/null || true)"
+# AND THE CEILING DOES NOT BOUND AN ANSWERED BARRIER INTO A FAILURE. A signal
+# is latched, so this pair is the ordinary path every other barrier here takes,
+# run through the same shim.
+tmux wait-for -S "$barrier_probe_channel-answered"
+barrier_answered_rc=0
+tmux wait-for "$barrier_probe_channel-answered" || barrier_answered_rc=$?
+equal "a barrier that is answered still returns clean through the ceiling" \
+  "0" "$barrier_answered_rc"
+# AND THE CEILING IS NOT IN THE DIRECTORY CASES REMOVE. A case that needs the
+# production clock strips the compressed-clock shim's directory off PATH, and
+# while the two shims shared a directory that stripped the ceiling with it —
+# which is precisely where the wedge that proved the ceiling then happened. The
+# relationship is asserted rather than left to whoever edits either line next.
+equal "stripping the compressed-clock shim leaves the wait ceiling on PATH" \
+  "$RUN_ROOT/waitbin/tmux" \
+  "$(PATH="${PATH#"$RUN_ROOT/bin:"}"; command -v tmux)"
+# AND THE GUARD OUTLIVES NOTHING. A caller reading a barrier inside a command
+# substitution is reading a pipe, and any background process that inherited the
+# write end holds it open whether or not it has anything to say. A guard still
+# counting after its barrier was answered therefore kept that substitution open
+# for the whole ceiling — which never showed up as a failure, because the
+# barrier passed and only the read after it was slow.
+#
+# The behaviour is exercised below; the guard against it coming back is the
+# redirect itself, asserted on the generated shim, because the regression's only
+# symptom is duration and a check that can only be slow is not a check.
+contains "the ceiling's guard is given stdio it cannot lend to a caller" \
+  "$(<"$RUN_ROOT/waitbin/tmux")" ') >/dev/null 2>&1 &'
+# AND IT KILLS A PID RATHER THAN A PROCESS GROUP. The guard's trap tears down
+# the sleeper it forked, and `kill 0` would instead tear down the process group
+# that called the shim — this run. That is also read off the generated shim
+# rather than exercised, and for a harder reason than the redirect above: the
+# window is entered about once in a few hundred teardowns, so exercising it once
+# would report green from a race it simply won, and exercising it enough times
+# to lose would be a check whose failure mode is killing the run reading it.
+contains "the ceiling's guard names the sleeper instead of its own group" \
+  "$(<"$RUN_ROOT/waitbin/tmux")" '[ -n "$napper" ] && kill -KILL "$napper"'
+# AND THE CEILING SURVIVES A CALLER THAT HAS TURNED TERM OFF. gang's spool
+# drain runs under `trap "" HUP INT TERM`; an ignored disposition survives
+# exec, and POSIX does not let a non-interactive shell un-ignore what was
+# ignored at entry. Every process such a caller forks — the shim, its guard,
+# and the tmux client the guard must cut off — inherits SIGTERM as ignored, so
+# a TERM-based teardown made this ceiling silently absent in the one place the
+# suite's own barriers run. Measured: at a 2s ceiling the shim was still
+# blocked after 8s inside such a caller and reported at 2s outside one.
+#
+# THE CLOCK IS SCALED, NOT STOPPED, for the same reason as the probe above: the
+# subject IS an expiry. THE MARGIN, MEASURED 2026-08-25:
+#
+#   signalled barrier, waiter already blocked   ~10ms
+#   this fixture's ceiling                      1s
+#   the suite's ceiling                         120s
+barrier_ignored_rc=0
+barrier_ignored_out="$( ( trap '' HUP INT TERM
+  GANG_TEST_WAIT_CEILING=1 GANG_TEST_WAIT_LEDGER="$barrier_probe_ledger" \
+    tmux wait-for "$barrier_probe_channel-term-ignored" 2>&1 ) )" \
+  || barrier_ignored_rc=$?
+equal "the ceiling cuts a barrier off even where its caller ignores TERM" \
+  "111" "$barrier_ignored_rc"
+contains "and still says which barrier it cut off" \
+  "$barrier_ignored_out" "$barrier_probe_channel-term-ignored"
+tmux wait-for -S "$barrier_probe_channel-answered-in-substitution"
+equal "an answered barrier inside a command substitution closes it" \
+  "answered" \
+  "$(tmux wait-for "$barrier_probe_channel-answered-in-substitution" \
+    && printf answered)"
+
+# AND IT REACHES A WAITER INSIDE A PANE. Every check above runs the ceiling from
+# the suite's own shell, where PATH is set two lines after
+# the shim is written. A pane's environment does not come from the client that
+# opened the window — it comes from the tmux SERVER, as it stood when the server
+# started — so whether the ceiling covers a pane at all is a fact about the
+# order this run sets PATH in and starts its server in. Nothing asserted it, and
+# a reordering that took it away would be silent in exactly the place the wedges
+# happen.
+#
+# THE CLOCK IS SCALED, NOT STOPPED, for the reason the probes above are: the
+# subject IS an expiry. THE MARGIN, MEASURED 2026-08-30:
+#
+#   pane-side barrier answered before it blocked   29ms (pane launch included)
+#   this fixture's ceiling                         2s
+#   the suite's ceiling                            120s
+#
+# Seventy times the latency it bounds, and a sixtieth of the budget a real
+# barrier gets, so this spends two seconds to prove that two seconds are enough.
+#
+# THE VERDICT COMES BACK DOWN A PIPE THE RUN OWNS, not down a second tmux
+# channel: a barrier reporting on the tmux transport cannot be carried by it.
+barrier_pane_channel="test-pane-never-signalled-$$"
+barrier_pane_rc_file="$RUN_ROOT/barrier-pane-rc"
+barrier_pane_err="$RUN_ROOT/barrier-pane-err"
+barrier_pane_done="$RUN_ROOT/barrier-pane-done"
+mkfifo "$barrier_pane_done"
+cat > "$RUN_ROOT/barrier-pane.sh" <<SH
+#!/bin/sh
+rc=0
+GANG_TEST_WAIT_CEILING=2 GANG_TEST_WAIT_LEDGER='$barrier_probe_ledger' \\
+  tmux wait-for '$barrier_pane_channel' 2> '$barrier_pane_err' || rc=\$?
+printf '%s' "\$rc" > '$barrier_pane_rc_file'
+printf x > '$barrier_pane_done'
+exec cat
+SH
+chmod +x "$RUN_ROOT/barrier-pane.sh"
+barrier_pane_id="$(tmux new-window -d -P -F '#{window_id}' -t "=$GANG_SESSION" \
+  -n barrier-pane "$RUN_ROOT/barrier-pane.sh")"
+barrier_pane_byte=""
+barrier_pane_read_rc=0
+IFS= read -r -n 1 barrier_pane_byte < "$barrier_pane_done" || barrier_pane_read_rc=$?
+equal "the pane-side barrier reported a verdict rather than parking the run" \
+  "0 x" "$barrier_pane_read_rc $barrier_pane_byte"
+equal "the ceiling cuts off a barrier waiting inside a pane" \
+  "111" "$(<"$barrier_pane_rc_file")"
+contains "and names the pane-side barrier it cut off" \
+  "$(<"$barrier_pane_err")" "$barrier_pane_channel"
+equal "the run's own barrier ledger is still untouched" "" \
+  "$(cat "$RUN_ROOT/wedged-barriers" 2>/dev/null || true)"
+tmux kill-window -t "$barrier_pane_id"
+
+unadopted_id="$(tmux new-window -d -P -F '#{window_id}' -t "=$GANG_SESSION" \
+  -n unadopted "PS1='❯ ' bash --norc")"
+unadopted_pane="$(tmux list-panes -t "$unadopted_id" -F '#{pane_id}')"
+unadopted_target_before="$(pane alpha)"
+refuses "an unadopted pane cannot send under its bare window name" \
+  "no registered Gangline agent/collar identity" bash -c \
+  'printf IDENTITY_ABSENT | TMUX_PANE="$1" "$2" send alpha' \
+  fixture "$unadopted_pane" "$GANG"
+equal "identity absence types nothing into the claimed target" \
+  "$unadopted_target_before" "$(pane alpha)"
+tmux kill-window -t "$unadopted_id"
+
+residue_recovery_id="$(tmux new-window -d -P -F '#{window_id}' \
+  -t "=$GANG_SESSION" -n residue-recovery "PS1='❯ ' bash --norc")"
+residue_recovery_pane="$(tmux list-panes -t "$residue_recovery_id" -F '#{pane_id}')"
+tmux set-option -w -t "$residue_recovery_id" @gl_collar identity
+residue_target_before="$(pane residue-recovery)"
+if residue_target_out="$(printf RESIDUE_TARGET_BODY | "$GANG" send \
+    residue-recovery --from tester --live-only 2>&1)"; then
+  fail "collar residue without registration is not a send target" \
+    "send unexpectedly succeeded"
+else
+  contains "the unregistered target refusal names adoption as the repair" \
+    "$residue_target_out" "not a registered Gangline agent"
+fi
+equal "the unregistered target receives no message bytes" \
+  "$residue_target_before" "$(pane residue-recovery)"
+refuses "collar residue without @gl_agent cannot send under a bare window name" \
+  "no registered Gangline agent/collar identity" bash -c \
+  'printf RESIDUE_BEFORE_ADOPT | TMUX_PANE="$1" "$2" send alpha' \
+  fixture "$residue_recovery_pane" "$GANG"
+if residue_adopt_out="$("$GANG" adopt residue-recovery -c identity 2>&1)"; then
+  pass "the deliberate adopt remedy claims a collar-residue window"
+else
+  fail "the deliberate adopt remedy claims a collar-residue window" \
+    "$residue_adopt_out"
+fi
+equal "adopt stamps the claimed residue window with its named identity" \
+  "residue-recovery" \
+  "$(tmux show-options -wqv -t "$residue_recovery_id" @gl_agent)"
+if printf 'RESIDUE_AFTER_ADOPT' | TMUX_PANE="$residue_recovery_pane" \
+    "$GANG" send alpha >/dev/null 2>&1; then
+  pass "the named adopt remedy resolves the send refusal"
+else
+  fail "the named adopt remedy resolves the send refusal" \
+    "send still refused after deliberate adoption"
+fi
+contains "the recovered pane's attributed message reaches its peer" \
+  "$(pane alpha)" "RESIDUE_AFTER_ADOPT"
+excludes "the pre-adoption refused body never reached the peer" \
+  "$(pane alpha)" "RESIDUE_BEFORE_ADOPT"
+"$GANG" drop residue-recovery >/dev/null
+
+residue_id="$(tmux new-window -d -P -F '#{window_id}' -t "=$GANG_SESSION" \
+  -n displaced "PS1='❯ ' bash --norc")"
+tmux set-option -w -t "$residue_id" @gl_agent lead
+refuses "hitch refuses a target window registered to another identity" \
+  "registered to Gangline agent 'lead'" \
+  "$GANG" hitch displaced -c identity -d /tmp
+refuses "adopt refuses a window registered to another Gangline identity" \
+  "registered to Gangline agent 'lead'" "$GANG" adopt displaced -c bash
+contains "the mismatch refusal names the requested window identity too" \
+  "$("$GANG" adopt displaced -c bash 2>&1 || true)" "displaced"
+tmux kill-window -t "$residue_id"
+
+# IDENTITY IS THE REGISTRATION, NOT THE TITLE. tmux lets anyone rename a window,
+# and gang paints its own state glyph into that title out of @gl_agent, so a
+# resolver that matches on #W can be aimed at another lane's harness by a rename
+# alone — and would paste, submit, VERIFY and report success against it. The
+# registration is what hitch and adopt wrote; the title is decoration.
+"$HITCH" registered-name -c bash -d /tmp >/dev/null
+registered_name_id="$(window_id registered-name)"
+tmux rename-window -t "$registered_name_id" borrowed-title
+refuses "a window title cannot address the agent registered under another name" \
+  "registered to Gangline agent 'registered-name'" \
+  bash -c 'printf TITLE_SPOOF | "$1" send borrowed-title --from tester' \
+  fixture "$GANG"
+excludes "the title-addressed message never reached the registered harness" \
+  "$(tmux capture-pane -pJ -t "$registered_name_id")" "TITLE_SPOOF"
+if printf 'REGISTERED_REACHES' |
+    "$GANG" send registered-name --from tester >/dev/null 2>&1; then
+  pass "the registered identity still resolves through a changed window title"
+else
+  fail "the registered identity still resolves through a changed window title" \
+    "send refused the agent under its own registered name"
+fi
+contains "and that message reaches the registered harness" \
+  "$(tmux capture-pane -pJ -t "$registered_name_id")" "REGISTERED_REACHES"
+equal "the agent's own name is its registration, whatever the title says" \
+  "registered-name" \
+  "$(TMUX_PANE="$(tmux list-panes -t "$registered_name_id" -F '#{pane_id}')" \
+    "$GANG" whoami | sed -n 's/^agent: //p')"
+refuses "rename applies the hitch name rules to the new identity" \
+  "is not a usable agent name" \
+  "$GANG" rename registered-name .hidden
+refuses "rename keeps Gangline's reserved identity unavailable" \
+  "is not a usable agent name" \
+  "$GANG" rename registered-name gangline
+refuses "rename refuses an identity another agent already registered" \
+  "'alpha' is already in use" \
+  "$GANG" rename registered-name alpha
+equal "refused renames leave the registration unchanged" \
+  "registered-name" \
+  "$(tmux show-options -wqv -t "$registered_name_id" @gl_agent)"
+equal "and leave its decorative title unchanged too" \
+  "borrowed-title" \
+  "$(tmux display-message -p -t "$registered_name_id" '#W')"
+tmux set-option -w -t "$registered_name_id" @gl_collar unavailable-for-rename
+contains "rename needs only registration, not a loadable collar" \
+  "$("$GANG" rename registered-name renamed-name)" \
+  "renamed registered-name to renamed-name"
+tmux set-option -w -t "$registered_name_id" @gl_collar bash
+equal "rename changes the registered identity" \
+  "renamed-name" \
+  "$(tmux show-options -wqv -t "$registered_name_id" @gl_agent)"
+equal "and immediately rewrites the decorative title from it" \
+  "renamed-name" \
+  "$(tmux display-message -p -t "$registered_name_id" '#W')"
+refuses "the old identity stops resolving immediately" \
+  "no agent 'registered-name'" \
+  bash -c 'printf OLD_RENAME_TARGET | "$1" send registered-name --from tester' \
+  fixture "$GANG"
+excludes "a send to the old identity reaches no harness" \
+  "$(tmux capture-pane -pJ -t "$registered_name_id")" "OLD_RENAME_TARGET"
+contains "status resolves the new identity immediately" \
+  "$("$GANG" status renamed-name)" "~idle~"
+contains "roster lists the new identity immediately" \
+  "$("$GANG" roster)" "renamed-name"
+equal "the agent reads its renamed registration as self" \
+  "renamed-name" \
+  "$(TMUX_PANE="$(tmux list-panes -t "$registered_name_id" -F '#{pane_id}')" \
+    "$GANG" whoami | sed -n 's/^agent: //p')"
+if printf 'RENAMED_REACHES' |
+    "$GANG" send renamed-name --from tester >/dev/null 2>&1; then
+  pass "delivery resolves the new identity immediately"
+else
+  fail "delivery resolves the new identity immediately" \
+    "send refused the agent under its renamed registration"
+fi
+contains "and the renamed target receives that message" \
+  "$(tmux capture-pane -pJ -t "$registered_name_id")" "RENAMED_REACHES"
+# Teardown, not an assertion: a resolver that cannot find this window by its
+# registration is exactly the defect above, and the fixture still has to go.
+"$GANG" drop renamed-name >/dev/null 2>&1 \
+  || tmux kill-window -t "$registered_name_id"
+
+# A REGISTRATION IS RAW BYTES, AND IT IS NOW THE TRUSTED IDENTITY. tmux escapes
+# control characters out of a window TITLE — #W reads \033 back as six literal
+# characters — so the title was never a way to paint somebody's terminal. Some
+# supported tmux versions return a user option raw, so reading identity from
+# @gl_agent can open that door. Names go out sanitized; matching keeps the bytes.
+ctl_name="$(printf 'ctl\033[31mrogue')"
+ctl_id="$(tmux new-window -d -P -F '#{window_id}' -t "=$GANG_SESSION" \
+  -n ctl-rogue "PS1='❯ ' bash --norc")"
+ctl_pane="$(tmux list-panes -t "$ctl_id" -F '#{pane_id}')"
+tmux set-option -w -t "$ctl_id" @gl_agent "$ctl_name"
+tmux set-option -w -t "$ctl_id" @gl_collar bash
+ctl_escapes() { case "$1" in *$'\033'*) printf raw ;; *) printf clean ;; esac; }
+ctl_whoami="$(TMUX_PANE="$ctl_pane" "$GANG" whoami 2>&1)" || true
+ctl_mail="$(TMUX_PANE="$ctl_pane" "$GANG" queue 2>&1)" || true
+ctl_drop="$("$GANG" drop "$ctl_name" 2>&1)" || true
+equal "a control-bearing registration never reaches the terminal raw" \
+  "clean clean clean" \
+  "$(ctl_escapes "$ctl_whoami") $(ctl_escapes "$ctl_mail") $(ctl_escapes "$ctl_drop")"
+tmux kill-window -t "$ctl_id" 2>/dev/null || true
+
+# tmux versions differ at the boundary above: 3.2 returns the raw user-option
+# byte while 3.4 serializes it as the four visible characters `\033`. In the
+# latter world drop does not resolve the raw lookup name, which exposed a second
+# route to the terminal: its missing-agent error formatted the unsanitized
+# argument before cmd_drop had made its safe display copy. This independent
+# absent-name case fixes the error path in place instead of relying on either
+# tmux representation of a forged registration.
+missing_ctl_name="$(printf 'missing\033[31mrogue')"
+missing_ctl_drop="$("$GANG" drop "$missing_ctl_name" 2>&1)" || true
+equal "a missing-agent drop refusal makes its control byte visible, never active" \
+  "gang: no agent 'missing?[31mrogue'" "$missing_ctl_drop"
+
+# win_id owns every resolver's contradicted-title and ambiguous-name errors.
+# Sanitizing only inside drop leaves the registration it reports able to paint
+# through every caller. This forged identity is independently witnessed by its
+# tmux option; the requested title itself contains no hostile byte.
+ctl_claimed_id="$(tmux new-window -d -P -F '#{window_id}' -t "=$GANG_SESSION" \
+  -n victim "PS1='❯ ' bash --norc")"
+tmux set-option -w -t "$ctl_claimed_id" @gl_agent "$ctl_name"
+tmux set-option -w -t "$ctl_claimed_id" @gl_collar bash
+ctl_claimed_out="$("$GANG" drop victim 2>&1)" || true
+contains "a forged registration produces the contradicted-title refusal" \
+  "$ctl_claimed_out" "registered to Gangline agent"
+equal "the resolver never paints a forged registration through that refusal" \
+  "clean" "$(ctl_escapes "$ctl_claimed_out")"
+tmux kill-window -t "$ctl_claimed_id" 2>/dev/null || true
+
+# WHICH WORLD THIS RUN IS STANDING IN, ASKED RATHER THAN ASSUMED. The two
+# refusals win_id owns can only be made to carry a hostile byte where a user
+# option round-trips one, and supported tmux versions disagree about that. The
+# probe is the single definition of the question; both this suite and the tmux
+# cell in .github/workflows/shell.yml read it rather than restating it, and it
+# ends loudly on a substrate that answers neither way.
+ctl_option_bytes="$("$ROOT/test/tmux-option-bytes.sh")"
+printf 'instrument tmux=%s user-option-control-bytes=%s\n' \
+  "$(tmux -V)" "$ctl_option_bytes"
+
+if [ "$ctl_option_bytes" = raw ]; then
+  # THE OTHER RESOLVER DIAGNOSTIC. Status 3 above says a window belongs to
+  # somebody else; status 2 says two of them answer to the same name, and it
+  # formats the requested identity for exactly the same terminal. Both windows
+  # register the control-bearing name, so the resolver matches raw bytes twice
+  # and the ambiguity is real rather than a title coincidence.
+  ctl_twin_a="$(tmux new-window -d -P -F '#{window_id}' -t "=$GANG_SESSION" \
+    -n ctl-twin-a "PS1='❯ ' bash --norc")"
+  ctl_twin_b="$(tmux new-window -d -P -F '#{window_id}' -t "=$GANG_SESSION" \
+    -n ctl-twin-b "PS1='❯ ' bash --norc")"
+  for ctl_twin in "$ctl_twin_a" "$ctl_twin_b"; do
+    tmux set-option -w -t "$ctl_twin" @gl_agent "$ctl_name"
+    tmux set-option -w -t "$ctl_twin" @gl_collar bash
+  done
+  ctl_ambiguous_out="$("$GANG" drop "$ctl_name" 2>&1)" || true
+  contains "two windows registered to one control-bearing name are ambiguous" \
+    "$ctl_ambiguous_out" "is ambiguous in session"
+  equal "the resolver never paints an ambiguous identity through that refusal" \
+    "clean" "$(ctl_escapes "$ctl_ambiguous_out")"
+  # `tmux rename-window` changes only #W. Both @gl_agent registrations — and
+  # therefore the ambiguity — remain; the remedy must mutate the identity.
+  contains "the ambiguous refusal names the identity rename that resolves it" \
+    "$ctl_ambiguous_out" "Rename one with gang rename"
+  tmux kill-window -t "$ctl_twin_a" 2>/dev/null || true
+  tmux kill-window -t "$ctl_twin_b" 2>/dev/null || true
+else
+  unknown "win_id's resolver diagnostics sanitize a raw control-bearing identity" \
+    "this tmux serializes a user option's control bytes into visible text, so no registration on this host can hold the byte those diagnostics exist to disarm — the contradicted-title checks above passed over an identity that never carried one, and the ambiguous branch cannot be reached with one at all. The tmux cell in .github/workflows/shell.yml is where both are exercised."
+fi
+
+# A synchronous tty fixture paints two native menus and records every key it
+# receives. Both are ordinary occupancy, and the key log proves that Gangline
+# sends no keystroke.
+cat > "$RUN_ROOT/dialog-fixture.py" <<'PY'
+#!/usr/bin/env python3
+# SPDX-License-Identifier: Apache-2.0
+import os
+import sys
+import threading
+import tty
+
+variant = os.environ.get("DIALOG_VARIANT", "known")
+log_path = os.environ["DIALOG_KEY_LOG"]
+ready = os.environ["DIALOG_READY"]
+answered = os.environ.get("DIALOG_ANSWERED") or ""
+# A CAPTURE IS PAINTED BYTE FOR BYTE. The external-import prompt is a recorded
+# frame from the harness itself, and the point of rendering it is that the
+# shipped collar's regex meets the bytes the harness produced, not a
+# reconstruction of them.
+capture = os.environ.get("DIALOG_CAPTURE") or ""
+body = [
+    "Our systems are thinking a bit more about this request before responding.",
+    "Hang tight or retry with a faster model for a quicker response, though it may be less capable of handling complex requests.",
+]
+labels = ["Retry with a faster model", "Dismiss and keep waiting", "Learn more"]
+footer = "No action is required. Codex will keep waiting, and this menu will close when the response is ready."
+if variant == "trust":
+    body = [
+        "> You are in /tmp/fixture-cwd",
+        "Do you trust the contents of this directory? Working with untrusted contents comes with higher risk of prompt injection. Trusting the directory allows project-local config, hooks, and exec policies to load.",
+    ]
+    labels = ["Yes, continue", "No, quit"]
+    footer = "Press enter to continue"
+
+def paint_capture():
+    with open(capture, encoding="utf-8") as stream:
+        rows = stream.read().splitlines()
+    sys.stdout.write("\x1b[2J\x1b[H" + "\r\n".join(rows) + "\r\n")
+    sys.stdout.flush()
+
+def paint():
+    # CRLF, EXPLICITLY. tty.setraw below turns off ONLCR, so a bare "\n" leaves
+    # the cursor where it was and every row after the first starts indented by
+    # the length of the one before it. A menu row that should begin at column
+    # zero would then begin wherever the previous line ended, and a
+    # line-anchored occupancy regex would match or miss by terminal width.
+    rows = ["  " + line for line in body] + [""]
+    rows += [f"{'›' if index == 0 else ' '} {index + 1}. {label}"
+             for index, label in enumerate(labels)]
+    rows += ["", "  " + footer]
+    sys.stdout.write("\x1b[2J\x1b[H" + "\r\n".join(rows) + "\r\n")
+    sys.stdout.flush()
+
+def record(key):
+    with open(log_path, "a", encoding="utf-8") as stream:
+        stream.write(key + "\n")
+
+# A BARRIER THAT NEEDS THE TMUX SERVER CANNOT REPORT ON THE TMUX SERVER. The
+# byte goes down a pipe the run owns, so neither side is a tmux client.
+# WRITTEN FROM A THREAD, because the mechanism it replaces did not block. A
+# `tmux wait-for -S` returns whether or not anyone is waiting, so the fixture
+# went straight on to reading keystrokes; opening a pipe for write blocks until
+# a reader arrives, which would hold this fixture out of its input loop for as
+# long as the test took to reach the read. The thread keeps the old timing —
+# the fixture proceeds immediately — while the reader still blocks on a real
+# byte, so the barrier stays an event rather than becoming a clock.
+def signal(path):
+    def write():
+        with open(path, "w", encoding="utf-8") as stream:
+            stream.write("x")
+    threading.Thread(target=write, daemon=True).start()
+
+# THE MENU ONLY MOVES FOR AN ANSWER, and every byte that arrives is recorded
+# first, so a key Gangline should not have sent cannot be hidden by the screen
+# reacting to it: the assertions read the log as well as the pane. Enter is the
+# operator answering; the menu then gives way to a composer, which is what makes
+# the manual-clearance path deliverable.
+composer = False
+draft = bytearray()
+tty.setraw(sys.stdin.fileno())
+if capture:
+    paint_capture()
+else:
+    paint()
+signal(ready)
+while True:
+    char = os.read(sys.stdin.fileno(), 1)
+    if composer:
+        if char in (b"\r", b"\n"):
+            sys.stdout.write("\r\n" + draft.decode("utf-8") + "\r\n\u276f ")
+            sys.stdout.flush()
+            draft.clear()
+        else:
+            draft.extend(char)
+            os.write(sys.stdout.fileno(), char)
+        continue
+    if char == b"\x1b":
+        tail = os.read(sys.stdin.fileno(), 2)
+        record({b"[B": "Down", b"[A": "Up"}.get(tail, "Escape " + repr(tail)))
+    elif char in (b"\r", b"\n"):
+        record("Enter")
+        composer = True
+        sys.stdout.write("\x1b[2J\x1b[H\u276f ")
+        sys.stdout.flush()
+        if answered:
+            signal(answered)
+    else:
+        record(repr(char))
+PY
+chmod +x "$RUN_ROOT/dialog-fixture.py"
+cat > "$RUN_ROOT/collars/dialog.sh" <<SH
+# shellcheck shell=bash
+# shellcheck disable=SC2034
+. "$ROOT/collars/bash.sh"
+GANG_LAUNCH="sh -c 'PS1=\"❯ \" exec bash --norc' dialog"
+GANG_OCCUPIED_REGEX='^› [0-9]+\. '
+SH
+# The capture below is the frame the harness itself printed. The fixture keeps
+# the shipped Claude occupancy reader and changes only how the pane launches.
+cat > "$RUN_ROOT/collars/dialog-claude.sh" <<SH
+# shellcheck shell=bash
+# shellcheck disable=SC2034
+. "$ROOT/collars/claude-code.sh"
+GANG_LAUNCH="sh -c 'PS1=\"❯ \" exec bash --norc' dialog-claude"
+GANG_RESUME_LAUNCH=""
+GANG_STOP_HOOK=""
+GANG_SELF_COMPACT=""
+SH
+
+# THE SAME BARRIER RULE THE SURVIVOR FIXTURE ALREADY FOLLOWS. Both of this
+# fixture's signals travel down pipes this run owns rather than through the
+# tmux server, for the reason recorded beside `signal` above. The read blocks
+# on the byte exactly as the channel blocked on the signal, so this stays an
+# event and spends no wall time.
+dialog_channel() { # $1 agent, $2 ready|answered -> that run-owned pipe's path
+  printf '%s/dialog-%s-%s' "$RUN_ROOT" "$2" "$1"
+}
+
+# A WRITER THAT OPENED AND CLOSED WITHOUT WRITING IS NOT A FIXTURE THAT REACHED
+# ITS SIGNAL, and under set -e an empty read would end the run rather than name
+# what happened.
+# READ WHERE THE COUNTERS LIVE. Two of the three callers of dialog_start
+# capture its stdout, and an assertion made inside a command substitution
+# increments its counters in a subshell that exits — the check would run, pass
+# or fail, and be recorded nowhere. So the barrier is awaited by the caller.
+dialog_await() { # $1 agent, $2 ready|answered; assert the byte it was sent
+  local channel byte="" rc=0
+  channel="$(dialog_channel "$1" "$2")"
+  IFS= read -r -n 1 byte < "$channel" || rc=$?
+  equal "the $2 signal of $1 arrived from the fixture itself" "0 x" "$rc $byte"
+}
+
+dialog_start() { # $1 agent, $2 variant, $3 collar, $4 capture file
+  local name="$1" variant="$2" id command
+  "$HITCH" "$name" -c "${3:-dialog}" -d /tmp >/dev/null
+  id="$(window_id "$name")"
+  : > "$RUN_ROOT/$name.keys"
+  rm -f "$(dialog_channel "$name" ready)" "$(dialog_channel "$name" answered)"
+  mkfifo "$(dialog_channel "$name" ready)" "$(dialog_channel "$name" answered)"
+  printf -v command 'DIALOG_VARIANT=%q DIALOG_KEY_LOG=%q DIALOG_READY=%q DIALOG_ANSWERED=%q DIALOG_CAPTURE=%q %q' \
+    "$variant" "$RUN_ROOT/$name.keys" "$(dialog_channel "$name" ready)" \
+    "$(dialog_channel "$name" answered)" "${4:-}" \
+    "$RUN_ROOT/dialog-fixture.py"
+  tmux send-keys -l -t "$id" "$command"
+  tmux send-keys -t "$id" Enter
+}
+
+# The Codex wait screen and directory-trust prompt are both refused like any
+# other occupied screen.
+for dialog_case in known trust; do
+  dialog_start "dialog-$dialog_case" "$dialog_case" dialog
+  dialog_await "dialog-$dialog_case" ready
+  dialog_before="$(pane "dialog-$dialog_case")"
+  equal "a $dialog_case menu is occupancy of unknown authority" \
+    "!occupied! (authority unknown)" \
+    "$("$GANG" status "dialog-$dialog_case" | sed -n '1p')"
+  dialog_live_rc=0
+  dialog_live_out="$(printf 'DIALOG_BODY_REACHED' | "$GANG" send \
+    "dialog-$dialog_case" --from tester --live-only 2>&1)" \
+    || dialog_live_rc=$?
+  if [ "$dialog_live_rc" -eq 0 ]; then
+    fail "a live-only send to the $dialog_case menu refuses" \
+      "send unexpectedly succeeded"
+  else
+    contains "a live-only send to the $dialog_case menu refuses" \
+      "$dialog_live_out" "is occupied (authority unknown)"
+  fi
+  printf 'DIALOG_BODY_PARKED' | "$GANG" send "dialog-$dialog_case" \
+    --from tester > "$RUN_ROOT/dialog-$dialog_case.park" 2>&1 || true
+  contains "the default send path refuses it on the same occupancy" \
+    "$(<"$RUN_ROOT/dialog-$dialog_case.park")" "is occupied (authority unknown)"
+  equal "no key reached the $dialog_case menu through any of it" "" \
+    "$(<"$RUN_ROOT/dialog-$dialog_case.keys")"
+  equal "and the $dialog_case menu is byte-for-byte where it was" \
+    "$dialog_before" "$(pane "dialog-$dialog_case")"
+  excludes "and no part of either body reached the screen" \
+    "$(pane "dialog-$dialog_case")" "DIALOG_BODY"
+  # AN EMPTY LOG IS A CLAIM ABOUT THE INSTRUMENT FIRST. Send an answer by hand
+  # so the log proves it was listening during the earlier assertion.
+  tmux send-keys -t "$(window_id "dialog-$dialog_case")" Down Enter
+  dialog_await "dialog-$dialog_case" answered
+  equal "the key log records the answer the operator sends by hand" \
+    $'Down\nEnter' "$(<"$RUN_ROOT/dialog-$dialog_case.keys")"
+  "$GANG" drop "dialog-$dialog_case" >/dev/null
+done
+
+# NOT EVERY OWNED INPUT BOX IS WAITING FOR A PERSON. The provider-latency menu
+# above says in its own last line that no action is required and that it closes
+# by itself, while the agent behind it keeps working, and every delivery behind
+# it waits while gang reports only occupancy of unknown authority. The
+# state does not change — a numbered chooser still eats a paste — but a collar
+# that recognises the surface gets to say what it is, and gang sends no key to
+# dismiss it, because a menu that clears itself between the reading and the
+# keystroke takes that digit as message text.
+#
+# THE SHIPPED READER MEETS THE FRAME IT MUST READ. The menu painted here
+# carries codex-cli 0.151.0's own wording rather than a paraphrase, so
+# collars/codex.sh answers the text it answers in production, and the
+# directory-trust menu is the negative case that keeps the match from being
+# satisfied by any occupied screen at all.
+cat > "$RUN_ROOT/collars/dialog-advisory.sh" <<SH
+# shellcheck shell=bash
+# shellcheck disable=SC2034
+. "$RUN_ROOT/collars/dialog.sh"
+collar_advisory() { # answers exactly as the shipped Codex reader does
+  local pane
+  pane="\$(tmux capture-pane -pJ -t "\$1" 2>/dev/null)" || return 1
+  printf '%s\n' "\$pane" | grep -qF \
+    'No action is required. Codex will keep waiting, and this menu will close when the response is ready.' \
+    || return 1
+  printf 'the fixture menu says it closes by itself'
+}
+SH
+dialog_start dialog-advisory known dialog-advisory
+dialog_await dialog-advisory ready
+advisory_rc=0
+advisory_out="$(bash -c '. "$1"; collar_advisory "$2"' fixture \
+  "$ROOT/collars/codex.sh" "$(window_id dialog-advisory)")" || advisory_rc=$?
+equal "the shipped Codex reader recognises its own advisory menu" 0 "$advisory_rc"
+contains "and says why nobody has to answer it" \
+  "$advisory_out" "closes by itself when the response is ready"
+contains "the advisory state keeps the occupied verdict" \
+  "$("$GANG" status dialog-advisory | sed -n '1p')" "!occupied! (advisory:"
+contains "and the state line carries the collar's explanation" \
+  "$("$GANG" status dialog-advisory | sed -n '1p')" "closes by itself"
+advisory_send_rc=0
+advisory_send="$(printf 'ADVISORY_BODY' | "$GANG" send \
+  dialog-advisory --from tester --live-only 2>&1)" \
+  || advisory_send_rc=$?
+equal "delivery is still refused at an advisory surface" 3 "$advisory_send_rc"
+contains "and the refusal explains the surface instead of demanding an answer" \
+  "$advisory_send" "occupied by an advisory surface"
+contains "and says delivery resumes without anyone acting" \
+  "$advisory_send" "delivery resumes when it closes"
+equal "no key was sent to dismiss the advisory menu" "" \
+  "$(<"$RUN_ROOT/dialog-advisory.keys")"
+"$GANG" drop dialog-advisory >/dev/null
+
+# A MENU THAT SAYS NOTHING OF THE KIND. The directory-trust prompt is occupancy
+# that genuinely needs a person, painted by the same fixture and read by the
+# same collar — so the advisory wording above is a recognition rather than a
+# relabelling of every screen that owns the box.
+dialog_start dialog-plain trust dialog-advisory
+dialog_await dialog-plain ready
+advisory_neg_rc=0
+bash -c '. "$1"; collar_advisory "$2"' fixture \
+  "$ROOT/collars/codex.sh" "$(window_id dialog-plain)" >/dev/null 2>&1 \
+  || advisory_neg_rc=$?
+equal "the shipped Codex reader declines a menu that needs a person" 1 "$advisory_neg_rc"
+equal "and that occupancy is still authority unknown" \
+  "!occupied! (authority unknown)" \
+  "$("$GANG" status dialog-plain | sed -n '1p')"
+"$GANG" drop dialog-plain >/dev/null
+
+# The shipped Claude collar's occupancy regex is bound to a frame the harness
+# printed, through the collar itself: the fixture overrides only the launch, so
+# GANG_OCCUPIED_REGEX is the one collars/claude-code.sh ships.
+dialog_external_hitch=0
+dialog_external_load="$(dialog_start dialog-external external-import \
+  dialog-claude "$ROOT/test/fixtures/claude-external-import.txt" 2>&1)" \
+  || dialog_external_hitch=$?
+if [ "$dialog_external_hitch" -eq 0 ]; then
+  pass "the shipped Claude occupancy reader loads in the fixture collar"
+  # Awaited only where the launch succeeded: a fixture that never started would
+  # otherwise be waited on for a byte nothing is going to write.
+  dialog_await dialog-external ready
+else
+  fail "the shipped Claude occupancy reader loads in the fixture collar" \
+    "$dialog_external_load"
+fi
+contains "the captured harness frame is what is on screen" \
+  "$(pane dialog-external)" "Yes, allow external imports"
+equal "and the shipped Claude occupancy regex reads it as occupancy" \
+  "!occupied! (authority unknown)" \
+  "$("$GANG" status dialog-external | sed -n '1p')"
+dialog_external_rc=0
+dialog_external_out="$(printf 'DIALOG_BODY_EXTERNAL' | "$GANG" send \
+  dialog-external --from tester --live-only 2>&1)" \
+  || dialog_external_rc=$?
+if [ "$dialog_external_rc" -eq 0 ]; then
+  fail "the external-import prompt refuses delivery like any other occupancy" \
+    "send unexpectedly succeeded"
+else
+  contains "the external-import prompt refuses delivery like any other occupancy" \
+    "$dialog_external_out" "is occupied (authority unknown)"
+fi
+equal "and Gangline sent no answer to the native prompt" "" \
+  "$(<"$RUN_ROOT/dialog-external.keys")"
+"$GANG" drop dialog-external >/dev/null
+
+# CLAUDE 2.1.239 CAN PAINT ITS AUTO-MODE ENVIRONMENT NUX OVER A LIVE COMPOSER.
+# The hookless dialog owns the keyboard, but the two ordinary composer rules
+# remain parseable below it. Start with the right-trimmed frame captured from
+# the live harness, then expose the underneath composer the defect requires.
+cp "$ROOT/test/fixtures/claude-auto-mode-environment.txt" \
+  "$RUN_ROOT/claude-auto-nux-overlay.txt"
+auto_nux_rule="$(printf '─%.0s' $(seq 100))"
+printf '%s\n%s\n%s\n%s\n%s\n' \
+  "$auto_nux_rule" '❯' "$auto_nux_rule" '  ctx 1k/200k 1%' \
+  '  bypass permissions on' >> "$RUN_ROOT/claude-auto-nux-overlay.txt"
+dialog_start dialog-auto-nux external-import dialog \
+  "$RUN_ROOT/claude-auto-nux-overlay.txt"
+dialog_await dialog-auto-nux ready
+# Hitch used the ordinary framed Bash fixture so startup readiness was already
+# proven before the screen changed. Observation now uses the shipped Claude
+# reader, without relaunching or changing a byte of the pane under test.
+tmux set-option -w -t "$(window_id dialog-auto-nux)" @gl_collar dialog-claude
+# A POSITIVE SCREEN WITNESS before the state assertion: dialog_start returns
+# only after the fixture has painted and signalled its native-ready barrier.
+contains "the auto-mode NUX is painted over the fixture composer" \
+  "$(pane dialog-auto-nux)" "Teach auto mode about your environment?"
+equal "the hookless NUX over a composer is occupied rather than idle" \
+  "!occupied! (authority unknown)" \
+  "$(GANG_ACTIVITY_WINDOW=0 "$GANG" status dialog-auto-nux | sed -n '1p')"
+equal "roster does not advertise the stranded slot as free" "occupied" \
+  "$(GANG_ACTIVITY_WINDOW=0 "$GANG" roster --porcelain \
+    | awk -F '\t' '$1 == "dialog-auto-nux" { print $3 }')"
+auto_nux_send_rc=0
+auto_nux_send_out="$(printf 'AUTO_NUX_BODY' | "$GANG" send \
+  dialog-auto-nux --from tester --live-only 2>&1)" \
+  || auto_nux_send_rc=$?
+equal "the live dialog refuses before any paste" "refused" \
+  "$([ "$auto_nux_send_rc" -ne 0 ] && printf refused || printf sent)"
+contains "the pre-paste refusal names occupancy" \
+  "$auto_nux_send_out" "is occupied (authority unknown)"
+equal "state observation sends no key to the native NUX" "" \
+  "$(<"$RUN_ROOT/dialog-auto-nux.keys")"
+# Without the occupied screen rule, the same hookless dialog still must not
+# fall through to idle: visible busy paint is the remaining fail-closed source.
+cat > "$RUN_ROOT/collars/dialog-claude-busy.sh" <<SH
+# shellcheck shell=bash
+# shellcheck disable=SC2034
+. "$RUN_ROOT/collars/dialog-claude.sh"
+GANG_OCCUPIED_REGEX=""
+GANG_BUSY_REGEX='Claude Code reads this project'
+SH
+tmux set-option -w -t "$(window_id dialog-auto-nux)" @gl_collar dialog-claude-busy
+equal "a dialog that also paints busy remains busy rather than idle" "-busy-" \
+  "$(GANG_ACTIVITY_WINDOW=0 "$GANG" status dialog-auto-nux | sed -n '1p')"
+equal "busy-dialog observation sends no key either" "" \
+  "$(<"$RUN_ROOT/dialog-auto-nux.keys")"
+"$GANG" drop dialog-auto-nux >/dev/null
