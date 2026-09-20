@@ -1,8 +1,11 @@
 # Gangline design principles
 
-These principles guide every change to this repository. Harness machinery
-accretes faster than the work it serves, and components built to guard a system
-are a defect source in their own right.
+Use these principles to decide whether a change belongs in Gangline. Read them
+before extending the command surface, runtime, or collar interface. If a change
+conflicts with a principle, redesign it before implementation.
+
+Harness machinery grows faster than the work it serves, and components built
+to guard a system create defects of their own.
 
 1. **Minimize bespoke integration surface.** Integrate only through universal
    surfaces: the tty (tmux), the shell (`gang` as a CLI), and open standards a

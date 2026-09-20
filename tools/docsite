@@ -27,18 +27,25 @@ from markdown_it import MarkdownIt
 REPO = Path(__file__).resolve().parent.parent
 GITHUB = "https://github.com/adambiggs/gangline"
 
-# Navigation order: getting started, then project design. Each entry is
+# Navigation order follows the reader's path: start, operate, understand,
+# look up exact behavior, then work on the project. Each entry is
 # (source, output, nav label).
 GROUPS = [
     ("Start", [
         ("README.md", "index.html", "Overview"),
-        ("docs/reference.md", "reference.html", "Reference"),
         ("docs/operations.md", "operations.html", "Operations"),
     ]),
+    ("Understand", [
+        ("docs/architecture.md", "architecture.html", "Architecture"),
+        ("CONSTITUTION.md", "constitution.html", "Design principles"),
+        ("docs/design.md", "design.html", "Design decisions"),
+    ]),
+    ("Reference", [
+        ("docs/reference.md", "reference.html", "CLI and configuration"),
+    ]),
     ("Project", [
-        ("CONSTITUTION.md", "constitution.html", "Constitution"),
         ("CONTRIBUTING.md", "contributing.html", "Contributing"),
-        ("docs/design.md", "design.html", "Design"),
+        ("SECURITY.md", "security.html", "Security"),
     ]),
 ]
 # Files under site/ are published at the site root beside the landing page.
