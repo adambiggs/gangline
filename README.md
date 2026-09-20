@@ -49,41 +49,41 @@ gang up -c claude-code -m sonnet -e high
 ```
 
 `gang up` creates a tmux session and attaches you to `lead`, the fixed first
-role. Detach with `Ctrl-b d`. From a shell outside the team, verify the running
-session:
+role. Tell the lead what result you want in plain language:
+
+```text
+Find the parser regression, fix it, and run the relevant checks. Use teammates
+where they help, then give me the evidence I need to decide whether to ship.
+```
+
+The lead hitches teammates, briefs and messages them, judges their reports, and
+drops them when their work is done. You stay in the lead window for decisions
+and results; you do not need to translate the work into Gangline commands.
+
+Detach with `Ctrl-b d`. From a shell outside the team, inspect the live roster:
 
 ```console
 $ gang roster
-lead             claude-code  ~idle~             hitcher=operator
+lead             claude-code  -busy-             hitcher=operator
+worker           codex        -busy-             hitcher=lead
 ```
 
 Your row may include more live evidence, such as recent tool activity, context
 use, or queued messages. Return to the team with `gang attach`.
 
-## Add a teammate
+## Work directly with one agent
 
-List the choices exposed by a harness, then hitch a named agent:
+Ask the lead to create the agent first:
 
-```sh
-gang models -c claude-code
-gang hitch worker -c claude-code -d "$PWD" -m sonnet -e high -r worker \
-  -t 'Inspect the parser failure and report the evidence.'
+```text
+Hitch a worker to trace the parser failure. I will work with it directly after
+you brief it.
 ```
 
-To use Codex instead, run `gang models -c codex` and pass one listed model and
-effort to `gang hitch`.
-
-Send more work from an operator shell with an explicit sender:
-
-```sh
-printf '%s\n' 'Run the focused test and report the result.' |
-  gang send worker --from operator
-```
-
-Inside an agent window, omit `--from`; Gangline reads the sender from tmux.
-Delivery succeeds only when Gangline can verify the recipient accepted the
-message. If the recipient is busy, the message waits for a safe native turn
-boundary.
+When the lead says the worker is ready, switch to its tmux window with
+`Ctrl-b w` and select `worker`. If you detached, run `gang attach` first. You
+can now talk to that agent directly in its native terminal; the lead remains
+available in its own window.
 
 ## Choose the next page
 

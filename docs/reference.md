@@ -1,8 +1,13 @@
 # CLI and configuration reference
 
 Use this page to look up Gangline's command surface, states, settings, and
-collar interface. For the flags and failure cases of one command, run its own
-help page:
+collar interface. In normal use, you run `gang up`, talk to the lead in its
+tmux window, and use observation or recovery commands as needed. The lead and
+its teammates run the coordination commands.
+
+In the tables, **you** means the person at a shell outside the team; **agent**
+means a registered Gangline window. For the flags and failure cases of one
+command, run its own help page:
 
 ```sh
 gang COMMAND --help
@@ -23,14 +28,14 @@ them.
 
 ## Team lifecycle
 
-| Command | Purpose |
-| --- | --- |
-| `gang up [NAME] [HITCH OPTIONS]` | Start a team, hitch the lead, and attach this terminal. |
-| `gang hitch NAME [OPTIONS]` | Launch and register one native harness window. |
-| `gang adopt NAME -c HARNESS` | Register an existing window in this team without startup prose or hooks. |
-| `gang rename OLD NEW` | Change the registered name without restarting the window. |
-| `gang drop NAME` | Archive waiting messages and remove one agent window. |
-| `gang down SESSION` | Archive waiting messages and end one named team. |
+| Command | Normally run by | Purpose |
+| --- | --- | --- |
+| `gang up [NAME] [HITCH OPTIONS]` | You | Start a team, hitch the lead, and attach this terminal. |
+| `gang hitch NAME [OPTIONS]` | Lead or agent | Launch and register one native harness window. |
+| `gang adopt NAME -c HARNESS` | Lead or agent | Register an existing window in this team without startup prose or hooks. |
+| `gang rename OLD NEW` | Lead or agent | Change the registered name without restarting the window. |
+| `gang drop NAME` | Lead or agent | Archive waiting messages and remove one agent window. |
+| `gang down SESSION` | You | Archive waiting messages and end one named team. |
 
 `gang hitch` accepts `-c/--collar`, `-d/--dir`, `-m/--model`, `-e/--effort`,
 `-t/--task`, `-r/--role`, `-l/--lights`, `--resume`, and `--stdin`. Names may
@@ -43,23 +48,36 @@ window.
 
 ## Messages and execution
 
-| Command | Purpose |
-| --- | --- |
-| `gang send NAME [--from SENDER] [--live-only] [--supersede]` | Deliver the stdin body or park it for a safe boundary. |
-| `gang send NAME --at TIME [--from SENDER]` | Hold the stdin body until a duration or local `HH:MM` time passes. |
-| `gang send NAME --at clear` | Cancel that recipient's timed messages. |
-| `gang run -- COMMAND [ARG ...]` | Run a host command for the calling agent and send back its result. |
-| `gang run --active` | List this agent's active host runs and recovery commands. |
-| `gang run --cancel RUN_ID` | Cancel one host run owned by this agent. |
-| `gang queue [NAME]` | Read queued messages; an agent consumes its own queue. |
-| `gang flush [NAME]` | Recover an exactly matched body from a harness-owned input queue. |
-| `gang interrupt [NAME] [-m REASON] [--from SENDER]` | Send the collar's stop key and optionally deliver a reason afterward. |
-| `gang compact [NAME] [--resume TEXT]` | Request native compaction and a continuation turn. |
-| `gang compact NAME --recover` | Apply the collar's recovery keys to a stuck compaction surface. |
+| Command | Normally run by | Purpose |
+| --- | --- | --- |
+| `gang send NAME [--from SENDER] [--live-only] [--supersede]` | Agent | Deliver the stdin body or park it for a safe boundary. |
+| `gang send NAME --at TIME [--from SENDER]` | Agent | Hold the stdin body until a duration or local `HH:MM` time passes. |
+| `gang send NAME --at clear` | Agent | Cancel that recipient's timed messages. |
+| `gang run -- COMMAND [ARG ...]` | Agent | Run a host command for the calling agent and send back its result. |
+| `gang run --active` | Agent | List this agent's active host runs and recovery commands. |
+| `gang run --cancel RUN_ID` | Agent | Cancel one host run owned by this agent. |
+| `gang queue [NAME]` | Agent | Read queued messages; an agent consumes its own queue. |
+| `gang flush [NAME]` | Agent | Recover an exactly matched body from a harness-owned input queue. |
+| `gang interrupt [NAME] [-m REASON] [--from SENDER]` | Agent | Send the collar's stop key and optionally deliver a reason afterward. |
+| `gang compact [NAME] [--resume TEXT]` | Agent | Request native compaction and a continuation turn. |
+| `gang compact NAME --recover` | Agent | Apply the collar's recovery keys to a stuck compaction surface. |
 
 `gang send` reads its body from a pipe, file, heredoc, or editor. Inside a
-registered window, the sender comes from tmux. Outside the team, `--from` is
-required.
+registered window, the sender comes from tmux.
+
+### Drive it by hand or from a script
+
+The commands above are the team agents' normal tools. When you deliberately
+drive the team from an outside shell, `--from` is required:
+
+```sh
+printf '%s\n' 'Run the focused test and report the result.' |
+  gang send worker --from operator
+```
+
+You can also run `hitch`, `drop`, `interrupt`, or `compact` from that shell for
+manual control and recovery. This is the secondary path; for ordinary work,
+ask the lead in its tmux window.
 
 `gang run` starts outside the requesting harness's sandbox. It inherits the
 agent's working directory and command environment, stores combined output in
@@ -67,28 +85,28 @@ durable state, and sends a bounded result back when the command exits.
 
 ## Observation and control
 
-| Command | Purpose |
-| --- | --- |
-| `gang roster [--porcelain]` | Show every window, collar, live state, queued work, and provenance. |
-| `gang status [NAME] [--why]` | Show one agent's detailed state or explain how the state was derived. |
-| `gang tick` | Run one bounded synchronous retry pass. |
-| `gang wait NAME --until idle\|done [--timeout SECONDS]` | Block an outside shell on a native boundary. |
-| `gang wait --limit [NAME] [--resume TEXT]` | Schedule a continuation after a provider reset. |
-| `gang wait --limit [NAME] --clear` | Remove that scheduled continuation. |
-| `gang capture [NAME] [LINES]` | Print recent pane content. |
-| `gang capture --composer [NAME]` | Print the native input composer. |
-| `gang context [NAME]` | Print the harness's native context reading. |
-| `gang log [NAME] [--since N] [--kind KIND]` | Read durable JSONL events for the team or one agent. |
-| `gang limits [NAME]` | Read current provider usage windows through a collar. |
-| `gang limits --history` | Read retained account-window samples and pace. |
-| `gang usage [--daily [DATE]\|--since DATE]` | Join live agents to local token attribution from `ccusage`. |
-| `gang cap` | Read retained weekly provider-window history. |
-| `gang cap check` | Sample provider windows now and emit threshold alerts. |
-| `gang cap watch [--clear]` | Install or remove periodic sampling. |
-| `gang cap forget` | Delete the provider-window history Gangline wrote. |
-| `gang whoami` | Print the calling pane's registered identity. |
-| `gang attach` | Attach to the configured team, including its recorded socket. |
-| `gang teams` | List recorded teams and their sockets. |
+| Command | Normally run by | Purpose |
+| --- | --- | --- |
+| `gang roster [--porcelain]` | You or agent | Show every window, collar, live state, queued work, and provenance. |
+| `gang status [NAME] [--why]` | You or agent | Show one agent's detailed state or explain how the state was derived. |
+| `gang tick` | Agent or recovery shell | Run one bounded synchronous retry pass. |
+| `gang wait NAME --until idle\|done [--timeout SECONDS]` | You or script | Block an outside shell on a native boundary. |
+| `gang wait --limit [NAME] [--resume TEXT]` | You or script | Schedule a continuation after a provider reset. |
+| `gang wait --limit [NAME] --clear` | You or script | Remove that scheduled continuation. |
+| `gang capture [NAME] [LINES]` | You or agent | Print recent pane content. |
+| `gang capture --composer [NAME]` | You or agent | Print the native input composer. |
+| `gang context [NAME]` | You or agent | Print the harness's native context reading. |
+| `gang log [NAME] [--since N] [--kind KIND]` | You or agent | Read durable JSONL events for the team or one agent. |
+| `gang limits [NAME]` | You or agent | Read current provider usage windows through a collar. |
+| `gang limits --history` | You or agent | Read retained account-window samples and pace. |
+| `gang usage [--daily [DATE]\|--since DATE]` | You or agent | Join live agents to local token attribution from `ccusage`. |
+| `gang cap` | You or agent | Read retained weekly provider-window history. |
+| `gang cap check` | You | Sample provider windows now and emit threshold alerts. |
+| `gang cap watch [--clear]` | You | Install or remove periodic sampling. |
+| `gang cap forget` | You | Delete the provider-window history Gangline wrote. |
+| `gang whoami` | Agent | Print the calling pane's registered identity. |
+| `gang attach` | You | Attach to the configured team, including its recorded socket. |
+| `gang teams` | You | List recorded teams and their sockets. |
 
 `gang roster --porcelain` prints tab-separated fields in this order: name,
 collar, state, queued count, oldest queued age in seconds, native session ID,
@@ -99,18 +117,18 @@ agent window because team reports already arrive at native turn boundaries.
 
 ## Discovery, settings, and upgrades
 
-| Command | Purpose |
-| --- | --- |
-| `gang curfew` | Show the team deadline. |
-| `gang curfew DURATION\|HH:MM` | Set or replace the team deadline. |
-| `gang curfew clear` | Remove the team deadline. |
-| `gang collars` | List harness collars and their resume capability. |
-| `gang models [-c HARNESS]` | List native model identifiers and effort values. |
-| `gang roles` | List usable and invalid role briefs with their source. |
-| `gang config` | Print each persistent setting, its effective value, and source. |
-| `gang --version` | Print the installed release version. |
-| `gang upgrade --check` | Compare the installed release with the latest stable tag. |
-| `gang upgrade` | Install the latest stable release over an installer-managed tree. |
+| Command | Normally run by | Purpose |
+| --- | --- | --- |
+| `gang curfew` | Lead or you | Show the team deadline. |
+| `gang curfew DURATION\|HH:MM` | Lead or you | Set or replace the team deadline. |
+| `gang curfew clear` | Lead or you | Remove the team deadline. |
+| `gang collars` | Lead or you | List harness collars and their resume capability. |
+| `gang models [-c HARNESS]` | Lead or you | List native model identifiers and effort values. |
+| `gang roles` | Lead or you | List usable and invalid role briefs with their source. |
+| `gang config` | You or agent | Print each persistent setting, its effective value, and source. |
+| `gang --version` | You | Print the installed release version. |
+| `gang upgrade --check` | You | Compare the installed release with the latest stable tag. |
+| `gang upgrade` | You | Install the latest stable release over an installer-managed tree. |
 
 Ordinary commands do not check the network for updates. Source checkouts update
 with Git; `gang upgrade` is for installer-managed release trees.
