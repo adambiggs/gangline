@@ -28,10 +28,10 @@ collar: {
 	models: {
 		catalog: {name: "codex-debug-models", params: {command: "codex", args: "debug models"}}
 		selected: {name: "codex-screen-model"}
-		option: {flag: "-m"}
+		option: {args: ["-m", "{{value}}"]}
 	}
 	options: {
-		effort: {flag: "-c", joined: false}
+		effort: {args: ["-c", "model_reasoning_effort={{value}}"]}
 	}
 	primitives: {
 		startup: [{name: "codex-trust-prompt"}, {name: "codex-composer"}]
@@ -39,10 +39,19 @@ collar: {
 		submit: {name: "enter-submit"}
 		turn_boundary: {name: "hook-boundary"}
 		context: {name: "codex-screen-context"}
+		provider_limits: {name: "codex-screen-limits"}
 		wedge: {name: "stable-busy-screen", params: {busy: "esc to interrupt", after: "5m"}}
 	}
-	context_bands: [
-		{name: "yellow", at: 0.75, message: "context is getting full"},
-		{name: "red", at: 0.90, message: "finish or compact this session"},
-	]
+	actions: {
+		interrupt: {keys: ["Escape"]}
+		compact: {text: "/compact", submit: true}
+		compact_recover: [{keys: ["Escape"]}, {keys: ["Enter"]}]
+		queue_recall: {keys: ["S-Left"]}
+	}
+	context_bands: {
+		"*": [
+			{name: "yellow", at: 0.75, message: "context is getting full"},
+			{name: "red", at: 0.90, message: "finish or compact this session"},
+		]
+	}
 }

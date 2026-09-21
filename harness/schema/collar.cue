@@ -19,8 +19,7 @@ package harness
 })
 
 #Option: close({
-	flag: string & !=""
-	joined?: bool
+	args: [...string] & [_, ...]
 })
 
 #Models: close({
@@ -33,6 +32,12 @@ package harness
 	name: #Name
 	at: number & >=0 & <=1
 	message: string & !=""
+})
+
+#Action: close({
+	text?: string
+	keys?: [...string]
+	submit?: bool
 })
 
 #Collar: close({
@@ -55,7 +60,14 @@ package harness
 		submit:        #Invocation
 		turn_boundary: #Invocation
 		context:       #Invocation
+		provider_limits: #Invocation
 		wedge:         #Invocation
 	})
-	context_bands: [...#ContextBand]
+	actions: close({
+		interrupt: #Action
+		compact: #Action
+		compact_recover: [...#Action]
+		queue_recall?: #Action
+	})
+	context_bands: [string & !=""]: [...#ContextBand]
 })

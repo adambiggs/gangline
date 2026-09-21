@@ -37,10 +37,12 @@ collar: {
 		submit: {name: "submit"}
 		turn_boundary: {name: "hook-boundary"}
 		context: {name: "screen-context"}
+		provider_limits: {name: "screen-limits"}
 		wedge: {name: "stable-busy-screen"}
 	}
-	models: {catalog: {name: "models"}, option: {flag: "--model"}}
-	context_bands: []
+	actions: {interrupt: {keys: ["Escape"]}, compact: {text: "/compact", submit: true}, compact_recover: []}
+	models: {catalog: {name: "models"}, option: {args: ["--model", "{{value}}"]}}
+	context_bands: {}
 	unknown: true
 }`)
 	if _, err := LoadCollar("example.cue", data); err == nil {
