@@ -28,7 +28,6 @@ func (cmd command) hook([]string) error      { return pending("hook") }
 func (cmd command) capture([]string) error   { return pending("capture") }
 func (cmd command) whoami([]string) error    { return pending("whoami") }
 func (cmd command) roster([]string) error    { return pending("roster") }
-func (cmd command) attach([]string) error    { return pending("attach") }
 func (cmd command) teams([]string) error     { return pending("teams") }
 func (cmd command) drop([]string) error      { return pending("drop") }
 func (cmd command) down([]string) error      { return pending("down") }
