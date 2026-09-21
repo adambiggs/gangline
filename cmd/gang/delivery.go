@@ -6,7 +6,6 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
-	"reflect"
 	"strings"
 	"syscall"
 	"time"
@@ -88,7 +87,7 @@ func (run *runtime) deliver(state core.State, backend interface {
 	}
 	ctx, cancel := context.WithDeadline(context.Background(), effect.Deadline)
 	defer cancel()
-	if err := awaitScreenSettle(ctx, backend, substrate.PaneID(effect.Pane), screen, settle); err != nil {
+	if err := harness.AwaitScreenSettle(ctx, backend.Capture, substrate.PaneID(effect.Pane), screen, settle); err != nil {
 		return core.DeliveryUnverifiedEvent{At: time.Now(), EnvelopeID: effect.Envelope.ID, Evidence: err.Error()}, nil
 	}
 	// Recapture supplies diagnostic evidence when the native renderer is fast
@@ -132,35 +131,6 @@ func (run *runtime) deliver(state core.State, backend interface {
 		return core.DeliverySucceeded{At: time.Now(), EnvelopeID: effect.Envelope.ID}, nil
 	case <-ctx.Done():
 		return core.DeliveryUnverifiedEvent{At: time.Now(), EnvelopeID: effect.Envelope.ID, Evidence: "native submit witness timed out after input was sent"}, nil
-	}
-}
-
-func awaitScreenSettle(ctx context.Context, backend interface {
-	Capture(context.Context, substrate.PaneID) (substrate.Screen, error)
-}, pane substrate.PaneID, before substrate.Screen, settle time.Duration) error {
-	ticker := time.NewTicker(25 * time.Millisecond)
-	defer ticker.Stop()
-	var last substrate.Screen
-	var stableSince time.Time
-	for {
-		screen, err := backend.Capture(ctx, pane)
-		if err == nil && !reflect.DeepEqual(screen, before) {
-			if stableSince.IsZero() || !reflect.DeepEqual(screen, last) {
-				stableSince = time.Now()
-				last = screen
-			}
-			if time.Since(stableSince) >= settle {
-				return nil
-			}
-		} else {
-			stableSince = time.Time{}
-			last = substrate.Screen{}
-		}
-		select {
-		case <-ctx.Done():
-			return fmt.Errorf("native composer did not settle before submission: %w", ctx.Err())
-		case <-ticker.C:
-		}
 	}
 }
 

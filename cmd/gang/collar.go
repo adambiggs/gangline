@@ -131,7 +131,7 @@ func probeTrust(ctx context.Context, backend *tmux.Backend, collar harness.Colla
 		return results, nil
 	}
 	results[harness.ProbeLaunch] = harness.ProbeResult{Name: harness.ProbeLaunch, Passed: true, Detail: "native process launched in a private tmux server"}
-	startup, _, err := awaitStartup(ctx, backend, pane.ID, collar)
+	startup, _, err := harness.AwaitStartup(ctx, backend.Capture, pane.ID, collar)
 	if err != nil {
 		results[harness.ProbeTrustPrompt] = harness.ProbeResult{Name: harness.ProbeTrustPrompt, Detail: err.Error()}
 		return results, nil
@@ -162,7 +162,7 @@ func (cmd command) probeActive(ctx context.Context, backend *tmux.Backend, colla
 		results[harness.ProbeComposer] = harness.ProbeResult{Name: harness.ProbeComposer, Detail: err.Error()}
 		return results, nil
 	}
-	startup, screen, err := awaitStartup(ctx, backend, pane.ID, collar)
+	startup, screen, err := harness.AwaitStartup(ctx, backend.Capture, pane.ID, collar)
 	if err != nil {
 		results[harness.ProbeComposer] = harness.ProbeResult{Name: harness.ProbeComposer, Detail: err.Error()}
 		return results, nil
@@ -190,7 +190,7 @@ func (cmd command) probeActive(ctx context.Context, backend *tmux.Backend, colla
 		if err := sendHarnessKeys(ctx, backend, pane.ID, collar, input); err != nil {
 			return err
 		}
-		if err := awaitComposerText(ctx, backend, pane.ID, collar, action.Text, settle); err != nil {
+		if err := harness.AwaitComposerText(ctx, backend.Capture, pane.ID, collar, action.Text, settle); err != nil {
 			return err
 		}
 		return sendHarnessKeys(ctx, backend, pane.ID, collar, substrate.Keys{Names: action.Keys, Submit: action.Submit})

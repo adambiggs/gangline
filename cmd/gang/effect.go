@@ -201,7 +201,7 @@ func (run *runtime) compactHitch(state core.State, backend *tmux.Backend, effect
 	}
 	ctx, cancel := context.WithDeadline(context.Background(), effect.Compaction.Deadline)
 	defer cancel()
-	if err := awaitComposerText(ctx, backend, pane, collar, action.Text, settle); err != nil {
+	if err := harness.AwaitComposerText(ctx, backend.Capture, pane, collar, action.Text, settle); err != nil {
 		return fail(time.Now(), err), nil
 	}
 	if err := sendHarnessKeys(context.Background(), backend, pane, collar, substrate.Keys{Names: action.Keys, Submit: action.Submit}); err != nil {

@@ -1,5 +1,7 @@
 package substrate
 
+import "strings"
+
 type Screen struct {
 	Rows   [][]Cell
 	Cursor Cursor
@@ -54,4 +56,23 @@ func (screen Screen) Width() int {
 
 func (screen Screen) Height() int {
 	return len(screen.Rows)
+}
+
+// Text renders visible cell text, trimming terminal dead space and old rows.
+func (screen Screen) Text(lineCount int) string {
+	rows := make([]string, len(screen.Rows))
+	for rowNumber, row := range screen.Rows {
+		var line strings.Builder
+		for _, cell := range row {
+			line.WriteString(cell.Text)
+		}
+		rows[rowNumber] = strings.TrimRight(line.String(), " ")
+	}
+	for len(rows) != 0 && rows[len(rows)-1] == "" {
+		rows = rows[:len(rows)-1]
+	}
+	if lineCount > 0 && len(rows) > lineCount {
+		rows = rows[len(rows)-lineCount:]
+	}
+	return strings.Join(rows, "\n")
 }

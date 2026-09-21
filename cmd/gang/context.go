@@ -4,7 +4,6 @@ import (
 	"context"
 	"fmt"
 	"strconv"
-	"strings"
 	"time"
 
 	"github.com/adambiggs/gangline/core"
@@ -200,28 +199,10 @@ func (cmd command) capture(arguments []string) error {
 	if err != nil {
 		return err
 	}
-	text := renderScreen(screen, lineCount)
+	text := screen.Text(lineCount)
 	if text == "" {
 		return nil
 	}
 	_, err = fmt.Fprintln(cmd.stdout, text)
 	return err
-}
-
-func renderScreen(screen substrate.Screen, lineCount int) string {
-	rows := make([]string, len(screen.Rows))
-	for rowNumber, row := range screen.Rows {
-		var line strings.Builder
-		for _, cell := range row {
-			line.WriteString(cell.Text)
-		}
-		rows[rowNumber] = strings.TrimRight(line.String(), " ")
-	}
-	for len(rows) != 0 && rows[len(rows)-1] == "" {
-		rows = rows[:len(rows)-1]
-	}
-	if lineCount > 0 && len(rows) > lineCount {
-		rows = rows[len(rows)-lineCount:]
-	}
-	return strings.Join(rows, "\n")
 }
