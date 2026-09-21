@@ -87,6 +87,12 @@ func (cmd command) prepareCollarCheck(root string) (string, string, [2]string, e
 	if err := os.Mkdir(directory, 0o775); err != nil {
 		return "", "", [2]string{}, err
 	}
+	ready := false
+	defer func() {
+		if !ready {
+			_ = os.RemoveAll(directory)
+		}
+	}()
 	if output, err := exec.Command("git", "-C", directory, "init", "--quiet").CombinedOutput(); err != nil {
 		return "", "", [2]string{}, fmt.Errorf("initialize disposable collar-check project: %w: %s", err, strings.TrimSpace(string(output)))
 	}
@@ -106,6 +112,7 @@ func (cmd command) prepareCollarCheck(root string) (string, string, [2]string, e
 		filepath.Join(socketRoot, "gl-"+shortID+"-t.sock"),
 		filepath.Join(socketRoot, "gl-"+shortID+"-a.sock"),
 	}
+	ready = true
 	return id, directory, sockets, nil
 }
 
@@ -152,6 +159,7 @@ func (cmd command) probeActive(ctx context.Context, backend *tmux.Backend, colla
 	launch = applyLaunchPolicy(launch, collar.Name, settings)
 	pane, err := backend.CreateSession(ctx, launch.SpawnSpec("probe", workdir))
 	if err != nil {
+		results[harness.ProbeComposer] = harness.ProbeResult{Name: harness.ProbeComposer, Detail: err.Error()}
 		return results, nil
 	}
 	startup, screen, err := awaitStartup(ctx, backend, pane.ID, collar)
