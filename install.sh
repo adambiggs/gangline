@@ -18,88 +18,83 @@ BIN_DIR="${GANGLINE_BIN:-$HOME/.local/bin}"
 
 die() { echo "gangline: $*" >&2; exit 1; }
 need() { command -v "$1" >/dev/null 2>&1 || die "$1 is required but not installed"; }
+valid_number() {
+  case "$1" in 0|[1-9][0-9]*) return 0 ;; *) return 1 ;; esac
+}
+parse_semver() {
+  SEMVER_MAJOR="${1%%.*}"
+  rest="${1#*.}"
+  [ "$rest" != "$1" ] || return 1
+  SEMVER_MINOR="${rest%%.*}"
+  SEMVER_PATCH="${rest#*.}"
+  [ "$SEMVER_PATCH" != "$rest" ] || return 1
+  case "$SEMVER_PATCH" in *.*) return 1 ;; esac
+  valid_number "$SEMVER_MAJOR" && valid_number "$SEMVER_MINOR" \
+    && valid_number "$SEMVER_PATCH"
+}
 
 need git
-need python3
+need go
 
 latest_release_tag() {
   refs="$(git ls-remote --refs --tags "$REPO" 'refs/tags/gangline-v*')" \
     || die "could not read release tags from $REPO"
-  tag="$(printf '%s\n' "$refs" | python3 -c '
-import re
-import sys
-
-releases = []
-for line in sys.stdin:
-    fields = line.split()
-    if len(fields) != 2:
-        raise SystemExit(2)
-    ref = fields[1]
-    number = r"(0|[1-9]\d*)"
-    match = re.fullmatch(rf"refs/tags/(gangline-v{number}\.{number}\.{number})", ref)
-    if match:
-        releases.append(((int(match[2]), int(match[3]), int(match[4])), match[1]))
-if not releases:
-    raise SystemExit(1)
-print(max(releases)[1])
-')" || die "could not determine a stable gangline-vMAJOR.MINOR.PATCH release tag from $REPO"
-  printf '%s\n' "$tag"
+  best_tag=""
+  best_major=0 best_minor=0 best_patch=0
+  while read -r _ ref; do
+    case "$ref" in refs/tags/gangline-v*) ;; *) continue ;; esac
+    release="${ref#refs/tags/gangline-v}"
+    parse_semver "$release" || continue
+    major=$SEMVER_MAJOR minor=$SEMVER_MINOR patch=$SEMVER_PATCH
+    if [ -z "$best_tag" ] \
+      || [ "$major" -gt "$best_major" ] \
+      || { [ "$major" -eq "$best_major" ] && [ "$minor" -gt "$best_minor" ]; } \
+      || { [ "$major" -eq "$best_major" ] && [ "$minor" -eq "$best_minor" ] && [ "$patch" -gt "$best_patch" ]; }; then
+      best_tag="gangline-v$release"
+      best_major=$major best_minor=$minor best_patch=$patch
+    fi
+  done <<EOF
+$refs
+EOF
+  [ -n "$best_tag" ] \
+    || die "could not determine a stable gangline-vMAJOR.MINOR.PATCH release tag from $REPO"
+  printf '%s\n' "$best_tag"
 }
 
 installed_release_version() {
-  [ -r "$HOME_DIR/version.txt" ] \
-    || die "installed version is unknown: cannot read $HOME_DIR/version.txt"
-  current_rc=0
-  current="$(python3 - "$HOME_DIR/version.txt" <<'PY'
-import re
-import sys
-
-try:
-    raw = open(sys.argv[1], "rb").read()
-except OSError:
-    raise SystemExit(4)
-if not raw:
-    raise SystemExit(3)
-if raw.endswith(b"\n"):
-    raw = raw[:-1]
-if not re.fullmatch(rb"(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)", raw):
-    raise SystemExit(2)
-sys.stdout.write(raw.decode("ascii"))
-PY
-  )" || current_rc=$?
-  case "$current_rc" in
-    0) ;;
-    2) die "installed version is malformed: $HOME_DIR/version.txt must contain exactly one MAJOR.MINOR.PATCH value" ;;
-    3) die "installed version is unknown: $HOME_DIR/version.txt is empty" ;;
-    *) die "installed version is unknown: cannot read $HOME_DIR/version.txt" ;;
-  esac
+  [ -x "$BIN_DIR/gang" ] \
+    || die "installed version is unknown: cannot execute $BIN_DIR/gang"
+  installed="$("$BIN_DIR/gang" --version)" \
+    || die "installed version is unknown: $BIN_DIR/gang --version failed"
+  current="${installed#gangline }"
+  [ "$installed" = "gangline $current" ] \
+    || die "installed version is malformed: $BIN_DIR/gang --version returned '$installed'"
   printf '%s\n' "$current"
 }
 
 release_relation() { # current latest -> relation and the changed semver component
-  python3 -c '
-import re
-import sys
-
-def version(value):
-    match = re.fullmatch(r"(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)", value)
-    if not match:
-        raise SystemExit(1)
-    return tuple(map(int, match.groups()))
-
-current = version(sys.argv[1])
-latest = version(sys.argv[2])
-relation = (current > latest) - (current < latest)
-if relation == 0:
-    distance = "current"
-elif current[0] != latest[0]:
-    distance = "major"
-elif current[1] != latest[1]:
-    distance = "minor"
-else:
-    distance = "patch"
-print(relation, distance)
-' "$1" "$2"
+  parse_semver "$1" || return 1
+  current_major=$SEMVER_MAJOR current_minor=$SEMVER_MINOR current_patch=$SEMVER_PATCH
+  parse_semver "$2" || return 1
+  latest_major=$SEMVER_MAJOR latest_minor=$SEMVER_MINOR latest_patch=$SEMVER_PATCH
+  relation=0 distance=current
+  if [ "$current_major" -ne "$latest_major" ]; then
+    distance=major
+  elif [ "$current_minor" -ne "$latest_minor" ]; then
+    distance=minor
+  elif [ "$current_patch" -ne "$latest_patch" ]; then
+    distance='patch'
+  fi
+  if [ "$current_major" -gt "$latest_major" ] \
+    || { [ "$current_major" -eq "$latest_major" ] && [ "$current_minor" -gt "$latest_minor" ]; } \
+    || { [ "$current_major" -eq "$latest_major" ] && [ "$current_minor" -eq "$latest_minor" ] && [ "$current_patch" -gt "$latest_patch" ]; }; then
+    relation=1
+  elif [ "$current_major" -lt "$latest_major" ] \
+    || { [ "$current_major" -eq "$latest_major" ] && [ "$current_minor" -lt "$latest_minor" ]; } \
+    || { [ "$current_major" -eq "$latest_major" ] && [ "$current_minor" -eq "$latest_minor" ] && [ "$current_patch" -lt "$latest_patch" ]; }; then
+    relation=-1
+  fi
+  printf '%s %s\n' "$relation" "$distance"
 }
 
 mode=""
@@ -177,10 +172,8 @@ minor="${ver#*.}"; minor="${minor%%.*}"
 [ "$major" -gt 3 ] || { [ "$major" -eq 3 ] && [ "$minor" -ge 2 ]; } \
   || die "tmux >= 3.2 required: gang wait needs indexed hooks and list-command filters, found $(tmux -V)"
 
-python3 -c 'import json; assert json.loads("{\"ok\": true}")["ok"]' >/dev/null 2>&1 \
-  || die "working python3 with JSON support required — native hook payloads and optional context lights use it"
-
-# The whole tree is the tool: bin/gang reads collars/ relative to itself.
+# Keep the tagged source so upgrades remain inspectable and reproducible. The
+# installed command itself is one static binary and has no runtime tree.
 if [ -d "$HOME_DIR/.git" ]; then
   state="$(git -C "$HOME_DIR" status --porcelain)" \
     || die "could not inspect the existing install at $HOME_DIR"
@@ -212,23 +205,19 @@ else
 fi
 
 mkdir -p "$BIN_DIR"
-# `ln -sf` FOLLOWS an existing symlink to a directory: it writes gang INSIDE the
-# referenced directory and leaves the link standing, so a re-run mutates a
-# directory nobody named and only fails afterwards, when it executes the
-# still-directory destination. -f does not prevent that. Remove the exact
-# destination first when it is gang's own link or file, and refuse anything else
-# rather than reaching through it.
-if [ "$BIN_DIR/gang" != "$HOME_DIR/bin/gang" ]; then
-  if [ -L "$BIN_DIR/gang" ] || [ -f "$BIN_DIR/gang" ]; then
-    rm -f "$BIN_DIR/gang" || die "could not remove the existing $BIN_DIR/gang"
-  elif [ -e "$BIN_DIR/gang" ]; then
-    die "$BIN_DIR/gang exists and is not a file or a symlink — move it aside"
-  fi
-  ln -s "$HOME_DIR/bin/gang" "$BIN_DIR/gang" \
-    || die "could not link $BIN_DIR/gang -> $HOME_DIR/bin/gang"
+if [ -e "$BIN_DIR/gang" ] && [ ! -f "$BIN_DIR/gang" ] && [ ! -L "$BIN_DIR/gang" ]; then
+  die "$BIN_DIR/gang exists and is not a file or a symlink — move it aside"
 fi
+new_binary="$BIN_DIR/.gang.new.$$"
+trap 'rm -f "$new_binary"' EXIT HUP INT TERM
+CGO_ENABLED=0 go build -trimpath -ldflags "-s -w -X main.version=$latest" \
+  -o "$new_binary" "$HOME_DIR/cmd/gang" \
+  || die "could not build gang $tag"
+mv -f "$new_binary" "$BIN_DIR/gang" \
+  || die "could not install $BIN_DIR/gang"
+trap - EXIT HUP INT TERM
 
-# Execute the installed tree before reporting success.
+# Execute the installed binary before reporting success.
 "$BIN_DIR/gang" collars >/dev/null || die "installed, but 'gang collars' failed"
 
 echo
