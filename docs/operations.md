@@ -9,8 +9,9 @@ repository trust are already explicit. Then start a team in its working tree:
 gang up -c claude-code -m sonnet -e high
 ```
 
-`gang up` hitches `lead` and attaches when run from a terminal. Detach with
-`Ctrl-b d` and return with:
+`gang up` hitches `lead` in the caller's current directory, gives it the
+`lead` role brief by default, and attaches when run from a terminal. Detach
+with `Ctrl-b d` and return with:
 
 ```sh
 gang attach
@@ -30,6 +31,13 @@ GANG_SESSION=review GANG_STATE_ROOT="$HOME/.local/state/gangline-review" \
 ```
 
 Those values must be present on every command that addresses that team.
+
+`up` and `hitch` wait for a stable native composer before registering the
+agent active. If the harness instead shows an operator trust prompt, the hitch
+stays booting and the command exits with status 4. Resolve the prompt and run
+`gang tick`; a readable composer completes registration even after the boot
+deadline, and a still-visible operator prompt remains pending rather than
+becoming a terminal failure.
 
 ## Add and message agents
 

@@ -103,27 +103,31 @@ func (run *runtime) spawn(backend *tmux.Backend, effect core.SpawnHitch) (core.E
 }
 
 func (run *runtime) awaitBoot(state core.State, backend *tmux.Backend, effect core.AwaitBoot) (core.Event, error) {
-	now := time.Now()
-	if !now.Before(effect.Deadline) {
-		return core.OperationTimedOut{At: now, Operation: core.TimeoutBoot, ID: string(effect.HitchID), Deadline: effect.Deadline, Evidence: "boot deadline elapsed without a readable composer"}, nil
-	}
 	hitch := state.Hitches[effect.HitchID]
 	collar, err := loadCollar(hitch.Collar, run.settings)
 	if err != nil {
-		return core.HitchLaunchFailed{At: now, HitchID: effect.HitchID, Reason: err.Error()}, nil
+		return core.HitchLaunchFailed{At: time.Now(), HitchID: effect.HitchID, Reason: err.Error()}, nil
 	}
-	screen, err := backend.Capture(context.Background(), substrate.PaneID(effect.Pane))
-	if err != nil {
-		return core.HitchLaunchFailed{At: now, HitchID: effect.HitchID, Reason: err.Error()}, nil
+	startup, _, observeErr := harness.AwaitStartup(context.Background(), backend.Capture, substrate.PaneID(effect.Pane), collar)
+	return bootObservationOutcome(time.Now(), effect, startup, observeErr), nil
+}
+
+func bootObservationOutcome(now time.Time, effect core.AwaitBoot, startup harness.Startup, observeErr error) core.Event {
+	if observeErr == nil {
+		switch startup.State {
+		case harness.StartupReady:
+			return core.HitchReady{At: now, HitchID: effect.HitchID}
+		case harness.StartupTrustRequired:
+			return nil
+		}
 	}
-	startup, err := harness.InspectStartup(collar, screen)
-	if err != nil {
-		return core.HitchLaunchFailed{At: now, HitchID: effect.HitchID, Reason: err.Error()}, nil
+	if now.Before(effect.Deadline) {
+		return nil
 	}
-	if startup.State == harness.StartupReady {
-		return core.HitchReady{At: time.Now(), HitchID: effect.HitchID}, nil
+	return core.OperationTimedOut{
+		At: now, Operation: core.TimeoutBoot, ID: string(effect.HitchID), Deadline: effect.Deadline,
+		Evidence: "boot deadline elapsed without a readable composer or operator prompt",
 	}
-	return nil, nil
 }
 
 func (run *runtime) interruptHitch(state core.State, backend *tmux.Backend, effect core.InterruptHitch) (core.Event, error) {

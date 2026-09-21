@@ -36,6 +36,9 @@ Hitch options are `-c/--collar`, `-d/--dir`, `-m/--model`, `-e/--effort`,
 requires an explicit model. `--stdin` reads the assignment body from stdin;
 otherwise `--task` supplies it.
 
+`up` defaults the role to `lead` and the working directory to the caller's
+current directory. An explicit `--role` or `--dir` overrides that default.
+
 ### Delivery and control
 
 | Command | Effect |

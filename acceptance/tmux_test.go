@@ -2,6 +2,7 @@ package acceptance
 
 import (
 	"bufio"
+	"bytes"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -9,6 +10,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"strings"
+	"syscall"
 	"testing"
 
 	"github.com/adambiggs/gangline/core"
@@ -72,6 +74,13 @@ func TestCommandLifecycleOnPrivateTmux(t *testing.T) {
 	if err := os.Mkdir(configDir, 0o700); err != nil {
 		t.Fatal(err)
 	}
+	if err := os.Mkdir(filepath.Join(configDir, "roles"), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	const leadBrief = "ACCEPTANCE LEAD ROLE BRIEF"
+	if err := os.WriteFile(filepath.Join(configDir, "roles", "lead.md"), []byte(leadBrief+"\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
 	collar := commandAcceptanceCollar(testBinary)
 	if err := os.WriteFile(filepath.Join(collarDir, "acceptance.cue"), []byte(collar), 0o600); err != nil {
 		t.Fatal(err)
@@ -80,7 +89,13 @@ func TestCommandLifecycleOnPrivateTmux(t *testing.T) {
 	socket := filepath.Join(root, "tmux.sock")
 	ledger := filepath.Join(root, "received.log")
 	argvLedger := filepath.Join(root, "argv.log")
-	ready := "command-harness-ready"
+	startedFIFO := filepath.Join(root, "harness-started.fifo")
+	releaseFIFO := filepath.Join(root, "harness-release.fifo")
+	for _, fifo := range []string{startedFIFO, releaseFIFO} {
+		if err := syscall.Mkfifo(fifo, 0o600); err != nil {
+			t.Fatal(err)
+		}
+	}
 	const session = "gangline-command-acceptance"
 	environment := append(withoutEnvironment(os.Environ(), "TMUX", "TMUX_PANE", "GANG_CONFIG_DIR"),
 		"GANG_SESSION="+session,
@@ -93,7 +108,8 @@ func TestCommandLifecycleOnPrivateTmux(t *testing.T) {
 		"GANGLINE_ACCEPTANCE_CMD_HARNESS=1",
 		"GANGLINE_ACCEPTANCE_TMUX="+tmuxBinary,
 		"GANGLINE_ACCEPTANCE_TMUX_SOCKET="+socket,
-		"GANGLINE_ACCEPTANCE_READY="+ready,
+		"GANGLINE_ACCEPTANCE_STARTED_FIFO="+startedFIFO,
+		"GANGLINE_ACCEPTANCE_RELEASE_FIFO="+releaseFIFO,
 		"GANGLINE_ACCEPTANCE_LEDGER="+ledger,
 		"GANGLINE_ACCEPTANCE_ARGV_LEDGER="+argvLedger,
 	)
@@ -118,17 +134,23 @@ func TestCommandLifecycleOnPrivateTmux(t *testing.T) {
 		return "", -1
 	}
 
-	_, hitchStatus := runGang("acceptance assignment\n", "hitch", "worker", "-c", "acceptance", "--stdin")
-	if hitchStatus != 0 && hitchStatus != 4 {
-		t.Fatalf("initial hitch status = %d, want ready (0) or native wait (4)", hitchStatus)
+	up := exec.Command(gangBinary, "up", "-c", "acceptance", "--stdin")
+	up.Dir = repository
+	up.Env = environment
+	up.Stdin = strings.NewReader("acceptance assignment\n")
+	var upOutput bytes.Buffer
+	up.Stdout, up.Stderr = &upOutput, &upOutput
+	if err := up.Start(); err != nil {
+		t.Fatal(err)
 	}
-	if output, err := runner.run("wait-for", ready); err != nil {
-		t.Fatalf("wait for harness: %v\n%s", err, output)
+	if _, err := os.ReadFile(startedFIFO); err != nil {
+		t.Fatalf("wait for harness process: %v", err)
 	}
-	if hitchStatus == 4 {
-		if output, status := runGang("", "tick"); status != 0 {
-			t.Fatalf("finish hitch: status %d\n%s", status, output)
-		}
+	if err := os.WriteFile(releaseFIFO, []byte("x"), 0o600); err != nil {
+		t.Fatalf("release harness composer: %v", err)
+	}
+	if err := up.Wait(); err != nil {
+		t.Fatalf("up did not observe the released composer: %v\n%s", err, upOutput.String())
 	}
 	startupState := loadAcceptanceState(t, filepath.Join(root, "state"), session)
 	startupDelivered := false
@@ -145,13 +167,25 @@ func TestCommandLifecycleOnPrivateTmux(t *testing.T) {
 		t.Fatalf("wait for startup delivery: %v\n%s", err, output)
 	}
 	argv, err := os.ReadFile(argvLedger)
-	if err != nil || !strings.Contains(string(argv), "--operator-unsandboxed") {
+	if err != nil || !strings.Contains(string(argv), "--operator-unsandboxed") || !strings.Contains(string(argv), leadBrief) {
 		t.Fatalf("operator launch policy was not observed: %v %q", err, argv)
 	}
 	state := loadAcceptanceState(t, filepath.Join(root, "state"), session)
-	hitch, ok := acceptanceHitch(state, "worker")
+	hitch, ok := acceptanceHitch(state, "lead")
 	if !ok {
-		t.Fatal("worker did not become active")
+		t.Fatal("lead did not become active")
+	}
+	if hitch.Role != "lead" {
+		t.Fatalf("lead role = %q, want lead", hitch.Role)
+	}
+	if hitch.Directory != repository {
+		t.Fatalf("lead directory = %q, want caller cwd %q", hitch.Directory, repository)
+	}
+	whoami := exec.Command(gangBinary, "whoami")
+	whoami.Dir = repository
+	whoami.Env = append(environment, "TMUX_PANE="+hitch.Pane)
+	if output, err := whoami.CombinedOutput(); err != nil || strings.TrimSpace(string(output)) != "lead" {
+		t.Fatalf("whoami: %v, output %q", err, output)
 	}
 
 	hookEnv := append(environment, "GANGLINE_HITCH_ID="+string(hitch.ID))
@@ -165,7 +199,7 @@ func TestCommandLifecycleOnPrivateTmux(t *testing.T) {
 		}
 	}
 	runHook("Stop")
-	if output, status := runGang("ordinary delivery\n", "send", "worker", "--from", "tester"); status != 0 {
+	if output, status := runGang("ordinary delivery\n", "send", "lead", "--from", "tester"); status != 0 {
 		screen, _ := runner.run("capture-pane", "-p", "-J", "-t", session)
 		t.Fatalf("send status %d:\n%s\nscreen:\n%s", status, output, screen)
 	}
@@ -174,7 +208,7 @@ func TestCommandLifecycleOnPrivateTmux(t *testing.T) {
 	}
 	runHook("Stop")
 	const multiline = "multiline first\nmultiline second\n"
-	if output, status := runGang(multiline, "send", "worker", "--from", "tester"); status != 0 {
+	if output, status := runGang(multiline, "send", "lead", "--from", "tester"); status != 0 {
 		t.Fatalf("normalized multiline send status %d:\n%s", status, output)
 	}
 	if output, err := runner.run("wait-for", "received"); err != nil {
@@ -185,7 +219,7 @@ func TestCommandLifecycleOnPrivateTmux(t *testing.T) {
 		t.Fatalf("normalized multiline prompt was not verified: %#v", state.Deliveries)
 	}
 	t.Run("tick retries a durable queued send", func(t *testing.T) {
-		output, status := runGang("queued delivery\n", "send", "worker", "--from", "tester")
+		output, status := runGang("queued delivery\n", "send", "lead", "--from", "tester")
 		if status != 0 || !strings.Contains(output, "\tqueued\n") {
 			t.Fatalf("queue status %d, want queued:\n%s", status, output)
 		}
@@ -205,7 +239,7 @@ func TestCommandLifecycleOnPrivateTmux(t *testing.T) {
 		}
 	})
 	runHook("Stop")
-	if output, status := runGang("", "compact", "worker", "--resume", "resume after compact"); status != 0 {
+	if output, status := runGang("", "compact", "lead", "--resume", "resume after compact"); status != 0 {
 		t.Fatalf("compact status %d:\n%s", status, output)
 	}
 	if output, err := runner.run("wait-for", "received"); err != nil {
@@ -225,16 +259,16 @@ func TestCommandLifecycleOnPrivateTmux(t *testing.T) {
 		t.Fatalf("second wedge observation status %d:\n%s", status, output)
 	}
 	state = loadAcceptanceState(t, filepath.Join(root, "state"), session)
-	hitch, _ = acceptanceHitch(state, "worker")
+	hitch, _ = acceptanceHitch(state, "lead")
 	if hitch.Activity != core.ActivityWedged {
 		t.Fatalf("activity = %q, want wedged", hitch.Activity)
 	}
-	if output, status := runGang("", "drop", "worker"); status != 0 {
+	if output, status := runGang("", "drop", "lead"); status != 0 {
 		t.Fatalf("drop status %d:\n%s", status, output)
 	}
 	state = loadAcceptanceState(t, filepath.Join(root, "state"), session)
 	for _, recorded := range state.Hitches {
-		if recorded.Name == "worker" && recorded.Status != core.HitchDropped {
+		if recorded.Name == "lead" && recorded.Status != core.HitchDropped {
 			t.Fatalf("drop left status %q", recorded.Status)
 		}
 	}
@@ -264,7 +298,7 @@ collar: {
   }
  }
  models: {catalog: {name: "codex-debug-models", params: {command: "false", args: ""}}, option: {args: ["-m", "{{value}}"]}}
- options: {effort: {args: ["-e", "{{value}}"]}}
+ options: {effort: {args: ["-e", "{{value}}"]}, role_prompt: {args: ["--role-prompt", "{{value}}"]}}
  primitives: {
 	  startup: [{name: "claude-composer"}]
 	  composer: {name: "claude-composer"}
@@ -425,9 +459,11 @@ func (runner tmuxRunner) run(arguments ...string) (string, error) {
 }
 
 func runFakeHarness() int {
-	if err := signal(os.Getenv("GANGLINE_ACCEPTANCE_READY")); err != nil {
-		fmt.Fprintln(os.Stderr, err)
-		return 1
+	if ready := os.Getenv("GANGLINE_ACCEPTANCE_READY"); ready != "" {
+		if err := signal(ready); err != nil {
+			fmt.Fprintln(os.Stderr, err)
+			return 1
+		}
 	}
 	fmt.Print("fake> ")
 	scanner := bufio.NewScanner(os.Stdin)
@@ -457,10 +493,24 @@ func runCommandHarness() int {
 		fmt.Fprintf(os.Stderr, "set raw terminal: %v: %s", err, output)
 		return 1
 	}
+	if started := os.Getenv("GANGLINE_ACCEPTANCE_STARTED_FIFO"); started != "" {
+		if err := os.WriteFile(started, []byte("x"), 0o600); err != nil {
+			fmt.Fprintln(os.Stderr, err)
+			return 1
+		}
+	}
+	if release := os.Getenv("GANGLINE_ACCEPTANCE_RELEASE_FIFO"); release != "" {
+		if _, err := os.ReadFile(release); err != nil {
+			fmt.Fprintln(os.Stderr, err)
+			return 1
+		}
+	}
 	renderCommandComposer("")
-	if err := signal(os.Getenv("GANGLINE_ACCEPTANCE_READY")); err != nil {
-		fmt.Fprintln(os.Stderr, err)
-		return 1
+	if ready := os.Getenv("GANGLINE_ACCEPTANCE_READY"); ready != "" {
+		if err := signal(ready); err != nil {
+			fmt.Fprintln(os.Stderr, err)
+			return 1
+		}
 	}
 	reader := bufio.NewReader(os.Stdin)
 	var input strings.Builder

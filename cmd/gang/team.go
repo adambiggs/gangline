@@ -16,7 +16,8 @@ func (cmd command) up(arguments []string) error {
 		name = arguments[0]
 		arguments = arguments[1:]
 	}
-	if err := cmd.hitch(append([]string{name}, arguments...)); err != nil {
+	hitchArguments := append([]string{name, "--role", "lead"}, arguments...)
+	if err := cmd.hitch(hitchArguments); err != nil {
 		return err
 	}
 	if file, ok := cmd.stdin.(*os.File); ok {
