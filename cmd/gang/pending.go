@@ -29,4 +29,3 @@ func (cmd command) whoami([]string) error    { return pending("whoami") }
 func (cmd command) roster([]string) error    { return pending("roster") }
 func (cmd command) drop([]string) error      { return pending("drop") }
 func (cmd command) down([]string) error      { return pending("down") }
-func (cmd command) models([]string) error    { return pending("models") }

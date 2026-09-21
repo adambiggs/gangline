@@ -1,12 +1,15 @@
 package main
 
 import (
+	"context"
+	"flag"
 	"fmt"
 	"os"
 	"path/filepath"
 	"regexp"
 	"sort"
 	"strings"
+	"time"
 	"unicode/utf8"
 
 	gangline "github.com/adambiggs/gangline"
@@ -33,6 +36,49 @@ func (cmd command) collars(arguments []string) error {
 		}
 	}
 	return nil
+}
+
+func (cmd command) models(arguments []string) error {
+	settings, err := cmd.settings()
+	if err != nil {
+		return err
+	}
+	name := settings.Collar
+	flags := quietFlagSet("models")
+	flags.StringVar(&name, "c", name, "harness collar")
+	flags.StringVar(&name, "collar", name, "harness collar")
+	if err := flags.Parse(arguments); err != nil {
+		if err == flag.ErrHelp {
+			return cmd.printHelp("models")
+		}
+		return usageError("models: %v", err)
+	}
+	if flags.NArg() != 0 {
+		return usageError("models: unexpected argument %q", flags.Arg(0))
+	}
+	collar, err := loadCollar(name, settings)
+	if err != nil {
+		return err
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+	defer cancel()
+	catalog, err := harness.DiscoverModels(ctx, collar)
+	if err != nil {
+		return err
+	}
+	for _, model := range catalog.Models {
+		efforts := strings.Join(model.Efforts, ",")
+		if efforts == "" {
+			efforts = "-"
+		}
+		if _, err := fmt.Fprintf(cmd.stdout, "%s\t%s\n", model.ID, efforts); err != nil {
+			return err
+		}
+	}
+	if !catalog.Complete {
+		_, err = fmt.Fprintln(cmd.stdout, "(the harness accepts full model ids that its catalog does not enumerate)")
+	}
+	return err
 }
 
 func collarNames(settings settings) ([]string, error) {
