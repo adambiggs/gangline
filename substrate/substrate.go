@@ -10,6 +10,7 @@ type Substrate interface {
 	Capture(context.Context, PaneID) (Screen, error)
 	ComposerState(context.Context, PaneID) (ComposerState, error)
 	Kill(context.Context, PaneID) error
+	Attach(context.Context, PaneID) error
 }
 
 type PaneID string
@@ -28,6 +29,7 @@ type SpawnSpec struct {
 
 type Keys struct {
 	Text   string
+	Names  []string
 	Submit bool
 }
 
