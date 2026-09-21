@@ -51,6 +51,18 @@ func TestBackendDrivesPrivateTmuxServer(t *testing.T) {
 	if name := strings.TrimSpace(runTmux(t, binary, socket, "display-message", "-p", "-t", string(pane.ID), "#{window_name}")); name != "worker#S" {
 		t.Fatalf("window name = %q, want literal format marker", name)
 	}
+	if found, err := backend.PaneNamed(context.Background(), "worker#S"); err != nil || found.ID != pane.ID {
+		t.Fatalf("named pane = %#v, %v; want %q", found, err, pane.ID)
+	}
+	if err := backend.Rename(context.Background(), pane.ID, "renamed#S"); err != nil {
+		t.Fatal(err)
+	}
+	if found, err := backend.PaneNamed(context.Background(), "renamed#S"); err != nil || found.ID != pane.ID {
+		t.Fatalf("renamed pane = %#v, %v; want %q", found, err, pane.ID)
+	}
+	if current, err := backend.CurrentPane(context.Background()); err != nil || !strings.HasPrefix(string(current.ID), "%") {
+		t.Fatalf("current pane = %#v, %v", current, err)
+	}
 	runTmux(t, binary, socket, "wait-for", ready)
 	if err := backend.SendKeys(context.Background(), pane.ID, substrate.Keys{Text: "hello from backend", Submit: true}); err != nil {
 		t.Fatal(err)
@@ -68,6 +80,31 @@ func TestBackendDrivesPrivateTmuxServer(t *testing.T) {
 	}
 	if err := backend.Kill(context.Background(), pane.ID); err != nil {
 		t.Fatal(err)
+	}
+}
+
+func TestBackendCreatesAndKillsSession(t *testing.T) {
+	binary, err := exec.LookPath("tmux")
+	if err != nil {
+		t.Skip("tmux is required")
+	}
+	root := t.TempDir()
+	backend, err := New(Config{Binary: binary, Socket: filepath.Join(root, "tmux.sock"), Session: "created"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	pane, err := backend.CreateSession(context.Background(), substrate.SpawnSpec{Name: "lead", Directory: root, Command: "sh"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if exists, err := backend.SessionExists(context.Background()); err != nil || !exists {
+		t.Fatalf("session exists = %t, %v", exists, err)
+	}
+	if err := backend.Kill(context.Background(), pane.ID); err != nil {
+		t.Fatal(err)
+	}
+	if exists, err := backend.SessionExists(context.Background()); err != nil || exists {
+		t.Fatalf("session exists after last pane kill = %t, %v", exists, err)
 	}
 }
 

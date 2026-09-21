@@ -30,6 +30,11 @@ type Backend struct {
 	config Config
 }
 
+type Window struct {
+	Pane substrate.Pane
+	Name string
+}
+
 func New(config Config) (*Backend, error) {
 	if config.Session == "" {
 		return nil, fmt.Errorf("tmux session is required")
@@ -40,20 +45,55 @@ func New(config Config) (*Backend, error) {
 	return &Backend{config: config}, nil
 }
 
-func (backend *Backend) Spawn(ctx context.Context, spec substrate.SpawnSpec) (substrate.Pane, error) {
-	if err := validWindowName(spec.Name); err != nil {
+func (backend *Backend) CreateSession(ctx context.Context, spec substrate.SpawnSpec) (substrate.Pane, error) {
+	arguments, err := backend.launchArguments("new-session", spec)
+	if err != nil {
 		return substrate.Pane{}, err
 	}
+	arguments = append(arguments[:len(arguments)-1], "-s", backend.config.Session, arguments[len(arguments)-1])
+	return backend.launch(ctx, "create session", arguments)
+}
+
+func (backend *Backend) SessionExists(ctx context.Context) (bool, error) {
+	output, err := backend.run(ctx, "has-session", "-t", backend.config.Session)
+	if err == nil {
+		return true, nil
+	}
+	if exit, ok := err.(*exec.ExitError); ok && exit.ExitCode() == 1 {
+		return false, nil
+	}
+	return false, tmuxError("check session", err, output)
+}
+
+func (backend *Backend) Sessions(ctx context.Context) ([]string, error) {
+	output, err := backend.run(ctx, "list-sessions", "-F", "#{session_name}")
+	if err != nil {
+		return nil, tmuxError("list sessions", err, output)
+	}
+	return lines(output), nil
+}
+
+func (backend *Backend) Spawn(ctx context.Context, spec substrate.SpawnSpec) (substrate.Pane, error) {
+	arguments, err := backend.launchArguments("new-window", spec)
+	if err != nil {
+		return substrate.Pane{}, err
+	}
+	arguments = append(arguments[:len(arguments)-1], "-t", backend.config.Session, arguments[len(arguments)-1])
+	return backend.launch(ctx, "spawn pane", arguments)
+}
+
+func (backend *Backend) launchArguments(command string, spec substrate.SpawnSpec) ([]string, error) {
+	if err := validWindowName(spec.Name); err != nil {
+		return nil, err
+	}
 	if spec.Directory == "" {
-		return substrate.Pane{}, fmt.Errorf("spawn directory is required")
+		return nil, fmt.Errorf("spawn directory is required")
 	}
 	if spec.Command == "" {
-		return substrate.Pane{}, fmt.Errorf("spawn command is required")
+		return nil, fmt.Errorf("spawn command is required")
 	}
-
 	arguments := []string{
-		"new-window", "-d", "-P", "-F", "#{pane_id}",
-		"-t", backend.config.Session,
+		command, "-d", "-P", "-F", "#{pane_id}",
 		"-n", escapeFormat(spec.Name),
 		"-c", spec.Directory,
 	}
@@ -65,21 +105,102 @@ func (backend *Backend) Spawn(ctx context.Context, spec substrate.SpawnSpec) (su
 	for _, name := range names {
 		value := spec.Env[name]
 		if name == "" || strings.ContainsAny(name, "=\x00") || strings.ContainsRune(value, '\x00') {
-			return substrate.Pane{}, fmt.Errorf("invalid spawn environment %q", name)
+			return nil, fmt.Errorf("invalid spawn environment %q", name)
 		}
 		arguments = append(arguments, "-e", name+"="+value)
 	}
 	arguments = append(arguments, shellCommand(spec.Command, spec.Args))
+	return arguments, nil
+}
 
+func (backend *Backend) launch(ctx context.Context, action string, arguments []string) (substrate.Pane, error) {
 	output, err := backend.run(ctx, arguments...)
 	if err != nil {
-		return substrate.Pane{}, tmuxError("spawn pane", err, output)
+		return substrate.Pane{}, tmuxError(action, err, output)
 	}
 	identifier := strings.TrimSpace(output)
 	if identifier == "" || strings.ContainsAny(identifier, "\r\n") {
-		return substrate.Pane{}, fmt.Errorf("spawn pane: tmux returned invalid pane id %q", output)
+		return substrate.Pane{}, fmt.Errorf("%s: tmux returned invalid pane id %q", action, output)
 	}
 	return substrate.Pane{ID: substrate.PaneID(identifier)}, nil
+}
+
+func (backend *Backend) Windows(ctx context.Context) ([]Window, error) {
+	output, err := backend.run(ctx, "list-windows", "-t", backend.config.Session, "-F", "#{window_id}")
+	if err != nil {
+		return nil, tmuxError("list windows", err, output)
+	}
+	identifiers := lines(output)
+	windows := make([]Window, 0, len(identifiers))
+	for _, identifier := range identifiers {
+		panes, err := backend.run(ctx, "list-panes", "-t", identifier, "-F", "#{pane_id}")
+		if err != nil {
+			return nil, tmuxError("list panes", err, panes)
+		}
+		for _, paneID := range lines(panes) {
+			pane := substrate.PaneID(paneID)
+			if err := validPaneID(pane); err != nil {
+				return nil, fmt.Errorf("list panes: %w", err)
+			}
+			name, err := backend.windowName(ctx, pane)
+			if err != nil {
+				return nil, err
+			}
+			windows = append(windows, Window{Pane: substrate.Pane{ID: pane}, Name: name})
+		}
+	}
+	return windows, nil
+}
+
+func (backend *Backend) CurrentPane(ctx context.Context) (substrate.Pane, error) {
+	output, err := backend.run(ctx, "list-panes", "-t", backend.config.Session, "-f", "#{pane_active}", "-F", "#{pane_id}")
+	if err != nil {
+		return substrate.Pane{}, tmuxError("read current pane", err, output)
+	}
+	identifiers := lines(output)
+	if len(identifiers) != 1 {
+		return substrate.Pane{}, fmt.Errorf("read current pane: tmux returned %q", output)
+	}
+	pane := substrate.PaneID(identifiers[0])
+	if err := validPaneID(pane); err != nil {
+		return substrate.Pane{}, fmt.Errorf("read current pane: %w", err)
+	}
+	return substrate.Pane{ID: pane}, nil
+}
+
+func (backend *Backend) PaneNamed(ctx context.Context, name string) (substrate.Pane, error) {
+	windows, err := backend.Windows(ctx)
+	if err != nil {
+		return substrate.Pane{}, err
+	}
+	var match substrate.Pane
+	for _, window := range windows {
+		if window.Name != name {
+			continue
+		}
+		if match.ID != "" {
+			return substrate.Pane{}, fmt.Errorf("window name %q is ambiguous", name)
+		}
+		match = window.Pane
+	}
+	if match.ID == "" {
+		return substrate.Pane{}, fmt.Errorf("window name %q was not found", name)
+	}
+	return match, nil
+}
+
+func (backend *Backend) Rename(ctx context.Context, pane substrate.PaneID, name string) error {
+	if err := validPaneID(pane); err != nil {
+		return err
+	}
+	if err := validWindowName(name); err != nil {
+		return err
+	}
+	output, err := backend.run(ctx, "rename-window", "-t", string(pane), "--", escapeFormat(name))
+	if err != nil {
+		return tmuxError("rename pane", err, output)
+	}
+	return nil
 }
 
 func (backend *Backend) SendKeys(ctx context.Context, pane substrate.PaneID, keys substrate.Keys) error {
@@ -148,6 +269,14 @@ func (backend *Backend) Kill(ctx context.Context, pane substrate.PaneID) error {
 	output, err := backend.run(ctx, "kill-window", "-t", string(pane))
 	if err != nil {
 		return tmuxError("kill pane", err, output)
+	}
+	return nil
+}
+
+func (backend *Backend) KillSession(ctx context.Context) error {
+	output, err := backend.run(ctx, "kill-session", "-t", backend.config.Session)
+	if err != nil {
+		return tmuxError("kill session", err, output)
 	}
 	return nil
 }
@@ -267,6 +396,22 @@ func tmuxError(action string, err error, output string) error {
 		return fmt.Errorf("%s: %w", action, err)
 	}
 	return fmt.Errorf("%s: %w: %s", action, err, output)
+}
+
+func (backend *Backend) windowName(ctx context.Context, pane substrate.PaneID) (string, error) {
+	output, err := backend.run(ctx, "display-message", "-p", "-t", string(pane), "#{window_name}")
+	if err != nil {
+		return "", tmuxError("read window name", err, output)
+	}
+	return strings.TrimSuffix(output, "\n"), nil
+}
+
+func lines(output string) []string {
+	output = strings.TrimSuffix(output, "\n")
+	if output == "" {
+		return nil
+	}
+	return strings.Split(output, "\n")
 }
 
 var _ substrate.Substrate = (*Backend)(nil)
