@@ -102,6 +102,42 @@ var commandUsage = map[string]string{
 	"upgrade":   "usage: gang upgrade [--check]\n",
 }
 
+var commandDescription = map[string]string{
+	"up":        "Start a team, hitch its lead, and attach this terminal.\n",
+	"hitch":     "Launch a native harness in a new team pane and deliver its contract, role, and assignment.\n",
+	"adopt":     "Register an existing pane without launching a harness or delivering startup prose.\n",
+	"rename":    "Change a registered agent name without restarting its harness.\n",
+	"send":      "Read a message from stdin. Delivery is verified in the recipient composer or remains pending for a native turn boundary.\n",
+	"run":       "Run a host command outside the harness sandbox and send its bounded result to the caller.\n",
+	"flush":     "Recover an exactly matched message left in a harness-owned input queue.\n",
+	"queue":     "Read pending messages. Reading your own queue consumes the rows printed.\n",
+	"interrupt": "Send the collar's native interrupt and optionally deliver a reason after the turn stops.\n",
+	"compact":   "Request the collar's native compaction and place a continuation behind it.\n",
+	"context":   "Print the collar's native context reading without estimating missing data.\n",
+	"log":       "Print durable JSONL events for the selected team.\n",
+	"replay":    "Fold a recorded JSONL event stream without contacting tmux or a harness.\n",
+	"usage":     "Join live native session identifiers to locally recorded token consumption.\n",
+	"cap":       "Inspect or maintain retained provider-window samples.\n",
+	"limits":    "Read current provider limits from the collar's native source.\n",
+	"wait":      "Block an outside shell until a recorded native boundary or provider reset.\n",
+	"curfew":    "Declare, inspect, or clear one team deadline.\n",
+	"status":    "Show one agent's recorded and directly observed state. Wedged states include evidence and point to gang log.\n",
+	"tick":      "Run one bounded retry pass over durable pending effects.\n",
+	"capture":   "Print pane content, or only the native composer with --composer.\n",
+	"whoami":    "Print the registered identity of the calling Gangline pane.\n",
+	"roster":    "List the team's registered agents and conservative current states.\n",
+	"attach":    "Attach this terminal to the configured team session.\n",
+	"teams":     "List teams found in the versioned state root.\n",
+	"drop":      "Archive pending work and stop one registered agent pane.\n",
+	"down":      "Drop every live agent, then remove the stopped team's runtime state.\n",
+	"collars":   "List embedded and operator-provided CUE collars.\n",
+	"collar":    "Probe one installed harness in a throwaway private tmux session.\n",
+	"models":    "List model and reasoning-effort identifiers declared by a collar.\n",
+	"roles":     "List embedded and operator-provided role briefs.\n",
+	"config":    "Print persistent settings, effective values, and their sources.\n",
+	"upgrade":   "Check or install the latest stable release into an installer-managed tree.\n",
+}
+
 func (cmd command) printHelp(name string) error {
 	if name == "" {
 		_, err := io.WriteString(cmd.stdout, commandInventory)
@@ -111,6 +147,6 @@ func (cmd command) printHelp(name string) error {
 	if !ok {
 		return usageError("help: unknown command %q", name)
 	}
-	_, err := fmt.Fprint(cmd.stdout, usage)
+	_, err := fmt.Fprintf(cmd.stdout, "%s\n%s", usage, commandDescription[name])
 	return err
 }
