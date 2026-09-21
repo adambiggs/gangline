@@ -1,0 +1,69 @@
+package core
+
+import "fmt"
+
+func EventName(event Event) string {
+	switch event.(type) {
+	case HitchRequested:
+		return "hitch_requested"
+	case AdoptRequested:
+		return "adopt_requested"
+	case RenameRequested:
+		return "rename_requested"
+	case HitchSpawned:
+		return "hitch_spawned"
+	case HitchReady:
+		return "hitch_ready"
+	case HitchLaunchFailed:
+		return "hitch_launch_failed"
+	case TurnStarted:
+		return "turn_started"
+	case TurnBoundaryReached:
+		return "turn_boundary_reached"
+	case SendRequested:
+		return "send_requested"
+	case TimedDeliveryReleased:
+		return "timed_delivery_released"
+	case TimedDeliveriesCleared:
+		return "timed_deliveries_cleared"
+	case DeliverySucceeded:
+		return "delivery_succeeded"
+	case DeliveryDeferred:
+		return "delivery_deferred"
+	case DeliveryFailedEvent:
+		return "delivery_failed"
+	case DeliveryUnverifiedEvent:
+		return "delivery_unverified"
+	case CompactionRequested:
+		return "compaction_requested"
+	case CompactionCompleted:
+		return "compaction_completed"
+	case CompactionFailedEvent:
+		return "compaction_failed"
+	case InterruptRequested:
+		return "interrupt_requested"
+	case InterruptSucceeded:
+		return "interrupt_succeeded"
+	case InterruptFailed:
+		return "interrupt_failed"
+	case DropRequested:
+		return "drop_requested"
+	case DropSucceeded:
+		return "drop_succeeded"
+	case DropFailed:
+		return "drop_failed"
+	case WedgeDetected:
+		return "wedge_detected"
+	case WedgeCleared:
+		return "wedge_cleared"
+	case OperationTimedOut:
+		return "operation_timed_out"
+	case CurfewSet:
+		return "curfew_set"
+	case CurfewCleared:
+		return "curfew_cleared"
+	case TransitionRejected:
+		return "transition_rejected"
+	}
+	return fmt.Sprintf("%T", event)
+}
