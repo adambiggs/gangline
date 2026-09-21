@@ -28,9 +28,10 @@ to guard a system create defects of their own.
    loudly. No fire-and-forget, no success receipts for messages nobody saw.
 
 4. **Harness integration is a collar, not a plugin.** Per-harness knowledge lives in
-   a collar, never as a branch in `bin/gang`; the collar contract itself is
-   documented in `docs/reference.md`. Code inside a harness requires a section of
-   `docs/design.md` proving the value is real and unachievable any other way.
+   a collar, never as a harness-name branch in `cmd/gang`; the collar contract
+   itself is documented in `docs/reference.md`. Code inside a harness requires a
+   section of `docs/design.md` proving the value is real and unachievable any
+   other way.
 
 5. **Nothing lands without a live consumer.** If nothing invokes it the day it
    merges, it does not merge.

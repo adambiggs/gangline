@@ -1,262 +1,120 @@
 # Operate a team
 
-Use this guide to start a Gangline team, work through its lead, inspect live
-state, and recover native sessions. Your normal command surface is small: start
-the team, talk to the lead in its tmux window, observe the work, and stop the
-team when it is finished.
-
-```sh
-gang roster
-```
-
-If a row is not clearly idle or busy, inspect that agent before you act:
-
-```sh
-gang status NAME
-gang capture NAME
-```
-
 ## Start, leave, and return
 
-Start the team in the repository it should work on:
+Run the supported harness directly once before Gangline so authentication and
+repository trust are already explicit. Then start a team in its working tree:
 
 ```sh
-cd ~/src/my-project
 gang up -c claude-code -m sonnet -e high
 ```
 
-The command creates the configured tmux session, hitches the lead, and attaches
-your terminal. Give the lead the outcome, constraints, and evidence you need:
+`gang up` hitches `lead` and attaches when run from a terminal. Detach with
+`Ctrl-b d` and return with:
 
-```text
-Find the parser regression, fix it, and run the relevant checks. Use teammates
-where they help, then give me the evidence I need to decide whether to ship.
+```sh
+gang attach
 ```
 
-The lead hitches teammates, briefs and messages them, judges their reports, and
-drops them. Stay in the lead window for decisions and results. Use `Ctrl-b d`
-to detach without stopping anything. From an outside shell, list or rejoin the
+If launch stops at a native prompt, Gangline exits with status 4 and names the
+pane. Attach, answer the harness-owned prompt, detach, and run `gang tick` to
+finish readiness and deliver the startup envelope.
+
+Use an isolated team name and state/socket roots when running more than one
 team:
 
 ```sh
-gang roster
-gang attach
+GANG_SESSION=review GANG_STATE_ROOT="$HOME/.local/state/gangline-review" \
+  GANG_TMUX_SOCKET="$HOME/.local/state/gangline-review/tmux.sock" \
+  gang up
 ```
 
-If you run more than one team, `gang teams` lists their names and sockets. Set
-`GANG_SESSION` when you want a shell to address a non-default team.
+Those values must be present on every command that addresses that team.
 
-## Work directly with one agent
+## Add and message agents
 
-You can ask the lead to prepare an agent, then take over the conversation:
-
-```text
-Hitch a worker to trace the parser failure. I will work with it directly after
-you brief it.
-```
-
-When the lead says the worker is ready, press `Ctrl-b w` and select `worker`.
-If you are outside the team, run `gang attach` first. You are now typing into
-the worker's native terminal. Return to the lead window whenever the team needs
-a decision or you want the combined result.
-
-## Drive the team by hand or from a script
-
-The lead and its teammates normally run `gang hitch`, `gang send`, `gang drop`,
-and the other coordination commands. Run them from an operator shell only when
-you deliberately want to drive the team by hand or automate it.
-
-Choose the harness first. These commands show the available collars, models,
-and role briefs:
+Inspect native model names first, then hitch:
 
 ```sh
-gang collars
-gang models -c claude-code
-gang roles
+gang models -c codex
+gang hitch worker -c codex -d "$PWD" -m MODEL -e EFFORT \
+  -r worker -t 'Trace the failure and report the smallest reproduction.'
 ```
 
-Then hitch a named agent:
+From a registered agent pane:
 
 ```sh
-gang hitch worker -c claude-code -d "$PWD" -m sonnet -e high -r worker \
-  -t 'Trace the parser failure and report the smallest reproduction.'
+printf '%s\n' 'Run the focused test and report the result.' | gang send worker
 ```
 
-To use Codex instead, run `gang models -c codex` and pass one listed model and
-effort to `gang hitch`.
-
-The working directory, model, effort, and role are launch choices. To change
-one, drop the window and hitch a new agent with the intended values. `gang drop`
-prints a resume command when the collar can recover the native session.
-
-Use `gang adopt` only for a harness already running in a window of this tmux
-team. Adoption does not deliver the startup contract or install native hooks,
-so context readings and turn-boundary delivery may be unavailable.
-
-From outside the team, an explicit sender is required:
+From an operator shell, declare the outside identity:
 
 ```sh
-printf '%s\n' 'Run the focused test and report the exact failure.' |
+printf '%s\n' 'Run the focused test and report the result.' |
   gang send worker --from operator
 ```
 
-From an agent window, omit `--from`. Gangline reads the window's registered
-name and refuses a conflicting claim.
+A successful command prints a delivery ID and either `delivered` or `queued`.
+Queued work remains in the event log until a safe native boundary releases it.
+Status 5 means input may have landed but the native hook did not prove the
+attributed envelope; inspect the recipient before retrying.
 
-A successful send has two possible outcomes:
+## Observe and recover
 
-- `delivered` means Gangline saw the native composer accept the message.
-- `queued` means Gangline owns the body and will retry at a safe native turn
-  boundary. `gang roster` shows `spooled=N` until it moves.
-
-Read stderr before retrying a failed send. If Gangline reports an unverified
-delivery, the body may already be in the target's composer. Inspect the target
-with `gang status NAME` and `gang capture NAME`; do not create a second copy
-until you know the first one is absent.
-
-Use a timed message when the work should not enter the session yet:
-
-```sh
-printf '%s\n' 'Resume the release check.' |
-  gang send worker --from operator --at 45m
-```
-
-## Read team state
-
-Use the narrowest command that answers your question:
-
-| Question | Command |
-| --- | --- |
-| What is every agent doing? | `gang roster` |
-| Why is one agent in this state? | `gang status NAME --why` |
-| What is on its terminal? | `gang capture NAME` |
-| What is in its composer? | `gang capture --composer NAME` |
-| What durable events were recorded? | `gang log NAME` |
-| How full is its context? | `gang context NAME` |
-| What provider limits are visible? | `gang limits NAME` |
-| How much local token use is attributed? | `gang usage` |
-
-`gang status NAME --why` is the explanation view: it prints the evidence and
-collar rules behind the state instead of adding a separate `explain` command.
-
-Treat `?unknown?` as missing evidence, not as idle. Treat `!occupied!` as a
-native UI that needs a person. The full state vocabulary is in the
-[reference](reference.md#states-and-exit-status).
-
-## Answer native prompts
-
-Authentication, repository access, permissions, and trust stay in the native
-harness. Gangline does not choose an answer. Inspect and enter the window:
-
-```sh
-gang capture NAME
-gang attach
-```
-
-Answer the prompt in the harness, detach, then run `gang status NAME` again.
-Queued work can move once the native composer becomes safe.
-
-## Manage context and provider limits
-
-Agents normally read their own context and request compaction themselves:
-
-```sh
-gang context worker
-gang compact worker --resume 'Continue from the saved checkpoint.'
-```
-
-When an agent asks to compact itself, Gangline waits for the end of its current
-turn. Every compaction gets a continuation turn so the native session does not
-stop at an empty composer. You can run the same commands by hand when recovering
-a session or directing one agent yourself.
-
-Use these commands for capacity decisions:
-
-```sh
-gang limits worker
-gang usage --daily
-gang cap
-```
-
-`gang limits` reads a provider's published usage window through the collar.
-`gang usage` attributes local tokens when `ccusage` is installed. `gang cap`
-retains account-window samples. These are different measurements; Gangline does
-not infer account quota from token totals.
-
-Set a team curfew when agents need a visible deadline:
-
-```sh
-gang curfew 2h
-gang curfew
-```
-
-The curfew produces advisory edges for hook-enabled agents. It does not stop the
-team at the deadline.
-
-## Troubleshoot and recover
-
-Start from live evidence:
+Start with recorded state and the parsed terminal:
 
 ```sh
 gang roster
-gang status NAME
-gang capture NAME
+gang status worker --why
+gang capture worker 40
+gang capture --composer worker
+gang log
 ```
 
-Then follow the state you can prove:
+`gang tick` is one bounded recovery pass. It retries effects left pending by an
+interruption, releases one safe queued delivery per recipient, and records a
+wedge only when two qualifying observations support it.
 
-- For `!occupied!`, answer the native dialog in `gang attach`.
-- For `?unknown?`, restore or inspect the native condition. Do not assume the
-  composer is safe.
-- For a queued Gangline message, wait for the next native boundary. Use
-  `gang queue NAME` to read another agent's queue without consuming it.
-- Use `gang flush NAME` only when the session transcript or current context
-  proves that the harness itself parked the recorded body.
-- If status reports a stuck compaction surface, use
-  `gang compact NAME --recover` to apply the collar's recovery keys.
-- Ask the lead to interrupt or drop another agent during ordinary work.
-- From an outside shell, use
-  `gang interrupt NAME -m 'reason' --from operator` when recovery requires you
-  to stop a live turn and deliver a reason when the composer returns.
-- If the window is unusable, capture anything you need, then run
-  `gang drop NAME` from an outside shell. Use the printed resume command when
-  one is available.
+Use `gang interrupt worker -m 'Stop and report current evidence.'` only while
+the agent is recorded busy or wedged. Use `gang compact worker --resume 'Read
+the saved state and continue.'` for native compaction. If the compaction surface
+is stuck, `gang compact worker --recover` applies only the recovery actions
+declared by that collar.
 
-`gang queue` is destructive when an agent reads its own queue: printed entries
-move to an archive and will not be delivered later. Do not pipe that read
-through `head` or `tail`.
+`gang collar check NAME` launches disposable private tmux sessions and reports
+each native compatibility probe. It observes trust prompts but never answers
+them.
 
-## Run a host command for an agent
+## State and replay
 
-From an agent window, `gang run` starts a command in a transient host service
-and sends the result back when it exits:
+Every team has an append-only event log under the v1 state root:
 
-```sh
-gang run -- make test
-gang run --active
+```text
+${XDG_STATE_HOME:-~/.local/state}/gangline/v1/TEAM/events.jsonl
 ```
 
-The command inherits the agent's working directory and environment, but not its
-sandbox. Combined output is stored in Gangline's durable state directory. Only
-the requesting agent can list or cancel its runs.
-
-## Stop work
-
-The lead normally removes teammates when their work is done. To remove one by
-hand during recovery, use its exact name from an outside shell:
+Replay a copied log without tmux or a native harness:
 
 ```sh
+gang replay path/to/events.jsonl
+```
+
+Snapshots are disposable acceleration; the log is authoritative. Preserve the
+team directory when diagnosing a failure.
+
+## Stop a team
+
+Inspect the roster before removing live windows:
+
+```sh
+gang roster
 gang drop worker
+gang down gangline
 ```
 
-Before ending the entire team, read the roster and list the exact session name:
+`gang drop` stops one active hitch. `gang down` requires the exact configured
+session name, stops all active hitches, and then removes the team's v1 state
+directory, including its event log. Copy evidence first if it must survive.
 
-```sh
-gang roster
-gang teams
-gang down SESSION
-```
-
-`gang down` refuses an omitted session name. Both teardown commands archive
-waiting messages before removing their target. When an archive is created, the
-command prints its recovery location.
+Never use an unaimed `tmux kill-server` or `tmux kill-session`; Gangline teams
+may share a tmux server with unrelated work.

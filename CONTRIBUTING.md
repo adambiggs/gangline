@@ -16,16 +16,16 @@ test/gate.sh
 A successful baseline ends with:
 
 ```text
-gate: VERDICT PASS (status 0); this gate ran lint, smoke, and Go checks; shell integration runs in CI.
+gate: VERDICT PASS (status 0); this gate ran the Go checks and private-tmux acceptance scenarios.
 ```
 
-The gate runs fast shell lint, smoke checks, Go formatting and analysis, unit
-tests, and the tmux acceptance scenario against the working tree. It serializes
+The gate runs Go formatting and analysis, unit tests, and the tmux acceptance
+scenarios against the working tree. It serializes
 with other local gate runs and reports `PASS`, `REFUSED`, or `UNKNOWN`; an
 absent verdict is not success.
 
-New shell and Python files need an SPDX license identifier. Do not hand-edit
-`CHANGELOG.md`; Release Please owns it.
+New shell and Python build-support files need an SPDX license identifier. Do
+not hand-edit `CHANGELOG.md`; Release Please owns it.
 
 ## Make and check a change
 
@@ -39,8 +39,8 @@ Run the gate again at each coherent checkpoint:
 test/gate.sh
 ```
 
-CI runs full lint and integration after a push to `main`. Mandatory tests use
-immediate state, event barriers, or fake clocks instead of sleeps and polling.
+CI repeats the Go checks on Linux and macOS. Mandatory tests use immediate
+state, event barriers, or fake clocks instead of sleeps and polling.
 When a test needs native behavior, use a separately named disposable Gangline
 session; never use a development team as the test subject.
 
@@ -57,7 +57,6 @@ Allowed types are `build`, `chore`, `ci`, `docs`, `feat`, `fix`, `perf`,
 callers must change how they use Gangline.
 
 Stage only the files you changed, then commit normally. Do not use
-`--no-verify`; the pre-push hook runs the contribution gate and a fast check of
-the pushed tree.
+`--no-verify`; the pre-push hook runs the Go checks against the pushed tree.
 
 Report vulnerabilities privately as described in [SECURITY.md](SECURITY.md).

@@ -1,296 +1,162 @@
-# CLI and configuration reference
+# CLI and collar reference
 
-Use this page to look up Gangline's command surface, states, settings, and
-collar interface. In normal use, you run `gang up`, talk to the lead in its
-tmux window, and use observation or recovery commands as needed. The lead and
-its teammates run the coordination commands.
+`gang help` is the executable command inventory. `gang COMMAND --help` prints
+the accepted shape for one command.
 
-In the tables, **you** means the person at a shell outside the team; **agent**
-means a registered Gangline window. For the flags and failure cases of one
-command, run its own help page:
+## Requirements and installation
 
-```sh
-gang COMMAND --help
-```
-
-Start with the [operations guide](operations.md) if you want a task-oriented
-path through these commands.
-
-## Requirements
-
-Gangline supports macOS and Linux. It needs Git for installation, Bash, Python
-3, tmux 3.2 or later, and a supported native harness. Claude Code and Codex are
-first-class today.
-
-Run each harness directly once before starting a team. Its sign-in, repository,
-permission, and trust prompts stay in that harness; Gangline does not answer
-them.
-
-## Team lifecycle
-
-| Command | Normally run by | Purpose |
-| --- | --- | --- |
-| `gang up [NAME] [HITCH OPTIONS]` | You | Start a team, hitch the lead, and attach this terminal. |
-| `gang hitch NAME [OPTIONS]` | Lead or agent | Launch and register one native harness window. |
-| `gang adopt NAME -c HARNESS` | Lead or agent | Register an existing window in this team without startup prose or hooks. |
-| `gang rename OLD NEW` | Lead or agent | Change the registered name without restarting the window. |
-| `gang drop NAME` | Lead or agent | Archive waiting messages and remove one agent window. |
-| `gang down SESSION` | You | Archive waiting messages and end one named team. |
-
-`gang hitch` accepts `-c/--collar`, `-d/--dir`, `-m/--model`, `-e/--effort`,
-`-t/--task`, `-r/--role`, `-l/--lights`, `--resume`, and `--stdin`. Names may
-contain letters, digits, `.`, `-`, and `_`; they cannot start with `.` or `-`.
-Run `gang hitch --help` before scripting the launch path.
-
-`gang drop` prints the native session identifier and a resume command when the
-collar supports recovery. Capture terminal-only evidence before dropping the
-window.
-
-## Messages and execution
-
-| Command | Normally run by | Purpose |
-| --- | --- | --- |
-| `gang send NAME [--from SENDER] [--live-only] [--supersede]` | Agent | Deliver the stdin body or park it for a safe boundary. |
-| `gang send NAME --at TIME [--from SENDER]` | Agent | Hold the stdin body until a duration or local `HH:MM` time passes. |
-| `gang send NAME --at clear` | Agent | Cancel that recipient's timed messages. |
-| `gang run -- COMMAND [ARG ...]` | Agent | Run a host command for the calling agent and send back its result. |
-| `gang run --active` | Agent | List this agent's active host runs and recovery commands. |
-| `gang run --cancel RUN_ID` | Agent | Cancel one host run owned by this agent. |
-| `gang queue [NAME]` | Agent | Read queued messages; an agent consumes its own queue. |
-| `gang flush [NAME]` | Agent | Recover an exactly matched body from a harness-owned input queue. |
-| `gang interrupt [NAME] [-m REASON] [--from SENDER]` | Agent | Send the collar's stop key and optionally deliver a reason afterward. |
-| `gang compact [NAME] [--resume TEXT]` | Agent | Request native compaction and a continuation turn. |
-| `gang compact NAME --recover` | Agent | Apply the collar's recovery keys to a stuck compaction surface. |
-
-`gang send` reads its body from a pipe, file, heredoc, or editor. Inside a
-registered window, the sender comes from tmux.
-
-### Drive it by hand or from a script
-
-The commands above are the team agents' normal tools. When you deliberately
-drive the team from an outside shell, `--from` is required:
+Gangline supports macOS and Linux and requires Git, Go 1.27 or later, tmux 3.2
+or later, and Claude Code or Codex. The installer selects the newest stable
+`gangline-v*` tag, retains that checkout for inspectable upgrades, and builds a
+static binary with `CGO_ENABLED=0`.
 
 ```sh
-printf '%s\n' 'Run the focused test and report the result.' |
-  gang send worker --from operator
+curl -fsSL https://raw.githubusercontent.com/adambiggs/gangline/main/install.sh | sh
 ```
 
-You can also run `hitch`, `drop`, `interrupt`, or `compact` from that shell for
-manual control and recovery. This is the secondary path; for ordinary work,
-ask the lead in its tmux window.
+`GANGLINE_HOME` changes the retained checkout, `GANGLINE_BIN` changes the binary
+directory, and `GANGLINE_REPO` changes the release source. Defaults are
+`~/.local/share/gangline`, `~/.local/bin`, and the public Git repository.
 
-`gang run` starts outside the requesting harness's sandbox. It inherits the
-agent's working directory and command environment, stores combined output in
-durable state, and sends a bounded result back when the command exits.
+## Commands
 
-## Observation and control
+### Team lifecycle
 
-| Command | Normally run by | Purpose |
-| --- | --- | --- |
-| `gang roster [--porcelain]` | You or agent | Show every window, collar, live state, queued work, and provenance. |
-| `gang status [NAME] [--why]` | You or agent | Show one agent's detailed state or explain how the state was derived. |
-| `gang tick` | Agent or recovery shell | Run one bounded synchronous retry pass. |
-| `gang wait NAME --until idle\|done [--timeout SECONDS]` | You or script | Block an outside shell on a native boundary. |
-| `gang wait --limit [NAME] [--resume TEXT]` | You or script | Schedule a continuation after a provider reset. |
-| `gang wait --limit [NAME] --clear` | You or script | Remove that scheduled continuation. |
-| `gang capture [NAME] [LINES]` | You or agent | Print recent pane content. |
-| `gang capture --composer [NAME]` | You or agent | Print the native input composer. |
-| `gang context [NAME]` | You or agent | Print the harness's native context reading. |
-| `gang log [NAME] [--since N] [--kind KIND]` | You or agent | Read durable JSONL events for the team or one agent. |
-| `gang limits [NAME]` | You or agent | Read current provider usage windows through a collar. |
-| `gang limits --history` | You or agent | Read retained account-window samples and pace. |
-| `gang usage [--daily [DATE]\|--since DATE]` | You or agent | Join live agents to local token attribution from `ccusage`. |
-| `gang cap` | You or agent | Read retained weekly provider-window history. |
-| `gang cap check` | You | Sample provider windows now and emit threshold alerts. |
-| `gang cap watch [--clear]` | You | Install or remove periodic sampling. |
-| `gang cap forget` | You | Delete the provider-window history Gangline wrote. |
-| `gang whoami` | Agent | Print the calling pane's registered identity. |
-| `gang attach` | You | Attach to the configured team, including its recorded socket. |
-| `gang teams` | You | List recorded teams and their sockets. |
-
-`gang roster --porcelain` prints tab-separated fields in this order: name,
-collar, state, queued count, oldest queued age in seconds, native session ID,
-hitcher state, and hitcher name.
-
-`gang wait` is for an operator shell or external script. It refuses inside an
-agent window because team reports already arrive at native turn boundaries.
-
-## Discovery, settings, and upgrades
-
-| Command | Normally run by | Purpose |
-| --- | --- | --- |
-| `gang curfew` | Lead or you | Show the team deadline. |
-| `gang curfew DURATION\|HH:MM` | Lead or you | Set or replace the team deadline. |
-| `gang curfew clear` | Lead or you | Remove the team deadline. |
-| `gang collars` | Lead or you | List harness collars and their resume capability. |
-| `gang models [-c HARNESS]` | Lead or you | List native model identifiers and effort values. |
-| `gang roles` | Lead or you | List usable and invalid role briefs with their source. |
-| `gang config` | You or agent | Print each persistent setting, its effective value, and source. |
-| `gang --version` | You | Print the installed release version. |
-| `gang upgrade --check` | You | Compare the installed release with the latest stable tag. |
-| `gang upgrade` | You | Install the latest stable release over an installer-managed tree. |
-
-Ordinary commands do not check the network for updates. Source checkouts update
-with Git; `gang upgrade` is for installer-managed release trees.
-
-## States and exit status
-
-The state symbols are conservative:
-
-| State | Meaning |
+| Command | Effect |
 | --- | --- |
-| `-busy-` | Native evidence says the agent is working. |
-| `~wait~` | Work is pending before the next turn. |
-| `~idle~` | The native composer is ready for input. |
-| `!occupied!` | A native dialog owns the input surface. |
-| `!dead!`, `!bricked!`, `!blocked!` | The window cannot take the expected next turn; inspect its status. |
-| `!harness-lost!`, `!session-lost!` | The registered native identity no longer matches a usable session. |
-| `?unknown?` | Gangline cannot establish the state safely. |
+| `gang up [NAME] [HITCH OPTIONS]` | Hitch the first agent, named `lead` by default, and attach when stdin is a terminal. |
+| `gang hitch NAME [OPTIONS]` | Launch a harness window and deliver its contract, role, and assignment. |
+| `gang adopt NAME -c COLLAR` | Register the current tmux pane without launch or startup delivery. |
+| `gang rename OLD NEW` | Rename an active hitch and its tmux window. |
+| `gang drop NAME` | Stop one active hitch and cancel its pending work. |
+| `gang down SESSION` | Drop every active hitch and remove that team's v1 state directory. |
 
-Exit status `0` means the command completed its documented operation. For
-`send`, it can mean Gangline accepted the body into its queue, not that the
-native session has read it yet.
+Hitch options are `-c/--collar`, `-d/--dir`, `-m/--model`, `-e/--effort`,
+`-t/--task`, `-r/--role`, `--resume`, and `--stdin`. Effort
+requires an explicit model. `--stdin` reads the assignment body from stdin;
+otherwise `--task` supplies it.
 
-Exit status `3` is a refusal made before the operation. Stderr says what was
-refused. Exit status `1` is an error and does not prove that nothing changed.
-Status `4` reports a command-specific native condition that did not settle,
-such as an unreadable roster row or an unanswered startup gate. Status `5`
-means delivery keystrokes landed but Gangline lost verification; inspect the
-recipient before retrying.
+### Delivery and control
 
-## Configuration
+| Command | Effect |
+| --- | --- |
+| `gang send NAME [--from NAME] [--live-only] [--supersede] [--at TIME]` | Read a body from stdin and deliver or queue it. |
+| `gang send NAME --at clear` | Clear timed deliveries for the recipient. |
+| `gang queue [NAME]` | List queued delivery ID, recipient, and sender rows. |
+| `gang flush [NAME]` | Run one recovery pass over pending deliveries. |
+| `gang interrupt [NAME] [-m REASON]` | Interrupt an active or wedged native turn. |
+| `gang compact [NAME] [--resume TEXT]` | Submit the collar's compaction action and queue a continuation. |
+| `gang compact NAME --recover` | Apply the collar's declared compaction-recovery actions. |
+| `gang run -- COMMAND [ARG ...]` | Run a command synchronously with the caller's stdin/stdout/stderr. |
 
-`gang config` shows the effective value and source of every persistent setting.
-The environment wins over `$GANG_CONFIG_DIR/config`; the default configuration
-directory is `$XDG_CONFIG_HOME/gangline`, or `~/.config/gangline`. The file is
-parsed as `NAME=VALUE` lines, not sourced. Blank values, duplicates, unknown
-keys, and invalid values fail the command that reads them.
+Inside an active Gangline pane, `send` derives the sender from the pane and
+refuses an overriding `--from`. Outside the team, `--from` is required and the
+wire envelope marks it `self-declared:`.
 
-| Key | Default | Value and effect |
+`--live-only` refuses unless the recipient is recorded idle. `--supersede`
+clears older timed work for that recipient before sending. `--at` accepts a
+duration such as `45m` or a local `HH:MM` time.
+
+### Observation and recovery
+
+| Command | Effect |
+| --- | --- |
+| `gang roster [--porcelain]` | List active hitches and recorded activity. |
+| `gang status [NAME] [--why]` | Show one hitch and any recorded wedge evidence. |
+| `gang capture [NAME] [LINES]` | Render a parsed pane screen. |
+| `gang capture --composer [NAME]` | Read the collar-recognized composer. |
+| `gang context [NAME]` | Read native context use and the active collar band. |
+| `gang limits [NAME]` | Read provider-limit rows visible in the native TUI. |
+| `gang limits --history` | Return unknown; v1 retains no limit history. |
+| `gang log` | Print the configured team's authoritative JSONL log. |
+| `gang replay [EVENTS.jsonl]` | Fold a log from a file or stdin and print state as JSON. |
+| `gang tick` | Retry pending effects, release safe queued delivery, and observe wedges. |
+| `gang wait NAME` | Succeed only if the agent is already recorded idle. |
+| `gang whoami` | Print the active hitch bound to the current pane. |
+| `gang teams` | List team directories with event logs in the v1 state root. |
+| `gang attach` | Attach to the configured tmux team. |
+
+`gang usage` and `gang cap` return explicit `unknown` rows because v1 has no
+local accounting or retained provider-window database.
+
+### Discovery and installation
+
+| Command | Effect |
+| --- | --- |
+| `gang collars` | List embedded and operator CUE collars. |
+| `gang collar check NAME` | Probe an installed harness on disposable private tmux sockets. |
+| `gang models [-c COLLAR]` | Ask the collar's native catalog for models and efforts. |
+| `gang roles` | List shipped and operator role briefs. |
+| `gang config` | Print effective settings and their source. |
+| `gang curfew [DURATION\|HH:MM\|clear]` | Show, set, or clear the recorded team deadline. |
+| `gang --version` | Print the built release version. |
+| `gang upgrade [--check]` | Run the retained release installer's upgrade path. |
+
+## Exit status
+
+| Status | Meaning |
+| --- | --- |
+| `0` | The documented operation completed; a send may be durably queued. |
+| `1` | An execution or I/O error occurred. |
+| `2` | Command usage was invalid. |
+| `3` | Gangline refused before the requested state change. |
+| `4` | A native condition needs attention, such as a startup prompt. |
+| `5` | The result is unknown, including delivery typed without a matching witness. |
+
+## Configuration and state
+
+The config file is `$GANG_CONFIG_DIR/config`, defaulting to
+`${XDG_CONFIG_HOME:-~/.config}/gangline/config`. It is parsed as strict
+`NAME=VALUE` data; it is never sourced. Environment values override file values.
+
+| Setting | Default | Purpose |
 | --- | --- | --- |
-| `GANG_COLLAR` | `claude-code` | Collar selected by `up`, `hitch`, and `models` when `-c` is absent. |
-| `GANG_SESSION` | `gangline` | tmux session addressed by the command. |
-| `GANG_COLLARS` | unset | Absolute directory of custom `NAME.sh` collars; these override shipped collars by name. |
-| `GANG_LOCK_DIR` | `/run/user/UID/gangline`, or `/tmp/gangline-UID` without logind | Shared delivery-lock and team-record directory. Every process addressing a team must use the same absolute path. |
-| `GANG_ARCHIVE_DIR` | `${XDG_STATE_HOME:-~/.local/state}/gangline/archive` | Directory that receives consumed and teardown-archived messages. Gangline does not delete these archives. |
-| `GANG_NOTIFY` | `lead` | Existing agent that receives automatic blocked, failed, or stalled-state messages. The originating agent's status retains delivery failures. |
-| `GANG_CONTEXT_LIGHTS` | `collar` | `off`, `collar`, `YELLOW,RED`, or whitespace-separated `COLLAR/MODEL=SPEC` entries. Thresholds are positive token counts or matching percentages below 100. The most specific selector wins and `*` is the fallback. |
-| `GANG_CONTEXT_BANDS` | unset | `off` or `COLLAR/MODEL=NAME@THRESHOLD:TEMPLATE\|...` entries separated by semicolons, including a `*` default. Thresholds strictly increase and use one unit: tokens or percentages. Templates may use the placeholders printed by `gang config`. |
-| `GANG_CACHE_BANDS` | unset | Same grammar as context bands, using cache age rather than context use and including a `*` default. |
-| `GANG_CACHE_COMPACTION` | `claude-code=3600:300 codex=1800:180` | Space-separated `COLLAR=TTL:MARGIN` or `COLLAR=off` entries. Values are whole seconds; TTL is positive and margin is smaller than TTL. |
-| `GANG_AUTO_RESUME` | `off` | `off` or a percentage from `1%` through `100%`; resumes one failed Claude stream when the provider window reaches that use. |
-| `GANG_SCOPE` | `off` | `on` launches each agent in its own systemd user scope; `off` uses the tmux server's cgroup. |
+| `GANG_SESSION` | `gangline` | Team and tmux session name. |
+| `GANG_COLLAR` | `claude-code` | Default collar for launch and model discovery. |
+| `GANG_COLLARS` | unset | Absolute directory of operator `NAME.cue` collars. |
+| `GANG_LAUNCH_ARGS` | unset | JSON object of collar names to extra launch-argument arrays. |
 
-These runtime variables are intentionally not accepted in the config file:
+Runtime-only variables are `GANG_CONFIG_DIR`, `GANG_STATE_ROOT`, and
+`GANG_TMUX_SOCKET`. The state default is
+`${XDG_STATE_HOME:-~/.local/state}/gangline`; tmux uses its default socket unless
+an explicit socket is supplied. `GANGLINE_TMUX` selects the tmux executable for
+tests and native collar probes.
 
-| Variable | Default | Purpose |
-| --- | --- | --- |
-| `GANG_CONFIG_DIR` | described above | Absolute root containing `config`, `DOCTRINE.md`, `CONTRACT.md`, and `roles/`. |
-| `GANG_ACTIVITY_WINDOW` | `5` | Seconds in which recent pane activity is credited without a second reading. |
-| `GANG_ACTIVITY_LIMIT` | `300` | Seconds after which unchanged activity no longer proves a turn is live. |
-| `GANG_TURN_LIMIT` | `300` | Seconds after which an unmatched native turn boundary is stale. |
-| `GANG_CHURN_WAIT` | `0.5` | Seconds between pane reads used to prove visible activity. Fractions are allowed. |
-| `GANG_BOOT_TIMEOUT` | `30` | Startup-readiness budget in seconds. |
-| `GANG_GATE_LOOKS` | `60` | Maximum immediate observations of an unrecognized first-run prompt. |
-| `GANG_CLEAR_PRESSES` | `40` | Maximum erase-key presses when clearing a composer. |
-| `GANG_TICK_DEADLINE` | `60` | Tick worker deadline in whole seconds, from 60 through 3600. |
-| `GANGLINE_REPO` | public Git repository | Source used by `gang upgrade` and the installer. |
-
-`XDG_CONFIG_HOME`, `XDG_DATA_HOME`, and `XDG_STATE_HOME` relocate configuration,
-capacity history, and durable state. `CODEX_HOME` and `CLAUDE_CONFIG_DIR` are
-provider-owned locations read by their collars. Names beginning with
-`GANG_TEST_`, `GANG_TICK_INTERNAL`, `GANG_TMUX_`, or `GANGLINE_` other than
-`GANGLINE_REPO` are internal protocol, not operator configuration.
-`GANG_MODEL`, `GANG_COLLAR_FILE`, `GANG_RUN_TEAM_ROOT`, `GANG_COMPACT_KEEP`, and
-`GANG_COMPACT_RESUME` are passed between Gangline and a collar or child process;
-they are not settings.
-
-The installer accepts three location overrides:
-
-| Variable | Default | Purpose |
-| --- | --- | --- |
-| `GANGLINE_REPO` | public Git repository | Release-tag source used for installation and upgrades. |
-| `GANGLINE_HOME` | `~/.local/share/gangline` | Installer-managed release tree. |
-| `GANGLINE_BIN` | `~/.local/bin` | Directory that receives the `gang` command link. |
-
-Provider-cap history has its own environment because `gang cap watch` copies
-selected values into a user service:
-
-| Variable | Default | Purpose |
-| --- | --- | --- |
-| `GANG_CAP_THRESHOLDS` | `70,90` | Comma-separated increasing percentages that alert once per provider window. |
-| `GANG_CAP_CLAUDE_INTERVAL` | `3300` | Minimum seconds between Claude readings; each reading spends a provider turn. |
-| `GANG_CAP_NOTIFY` | unset | Shell command that receives each alert on stdin and must finish within 30 seconds. |
-| `GANG_CAP_DIR` | `${XDG_DATA_HOME:-~/.local/share}/gangline/cap` | History, state, and lock directory. |
-| `GANG_CAP_UNIT_DIR` | `${XDG_CONFIG_HOME:-~/.config}/systemd/user` | Alternate directory for generated timer and service files; setting it writes files without activating them. |
-| `GANG_CAP_CODEX_SESSIONS` | Codex session directory | Alternate Codex session source. |
-| `GANG_CAP_CLAUDE_READER` | native Claude reader | Shell command that returns Claude's published usage row. |
-| `GANG_CAP_CLAUDE_COLLAR` | shipped Claude collar | Collar file used by the native Claude reader. |
+Each team is stored at `STATE_ROOT/v1/TEAM/`. `events.jsonl` is authoritative;
+`snapshot.json` is an integrity-checked loading shortcut. `gang down SESSION`
+removes that directory after every active hitch is stopped.
 
 ## Startup prose
 
-| Slot | Purpose |
-| --- | --- |
-| `DOCTRINE.md` | Optional operator-owned rules sent to every agent. |
-| `CONTRACT.md` | Standing delivery and reporting terms; an operator copy overrides the shipped file. |
-| `roles/NAME.md` | Replaceable role guidance selected with `gang hitch --role NAME`; operator roles override shipped roles by name. |
+Gangline embeds `CONTRACT.md` and the shipped `roles/*.md`. Operator files under
+`GANG_CONFIG_DIR` override them:
 
-The lead is the fixed first role. Treat non-lead role briefs as starter material
-and replace them with the operator's own division of work. Keep operator policy
-in `DOCTRINE.md`, not in the Gangline core.
+- `CONTRACT.md` supplies standing terms;
+- `DOCTRINE.md` adds optional operator guidance; and
+- `roles/NAME.md` replaces or adds a role brief.
 
-## Collar contract
+The collar's `role_prompt` option puts standing prose into a native system
+prompt when the harness supports it. The startup envelope still carries the
+assignment.
 
-A collar is a Bash file sourced by Gangline. It must define `GANG_LAUNCH`; all
-other declarations and functions are optional. Gangline clears the complete
-surface before loading each collar, validates declarations before launch, and
-fails on malformed values or function results it cannot interpret.
+## CUE collar contract
 
-| Declaration | Meaning |
-| --- | --- |
-| `GANG_LAUNCH` | Required shell command for a fresh harness session. |
-| `GANG_RESUME_LAUNCH` | Resume command containing exactly one `{{session_id}}`. |
-| `GANG_MODEL_OPT`, `GANG_MODEL_ALIASES` | Model option spelling and newline-separated aliases. |
-| `GANG_EFFORT_OPT`, `GANG_EFFORT_CMD` | Effort option spelling and command that prints the accepted vocabulary. |
-| `GANG_ROLE_PROMPT_OPT` | Harness option that takes the contract, collar guidance, and role brief as one value. |
-| `GANG_HARNESS_PROMPT` | Short harness-specific guidance attached at launch. |
-| `GANG_BUSY_REGEX`, `GANG_OCCUPIED_REGEX`, `GANG_QUEUED_REGEX` | Extended regular expressions for visible busy, dialog, and queued-input states. |
-| `GANG_QUEUE_RECALL_KEY`, `GANG_INTERRUPT_KEY` | tmux key names for recalling queued input and interrupting a turn. |
-| `GANG_COMPACT_RECOVER_KEYS` | Space-separated tmux key names used to recover a refused compaction surface. |
-| `GANG_STOP_HOOK` | `1` when the launch installs Gangline's native Stop hook. |
-| `GANG_STALL_TYPES` | Space-separated native notification kinds that represent a stalled harness. |
-| `GANG_QUIET_AT_REST` | `1` when absent pane activity is meaningful at rest. |
-| `GANG_MIDTURN_INPUT` | Empty, `1`, `park`, or `steer`, describing native mid-turn input support. |
-| `GANG_COMPACT_CMD` | Composer command; `{{instructions}}` is replaced by continuation text. |
-| `GANG_SELF_COMPACT` | `deferred` when safe self-compaction waits for a native boundary. |
-| `GANG_SELF_COMPACT_WITNESS` | Empty, `unavailable`, or `native-idle`; the last requires `collar_native_idle`. |
-| `GANG_USAGE_LIMIT_INTERVAL`, `GANG_USAGE_LIMIT_MAX_AGE` | Whole-second sampling interval and maximum age for provider-limit rows. |
+A custom collar is a CUE file with a top-level `collar` value validated against
+`harness/schema/collar.cue`. Its filename and `collar.name` must agree.
 
-Optional functions return `0` for a positive reading, `1` for an absent or
-negative reading, and `2` or `3` only where the description says so. Text
-results go to stdout.
+The value declares:
 
-| Function | Contract |
-| --- | --- |
-| `collar_models` | Print supported model rows. |
-| `collar_model_check MODEL` | Return recognized, unrecognized, or unknown. |
-| `collar_context_lights MODEL` | Print the collar's default `YELLOW,RED` thresholds. |
-| `collar_context TARGET` | Print `used<TAB>window`; return 3 when the native source is unreadable. |
-| `collar_input TARGET` | Print the current composer; return 3 when the pane cannot be read. |
-| `collar_overlay TARGET` | Print the visible overlay title. |
-| `collar_advisory TARGET`, `collar_dismiss_advisory TARGET` | Detect an advisory and, when safe, dismiss it while naming the action. |
-| `collar_bricked TARGET`, `collar_blocked TARGET` | Print the reason for a fatal or blocked completed turn; status 2 means unknown. |
-| `collar_queued TARGET BODY` | Report whether `BODY` is in the harness queue; status 2 explains an unknown reading. |
-| `collar_session_id TARGET PAYLOAD`, `collar_live_session_id TARGET` | Print the native session identifier from a hook payload or live harness. |
-| `collar_harness_identity TARGET` | Print `PID<TAB>START_STAMP`; status 2 means unreadable. |
-| `collar_last_action TARGET` | Print `at EPOCH` or `before EPOCH`; status 2 explains an unknown reading. |
-| `collar_cache_stamp TARGET` | Print the epoch of the provider cache source. |
-| `collar_usage_limits TARGET` | Print `LABEL<TAB>USED<TAB>RESET<TAB>OBSERVED` rows. |
-| `collar_usage_limits_error STATUS` | Explain a failed usage-limit read. |
-| `collar_auto_resume_record TARGET KIND` | Print the failed native turn identifier eligible for one resume. |
-| `collar_submitted_prompt TARGET PAYLOAD` | Record the prompt submitted at a native boundary. |
-| `collar_native_idle TARGET PAYLOAD` | Positively witness post-Stop idleness. |
-| `collar_recap_boundary TARGET` | Report a current empty recap; status 3 means unreadable. |
+- `launch`: command, normal/resume/probe arguments, and environment;
+- `hooks`: launch arguments containing `{{hook.command.json}}`, plus native
+  event and payload mappings;
+- `models`: catalog and selected-model primitives and the model option;
+- `options`: optional effort and role-prompt argument templates;
+- `primitives`: startup, composer, submit, submit witness, turn boundary,
+  context, provider limits, and wedge operations;
+- `actions`: interrupt, compact, recovery, and optional queue recall; and
+- `context_bands`: ordered named thresholds per model selector.
 
-See [Operations](operations.md) for recovery procedures and
-[Architecture](architecture.md) for the boundary between collars and the core.
+Logic stays in committed Go primitives. A collar selects and parameterizes
+those primitives; unknown primitive names fail during collar validation.
+Shipped collars are embedded CUE values under `harness/collars/` and pass
+through the same loader as operator collars.

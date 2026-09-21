@@ -3,27 +3,25 @@
 Read [`CONSTITUTION.md`](CONSTITUTION.md) before changing this repository and
 [`CONTRIBUTING.md`](CONTRIBUTING.md) before committing. They are binding.
 
-## Check whether `gang` is live
+## Check the executable in use
 
-Before editing `bin/gang`, run:
+Before changing command behavior, run:
 
 ```sh
 readlink -f "$(command -v gang)"
 ```
 
-If it resolves into this checkout, every save changes the executable used by
-attached agents immediately. There is no daemon or build step. Keep the script
-parseable and make small green checkpoints.
+Gangline 1.0 is a compiled Go binary. Source edits do not change the executable
+used by attached agents until a new binary is built and installed. Never
+replace the executable driving a live team as part of a test.
 
 Collars and role briefs are read at hitch time. Existing agents retain the copy
 already in their context. Model selection is also a launch choice: drop the old
 window and hitch a new one to change it.
 
-`CONTRACT.md` is read at hitch time like the rest, but how it lands depends on
-the collar. Where one declares `GANG_ROLE_PROMPT_OPT` it goes into the harness's
-system prompt and a running agent keeps the copy it launched with; where none is
-declared the agent is pointed at the path, so an edit reaches it the next time it
-reads the file. Editing it can therefore change what a live team is held to.
+`CONTRACT.md` is read at hitch time like the rest. Where a collar declares a
+`role_prompt` option it also enters the harness's system prompt. A running agent
+keeps the prose it launched with, so edits apply to later hitches.
 
 ## Evidence
 
@@ -36,11 +34,12 @@ fail, and require immediate observable readiness before asserting state.
 
 Gangline is substrate: tmux lifecycle, attributed verified delivery, direct
 observation, collars, shipped prose in `CONTRACT.md` and `roles/`, native hooks,
-native compaction, and optional yellow/red context and team-time lights. It does
-not coordinate work or supervise agents.
+native compaction, context readings, provider limits, and recorded curfews. It
+does not coordinate work or supervise agents.
 
-- Harness-specific knowledge belongs in `collars/`, not harness-name branches
-  in `bin/gang`.
+- Harness-specific declarations belong in `harness/collars/`, and branching
+  logic belongs in named `harness` primitives rather than harness-name branches
+  in `cmd/gang`.
 - Do not add the machinery classes prohibited by principles 1 and 7 in
   `CONSTITUTION.md`.
 - Do not add speculative surfaces without a live consumer.
@@ -75,8 +74,8 @@ Inside an agent window `$TMUX` is set, so bare `tmux` — and `gang`, which take
 no socket flag — talks to the live server and `TMUX_TMPDIR` is ignored without
 saying so. Start with
 `unset TMUX TMUX_PANE`, then prove it with `tmux list-sessions` showing only
-your own session, before anything spawns an agent. `test/integration.sh` does
-this on its seventh line.
+your own session, before anything spawns an agent. The Go acceptance suite uses
+a private socket and separately named disposable sessions.
 
 Do not invent extra test matrices or release blockers without an operator
 request.
@@ -88,7 +87,7 @@ request.
 | `README.md` | what Gangline is and why it exists |
 | `CONSTITUTION.md` | project design principles |
 | `CONTRACT.md` | the standing terms every hitched agent is held to |
-| `docs/architecture.md` | layers, message path, and map of `bin/gang` |
+| `ARCHITECTURE.md` | layers, message path, and package map |
 | `docs/design.md` | the decisions that still shape the code |
 | `docs/reference.md` | exact commands, environment, and collar contract |
 | `docs/operations.md` | unattended operation and recovery |

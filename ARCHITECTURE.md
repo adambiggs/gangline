@@ -1,69 +1,75 @@
 # Architecture
 
-Gangline is a single Go binary with a functional core and a thin imperative
-shell. The shell observes the outside world, turns observations into events,
-and executes effects chosen by the core. This keeps terminal and process
-quirks away from state transitions and makes recorded sessions replayable.
+Gangline is one Go module and one `gang` binary. Its functional core decides
+state transitions; a thin command layer observes tmux and native harnesses,
+turns those observations into events, and executes the resulting effects.
 
 ## Packages
 
-`core` owns Gangline's vocabulary and state machine. Its sealed `Event` and
-`Effect` types make every case explicit. `Step(State, Event)` is deterministic:
-it performs no I/O, reads no clock, and creates no identifiers. Times,
-identifiers, and external outcomes arrive in events.
+`core` owns teams, hitches, envelopes, deliveries, compactions, events, and
+effects. `Step(State, Event) (State, []Effect)` is deterministic: it performs no
+I/O, reads no clock, and creates no identifiers. Event and effect families are
+sealed sum types checked for exhaustive switches.
 
-`substrate` defines the only implementation boundary. A substrate can spawn and
-stop panes, send input, inspect composer state, and capture a parsed screen.
-Screens are grids of attributed cells plus a cursor; backend escape sequences
-do not cross the package boundary. The production implementation uses tmux; the
-acceptance suite drives a disposable private tmux session.
+`store` owns the versioned state root, one advisory lock per team, append-only
+JSONL event logs, and snapshots. The event log is authoritative; a snapshot is
+only a validated shortcut for replaying it.
 
-`store` owns the versioned state root, per-team lock, append-only event log, and
-snapshots. The event log is the source of truth. A snapshot is only a shortcut
-for folding the log through `core.Step`.
+`substrate` defines the sole backend interface: spawn, list, rename, capture,
+send keys, and kill. The tmux backend returns parsed screens made of attributed
+cells and a cursor, so tmux escape sequences never reach harness logic.
 
-`harness` contains reusable operations over parsed screens and input: startup
-prompt handling, composer reads, submission, hook installation, turn-boundary
-detection, model identification, and wedge detection. It also loads CUE
-collars. Neither `harness` nor `substrate` imports `core`; both remain useful
-without Gangline's team and message concepts.
+`harness` loads and validates CUE collars and implements reusable native
+primitives: startup recognition, composer reading, submission, submit-witness
+normalization, hook decoding, context and provider-limit readings, model
+discovery, and wedge detection. It does not import `core`.
 
-`cmd/gang` parses commands and connects the packages. Commands and hooks share
-one execution loop:
+`cmd/gang` parses the CLI and connects those packages. It contains no
+harness-name branches; shipped and operator collars use the same CUE schema and
+loader.
+
+## Command path
+
+Commands and native hooks use the same state loop:
 
 1. lock one team's store;
-2. load its state and turn the input into an event;
-3. append the event, then fold it with `core.Step`;
-4. persist the resulting state and release the lock;
-5. execute returned effects; and
-6. feed each external outcome back through the same loop as another event.
+2. load its snapshot and replay any later log entries;
+3. append the input event before doing external work;
+4. fold the event with `core.Step`, save the snapshot, and unlock;
+5. execute the returned effects against tmux or the harness; and
+6. feed each observed outcome back through the loop as another event.
 
-Appending before effects means a crash leaves an inspectable intent. A later
-invocation can retry a delivery or record that its pane disappeared without
-inventing partial state.
+Appending intent before effects makes interruption inspectable. Recovery can
+retry an operation whose outcome is still safely pending, while a send whose
+keystrokes landed without a matching native witness becomes `unverified` and is
+never duplicated automatically.
 
-## Schemas and collars
+## Verified delivery
 
-Events have a CUE schema in `core/schema/events.cue` and an exported JSON Schema
-in `core/schema/events.schema.json`. Event decoding validates input before it
-constructs a core value.
+A send renders a nonce-bearing attributed envelope, verifies that the native
+composer is empty, pastes the envelope, waits for the TUI to settle, and submits
+it. Delivery succeeds only when `UserPromptSubmit` reports the same prompt under
+the collar's declared normalization.
 
-Collars are CUE data validated against `harness/schema/collar.cue`. A collar
-declares a launch command, native hook templates, and named harness primitives;
-conditional behavior belongs in a Go primitive. Shipped collars use the same
-loader as third-party collars.
+Codex exposes the prompt byte-for-byte. Claude Code may wrap a bracketed paste
+in a matching `pasted_content` element; Gangline removes only that exact wrapper
+and still compares every inner envelope byte. A missing, malformed, or changed
+witness records `delivery_unverified`.
 
-## Failure model
+## State and schemas
 
-Invalid state transitions do not panic or return errors. `Step` emits a
-`RecordEvent` effect containing a rejection event and leaves state unchanged.
-I/O failures are returned with context by the package that observed them and
-become outcome events at the command boundary. Waits use explicit deadlines;
-timeouts and wedges are durable events with evidence, not inferred success.
+The default root is `${XDG_STATE_HOME:-~/.local/state}/gangline/v1/TEAM/`.
+`events.jsonl` is the source of truth and `snapshot.json` accelerates loading.
+The event schema lives in `core/schema/events.cue` and is exported as JSON
+Schema.
+
+Collars live in `harness/collars/*.cue` or an operator directory selected by
+`GANG_COLLARS`. `harness/schema/collar.cue` validates launch arguments, hook
+wiring, primitive selection, actions, and context bands before a harness is
+started.
 
 ## Verification
 
-The contribution gate formats and vets Go, checks exhaustive switches over sum
-types, enforces the package import boundary, runs unit tests, and exercises a
-real tmux session with a fake harness. The shell implementation remains in the
-tree as the behavior reference until the Go command reaches cutover.
+`test/gate.sh` runs formatting, vet, exhaustive-sum checks, the package-boundary
+check, unit tests, and black-box acceptance scenarios against a separately named
+private tmux socket. The gate has a hard wall-clock ceiling below two minutes.
