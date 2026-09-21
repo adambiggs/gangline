@@ -158,6 +158,12 @@ type DropFailed struct {
 	Reason  string    `json:"reason"`
 }
 
+type PaneVanished struct {
+	At       time.Time `json:"at"`
+	HitchID  HitchID   `json:"hitch_id"`
+	Evidence string    `json:"evidence"`
+}
+
 type WedgeDetected struct {
 	At       time.Time `json:"at"`
 	HitchID  HitchID   `json:"hitch_id"`
@@ -230,6 +236,7 @@ func (InterruptFailed) isEvent()         {}
 func (DropRequested) isEvent()           {}
 func (DropSucceeded) isEvent()           {}
 func (DropFailed) isEvent()              {}
+func (PaneVanished) isEvent()            {}
 func (WedgeDetected) isEvent()           {}
 func (WedgeCleared) isEvent()            {}
 func (OperationTimedOut) isEvent()       {}

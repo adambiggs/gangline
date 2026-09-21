@@ -94,6 +94,8 @@ func EncodeEvent(event Event) ([]byte, error) {
 		record.At, record.HitchID = event.At, event.HitchID
 	case DropFailed:
 		record.At, record.HitchID, record.Reason = event.At, event.HitchID, event.Reason
+	case PaneVanished:
+		record.At, record.HitchID, record.Evidence = event.At, event.HitchID, event.Evidence
 	case WedgeDetected:
 		record.At, record.HitchID, record.Evidence = event.At, event.HitchID, event.Evidence
 	case WedgeCleared:
@@ -186,6 +188,8 @@ func DecodeEvent(data []byte) (Event, error) {
 		return DropSucceeded{At: record.At, HitchID: record.HitchID}, nil
 	case "drop_failed":
 		return DropFailed{At: record.At, HitchID: record.HitchID, Reason: record.Reason}, nil
+	case "pane_vanished":
+		return PaneVanished{At: record.At, HitchID: record.HitchID, Evidence: record.Evidence}, nil
 	case "wedge_detected":
 		return WedgeDetected{At: record.At, HitchID: record.HitchID, Evidence: record.Evidence}, nil
 	case "wedge_cleared":

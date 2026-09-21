@@ -56,6 +56,8 @@ func EventName(event Event) string {
 		return "drop_succeeded"
 	case DropFailed:
 		return "drop_failed"
+	case PaneVanished:
+		return "pane_vanished"
 	case WedgeDetected:
 		return "wedge_detected"
 	case WedgeCleared:

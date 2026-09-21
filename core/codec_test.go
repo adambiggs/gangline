@@ -43,6 +43,7 @@ func TestEventCodecRoundTrip(t *testing.T) {
 		DropRequested{At: now, HitchID: "h-1", Deadline: deadline},
 		DropSucceeded{At: now, HitchID: "h-1"},
 		DropFailed{At: now, HitchID: "h-1", Reason: "pane busy"},
+		PaneVanished{At: now, HitchID: "h-1", Evidence: "pane %1 is absent"},
 		WedgeDetected{At: now, HitchID: "h-1", Evidence: "unchanged for 5m"},
 		WedgeCleared{At: now, HitchID: "h-1"},
 		OperationTimedOut{At: now, Operation: TimeoutDelivery, ID: "e-1", Deadline: deadline, Evidence: "verification deadline passed"},

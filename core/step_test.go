@@ -308,6 +308,27 @@ func TestDropFailureRestoresInFlightDelivery(t *testing.T) {
 	}
 }
 
+func TestPaneVanishedFailsQueuedWorkAndPreservesUnknownDelivery(t *testing.T) {
+	state := deliveringHitch(t)
+	queued := Envelope{
+		ID: "e-2", From: Sender{Kind: SenderAgent, Name: "lead", HitchID: "lead-id"},
+		To: "worker", Message: Message{Text: "next"}, CreatedAt: testNow,
+	}
+	state = apply(t, state, SendRequested{At: testNow, Envelope: queued, Deadline: testDeadline})
+	state = apply(t, state, PaneVanished{At: testNow, HitchID: "worker-id", Evidence: "pane %2 is absent"})
+
+	hitch := state.Hitches["worker-id"]
+	if hitch.Status != HitchFailed || hitch.Activity != ActivityWedged || hitch.WedgeEvidence == "" {
+		t.Fatalf("hitch = %#v", hitch)
+	}
+	if delivery := state.Deliveries["e-1"]; delivery.Status != DeliveryUnverified || delivery.Reason == "" {
+		t.Fatalf("in-flight delivery = %#v", delivery)
+	}
+	if delivery := state.Deliveries["e-2"]; delivery.Status != DeliveryFailed || delivery.Reason == "" {
+		t.Fatalf("queued delivery = %#v", delivery)
+	}
+}
+
 func TestStepRejectsInvalidTransitionWithoutMutatingInput(t *testing.T) {
 	state := NewState(Team{ID: "team-1", Name: "example"})
 	next, effects := Step(state, DropRequested{At: testNow, HitchID: "missing", Deadline: testDeadline})

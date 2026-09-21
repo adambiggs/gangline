@@ -56,6 +56,8 @@ func Step(state State, event Event) (State, []Effect) {
 		return stepDropSucceeded(next, event)
 	case DropFailed:
 		return stepDropFailed(next, event)
+	case PaneVanished:
+		return stepPaneVanished(next, event)
 	case WedgeDetected:
 		return stepWedgeDetected(next, event)
 	case WedgeCleared:

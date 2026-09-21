@@ -55,7 +55,7 @@ import "time"
 	#TurnStarted | #TurnBoundaryReached | #BlockedDetected | #BlockedCleared | #SendRequested | #TimedDeliveryReleased | #TimedDeliveriesCleared | #DeliverySucceeded |
 	#DeliveryDeferred | #DeliveryFailed | #DeliveryUnverified |
 	#CompactionRequested | #CompactionCompleted | #CompactionFailed | #InterruptRequested | #InterruptSucceeded | #InterruptFailed |
-	#DropRequested | #DropSucceeded | #DropFailed | #WedgeDetected |
+	#DropRequested | #DropSucceeded | #DropFailed | #PaneVanished | #WedgeDetected |
 	#WedgeCleared | #OperationTimedOut | #CurfewSet | #CurfewCleared | #TransitionRejected
 
 #HitchRequested: close({type: "hitch_requested", at: #Time, hitch: #Hitch, boot_deadline: #Time})
@@ -84,6 +84,7 @@ import "time"
 #DropRequested: close({type: "drop_requested", at: #Time, hitch_id: #ID, deadline: #Time})
 #DropSucceeded: close({type: "drop_succeeded", at: #Time, hitch_id: #ID})
 #DropFailed: close({type: "drop_failed", at: #Time, hitch_id: #ID, reason: #Text})
+#PaneVanished: close({type: "pane_vanished", at: #Time, hitch_id: #ID, evidence: #Text})
 #WedgeDetected: close({type: "wedge_detected", at: #Time, hitch_id: #ID, evidence: #Text})
 #WedgeCleared: close({type: "wedge_cleared", at: #Time, hitch_id: #ID})
 #OperationTimedOut: close({
