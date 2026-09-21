@@ -70,6 +70,7 @@ type Primitives struct {
 	Startup        []Invocation `json:"startup"`
 	Composer       Invocation   `json:"composer"`
 	Submit         Invocation   `json:"submit"`
+	SubmitWitness  Invocation   `json:"submit_witness"`
 	TurnBoundary   Invocation   `json:"turn_boundary"`
 	Context        Invocation   `json:"context"`
 	ProviderLimits Invocation   `json:"provider_limits"`
@@ -150,6 +151,7 @@ func validateCollar(collar Collar) error {
 		{"model catalog", collar.Models.Catalog, []string{"claude-help-models", "codex-debug-models"}},
 		{"composer", collar.Primitives.Composer, []string{"claude-composer", "codex-composer"}},
 		{"submit", collar.Primitives.Submit, []string{"enter-submit"}},
+		{"submit witness", collar.Primitives.SubmitWitness, []string{"exact-prompt", "claude-pasted-content"}},
 		{"turn boundary", collar.Primitives.TurnBoundary, []string{"hook-boundary"}},
 		{"context", collar.Primitives.Context, []string{"claude-screen-context", "codex-screen-context"}},
 		{"provider limits", collar.Primitives.ProviderLimits, []string{"claude-screen-limits", "codex-screen-limits"}},
@@ -170,9 +172,6 @@ func validateCollar(collar Collar) error {
 		}{fmt.Sprintf("startup[%d]", index), startup, []string{"claude-trust-prompt", "codex-trust-prompt", "claude-composer", "codex-composer"}})
 	}
 	for _, check := range checks {
-		if strings.HasPrefix(check.value.Name, "exec:") {
-			continue
-		}
 		known := false
 		for _, allowed := range check.allowed {
 			known = known || check.value.Name == allowed

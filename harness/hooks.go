@@ -66,6 +66,36 @@ func DecodeHook(collar Collar, data []byte) (HookEvent, error) {
 	return HookEvent{NativeEvent: native, Kind: wiring.Event, Payload: payload}, nil
 }
 
+// SubmittedPromptMatches compares the text Gangline sent with the prompt a
+// native submit hook observed. Claude Code wraps bracketed pastes in a
+// pasted_content element before exposing them to UserPromptSubmit; the wrapper
+// identifier is harness-owned, but the wrapped bytes remain authoritative.
+func SubmittedPromptMatches(primitive Invocation, sent, witnessed string) (bool, error) {
+	switch primitive.Name {
+	case "exact-prompt":
+		return witnessed == sent, nil
+	case "claude-pasted-content":
+		if witnessed == sent {
+			return true, nil
+		}
+		const prefix = "\n\n<pasted_content id=\""
+		if !strings.HasPrefix(witnessed, prefix) {
+			return false, nil
+		}
+		identifier, wrapped, found := strings.Cut(strings.TrimPrefix(witnessed, prefix), "\">\n")
+		if !found || identifier == "" || strings.ContainsAny(identifier, "\"\r\n<>") {
+			return false, nil
+		}
+		suffix := "\n</pasted_content id=\"" + identifier + "\">\n"
+		if !strings.HasSuffix(wrapped, suffix) {
+			return false, nil
+		}
+		return strings.TrimSuffix(wrapped, suffix) == sent, nil
+	default:
+		return false, fmt.Errorf("unknown submit-witness primitive %q", primitive.Name)
+	}
+}
+
 func normalizeEventName(name string) string {
 	return strings.Map(func(char rune) rune {
 		if char == '-' || char == '_' || char == ' ' {

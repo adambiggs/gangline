@@ -44,3 +44,29 @@ func TestDetectTurnBoundaryIgnoresActivityHook(t *testing.T) {
 		t.Fatalf("boundary = %q, event = %+v", boundary, event)
 	}
 }
+
+func TestSubmittedPromptMatchesClaudePastedContent(t *testing.T) {
+	sent := "[gang:lead#message-1] first\nsecond [/gang:lead#message-1]"
+	witness := "\n\n<pasted_content id=\"c623\">\n" + sent + "\n</pasted_content id=\"c623\">\n"
+	matched, err := SubmittedPromptMatches(Invocation{Name: "claude-pasted-content"}, sent, witness)
+	if err != nil || !matched {
+		t.Fatalf("matched = %v, err = %v", matched, err)
+	}
+}
+
+func TestSubmittedPromptMatchRejectsChangedContentOrWrapper(t *testing.T) {
+	sent := "[gang:lead#message-1] first\nsecond [/gang:lead#message-1]"
+	for _, witness := range []string{
+		"\n\n<pasted_content id=\"c623\">\n[gang:lead#message-1] first [/gang:lead#message-1]\n</pasted_content id=\"c623\">\n",
+		"\n\n<pasted_content id=\"c623\">\n" + sent + "\n</pasted_content id=\"other\">\n",
+		"anything",
+	} {
+		matched, err := SubmittedPromptMatches(Invocation{Name: "claude-pasted-content"}, sent, witness)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if matched {
+			t.Fatalf("changed witness matched: %q", witness)
+		}
+	}
+}

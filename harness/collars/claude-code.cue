@@ -35,6 +35,7 @@ collar: {
 		startup: [{name: "claude-trust-prompt"}, {name: "claude-composer"}]
 		composer: {name: "claude-composer"}
 		submit: {name: "enter-submit", params: {paste: "bracketed", settle: "400ms"}}
+		submit_witness: {name: "claude-pasted-content"}
 		turn_boundary: {name: "hook-boundary"}
 		context: {name: "claude-screen-context"}
 		provider_limits: {name: "claude-screen-limits"}

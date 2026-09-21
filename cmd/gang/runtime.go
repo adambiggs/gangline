@@ -451,7 +451,11 @@ func (run *runtime) deliver(state core.State, backend interface {
 		if result.err != nil {
 			return core.DeliveryUnverifiedEvent{At: time.Now(), EnvelopeID: effect.Envelope.ID, Evidence: "native submit witness failed: " + result.err.Error()}, nil
 		}
-		if string(result.data) != wire {
+		matched, matchErr := harness.SubmittedPromptMatches(collar.Primitives.SubmitWitness, wire, string(result.data))
+		if matchErr != nil {
+			return core.DeliveryUnverifiedEvent{At: time.Now(), EnvelopeID: effect.Envelope.ID, Evidence: matchErr.Error()}, nil
+		}
+		if !matched {
 			return core.DeliveryUnverifiedEvent{At: time.Now(), EnvelopeID: effect.Envelope.ID, Evidence: "native submit witness did not match the attributed envelope"}, nil
 		}
 		return core.DeliverySucceeded{At: time.Now(), EnvelopeID: effect.Envelope.ID}, nil

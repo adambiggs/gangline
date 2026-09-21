@@ -38,6 +38,7 @@ collar: {
 		startup: [{name: "codex-trust-prompt"}, {name: "codex-composer"}]
 		composer: {name: "codex-composer"}
 		submit: {name: "enter-submit", params: {paste: "bracketed", settle: "400ms"}}
+		submit_witness: {name: "exact-prompt"}
 		turn_boundary: {name: "hook-boundary"}
 		context: {name: "codex-screen-context"}
 		provider_limits: {name: "codex-screen-limits"}

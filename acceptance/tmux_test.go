@@ -161,6 +161,18 @@ func TestCommandLifecycleOnPrivateTmux(t *testing.T) {
 	if output, err := runner.run("wait-for", "received"); err != nil {
 		t.Fatalf("wait for ordinary delivery: %v\n%s", err, output)
 	}
+	runHook("Stop")
+	const multiline = "multiline first\nmultiline second\n"
+	if output, status := runGang(multiline, "send", "worker", "--from", "tester"); status != 0 {
+		t.Fatalf("normalized multiline send status %d:\n%s", status, output)
+	}
+	if output, err := runner.run("wait-for", "received"); err != nil {
+		t.Fatalf("wait for normalized multiline delivery: %v\n%s", err, output)
+	}
+	state = loadAcceptanceState(t, filepath.Join(root, "state"), session)
+	if !hasAcceptanceDelivery(state, strings.TrimSuffix(multiline, "\n"), core.DeliveryDelivered) {
+		t.Fatalf("normalized multiline prompt was not verified: %#v", state.Deliveries)
+	}
 	t.Run("tick retries a durable queued send", func(t *testing.T) {
 		output, status := runGang("queued delivery\n", "send", "worker", "--from", "tester")
 		if status != 0 || !strings.Contains(output, "\tqueued\n") {
@@ -219,7 +231,7 @@ func TestCommandLifecycleOnPrivateTmux(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	for _, text := range []string{"assignment", "ordinary delivery", "queued delivery", "/compact resume after compact", "resume after compact"} {
+	for _, text := range []string{"assignment", "ordinary delivery", "multiline first", "multiline second", "queued delivery", "/compact resume after compact", "resume after compact"} {
 		if !strings.Contains(string(received), text) {
 			t.Fatalf("delivery ledger lacks %q:\n%s", text, received)
 		}
@@ -245,8 +257,9 @@ collar: {
  primitives: {
 	  startup: [{name: "claude-composer"}]
 	  composer: {name: "claude-composer"}
-  submit: {name: "enter-submit"}
-  turn_boundary: {name: "hook-boundary"}
+	  submit: {name: "enter-submit"}
+	  submit_witness: {name: "claude-pasted-content"}
+	  turn_boundary: {name: "hook-boundary"}
   context: {name: "codex-screen-context"}
   provider_limits: {name: "codex-screen-limits"}
   wedge: {name: "stable-busy-screen", params: {busy: "WORKING", after: "1ns"}}
@@ -490,6 +503,7 @@ func commandHarnessHook(prompt string) error {
 	if commandText == "" {
 		return fmt.Errorf("fake harness received no hook command")
 	}
+	prompt = "\n\n<pasted_content id=\"acceptance\">\n" + prompt + "\n</pasted_content id=\"acceptance\">\n"
 	payload, _ := json.Marshal(map[string]string{"hook_event_name": "UserPromptSubmit", "prompt": prompt})
 	command := exec.Command("sh", "-c", commandText)
 	command.Stdin = strings.NewReader(string(payload))

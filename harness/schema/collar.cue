@@ -1,7 +1,7 @@
 package harness
 
 #Name: string & =~"^[a-z][a-z0-9-]*$"
-#PrimitiveName: #Name | string & =~"^exec:.+"
+#PrimitiveName: #Name
 
 #Invocation: close({
 	name: #PrimitiveName
@@ -59,6 +59,7 @@ package harness
 		startup:       [...#Invocation] & [_, ...]
 		composer:      #Invocation
 		submit:        #Invocation
+		submit_witness: #Invocation
 		turn_boundary: #Invocation
 		context:       #Invocation
 		provider_limits: #Invocation
