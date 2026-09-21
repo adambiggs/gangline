@@ -36,7 +36,11 @@ collar: {
 		composer: {name: "composer-read"}
 		submit: {name: "submit"}
 		turn_boundary: {name: "hook-boundary"}
+		context: {name: "screen-context"}
+		wedge: {name: "stable-busy-screen"}
 	}
+	models: {catalog: {name: "models"}, option: {flag: "--model"}}
+	context_bands: []
 	unknown: true
 }`)
 	if _, err := LoadCollar("example.cue", data); err == nil {

@@ -18,22 +18,46 @@ var collarSchema []byte
 var embeddedCollars embed.FS
 
 type Collar struct {
-	Name       string          `json:"name"`
-	Launch     Launch          `json:"launch"`
-	Hooks      map[string]Hook `json:"hooks,omitempty"`
-	Primitives Primitives      `json:"primitives"`
+	Name         string        `json:"name"`
+	Launch       Launch        `json:"launch"`
+	Hooks        *Hooks        `json:"hooks,omitempty"`
+	Models       Models        `json:"models"`
+	Options      Options       `json:"options,omitempty"`
+	Primitives   Primitives    `json:"primitives"`
+	ContextBands []ContextBand `json:"context_bands"`
 }
 
 type Launch struct {
-	Command string            `json:"command"`
-	Args    []string          `json:"args,omitempty"`
-	Env     map[string]string `json:"env,omitempty"`
+	Command    string            `json:"command"`
+	Args       []string          `json:"args,omitempty"`
+	ResumeArgs []string          `json:"resume_args,omitempty"`
+	Env        map[string]string `json:"env,omitempty"`
+}
+
+type Hooks struct {
+	InstallArgs []string        `json:"install_args"`
+	Events      map[string]Hook `json:"events"`
 }
 
 type Hook struct {
-	Template string            `json:"template"`
-	Event    string            `json:"event"`
-	Payload  map[string]string `json:"payload,omitempty"`
+	Event   string            `json:"event"`
+	Payload map[string]string `json:"payload,omitempty"`
+}
+
+type Option struct {
+	Flag   string `json:"flag"`
+	Joined bool   `json:"joined,omitempty"`
+}
+
+type Models struct {
+	Catalog  Invocation  `json:"catalog"`
+	Selected *Invocation `json:"selected,omitempty"`
+	Option   Option      `json:"option"`
+}
+
+type Options struct {
+	Effort     *Option `json:"effort,omitempty"`
+	RolePrompt *Option `json:"role_prompt,omitempty"`
 }
 
 type Invocation struct {
@@ -46,8 +70,14 @@ type Primitives struct {
 	Composer     Invocation   `json:"composer"`
 	Submit       Invocation   `json:"submit"`
 	TurnBoundary Invocation   `json:"turn_boundary"`
-	ModelID      *Invocation  `json:"model_id,omitempty"`
-	Wedge        *Invocation  `json:"wedge,omitempty"`
+	Context      Invocation   `json:"context"`
+	Wedge        Invocation   `json:"wedge"`
+}
+
+type ContextBand struct {
+	Name    string  `json:"name"`
+	At      float64 `json:"at"`
+	Message string  `json:"message"`
 }
 
 func LoadCollar(filename string, data []byte) (Collar, error) {

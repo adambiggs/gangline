@@ -5,22 +5,41 @@ collar: {
 	launch: {
 		command: "claude"
 		args: []
+		resume_args: ["--resume", "{{session_id}}"]
 	}
 	hooks: {
-		stop: {
-			template: "hooks.Stop"
-			event: "turn-boundary"
-			payload: {
-				session_id: "session_id"
-			}
+		install_args: [
+			"--settings",
+			"{\"hooks\":{\"UserPromptSubmit\":[{\"hooks\":[{\"type\":\"command\",\"command\":{{hook.command.json}}}]}],\"PostToolUse\":[{\"matcher\":\"*\",\"hooks\":[{\"type\":\"command\",\"command\":{{hook.command.json}}}]}],\"Stop\":[{\"hooks\":[{\"type\":\"command\",\"command\":{{hook.command.json}}}]}],\"PermissionRequest\":[{\"hooks\":[{\"type\":\"command\",\"command\":{{hook.command.json}}}]}],\"PreCompact\":[{\"hooks\":[{\"type\":\"command\",\"command\":{{hook.command.json}}}]}],\"PostCompact\":[{\"hooks\":[{\"type\":\"command\",\"command\":{{hook.command.json}}}]}]}}",
+		]
+		events: {
+			userpromptsubmit: {event: "turn-started", payload: {session_id: "session_id", transcript_path: "transcript_path", prompt: "prompt"}}
+			posttooluse: {event: "activity", payload: {session_id: "session_id", transcript_path: "transcript_path"}}
+			stop: {event: "turn-finished", payload: {session_id: "session_id", transcript_path: "transcript_path"}}
+			permissionrequest: {event: "permission-requested", payload: {session_id: "session_id"}}
+			precompact: {event: "compaction-started", payload: {session_id: "session_id", trigger: "trigger"}}
+			postcompact: {event: "compaction-finished", payload: {session_id: "session_id", trigger: "trigger"}}
 		}
 	}
-	primitives: {
-		startup: [{name: "trust-prompt"}]
-		composer: {name: "composer-read", params: {ghost_text: "true"}}
-		submit: {name: "submit"}
-		turn_boundary: {name: "hook-boundary", params: {hook: "stop"}}
-		model_id: {name: "hook-model-id"}
-		wedge: {name: "screen-wedge"}
+	models: {
+		catalog: {name: "claude-help-models", params: {command: "claude", args: "--help"}}
+		selected: {name: "claude-screen-model"}
+		option: {flag: "--model"}
 	}
+	options: {
+		effort: {flag: "--effort=", joined: true}
+		role_prompt: {flag: "--append-system-prompt"}
+	}
+	primitives: {
+		startup: [{name: "claude-trust-prompt"}, {name: "claude-composer"}]
+		composer: {name: "claude-composer"}
+		submit: {name: "enter-submit"}
+		turn_boundary: {name: "hook-boundary"}
+		context: {name: "claude-screen-context"}
+		wedge: {name: "stable-busy-screen", params: {busy: "esc to interrupt|Retrying in [0-9]+s|API Error: 529 Overloaded\\.|▰|▱", after: "5m"}}
+	}
+	context_bands: [
+		{name: "yellow", at: 0.45, message: "context is getting full"},
+		{name: "red", at: 0.65, message: "finish or compact this session"},
+	]
 }

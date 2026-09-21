@@ -4,23 +4,45 @@ collar: {
 	name: "codex"
 	launch: {
 		command: "codex"
-		args: []
+		args: ["-c", "check_for_update_on_startup=false"]
+		resume_args: ["resume", "{{session_id}}", "-c", "check_for_update_on_startup=false", "-c", "tui.resume_cwd=\"current\""]
 	}
 	hooks: {
-		notify: {
-			template: "notify"
-			event: "turn-boundary"
-			payload: {
-				turn_id: "turn-id"
-			}
+		install_args: [
+			"-c", "hooks.UserPromptSubmit=[{ hooks = [{ type = \"command\", command = {{hook.command.json}} }] }]",
+			"-c", "hooks.PostToolUse=[{ hooks = [{ type = \"command\", command = {{hook.command.json}} }] }]",
+			"-c", "hooks.Stop=[{ hooks = [{ type = \"command\", command = {{hook.command.json}} }] }]",
+			"-c", "hooks.PermissionRequest=[{ hooks = [{ type = \"command\", command = {{hook.command.json}} }] }]",
+			"-c", "hooks.PreCompact=[{ hooks = [{ type = \"command\", command = {{hook.command.json}} }] }]",
+			"-c", "hooks.PostCompact=[{ hooks = [{ type = \"command\", command = {{hook.command.json}} }] }]",
+		]
+		events: {
+			userpromptsubmit: {event: "turn-started", payload: {session_id: "session_id", transcript_path: "transcript_path", prompt: "prompt", turn_id: "turn_id"}}
+			posttooluse: {event: "activity", payload: {session_id: "session_id", transcript_path: "transcript_path", turn_id: "turn_id"}}
+			stop: {event: "turn-finished", payload: {session_id: "session_id", transcript_path: "transcript_path", turn_id: "turn_id"}}
+			permissionrequest: {event: "permission-requested", payload: {session_id: "session_id", turn_id: "turn_id"}}
+			precompact: {event: "compaction-started", payload: {session_id: "session_id", trigger: "trigger"}}
+			postcompact: {event: "compaction-finished", payload: {session_id: "session_id", trigger: "trigger"}}
 		}
 	}
-	primitives: {
-		startup: [{name: "trust-prompt"}]
-		composer: {name: "composer-read", params: {ghost_text: "true"}}
-		submit: {name: "submit"}
-		turn_boundary: {name: "hook-boundary", params: {hook: "notify"}}
-		model_id: {name: "screen-model-id"}
-		wedge: {name: "screen-wedge"}
+	models: {
+		catalog: {name: "codex-debug-models", params: {command: "codex", args: "debug models"}}
+		selected: {name: "codex-screen-model"}
+		option: {flag: "-m"}
 	}
+	options: {
+		effort: {flag: "-c", joined: false}
+	}
+	primitives: {
+		startup: [{name: "codex-trust-prompt"}, {name: "codex-composer"}]
+		composer: {name: "codex-composer"}
+		submit: {name: "enter-submit"}
+		turn_boundary: {name: "hook-boundary"}
+		context: {name: "codex-screen-context"}
+		wedge: {name: "stable-busy-screen", params: {busy: "esc to interrupt", after: "5m"}}
+	}
+	context_bands: [
+		{name: "yellow", at: 0.75, message: "context is getting full"},
+		{name: "red", at: 0.90, message: "finish or compact this session"},
+	]
 }
