@@ -29,6 +29,20 @@ func SubmitSettle(invocation Invocation) (time.Duration, error) {
 	return duration, nil
 }
 
+func SubmitInput(invocation Invocation, text string) (substrate.Keys, error) {
+	if invocation.Name != "enter-submit" {
+		return substrate.Keys{}, fmt.Errorf("unknown submit primitive %q", invocation.Name)
+	}
+	switch invocation.Params["paste"] {
+	case "":
+		return substrate.Keys{Text: text}, nil
+	case "bracketed":
+		return substrate.Keys{Text: "\x1b[200~" + text + "\x1b[201~"}, nil
+	default:
+		return substrate.Keys{}, fmt.Errorf("unknown submit paste mode %q", invocation.Params["paste"])
+	}
+}
+
 func RenderAction(action Action, values map[string]string) (Action, error) {
 	text, err := renderArgs([]string{action.Text}, values)
 	if err != nil {

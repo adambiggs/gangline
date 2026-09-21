@@ -139,6 +139,9 @@ func validateCollar(collar Collar) error {
 	if _, err := SubmitSettle(collar.Primitives.Submit); err != nil {
 		return err
 	}
+	if _, err := SubmitInput(collar.Primitives.Submit, ""); err != nil {
+		return err
+	}
 	checks := []struct {
 		where   string
 		value   Invocation

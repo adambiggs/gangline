@@ -267,7 +267,11 @@ func (run *runtime) executeEffect(state core.State, effect core.Effect) (core.Ev
 			return core.CompactionFailedEvent{At: now, CompactionID: effect.Compaction.ID, Reason: settleErr.Error()}, nil
 		}
 		pane := substrate.PaneID(effect.Pane)
-		if sendErr := backend.SendKeys(context.Background(), pane, substrate.Keys{Text: action.Text}); sendErr != nil {
+		input, inputErr := harness.SubmitInput(collar.Primitives.Submit, action.Text)
+		if inputErr != nil {
+			return core.CompactionFailedEvent{At: now, CompactionID: effect.Compaction.ID, Reason: inputErr.Error()}, nil
+		}
+		if sendErr := backend.SendKeys(context.Background(), pane, input); sendErr != nil {
 			return core.CompactionFailedEvent{At: now, CompactionID: effect.Compaction.ID, Reason: sendErr.Error()}, nil
 		}
 		ctx, cancel := context.WithDeadline(context.Background(), effect.Compaction.Deadline)
@@ -352,7 +356,11 @@ func (run *runtime) deliver(state core.State, backend interface {
 	if err != nil {
 		return core.DeliveryFailedEvent{At: now, EnvelopeID: effect.Envelope.ID, Reason: err.Error()}, nil
 	}
-	if err := backend.SendKeys(context.Background(), substrate.PaneID(effect.Pane), substrate.Keys{Text: wire}); err != nil {
+	input, err := harness.SubmitInput(collar.Primitives.Submit, wire)
+	if err != nil {
+		return core.DeliveryFailedEvent{At: time.Now(), EnvelopeID: effect.Envelope.ID, Reason: err.Error()}, nil
+	}
+	if err := backend.SendKeys(context.Background(), substrate.PaneID(effect.Pane), input); err != nil {
 		return core.DeliveryUnverifiedEvent{At: time.Now(), EnvelopeID: effect.Envelope.ID, Evidence: "text input returned an error: " + err.Error()}, nil
 	}
 	settle, err := harness.SubmitSettle(collar.Primitives.Submit)

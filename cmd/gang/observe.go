@@ -314,8 +314,9 @@ func (cmd command) collar(arguments []string) error {
 					results[harness.ProbeComposer] = harness.ProbeResult{Name: harness.ProbeComposer, Passed: true, Detail: "native empty composer detected"}
 					action, _ := harness.Submit(collar.Primitives.Submit, "Reply with exactly READY.")
 					settle, _ := harness.SubmitSettle(collar.Primitives.Submit)
+					input, _ := harness.SubmitInput(collar.Primitives.Submit, action.Text)
 					payload, submitErr := awaitNativeHook(ctx, fifo, func() error {
-						if err := activeBackend.SendKeys(ctx, pane.ID, substrate.Keys{Text: action.Text}); err != nil {
+						if err := activeBackend.SendKeys(ctx, pane.ID, input); err != nil {
 							return err
 						}
 						if err := awaitComposerText(ctx, activeBackend, pane.ID, collar, action.Text, settle); err != nil {

@@ -29,6 +29,16 @@ func TestSubmitSettle(t *testing.T) {
 	}
 }
 
+func TestSubmitInputUsesBracketedPaste(t *testing.T) {
+	input, err := SubmitInput(Invocation{Name: "enter-submit", Params: map[string]string{"paste": "bracketed"}}, "hello\nworld")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if input.Text != "\x1b[200~hello\nworld\x1b[201~" {
+		t.Fatalf("text = %q", input.Text)
+	}
+}
+
 func TestRenderActionPreservesBracesInUserValue(t *testing.T) {
 	action, err := RenderAction(Action{Text: "/compact {{instructions}}"}, map[string]string{
 		"instructions": "keep {{literal}}",
