@@ -46,7 +46,7 @@ func (cmd command) down(arguments []string) error {
 	}
 	names := make([]string, 0)
 	for _, hitch := range state.Hitches {
-		if hitch.Status == core.HitchActive {
+		if hitch.Status == core.HitchActive || hitch.Status == core.HitchFailed {
 			names = append(names, string(hitch.Name))
 		}
 	}

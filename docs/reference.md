@@ -28,8 +28,8 @@ directory, and `GANGLINE_REPO` changes the release source. Defaults are
 | `gang hitch NAME [OPTIONS]` | Launch a harness window and deliver its contract, role, and assignment. |
 | `gang adopt NAME -c COLLAR` | Register the current tmux pane without launch or startup delivery. |
 | `gang rename OLD NEW` | Rename an active hitch and its tmux window. |
-| `gang drop NAME` | Stop one active hitch and cancel its pending work. |
-| `gang down SESSION` | Drop every active hitch and remove that team's v1 state directory. |
+| `gang drop NAME` | Stop one active or failed hitch and cancel its pending work. |
+| `gang down SESSION` | Drop every active or failed hitch and remove that team's v1 state directory. |
 
 Hitch options are `-c/--collar`, `-d/--dir`, `-m/--model`, `-e/--effort`,
 `-t/--task`, `-r/--role`, `--resume`, and `--stdin`. Effort
@@ -38,6 +38,8 @@ otherwise `--task` supplies it.
 
 `up` defaults the role to `lead` and the working directory to the caller's
 current directory. An explicit `--role` or `--dir` overrides that default.
+A failed hitch retains its name until `gang drop NAME` removes that generation;
+another hitch or rename cannot reuse it first.
 
 ### Delivery and control
 
@@ -75,6 +77,11 @@ duration such as `45m` or a local `HH:MM` time.
 | `gang whoami` | Print the active hitch bound to the current pane. |
 | `gang teams` | List team directories with event logs in the v1 state root. |
 | `gang attach` | Attach to the configured tmux team. |
+
+Gangline projects the recorded hitch state into each managed tmux window name:
+`?name?` is starting, booting, or dropping; `~name~` is idle; `-name-` is
+working; and `!name!` is blocked, wedged, or failed. `gang tick` repairs a
+window name that drifted from the event log.
 
 ### Discovery and installation
 
@@ -121,7 +128,7 @@ tests and native collar probes.
 
 Each team is stored at `STATE_ROOT/v1/TEAM/`. `events.jsonl` is authoritative;
 `snapshot.json` is an integrity-checked loading shortcut. `gang down SESSION`
-removes that directory after every active hitch is stopped.
+removes that directory after every active or failed hitch is dropped.
 
 ## Startup prose
 

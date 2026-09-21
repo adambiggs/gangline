@@ -55,6 +55,7 @@ type Hitch struct {
 	BlockedEvidence   string        `json:"blocked_evidence,omitempty"`
 	BlockedFrom       HitchActivity `json:"blocked_from,omitempty"`
 	WedgeEvidence     string        `json:"wedge_evidence,omitempty"`
+	PreviousStatus    HitchStatus   `json:"previous_status,omitempty"`
 	PreviousActivity  HitchActivity `json:"previous_activity,omitempty"`
 }
 

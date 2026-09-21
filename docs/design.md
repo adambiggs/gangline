@@ -136,6 +136,18 @@ length to close the registration race. It folds each append until the target is
 idle or the caller's deadline expires. A timeout is itself appended as an event;
 waiting never polls or changes the target hitch's activity.
 
+### Project recorded state into tmux window names
+
+Managed tmux window names carry a compact projection of the event-log state:
+question marks mean a lifecycle transition, tildes idle, hyphens working, and
+exclamation marks blocked, wedged, or failed. The projection changes after the
+event is recorded and `gang tick` reconciles drift, so a tmux rename never
+becomes a second source of truth.
+
+A failed hitch continues to occupy its agent name until an explicit drop. This
+prevents an old generation and its pane from becoming indistinguishable from a
+replacement, while preserving `gang drop` as the deletion path.
+
 ### Keep the mandatory gate immediate
 
 Unit tests use supplied times and direct state. Black-box scenarios use private

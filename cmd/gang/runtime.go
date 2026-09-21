@@ -69,10 +69,10 @@ func (run *runtime) load() (core.State, error) {
 
 // appendEvent records exactly one fact while holding the team lock. Effects
 // are returned to the caller and run only after the lock closes.
-func (run *runtime) appendEvent(event core.Event) (next core.State, effects []core.Effect, err error) {
+func (run *runtime) appendEvent(event core.Event) (previous, next core.State, effects []core.Effect, err error) {
 	locked, err := run.lock()
 	if err != nil {
-		return core.State{}, nil, err
+		return core.State{}, core.State{}, nil, err
 	}
 	defer func() {
 		if closeErr := locked.Close(); err == nil {
@@ -81,16 +81,16 @@ func (run *runtime) appendEvent(event core.Event) (next core.State, effects []co
 	}()
 	state, _, err := locked.Load(run.initial())
 	if err != nil {
-		return core.State{}, nil, err
+		return core.State{}, core.State{}, nil, err
 	}
 	if err := locked.Append(event); err != nil {
-		return core.State{}, nil, err
+		return core.State{}, core.State{}, nil, err
 	}
 	next, effects = core.Step(state, event)
 	if err := locked.SaveSnapshot(next); err != nil {
-		return core.State{}, nil, err
+		return core.State{}, core.State{}, nil, err
 	}
-	return next, effects, nil
+	return state, next, effects, nil
 }
 
 func (run *runtime) drive(events ...core.Event) (core.State, error) {
@@ -99,11 +99,14 @@ func (run *runtime) drive(events ...core.Event) (core.State, error) {
 	for len(queue) != 0 {
 		event := queue[0]
 		queue = queue[1:]
-		state, effects, err := run.appendEvent(event)
+		previous, state, effects, err := run.appendEvent(event)
 		if err != nil {
 			return core.State{}, err
 		}
 		latest = state
+		if err := run.markChangedWindows(previous, state); err != nil {
+			return core.State{}, err
+		}
 		for _, effect := range effects {
 			outcome, err := run.executeEffect(state, effect)
 			if err != nil {
@@ -192,12 +195,46 @@ func activeByName(state core.State, name string) (core.Hitch, bool) {
 }
 
 func hitchByName(state core.State, name string) (core.Hitch, bool) {
+	var selected core.Hitch
+	selectedRank := 100
 	for _, hitch := range state.Hitches {
-		if hitch.Name == core.AgentName(name) && hitch.Status != core.HitchDropped {
-			return hitch, true
+		if hitch.Name != core.AgentName(name) || hitch.Status == core.HitchDropped {
+			continue
+		}
+		rank := hitchStatusRank(hitch.Status)
+		if rank < selectedRank || (rank == selectedRank && hitch.ID < selected.ID) {
+			selected, selectedRank = hitch, rank
 		}
 	}
-	return core.Hitch{}, false
+	return selected, selectedRank != 100
+}
+
+func dropCandidateByName(state core.State, name string) (core.Hitch, bool) {
+	var failed core.Hitch
+	for _, hitch := range state.Hitches {
+		if hitch.Name == core.AgentName(name) && hitch.Status == core.HitchFailed && (failed.ID == "" || hitch.ID < failed.ID) {
+			failed = hitch
+		}
+	}
+	if failed.ID != "" {
+		return failed, true
+	}
+	return hitchByName(state, name)
+}
+
+func hitchStatusRank(status core.HitchStatus) int {
+	switch status {
+	case core.HitchActive:
+		return 0
+	case core.HitchStarting, core.HitchBooting:
+		return 1
+	case core.HitchDropping:
+		return 2
+	case core.HitchFailed:
+		return 3
+	default:
+		return 100
+	}
 }
 
 func nameAtPane(state core.State, pane string) string {

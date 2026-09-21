@@ -3,13 +3,14 @@ package core
 import "time"
 
 func stepDropRequested(state State, event DropRequested) (State, []Effect) {
-	hitch, ok := activeHitchByID(state, event.HitchID)
-	if !ok {
-		return rejected(state, event, event.At, "hitch is not active")
+	hitch, ok := state.Hitches[event.HitchID]
+	if !ok || (hitch.Status != HitchActive && hitch.Status != HitchFailed) {
+		return rejected(state, event, event.At, "hitch is not active or failed")
 	}
 	if !validDeadline(event.At, event.Deadline) {
 		return rejected(state, event, event.At, "drop deadline must be after event time")
 	}
+	hitch.PreviousStatus = hitch.Status
 	hitch.PreviousActivity = hitch.Activity
 	hitch.Status = HitchDropping
 	hitch.Activity = ActivityUnknown
@@ -46,6 +47,7 @@ func stepDropSucceeded(state State, event DropSucceeded) (State, []Effect) {
 	hitch.InterruptReason = ""
 	hitch.BlockedEvidence = ""
 	hitch.BlockedFrom = ""
+	hitch.PreviousStatus = ""
 	hitch.PreviousActivity = ""
 	state.Hitches[hitch.ID] = hitch
 	return state, nil
@@ -56,9 +58,13 @@ func stepDropFailed(state State, event DropFailed) (State, []Effect) {
 	if !ok || hitch.Status != HitchDropping || event.Reason == "" {
 		return rejected(state, event, event.At, "hitch is not dropping or reason is empty")
 	}
-	hitch.Status = HitchActive
+	hitch.Status = hitch.PreviousStatus
+	if hitch.Status == "" {
+		hitch.Status = HitchActive
+	}
 	hitch.Activity = hitch.PreviousActivity
 	hitch.DropDeadline = time.Time{}
+	hitch.PreviousStatus = ""
 	hitch.PreviousActivity = ""
 	state.Hitches[hitch.ID] = hitch
 	return state, nil

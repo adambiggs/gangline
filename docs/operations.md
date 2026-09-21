@@ -83,6 +83,11 @@ gang log
 interruption, releases one safe queued delivery per recipient, and records a
 wedge only when two qualifying observations support it.
 
+The tmux window name is an immediate projection of that recorded state:
+`?name?` needs startup or teardown attention, `~name~` is idle, `-name-` is
+working, and `!name!` is blocked, wedged, or failed. The event log remains
+authoritative; `gang tick` reconciles a stale window name.
+
 Use `gang interrupt worker -m 'Stop and report current evidence.'` only while
 the agent is recorded busy or wedged. Use `gang compact worker --resume 'Read
 the saved state and continue.'` for native compaction. If the compaction surface
@@ -120,9 +125,11 @@ gang drop worker
 gang down gangline
 ```
 
-`gang drop` stops one active hitch. `gang down` requires the exact configured
-session name, stops all active hitches, and then removes the team's v1 state
-directory, including its event log. Copy evidence first if it must survive.
+`gang drop` removes one active or failed hitch. A failed hitch keeps its name
+reserved until it is dropped. `gang down` requires the exact configured
+session name, drops all active and failed hitches, and then removes the team's
+v1 state directory, including its event log. Copy evidence first if it must
+survive.
 
 Never use an unaimed `tmux kill-server` or `tmux kill-session`; Gangline teams
 may share a tmux server with unrelated work.

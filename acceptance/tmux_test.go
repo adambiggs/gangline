@@ -114,8 +114,16 @@ func TestCommandLifecycleOnPrivateTmux(t *testing.T) {
 		"GANGLINE_ACCEPTANCE_ARGV_LEDGER="+argvLedger,
 	)
 	runner := tmuxRunner{binary: tmuxBinary, socket: socket, env: environment}
+	const proofSession = "gangline-window-mark-proof"
+	if output, err := runner.run("new-session", "-d", "-s", proofSession); err != nil {
+		t.Fatalf("create private proof session: %v\n%s", err, output)
+	}
+	if output, err := runner.run("set-hook", "-g", "after-rename-window", "wait-for -S command-harness-marked"); err != nil {
+		t.Fatalf("install window-mark barrier: %v\n%s", err, output)
+	}
 	t.Cleanup(func() {
 		_, _ = runner.run("kill-session", "-t", session)
+		_, _ = runner.run("kill-session", "-t", proofSession)
 	})
 	runGang := func(input string, arguments ...string) (string, int) {
 		t.Helper()
@@ -146,6 +154,13 @@ func TestCommandLifecycleOnPrivateTmux(t *testing.T) {
 	if _, err := os.ReadFile(startedFIFO); err != nil {
 		t.Fatalf("wait for harness process: %v", err)
 	}
+	if output, err := runner.run("wait-for", "command-harness-marked"); err != nil {
+		t.Fatalf("wait for booting window mark: %v\n%s", err, output)
+	}
+	if output, err := runner.run("set-hook", "-gu", "after-rename-window"); err != nil {
+		t.Fatalf("remove window-mark barrier: %v\n%s", err, output)
+	}
+	assertWindowName(t, runner, session, "?lead?")
 	if err := os.WriteFile(releaseFIFO, []byte("x"), 0o600); err != nil {
 		t.Fatalf("release harness composer: %v", err)
 	}
@@ -166,6 +181,7 @@ func TestCommandLifecycleOnPrivateTmux(t *testing.T) {
 	if output, err := runner.run("wait-for", "received"); err != nil {
 		t.Fatalf("wait for startup delivery: %v\n%s", err, output)
 	}
+	assertWindowName(t, runner, session, "-lead-")
 	argv, err := os.ReadFile(argvLedger)
 	if err != nil || !strings.Contains(string(argv), "--operator-unsandboxed") || !strings.Contains(string(argv), leadBrief) {
 		t.Fatalf("operator launch policy was not observed: %v %q", err, argv)
@@ -199,6 +215,7 @@ func TestCommandLifecycleOnPrivateTmux(t *testing.T) {
 		}
 	}
 	runHook("Stop")
+	assertWindowName(t, runner, session, "~lead~")
 	if output, status := runGang("ordinary delivery\n", "send", "lead", "--from", "tester"); status != 0 {
 		screen, _ := runner.run("capture-pane", "-p", "-J", "-t", session)
 		t.Fatalf("send status %d:\n%s\nscreen:\n%s", status, output, screen)
@@ -263,6 +280,7 @@ func TestCommandLifecycleOnPrivateTmux(t *testing.T) {
 	if hitch.Activity != core.ActivityWedged {
 		t.Fatalf("activity = %q, want wedged", hitch.Activity)
 	}
+	assertWindowName(t, runner, session, "!lead!")
 	if output, status := runGang("", "drop", "lead"); status != 0 {
 		t.Fatalf("drop status %d:\n%s", status, output)
 	}
@@ -346,6 +364,17 @@ func hasAcceptanceDelivery(state core.State, text string, status core.DeliverySt
 		}
 	}
 	return false
+}
+
+func assertWindowName(t *testing.T, runner tmuxRunner, session, want string) {
+	t.Helper()
+	output, err := runner.run("list-windows", "-t", session, "-F", "#{window_name}")
+	if err != nil {
+		t.Fatalf("read window name: %v\n%s", err, output)
+	}
+	if got := strings.TrimSpace(output); got != want {
+		t.Fatalf("window name = %q, want %q", got, want)
+	}
 }
 
 func TestTmuxCarriesOneHarnessTurn(t *testing.T) {

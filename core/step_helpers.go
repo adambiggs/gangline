@@ -21,7 +21,7 @@ func validDeadline(at, deadline time.Time) bool {
 }
 
 func hitchOccupiesName(status HitchStatus) bool {
-	return status == HitchStarting || status == HitchBooting || status == HitchActive || status == HitchDropping
+	return status == HitchStarting || status == HitchBooting || status == HitchActive || status == HitchDropping || status == HitchFailed
 }
 
 func rejected(state State, event Event, at time.Time, reason string) (State, []Effect) {

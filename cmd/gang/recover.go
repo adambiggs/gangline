@@ -18,6 +18,9 @@ func (run *runtime) recover() (core.State, error) {
 	if err != nil {
 		return core.State{}, err
 	}
+	if err := run.reconcileWindowMarks(state); err != nil {
+		return core.State{}, err
+	}
 	state, err = run.refreshBlocked(state)
 	if err != nil {
 		return core.State{}, err

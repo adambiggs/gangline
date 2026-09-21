@@ -9,7 +9,6 @@ import (
 
 	"github.com/adambiggs/gangline/core"
 	"github.com/adambiggs/gangline/harness"
-	"github.com/adambiggs/gangline/substrate"
 )
 
 func (cmd command) hitch(arguments []string) error {
@@ -39,6 +38,14 @@ func (cmd command) hitch(arguments []string) error {
 	}
 	if options.Effort != "" && options.Model == "" {
 		return usageError("hitch: --effort requires --model")
+	}
+	run := &runtime{cmd: cmd, settings: settings}
+	state, err := run.load()
+	if err != nil {
+		return err
+	}
+	if existing, found := hitchByName(state, options.Name); found {
+		return refuseError("agent name %q is already registered with status %s", options.Name, existing.Status)
 	}
 	if options.Model != "" {
 		ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
@@ -79,7 +86,6 @@ func (cmd command) hitch(arguments []string) error {
 		return err
 	}
 	hitchID := core.HitchID(hitchRaw)
-	run := &runtime{cmd: cmd, settings: settings}
 	record := startupRecord{
 		Model: options.Model, Effort: options.Effort, Resume: options.Resume,
 		RolePrompt: composeStartup(options.Name, brief, ""),
@@ -94,7 +100,7 @@ func (cmd command) hitch(arguments []string) error {
 	if err := run.writeStartup(hitchID, record); err != nil {
 		return fmt.Errorf("queue startup assignment: %w", err)
 	}
-	state, err := run.drive(core.HitchRequested{
+	state, err = run.drive(core.HitchRequested{
 		At: now, BootDeadline: now.Add(bootTimeout),
 		Hitch: core.Hitch{ID: hitchID, Name: core.AgentName(options.Name), Collar: options.Collar, Role: options.Role, Directory: directory},
 	})
@@ -169,15 +175,8 @@ func (cmd command) rename(arguments []string) error {
 	if !ok {
 		return refuseError("agent %q is not active", arguments[0])
 	}
-	if _, exists := activeByName(state, arguments[1]); exists {
-		return refuseError("agent name %q is already active", arguments[1])
-	}
-	backend, err := cmd.tmux(run.settings)
-	if err != nil {
-		return err
-	}
-	if err := backend.Rename(context.Background(), substrate.PaneID(hitch.Pane), arguments[1]); err != nil {
-		return err
+	if existing, exists := hitchByName(state, arguments[1]); exists {
+		return refuseError("agent name %q is already registered with status %s", arguments[1], existing.Status)
 	}
 	_, err = run.drive(core.RenameRequested{At: time.Now(), HitchID: hitch.ID, Name: core.AgentName(arguments[1])})
 	return err
@@ -192,9 +191,9 @@ func (cmd command) drop(arguments []string) error {
 	if err != nil {
 		return err
 	}
-	hitch, ok := activeByName(state, name)
+	hitch, ok := dropCandidateByName(state, name)
 	if !ok {
-		return refuseError("agent %q is not active", name)
+		return refuseError("agent %q is not active or failed", name)
 	}
 	now := time.Now()
 	state, err = run.drive(core.DropRequested{At: now, HitchID: hitch.ID, Deadline: now.Add(operationTimeout)})

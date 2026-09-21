@@ -31,3 +31,41 @@ func TestBootObservationPrecedesDeadlineFailure(t *testing.T) {
 		t.Fatalf("expired unreadable observation = %#v, want boot timeout", timedOut)
 	}
 }
+
+func TestWindowTitleProjectsRecordedHitchState(t *testing.T) {
+	tests := []struct {
+		name     string
+		status   core.HitchStatus
+		activity core.HitchActivity
+		want     string
+	}{
+		{name: "booting", status: core.HitchBooting, activity: core.ActivityUnknown, want: "?worker?"},
+		{name: "idle", status: core.HitchActive, activity: core.ActivityIdle, want: "~worker~"},
+		{name: "working", status: core.HitchActive, activity: core.ActivityBusy, want: "-worker-"},
+		{name: "blocked", status: core.HitchActive, activity: core.ActivityBlocked, want: "!worker!"},
+		{name: "wedged", status: core.HitchActive, activity: core.ActivityWedged, want: "!worker!"},
+		{name: "failed", status: core.HitchFailed, activity: core.ActivityUnknown, want: "!worker!"},
+		{name: "dropped", status: core.HitchDropped, activity: core.ActivityUnknown, want: ""},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			got := windowTitle(core.Hitch{Name: "worker", Status: test.status, Activity: test.activity})
+			if got != test.want {
+				t.Fatalf("window title = %q, want %q", got, test.want)
+			}
+		})
+	}
+}
+
+func TestLegacyDuplicateLookupPrefersActiveAndDropPrefersFailed(t *testing.T) {
+	state := core.NewState(core.Team{ID: "team", Name: "team"})
+	state.Hitches["failed"] = core.Hitch{ID: "failed", Name: "worker", Status: core.HitchFailed}
+	state.Hitches["active"] = core.Hitch{ID: "active", Name: "worker", Status: core.HitchActive}
+
+	if hitch, ok := hitchByName(state, "worker"); !ok || hitch.ID != "active" {
+		t.Fatalf("ordinary lookup = %#v, %v; want active generation", hitch, ok)
+	}
+	if hitch, ok := dropCandidateByName(state, "worker"); !ok || hitch.ID != "failed" {
+		t.Fatalf("drop lookup = %#v, %v; want failed generation", hitch, ok)
+	}
+}

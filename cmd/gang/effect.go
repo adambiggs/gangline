@@ -148,6 +148,13 @@ func (run *runtime) killHitch(backend *tmux.Backend, effect core.KillHitch) (cor
 	if !now.Before(effect.Deadline) {
 		return core.OperationTimedOut{At: now, Operation: core.TimeoutDrop, ID: string(effect.HitchID), Deadline: effect.Deadline, Evidence: "drop deadline elapsed before pane termination"}, nil
 	}
+	exists, err := backend.SessionExists(context.Background())
+	if err != nil {
+		return core.DropFailed{At: now, HitchID: effect.HitchID, Reason: err.Error()}, nil
+	}
+	if !exists {
+		return core.DropSucceeded{At: now, HitchID: effect.HitchID}, nil
+	}
 	windows, err := backend.Windows(context.Background())
 	if err == nil {
 		found := false

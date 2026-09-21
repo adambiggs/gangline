@@ -26,6 +26,7 @@ func stepAdoptRequested(state State, event AdoptRequested) (State, []Effect) {
 	hitch.BlockedEvidence = ""
 	hitch.BlockedFrom = ""
 	hitch.WedgeEvidence = ""
+	hitch.PreviousStatus = ""
 	hitch.PreviousActivity = ""
 	state.Hitches[hitch.ID] = hitch
 	return state, nil
@@ -78,6 +79,7 @@ func stepHitchRequested(state State, event HitchRequested) (State, []Effect) {
 	hitch.BlockedEvidence = ""
 	hitch.BlockedFrom = ""
 	hitch.WedgeEvidence = ""
+	hitch.PreviousStatus = ""
 	hitch.PreviousActivity = ""
 	state.Hitches[hitch.ID] = hitch
 	return state, []Effect{SpawnHitch{Hitch: hitch}}

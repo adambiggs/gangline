@@ -295,6 +295,52 @@ func TestStepWedgeClearAndDrop(t *testing.T) {
 	}
 }
 
+func TestFailedHitchKeepsNameUntilDropped(t *testing.T) {
+	state := bootingHitch(t)
+	state = apply(t, state, OperationTimedOut{
+		At: testDeadline, Operation: TimeoutBoot, ID: "worker-id", Deadline: testDeadline, Evidence: "startup deadline passed",
+	})
+
+	replacement := Hitch{ID: "replacement-id", Name: "worker", Collar: "codex", Directory: "/work"}
+	next, effects := Step(state, HitchRequested{At: testNow, Hitch: replacement, BootDeadline: testDeadline})
+	if _, exists := next.Hitches[replacement.ID]; exists {
+		t.Fatal("failed hitch did not retain its name")
+	}
+	if len(effects) != 1 {
+		t.Fatalf("replacement effects = %#v, want rejection", effects)
+	}
+	if record, ok := effects[0].(RecordEvent); !ok {
+		t.Fatalf("replacement effect = %T, want RecordEvent", effects[0])
+	} else if rejected, ok := record.Event.(TransitionRejected); !ok || rejected.Reason != "hitch name already exists" {
+		t.Fatalf("replacement rejection = %#v", record.Event)
+	}
+
+	state, effects = Step(state, DropRequested{At: testNow, HitchID: "worker-id", Deadline: testDeadline})
+	assertEffect(t, effects, KillHitch{HitchID: "worker-id", Pane: "%2", Deadline: testDeadline})
+	if hitch := state.Hitches["worker-id"]; hitch.Status != HitchDropping || hitch.PreviousStatus != HitchFailed {
+		t.Fatalf("failed drop intent = %#v", hitch)
+	}
+	state = apply(t, state, DropSucceeded{At: testNow, HitchID: "worker-id"})
+	if state.Hitches["worker-id"].Status != HitchDropped {
+		t.Fatalf("dropped hitch = %#v", state.Hitches["worker-id"])
+	}
+
+	state, effects = Step(state, HitchRequested{At: testNow, Hitch: replacement, BootDeadline: testDeadline})
+	assertEffect(t, effects, SpawnHitch{Hitch: state.Hitches[replacement.ID]})
+}
+
+func TestFailedDropFailureRestoresFailedState(t *testing.T) {
+	state := bootingHitch(t)
+	state = apply(t, state, OperationTimedOut{
+		At: testDeadline, Operation: TimeoutBoot, ID: "worker-id", Deadline: testDeadline, Evidence: "startup deadline passed",
+	})
+	state = apply(t, state, DropRequested{At: testNow, HitchID: "worker-id", Deadline: testDeadline})
+	state = apply(t, state, DropFailed{At: testNow, HitchID: "worker-id", Reason: "kill refused"})
+	if hitch := state.Hitches["worker-id"]; hitch.Status != HitchFailed || hitch.Activity != ActivityUnknown {
+		t.Fatalf("restored failed hitch = %#v", hitch)
+	}
+}
+
 func TestDropFailureRestoresInFlightDelivery(t *testing.T) {
 	state := deliveringHitch(t)
 	state, effects := Step(state, DropRequested{At: testNow, HitchID: "worker-id", Deadline: testDeadline})
