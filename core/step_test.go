@@ -261,6 +261,19 @@ func TestStepWedgeClearAndDrop(t *testing.T) {
 	}
 }
 
+func TestDropFailureRestoresInFlightDelivery(t *testing.T) {
+	state := deliveringHitch(t)
+	state, effects := Step(state, DropRequested{At: testNow, HitchID: "worker-id", Deadline: testDeadline})
+	assertEffect(t, effects, KillHitch{HitchID: "worker-id", Pane: "%2", Deadline: testDeadline})
+	if state.Deliveries["e-1"].Status != DeliveryDelivering {
+		t.Fatalf("drop intent changed delivery = %#v", state.Deliveries["e-1"])
+	}
+	state = apply(t, state, DropFailed{At: testNow, HitchID: "worker-id", Reason: "kill refused"})
+	if state.Hitches["worker-id"].Activity != ActivityDelivering || state.Deliveries["e-1"].Status != DeliveryDelivering {
+		t.Fatalf("restored state = %#v", state)
+	}
+}
+
 func TestStepRejectsInvalidTransitionWithoutMutatingInput(t *testing.T) {
 	state := NewState(Team{ID: "team-1", Name: "example"})
 	next, effects := Step(state, DropRequested{At: testNow, HitchID: "missing", Deadline: testDeadline})

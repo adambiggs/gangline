@@ -14,23 +14,6 @@ func stepDropRequested(state State, event DropRequested) (State, []Effect) {
 	hitch.Status = HitchDropping
 	hitch.Activity = ActivityUnknown
 	hitch.DropDeadline = event.Deadline
-	hitch.InterruptDeadline = time.Time{}
-	hitch.InterruptReason = ""
-	if hitch.PendingCompactID != "" {
-		compact := state.Compactions[hitch.PendingCompactID]
-		compact.Status = CompactionCancelled
-		compact.Reason = "hitch is dropping"
-		state.Compactions[compact.ID] = compact
-		hitch.PendingCompactID = ""
-	}
-	for id, delivery := range state.Deliveries {
-		if delivery.Envelope.To != hitch.Name || (delivery.Status != DeliveryQueued && delivery.Status != DeliveryDelivering) {
-			continue
-		}
-		delivery.Status = DeliveryCancelled
-		delivery.Reason = "recipient is dropping"
-		state.Deliveries[id] = delivery
-	}
 	state.Hitches[hitch.ID] = hitch
 	return state, []Effect{KillHitch{HitchID: hitch.ID, Pane: hitch.Pane, Deadline: event.Deadline}}
 }
@@ -42,8 +25,25 @@ func stepDropSucceeded(state State, event DropSucceeded) (State, []Effect) {
 	}
 	hitch.Status = HitchDropped
 	hitch.Activity = ActivityUnknown
+	if hitch.PendingCompactID != "" {
+		compact := state.Compactions[hitch.PendingCompactID]
+		compact.Status = CompactionCancelled
+		compact.Reason = "hitch was dropped"
+		state.Compactions[compact.ID] = compact
+		hitch.PendingCompactID = ""
+	}
+	for id, delivery := range state.Deliveries {
+		if delivery.Envelope.To != hitch.Name || (delivery.Status != DeliveryQueued && delivery.Status != DeliveryDelivering) {
+			continue
+		}
+		delivery.Status = DeliveryCancelled
+		delivery.Reason = "recipient was dropped"
+		state.Deliveries[id] = delivery
+	}
 	hitch.Pane = ""
 	hitch.DropDeadline = time.Time{}
+	hitch.InterruptDeadline = time.Time{}
+	hitch.InterruptReason = ""
 	hitch.PreviousActivity = ""
 	state.Hitches[hitch.ID] = hitch
 	return state, nil
@@ -56,10 +56,6 @@ func stepDropFailed(state State, event DropFailed) (State, []Effect) {
 	}
 	hitch.Status = HitchActive
 	hitch.Activity = hitch.PreviousActivity
-	if hitch.Activity == ActivityDelivering || hitch.Activity == ActivityCompacting || hitch.Activity == ActivityInterrupting {
-		hitch.Activity = ActivityWedged
-		hitch.WedgeEvidence = event.Reason
-	}
 	hitch.DropDeadline = time.Time{}
 	hitch.PreviousActivity = ""
 	state.Hitches[hitch.ID] = hitch
