@@ -140,6 +140,8 @@ func trustPrompt(name string, screen substrate.Screen) (string, bool) {
 	patterns := []string{"Do you trust the contents of this directory?"}
 	if name == "codex-trust-prompt" {
 		patterns = append(patterns, "Hooks need review")
+	} else {
+		patterns = append(patterns, "Only use Claude Code with files you trust")
 	}
 	for _, pattern := range patterns {
 		if strings.Contains(flat, pattern) {

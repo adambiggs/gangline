@@ -32,3 +32,16 @@ func TestParseClaudeModelCatalogLeavesFullNamesUnknown(t *testing.T) {
 		t.Fatalf("full model = %q", got)
 	}
 }
+
+func TestReadClaudeSelectedModelFromHeader(t *testing.T) {
+	model, err := ReadSelectedModel(
+		Invocation{Name: "claude-screen-model"},
+		testScreen(testRow("Claude Code v2", false), testRow("Sonnet 4.5 · /work", false)),
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if model != "sonnet" {
+		t.Fatalf("model = %q", model)
+	}
+}

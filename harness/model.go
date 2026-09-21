@@ -97,9 +97,13 @@ func ReadSelectedModel(invocation Invocation, screen substrate.Screen) (string, 
 		}
 	case "claude-screen-model":
 		pattern := regexp.MustCompile(`(?i)^(?:current )?model:[[:space:]]+([A-Za-z0-9][A-Za-z0-9._-]*)`)
+		header := regexp.MustCompile(`(?i)\b(fable|opus|sonnet|haiku)\b(?:[[:space:]]+[0-9.]+)?[[:space:]]+·`)
 		for index := len(lines) - 1; index >= 0; index-- {
 			if match := pattern.FindStringSubmatch(strings.TrimSpace(lines[index])); len(match) != 0 {
 				return match[1], nil
+			}
+			if match := header.FindStringSubmatch(lines[index]); len(match) != 0 {
+				return strings.ToLower(match[1]), nil
 			}
 		}
 	default:
