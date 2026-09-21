@@ -316,13 +316,13 @@ func (cmd command) collar(arguments []string) error {
 					settle, _ := harness.SubmitSettle(collar.Primitives.Submit)
 					input, _ := harness.SubmitInput(collar.Primitives.Submit, action.Text)
 					payload, submitErr := awaitNativeHook(ctx, fifo, func() error {
-						if err := activeBackend.SendKeys(ctx, pane.ID, input); err != nil {
+						if err := sendHarnessKeys(ctx, activeBackend, pane.ID, collar, input); err != nil {
 							return err
 						}
 						if err := awaitComposerText(ctx, activeBackend, pane.ID, collar, action.Text, settle); err != nil {
 							return err
 						}
-						return activeBackend.SendKeys(ctx, pane.ID, substrate.Keys{Names: action.Keys, Submit: action.Submit})
+						return sendHarnessKeys(ctx, activeBackend, pane.ID, collar, substrate.Keys{Names: action.Keys, Submit: action.Submit})
 					})
 					if submitErr != nil {
 						results[harness.ProbeSubmit] = harness.ProbeResult{Name: harness.ProbeSubmit, Detail: submitErr.Error()}

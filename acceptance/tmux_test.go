@@ -130,6 +130,17 @@ func TestCommandLifecycleOnPrivateTmux(t *testing.T) {
 			t.Fatalf("finish hitch: status %d\n%s", status, output)
 		}
 	}
+	startupState := loadAcceptanceState(t, filepath.Join(root, "state"), session)
+	startupDelivered := false
+	for _, delivery := range startupState.Deliveries {
+		startupDelivered = startupDelivered || delivery.Status == core.DeliveryDelivered
+		if delivery.Status != core.DeliveryDelivered {
+			t.Fatalf("startup delivery status = %q: %s", delivery.Status, delivery.Reason)
+		}
+	}
+	if !startupDelivered {
+		t.Fatal("startup delivery was not recorded")
+	}
 	if output, err := runner.run("wait-for", "received"); err != nil {
 		t.Fatalf("wait for startup delivery: %v\n%s", err, output)
 	}

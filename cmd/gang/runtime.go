@@ -319,7 +319,7 @@ func (run *runtime) executeEffect(state core.State, effect core.Effect) (core.Ev
 		if inputErr != nil {
 			return core.CompactionFailedEvent{At: now, CompactionID: effect.Compaction.ID, Reason: inputErr.Error()}, nil
 		}
-		if sendErr := backend.SendKeys(context.Background(), pane, input); sendErr != nil {
+		if sendErr := sendHarnessKeys(context.Background(), backend, pane, collar, input); sendErr != nil {
 			return core.CompactionFailedEvent{At: now, CompactionID: effect.Compaction.ID, Reason: sendErr.Error()}, nil
 		}
 		ctx, cancel := context.WithDeadline(context.Background(), effect.Compaction.Deadline)
@@ -327,7 +327,7 @@ func (run *runtime) executeEffect(state core.State, effect core.Effect) (core.Ev
 		if waitErr := awaitComposerText(ctx, backend, pane, collar, action.Text, settle); waitErr != nil {
 			return core.CompactionFailedEvent{At: time.Now(), CompactionID: effect.Compaction.ID, Reason: waitErr.Error()}, nil
 		}
-		if sendErr := backend.SendKeys(context.Background(), pane, substrate.Keys{Names: action.Keys, Submit: action.Submit}); sendErr != nil {
+		if sendErr := sendHarnessKeys(context.Background(), backend, pane, collar, substrate.Keys{Names: action.Keys, Submit: action.Submit}); sendErr != nil {
 			return core.CompactionFailedEvent{At: time.Now(), CompactionID: effect.Compaction.ID, Reason: sendErr.Error()}, nil
 		}
 		return nil, nil
@@ -337,7 +337,7 @@ func (run *runtime) executeEffect(state core.State, effect core.Effect) (core.Ev
 		if loadErr != nil {
 			return core.InterruptFailed{At: now, HitchID: effect.HitchID, Reason: loadErr.Error()}, nil
 		}
-		if sendErr := backend.SendKeys(context.Background(), substrate.PaneID(effect.Pane), collar.Actions.Interrupt.Input()); sendErr != nil {
+		if sendErr := sendHarnessKeys(context.Background(), backend, substrate.PaneID(effect.Pane), collar, collar.Actions.Interrupt.Input()); sendErr != nil {
 			return core.InterruptFailed{At: now, HitchID: effect.HitchID, Reason: sendErr.Error()}, nil
 		}
 		return core.InterruptSucceeded{At: time.Now(), HitchID: effect.HitchID}, nil
@@ -363,6 +363,7 @@ func (run *runtime) executeEffect(state core.State, effect core.Effect) (core.Ev
 
 func (run *runtime) deliver(state core.State, backend interface {
 	Capture(context.Context, substrate.PaneID) (substrate.Screen, error)
+	ForegroundProcesses(context.Context, substrate.PaneID) ([]substrate.Process, error)
 	SendKeys(context.Context, substrate.PaneID, substrate.Keys) error
 }, effect core.DeliverEnvelope) (core.Event, error) {
 	now := time.Now()
@@ -408,6 +409,9 @@ func (run *runtime) deliver(state core.State, backend interface {
 	if err != nil {
 		return core.DeliveryFailedEvent{At: time.Now(), EnvelopeID: effect.Envelope.ID, Reason: err.Error()}, nil
 	}
+	if err := requireHarnessForeground(context.Background(), backend, substrate.PaneID(effect.Pane), collar); err != nil {
+		return core.DeliveryDeferred{At: time.Now(), EnvelopeID: effect.Envelope.ID, Reason: err.Error()}, nil
+	}
 	if err := backend.SendKeys(context.Background(), substrate.PaneID(effect.Pane), input); err != nil {
 		return core.DeliveryUnverifiedEvent{At: time.Now(), EnvelopeID: effect.Envelope.ID, Evidence: "text input returned an error: " + err.Error()}, nil
 	}
@@ -443,7 +447,7 @@ func (run *runtime) deliver(state core.State, backend interface {
 		data, readErr := reader.Output()
 		witnessed <- witnessResult{data: data, err: readErr}
 	}()
-	if err := backend.SendKeys(context.Background(), substrate.PaneID(effect.Pane), substrate.Keys{Submit: true}); err != nil {
+	if err := sendHarnessKeys(context.Background(), backend, substrate.PaneID(effect.Pane), collar, substrate.Keys{Submit: true}); err != nil {
 		return core.DeliveryUnverifiedEvent{At: time.Now(), EnvelopeID: effect.Envelope.ID, Evidence: "submit returned an error after verified text input: " + err.Error()}, nil
 	}
 	select {

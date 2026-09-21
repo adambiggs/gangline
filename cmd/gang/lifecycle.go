@@ -379,7 +379,7 @@ func (cmd command) compact(arguments []string) error {
 			return err
 		}
 		for _, action := range collar.Actions.CompactRecover {
-			if err := backend.SendKeys(context.Background(), substrate.PaneID(hitch.Pane), action.Input()); err != nil {
+			if err := sendHarnessKeys(context.Background(), backend, substrate.PaneID(hitch.Pane), collar, action.Input()); err != nil {
 				return err
 			}
 		}

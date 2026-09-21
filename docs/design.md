@@ -25,6 +25,18 @@ Gangline accepts only a well-formed wrapper whose opening and closing IDs match,
 then compares the entire inner envelope byte-for-byte. Missing, malformed, or
 changed hook data remains unknown rather than success.
 
+## Bind terminal input to the foreground harness
+
+Before it sends any input, Gangline reads tmux's pane process and the host
+process table. The expected collar executable must be a descendant in the
+terminal's foreground process group. A shell or replacement program may paint
+a convincing composer, but it cannot receive Gangline input; the refusal is
+recorded as the effect's outcome.
+
+Process identity corroborates the native composer and hook evidence rather
+than replacing either. Keeping the process-tree query in `substrate` also keeps
+host and tmux details out of harness primitives and the command state machine.
+
 ## Put harness differences in CUE collars and Go primitives
 
 The command layer has no branches on harness names. A collar declares launch

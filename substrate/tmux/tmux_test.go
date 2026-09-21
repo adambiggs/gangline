@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"os/exec"
 	"path/filepath"
+	"sort"
 	"strings"
 	"testing"
 
@@ -108,6 +109,29 @@ func TestBackendCreatesAndKillsSession(t *testing.T) {
 func TestNewRequiresSession(t *testing.T) {
 	if _, err := New(Config{}); err == nil {
 		t.Fatal("empty session passed")
+	}
+}
+
+func TestProcessTableSelectsOnlyPaneForegroundGroup(t *testing.T) {
+	records, err := parseProcessTable(`
+100 1 100 200 sh
+200 100 200 200 codex
+201 200 200 200 helper
+300 200 300 200 background worker
+`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	root := records[100]
+	var commands []string
+	for pid, record := range records {
+		if record.GroupID == root.foregroundGroup && descendsFrom(pid, 100, records) {
+			commands = append(commands, record.Command)
+		}
+	}
+	sort.Strings(commands)
+	if strings.Join(commands, ",") != "codex,helper" {
+		t.Fatalf("foreground commands = %q", commands)
 	}
 }
 
