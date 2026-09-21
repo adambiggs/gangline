@@ -1,0 +1,8 @@
+ ▐▛███▛█   Claude Code v2.1.278
+▝▜██████▀  Fable 5.1 with high effort
+
+────────────────────────────────────────
+❯ 
+────────────────────────────────────────
+  ctx -
+  ⏵⏵ auto mode on (shift+tab to cycle) · ← for agents

@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"os"
 	"os/exec"
@@ -212,7 +213,7 @@ func (cmd command) collar(arguments []string) error {
 	for _, name := range harness.RequiredProbes() {
 		results[name] = harness.ProbeResult{Name: name, Detail: "unknown: probe did not run"}
 	}
-	root := filepath.Join(settings.StateRoot, "collar-check")
+	root := settings.StateRoot
 	if err := os.MkdirAll(root, 0o700); err != nil {
 		return err
 	}
@@ -220,11 +221,14 @@ func (cmd command) collar(arguments []string) error {
 	if err != nil {
 		return err
 	}
-	checkDir := filepath.Join(root, id)
-	if err := os.Mkdir(checkDir, 0o700); err != nil {
+	checkDir := filepath.Join(root, "native-project-"+id)
+	if err := os.Mkdir(checkDir, 0o775); err != nil {
 		return err
 	}
 	defer os.RemoveAll(checkDir)
+	if output, err := exec.Command("git", "-C", checkDir, "init", "--quiet").CombinedOutput(); err != nil {
+		return fmt.Errorf("initialize disposable collar-check project: %w: %s", err, strings.TrimSpace(string(output)))
+	}
 	home, err := cmd.userHomeDir()
 	if err != nil {
 		return err
@@ -248,7 +252,9 @@ func (cmd command) collar(arguments []string) error {
 	if err != nil {
 		return err
 	}
-	baseLaunch, err := harness.RenderLaunch(collar, harness.LaunchOptions{HookCommand: []string{"true"}})
+	trustCollar := collar
+	trustCollar.Hooks = nil
+	baseLaunch, err := harness.RenderLaunch(trustCollar, harness.LaunchOptions{})
 	if err != nil {
 		return err
 	}
@@ -257,8 +263,13 @@ func (cmd command) collar(arguments []string) error {
 	trustPane, launchErr := trustBackend.CreateSession(ctx, baseLaunch.SpawnSpec("probe", checkDir))
 	if launchErr == nil {
 		results[harness.ProbeLaunch] = harness.ProbeResult{Name: harness.ProbeLaunch, Passed: true, Detail: "native process launched in a private tmux server"}
-		if startup, _, inspectErr := awaitStartup(ctx, trustBackend, trustPane.ID, collar); inspectErr == nil && startup.State == harness.StartupTrustRequired {
+		startup, _, inspectErr := awaitStartup(ctx, trustBackend, trustPane.ID, collar)
+		if inspectErr != nil {
+			results[harness.ProbeTrustPrompt] = harness.ProbeResult{Name: harness.ProbeTrustPrompt, Detail: inspectErr.Error()}
+		} else if startup.State == harness.StartupTrustRequired {
 			results[harness.ProbeTrustPrompt] = harness.ProbeResult{Name: harness.ProbeTrustPrompt, Passed: true, Detail: startup.Prompt}
+		} else {
+			results[harness.ProbeTrustPrompt] = harness.ProbeResult{Name: harness.ProbeTrustPrompt, Passed: true, Detail: "persisted native trust admitted the disposable project"}
 		}
 	} else {
 		results[harness.ProbeLaunch] = harness.ProbeResult{Name: harness.ProbeLaunch, Detail: launchErr.Error()}
@@ -271,7 +282,7 @@ func (cmd command) collar(arguments []string) error {
 		return err
 	}
 	hook := []string{"sh", "-c", "cat > \"$1\"", "gang-collar-check", fifo}
-	launch, err := harness.RenderLaunch(collar, harness.LaunchOptions{HookCommand: hook})
+	launch, err := harness.RenderLaunch(collar, harness.LaunchOptions{HookCommand: hook, Probe: true})
 	if err != nil {
 		return err
 	}
@@ -281,29 +292,49 @@ func (cmd command) collar(arguments []string) error {
 		return err
 	}
 	defer activeBackend.KillSession(context.Background())
-	workdir, err := cmd.getwd()
+	workdir, err := activeProbeDirectory(cmd.getwd)
 	if err != nil {
 		return err
 	}
 	pane, err := activeBackend.CreateSession(ctx, launch.SpawnSpec("probe", workdir))
 	if err == nil {
-		if startup, screen, inspectErr := awaitStartup(ctx, activeBackend, pane.ID, collar); inspectErr == nil {
+		if startup, screen, inspectErr := awaitStartup(ctx, activeBackend, pane.ID, collar); inspectErr != nil {
+			results[harness.ProbeComposer] = harness.ProbeResult{Name: harness.ProbeComposer, Detail: inspectErr.Error()}
+		} else {
 			if startup.State == harness.StartupTrustRequired {
 				results[harness.ProbeTrustPrompt] = harness.ProbeResult{Name: harness.ProbeTrustPrompt, Passed: true, Detail: startup.Prompt}
 			}
 			if startup.State == harness.StartupReady {
 				composer, composerErr := harness.ReadComposer(collar.Primitives.Composer, screen)
-				if composerErr == nil && composer.Text == "" {
+				if composerErr != nil {
+					results[harness.ProbeComposer] = harness.ProbeResult{Name: harness.ProbeComposer, Detail: composerErr.Error()}
+				} else if composer.Text != "" {
+					results[harness.ProbeComposer] = harness.ProbeResult{Name: harness.ProbeComposer, Detail: "native composer was not empty"}
+				} else {
 					results[harness.ProbeComposer] = harness.ProbeResult{Name: harness.ProbeComposer, Passed: true, Detail: "native empty composer detected"}
 					action, _ := harness.Submit(collar.Primitives.Submit, "Reply with exactly READY.")
-					payload, submitErr := awaitNativeHook(ctx, fifo, func() error { return activeBackend.SendKeys(ctx, pane.ID, action.Input()) })
-					if submitErr == nil {
+					payload, submitErr := awaitNativeHook(ctx, fifo, func() error {
+						if err := activeBackend.SendKeys(ctx, pane.ID, substrate.Keys{Text: action.Text}); err != nil {
+							return err
+						}
+						if err := awaitComposerText(ctx, activeBackend, pane.ID, collar, action.Text); err != nil {
+							return err
+						}
+						return activeBackend.SendKeys(ctx, pane.ID, substrate.Keys{Names: action.Keys, Submit: action.Submit})
+					})
+					if submitErr != nil {
+						results[harness.ProbeSubmit] = harness.ProbeResult{Name: harness.ProbeSubmit, Detail: submitErr.Error()}
+					} else {
 						results[harness.ProbeSubmit] = harness.ProbeResult{Name: harness.ProbeSubmit, Passed: true, Detail: "native submit produced a hook witness"}
 						boundary, _, decodeErr := harness.DetectTurnBoundary(collar, payload)
-						if decodeErr == nil {
+						if decodeErr != nil {
+							results[harness.ProbeHook] = harness.ProbeResult{Name: harness.ProbeHook, Detail: decodeErr.Error()}
+						} else {
 							results[harness.ProbeHook] = harness.ProbeResult{Name: harness.ProbeHook, Passed: true, Detail: "native hook payload decoded"}
 							if boundary == harness.TurnStarted {
 								results[harness.ProbeTurnBoundary] = harness.ProbeResult{Name: harness.ProbeTurnBoundary, Passed: true, Detail: "native turn-start boundary decoded"}
+							} else {
+								results[harness.ProbeTurnBoundary] = harness.ProbeResult{Name: harness.ProbeTurnBoundary, Detail: fmt.Sprintf("first native hook decoded as %q", boundary)}
 							}
 						}
 					}
@@ -332,26 +363,93 @@ func (cmd command) collar(arguments []string) error {
 	return nil
 }
 
+func awaitComposerText(ctx context.Context, backend interface {
+	Capture(context.Context, substrate.PaneID) (substrate.Screen, error)
+}, pane substrate.PaneID, collar harness.Collar, want string) error {
+	const settle = 400 * time.Millisecond
+	ticker := time.NewTicker(25 * time.Millisecond)
+	defer ticker.Stop()
+	var stableSince time.Time
+	for {
+		screen, err := backend.Capture(ctx, pane)
+		if err == nil {
+			composer, readErr := harness.ReadComposer(collar.Primitives.Composer, screen)
+			if readErr == nil && composer.Text == want {
+				if stableSince.IsZero() {
+					stableSince = time.Now()
+				}
+				if time.Since(stableSince) >= settle {
+					return nil
+				}
+			} else {
+				stableSince = time.Time{}
+			}
+		}
+		select {
+		case <-ctx.Done():
+			return fmt.Errorf("native composer did not show submitted text: %w", ctx.Err())
+		case <-ticker.C:
+		}
+	}
+}
+
+func activeProbeDirectory(getwd func() (string, error)) (string, error) {
+	workdir, err := getwd()
+	if err != nil {
+		return "", err
+	}
+	command := exec.Command("git", "-C", workdir, "rev-parse", "--path-format=absolute", "--git-common-dir")
+	output, err := command.Output()
+	if err != nil {
+		return workdir, nil
+	}
+	common := strings.TrimSpace(string(output))
+	if filepath.Base(common) != ".git" {
+		return workdir, nil
+	}
+	return filepath.Dir(common), nil
+}
+
 func awaitStartup(ctx context.Context, backend interface {
 	Capture(context.Context, substrate.PaneID) (substrate.Screen, error)
 }, pane substrate.PaneID, collar harness.Collar) (harness.Startup, substrate.Screen, error) {
+	const readySettle = 400 * time.Millisecond
 	deadline := time.NewTimer(5 * time.Second)
 	defer deadline.Stop()
 	ticker := time.NewTicker(25 * time.Millisecond)
 	defer ticker.Stop()
+	lastErr := errors.New("no screen captured")
+	var readySince time.Time
 	for {
 		screen, err := backend.Capture(ctx, pane)
 		if err == nil {
 			startup, inspectErr := harness.InspectStartup(collar, screen)
-			if inspectErr == nil && startup.State != harness.StartupOccupied {
+			if inspectErr == nil && startup.State == harness.StartupTrustRequired {
 				return startup, screen, nil
 			}
+			if inspectErr == nil && startup.State == harness.StartupReady {
+				if readySince.IsZero() {
+					readySince = time.Now()
+				}
+				if time.Since(readySince) >= readySettle {
+					return startup, screen, nil
+				}
+			} else {
+				readySince = time.Time{}
+			}
+			if inspectErr != nil {
+				lastErr = inspectErr
+			} else {
+				lastErr = errors.New(startup.Prompt)
+			}
+		} else {
+			lastErr = err
 		}
 		select {
 		case <-ctx.Done():
 			return harness.Startup{}, substrate.Screen{}, ctx.Err()
 		case <-deadline.C:
-			return harness.Startup{}, substrate.Screen{}, fmt.Errorf("native startup was not observable within 5s")
+			return harness.Startup{}, substrate.Screen{}, fmt.Errorf("native startup was not observable within 5s: %w", lastErr)
 		case <-ticker.C:
 		}
 	}

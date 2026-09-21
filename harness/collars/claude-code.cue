@@ -6,6 +6,7 @@ collar: {
 		command: "claude"
 		args: []
 		resume_args: ["--resume", "{{session_id}}"]
+		probe_args: ["--model", "fable"]
 	}
 	hooks: {
 		install_args: [

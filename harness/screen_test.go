@@ -99,6 +99,47 @@ func TestInspectStartupFindsClaudeExternalImportTrust(t *testing.T) {
 	}
 }
 
+func TestStartupAgainstInstalledHarnessCaptures(t *testing.T) {
+	tests := []struct {
+		name   string
+		collar string
+		file   string
+		state  StartupState
+	}{
+		{name: "codex directory trust", collar: "codex", file: "codex-0.151.0-directory-trust.txt", state: StartupTrustRequired},
+		{name: "codex hook trust", collar: "codex", file: "codex-0.151.0-hook-trust.txt", state: StartupTrustRequired},
+		{name: "codex composer", collar: "codex", file: "codex-0.151.0-composer.txt", state: StartupReady},
+		{name: "claude directory trust", collar: "claude-code", file: "claude-code-2.1.278-directory-trust.txt", state: StartupTrustRequired},
+		{name: "claude external import", collar: "claude-code", file: "claude-code-2.1.278-external-import.txt", state: StartupTrustRequired},
+		{name: "claude composer", collar: "claude-code", file: "claude-code-2.1.278-composer.txt", state: StartupReady},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			collar, err := EmbeddedCollar(test.collar)
+			if err != nil {
+				t.Fatal(err)
+			}
+			screen := fixtureScreen(t, test.file)
+			startup, err := InspectStartup(collar, screen)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if startup.State != test.state {
+				t.Fatalf("startup state = %q, want %q (%s)", startup.State, test.state, startup.Prompt)
+			}
+			if test.state == StartupReady {
+				composer, err := ReadComposer(collar.Primitives.Composer, screen)
+				if err != nil {
+					t.Fatal(err)
+				}
+				if composer.Text != "" {
+					t.Fatalf("composer = %q, want empty", composer.Text)
+				}
+			}
+		})
+	}
+}
+
 func TestReadContext(t *testing.T) {
 	reading, err := ReadContext(
 		Invocation{Name: "claude-screen-context"},

@@ -15,6 +15,7 @@ type LaunchOptions struct {
 	Model         string
 	Effort        string
 	RolePrompt    string
+	Probe         bool
 }
 
 type Command struct {
@@ -65,6 +66,9 @@ func RenderLaunch(collar Collar, options LaunchOptions) (Command, error) {
 			return Command{}, fmt.Errorf("render %s hooks: %w", collar.Name, err)
 		}
 		rendered = append(rendered, hookArgs...)
+	}
+	if options.Probe {
+		rendered = append(rendered, collar.Launch.ProbeArgs...)
 	}
 
 	for _, option := range []struct {

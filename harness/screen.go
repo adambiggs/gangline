@@ -133,7 +133,7 @@ func readClaudeComposer(screen substrate.Screen) (Composer, error) {
 
 func trustPrompt(name string, screen substrate.Screen) (string, bool) {
 	flat := strings.Join(screenLines(screen, true), "\n")
-	selected := regexp.MustCompile(`(?m)^[[:space:]]*[❯›>] [0-9]+\. `).MatchString(flat)
+	selected := regexp.MustCompile(`(?m)^[[:space:]]*[❯›>] `).MatchString(flat)
 	if !selected {
 		return "", false
 	}
@@ -141,7 +141,10 @@ func trustPrompt(name string, screen substrate.Screen) (string, bool) {
 	if name == "codex-trust-prompt" {
 		patterns = append(patterns, "Hooks need review")
 	} else {
-		patterns = append(patterns, "Only use Claude Code with files you trust")
+		patterns = append(patterns,
+			"Only use Claude Code with files you trust",
+			"Quick safety check: Is this a project you created or one you trust?",
+		)
 	}
 	for _, pattern := range patterns {
 		if strings.Contains(flat, pattern) {

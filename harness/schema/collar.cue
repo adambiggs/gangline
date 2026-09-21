@@ -46,6 +46,7 @@ package harness
 		command: string & !=""
 		args?: [...string]
 		resume_args?: [...string]
+		probe_args?: [...string]
 		env?: [string]: string
 	})
 	hooks?: #Hooks

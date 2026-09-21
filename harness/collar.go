@@ -32,6 +32,7 @@ type Launch struct {
 	Command    string            `json:"command"`
 	Args       []string          `json:"args,omitempty"`
 	ResumeArgs []string          `json:"resume_args,omitempty"`
+	ProbeArgs  []string          `json:"probe_args,omitempty"`
 	Env        map[string]string `json:"env,omitempty"`
 }
 

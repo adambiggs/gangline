@@ -66,3 +66,25 @@ func TestRenderLaunchRequiresDeclaredHooks(t *testing.T) {
 		t.Fatal("hooked collar launched without a hook command")
 	}
 }
+
+func TestRenderLaunchAddsProbeArgumentsOnlyForProbe(t *testing.T) {
+	collar, err := EmbeddedCollar("codex")
+	if err != nil {
+		t.Fatal(err)
+	}
+	normal, err := RenderLaunch(collar, LaunchOptions{HookCommand: []string{"gang", "hook"}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	probe, err := RenderLaunch(collar, LaunchOptions{HookCommand: []string{"gang", "hook"}, Probe: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	const flag = "--dangerously-bypass-hook-trust"
+	if strings.Contains(strings.Join(normal.Args, "\n"), flag) {
+		t.Fatalf("ordinary launch contains probe flag: %q", normal.Args)
+	}
+	if !strings.Contains(strings.Join(probe.Args, "\n"), flag) {
+		t.Fatalf("probe launch does not contain probe flag: %q", probe.Args)
+	}
+}

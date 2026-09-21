@@ -1,0 +1,12 @@
+────────────────────────────────────────
+  Allow external CLAUDE.md file imports?
+
+  This project's CLAUDE.md imports files outside the current working
+  directory. Never allow this for third-party repositories.
+
+  Important: Only use Claude Code with files you trust.
+
+  ❯ No, disable external imports
+    Yes, allow external imports
+
+  Enter to confirm · Esc to cancel

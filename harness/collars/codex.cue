@@ -6,6 +6,7 @@ collar: {
 		command: "codex"
 		args: ["-c", "check_for_update_on_startup=false"]
 		resume_args: ["resume", "{{session_id}}", "-c", "check_for_update_on_startup=false", "-c", "tui.resume_cwd=\"current\""]
+		probe_args: ["--dangerously-bypass-hook-trust"]
 	}
 	hooks: {
 		install_args: [
