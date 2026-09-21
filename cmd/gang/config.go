@@ -2,6 +2,7 @@ package main
 
 import (
 	"bufio"
+	"encoding/json"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -22,6 +23,8 @@ type settings struct {
 	CacheBands      string
 	CacheCompaction string
 	AutoResume      string
+	LaunchArgs      map[string][]string
+	LaunchArgsJSON  string
 	Origins         map[string]string
 }
 
@@ -63,6 +66,7 @@ func (cmd command) settings() (settings, error) {
 		ContextLights:   "collar",
 		CacheCompaction: "claude-code=3600:300 codex=1800:180",
 		AutoResume:      "off",
+		LaunchArgs:      make(map[string][]string),
 		Socket:          cmd.environment("GANG_TMUX_SOCKET"),
 		ConfigDir:       configDir,
 		Origins:         make(map[string]string),
@@ -78,6 +82,7 @@ func (cmd command) settings() (settings, error) {
 		"GANG_CACHE_BANDS":      &result.CacheBands,
 		"GANG_CACHE_COMPACTION": &result.CacheCompaction,
 		"GANG_AUTO_RESUME":      &result.AutoResume,
+		"GANG_LAUNCH_ARGS":      &result.LaunchArgsJSON,
 	}
 	for name, destination := range values {
 		if value, ok := configured[name]; ok {
@@ -107,6 +112,21 @@ func (cmd command) settings() (settings, error) {
 	if result.Scope != "on" && result.Scope != "off" {
 		return settings{}, fmt.Errorf("GANG_SCOPE must be on or off, got %q", result.Scope)
 	}
+	if result.LaunchArgsJSON != "" {
+		if err := json.Unmarshal([]byte(result.LaunchArgsJSON), &result.LaunchArgs); err != nil {
+			return settings{}, fmt.Errorf("GANG_LAUNCH_ARGS must be a JSON object of collar names to argument arrays: %w", err)
+		}
+		for collar, arguments := range result.LaunchArgs {
+			if !collarNamePattern.MatchString(collar) {
+				return settings{}, fmt.Errorf("GANG_LAUNCH_ARGS has invalid collar name %q", collar)
+			}
+			for _, argument := range arguments {
+				if argument == "" || strings.ContainsRune(argument, 0) {
+					return settings{}, fmt.Errorf("GANG_LAUNCH_ARGS[%q] contains an empty or NUL argument", collar)
+				}
+			}
+		}
+	}
 	return result, nil
 }
 
@@ -121,6 +141,7 @@ var configurationKeys = map[string]bool{
 	"GANG_CACHE_COMPACTION": true,
 	"GANG_AUTO_RESUME":      true,
 	"GANG_SCOPE":            true,
+	"GANG_LAUNCH_ARGS":      true,
 }
 
 func readConfiguration(filename string) (map[string]string, error) {

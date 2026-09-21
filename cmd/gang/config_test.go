@@ -51,3 +51,28 @@ func TestReadConfigurationRejectsUnknownAndRepeatedKeys(t *testing.T) {
 		}
 	}
 }
+
+func TestSettingsLoadsOperatorLaunchArgumentsByCollar(t *testing.T) {
+	directory := t.TempDir()
+	content := "GANG_LAUNCH_ARGS={\"codex\":[\"--dangerously-bypass-approvals-and-sandbox\"]}\n"
+	if err := os.WriteFile(filepath.Join(directory, "config"), []byte(content), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	cmd := command{
+		getenv: func(string) string { return "" },
+		lookupEnv: func(name string) (string, bool) {
+			if name == "GANG_CONFIG_DIR" {
+				return directory, true
+			}
+			return "", false
+		},
+		userHomeDir: func() (string, error) { return "/workspace/example", nil },
+	}
+	got, err := cmd.settings()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(got.LaunchArgs["codex"]) != 1 || got.LaunchArgs["codex"][0] != "--dangerously-bypass-approvals-and-sandbox" {
+		t.Fatalf("launch args = %#v", got.LaunchArgs)
+	}
+}

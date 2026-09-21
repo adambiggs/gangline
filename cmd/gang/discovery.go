@@ -215,6 +215,7 @@ func (cmd command) config(arguments []string) error {
 		{"GANG_CACHE_BANDS", valueOr(settings.CacheBands, "unset")},
 		{"GANG_CACHE_COMPACTION", settings.CacheCompaction},
 		{"GANG_AUTO_RESUME", settings.AutoResume},
+		{"GANG_LAUNCH_ARGS", valueOr(settings.LaunchArgsJSON, "unset")},
 		{"GANG_STATE_ROOT", settings.StateRoot},
 		{"GANG_CONFIG_DIR", settings.ConfigDir},
 		{"GANG_TMUX_SOCKET", valueOr(settings.Socket, "default")},
