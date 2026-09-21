@@ -123,6 +123,8 @@ func (cmd command) execute(args []string) error {
 		return cmd.context(arguments)
 	case "log":
 		return cmd.log(arguments)
+	case "replay":
+		return cmd.replay(arguments)
 	case "usage":
 		return cmd.usage(arguments)
 	case "cap":

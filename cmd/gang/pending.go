@@ -16,6 +16,7 @@ func (cmd command) interrupt([]string) error { return pending("interrupt") }
 func (cmd command) compact([]string) error   { return pending("compact") }
 func (cmd command) context([]string) error   { return pending("context") }
 func (cmd command) log([]string) error       { return pending("log") }
+func (cmd command) replay([]string) error    { return pending("replay") }
 func (cmd command) usage([]string) error     { return pending("usage") }
 func (cmd command) cap([]string) error       { return pending("cap") }
 func (cmd command) limits([]string) error    { return pending("limits") }

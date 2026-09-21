@@ -46,6 +46,7 @@ Observe and control:
   capture   read an agent's pane or composer
   context   read native context use
   log       read the event log
+  replay    fold an event log offline
   usage     read token consumption
   cap       read provider-window history
   limits    read current provider limits
@@ -78,6 +79,7 @@ var commandUsage = map[string]string{
 	"compact":   "usage: gang compact [NAME] [--resume TEXT]\n       gang compact NAME --recover\n",
 	"context":   "usage: gang context [NAME]\n",
 	"log":       "usage: gang log [NAME] [--since TIME] [--kind KIND]\n",
+	"replay":    "usage: gang replay [EVENTS.jsonl]\n",
 	"usage":     "usage: gang usage [--daily [DATE] | --since DATE]\n",
 	"cap":       "usage: gang cap [check | watch [--clear] | forget]\n",
 	"limits":    "usage: gang limits [NAME | --history]\n",
