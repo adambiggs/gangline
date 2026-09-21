@@ -8,7 +8,7 @@ unset GIT_DIR GIT_WORK_TREE GIT_INDEX_FILE GIT_OBJECT_DIRECTORY GIT_COMMON_DIR G
 
 # The gate prepares and runs disposable fixture lanes. Keep an agent pane's
 # return route and team selection from reaching them.
-unset TMUX TMUX_PANE GANG_TMUX_SOCKET GANG_CONFIG_DIR GANG_SESSION GANG_COLLARS
+unset TMUX TMUX_PANE GANG_TMUX GANG_TMUX_SOCKET GANG_CONFIG_DIR GANG_SESSION GANG_COLLARS
 
 ROOT="$(cd -P "$(dirname "$0")/.." && pwd)"
 

@@ -11,7 +11,7 @@ import (
 
 func TestCodexComposerIgnoresGhostText(t *testing.T) {
 	screen := testScreen(
-		testRow("reply", false),
+		testCells("reply", false),
 		append(testCells("› hello", false), testCells(" placeholder", true)...),
 	)
 	composer, err := ReadComposer(Invocation{Name: "codex-composer"}, screen)
@@ -24,7 +24,7 @@ func TestCodexComposerIgnoresGhostText(t *testing.T) {
 }
 
 func TestCodexMenuIsNotComposer(t *testing.T) {
-	screen := testScreen(testRow("› 1. Review hooks", false))
+	screen := testScreen(testCells("› 1. Review hooks", false))
 	_, err := ReadComposer(Invocation{Name: "codex-composer"}, screen)
 	if !errors.Is(err, ErrComposerOccupied) {
 		t.Fatalf("error = %v, want occupied", err)
@@ -33,11 +33,11 @@ func TestCodexMenuIsNotComposer(t *testing.T) {
 
 func TestClaudeComposerReadsFramedMultilineBody(t *testing.T) {
 	screen := testScreen(
-		testRow("────────", false),
+		testCells("────────", false),
 		append(testCells("❯ first", false), testCells(" ghost", true)...),
-		testRow("second", false),
-		testRow("────────", false),
-		testRow("auto mode on", false),
+		testCells("second", false),
+		testCells("────────", false),
+		testCells("auto mode on", false),
 	)
 	composer, err := ReadComposer(Invocation{Name: "claude-composer"}, screen)
 	if err != nil {
@@ -50,12 +50,12 @@ func TestClaudeComposerReadsFramedMultilineBody(t *testing.T) {
 
 func TestClaudeOverlayOwnsInput(t *testing.T) {
 	screen := testScreen(
-		testRow("▔▔▔▔", false),
-		testRow("Choose a mode", false),
-		testRow("────────", false),
-		testRow("❯ draft", false),
-		testRow("────────", false),
-		testRow("Esc to cancel", false),
+		testCells("▔▔▔▔", false),
+		testCells("Choose a mode", false),
+		testCells("────────", false),
+		testCells("❯ draft", false),
+		testCells("────────", false),
+		testCells("Esc to cancel", false),
 	)
 	_, err := ReadComposer(Invocation{Name: "claude-composer"}, screen)
 	if !errors.Is(err, ErrComposerOccupied) {
@@ -69,8 +69,8 @@ func TestInspectStartupFindsTrustPrompt(t *testing.T) {
 		t.Fatal(err)
 	}
 	screen := testScreen(
-		testRow("Hooks need review", false),
-		testRow("› 1. Review hooks", false),
+		testCells("Hooks need review", false),
+		testCells("› 1. Review hooks", false),
 	)
 	startup, err := InspectStartup(collar, screen)
 	if err != nil {
@@ -87,8 +87,8 @@ func TestInspectStartupFindsClaudeExternalImportTrust(t *testing.T) {
 		t.Fatal(err)
 	}
 	screen := testScreen(
-		testRow("Only use Claude Code with files you trust.", false),
-		testRow("❯ 1. Yes, allow external imports", false),
+		testCells("Only use Claude Code with files you trust.", false),
+		testCells("❯ 1. Yes, allow external imports", false),
 	)
 	startup, err := InspectStartup(collar, screen)
 	if err != nil {
@@ -143,7 +143,7 @@ func TestStartupAgainstInstalledHarnessCaptures(t *testing.T) {
 func TestReadContext(t *testing.T) {
 	reading, err := ReadContext(
 		Invocation{Name: "claude-screen-context"},
-		testScreen(testRow("ctx 42k/200k 21%", false)),
+		testScreen(testCells("ctx 42k/200k 21%", false)),
 	)
 	if err != nil {
 		t.Fatal(err)
@@ -194,17 +194,13 @@ func fixtureScreen(t *testing.T, name string) substrate.Screen {
 	lines := strings.Split(strings.TrimSuffix(string(data), "\n"), "\n")
 	rows := make([][]substrate.Cell, len(lines))
 	for index, line := range lines {
-		rows[index] = testRow(line, false)
+		rows[index] = testCells(line, false)
 	}
 	return testScreen(rows...)
 }
 
 func testScreen(rows ...[]substrate.Cell) substrate.Screen {
 	return substrate.Screen{Rows: rows}
-}
-
-func testRow(text string, dim bool) []substrate.Cell {
-	return testCells(text, dim)
 }
 
 func testCells(text string, dim bool) []substrate.Cell {

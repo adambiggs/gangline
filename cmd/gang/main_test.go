@@ -17,7 +17,7 @@ func TestVersionAndHelpDoNotLoadRuntimeConfiguration(t *testing.T) {
 		{args: []string{"--version"}, want: "gangline dev"},
 	} {
 		var stdout, stderr bytes.Buffer
-		status := runWithInput(test.args, strings.NewReader(""), &stdout, &stderr)
+		status := run(test.args, strings.NewReader(""), &stdout, &stderr)
 		if status != exitOK {
 			t.Fatalf("run(%q) status = %d, stderr = %q", test.args, status, stderr.String())
 		}
@@ -29,7 +29,7 @@ func TestVersionAndHelpDoNotLoadRuntimeConfiguration(t *testing.T) {
 
 func TestArgumentErrorsAreUsageErrors(t *testing.T) {
 	var stdout, stderr bytes.Buffer
-	status := runWithInput([]string{"unknown"}, strings.NewReader(""), &stdout, &stderr)
+	status := run([]string{"unknown"}, strings.NewReader(""), &stdout, &stderr)
 	if status != exitUsage {
 		t.Fatalf("status = %d, want %d", status, exitUsage)
 	}
@@ -38,15 +38,26 @@ func TestArgumentErrorsAreUsageErrors(t *testing.T) {
 	}
 }
 
+func TestRemovedCommandsAreUnknown(t *testing.T) {
+	for _, name := range []string{"cap", "flush", "run", "usage", "wait"} {
+		var stdout, stderr bytes.Buffer
+		status := run([]string{name}, strings.NewReader(""), &stdout, &stderr)
+		if status != exitUsage {
+			t.Fatalf("run(%q) status = %d, want %d", name, status, exitUsage)
+		}
+		if !strings.Contains(stderr.String(), "unknown command") {
+			t.Fatalf("run(%q) stderr = %q, want unknown command", name, stderr.String())
+		}
+	}
+}
+
 func TestCommandsRejectIgnoredArguments(t *testing.T) {
 	for _, arguments := range [][]string{
-		{"flush", "worker"},
-		{"wait", "worker", "extra"},
-		{"cap", "extra"},
-		{"usage", "extra"},
+		{"idle", "worker", "extra"},
+		{"limits", "--history"},
 	} {
 		var stdout, stderr bytes.Buffer
-		status := runWithInput(arguments, strings.NewReader(""), &stdout, &stderr)
+		status := run(arguments, strings.NewReader(""), &stdout, &stderr)
 		if status != exitUsage {
 			t.Fatalf("run(%q) status = %d, want %d", arguments, status, exitUsage)
 		}

@@ -9,7 +9,7 @@ func TestReadClaudeProviderLimits(t *testing.T) {
 	now := time.Date(2026, time.September, 21, 10, 0, 0, 0, time.UTC)
 	limits, err := ReadProviderLimits(
 		Invocation{Name: "claude-screen-limits"},
-		testScreen(testRow("Current session: 23% used · resets Sep 21, 5pm (UTC)", false)),
+		testScreen(testCells("Current session: 23% used · resets Sep 21, 5pm (UTC)", false)),
 		now,
 	)
 	if err != nil {
@@ -24,7 +24,7 @@ func TestReadCodexProviderLimitsConvertsRemaining(t *testing.T) {
 	now := time.Date(2026, time.September, 21, 10, 0, 0, 0, time.UTC)
 	limits, err := ReadProviderLimits(
 		Invocation{Name: "codex-screen-limits"},
-		testScreen(testRow("5h limit: 70% left · resets 3:00 PM", false)),
+		testScreen(testCells("5h limit: 70% left · resets 3:00 PM", false)),
 		now,
 	)
 	if err != nil {

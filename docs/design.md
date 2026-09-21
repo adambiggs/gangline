@@ -52,12 +52,6 @@ otherwise state is replayed.
 team directory. Evidence that must outlive teardown is copied before that
 command.
 
-## Report absent accounting as unknown
-
-Gangline 1.0 does not maintain a token-accounting database or provider-window
-history. `gang usage`, `gang cap`, and `gang limits --history` say so explicitly
-instead of deriving totals from incomplete native evidence.
-
 ## Keep the mandatory gate immediate
 
 Unit tests use supplied times and direct state. Black-box scenarios use private

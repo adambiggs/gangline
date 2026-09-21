@@ -32,9 +32,7 @@ Start and end a team:
 
 Talk to agents:
   send      deliver a message
-  run       run a host command and return its result
   queue     read waiting messages
-  flush     retry pending effects
   interrupt stop an agent's current turn
   compact   compact an agent's context
 
@@ -42,13 +40,11 @@ Observe and control:
   roster    list the team
   status    inspect one agent
   tick      retry pending effects
-  wait      check for an agent boundary
+  idle      check for an idle boundary
   capture   read an agent's pane or composer
   context   read native context use
   log       read the event log
   replay    fold an event log offline
-  usage     report unavailable token accounting
-  cap       read provider-window history
   limits    read current provider limits
   whoami    read this pane's identity
   attach    join the team in tmux
@@ -72,18 +68,14 @@ var commandUsage = map[string]string{
 	"adopt":     "usage: gang adopt NAME -c COLLAR\n",
 	"rename":    "usage: gang rename OLD NEW\n",
 	"send":      "usage: gang send NAME [--from SENDER] [--live-only] [--supersede] [--at TIME]\n",
-	"run":       "usage: gang run -- COMMAND [ARG ...]\n",
-	"flush":     "usage: gang flush\n",
 	"queue":     "usage: gang queue [NAME]\n",
 	"interrupt": "usage: gang interrupt [NAME] [-m REASON]\n",
 	"compact":   "usage: gang compact [NAME] [--resume TEXT]\n       gang compact NAME --recover\n",
 	"context":   "usage: gang context [NAME]\n",
 	"log":       "usage: gang log\n",
 	"replay":    "usage: gang replay [EVENTS.jsonl]\n",
-	"usage":     "usage: gang usage\n",
-	"cap":       "usage: gang cap\n",
-	"limits":    "usage: gang limits [NAME | --history]\n",
-	"wait":      "usage: gang wait NAME\n",
+	"limits":    "usage: gang limits [NAME]\n",
+	"idle":      "usage: gang idle NAME\n",
 	"curfew":    "usage: gang curfew [DURATION | HH:MM | clear]\n",
 	"status":    "usage: gang status [NAME] [--why]\n",
 	"tick":      "usage: gang tick\n",
@@ -108,27 +100,23 @@ var commandDescription = map[string]string{
 	"adopt":     "Register an existing pane without launching a harness or delivering startup prose.\n",
 	"rename":    "Change a registered agent name without restarting its harness.\n",
 	"send":      "Read a message from stdin. Delivery is submitted from an empty composer and verified by a native hook, or remains pending for a turn boundary.\n",
-	"run":       "Run a host command synchronously with this process's input and output.\n",
-	"flush":     "Run the same bounded recovery pass as gang tick.\n",
 	"queue":     "List pending delivery identifiers, recipients, and senders.\n",
 	"interrupt": "Send the collar's native interrupt and optionally deliver a reason after the turn stops.\n",
 	"compact":   "Request the collar's native compaction and place a continuation behind it.\n",
 	"context":   "Print the collar's native context reading without estimating missing data.\n",
 	"log":       "Print the configured team's durable JSONL event log.\n",
 	"replay":    "Fold a recorded JSONL event stream without contacting tmux or a harness.\n",
-	"usage":     "Report that local token-accounting samples are unavailable.\n",
-	"cap":       "Report that retained provider-window sampling is unavailable.\n",
 	"limits":    "Read current provider limits from the collar's native source.\n",
-	"wait":      "Succeed only when an agent is already at a recorded idle boundary.\n",
+	"idle":      "Succeed only when an agent is already at a recorded idle boundary.\n",
 	"curfew":    "Declare, inspect, or clear one team deadline.\n",
-	"status":    "Show one agent's recorded and directly observed state. Wedged states include evidence and point to gang log.\n",
+	"status":    "Show one agent's recorded status and activity; --why adds recorded wedge evidence.\n",
 	"tick":      "Run one bounded retry pass over durable pending effects.\n",
 	"capture":   "Print pane content, or only the native composer with --composer.\n",
 	"whoami":    "Print the registered identity of the calling Gangline pane.\n",
 	"roster":    "List the team's registered agents and conservative current states.\n",
 	"attach":    "Attach this terminal to the configured team session.\n",
 	"teams":     "List teams found in the versioned state root.\n",
-	"drop":      "Archive pending work and stop one registered agent pane.\n",
+	"drop":      "Stop one registered agent pane and cancel its pending work.\n",
 	"down":      "Drop every live agent, then remove the stopped team's runtime state.\n",
 	"collars":   "List embedded and operator-provided CUE collars.\n",
 	"collar":    "Probe one installed harness in a throwaway private tmux session.\n",

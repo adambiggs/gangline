@@ -11,7 +11,8 @@ to guard a system create defects of their own.
    surfaces: the tty (tmux), the shell (`gang` as a CLI), and open standards a
    harness speaks natively (e.g. MCP). tmux is the default transport — agents are
    tmux windows, messages are keystrokes, observation is `capture-pane`,
-   termination is `kill-window`, state lives in tmux options. A harness-specific
+   termination is `kill-window`, and state lives in a per-team append-only
+   event log. A harness-specific
    code path requires a section of `docs/design.md` proving no universal surface
    can carry the value.
    No bespoke message buses, no databases, no daemons.
@@ -24,8 +25,9 @@ to guard a system create defects of their own.
    is single-tenant by design: anyone at the keyboard is the operator. Never build
    authentication, generation fencing, or anti-tamper into this repo.
 
-3. **Delivered means verified.** A send is confirmed by pane capture or it fails
-   loudly. No fire-and-forget, no success receipts for messages nobody saw.
+3. **Delivered means verified.** A send is confirmed by the harness's native
+   submit hook or it fails loudly. No fire-and-forget, no success receipts for
+   messages nobody saw.
 
 4. **Harness integration is a collar, not a plugin.** Per-harness knowledge lives in
    a collar, never as a harness-name branch in `cmd/gang`; the collar contract

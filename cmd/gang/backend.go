@@ -8,7 +8,7 @@ import (
 
 func (cmd command) tmux(settings settings) (*tmux.Backend, error) {
 	config := tmux.Config{
-		Binary:  valueOr(cmd.environment("GANGLINE_TMUX"), "tmux"),
+		Binary:  valueOr(cmd.environment("GANG_TMUX"), "tmux"),
 		Socket:  settings.Socket,
 		Session: settings.Session,
 	}

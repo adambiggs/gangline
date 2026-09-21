@@ -44,14 +44,10 @@ type command struct {
 }
 
 func main() {
-	os.Exit(run(os.Args[1:], os.Stdout, os.Stderr))
+	os.Exit(run(os.Args[1:], os.Stdin, os.Stdout, os.Stderr))
 }
 
-func run(args []string, stdout, stderr io.Writer) int {
-	return runWithInput(args, os.Stdin, stdout, stderr)
-}
-
-func runWithInput(args []string, stdin io.Reader, stdout, stderr io.Writer) int {
+func run(args []string, stdin io.Reader, stdout, stderr io.Writer) int {
 	cmd := command{
 		stdin:       stdin,
 		stdout:      stdout,
@@ -113,10 +109,6 @@ func (cmd command) execute(args []string) error {
 		return cmd.rename(arguments)
 	case "send":
 		return cmd.send(arguments)
-	case "run":
-		return cmd.hostRun(arguments)
-	case "flush":
-		return cmd.flush(arguments)
 	case "queue":
 		return cmd.queue(arguments)
 	case "interrupt":
@@ -129,14 +121,10 @@ func (cmd command) execute(args []string) error {
 		return cmd.log(arguments)
 	case "replay":
 		return cmd.replay(arguments)
-	case "usage":
-		return cmd.usage(arguments)
-	case "cap":
-		return cmd.cap(arguments)
 	case "limits":
 		return cmd.limits(arguments)
-	case "wait":
-		return cmd.wait(arguments)
+	case "idle":
+		return cmd.idle(arguments)
 	case "curfew":
 		return cmd.curfew(arguments)
 	case "status":

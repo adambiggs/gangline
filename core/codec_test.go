@@ -1,8 +1,6 @@
 package core
 
 import (
-	"encoding/json"
-	"os"
 	"reflect"
 	"testing"
 	"time"
@@ -84,36 +82,5 @@ func TestEventSchemaRejectsInvalidInput(t *testing.T) {
 				t.Fatal("invalid event passed validation")
 			}
 		})
-	}
-}
-
-func TestPublishedJSONSchemaCoversEveryEvent(t *testing.T) {
-	data, err := os.ReadFile("schema/events.schema.json")
-	if err != nil {
-		t.Fatal(err)
-	}
-	var schema map[string]any
-	if err := json.Unmarshal(data, &schema); err != nil {
-		t.Fatalf("JSON Schema is not JSON: %v", err)
-	}
-	if schema["$schema"] != "https://json-schema.org/draft/2020-12/schema" {
-		t.Fatalf("unexpected schema declaration: %#v", schema["$schema"])
-	}
-	definitions, ok := schema["$defs"].(map[string]any)
-	if !ok {
-		t.Fatal("JSON Schema has no definitions")
-	}
-	for _, name := range []string{
-		"hitch_requested", "adopt_requested", "rename_requested", "hitch_spawned", "hitch_ready", "hitch_launch_failed",
-		"turn_started", "turn_boundary_reached", "send_requested", "timed_delivery_released", "timed_deliveries_cleared",
-		"delivery_succeeded", "delivery_deferred", "delivery_failed", "delivery_unverified",
-		"compaction_requested", "compaction_completed", "compaction_failed",
-		"interrupt_requested", "interrupt_succeeded", "interrupt_failed",
-		"drop_requested", "drop_succeeded", "drop_failed", "wedge_detected", "wedge_cleared",
-		"operation_timed_out", "curfew_set", "curfew_cleared", "transition_rejected",
-	} {
-		if _, exists := definitions[name]; !exists {
-			t.Errorf("JSON Schema is missing %q", name)
-		}
 	}
 }

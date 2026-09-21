@@ -6,7 +6,6 @@ import (
 	"fmt"
 	"io"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"sort"
 	"strings"
@@ -563,25 +562,6 @@ func (cmd command) hook(arguments []string) error {
 	return err
 }
 
-func (cmd command) hostRun(arguments []string) error {
-	if len(arguments) == 0 || arguments[0] != "--" || len(arguments) == 1 {
-		return usageError("run: expected -- COMMAND [ARG ...]")
-	}
-	process := exec.Command(arguments[1], arguments[2:]...)
-	process.Stdin, process.Stdout, process.Stderr = cmd.stdin, cmd.stdout, cmd.stderr
-	if err := process.Run(); err != nil {
-		return commandError{status: exitNative, text: err.Error()}
-	}
-	return nil
-}
-
-func (cmd command) flush(arguments []string) error {
-	if err := noArguments(arguments, "flush"); err != nil {
-		return err
-	}
-	return cmd.tick(nil)
-}
-
 func (cmd command) queue(arguments []string) error {
 	if len(arguments) > 1 {
 		return usageError("queue: expected at most one agent")
@@ -790,29 +770,10 @@ func (cmd command) status(arguments []string) error {
 	return err
 }
 
-// v1 intentionally has no separate local accounting database. These commands
-// return explicit unknowns instead of inventing totals from incomplete data.
-func (cmd command) usage(arguments []string) error {
-	if len(arguments) != 0 {
-		return usageError("usage: filters are not available")
-	}
-	_, err := fmt.Fprintln(cmd.stdout, "unknown\tno local token-accounting samples")
-	return err
-}
-func (cmd command) cap(arguments []string) error {
-	if len(arguments) != 0 {
-		return usageError("cap: unexpected arguments")
-	}
-	_, err := fmt.Fprintln(cmd.stdout, "unknown\tno retained provider-window samples")
-	return err
-}
-
-func (cmd command) wait(arguments []string) error {
-	if err := exactly(arguments, 1, "wait"); err != nil {
+func (cmd command) idle(arguments []string) error {
+	if err := exactly(arguments, 1, "idle"); err != nil {
 		return err
 	}
-	// Waiting is event-driven for callers: a non-idle observation refuses now;
-	// callers can invoke again after their own hook/event barrier.
 	run, err := cmd.runtime()
 	if err != nil {
 		return err

@@ -61,8 +61,7 @@ witness records `delivery_unverified`.
 
 The default root is `${XDG_STATE_HOME:-~/.local/state}/gangline/v1/TEAM/`.
 `events.jsonl` is the source of truth and `snapshot.json` accelerates loading.
-The event schema lives in `core/schema/events.cue` and is exported as JSON
-Schema.
+The event schema lives in `core/schema/events.cue`.
 
 Collars live in `harness/collars/*.cue` or an operator directory selected by
 `GANG_COLLARS`. `harness/schema/collar.cue` validates launch arguments, hook

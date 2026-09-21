@@ -2,6 +2,9 @@ package core
 
 import "sort"
 
+// PendingEffects reconstructs intents whose outcome is absent from the log.
+// Callers execute them using the same idempotency checks as newly emitted
+// effects, then append the observed outcome as another event.
 func PendingEffects(state State) []Effect {
 	ids := make([]string, 0, len(state.Hitches))
 	for id := range state.Hitches {

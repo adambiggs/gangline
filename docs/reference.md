@@ -43,11 +43,9 @@ otherwise `--task` supplies it.
 | `gang send NAME [--from NAME] [--live-only] [--supersede] [--at TIME]` | Read a body from stdin and deliver or queue it. |
 | `gang send NAME --at clear` | Clear timed deliveries for the recipient. |
 | `gang queue [NAME]` | List queued delivery ID, recipient, and sender rows. |
-| `gang flush` | Run the same bounded recovery pass as `gang tick`. |
 | `gang interrupt [NAME] [-m REASON]` | Interrupt an active or wedged native turn. |
 | `gang compact [NAME] [--resume TEXT]` | Submit the collar's compaction action and queue a continuation. |
 | `gang compact NAME --recover` | Apply the collar's declared compaction-recovery actions. |
-| `gang run -- COMMAND [ARG ...]` | Run a command synchronously with the caller's stdin/stdout/stderr. |
 
 Inside an active Gangline pane, `send` derives the sender from the pane and
 refuses an overriding `--from`. Outside the team, `--from` is required and the
@@ -67,17 +65,13 @@ duration such as `45m` or a local `HH:MM` time.
 | `gang capture --composer [NAME]` | Read the collar-recognized composer. |
 | `gang context [NAME]` | Read native context use and the active collar band. |
 | `gang limits [NAME]` | Read provider-limit rows visible in the native TUI. |
-| `gang limits --history` | Return unknown; v1 retains no limit history. |
 | `gang log` | Print the configured team's authoritative JSONL log. |
 | `gang replay [EVENTS.jsonl]` | Fold a log from a file or stdin and print state as JSON. |
 | `gang tick` | Retry pending effects, release safe queued delivery, and observe wedges. |
-| `gang wait NAME` | Succeed only if the agent is already recorded idle. |
+| `gang idle NAME` | Succeed only if the agent is already recorded idle. |
 | `gang whoami` | Print the active hitch bound to the current pane. |
 | `gang teams` | List team directories with event logs in the v1 state root. |
 | `gang attach` | Attach to the configured tmux team. |
-
-`gang usage` and `gang cap` return explicit `unknown` rows because v1 has no
-local accounting or retained provider-window database.
 
 ### Discovery and installation
 
@@ -116,10 +110,10 @@ The config file is `$GANG_CONFIG_DIR/config`, defaulting to
 | `GANG_COLLARS` | unset | Absolute directory of operator `NAME.cue` collars. |
 | `GANG_LAUNCH_ARGS` | unset | JSON object of collar names to extra launch-argument arrays. |
 
-Runtime-only variables are `GANG_CONFIG_DIR`, `GANG_STATE_ROOT`, and
-`GANG_TMUX_SOCKET`. The state default is
+Runtime-only variables are `GANG_CONFIG_DIR`, `GANG_STATE_ROOT`, `GANG_TMUX`,
+and `GANG_TMUX_SOCKET`. The state default is
 `${XDG_STATE_HOME:-~/.local/state}/gangline`; tmux uses its default socket unless
-an explicit socket is supplied. `GANGLINE_TMUX` selects the tmux executable for
+an explicit socket is supplied. `GANG_TMUX` selects the tmux executable for
 tests and native collar probes.
 
 Each team is stored at `STATE_ROOT/v1/TEAM/`. `events.jsonl` is authoritative;

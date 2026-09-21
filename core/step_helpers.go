@@ -45,7 +45,3 @@ func cloneState(state State) State {
 	}
 	return next
 }
-
-// PendingEffects reconstructs intents whose outcome is absent from the log.
-// Callers execute them using the same idempotency checks as newly emitted
-// effects, then append the observed outcome as another event.

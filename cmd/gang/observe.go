@@ -55,9 +55,6 @@ func (cmd command) context(arguments []string) error {
 }
 
 func (cmd command) limits(arguments []string) error {
-	if len(arguments) == 1 && arguments[0] == "--history" {
-		return commandError{status: exitUnknown, text: "no retained provider-limit history"}
-	}
 	name, state, run, err := cmd.observationTarget(arguments, "limits")
 	if err != nil {
 		return err
@@ -91,6 +88,13 @@ func (cmd command) observationTarget(arguments []string, commandName string) (st
 	if len(arguments) > 1 {
 		return "", core.State{}, nil, usageError("%s: expected at most one agent", commandName)
 	}
+	name := ""
+	if len(arguments) == 1 {
+		name = arguments[0]
+		if err := validateAgentName(name); err != nil {
+			return "", core.State{}, nil, err
+		}
+	}
 	run, err := cmd.runtime()
 	if err != nil {
 		return "", core.State{}, nil, err
@@ -98,10 +102,6 @@ func (cmd command) observationTarget(arguments []string, commandName string) (st
 	state, err := run.load()
 	if err != nil {
 		return "", core.State{}, nil, err
-	}
-	name := ""
-	if len(arguments) == 1 {
-		name = arguments[0]
 	}
 	if name == "" {
 		pane := cmd.environment("TMUX_PANE")
@@ -248,7 +248,7 @@ func (cmd command) collar(arguments []string) error {
 
 	// A fresh directory exercises the native trust surface. Gangline observes it
 	// and never answers it.
-	trustBackend, err := tmux.New(tmux.Config{Binary: valueOr(cmd.environment("GANGLINE_TMUX"), "tmux"), Socket: trustSocket, Session: "gang-check-trust-" + id})
+	trustBackend, err := tmux.New(tmux.Config{Binary: valueOr(cmd.environment("GANG_TMUX"), "tmux"), Socket: trustSocket, Session: "gang-check-trust-" + id})
 	if err != nil {
 		return err
 	}
@@ -287,7 +287,7 @@ func (cmd command) collar(arguments []string) error {
 		return err
 	}
 	launch = applyLaunchPolicy(launch, collar.Name, settings)
-	activeBackend, err := tmux.New(tmux.Config{Binary: valueOr(cmd.environment("GANGLINE_TMUX"), "tmux"), Socket: activeSocket, Session: "gang-check-active-" + id})
+	activeBackend, err := tmux.New(tmux.Config{Binary: valueOr(cmd.environment("GANG_TMUX"), "tmux"), Socket: activeSocket, Session: "gang-check-active-" + id})
 	if err != nil {
 		return err
 	}
