@@ -38,6 +38,7 @@ type command struct {
 	stdout      io.Writer
 	stderr      io.Writer
 	getenv      func(string) string
+	lookupEnv   func(string) (string, bool)
 	getwd       func() (string, error)
 	userHomeDir func() (string, error)
 }
@@ -52,6 +53,7 @@ func run(args []string, stdin io.Reader, stdout, stderr io.Writer) int {
 		stdout:      stdout,
 		stderr:      stderr,
 		getenv:      os.Getenv,
+		lookupEnv:   os.LookupEnv,
 		getwd:       os.Getwd,
 		userHomeDir: os.UserHomeDir,
 	}
