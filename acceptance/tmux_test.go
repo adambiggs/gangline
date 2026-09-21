@@ -161,6 +161,26 @@ func TestCommandLifecycleOnPrivateTmux(t *testing.T) {
 	if output, err := runner.run("wait-for", "received"); err != nil {
 		t.Fatalf("wait for ordinary delivery: %v\n%s", err, output)
 	}
+	t.Run("tick retries a durable queued send", func(t *testing.T) {
+		output, status := runGang("queued delivery\n", "send", "worker", "--from", "tester")
+		if status != 0 || !strings.Contains(output, "\tqueued\n") {
+			t.Fatalf("queue status %d, want queued:\n%s", status, output)
+		}
+		queued := loadAcceptanceState(t, filepath.Join(root, "state"), session)
+		if !hasAcceptanceDelivery(queued, "queued delivery", core.DeliveryQueued) {
+			t.Fatalf("send did not remain durably queued: %#v", queued.Deliveries)
+		}
+		if output, status := runGang("", "tick"); status != 0 {
+			t.Fatalf("queued retry status %d:\n%s", status, output)
+		}
+		if output, err := runner.run("wait-for", "received"); err != nil {
+			t.Fatalf("wait for queued retry: %v\n%s", err, output)
+		}
+		delivered := loadAcceptanceState(t, filepath.Join(root, "state"), session)
+		if !hasAcceptanceDelivery(delivered, "queued delivery", core.DeliveryDelivered) {
+			t.Fatalf("tick did not deliver queued send: %#v", delivered.Deliveries)
+		}
+	})
 	runHook("Stop")
 	if output, status := runGang("", "compact", "worker", "--resume", "resume after compact"); status != 0 {
 		t.Fatalf("compact status %d:\n%s", status, output)
@@ -199,7 +219,7 @@ func TestCommandLifecycleOnPrivateTmux(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	for _, text := range []string{"assignment", "ordinary delivery", "/compact resume after compact", "resume after compact"} {
+	for _, text := range []string{"assignment", "ordinary delivery", "queued delivery", "/compact resume after compact", "resume after compact"} {
 		if !strings.Contains(string(received), text) {
 			t.Fatalf("delivery ledger lacks %q:\n%s", text, received)
 		}
@@ -258,6 +278,15 @@ func acceptanceHitch(state core.State, name string) (core.Hitch, bool) {
 		}
 	}
 	return core.Hitch{}, false
+}
+
+func hasAcceptanceDelivery(state core.State, text string, status core.DeliveryStatus) bool {
+	for _, delivery := range state.Deliveries {
+		if delivery.Envelope.Message.Text == text && delivery.Status == status {
+			return true
+		}
+	}
+	return false
 }
 
 func TestTmuxCarriesOneHarnessTurn(t *testing.T) {
