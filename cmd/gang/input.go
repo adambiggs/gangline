@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"io"
 	"strings"
+	"unicode/utf8"
 )
 
 const maximumMessageBytes = 1 << 20
@@ -22,6 +23,9 @@ func readBody(reader io.Reader) (string, error) {
 	body := strings.TrimSuffix(string(data), "\n")
 	if body == "" {
 		return "", refuseError("message body is empty")
+	}
+	if !utf8.ValidString(body) || strings.IndexByte(body, 0) >= 0 {
+		return "", refuseError("message body must be UTF-8 text without NUL bytes")
 	}
 	return body, nil
 }

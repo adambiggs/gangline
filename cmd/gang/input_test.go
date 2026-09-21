@@ -20,3 +20,11 @@ func TestReadBodyRejectsEmptyInput(t *testing.T) {
 		t.Fatal("empty input passed")
 	}
 }
+
+func TestReadBodyRejectsTerminalControlBytes(t *testing.T) {
+	for _, body := range []string{"contains\x00nul", "invalid\xffutf8"} {
+		if _, err := readBody(strings.NewReader(body)); err == nil {
+			t.Fatalf("body %q passed", body)
+		}
+	}
+}
