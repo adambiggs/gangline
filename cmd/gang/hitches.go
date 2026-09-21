@@ -64,11 +64,11 @@ func (cmd command) hitch(arguments []string) error {
 	if assignment == "" {
 		assignment = "Begin the role you were assigned and wait for an attributed Gangline message."
 	}
-	prose, err := cmd.startupProse(options.Role)
+	brief, err := cmd.startupProse(options.Role)
 	if err != nil {
 		return err
 	}
-	startup := composeStartup(options.Name, prose, assignment)
+	startup := composeStartup(options.Name, brief, assignment)
 	now := time.Now()
 	hitchRaw, err := randomID("hitch")
 	if err != nil {
@@ -82,7 +82,7 @@ func (cmd command) hitch(arguments []string) error {
 	run := &runtime{cmd: cmd, settings: settings}
 	record := startupRecord{
 		Model: options.Model, Effort: options.Effort, Resume: options.Resume,
-		RolePrompt: composeStartup(options.Name, prose, ""),
+		RolePrompt: composeStartup(options.Name, brief, ""),
 		Event: core.SendRequested{
 			At: now, Deadline: now.Add(deliveryTimeout),
 			Envelope: core.Envelope{
@@ -112,6 +112,7 @@ func (cmd command) hitch(arguments []string) error {
 		return refuseError("hitch %s failed to launch: %s", options.Name, hitch.WedgeEvidence)
 	}
 }
+
 func (cmd command) adopt(arguments []string) error {
 	if len(arguments) < 1 {
 		return usageError("adopt: agent name required")
@@ -152,6 +153,7 @@ func (cmd command) adopt(arguments []string) error {
 	}})
 	return err
 }
+
 func (cmd command) rename(arguments []string) error {
 	if err := exactly(arguments, 2, "rename"); err != nil {
 		return err
@@ -159,11 +161,7 @@ func (cmd command) rename(arguments []string) error {
 	if err := validateAgentName(arguments[1]); err != nil {
 		return err
 	}
-	run, err := cmd.runtime()
-	if err != nil {
-		return err
-	}
-	state, err := run.load()
+	run, state, err := cmd.loaded()
 	if err != nil {
 		return err
 	}
@@ -184,16 +182,13 @@ func (cmd command) rename(arguments []string) error {
 	_, err = run.drive(core.RenameRequested{At: time.Now(), HitchID: hitch.ID, Name: core.AgentName(arguments[1])})
 	return err
 }
+
 func (cmd command) drop(arguments []string) error {
 	name, err := requiredName(arguments, "drop")
 	if err != nil {
 		return err
 	}
-	run, err := cmd.runtime()
-	if err != nil {
-		return err
-	}
-	state, err := run.load()
+	run, state, err := cmd.loaded()
 	if err != nil {
 		return err
 	}

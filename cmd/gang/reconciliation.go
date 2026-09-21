@@ -114,8 +114,8 @@ func (run *runtime) reconcilePanes(state core.State, now time.Time) (core.State,
 	return state, nil
 }
 
-func (cmd command) observeWedges(run *runtime, state core.State) error {
-	backend, err := cmd.tmux(run.settings)
+func (run *runtime) observeWedges(state core.State) error {
+	backend, err := run.cmd.tmux(run.settings)
 	if err != nil {
 		return err
 	}
@@ -123,7 +123,7 @@ func (cmd command) observeWedges(run *runtime, state core.State) error {
 	if err != nil {
 		return err
 	}
-	entries, err := cmd.teamLog(run)
+	entries, err := run.teamLog()
 	if err != nil {
 		return err
 	}
@@ -166,7 +166,7 @@ func (cmd command) observeWedges(run *runtime, state core.State) error {
 	return nil
 }
 
-func (cmd command) teamLog(run *runtime) ([]store.LogEntry, error) {
+func (run *runtime) teamLog() ([]store.LogEntry, error) {
 	locked, err := run.paths().Lock(run.settings.Session)
 	if err != nil {
 		return nil, err

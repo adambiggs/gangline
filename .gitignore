@@ -6,4 +6,3 @@ packaging/pypi/*.egg-info/
 # Linked worktrees for local development.
 /.worktrees/
 .claude/
-.pii-scan-denylist

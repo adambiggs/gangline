@@ -7,6 +7,9 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+
+	"github.com/adambiggs/gangline/harness"
+	"github.com/adambiggs/gangline/substrate/tmux"
 )
 
 type settings struct {
@@ -174,4 +177,26 @@ func valueOr(value, fallback string) string {
 		return fallback
 	}
 	return value
+}
+
+func applyLaunchPolicy(command harness.Command, collar string, settings settings) harness.Command {
+	result := command
+	result.Args = append(append([]string(nil), command.Args...), settings.LaunchArgs[collar]...)
+	return result
+}
+
+func (cmd command) tmux(settings settings) (*tmux.Backend, error) {
+	config := cmd.tmuxConfig(settings.Socket, settings.Session)
+	config.Stdin, _ = cmd.stdin.(*os.File)
+	config.Stdout, _ = cmd.stdout.(*os.File)
+	config.Stderr, _ = cmd.stderr.(*os.File)
+	return tmux.New(config)
+}
+
+func (cmd command) tmuxConfig(socket, session string) tmux.Config {
+	return tmux.Config{
+		Binary:  valueOr(cmd.environment("GANG_TMUX"), "tmux"),
+		Socket:  socket,
+		Session: session,
+	}
 }

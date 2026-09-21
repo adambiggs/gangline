@@ -19,9 +19,9 @@ Collars and role briefs are read at hitch time. Existing agents retain the copy
 already in their context. Model selection is also a launch choice: drop the old
 window and hitch a new one to change it.
 
-The embedded contract is read at hitch time like the rest. Where a collar declares a
-`role_prompt` option it also enters the harness's system prompt. A running agent
-keeps the prose it launched with, so edits apply to later hitches.
+The embedded contract is read at hitch time like the rest. Where a collar
+declares a `role_prompt` option it also enters the harness's system prompt. A
+running agent keeps the prose it launched with, so edits apply to later hitches.
 
 ## Evidence
 
@@ -33,9 +33,9 @@ fail, and require immediate observable readiness before asserting state.
 ## Keep the agent surface small
 
 Gangline is substrate: tmux lifecycle, attributed verified delivery, direct
-observation, collars, shipped prose, native hooks,
-native compaction, context readings, provider limits, and recorded curfews. It
-does not coordinate work or supervise agents.
+observation, collars, shipped prose, native hooks, native compaction, context
+readings, provider limits, and recorded curfews. It does not coordinate work or
+supervise agents.
 
 - Harness-specific declarations belong in `harness/collars/`, and branching
   logic belongs in named `harness` primitives rather than harness-name branches

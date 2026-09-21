@@ -52,7 +52,7 @@ to guard a system create defects of their own.
 
 These decisions record non-obvious tradeoffs that still shape Gangline 1.0.
 
-## Append intent before external effects
+### Append intent before external effects
 
 Every command appends its input event and snapshots the resulting state before
 it touches tmux or a native harness. The observed outcome is another event.
@@ -63,7 +63,7 @@ An effect is retried only while duplication is safe. A delivery whose input
 keystrokes landed without a matching native submit witness becomes
 `delivery_unverified` and is not sent again automatically.
 
-## Verify submission through native hooks
+### Verify submission through native hooks
 
 Pane paint proves only that text appeared in a terminal. Delivery requires the
 native `UserPromptSubmit` hook to report the attributed, nonce-bearing envelope.
@@ -74,7 +74,7 @@ Gangline accepts only a well-formed wrapper whose opening and closing IDs match,
 then compares the entire inner envelope byte-for-byte. Missing, malformed, or
 changed hook data remains unknown rather than success.
 
-## Bind terminal input to the foreground harness
+### Bind terminal input to the foreground harness
 
 Before it sends any input, Gangline reads tmux's pane process and the host
 process table. The expected collar executable must be a descendant in the
@@ -86,7 +86,7 @@ Process identity corroborates the native composer and hook evidence rather
 than replacing either. Keeping the process-tree query in `substrate` also keeps
 host and tmux details out of harness primitives and the command state machine.
 
-## Reap only descendants recorded before pane termination
+### Reap only descendants recorded before pane termination
 
 Before tmux removes a pane, Gangline records every descendant using its PID and
 start time. After pane termination it signals only matching survivors, first
@@ -98,7 +98,7 @@ The snapshot catches descendants that changed session or process group with
 Executable names are deliberately excluded: they neither prove ownership nor
 remain stable across wrapper scripts and re-exec.
 
-## Put harness differences in CUE collars and Go primitives
+### Put harness differences in CUE collars and Go primitives
 
 The command layer has no branches on harness names. A collar declares launch
 arguments, hook payload mappings, primitive selections, actions, and context
@@ -108,7 +108,7 @@ third-party collar can select the same behavior.
 Operator collars pass through the same schema and loader as embedded collars.
 Unknown fields and primitive names fail before launch.
 
-## Leave native choices with the native harness
+### Leave native choices with the native harness
 
 Gangline recognizes trust, authentication, and permission surfaces but never
 answers them. A hitch that is not ready exits with status 4 and points the
@@ -121,7 +121,7 @@ native permission hook supplies an earlier signal when available. Delivery
 stays queued until direct observation clears the surface; Gangline never types
 through it or chooses an answer.
 
-## Keep the event log authoritative
+### Keep the event log authoritative
 
 The per-team JSONL log is the source of truth. Snapshots carry the event count,
 log byte length, and digest needed to validate that they describe the same log;
@@ -136,7 +136,7 @@ length to close the registration race. It folds each append until the target is
 idle or the caller's deadline expires. A timeout is itself appended as an event;
 waiting never polls or changes the target hitch's activity.
 
-## Keep the mandatory gate immediate
+### Keep the mandatory gate immediate
 
 Unit tests use supplied times and direct state. Black-box scenarios use private
 tmux sockets and event barriers. The local gate has a hard ceiling below two

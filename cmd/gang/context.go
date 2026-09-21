@@ -3,6 +3,8 @@ package main
 import (
 	"context"
 	"fmt"
+	"strconv"
+	"strings"
 	"time"
 
 	"github.com/adambiggs/gangline/core"
@@ -11,11 +13,18 @@ import (
 )
 
 func (cmd command) context(arguments []string) error {
-	name, state, run, err := cmd.observationTarget(arguments, "context")
+	name, err := observationName(arguments, "context")
 	if err != nil {
 		return err
 	}
-	hitch, _ := activeByName(state, name)
+	run, state, err := cmd.loaded()
+	if err != nil {
+		return err
+	}
+	hitch, err := cmd.observationTarget(name, state)
+	if err != nil {
+		return err
+	}
 	backend, err := cmd.tmux(run.settings)
 	if err != nil {
 		return err
@@ -41,16 +50,23 @@ func (cmd command) context(arguments []string) error {
 	if band != nil {
 		bandName = band.Name
 	}
-	_, err = fmt.Fprintf(cmd.stdout, "%s\t%d/%d\t%.0f%%\t%s\n", name, reading.Used, reading.Limit, reading.Percent*100, bandName)
+	_, err = fmt.Fprintf(cmd.stdout, "%s\t%d/%d\t%.0f%%\t%s\n", hitch.Name, reading.Used, reading.Limit, reading.Percent*100, bandName)
 	return err
 }
 
 func (cmd command) limits(arguments []string) error {
-	name, state, run, err := cmd.observationTarget(arguments, "limits")
+	name, err := observationName(arguments, "limits")
 	if err != nil {
 		return err
 	}
-	hitch, _ := activeByName(state, name)
+	run, state, err := cmd.loaded()
+	if err != nil {
+		return err
+	}
+	hitch, err := cmd.observationTarget(name, state)
+	if err != nil {
+		return err
+	}
 	backend, err := cmd.tmux(run.settings)
 	if err != nil {
 		return err
@@ -75,36 +91,137 @@ func (cmd command) limits(arguments []string) error {
 	return nil
 }
 
-func (cmd command) observationTarget(arguments []string, commandName string) (string, core.State, *runtime, error) {
+func observationName(arguments []string, commandName string) (string, error) {
 	if len(arguments) > 1 {
-		return "", core.State{}, nil, usageError("%s: expected at most one agent", commandName)
+		return "", usageError("%s: expected at most one agent", commandName)
 	}
 	name := ""
 	if len(arguments) == 1 {
 		name = arguments[0]
 		if err := validateAgentName(name); err != nil {
-			return "", core.State{}, nil, err
+			return "", err
 		}
 	}
-	run, err := cmd.runtime()
-	if err != nil {
-		return "", core.State{}, nil, err
-	}
-	state, err := run.load()
-	if err != nil {
-		return "", core.State{}, nil, err
-	}
+	return name, nil
+}
+
+func (cmd command) observationTarget(name string, state core.State) (core.Hitch, error) {
 	if name == "" {
-		pane := cmd.environment("TMUX_PANE")
-		for _, hitch := range state.Hitches {
-			if hitch.Pane == pane {
-				name = string(hitch.Name)
-				break
-			}
+		name = nameAtPane(state, cmd.environment("TMUX_PANE"))
+	}
+	hitch, ok := activeByName(state, name)
+	if !ok {
+		return core.Hitch{}, refuseError("agent %q is not active", name)
+	}
+	return hitch, nil
+}
+
+func (cmd command) capture(arguments []string) error {
+	composer := false
+	if len(arguments) != 0 && arguments[0] == "--composer" {
+		composer = true
+		arguments = arguments[1:]
+	}
+	if len(arguments) > 2 {
+		return usageError("capture: too many arguments")
+	}
+	name := ""
+	if len(arguments) >= 1 {
+		name = arguments[0]
+		if err := validateAgentName(name); err != nil {
+			return err
 		}
 	}
-	if _, ok := activeByName(state, name); !ok {
-		return "", core.State{}, nil, refuseError("agent %q is not active", name)
+	lineCount := 0
+	if len(arguments) == 2 {
+		if composer {
+			return usageError("capture --composer does not accept a line count")
+		}
+		parsed, err := strconv.Atoi(arguments[1])
+		if err != nil || parsed <= 0 {
+			return usageError("capture: lines must be a positive whole number")
+		}
+		lineCount = parsed
 	}
-	return name, state, run, nil
+	if composer {
+		run, state, err := cmd.loaded()
+		if err != nil {
+			return err
+		}
+		if name == "" {
+			name = nameAtPane(state, cmd.environment("TMUX_PANE"))
+		}
+		hitch, ok := activeByName(state, name)
+		if !ok {
+			return refuseError("agent %q is not active", name)
+		}
+		backend, err := cmd.tmux(run.settings)
+		if err != nil {
+			return err
+		}
+		screen, err := backend.Capture(context.Background(), substrate.PaneID(hitch.Pane))
+		if err != nil {
+			return err
+		}
+		collar, err := loadCollar(hitch.Collar, run.settings)
+		if err != nil {
+			return err
+		}
+		reading, err := harness.ReadComposer(collar.Primitives.Composer, screen)
+		if err != nil {
+			return commandError{status: exitUnknown, text: err.Error()}
+		}
+		_, err = fmt.Fprintln(cmd.stdout, reading.Text)
+		return err
+	}
+
+	settings, err := cmd.settings()
+	if err != nil {
+		return err
+	}
+	backend, err := cmd.tmux(settings)
+	if err != nil {
+		return err
+	}
+	var pane substrate.Pane
+	if name == "" {
+		paneID := cmd.environment("TMUX_PANE")
+		if paneID == "" {
+			return refuseError("capture without an agent name must run inside tmux")
+		}
+		pane = substrate.Pane{ID: substrate.PaneID(paneID)}
+	} else {
+		pane, err = backend.PaneNamed(context.Background(), name)
+	}
+	if err != nil {
+		return err
+	}
+	screen, err := backend.Capture(context.Background(), pane.ID)
+	if err != nil {
+		return err
+	}
+	text := renderScreen(screen, lineCount)
+	if text == "" {
+		return nil
+	}
+	_, err = fmt.Fprintln(cmd.stdout, text)
+	return err
+}
+
+func renderScreen(screen substrate.Screen, lineCount int) string {
+	rows := make([]string, len(screen.Rows))
+	for rowNumber, row := range screen.Rows {
+		var line strings.Builder
+		for _, cell := range row {
+			line.WriteString(cell.Text)
+		}
+		rows[rowNumber] = strings.TrimRight(line.String(), " ")
+	}
+	for len(rows) != 0 && rows[len(rows)-1] == "" {
+		rows = rows[:len(rows)-1]
+	}
+	if lineCount > 0 && len(rows) > lineCount {
+		rows = rows[len(rows)-lineCount:]
+	}
+	return strings.Join(rows, "\n")
 }
