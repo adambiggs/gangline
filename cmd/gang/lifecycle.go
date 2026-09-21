@@ -10,6 +10,7 @@ import (
 	"path/filepath"
 	"sort"
 	"strings"
+	"syscall"
 	"time"
 
 	"github.com/adambiggs/gangline/core"
@@ -501,19 +502,49 @@ func (cmd command) hook(arguments []string) error {
 	if err != nil {
 		return err
 	}
-	boundary, _, err := harness.DetectTurnBoundary(collar, payload)
+	boundary, hookEvent, err := harness.DetectTurnBoundary(collar, payload)
 	if err != nil {
 		return err
+	}
+	if boundary == harness.TurnStarted && hookEvent.Payload["prompt"] != "" {
+		witness := run.deliveryWitnessPath(id)
+		file, openErr := os.OpenFile(witness, os.O_WRONLY|syscall.O_NONBLOCK, 0)
+		if openErr == nil {
+			_, writeErr := io.WriteString(file, hookEvent.Payload["prompt"])
+			closeErr := file.Close()
+			if writeErr != nil {
+				return writeErr
+			}
+			if closeErr != nil {
+				return closeErr
+			}
+		}
 	}
 	now := time.Now()
 	switch boundary {
 	case harness.TurnStarted:
-		_, err = run.drive(core.TurnStarted{At: now, HitchID: id})
+		if hitch.Activity == core.ActivityIdle {
+			_, err = run.drive(core.TurnStarted{At: now, HitchID: id})
+		}
 	case harness.TurnFinished:
 		_, err = run.drive(core.TurnBoundaryReached{At: now, HitchID: id})
 	case harness.TurnCompactionFinished:
 		if hitch.PendingCompactID != "" {
+			compact := state.Compactions[hitch.PendingCompactID]
 			_, err = run.drive(core.CompactionCompleted{At: now, CompactionID: hitch.PendingCompactID})
+			if err == nil {
+				id, idErr := randomID("resume")
+				if idErr != nil {
+					return idErr
+				}
+				_, err = run.drive(core.SendRequested{
+					At: now, Deadline: now.Add(deliveryTimeout),
+					Envelope: core.Envelope{
+						ID: core.EnvelopeID(id), From: core.Sender{Kind: core.SenderSelfDeclared, Name: "compact"},
+						To: hitch.Name, Message: compact.Resume, CreatedAt: now,
+					},
+				})
+			}
 		}
 	case harness.TurnCompactionStarted:
 		// The request event already records the durable start intent.

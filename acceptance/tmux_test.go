@@ -2,21 +2,262 @@ package acceptance
 
 import (
 	"bufio"
+	"encoding/json"
 	"fmt"
+	"io"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/adambiggs/gangline/core"
+	"github.com/adambiggs/gangline/store"
 )
 
 const fakeHarnessEnvironment = "GANGLINE_ACCEPTANCE_FAKE_HARNESS"
 
 func TestMain(m *testing.M) {
+	if os.Getenv("GANGLINE_ACCEPTANCE_CMD_HARNESS") == "1" {
+		os.Exit(runCommandHarness())
+	}
 	if os.Getenv(fakeHarnessEnvironment) == "1" {
 		os.Exit(runFakeHarness())
 	}
 	os.Exit(m.Run())
+}
+
+func TestCommandLifecycleOnPrivateTmux(t *testing.T) {
+	tmuxBinary, err := exec.LookPath("tmux")
+	if err != nil {
+		t.Fatal("tmux is required for acceptance tests")
+	}
+	goBinary, err := exec.LookPath("go")
+	if err != nil {
+		t.Fatal("go is required for command acceptance tests")
+	}
+	home, err := os.UserHomeDir()
+	if err != nil {
+		t.Fatal(err)
+	}
+	base := filepath.Join(home, ".local", "state", "gangline", "acceptance")
+	if err := os.MkdirAll(base, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	root, err := os.MkdirTemp(base, "command-")
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = os.RemoveAll(root) })
+
+	repository, err := filepath.Abs("..")
+	if err != nil {
+		t.Fatal(err)
+	}
+	gangBinary := filepath.Join(root, "gang")
+	build := exec.Command(goBinary, "build", "-o", gangBinary, "./cmd/gang")
+	build.Dir = repository
+	if output, err := build.CombinedOutput(); err != nil {
+		t.Fatalf("build gang: %v\n%s", err, output)
+	}
+	testBinary, err := os.Executable()
+	if err != nil {
+		t.Fatal(err)
+	}
+	collarDir := filepath.Join(root, "collars")
+	if err := os.Mkdir(collarDir, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	configDir := filepath.Join(root, "config")
+	if err := os.Mkdir(configDir, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	collar := commandAcceptanceCollar(testBinary)
+	if err := os.WriteFile(filepath.Join(collarDir, "acceptance.cue"), []byte(collar), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	socket := filepath.Join(root, "tmux.sock")
+	ledger := filepath.Join(root, "received.log")
+	argvLedger := filepath.Join(root, "argv.log")
+	ready := "command-harness-ready"
+	const session = "gangline-command-acceptance"
+	environment := append(withoutEnvironment(os.Environ(), "TMUX", "TMUX_PANE", "GANG_CONFIG_DIR"),
+		"GANG_SESSION="+session,
+		"GANG_CONFIG_DIR="+configDir,
+		"GANG_STATE_ROOT="+filepath.Join(root, "state"),
+		"GANG_TMUX_SOCKET="+socket,
+		"GANG_COLLARS="+collarDir,
+		"GANG_COLLAR=acceptance",
+		`GANG_LAUNCH_ARGS={"acceptance":["--operator-unsandboxed"]}`,
+		"GANGLINE_ACCEPTANCE_CMD_HARNESS=1",
+		"GANGLINE_ACCEPTANCE_TMUX="+tmuxBinary,
+		"GANGLINE_ACCEPTANCE_TMUX_SOCKET="+socket,
+		"GANGLINE_ACCEPTANCE_READY="+ready,
+		"GANGLINE_ACCEPTANCE_LEDGER="+ledger,
+		"GANGLINE_ACCEPTANCE_ARGV_LEDGER="+argvLedger,
+	)
+	runner := tmuxRunner{binary: tmuxBinary, socket: socket, env: environment}
+	t.Cleanup(func() {
+		_, _ = runner.run("kill-session", "-t", session)
+	})
+	runGang := func(input string, arguments ...string) (string, int) {
+		t.Helper()
+		command := exec.Command(gangBinary, arguments...)
+		command.Dir = repository
+		command.Env = environment
+		command.Stdin = strings.NewReader(input)
+		output, err := command.CombinedOutput()
+		if err == nil {
+			return string(output), 0
+		}
+		if exit, ok := err.(*exec.ExitError); ok {
+			return string(output), exit.ExitCode()
+		}
+		t.Fatalf("run gang %v: %v", arguments, err)
+		return "", -1
+	}
+
+	_, hitchStatus := runGang("acceptance assignment\n", "hitch", "worker", "-c", "acceptance", "--stdin")
+	if hitchStatus != 0 && hitchStatus != 4 {
+		t.Fatalf("initial hitch status = %d, want ready (0) or native wait (4)", hitchStatus)
+	}
+	if output, err := runner.run("wait-for", ready); err != nil {
+		t.Fatalf("wait for harness: %v\n%s", err, output)
+	}
+	if hitchStatus == 4 {
+		if output, status := runGang("", "tick"); status != 0 {
+			t.Fatalf("finish hitch: status %d\n%s", status, output)
+		}
+	}
+	if output, err := runner.run("wait-for", "received"); err != nil {
+		t.Fatalf("wait for startup delivery: %v\n%s", err, output)
+	}
+	argv, err := os.ReadFile(argvLedger)
+	if err != nil || !strings.Contains(string(argv), "--operator-unsandboxed") {
+		t.Fatalf("operator launch policy was not observed: %v %q", err, argv)
+	}
+	state := loadAcceptanceState(t, filepath.Join(root, "state"), session)
+	hitch, ok := acceptanceHitch(state, "worker")
+	if !ok {
+		t.Fatal("worker did not become active")
+	}
+
+	hookEnv := append(environment, "GANGLINE_HITCH_ID="+string(hitch.ID))
+	runHook := func(native string) {
+		t.Helper()
+		payload, _ := json.Marshal(map[string]string{"hook_event_name": native})
+		command := exec.Command(gangBinary, "hook")
+		command.Dir, command.Env, command.Stdin = repository, hookEnv, strings.NewReader(string(payload))
+		if output, err := command.CombinedOutput(); err != nil {
+			t.Fatalf("hook %s: %v\n%s", native, err, output)
+		}
+	}
+	runHook("Stop")
+	if output, status := runGang("ordinary delivery\n", "send", "worker", "--from", "tester"); status != 0 {
+		screen, _ := runner.run("capture-pane", "-p", "-J", "-t", session)
+		t.Fatalf("send status %d:\n%s\nscreen:\n%s", status, output, screen)
+	}
+	if output, err := runner.run("wait-for", "received"); err != nil {
+		t.Fatalf("wait for ordinary delivery: %v\n%s", err, output)
+	}
+	runHook("Stop")
+	if output, status := runGang("", "compact", "worker", "--resume", "resume after compact"); status != 0 {
+		t.Fatalf("compact status %d:\n%s", status, output)
+	}
+	if output, err := runner.run("wait-for", "received"); err != nil {
+		t.Fatalf("wait for compact command: %v\n%s", err, output)
+	}
+	runHook("PostCompact")
+	runHook("Stop")
+	if output, err := runner.run("wait-for", "received"); err != nil {
+		t.Fatalf("wait for compaction continuation: %v\n%s", err, output)
+	}
+	runHook("Stop")
+	runHook("UserPromptSubmit")
+	if output, status := runGang("", "tick"); status != 0 {
+		t.Fatalf("first wedge observation status %d:\n%s", status, output)
+	}
+	if output, status := runGang("", "tick"); status != 0 {
+		t.Fatalf("second wedge observation status %d:\n%s", status, output)
+	}
+	state = loadAcceptanceState(t, filepath.Join(root, "state"), session)
+	hitch, _ = acceptanceHitch(state, "worker")
+	if hitch.Activity != core.ActivityWedged {
+		t.Fatalf("activity = %q, want wedged", hitch.Activity)
+	}
+	if output, status := runGang("", "drop", "worker"); status != 0 {
+		t.Fatalf("drop status %d:\n%s", status, output)
+	}
+	state = loadAcceptanceState(t, filepath.Join(root, "state"), session)
+	for _, recorded := range state.Hitches {
+		if recorded.Name == "worker" && recorded.Status != core.HitchDropped {
+			t.Fatalf("drop left status %q", recorded.Status)
+		}
+	}
+	received, err := os.ReadFile(ledger)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, text := range []string{"assignment", "ordinary delivery", "/compact resume after compact", "resume after compact"} {
+		if !strings.Contains(string(received), text) {
+			t.Fatalf("delivery ledger lacks %q:\n%s", text, received)
+		}
+	}
+}
+
+func commandAcceptanceCollar(command string) string {
+	return fmt.Sprintf(`package collars
+collar: {
+ name: "acceptance"
+ launch: {command: %q, args: []}
+ hooks: {
+  install_args: ["--hook", "{{hook.command.json}}"]
+  events: {
+	   userpromptsubmit: {event: "turn-started", payload: {prompt: "prompt"}}
+   stop: {event: "turn-finished"}
+   precompact: {event: "compaction-started"}
+   postcompact: {event: "compaction-finished"}
+  }
+ }
+ models: {catalog: {name: "codex-debug-models", params: {command: "false", args: ""}}, option: {args: ["-m", "{{value}}"]}}
+ options: {effort: {args: ["-e", "{{value}}"]}}
+ primitives: {
+	  startup: [{name: "claude-composer"}]
+	  composer: {name: "claude-composer"}
+  submit: {name: "enter-submit"}
+  turn_boundary: {name: "hook-boundary"}
+  context: {name: "codex-screen-context"}
+  provider_limits: {name: "codex-screen-limits"}
+  wedge: {name: "stable-busy-screen", params: {busy: "WORKING", after: "1ns"}}
+ }
+ actions: {interrupt: {keys: ["Escape"]}, compact: {text: "/compact {{instructions}}", submit: true}, compact_recover: [{keys: ["Escape"]}]}
+ context_bands: {"*": [{name: "yellow", at: 0.75, message: "context"}]}
+}
+`, command)
+}
+
+func loadAcceptanceState(t *testing.T, root, session string) core.State {
+	t.Helper()
+	locked, err := (store.Paths{Root: root}).Lock(session)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer locked.Close()
+	state, _, err := locked.Load(core.NewState(core.Team{ID: core.TeamID(session), Name: session}))
+	if err != nil {
+		t.Fatal(err)
+	}
+	return state
+}
+
+func acceptanceHitch(state core.State, name string) (core.Hitch, bool) {
+	for _, hitch := range state.Hitches {
+		if hitch.Name == core.AgentName(name) {
+			return hitch, true
+		}
+	}
+	return core.Hitch{}, false
 }
 
 func TestTmuxCarriesOneHarnessTurn(t *testing.T) {
@@ -148,6 +389,98 @@ func runFakeHarness() int {
 		return 1
 	}
 	return 0
+}
+
+func runCommandHarness() int {
+	argv := strings.Join(os.Args[1:], "\n") + "\n"
+	if err := os.WriteFile(os.Getenv("GANGLINE_ACCEPTANCE_ARGV_LEDGER"), []byte(argv), 0o600); err != nil {
+		fmt.Fprintln(os.Stderr, err)
+		return 1
+	}
+	stty := exec.Command("stty", "raw", "-echo")
+	stty.Stdin = os.Stdin
+	if output, err := stty.CombinedOutput(); err != nil {
+		fmt.Fprintf(os.Stderr, "set raw terminal: %v: %s", err, output)
+		return 1
+	}
+	renderCommandComposer("")
+	if err := signal(os.Getenv("GANGLINE_ACCEPTANCE_READY")); err != nil {
+		fmt.Fprintln(os.Stderr, err)
+		return 1
+	}
+	reader := bufio.NewReader(os.Stdin)
+	var input strings.Builder
+	for {
+		value, err := reader.ReadByte()
+		if err != nil {
+			if err == io.EOF {
+				return 0
+			}
+			fmt.Fprintln(os.Stderr, err)
+			return 1
+		}
+		if value != '\r' {
+			input.WriteByte(value)
+			renderCommandComposer(input.String())
+			continue
+		}
+		file, err := os.OpenFile(os.Getenv("GANGLINE_ACCEPTANCE_LEDGER"), os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0o600)
+		if err != nil {
+			fmt.Fprintln(os.Stderr, err)
+			return 1
+		}
+		_, writeErr := fmt.Fprintln(file, input.String())
+		closeErr := file.Close()
+		if writeErr != nil || closeErr != nil {
+			fmt.Fprintln(os.Stderr, writeErr, closeErr)
+			return 1
+		}
+		if err := commandHarnessHook(input.String()); err != nil {
+			fmt.Fprintln(os.Stderr, err)
+			return 1
+		}
+		input.Reset()
+		renderCommandComposer("")
+		if err := signal("received"); err != nil {
+			fmt.Fprintln(os.Stderr, err)
+			return 1
+		}
+	}
+}
+
+func commandHarnessHook(prompt string) error {
+	commandText := ""
+	for index := 1; index+1 < len(os.Args); index++ {
+		if os.Args[index] == "--hook" {
+			if err := json.Unmarshal([]byte(os.Args[index+1]), &commandText); err != nil {
+				return fmt.Errorf("decode hook command: %w", err)
+			}
+			break
+		}
+	}
+	if commandText == "" {
+		return fmt.Errorf("fake harness received no hook command")
+	}
+	payload, _ := json.Marshal(map[string]string{"hook_event_name": "UserPromptSubmit", "prompt": prompt})
+	command := exec.Command("sh", "-c", commandText)
+	command.Stdin = strings.NewReader(string(payload))
+	if output, err := command.CombinedOutput(); err != nil {
+		return fmt.Errorf("run hook: %w: %s", err, output)
+	}
+	return nil
+}
+
+func renderCommandComposer(input string) {
+	const rule = "────────────────────────────────────────────────────────────"
+	lines := strings.Split(input, "\n")
+	if len(lines) == 0 {
+		lines = []string{""}
+	}
+	fmt.Print("\x1b[2J\x1b[HWORKING\r\n", rule, "\r\n❯ ", lines[0], "\r\n")
+	for _, line := range lines[1:] {
+		fmt.Print(line, "\r\n")
+	}
+	fmt.Print(rule, "\r\n")
 }
 
 func signal(channel string) error {

@@ -6,7 +6,9 @@ import (
 	"errors"
 	"fmt"
 	"os"
+	"os/exec"
 	"path/filepath"
+	"syscall"
 	"time"
 
 	"github.com/adambiggs/gangline/core"
@@ -317,22 +319,51 @@ func (run *runtime) deliver(state core.State, backend interface {
 	if err := backend.SendKeys(context.Background(), substrate.PaneID(effect.Pane), substrate.Keys{Text: wire}); err != nil {
 		return core.DeliveryUnverifiedEvent{At: time.Now(), EnvelopeID: effect.Envelope.ID, Evidence: "text input returned an error: " + err.Error()}, nil
 	}
-	readback, err := backend.Capture(context.Background(), substrate.PaneID(effect.Pane))
-	if err != nil {
-		return core.DeliveryUnverifiedEvent{At: time.Now(), EnvelopeID: effect.Envelope.ID, Evidence: "cannot verify composer after input: " + err.Error()}, nil
+	// Recapture supplies diagnostic evidence when the native renderer is fast
+	// enough. The exact UserPromptSubmit payload below is authoritative: long
+	// composers can be clipped and a TUI may still be painting immediately
+	// after tmux accepted the literal bytes.
+	if readback, captureErr := backend.Capture(context.Background(), substrate.PaneID(effect.Pane)); captureErr == nil {
+		_, _ = harness.ReadComposer(collar.Primitives.Composer, readback)
 	}
-	observed, err := harness.ReadComposer(collar.Primitives.Composer, readback)
-	if err != nil || observed.Text != wire {
-		evidence := "composer readback did not match the attributed envelope"
-		if err != nil {
-			evidence = "composer readback failed: " + err.Error()
-		}
-		return core.DeliveryUnverifiedEvent{At: time.Now(), EnvelopeID: effect.Envelope.ID, Evidence: evidence}, nil
+	witness := run.deliveryWitnessPath(hitch.ID)
+	_ = os.Remove(witness)
+	if err := syscall.Mkfifo(witness, 0o600); err != nil {
+		return core.DeliveryUnverifiedEvent{At: time.Now(), EnvelopeID: effect.Envelope.ID, Evidence: "prepare native submit witness: " + err.Error()}, nil
 	}
+	defer os.Remove(witness)
+	ctx, cancel := context.WithDeadline(context.Background(), effect.Deadline)
+	defer cancel()
+	reader := exec.CommandContext(ctx, "cat", witness)
+	type witnessResult struct {
+		data []byte
+		err  error
+	}
+	witnessed := make(chan witnessResult, 1)
+	go func() {
+		data, readErr := reader.Output()
+		witnessed <- witnessResult{data: data, err: readErr}
+	}()
 	if err := backend.SendKeys(context.Background(), substrate.PaneID(effect.Pane), substrate.Keys{Submit: true}); err != nil {
 		return core.DeliveryUnverifiedEvent{At: time.Now(), EnvelopeID: effect.Envelope.ID, Evidence: "submit returned an error after verified text input: " + err.Error()}, nil
 	}
-	return core.DeliverySucceeded{At: time.Now(), EnvelopeID: effect.Envelope.ID}, nil
+	select {
+	case result := <-witnessed:
+		if result.err != nil {
+			return core.DeliveryUnverifiedEvent{At: time.Now(), EnvelopeID: effect.Envelope.ID, Evidence: "native submit witness failed: " + result.err.Error()}, nil
+		}
+		if string(result.data) != wire {
+			return core.DeliveryUnverifiedEvent{At: time.Now(), EnvelopeID: effect.Envelope.ID, Evidence: "native submit witness did not match the attributed envelope"}, nil
+		}
+		return core.DeliverySucceeded{At: time.Now(), EnvelopeID: effect.Envelope.ID}, nil
+	case <-ctx.Done():
+		return core.DeliveryUnverifiedEvent{At: time.Now(), EnvelopeID: effect.Envelope.ID, Evidence: "native submit witness timed out after input was sent"}, nil
+	}
+}
+
+func (run *runtime) deliveryWitnessPath(id core.HitchID) string {
+	paths, _ := run.paths().Team(run.settings.Session)
+	return filepath.Join(paths.Directory, "delivery-"+string(id)+".fifo")
 }
 
 type startupRecord struct {
