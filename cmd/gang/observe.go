@@ -7,6 +7,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strings"
 	"syscall"
 	"time"
 
@@ -210,7 +211,7 @@ func (cmd command) collar(arguments []string) error {
 	if err != nil {
 		return err
 	}
-	report := harness.CheckReport{Collar: collar.Name, HarnessVersion: "unknown"}
+	report := harness.CheckReport{Collar: collar.Name, HarnessVersion: installedHarnessVersion(collar)}
 	results := make(map[string]harness.ProbeResult)
 	for _, name := range harness.RequiredProbes() {
 		results[name] = harness.ProbeResult{Name: name, Detail: "unknown: probe did not run"}
@@ -228,15 +229,26 @@ func (cmd command) collar(arguments []string) error {
 		return err
 	}
 	defer os.RemoveAll(checkDir)
-	executable, err := os.Executable()
+	home, err := cmd.userHomeDir()
 	if err != nil {
 		return err
 	}
-	_ = executable
+	socketRoot := filepath.Join(home, ".local", "state")
+	if err := os.MkdirAll(socketRoot, 0o700); err != nil {
+		return err
+	}
+	shortID := id
+	if len(shortID) > 18 {
+		shortID = shortID[:18]
+	}
+	trustSocket := filepath.Join(socketRoot, "gl-"+shortID+"-t.sock")
+	activeSocket := filepath.Join(socketRoot, "gl-"+shortID+"-a.sock")
+	defer os.Remove(trustSocket)
+	defer os.Remove(activeSocket)
 
 	// A fresh directory exercises the native trust surface. Gangline observes it
 	// and never answers it.
-	trustBackend, err := tmux.New(tmux.Config{Binary: valueOr(cmd.environment("GANGLINE_TMUX"), "tmux"), Socket: filepath.Join(checkDir, "trust.sock"), Session: "gang-check-trust-" + id})
+	trustBackend, err := tmux.New(tmux.Config{Binary: valueOr(cmd.environment("GANGLINE_TMUX"), "tmux"), Socket: trustSocket, Session: "gang-check-trust-" + id})
 	if err != nil {
 		return err
 	}
@@ -244,17 +256,16 @@ func (cmd command) collar(arguments []string) error {
 	if err != nil {
 		return err
 	}
-	baseLaunch = applyLaunchPolicy(baseLaunch, collar.Name, settings)
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
 	trustPane, launchErr := trustBackend.CreateSession(ctx, baseLaunch.SpawnSpec("probe", checkDir))
 	if launchErr == nil {
 		results[harness.ProbeLaunch] = harness.ProbeResult{Name: harness.ProbeLaunch, Passed: true, Detail: "native process launched in a private tmux server"}
-		if screen, captureErr := trustBackend.Capture(ctx, trustPane.ID); captureErr == nil {
-			if startup, inspectErr := harness.InspectStartup(collar, screen); inspectErr == nil && startup.State == harness.StartupTrustRequired {
-				results[harness.ProbeTrustPrompt] = harness.ProbeResult{Name: harness.ProbeTrustPrompt, Passed: true, Detail: startup.Prompt}
-			}
+		if startup, _, inspectErr := awaitStartup(ctx, trustBackend, trustPane.ID, collar); inspectErr == nil && startup.State == harness.StartupTrustRequired {
+			results[harness.ProbeTrustPrompt] = harness.ProbeResult{Name: harness.ProbeTrustPrompt, Passed: true, Detail: startup.Prompt}
 		}
+	} else {
+		results[harness.ProbeLaunch] = harness.ProbeResult{Name: harness.ProbeLaunch, Detail: launchErr.Error()}
 	}
 	_ = trustBackend.KillSession(context.Background())
 
@@ -269,7 +280,7 @@ func (cmd command) collar(arguments []string) error {
 		return err
 	}
 	launch = applyLaunchPolicy(launch, collar.Name, settings)
-	activeBackend, err := tmux.New(tmux.Config{Binary: valueOr(cmd.environment("GANGLINE_TMUX"), "tmux"), Socket: filepath.Join(checkDir, "active.sock"), Session: "gang-check-active-" + id})
+	activeBackend, err := tmux.New(tmux.Config{Binary: valueOr(cmd.environment("GANGLINE_TMUX"), "tmux"), Socket: activeSocket, Session: "gang-check-active-" + id})
 	if err != nil {
 		return err
 	}
@@ -280,9 +291,11 @@ func (cmd command) collar(arguments []string) error {
 	}
 	pane, err := activeBackend.CreateSession(ctx, launch.SpawnSpec("probe", workdir))
 	if err == nil {
-		if screen, captureErr := activeBackend.Capture(ctx, pane.ID); captureErr == nil {
-			startup, inspectErr := harness.InspectStartup(collar, screen)
-			if inspectErr == nil && startup.State == harness.StartupReady {
+		if startup, screen, inspectErr := awaitStartup(ctx, activeBackend, pane.ID, collar); inspectErr == nil {
+			if startup.State == harness.StartupTrustRequired {
+				results[harness.ProbeTrustPrompt] = harness.ProbeResult{Name: harness.ProbeTrustPrompt, Passed: true, Detail: startup.Prompt}
+			}
+			if startup.State == harness.StartupReady {
 				composer, composerErr := harness.ReadComposer(collar.Primitives.Composer, screen)
 				if composerErr == nil && composer.Text == "" {
 					results[harness.ProbeComposer] = harness.ProbeResult{Name: harness.ProbeComposer, Passed: true, Detail: "native empty composer detected"}
@@ -315,9 +328,54 @@ func (cmd command) collar(arguments []string) error {
 		}
 	}
 	if !report.Passed() {
+		fmt.Fprintln(cmd.stdout)
+		fmt.Fprint(cmd.stdout, report.IssueBody())
+		fmt.Fprintln(cmd.stdout, report.IssueCommand("adambiggs/gangline"))
 		return commandError{status: exitNative, text: "collar check incomplete; native prompts are never auto-answered"}
 	}
 	return nil
+}
+
+func awaitStartup(ctx context.Context, backend interface {
+	Capture(context.Context, substrate.PaneID) (substrate.Screen, error)
+}, pane substrate.PaneID, collar harness.Collar) (harness.Startup, substrate.Screen, error) {
+	deadline := time.NewTimer(5 * time.Second)
+	defer deadline.Stop()
+	ticker := time.NewTicker(25 * time.Millisecond)
+	defer ticker.Stop()
+	for {
+		screen, err := backend.Capture(ctx, pane)
+		if err == nil {
+			startup, inspectErr := harness.InspectStartup(collar, screen)
+			if inspectErr == nil && startup.State != harness.StartupOccupied {
+				return startup, screen, nil
+			}
+		}
+		select {
+		case <-ctx.Done():
+			return harness.Startup{}, substrate.Screen{}, ctx.Err()
+		case <-deadline.C:
+			return harness.Startup{}, substrate.Screen{}, fmt.Errorf("native startup was not observable within 5s")
+		case <-ticker.C:
+		}
+	}
+}
+
+func installedHarnessVersion(collar harness.Collar) string {
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	output, err := exec.CommandContext(ctx, collar.Launch.Command, "--version").Output()
+	if err != nil {
+		return "unknown"
+	}
+	line := strings.TrimSpace(string(output))
+	if before, _, ok := strings.Cut(line, "\n"); ok {
+		line = before
+	}
+	if line == "" {
+		return "unknown"
+	}
+	return line
 }
 
 func awaitNativeHook(ctx context.Context, fifo string, trigger func() error) ([]byte, error) {
