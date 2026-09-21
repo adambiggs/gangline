@@ -21,7 +21,7 @@ else
 fi
 
 # THE PRE-RELEASE LANE CARRIES THE ASSERTIONS THE FIVE-MINUTE GATE CANNOT. Its
-# fixture proves that it invokes all three checks in order and that a failed integration remains the lane's result instead of becoming a
+# fixture proves that it invokes every check in order and that a failed integration remains the lane's result instead of becoming a
 # green contribution verdict.
 release_dependencies="$(awk '
   $0 == "  release:" { in_release = 1; next }
@@ -43,7 +43,7 @@ release_flock_args="$RUN_ROOT/release-lane-flock-args"
 release_real_flock="$(command -v flock)"
 mkdir -p "$release_run/test"
 cp "$ROOT/test/release.sh" "$release_run/test/"
-for release_step in lint smoke integration; do
+for release_step in lint smoke go integration; do
   cat > "$release_run/test/$release_step.sh" <<SH
 #!/bin/sh
 # SPDX-License-Identifier: Apache-2.0
@@ -80,10 +80,10 @@ release_out="$(env -u GANG_RELEASE_LOCKED \
   PATH="$release_flock_bin:$PATH" GANG_RELEASE_LOCK="$release_lock" GANG_INTEGRATION_PARTS=cli \
   GANG_INTEGRATION_REQUIRE_ALL=0 \
   "$release_run/test/release.sh")"
-equal "the release lane runs lint, smoke, and integration in order" \
-  "$(printf 'lint\nsmoke\nintegration')" "$(<"$release_order")"
+equal "the release lane runs lint, smoke, Go checks, and integration in order" \
+  "$(printf 'lint\nsmoke\ngo\nintegration')" "$(<"$release_order")"
 contains "the release lane reports its complete green proof" \
-  "$release_out" "passed lint, smoke, and full integration"
+  "$release_out" "passed lint, smoke, Go checks, and full integration"
 equal "the release lane clears a focused selector and requires every part" \
   "parts=<> require=<1>" "$(<"$release_scope")"
 if [ -s "$release_flock_args" ]; then
@@ -101,8 +101,8 @@ env -u GANG_RELEASE_LOCKED \
   PATH="$release_flock_bin:$PATH" GANG_RELEASE_LOCK="$release_lock" RELEASE_FAIL_INTEGRATION=7 \
   "$release_run/test/release.sh" >/dev/null 2>&1 || release_failed_rc=$?
 equal "a failed release integration keeps its status" 7 "$release_failed_rc"
-equal "a failed release integration still follows lint and smoke" \
-  "$(printf 'lint\nsmoke\nintegration')" "$(<"$release_order")"
+equal "a failed release integration still follows lint, smoke, and Go checks" \
+  "$(printf 'lint\nsmoke\ngo\nintegration')" "$(<"$release_order")"
 
 
 # THE GATE'S LAST LINE CARRIES ITS VERDICT, because `test/gate.sh 2>&1 | tail`
@@ -112,7 +112,7 @@ gate_run="$RUN_ROOT/gate"
 gate_order="$RUN_ROOT/gate-order"
 mkdir -p "$gate_run/test"
 cp "$ROOT/test/gate.sh" "$gate_run/test/gate.sh"
-for gate_step in lint smoke; do
+for gate_step in lint smoke go; do
   cat > "$gate_run/test/$gate_step.sh" <<SH
 #!/bin/sh
 # SPDX-License-Identifier: Apache-2.0
@@ -123,16 +123,16 @@ SH
 done
 : > "$gate_order"
 gate_out="$(_GANGLINE_GATE_LOCKED=1 "$gate_run/test/gate.sh" 2>&1)"
-equal "a green gate ends on its verdict and says integration runs in CI" \
-  "gate: VERDICT PASS (status 0); this gate ran lint and smoke only, and integration runs in CI." \
+equal "a green gate ends on its verdict and says shell integration runs in CI" \
+  "gate: VERDICT PASS (status 0); this gate ran lint, smoke, and Go checks; shell integration runs in CI." \
   "$(printf '%s\n' "$gate_out" | tail -n 1)"
-equal "the gate runs lint and then smoke" "$(printf 'lint\nsmoke')" "$(<"$gate_order")"
+equal "the gate runs lint, smoke, and Go checks" "$(printf 'lint\nsmoke\ngo')" "$(<"$gate_order")"
 : > "$gate_order"
 gate_rc=0
 gate_out="$(GATE_FAIL_LINT=3 _GANGLINE_GATE_LOCKED=1 "$gate_run/test/gate.sh" 2>&1)" \
   || gate_rc=$?
 equal "a failed lint is the gate's status" 3 "$gate_rc"
-equal "and smoke still runs after it" "$(printf 'lint\nsmoke')" "$(<"$gate_order")"
+equal "and the remaining checks still run after it" "$(printf 'lint\nsmoke\ngo')" "$(<"$gate_order")"
 equal "and the last line refuses" "gate: VERDICT REFUSED (status 3)" \
   "$(printf '%s\n' "$gate_out" | tail -n 1)"
 

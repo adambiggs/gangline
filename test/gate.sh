@@ -1,8 +1,8 @@
 #!/usr/bin/env bash
 # SPDX-License-Identifier: Apache-2.0
 #
-# The local gate: lint and smoke against this working tree. Integration, the
-# full lint set and the checker self-tests run in CI.
+# The local gate: lint, smoke, and Go checks against this working tree.
+# Integration, the full shell lint set and checker self-tests run in CI.
 set -euo pipefail
 
 unset GIT_DIR GIT_WORK_TREE GIT_INDEX_FILE GIT_OBJECT_DIRECTORY GIT_COMMON_DIR GIT_PREFIX
@@ -32,7 +32,7 @@ verdict() {
   if [ "$decided" -ne 1 ]; then
     printf 'gate: VERDICT UNKNOWN (status %s)\n' "$rc"
   elif [ "$rc" -eq 0 ]; then
-    printf 'gate: VERDICT PASS (status 0); this gate ran lint and smoke only, and integration runs in CI.\n'
+    printf 'gate: VERDICT PASS (status 0); this gate ran lint, smoke, and Go checks; shell integration runs in CI.\n'
   else
     printf 'gate: VERDICT REFUSED (status %s)\n' "$rc"
   fi
@@ -48,5 +48,8 @@ test/lint.sh --fast || rc=$?
 smoke_rc=0
 test/smoke.sh || smoke_rc=$?
 [ "$rc" -ne 0 ] || rc=$smoke_rc
+go_rc=0
+test/go.sh || go_rc=$?
+[ "$rc" -ne 0 ] || rc=$go_rc
 decided=1
 exit "$rc"

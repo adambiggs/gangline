@@ -1,0 +1,107 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://gangline.dev/schema/events-v1.json",
+  "title": "Gangline event",
+  "oneOf": [
+    { "$ref": "#/$defs/hitch_requested" },
+    { "$ref": "#/$defs/hitch_ready" },
+    { "$ref": "#/$defs/hitch_launch_failed" },
+    { "$ref": "#/$defs/send_requested" },
+    { "$ref": "#/$defs/delivery_succeeded" },
+    { "$ref": "#/$defs/delivery_failed" },
+    { "$ref": "#/$defs/drop_requested" },
+    { "$ref": "#/$defs/drop_succeeded" },
+    { "$ref": "#/$defs/drop_failed" },
+    { "$ref": "#/$defs/transition_rejected" }
+  ],
+  "$defs": {
+    "id": { "type": "string", "minLength": 1 },
+    "time": { "type": "string", "format": "date-time" },
+    "message": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["text"],
+      "properties": { "text": { "type": "string" } }
+    },
+    "hitch": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["id", "name", "collar", "directory"],
+      "properties": {
+        "id": { "$ref": "#/$defs/id" },
+        "name": { "$ref": "#/$defs/id" },
+        "collar": { "$ref": "#/$defs/id" },
+        "role": { "type": "string" },
+        "directory": { "$ref": "#/$defs/id" },
+        "status": { "enum": ["starting", "active", "dropping", "dropped", "failed"] },
+        "pane": { "type": "string" }
+      }
+    },
+    "envelope": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["id", "from", "to", "message", "created_at"],
+      "properties": {
+        "id": { "$ref": "#/$defs/id" },
+        "from": { "$ref": "#/$defs/id" },
+        "to": { "$ref": "#/$defs/id" },
+        "message": { "$ref": "#/$defs/message" },
+        "created_at": { "$ref": "#/$defs/time" }
+      }
+    },
+    "hitch_requested": {
+      "type": "object", "additionalProperties": false,
+      "required": ["type", "at", "hitch"],
+      "properties": { "type": { "const": "hitch_requested" }, "at": { "$ref": "#/$defs/time" }, "hitch": { "$ref": "#/$defs/hitch" } }
+    },
+    "hitch_ready": {
+      "type": "object", "additionalProperties": false,
+      "required": ["type", "at", "hitch_id", "pane"],
+      "properties": { "type": { "const": "hitch_ready" }, "at": { "$ref": "#/$defs/time" }, "hitch_id": { "$ref": "#/$defs/id" }, "pane": { "$ref": "#/$defs/id" } }
+    },
+    "hitch_launch_failed": { "$ref": "#/$defs/hitch_failure" },
+    "send_requested": {
+      "type": "object", "additionalProperties": false,
+      "required": ["type", "at", "envelope"],
+      "properties": { "type": { "const": "send_requested" }, "at": { "$ref": "#/$defs/time" }, "envelope": { "$ref": "#/$defs/envelope" } }
+    },
+    "delivery_succeeded": { "$ref": "#/$defs/delivery_result" },
+    "delivery_failed": { "$ref": "#/$defs/delivery_failure" },
+    "drop_requested": {
+      "type": "object", "additionalProperties": false,
+      "required": ["type", "at", "hitch_id"],
+      "properties": { "type": { "const": "drop_requested" }, "at": { "$ref": "#/$defs/time" }, "hitch_id": { "$ref": "#/$defs/id" } }
+    },
+    "drop_succeeded": {
+      "type": "object", "additionalProperties": false,
+      "required": ["type", "at", "hitch_id"],
+      "properties": { "type": { "const": "drop_succeeded" }, "at": { "$ref": "#/$defs/time" }, "hitch_id": { "$ref": "#/$defs/id" } }
+    },
+    "drop_failed": { "$ref": "#/$defs/drop_failure" },
+    "transition_rejected": {
+      "type": "object", "additionalProperties": false,
+      "required": ["type", "at", "event", "reason"],
+      "properties": { "type": { "const": "transition_rejected" }, "at": { "$ref": "#/$defs/time" }, "event": { "$ref": "#/$defs/id" }, "reason": { "$ref": "#/$defs/id" } }
+    },
+    "hitch_failure": {
+      "type": "object", "additionalProperties": false,
+      "required": ["type", "at", "hitch_id", "reason"],
+      "properties": { "type": { "const": "hitch_launch_failed" }, "at": { "$ref": "#/$defs/time" }, "hitch_id": { "$ref": "#/$defs/id" }, "reason": { "$ref": "#/$defs/id" } }
+    },
+    "delivery_result": {
+      "type": "object", "additionalProperties": false,
+      "required": ["type", "at", "envelope_id"],
+      "properties": { "type": { "const": "delivery_succeeded" }, "at": { "$ref": "#/$defs/time" }, "envelope_id": { "$ref": "#/$defs/id" } }
+    },
+    "delivery_failure": {
+      "type": "object", "additionalProperties": false,
+      "required": ["type", "at", "envelope_id", "reason"],
+      "properties": { "type": { "const": "delivery_failed" }, "at": { "$ref": "#/$defs/time" }, "envelope_id": { "$ref": "#/$defs/id" }, "reason": { "$ref": "#/$defs/id" } }
+    },
+    "drop_failure": {
+      "type": "object", "additionalProperties": false,
+      "required": ["type", "at", "hitch_id", "reason"],
+      "properties": { "type": { "const": "drop_failed" }, "at": { "$ref": "#/$defs/time" }, "hitch_id": { "$ref": "#/$defs/id" }, "reason": { "$ref": "#/$defs/id" } }
+    }
+  }
+}

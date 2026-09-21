@@ -55,7 +55,7 @@ if [ -n "$outer" ]; then
   fi
 fi
 
-echo "pre-push: lint of changed files and smoke run here; CI runs full lint, integration and the commit-message check." >&2
+echo "pre-push: lint, smoke, and Go checks run here; CI runs full shell lint, integration and the commit-message check." >&2
 
 while read -r local_ref local_sha _remote_ref _remote_sha \
       || [ -n "${local_sha:-}" ]; do
@@ -72,12 +72,13 @@ while read -r local_ref local_sha _remote_ref _remote_sha \
     echo "pre-push: cannot check out $local_sha into a worktree, so nothing was linted" >&2
     fail=1; continue
   }
-  if [ -x "$work/test/lint.sh" ] && [ -x "$work/test/smoke.sh" ]; then
-    echo "pre-push: running pushed-tree fast lint and smoke for $local_ref." >&2
+  if [ -x "$work/test/lint.sh" ] && [ -x "$work/test/smoke.sh" ] \
+     && [ -x "$work/test/go.sh" ]; then
+    echo "pre-push: running pushed-tree fast lint, smoke, and Go checks for $local_ref." >&2
     ( unset GIT_DIR GIT_WORK_TREE GIT_INDEX_FILE GIT_OBJECT_DIRECTORY GIT_COMMON_DIR GIT_PREFIX
-      cd "$work" && ./test/lint.sh --fast && ./test/smoke.sh ) || fail=1
+      cd "$work" && ./test/lint.sh --fast && ./test/smoke.sh && ./test/go.sh ) || fail=1
   else
-    echo "pre-push: $local_sha does not carry executable test/lint.sh and test/smoke.sh gates" >&2
+    echo "pre-push: $local_sha does not carry the executable lint, smoke, and Go gates" >&2
     fail=1
   fi
   ( unset GIT_DIR GIT_WORK_TREE GIT_INDEX_FILE GIT_OBJECT_DIRECTORY GIT_COMMON_DIR GIT_PREFIX
@@ -85,7 +86,7 @@ while read -r local_ref local_sha _remote_ref _remote_sha \
 done < "$tmp/stdin"
 
 if [ "$fail" -ne 0 ]; then
-  echo "pre-push: refusing — lint or smoke failed." >&2
+  echo "pre-push: refusing — lint, smoke, or Go checks failed." >&2
   echo "          push anyway with: git push --no-verify" >&2
   exit 1
 fi

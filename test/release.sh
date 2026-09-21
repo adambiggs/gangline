@@ -1,8 +1,8 @@
 #!/usr/bin/env bash
 # SPDX-License-Identifier: Apache-2.0
 #
-# THE PRE-RELEASE LANE. The local gate runs lint and smoke; this lane runs the
-# complete integration proof before a release-please pull request merges.
+# THE PRE-RELEASE LANE. The local gate runs lint, smoke, and Go checks; this
+# lane adds the complete shell integration proof before a release merges.
 set -euo pipefail
 
 unset GIT_DIR GIT_WORK_TREE GIT_INDEX_FILE GIT_OBJECT_DIRECTORY GIT_COMMON_DIR GIT_PREFIX
@@ -27,6 +27,7 @@ export GANG_INTEGRATION_REQUIRE_ALL=1
 
 "$ROOT/test/lint.sh"
 "$ROOT/test/smoke.sh"
+"$ROOT/test/go.sh"
 "$ROOT/test/integration.sh"
 
-printf 'release: the tree passed lint, smoke, and full integration.\n'
+printf 'release: the tree passed lint, smoke, Go checks, and full integration.\n'

@@ -2652,11 +2652,11 @@ order_output="$(
     "$ROOT/.githooks/pre-push" origin "$order_remote" 2>&1
 )" || true
 order_gate_line="$(printf '%s\n' "$order_output" |
-  awk '/does not carry executable test\/lint.sh/ { print NR; exit }')"
+  awk '/does not carry the executable lint, smoke, and Go gates/ { print NR; exit }')"
 order_marker_line="$(printf '%s\n' "$order_output" |
   awk '/OUTER-VERDICT-MARKER/ { print NR; exit }')"
 contains "the ordering fixture reaches Gangline's own gate" \
-  "$order_output" "does not carry executable test/lint.sh"
+  "$order_output" "does not carry the executable lint, smoke, and Go gates"
 contains "the ordering fixture reaches the outer gate" \
   "$order_output" "OUTER-VERDICT-MARKER"
 equal "the outer verdict is printed before Gangline's own output" \
@@ -2725,15 +2725,15 @@ no_outer_rc=0
 no_outer_output="$(printf '%s\n' "$deletion_record" |
   GIT_CONFIG_GLOBAL="$empty_global" \
   "$ROOT/.githooks/pre-push" origin /tmp/remote 2>&1)" || no_outer_rc=$?
-# A deletion-only push runs no pushed-tree lint or smoke. It still names the
+# A deletion-only push runs no pushed-tree checks. It still names the
 # local checks and CI boundary on every push.
 equal "no global hook still lets the local gate decide" "0" "$no_outer_rc"
 contains "the local hook names its local checks" \
-  "$no_outer_output" "lint of changed files and smoke run here"
+  "$no_outer_output" "lint, smoke, and Go checks run here"
 contains "the local hook names the CI checks" \
-  "$no_outer_output" "CI runs full lint, integration and the commit-message check"
-excludes "a deletion-only push does not claim it ran lint or smoke" \
-  "$no_outer_output" "running pushed-tree fast lint and smoke"
+  "$no_outer_output" "CI runs full shell lint, integration and the commit-message check"
+excludes "a deletion-only push does not claim it ran local checks" \
+  "$no_outer_output" "running pushed-tree fast lint, smoke, and Go checks"
 
 # THE COMMITS WORKFLOW CHECKS A PUSH'S NEW COMMITS, AND A NEW BRANCH HAS SOME.
 # GitHub reports a branch's first push with an all-zero before, and refusing
@@ -3084,7 +3084,14 @@ cat > "$hook_repo/test/smoke.sh" <<'SH'
 : "${PROBE_DIR:?}"
 printf 'smoke\n' > "$PROBE_DIR/smoke"
 SH
-chmod +x "$hook_repo/test/lint.sh" "$hook_repo/test/integration.sh" "$hook_repo/test/smoke.sh"
+cat > "$hook_repo/test/go.sh" <<'SH'
+#!/bin/sh
+# SPDX-License-Identifier: Apache-2.0
+: "${PROBE_DIR:?}"
+printf 'go\n' > "$PROBE_DIR/go"
+SH
+chmod +x "$hook_repo/test/lint.sh" "$hook_repo/test/integration.sh" \
+  "$hook_repo/test/smoke.sh" "$hook_repo/test/go.sh"
 git -C "$hook_repo" init -q
 git -C "$hook_repo" config user.name 'Gangline Test'
 git -C "$hook_repo" config user.email 'gangline-test@example.invalid'
@@ -3104,12 +3111,12 @@ if hook_out="$({
       PROBE_DIR="$hook_probe" \
       ./.githooks/pre-push origin "$hook_remote"
 } 2>&1)"; then
-  pass "pre-push passes a pushed ref whose lint and smoke pass"
+  pass "pre-push passes a pushed ref whose local checks pass"
 else
-  fail "pre-push passes a pushed ref whose lint and smoke pass" "$hook_out"
+  fail "pre-push passes a pushed ref whose local checks pass" "$hook_out"
 fi
-contains "a checked ref announces the fast lint and smoke it actually runs" \
-  "$hook_out" "running pushed-tree fast lint and smoke"
+contains "a checked ref announces the local checks it actually runs" \
+  "$hook_out" "running pushed-tree fast lint, smoke, and Go checks"
 hook_gitdir="$(<"$hook_probe/gitdir")"
 case "$hook_gitdir" in
   "$hook_repo/.git/worktrees/"*)
@@ -3127,6 +3134,8 @@ equal "pre-push selects the lint fast path" \
   "1:--fast" "$(<"$hook_probe/lint-argv")"
 equal "pre-push runs the fast smoke from the pushed tree" \
   "smoke" "$(<"$hook_probe/smoke")"
+equal "pre-push runs Go checks from the pushed tree" \
+  "go" "$(<"$hook_probe/go")"
 if [ ! -e "$hook_probe/integration" ]; then
   pass "pre-push skips the full integration suite"
 else

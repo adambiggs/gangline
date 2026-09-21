@@ -16,12 +16,13 @@ test/gate.sh
 A successful baseline ends with:
 
 ```text
-gate: VERDICT PASS (status 0); this gate ran lint and smoke only, and integration runs in CI.
+gate: VERDICT PASS (status 0); this gate ran lint, smoke, and Go checks; shell integration runs in CI.
 ```
 
-The gate runs fast lint and smoke against the working tree. It serializes with
-other local gate runs and reports `PASS`, `REFUSED`, or `UNKNOWN`; an absent
-verdict is not success.
+The gate runs fast shell lint, smoke checks, Go formatting and analysis, unit
+tests, and the tmux acceptance scenario against the working tree. It serializes
+with other local gate runs and reports `PASS`, `REFUSED`, or `UNKNOWN`; an
+absent verdict is not success.
 
 New shell and Python files need an SPDX license identifier. Do not hand-edit
 `CHANGELOG.md`; Release Please owns it.
