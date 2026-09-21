@@ -197,6 +197,9 @@ func (cmd command) rename(arguments []string) error {
 	if !ok {
 		return refuseError("agent %q is not active", arguments[0])
 	}
+	if _, exists := activeByName(state, arguments[1]); exists {
+		return refuseError("agent name %q is already active", arguments[1])
+	}
 	backend, err := cmd.tmux(run.settings)
 	if err != nil {
 		return err
@@ -335,6 +338,9 @@ func (cmd command) interrupt(arguments []string) error {
 	if !ok {
 		return refuseError("agent %q is not active", name)
 	}
+	if hitch.Activity != core.ActivityBusy && hitch.Activity != core.ActivityWedged {
+		return refuseError("agent %q is not in an interruptible turn", name)
+	}
 	now := time.Now()
 	_, err = run.drive(core.InterruptRequested{At: now, HitchID: hitch.ID, Reason: reason, Deadline: now.Add(operationTimeout)})
 	return err
@@ -417,8 +423,14 @@ func (cmd command) drop(arguments []string) error {
 		return refuseError("agent %q is not active", name)
 	}
 	now := time.Now()
-	_, err = run.drive(core.DropRequested{At: now, HitchID: hitch.ID, Deadline: now.Add(operationTimeout)})
-	return err
+	state, err = run.drive(core.DropRequested{At: now, HitchID: hitch.ID, Deadline: now.Add(operationTimeout)})
+	if err != nil {
+		return err
+	}
+	if state.Hitches[hitch.ID].Status != core.HitchDropped {
+		return refuseError("agent %q was not stopped; inspect 'gang log'", name)
+	}
+	return nil
 }
 
 func (cmd command) down(arguments []string) error {
@@ -669,6 +681,9 @@ func (cmd command) curfew(arguments []string) error {
 		return err
 	}
 	if arguments[0] == "clear" {
+		if state.Team.Curfew.IsZero() {
+			return refuseError("team curfew is already clear")
+		}
 		_, err = run.drive(core.CurfewCleared{At: time.Now()})
 		return err
 	}

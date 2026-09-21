@@ -90,7 +90,11 @@ func (cmd command) capture(arguments []string) error {
 	}
 	var pane substrate.Pane
 	if name == "" {
-		pane, err = backend.CurrentPane(context.Background())
+		paneID := cmd.environment("TMUX_PANE")
+		if paneID == "" {
+			return refuseError("capture without an agent name must run inside tmux")
+		}
+		pane = substrate.Pane{ID: substrate.PaneID(paneID)}
 	} else {
 		pane, err = backend.PaneNamed(context.Background(), name)
 	}

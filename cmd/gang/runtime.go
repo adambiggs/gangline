@@ -195,7 +195,11 @@ func (run *runtime) executeEffect(state core.State, effect core.Effect) (core.Ev
 		spec.Env["GANG_SESSION"] = run.settings.Session
 		spec.Env["GANG_STATE_ROOT"] = run.settings.StateRoot
 		spec.Env["GANG_COLLAR"] = effect.Hitch.Collar
+		spec.Env["GANG_CONFIG_DIR"] = run.settings.ConfigDir
 		spec.Env["GANGLINE_HITCH_ID"] = string(effect.Hitch.ID)
+		if run.settings.CollarDir != "" {
+			spec.Env["GANG_COLLARS"] = run.settings.CollarDir
+		}
 		if run.settings.Socket != "" {
 			spec.Env["GANG_TMUX_SOCKET"] = run.settings.Socket
 		}
@@ -249,6 +253,14 @@ func (run *runtime) executeEffect(state core.State, effect core.Effect) (core.Ev
 		if renderErr != nil {
 			return core.CompactionFailedEvent{At: now, CompactionID: effect.Compaction.ID, Reason: renderErr.Error()}, nil
 		}
+		screen, captureErr := backend.Capture(context.Background(), substrate.PaneID(effect.Pane))
+		if captureErr != nil {
+			return core.CompactionFailedEvent{At: now, CompactionID: effect.Compaction.ID, Reason: captureErr.Error()}, nil
+		}
+		composer, composerErr := harness.ReadComposer(collar.Primitives.Composer, screen)
+		if composerErr != nil || composer.Text != "" {
+			return nil, nil
+		}
 		if sendErr := backend.SendKeys(context.Background(), substrate.PaneID(effect.Pane), action.Input()); sendErr != nil {
 			return core.CompactionFailedEvent{At: now, CompactionID: effect.Compaction.ID, Reason: sendErr.Error()}, nil
 		}
@@ -264,6 +276,16 @@ func (run *runtime) executeEffect(state core.State, effect core.Effect) (core.Ev
 		}
 		return core.InterruptSucceeded{At: time.Now(), HitchID: effect.HitchID}, nil
 	case core.KillHitch:
+		windows, listErr := backend.Windows(context.Background())
+		if listErr == nil {
+			found := false
+			for _, window := range windows {
+				found = found || string(window.Pane.ID) == effect.Pane
+			}
+			if !found {
+				return core.DropSucceeded{At: now, HitchID: effect.HitchID}, nil
+			}
+		}
 		if killErr := backend.Kill(context.Background(), substrate.PaneID(effect.Pane)); killErr != nil {
 			return core.DropFailed{At: now, HitchID: effect.HitchID, Reason: killErr.Error()}, nil
 		}
