@@ -17,7 +17,7 @@ func TestVersionAndHelpDoNotLoadRuntimeConfiguration(t *testing.T) {
 		{args: []string{"--version"}, want: "gangline dev"},
 	} {
 		var stdout, stderr bytes.Buffer
-		status := run(test.args, strings.NewReader(""), &stdout, &stderr)
+		status := runWithInput(test.args, strings.NewReader(""), &stdout, &stderr)
 		if status != exitOK {
 			t.Fatalf("run(%q) status = %d, stderr = %q", test.args, status, stderr.String())
 		}
@@ -29,7 +29,7 @@ func TestVersionAndHelpDoNotLoadRuntimeConfiguration(t *testing.T) {
 
 func TestArgumentErrorsAreUsageErrors(t *testing.T) {
 	var stdout, stderr bytes.Buffer
-	status := run([]string{"unknown"}, strings.NewReader(""), &stdout, &stderr)
+	status := runWithInput([]string{"unknown"}, strings.NewReader(""), &stdout, &stderr)
 	if status != exitUsage {
 		t.Fatalf("status = %d, want %d", status, exitUsage)
 	}
