@@ -307,10 +307,8 @@ func (cmd command) interrupt(arguments []string) error {
 		name, arguments = arguments[0], arguments[1:]
 	}
 	reason := ""
-	from := ""
 	flags := quietFlagSet("interrupt")
 	flags.StringVar(&reason, "m", "", "reason")
-	flags.StringVar(&from, "from", "", "sender")
 	if err := flags.Parse(arguments); err != nil || flags.NArg() != 0 {
 		return usageError("interrupt: invalid arguments")
 	}
@@ -333,7 +331,6 @@ func (cmd command) interrupt(arguments []string) error {
 			}
 		}
 	}
-	_ = from
 	hitch, ok := activeByName(state, name)
 	if !ok {
 		return refuseError("agent %q is not active", name)
@@ -803,8 +800,8 @@ func (cmd command) usage(arguments []string) error {
 	return err
 }
 func (cmd command) cap(arguments []string) error {
-	if len(arguments) > 1 {
-		return usageError("cap: invalid arguments")
+	if len(arguments) != 0 {
+		return usageError("cap: unexpected arguments")
 	}
 	_, err := fmt.Fprintln(cmd.stdout, "unknown\tno retained provider-window samples")
 	return err

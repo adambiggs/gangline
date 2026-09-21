@@ -1,0 +1,49 @@
+name: test
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  check:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-go@v6
+        with:
+          go-version-file: go.mod
+          cache: true
+
+      - name: Install tmux
+        run: |
+          set -eu
+          command -v tmux >/dev/null && exit 0
+          case "${{ runner.os }}" in
+            Linux) sudo apt-get install -y tmux ;;
+            macOS) brew install tmux ;;
+            *) echo "no tmux recipe for runner.os=${{ runner.os }}" >&2; exit 1 ;;
+          esac
+
+      - name: Go checks
+        run: test/go.sh
+
+  release-please:
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    needs: [check]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+      pull-requests: write
+    steps:
+      - uses: googleapis/release-please-action@v4
+        with:
+          config-file: release-please-config.json
+          manifest-file: .release-please-manifest.json

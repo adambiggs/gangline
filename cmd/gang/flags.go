@@ -18,7 +18,6 @@ type hitchOptions struct {
 	Effort    string
 	Task      string
 	Role      string
-	Lights    string
 	Resume    string
 	Stdin     bool
 }
@@ -41,8 +40,6 @@ func parseHitch(arguments []string, defaultCollar, defaultDirectory string) (hit
 	flags.StringVar(&options.Task, "task", "", "task label")
 	flags.StringVar(&options.Role, "r", "", "role brief")
 	flags.StringVar(&options.Role, "role", "", "role brief")
-	flags.StringVar(&options.Lights, "l", "", "context lights")
-	flags.StringVar(&options.Lights, "lights", "", "context lights")
 	flags.StringVar(&options.Resume, "resume", "", "native session id")
 	flags.BoolVar(&options.Stdin, "stdin", false, "read assignment from stdin")
 	if err := flags.Parse(arguments[1:]); err != nil {

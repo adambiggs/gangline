@@ -1,6 +1,0 @@
-  Important: Only use Claude Code with files you trust. Accessing untrusted files may pose security risks https://code.claude.com/docs/en/security
-
-  ❯ 1. Yes, allow external imports
-    2. No, disable external imports
-
-  Enter to confirm · Esc to cancel
