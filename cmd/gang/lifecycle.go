@@ -844,7 +844,7 @@ func (cmd command) wait(arguments []string) error {
 		if !time.Now().Before(deadline) {
 			return run.waitTimedOut(hitch, deadline)
 		}
-		appendWait, watchErr := store.NewAppendWait(paths.Events, info.Size())
+		appendWait, watchErr := cmd.appendWait(paths.Events, info.Size())
 		if watchErr != nil {
 			return watchErr
 		}
@@ -860,6 +860,18 @@ func (cmd command) wait(arguments []string) error {
 			return closeErr
 		}
 	}
+}
+
+type appendWait interface {
+	Wait(context.Context) error
+	Close() error
+}
+
+func (cmd command) appendWait(path string, after int64) (appendWait, error) {
+	if cmd.newAppendWait != nil {
+		return cmd.newAppendWait(path, after)
+	}
+	return store.NewAppendWait(path, after)
 }
 
 func (run *runtime) waitTimedOut(hitch core.Hitch, deadline time.Time) error {

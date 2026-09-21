@@ -34,13 +34,14 @@ func refuseError(format string, arguments ...any) error {
 }
 
 type command struct {
-	stdin       io.Reader
-	stdout      io.Writer
-	stderr      io.Writer
-	getenv      func(string) string
-	lookupEnv   func(string) (string, bool)
-	getwd       func() (string, error)
-	userHomeDir func() (string, error)
+	stdin         io.Reader
+	stdout        io.Writer
+	stderr        io.Writer
+	getenv        func(string) string
+	lookupEnv     func(string) (string, bool)
+	getwd         func() (string, error)
+	userHomeDir   func() (string, error)
+	newAppendWait func(string, int64) (appendWait, error)
 }
 
 func main() {
