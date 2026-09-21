@@ -210,8 +210,8 @@ if [ -e "$BIN_DIR/gang" ] && [ ! -f "$BIN_DIR/gang" ] && [ ! -L "$BIN_DIR/gang" 
 fi
 new_binary="$BIN_DIR/.gang.new.$$"
 trap 'rm -f "$new_binary"' EXIT HUP INT TERM
-CGO_ENABLED=0 go build -trimpath -ldflags "-s -w -X main.version=$latest" \
-  -o "$new_binary" "$HOME_DIR/cmd/gang" \
+CGO_ENABLED=0 go -C "$HOME_DIR" build -trimpath \
+  -ldflags "-s -w -X main.version=$latest" -o "$new_binary" ./cmd/gang \
   || die "could not build gang $tag"
 mv -f "$new_binary" "$BIN_DIR/gang" \
   || die "could not install $BIN_DIR/gang"
