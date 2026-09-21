@@ -39,7 +39,7 @@ func TestArgumentErrorsAreUsageErrors(t *testing.T) {
 }
 
 func TestRemovedCommandsAreUnknown(t *testing.T) {
-	for _, name := range []string{"cap", "flush", "run", "usage", "wait"} {
+	for _, name := range []string{"cap", "flush", "idle", "run", "usage"} {
 		var stdout, stderr bytes.Buffer
 		status := run([]string{name}, strings.NewReader(""), &stdout, &stderr)
 		if status != exitUsage {
@@ -53,7 +53,7 @@ func TestRemovedCommandsAreUnknown(t *testing.T) {
 
 func TestCommandsRejectIgnoredArguments(t *testing.T) {
 	for _, arguments := range [][]string{
-		{"idle", "worker", "extra"},
+		{"wait", "worker", "extra"},
 		{"limits", "--history"},
 	} {
 		var stdout, stderr bytes.Buffer

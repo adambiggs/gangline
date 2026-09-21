@@ -46,6 +46,7 @@ func TestEventCodecRoundTrip(t *testing.T) {
 		WedgeDetected{At: now, HitchID: "h-1", Evidence: "unchanged for 5m"},
 		WedgeCleared{At: now, HitchID: "h-1"},
 		OperationTimedOut{At: now, Operation: TimeoutDelivery, ID: "e-1", Deadline: deadline, Evidence: "verification deadline passed"},
+		OperationTimedOut{At: deadline, Operation: TimeoutWait, ID: "h-1", Deadline: deadline, Evidence: "idle boundary deadline passed"},
 		CurfewSet{At: now, Deadline: deadline},
 		CurfewCleared{At: now},
 		TransitionRejected{At: now, Event: "drop_requested", Reason: "hitch is not active"},

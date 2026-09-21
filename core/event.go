@@ -178,6 +178,7 @@ const (
 	TimeoutCompaction TimeoutOperation = "compaction"
 	TimeoutInterrupt  TimeoutOperation = "interrupt"
 	TimeoutDrop       TimeoutOperation = "drop"
+	TimeoutWait       TimeoutOperation = "wait"
 )
 
 type OperationTimedOut struct {

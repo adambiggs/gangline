@@ -257,6 +257,15 @@ func TestStepTimeouts(t *testing.T) {
 				}
 			},
 		},
+		{
+			name: "wait timeout records without changing hitch", state: busyHitch,
+			event: OperationTimedOut{At: testDeadline, Operation: TimeoutWait, ID: "worker-id", Deadline: testDeadline, Evidence: "idle boundary deadline passed"},
+			check: func(t *testing.T, state State) {
+				if state.Hitches["worker-id"].Activity != ActivityBusy {
+					t.Fatalf("state = %#v", state)
+				}
+			},
+		},
 	}
 
 	for _, test := range tests {

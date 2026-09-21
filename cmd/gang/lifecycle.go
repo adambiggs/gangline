@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"os"
@@ -796,8 +797,9 @@ func (cmd command) status(arguments []string) error {
 	return err
 }
 
-func (cmd command) idle(arguments []string) error {
-	if err := exactly(arguments, 1, "idle"); err != nil {
+func (cmd command) wait(arguments []string) error {
+	options, err := parseWait(arguments)
+	if err != nil {
 		return err
 	}
 	run, err := cmd.runtime()
@@ -808,12 +810,66 @@ func (cmd command) idle(arguments []string) error {
 	if err != nil {
 		return err
 	}
-	hitch, ok := activeByName(state, arguments[0])
+	hitch, ok := activeByName(state, options.Name)
 	if !ok {
-		return refuseError("agent %q is not active", arguments[0])
+		return refuseError("agent %q is not active", options.Name)
 	}
-	if hitch.Activity != core.ActivityIdle {
-		return refuseError("agent %q has not reached an idle boundary", arguments[0])
+	if hitch.Activity == core.ActivityIdle {
+		return nil
 	}
-	return nil
+
+	deadline := time.Now().Add(options.Timeout)
+	ctx, cancel := context.WithDeadline(context.Background(), deadline)
+	defer cancel()
+	paths, err := run.paths().Team(run.settings.Session)
+	if err != nil {
+		return err
+	}
+	for {
+		info, statErr := os.Stat(paths.Events)
+		if statErr != nil {
+			return fmt.Errorf("stat event log before wait: %w", statErr)
+		}
+		state, err = run.load()
+		if err != nil {
+			return err
+		}
+		hitch, ok = activeByName(state, options.Name)
+		if !ok {
+			return refuseError("agent %q is not active", options.Name)
+		}
+		if hitch.Activity == core.ActivityIdle {
+			return nil
+		}
+		if !time.Now().Before(deadline) {
+			return run.waitTimedOut(hitch, deadline)
+		}
+		appendWait, watchErr := store.NewAppendWait(paths.Events, info.Size())
+		if watchErr != nil {
+			return watchErr
+		}
+		waitErr := appendWait.Wait(ctx)
+		closeErr := appendWait.Close()
+		if waitErr != nil {
+			if errors.Is(waitErr, context.DeadlineExceeded) {
+				return run.waitTimedOut(hitch, deadline)
+			}
+			return waitErr
+		}
+		if closeErr != nil {
+			return closeErr
+		}
+	}
+}
+
+func (run *runtime) waitTimedOut(hitch core.Hitch, deadline time.Time) error {
+	now := time.Now()
+	_, err := run.drive(core.OperationTimedOut{
+		At: now, Operation: core.TimeoutWait, ID: string(hitch.ID), Deadline: deadline,
+		Evidence: "wait deadline elapsed before an idle boundary",
+	})
+	if err != nil {
+		return err
+	}
+	return refuseError("agent %q did not reach an idle boundary before the wait deadline", hitch.Name)
 }

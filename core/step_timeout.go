@@ -78,6 +78,11 @@ func stepTimedOut(state State, event OperationTimedOut) (State, []Effect) {
 		hitch.WedgeEvidence = event.Evidence
 		state.Hitches[hitch.ID] = hitch
 		return state, nil
+	case TimeoutWait:
+		if _, ok := activeHitchByID(state, HitchID(event.ID)); !ok || event.At.Before(event.Deadline) {
+			return rejected(state, event, event.At, "wait timeout does not name an active hitch or precedes its deadline")
+		}
+		return state, nil
 	default:
 		return rejected(state, event, event.At, "unknown timeout operation")
 	}

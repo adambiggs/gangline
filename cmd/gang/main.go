@@ -123,8 +123,8 @@ func (cmd command) execute(args []string) error {
 		return cmd.replay(arguments)
 	case "limits":
 		return cmd.limits(arguments)
-	case "idle":
-		return cmd.idle(arguments)
+	case "wait":
+		return cmd.wait(arguments)
 	case "curfew":
 		return cmd.curfew(arguments)
 	case "status":

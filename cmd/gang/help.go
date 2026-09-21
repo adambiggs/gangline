@@ -40,7 +40,7 @@ Observe and control:
   roster    list the team
   status    inspect one agent
   tick      retry pending effects
-  idle      check for an idle boundary
+  wait      wait for an idle boundary
   capture   read an agent's pane or composer
   context   read native context use
   log       read the event log
@@ -75,7 +75,7 @@ var commandUsage = map[string]string{
 	"log":       "usage: gang log\n",
 	"replay":    "usage: gang replay [EVENTS.jsonl]\n",
 	"limits":    "usage: gang limits [NAME]\n",
-	"idle":      "usage: gang idle NAME\n",
+	"wait":      "usage: gang wait NAME [--timeout DURATION]\n",
 	"curfew":    "usage: gang curfew [DURATION | HH:MM | clear]\n",
 	"status":    "usage: gang status [NAME] [--why]\n",
 	"tick":      "usage: gang tick\n",
@@ -107,7 +107,7 @@ var commandDescription = map[string]string{
 	"log":       "Print the configured team's durable JSONL event log.\n",
 	"replay":    "Fold a recorded JSONL event stream without contacting tmux or a harness.\n",
 	"limits":    "Read current provider limits from the collar's native source.\n",
-	"idle":      "Succeed only when an agent is already at a recorded idle boundary.\n",
+	"wait":      "Block on the event log until an agent reaches a recorded idle boundary or the deadline expires. A zero timeout checks once.\n",
 	"curfew":    "Declare, inspect, or clear one team deadline.\n",
 	"status":    "Show one agent's recorded status and activity; --why adds recorded wedge evidence.\n",
 	"tick":      "Run one bounded retry pass over durable pending effects.\n",

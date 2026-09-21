@@ -30,3 +30,16 @@ func TestParseCompactAllowsSelfTarget(t *testing.T) {
 		t.Fatalf("options = %#v", got)
 	}
 }
+
+func TestParseWaitAcceptsZeroAndRejectsNegativeTimeout(t *testing.T) {
+	options, err := parseWait([]string{"worker", "--timeout", "0"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if options.Name != "worker" || options.Timeout != 0 {
+		t.Fatalf("options = %#v", options)
+	}
+	if _, err := parseWait([]string{"worker", "--timeout", "-1s"}); err == nil {
+		t.Fatal("negative timeout passed")
+	}
+}

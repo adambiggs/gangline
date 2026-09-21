@@ -6,6 +6,7 @@ import (
 	"io"
 	"regexp"
 	"strings"
+	"time"
 )
 
 var agentNamePattern = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9._-]*$`)
@@ -63,6 +64,33 @@ type sendOptions struct {
 	LiveOnly  bool
 	Supersede bool
 	At        string
+}
+
+type waitOptions struct {
+	Name    string
+	Timeout time.Duration
+}
+
+func parseWait(arguments []string) (waitOptions, error) {
+	if len(arguments) == 0 || strings.HasPrefix(arguments[0], "-") {
+		return waitOptions{}, usageError("wait: agent name required")
+	}
+	options := waitOptions{Name: arguments[0], Timeout: operationTimeout}
+	flags := quietFlagSet("wait")
+	flags.DurationVar(&options.Timeout, "timeout", options.Timeout, "maximum wait")
+	if err := flags.Parse(arguments[1:]); err != nil {
+		return waitOptions{}, usageError("wait: %v", err)
+	}
+	if flags.NArg() != 0 {
+		return waitOptions{}, usageError("wait: unexpected argument %q", flags.Arg(0))
+	}
+	if err := validateAgentName(options.Name); err != nil {
+		return waitOptions{}, err
+	}
+	if options.Timeout < 0 {
+		return waitOptions{}, usageError("wait: --timeout must not be negative")
+	}
+	return options, nil
 }
 
 func parseSend(arguments []string) (sendOptions, error) {

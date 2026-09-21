@@ -89,7 +89,7 @@ import "time"
 #OperationTimedOut: close({
 	type: "operation_timed_out"
 	at: #Time
-	operation: "boot" | "turn" | "delivery" | "compaction" | "interrupt" | "drop"
+	operation: "boot" | "turn" | "delivery" | "compaction" | "interrupt" | "drop" | "wait"
 	id: #ID
 	deadline: #Time
 	evidence: #Text

@@ -68,7 +68,7 @@ duration such as `45m` or a local `HH:MM` time.
 | `gang log` | Print the configured team's authoritative JSONL log. |
 | `gang replay [EVENTS.jsonl]` | Fold a log from a file or stdin and print state as JSON. |
 | `gang tick` | Retry pending effects, release safe queued delivery, and observe wedges. |
-| `gang idle NAME` | Succeed only if the agent is already recorded idle. |
+| `gang wait NAME [--timeout DURATION]` | Block on event-log appends until the agent is idle; defaults to 30 seconds and `--timeout 0` checks once. |
 | `gang whoami` | Print the active hitch bound to the current pane. |
 | `gang teams` | List team directories with event logs in the v1 state root. |
 | `gang attach` | Attach to the configured tmux team. |

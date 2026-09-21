@@ -70,6 +70,11 @@ otherwise state is replayed.
 team directory. Evidence that must outlive teardown is copied before that
 command.
 
+`gang wait` registers a native file notification on that log, then rechecks its
+length to close the registration race. It folds each append until the target is
+idle or the caller's deadline expires. A timeout is itself appended as an event;
+waiting never polls or changes the target hitch's activity.
+
 ## Keep the mandatory gate immediate
 
 Unit tests use supplied times and direct state. Black-box scenarios use private
