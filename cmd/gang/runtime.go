@@ -386,6 +386,9 @@ func (run *runtime) executeEffect(state core.State, effect core.Effect) (core.Ev
 		}
 		return core.InterruptSucceeded{At: time.Now(), HitchID: effect.HitchID}, nil
 	case core.KillHitch:
+		if !now.Before(effect.Deadline) {
+			return core.OperationTimedOut{At: now, Operation: core.TimeoutDrop, ID: string(effect.HitchID), Deadline: effect.Deadline, Evidence: "drop deadline elapsed before pane termination"}, nil
+		}
 		windows, listErr := backend.Windows(context.Background())
 		if listErr == nil {
 			found := false
@@ -396,7 +399,9 @@ func (run *runtime) executeEffect(state core.State, effect core.Effect) (core.Ev
 				return core.DropSucceeded{At: now, HitchID: effect.HitchID}, nil
 			}
 		}
-		if killErr := backend.Kill(context.Background(), substrate.PaneID(effect.Pane)); killErr != nil {
+		ctx, cancel := context.WithDeadline(context.Background(), effect.Deadline)
+		defer cancel()
+		if killErr := backend.Kill(ctx, substrate.PaneID(effect.Pane)); killErr != nil {
 			return core.DropFailed{At: now, HitchID: effect.HitchID, Reason: killErr.Error()}, nil
 		}
 		return core.DropSucceeded{At: time.Now(), HitchID: effect.HitchID}, nil

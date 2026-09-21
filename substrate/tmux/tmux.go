@@ -227,11 +227,15 @@ func (backend *Backend) Kill(ctx context.Context, pane substrate.PaneID) error {
 	if err := validPaneID(pane); err != nil {
 		return err
 	}
+	owned, err := backend.ownedProcesses(ctx, pane)
+	if err != nil {
+		return fmt.Errorf("record pane descendants: %w", err)
+	}
 	output, err := backend.run(ctx, "kill-window", "-t", string(pane))
 	if err != nil {
 		return tmuxError("kill pane", err, output)
 	}
-	return nil
+	return reapOwnedProcesses(ctx, owned)
 }
 
 func (backend *Backend) KillSession(ctx context.Context) error {

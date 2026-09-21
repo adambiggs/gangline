@@ -37,6 +37,18 @@ Process identity corroborates the native composer and hook evidence rather
 than replacing either. Keeping the process-tree query in `substrate` also keeps
 host and tmux details out of harness primitives and the command state machine.
 
+## Reap only descendants recorded before pane termination
+
+Before tmux removes a pane, Gangline records every descendant using its PID and
+start time. After pane termination it signals only matching survivors, first
+with `SIGTERM` and then, when direct observation still finds them, `SIGKILL`.
+A final process-table observation must find none of those identities.
+
+The snapshot catches descendants that changed session or process group with
+`setsid`, while the start time prevents a reused PID from inheriting ownership.
+Executable names are deliberately excluded: they neither prove ownership nor
+remain stable across wrapper scripts and re-exec.
+
 ## Put harness differences in CUE collars and Go primitives
 
 The command layer has no branches on harness names. A collar declares launch

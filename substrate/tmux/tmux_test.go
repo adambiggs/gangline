@@ -3,14 +3,49 @@ package tmux
 import (
 	"context"
 	"fmt"
+	"os"
 	"os/exec"
+	"os/signal"
 	"path/filepath"
 	"sort"
+	"strconv"
 	"strings"
+	"syscall"
 	"testing"
 
 	"github.com/adambiggs/gangline/substrate"
 )
+
+const detachedHelperEnvironment = "GANGLINE_TMUX_DETACHED_HELPER"
+
+func TestMain(m *testing.M) {
+	if os.Getenv(detachedHelperEnvironment) == "1" {
+		os.Exit(runDetachedHelper())
+	}
+	os.Exit(m.Run())
+}
+
+func runDetachedHelper() int {
+	if _, err := syscall.Setsid(); err != nil {
+		fmt.Fprintln(os.Stderr, err)
+		return 1
+	}
+	signal.Ignore(syscall.SIGHUP, syscall.SIGTERM)
+	pidFile := os.Getenv("GANGLINE_TMUX_DETACHED_PID_FILE")
+	if err := os.WriteFile(pidFile, []byte(strconv.Itoa(os.Getpid())+"\n"), 0o600); err != nil {
+		fmt.Fprintln(os.Stderr, err)
+		return 1
+	}
+	command := exec.Command(os.Getenv("GANGLINE_TMUX_BINARY"), "-S", os.Getenv("GANGLINE_TMUX_SOCKET"), "wait-for", "-S", os.Getenv("GANGLINE_TMUX_READY"))
+	if output, err := command.CombinedOutput(); err != nil {
+		fmt.Fprintf(os.Stderr, "%v: %s", err, output)
+		return 1
+	}
+	blocked := make(chan os.Signal, 1)
+	signal.Notify(blocked, syscall.SIGUSR1)
+	<-blocked
+	return 0
+}
 
 func TestBackendDrivesPrivateTmuxServer(t *testing.T) {
 	binary, err := exec.LookPath("tmux")
@@ -106,6 +141,60 @@ func TestBackendCreatesAndKillsSession(t *testing.T) {
 	}
 }
 
+func TestBackendKillReapsDetachedDescendant(t *testing.T) {
+	binary, err := exec.LookPath("tmux")
+	if err != nil {
+		t.Skip("tmux is required")
+	}
+	root := t.TempDir()
+	socket := filepath.Join(root, "tmux.sock")
+	pidFile := filepath.Join(root, "detached.pid")
+	const session = "reap-detached-test"
+	backend, err := New(Config{Binary: binary, Socket: socket, Session: session})
+	if err != nil {
+		t.Fatal(err)
+	}
+	ready := "detached-ready"
+	executable, err := os.Executable()
+	if err != nil {
+		t.Fatal(err)
+	}
+	script := `"$1" & exec "$2" -S "$3" wait-for detached-hold`
+	pane, err := backend.CreateSession(context.Background(), substrate.SpawnSpec{
+		Name: "detached", Directory: root, Command: "sh",
+		Args: []string{"-c", script, "sh", executable, binary, socket},
+		Env: map[string]string{
+			detachedHelperEnvironment:         "1",
+			"GANGLINE_TMUX_DETACHED_PID_FILE": pidFile,
+			"GANGLINE_TMUX_BINARY":            binary,
+			"GANGLINE_TMUX_SOCKET":            socket,
+			"GANGLINE_TMUX_READY":             ready,
+		},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if output, err := runTmuxResult(binary, socket, "wait-for", ready); err != nil {
+		t.Fatalf("wait for detached descendant: %v\n%s", err, output)
+	}
+	data, err := os.ReadFile(pidFile)
+	if err != nil {
+		t.Fatal(err)
+	}
+	pid, err := strconv.Atoi(strings.TrimSpace(string(data)))
+	if err != nil || pid <= 0 {
+		t.Fatalf("detached pid = %q, %v", data, err)
+	}
+	t.Cleanup(func() { _ = syscall.Kill(pid, syscall.SIGKILL) })
+
+	if err := backend.Kill(context.Background(), pane.ID); err != nil {
+		t.Fatal(err)
+	}
+	if err := syscall.Kill(pid, 0); err == nil || err != syscall.ESRCH {
+		t.Fatalf("detached descendant %d remains after pane kill: %v", pid, err)
+	}
+}
+
 func TestNewRequiresSession(t *testing.T) {
 	if _, err := New(Config{}); err == nil {
 		t.Fatal("empty session passed")
@@ -114,10 +203,10 @@ func TestNewRequiresSession(t *testing.T) {
 
 func TestProcessTableSelectsOnlyPaneForegroundGroup(t *testing.T) {
 	records, err := parseProcessTable(`
-100 1 100 200 sh
-200 100 200 200 codex
-201 200 200 200 helper
-300 200 300 200 background worker
+100 1 100 200 Sun Sep 21 08:00:00 2026 sh
+200 100 200 200 Sun Sep 21 08:00:01 2026 harness
+201 200 200 200 Sun Sep 21 08:00:02 2026 helper
+300 200 300 200 Sun Sep 21 08:00:03 2026 background worker
 `)
 	if err != nil {
 		t.Fatal(err)
@@ -130,19 +219,34 @@ func TestProcessTableSelectsOnlyPaneForegroundGroup(t *testing.T) {
 		}
 	}
 	sort.Strings(commands)
-	if strings.Join(commands, ",") != "codex,helper" {
+	if strings.Join(commands, ",") != "harness,helper" {
 		t.Fatalf("foreground commands = %q", commands)
+	}
+}
+
+func TestRecordedProcessIdentityRejectsReusedPID(t *testing.T) {
+	owned := []processIdentity{{pid: 200, started: "Sun Sep 21 08:00:01 2026"}}
+	records, err := parseProcessTable(`200 1 200 200 Sun Sep 21 08:00:02 2026 replacement`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if survivors := matchingProcesses(owned, records); len(survivors) != 0 {
+		t.Fatalf("reused PID matched recorded identity: %#v", survivors)
 	}
 }
 
 func runTmux(t *testing.T, binary, socket string, arguments ...string) string {
 	t.Helper()
-	command := exec.Command(binary, append([]string{"-S", socket}, arguments...)...)
-	output, err := command.CombinedOutput()
+	output, err := runTmuxResult(binary, socket, arguments...)
 	if err != nil {
 		t.Fatalf("tmux %s: %v\n%s", strings.Join(arguments, " "), err, output)
 	}
 	return string(output)
+}
+
+func runTmuxResult(binary, socket string, arguments ...string) ([]byte, error) {
+	command := exec.Command(binary, append([]string{"-S", socket}, arguments...)...)
+	return command.CombinedOutput()
 }
 
 func screenText(screen substrate.Screen) string {
