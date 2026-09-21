@@ -65,14 +65,6 @@ func (backend *Backend) SessionExists(ctx context.Context) (bool, error) {
 	return false, tmuxError("check session", err, output)
 }
 
-func (backend *Backend) Sessions(ctx context.Context) ([]string, error) {
-	output, err := backend.run(ctx, "list-sessions", "-F", "#{session_name}")
-	if err != nil {
-		return nil, tmuxError("list sessions", err, output)
-	}
-	return lines(output), nil
-}
-
 func (backend *Backend) Spawn(ctx context.Context, spec substrate.SpawnSpec) (substrate.Pane, error) {
 	arguments, err := backend.launchArguments("new-window", spec)
 	if err != nil {
@@ -152,22 +144,6 @@ func (backend *Backend) Windows(ctx context.Context) ([]Window, error) {
 	return windows, nil
 }
 
-func (backend *Backend) CurrentPane(ctx context.Context) (substrate.Pane, error) {
-	output, err := backend.run(ctx, "list-panes", "-t", backend.config.Session, "-f", "#{pane_active}", "-F", "#{pane_id}")
-	if err != nil {
-		return substrate.Pane{}, tmuxError("read current pane", err, output)
-	}
-	identifiers := lines(output)
-	if len(identifiers) != 1 {
-		return substrate.Pane{}, fmt.Errorf("read current pane: tmux returned %q", output)
-	}
-	pane := substrate.PaneID(identifiers[0])
-	if err := validPaneID(pane); err != nil {
-		return substrate.Pane{}, fmt.Errorf("read current pane: %w", err)
-	}
-	return substrate.Pane{ID: pane}, nil
-}
-
 func (backend *Backend) PaneNamed(ctx context.Context, name string) (substrate.Pane, error) {
 	windows, err := backend.Windows(ctx)
 	if err != nil {
@@ -245,21 +221,6 @@ func (backend *Backend) Capture(ctx context.Context, pane substrate.PaneID) (sub
 		return substrate.Screen{}, fmt.Errorf("parse captured pane %q: %w", pane, err)
 	}
 	return screen, nil
-}
-
-func (backend *Backend) ComposerState(ctx context.Context, pane substrate.PaneID) (substrate.ComposerState, error) {
-	if err := validPaneID(pane); err != nil {
-		return substrate.ComposerState{}, err
-	}
-	output, err := backend.run(ctx, "display-message", "-p", "-t", string(pane), "#{pane_in_mode}")
-	if err != nil {
-		return substrate.ComposerState{}, tmuxError("read pane mode", err, output)
-	}
-	inMode, err := parseFlag(strings.TrimSpace(output))
-	if err != nil {
-		return substrate.ComposerState{}, fmt.Errorf("read pane mode: %w", err)
-	}
-	return substrate.ComposerState{Ready: !inMode}, nil
 }
 
 func (backend *Backend) Kill(ctx context.Context, pane substrate.PaneID) error {

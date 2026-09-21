@@ -8,7 +8,6 @@ type Substrate interface {
 	Spawn(context.Context, SpawnSpec) (Pane, error)
 	SendKeys(context.Context, PaneID, Keys) error
 	Capture(context.Context, PaneID) (Screen, error)
-	ComposerState(context.Context, PaneID) (ComposerState, error)
 	Kill(context.Context, PaneID) error
 	Attach(context.Context, PaneID) error
 }
@@ -31,9 +30,4 @@ type Keys struct {
 	Text   string
 	Names  []string
 	Submit bool
-}
-
-type ComposerState struct {
-	Ready bool
-	Text  string
 }

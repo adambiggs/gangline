@@ -39,10 +39,6 @@ func (paths Paths) Lock(team string) (*LockedTeam, error) {
 	return &LockedTeam{paths: teamPaths, lock: lock}, nil
 }
 
-func (team *LockedTeam) Paths() TeamPaths {
-	return team.paths
-}
-
 func (team *LockedTeam) Close() error {
 	if team == nil || team.lock == nil {
 		return nil

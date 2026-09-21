@@ -15,9 +15,10 @@ sealed sum types checked for exhaustive switches.
 JSONL event logs, and snapshots. The event log is authoritative; a snapshot is
 only a validated shortcut for replaying it.
 
-`substrate` defines the sole backend interface: spawn, list, rename, capture,
-send keys, and kill. The tmux backend returns parsed screens made of attributed
-cells and a cursor, so tmux escape sequences never reach harness logic.
+`substrate` defines terminal values and the common backend interface: spawn,
+capture, send keys, kill, and attach. The tmux backend also owns session and
+window lifecycle. It returns parsed screens made of attributed cells and a
+cursor, so tmux escape sequences never reach harness logic.
 
 `harness` loads and validates CUE collars and implements reusable native
 primitives: startup recognition, composer reading, submission, submit-witness

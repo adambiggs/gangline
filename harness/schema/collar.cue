@@ -31,7 +31,6 @@ package harness
 #ContextBand: close({
 	name: #Name
 	at: number & >=0 & <=1
-	message: string & !=""
 })
 
 #Action: close({
@@ -69,7 +68,6 @@ package harness
 		interrupt: #Action
 		compact: #Action
 		compact_recover: [...#Action]
-		queue_recall?: #Action
 	})
 	context_bands: [string & !=""]: [...#ContextBand]
 })

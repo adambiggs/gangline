@@ -2,6 +2,7 @@ package core
 
 import (
 	"encoding/json"
+	"os"
 	"reflect"
 	"testing"
 	"time"
@@ -86,9 +87,13 @@ func TestEventSchemaRejectsInvalidInput(t *testing.T) {
 	}
 }
 
-func TestEventJSONSchemaIsExported(t *testing.T) {
+func TestPublishedJSONSchemaCoversEveryEvent(t *testing.T) {
+	data, err := os.ReadFile("schema/events.schema.json")
+	if err != nil {
+		t.Fatal(err)
+	}
 	var schema map[string]any
-	if err := json.Unmarshal(EventJSONSchema(), &schema); err != nil {
+	if err := json.Unmarshal(data, &schema); err != nil {
 		t.Fatalf("JSON Schema is not JSON: %v", err)
 	}
 	if schema["$schema"] != "https://json-schema.org/draft/2020-12/schema" {

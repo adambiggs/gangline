@@ -15,7 +15,6 @@ type ProviderLimit struct {
 	Label       string
 	UsedPercent int
 	ResetAt     time.Time
-	ObservedAt  time.Time
 }
 
 var (
@@ -72,7 +71,7 @@ func parseClaudeLimit(line string, now time.Time) (ProviderLimit, bool) {
 	if reset.Before(now.Add(-24 * time.Hour)) {
 		reset = reset.AddDate(1, 0, 0)
 	}
-	return ProviderLimit{Label: match[1], UsedPercent: used, ResetAt: reset, ObservedAt: now}, true
+	return ProviderLimit{Label: match[1], UsedPercent: used, ResetAt: reset}, true
 }
 
 func parseCodexLimit(line string, now time.Time) (ProviderLimit, bool) {
@@ -91,7 +90,7 @@ func parseCodexLimit(line string, now time.Time) (ProviderLimit, bool) {
 	if !ok {
 		return ProviderLimit{}, false
 	}
-	return ProviderLimit{Label: strings.TrimSpace(match[1]), UsedPercent: percent, ResetAt: reset, ObservedAt: now}, true
+	return ProviderLimit{Label: strings.TrimSpace(match[1]), UsedPercent: percent, ResetAt: reset}, true
 }
 
 func parseReset(text string, now time.Time) (time.Time, bool) {

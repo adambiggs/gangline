@@ -45,16 +45,15 @@ collar: {
 		interrupt: {keys: ["Escape"]}
 		compact: {text: "/compact {{instructions}}", submit: true}
 		compact_recover: [{keys: ["Escape"]}, {keys: ["Enter"]}]
-		queue_recall: {keys: ["Up"]}
 	}
 	context_bands: {
 		"*": [
-			{name: "yellow", at: 0.20, message: "context turns are now expensive"},
-			{name: "red", at: 0.40, message: "finish or rotate this session"},
+			{name: "yellow", at: 0.20},
+			{name: "red", at: 0.40},
 		]
 		"*haiku*": [
-			{name: "yellow", at: 0.45, message: "context is getting full"},
-			{name: "red", at: 0.65, message: "finish or compact this session"},
+			{name: "yellow", at: 0.45},
+			{name: "red", at: 0.65},
 		]
 	}
 }

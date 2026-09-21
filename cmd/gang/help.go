@@ -34,7 +34,7 @@ Talk to agents:
   send      deliver a message
   run       run a host command and return its result
   queue     read waiting messages
-  flush     recover a harness-queued message
+  flush     retry pending effects
   interrupt stop an agent's current turn
   compact   compact an agent's context
 
@@ -42,12 +42,12 @@ Observe and control:
   roster    list the team
   status    inspect one agent
   tick      retry pending effects
-  wait      wait for an agent boundary
+  wait      check for an agent boundary
   capture   read an agent's pane or composer
   context   read native context use
   log       read the event log
   replay    fold an event log offline
-  usage     read token consumption
+  usage     report unavailable token accounting
   cap       read provider-window history
   limits    read current provider limits
   whoami    read this pane's identity
@@ -107,16 +107,16 @@ var commandDescription = map[string]string{
 	"hitch":     "Launch a native harness in a new team pane and deliver its contract, role, and assignment.\n",
 	"adopt":     "Register an existing pane without launching a harness or delivering startup prose.\n",
 	"rename":    "Change a registered agent name without restarting its harness.\n",
-	"send":      "Read a message from stdin. Delivery is verified in the recipient composer or remains pending for a native turn boundary.\n",
+	"send":      "Read a message from stdin. Delivery is submitted from an empty composer and verified by a native hook, or remains pending for a turn boundary.\n",
 	"run":       "Run a host command synchronously with this process's input and output.\n",
-	"flush":     "Run one recovery pass over pending deliveries.\n",
+	"flush":     "Run the same bounded recovery pass as gang tick.\n",
 	"queue":     "List pending delivery identifiers, recipients, and senders.\n",
 	"interrupt": "Send the collar's native interrupt and optionally deliver a reason after the turn stops.\n",
 	"compact":   "Request the collar's native compaction and place a continuation behind it.\n",
 	"context":   "Print the collar's native context reading without estimating missing data.\n",
 	"log":       "Print the configured team's durable JSONL event log.\n",
 	"replay":    "Fold a recorded JSONL event stream without contacting tmux or a harness.\n",
-	"usage":     "Join live native session identifiers to locally recorded token consumption.\n",
+	"usage":     "Report that local token-accounting samples are unavailable.\n",
 	"cap":       "Report that retained provider-window sampling is unavailable.\n",
 	"limits":    "Read current provider limits from the collar's native source.\n",
 	"wait":      "Succeed only when an agent is already at a recorded idle boundary.\n",
@@ -132,7 +132,7 @@ var commandDescription = map[string]string{
 	"down":      "Drop every live agent, then remove the stopped team's runtime state.\n",
 	"collars":   "List embedded and operator-provided CUE collars.\n",
 	"collar":    "Probe one installed harness in a throwaway private tmux session.\n",
-	"models":    "List model and reasoning-effort identifiers declared by a collar.\n",
+	"models":    "Discover model and reasoning-effort identifiers through a collar's native catalog.\n",
 	"roles":     "List embedded and operator-provided role briefs.\n",
 	"config":    "Print persistent settings, effective values, and their sources.\n",
 	"upgrade":   "Check or install the latest stable release into an installer-managed tree.\n",

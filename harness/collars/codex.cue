@@ -48,12 +48,11 @@ collar: {
 		interrupt: {keys: ["Escape"]}
 		compact: {text: "/compact", submit: true}
 		compact_recover: [{keys: ["Escape"]}, {keys: ["Enter"]}]
-		queue_recall: {keys: ["S-Left"]}
 	}
 	context_bands: {
 		"*": [
-			{name: "yellow", at: 0.75, message: "context is getting full"},
-			{name: "red", at: 0.90, message: "finish or compact this session"},
+			{name: "yellow", at: 0.75},
+			{name: "red", at: 0.90},
 		]
 	}
 }

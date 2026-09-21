@@ -31,17 +31,6 @@ func TestTeamPathsStayInsideRoot(t *testing.T) {
 	}
 }
 
-func TestDefaultPathsUsesStateHome(t *testing.T) {
-	t.Setenv("XDG_STATE_HOME", "/state")
-	paths, err := DefaultPaths()
-	if err != nil {
-		t.Fatal(err)
-	}
-	if paths.Root != "/state/gangline" {
-		t.Fatalf("root = %q", paths.Root)
-	}
-}
-
 func TestTeamLockRefusesContentionImmediately(t *testing.T) {
 	paths := Paths{Root: t.TempDir()}
 	first, err := paths.Lock("example")

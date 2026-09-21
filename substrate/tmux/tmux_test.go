@@ -60,9 +60,6 @@ func TestBackendDrivesPrivateTmuxServer(t *testing.T) {
 	if found, err := backend.PaneNamed(context.Background(), "renamed#S"); err != nil || found.ID != pane.ID {
 		t.Fatalf("renamed pane = %#v, %v; want %q", found, err, pane.ID)
 	}
-	if current, err := backend.CurrentPane(context.Background()); err != nil || !strings.HasPrefix(string(current.ID), "%") {
-		t.Fatalf("current pane = %#v, %v", current, err)
-	}
 	runTmux(t, binary, socket, "wait-for", ready)
 	if err := backend.SendKeys(context.Background(), pane.ID, substrate.Keys{Text: "hello from backend", Submit: true}); err != nil {
 		t.Fatal(err)

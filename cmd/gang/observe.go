@@ -419,7 +419,7 @@ func awaitStartup(ctx context.Context, backend interface {
 	defer deadline.Stop()
 	ticker := time.NewTicker(25 * time.Millisecond)
 	defer ticker.Stop()
-	lastErr := errors.New("no screen captured")
+	var lastErr error
 	var readySince time.Time
 	for {
 		screen, err := backend.Capture(ctx, pane)

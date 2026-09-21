@@ -13,9 +13,6 @@ import (
 //go:embed schema/events.cue
 var eventSchema []byte
 
-//go:embed schema/events.schema.json
-var eventJSONSchema []byte
-
 type eventRecord struct {
 	Type         string           `json:"type"`
 	At           time.Time        `json:"at"`
@@ -212,8 +209,4 @@ func ValidateEventJSON(data []byte) error {
 		return fmt.Errorf("validate event: %w", err)
 	}
 	return nil
-}
-
-func EventJSONSchema() []byte {
-	return append([]byte(nil), eventJSONSchema...)
 }

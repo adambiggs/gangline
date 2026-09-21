@@ -81,7 +81,6 @@ type Actions struct {
 	Interrupt      Action   `json:"interrupt"`
 	Compact        Action   `json:"compact"`
 	CompactRecover []Action `json:"compact_recover"`
-	QueueRecall    *Action  `json:"queue_recall,omitempty"`
 }
 
 type Action struct {
@@ -91,9 +90,8 @@ type Action struct {
 }
 
 type ContextBand struct {
-	Name    string  `json:"name"`
-	At      float64 `json:"at"`
-	Message string  `json:"message"`
+	Name string  `json:"name"`
+	At   float64 `json:"at"`
 }
 
 func LoadCollar(filename string, data []byte) (Collar, error) {

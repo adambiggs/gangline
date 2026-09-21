@@ -6,8 +6,8 @@
       "Bash(git log:*)",
       "Bash(git show:*)",
       "Bash(shellcheck:*)",
-      "Bash(test/lint.sh:*)",
-      "Bash(test/integration.sh:*)",
+      "Bash(test/gate.sh:*)",
+      "Bash(test/go.sh:*)",
       "Bash(gang roster:*)",
       "Bash(gang status:*)",
       "Bash(gang capture:*)"

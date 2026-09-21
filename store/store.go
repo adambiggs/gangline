@@ -2,7 +2,6 @@ package store
 
 import (
 	"fmt"
-	"os"
 	"path/filepath"
 )
 
@@ -17,18 +16,6 @@ type TeamPaths struct {
 	Events    string
 	Snapshot  string
 	Lock      string
-}
-
-func DefaultPaths() (Paths, error) {
-	stateHome := os.Getenv("XDG_STATE_HOME")
-	if stateHome == "" {
-		home, err := os.UserHomeDir()
-		if err != nil {
-			return Paths{}, fmt.Errorf("resolve state home: %w", err)
-		}
-		stateHome = filepath.Join(home, ".local", "state")
-	}
-	return Paths{Root: filepath.Join(stateHome, "gangline")}, nil
 }
 
 func (paths Paths) Team(team string) (TeamPaths, error) {

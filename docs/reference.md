@@ -43,7 +43,7 @@ otherwise `--task` supplies it.
 | `gang send NAME [--from NAME] [--live-only] [--supersede] [--at TIME]` | Read a body from stdin and deliver or queue it. |
 | `gang send NAME --at clear` | Clear timed deliveries for the recipient. |
 | `gang queue [NAME]` | List queued delivery ID, recipient, and sender rows. |
-| `gang flush` | Run one recovery pass over pending deliveries. |
+| `gang flush` | Run the same bounded recovery pass as `gang tick`. |
 | `gang interrupt [NAME] [-m REASON]` | Interrupt an active or wedged native turn. |
 | `gang compact [NAME] [--resume TEXT]` | Submit the collar's compaction action and queue a continuation. |
 | `gang compact NAME --recover` | Apply the collar's declared compaction-recovery actions. |
@@ -153,7 +153,7 @@ The value declares:
 - `options`: optional effort and role-prompt argument templates;
 - `primitives`: startup, composer, submit, submit witness, turn boundary,
   context, provider limits, and wedge operations;
-- `actions`: interrupt, compact, recovery, and optional queue recall; and
+- `actions`: interrupt, compact, and recovery; and
 - `context_bands`: ordered named thresholds per model selector.
 
 Logic stays in committed Go primitives. A collar selects and parameterizes

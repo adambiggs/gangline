@@ -36,7 +36,7 @@ GROUPS = [
         ("docs/operations.md", "operations.html", "Operations"),
     ]),
     ("Understand", [
-        ("docs/architecture.md", "architecture.html", "Architecture"),
+        ("ARCHITECTURE.md", "architecture.html", "Architecture"),
         ("CONSTITUTION.md", "constitution.html", "Design principles"),
         ("docs/design.md", "design.html", "Design decisions"),
     ]),

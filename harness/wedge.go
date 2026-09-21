@@ -20,7 +20,6 @@ type WedgeObservation struct {
 
 type Wedge struct {
 	Detected bool
-	Since    time.Time
 	Evidence string
 }
 
@@ -48,7 +47,6 @@ func DetectWedge(invocation Invocation, observation WedgeObservation) (Wedge, er
 	}
 	return Wedge{
 		Detected: true,
-		Since:    observation.BusySince,
 		Evidence: boundedTail(plain, 20),
 	}, nil
 }
