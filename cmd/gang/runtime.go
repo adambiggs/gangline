@@ -8,6 +8,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"reflect"
 	"syscall"
 	"time"
 
@@ -360,7 +361,7 @@ func (run *runtime) deliver(state core.State, backend interface {
 	}
 	ctx, cancel := context.WithDeadline(context.Background(), effect.Deadline)
 	defer cancel()
-	if err := awaitSubmitSettle(ctx, settle); err != nil {
+	if err := awaitScreenSettle(ctx, backend, substrate.PaneID(effect.Pane), screen, settle); err != nil {
 		return core.DeliveryUnverifiedEvent{At: time.Now(), EnvelopeID: effect.Envelope.ID, Evidence: err.Error()}, nil
 	}
 	// Recapture supplies diagnostic evidence when the native renderer is fast
@@ -403,17 +404,32 @@ func (run *runtime) deliver(state core.State, backend interface {
 	}
 }
 
-func awaitSubmitSettle(ctx context.Context, settle time.Duration) error {
-	if settle == 0 {
-		return nil
-	}
-	timer := time.NewTimer(settle)
-	defer timer.Stop()
-	select {
-	case <-ctx.Done():
-		return fmt.Errorf("submit did not settle before its deadline: %w", ctx.Err())
-	case <-timer.C:
-		return nil
+func awaitScreenSettle(ctx context.Context, backend interface {
+	Capture(context.Context, substrate.PaneID) (substrate.Screen, error)
+}, pane substrate.PaneID, before substrate.Screen, settle time.Duration) error {
+	ticker := time.NewTicker(25 * time.Millisecond)
+	defer ticker.Stop()
+	var last substrate.Screen
+	var stableSince time.Time
+	for {
+		screen, err := backend.Capture(ctx, pane)
+		if err == nil && !reflect.DeepEqual(screen, before) {
+			if stableSince.IsZero() || !reflect.DeepEqual(screen, last) {
+				stableSince = time.Now()
+				last = screen
+			}
+			if time.Since(stableSince) >= settle {
+				return nil
+			}
+		} else {
+			stableSince = time.Time{}
+			last = substrate.Screen{}
+		}
+		select {
+		case <-ctx.Done():
+			return fmt.Errorf("native composer did not settle before submission: %w", ctx.Err())
+		case <-ticker.C:
+		}
 	}
 }
 
