@@ -136,6 +136,9 @@ func validateCollar(collar Collar) error {
 	if collar.Hooks != nil && !argsContain(collar.Hooks.InstallArgs, "{{hook.command.json}}") {
 		return fmt.Errorf("hook install arguments do not contain {{hook.command.json}}")
 	}
+	if _, err := SubmitSettle(collar.Primitives.Submit); err != nil {
+		return err
+	}
 	checks := []struct {
 		where   string
 		value   Invocation

@@ -2,6 +2,7 @@ package harness
 
 import (
 	"fmt"
+	"time"
 
 	"github.com/adambiggs/gangline/substrate"
 )
@@ -11,6 +12,21 @@ func Submit(invocation Invocation, text string) (Action, error) {
 		return Action{}, fmt.Errorf("unknown submit primitive %q", invocation.Name)
 	}
 	return Action{Text: text, Submit: true}, nil
+}
+
+func SubmitSettle(invocation Invocation) (time.Duration, error) {
+	if invocation.Name != "enter-submit" {
+		return 0, fmt.Errorf("unknown submit primitive %q", invocation.Name)
+	}
+	value := invocation.Params["settle"]
+	if value == "" {
+		return 0, nil
+	}
+	duration, err := time.ParseDuration(value)
+	if err != nil || duration < 0 {
+		return 0, fmt.Errorf("submit settle %q is not a non-negative duration", value)
+	}
+	return duration, nil
 }
 
 func RenderAction(action Action, values map[string]string) (Action, error) {

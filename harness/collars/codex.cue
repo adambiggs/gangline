@@ -37,7 +37,7 @@ collar: {
 	primitives: {
 		startup: [{name: "codex-trust-prompt"}, {name: "codex-composer"}]
 		composer: {name: "codex-composer"}
-		submit: {name: "enter-submit"}
+		submit: {name: "enter-submit", params: {settle: "400ms"}}
 		turn_boundary: {name: "hook-boundary"}
 		context: {name: "codex-screen-context"}
 		provider_limits: {name: "codex-screen-limits"}

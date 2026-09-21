@@ -261,8 +261,21 @@ func (run *runtime) executeEffect(state core.State, effect core.Effect) (core.Ev
 		if composerErr != nil || composer.Text != "" {
 			return nil, nil
 		}
-		if sendErr := backend.SendKeys(context.Background(), substrate.PaneID(effect.Pane), action.Input()); sendErr != nil {
+		settle, settleErr := harness.SubmitSettle(collar.Primitives.Submit)
+		if settleErr != nil {
+			return core.CompactionFailedEvent{At: now, CompactionID: effect.Compaction.ID, Reason: settleErr.Error()}, nil
+		}
+		pane := substrate.PaneID(effect.Pane)
+		if sendErr := backend.SendKeys(context.Background(), pane, substrate.Keys{Text: action.Text}); sendErr != nil {
 			return core.CompactionFailedEvent{At: now, CompactionID: effect.Compaction.ID, Reason: sendErr.Error()}, nil
+		}
+		ctx, cancel := context.WithDeadline(context.Background(), effect.Compaction.Deadline)
+		defer cancel()
+		if waitErr := awaitComposerText(ctx, backend, pane, collar, action.Text, settle); waitErr != nil {
+			return core.CompactionFailedEvent{At: time.Now(), CompactionID: effect.Compaction.ID, Reason: waitErr.Error()}, nil
+		}
+		if sendErr := backend.SendKeys(context.Background(), pane, substrate.Keys{Names: action.Keys, Submit: action.Submit}); sendErr != nil {
+			return core.CompactionFailedEvent{At: time.Now(), CompactionID: effect.Compaction.ID, Reason: sendErr.Error()}, nil
 		}
 		return nil, nil
 	case core.InterruptHitch:
@@ -341,6 +354,15 @@ func (run *runtime) deliver(state core.State, backend interface {
 	if err := backend.SendKeys(context.Background(), substrate.PaneID(effect.Pane), substrate.Keys{Text: wire}); err != nil {
 		return core.DeliveryUnverifiedEvent{At: time.Now(), EnvelopeID: effect.Envelope.ID, Evidence: "text input returned an error: " + err.Error()}, nil
 	}
+	settle, err := harness.SubmitSettle(collar.Primitives.Submit)
+	if err != nil {
+		return core.DeliveryUnverifiedEvent{At: time.Now(), EnvelopeID: effect.Envelope.ID, Evidence: err.Error()}, nil
+	}
+	ctx, cancel := context.WithDeadline(context.Background(), effect.Deadline)
+	defer cancel()
+	if err := awaitSubmitSettle(ctx, settle); err != nil {
+		return core.DeliveryUnverifiedEvent{At: time.Now(), EnvelopeID: effect.Envelope.ID, Evidence: err.Error()}, nil
+	}
 	// Recapture supplies diagnostic evidence when the native renderer is fast
 	// enough. The exact UserPromptSubmit payload below is authoritative: long
 	// composers can be clipped and a TUI may still be painting immediately
@@ -354,8 +376,6 @@ func (run *runtime) deliver(state core.State, backend interface {
 		return core.DeliveryUnverifiedEvent{At: time.Now(), EnvelopeID: effect.Envelope.ID, Evidence: "prepare native submit witness: " + err.Error()}, nil
 	}
 	defer os.Remove(witness)
-	ctx, cancel := context.WithDeadline(context.Background(), effect.Deadline)
-	defer cancel()
 	reader := exec.CommandContext(ctx, "cat", witness)
 	type witnessResult struct {
 		data []byte
@@ -380,6 +400,20 @@ func (run *runtime) deliver(state core.State, backend interface {
 		return core.DeliverySucceeded{At: time.Now(), EnvelopeID: effect.Envelope.ID}, nil
 	case <-ctx.Done():
 		return core.DeliveryUnverifiedEvent{At: time.Now(), EnvelopeID: effect.Envelope.ID, Evidence: "native submit witness timed out after input was sent"}, nil
+	}
+}
+
+func awaitSubmitSettle(ctx context.Context, settle time.Duration) error {
+	if settle == 0 {
+		return nil
+	}
+	timer := time.NewTimer(settle)
+	defer timer.Stop()
+	select {
+	case <-ctx.Done():
+		return fmt.Errorf("submit did not settle before its deadline: %w", ctx.Err())
+	case <-timer.C:
+		return nil
 	}
 }
 

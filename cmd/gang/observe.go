@@ -313,11 +313,12 @@ func (cmd command) collar(arguments []string) error {
 				} else {
 					results[harness.ProbeComposer] = harness.ProbeResult{Name: harness.ProbeComposer, Passed: true, Detail: "native empty composer detected"}
 					action, _ := harness.Submit(collar.Primitives.Submit, "Reply with exactly READY.")
+					settle, _ := harness.SubmitSettle(collar.Primitives.Submit)
 					payload, submitErr := awaitNativeHook(ctx, fifo, func() error {
 						if err := activeBackend.SendKeys(ctx, pane.ID, substrate.Keys{Text: action.Text}); err != nil {
 							return err
 						}
-						if err := awaitComposerText(ctx, activeBackend, pane.ID, collar, action.Text); err != nil {
+						if err := awaitComposerText(ctx, activeBackend, pane.ID, collar, action.Text, settle); err != nil {
 							return err
 						}
 						return activeBackend.SendKeys(ctx, pane.ID, substrate.Keys{Names: action.Keys, Submit: action.Submit})
@@ -365,8 +366,7 @@ func (cmd command) collar(arguments []string) error {
 
 func awaitComposerText(ctx context.Context, backend interface {
 	Capture(context.Context, substrate.PaneID) (substrate.Screen, error)
-}, pane substrate.PaneID, collar harness.Collar, want string) error {
-	const settle = 400 * time.Millisecond
+}, pane substrate.PaneID, collar harness.Collar, want string, settle time.Duration) error {
 	ticker := time.NewTicker(25 * time.Millisecond)
 	defer ticker.Stop()
 	var stableSince time.Time

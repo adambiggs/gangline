@@ -16,6 +16,19 @@ func TestRenderCompactAction(t *testing.T) {
 	}
 }
 
+func TestSubmitSettle(t *testing.T) {
+	settle, err := SubmitSettle(Invocation{Name: "enter-submit", Params: map[string]string{"settle": "400ms"}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if settle.String() != "400ms" {
+		t.Fatalf("settle = %s", settle)
+	}
+	if _, err := SubmitSettle(Invocation{Name: "enter-submit", Params: map[string]string{"settle": "later"}}); err == nil {
+		t.Fatal("invalid settle duration was accepted")
+	}
+}
+
 func TestRenderActionPreservesBracesInUserValue(t *testing.T) {
 	action, err := RenderAction(Action{Text: "/compact {{instructions}}"}, map[string]string{
 		"instructions": "keep {{literal}}",
