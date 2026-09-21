@@ -137,13 +137,6 @@ func loadCollar(name string, settings settings) (harness.Collar, error) {
 	return harness.EmbeddedCollar(name)
 }
 
-func (cmd command) collar(arguments []string) error {
-	if len(arguments) != 2 || arguments[0] != "check" {
-		return usageError("collar: expected 'check NAME'")
-	}
-	return pending("collar check")
-}
-
 func (cmd command) roles(arguments []string) error {
 	if len(arguments) != 0 {
 		return usageError("roles takes no arguments")

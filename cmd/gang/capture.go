@@ -6,6 +6,7 @@ import (
 	"strconv"
 	"strings"
 
+	"github.com/adambiggs/gangline/harness"
 	"github.com/adambiggs/gangline/substrate"
 )
 
@@ -37,7 +38,46 @@ func (cmd command) capture(arguments []string) error {
 		lineCount = parsed
 	}
 	if composer {
-		return pending("capture --composer")
+		settings, err := cmd.settings()
+		if err != nil {
+			return err
+		}
+		run := &runtime{cmd: cmd, settings: settings}
+		state, err := run.load()
+		if err != nil {
+			return err
+		}
+		if name == "" {
+			paneID := cmd.environment("TMUX_PANE")
+			for _, hitch := range state.Hitches {
+				if hitch.Pane == paneID {
+					name = string(hitch.Name)
+					break
+				}
+			}
+		}
+		hitch, ok := activeByName(state, name)
+		if !ok {
+			return refuseError("agent %q is not active", name)
+		}
+		backend, err := cmd.tmux(settings)
+		if err != nil {
+			return err
+		}
+		screen, err := backend.Capture(context.Background(), substrate.PaneID(hitch.Pane))
+		if err != nil {
+			return err
+		}
+		collar, err := loadCollar(hitch.Collar, settings)
+		if err != nil {
+			return err
+		}
+		reading, err := harness.ReadComposer(collar.Primitives.Composer, screen)
+		if err != nil {
+			return commandError{status: exitUnknown, text: err.Error()}
+		}
+		_, err = fmt.Fprintln(cmd.stdout, reading.Text)
+		return err
 	}
 
 	settings, err := cmd.settings()
