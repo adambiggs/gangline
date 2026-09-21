@@ -41,7 +41,7 @@ jobs:
           cp -R site/fonts _site/fonts
           # Install instructions point at the raw GitHub URL on purpose — what you
           # pipe is verifiably the repo file — so no /install copy is published.
-          echo gangline.ai > _site/CNAME
+          cp site/CNAME _site/CNAME
 
       # The docs are the repository's Markdown, rendered here and nowhere
       # else, so GitHub and the site read the same text.

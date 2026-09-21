@@ -1,7 +1,7 @@
 # Contributing
 
 Use this page to prepare a checkout, run the required checks, and create a
-commit that CI accepts. Before you edit, read [CONSTITUTION.md](CONSTITUTION.md)
+commit that CI accepts. Before you edit, read [docs/design.md](docs/design.md)
 and [AGENTS.md](AGENTS.md); both are binding for this repository.
 
 ## Prepare the checkout

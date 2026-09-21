@@ -5,5 +5,5 @@ packaging/pypi/*.egg-info/
 .gang-briefs/
 # Linked worktrees for local development.
 /.worktrees/
-.claude/settings.local.json
+.claude/
 .pii-scan-denylist

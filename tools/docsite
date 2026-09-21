@@ -37,8 +37,7 @@ GROUPS = [
     ]),
     ("Understand", [
         ("ARCHITECTURE.md", "architecture.html", "Architecture"),
-        ("CONSTITUTION.md", "constitution.html", "Design principles"),
-        ("docs/design.md", "design.html", "Design decisions"),
+        ("docs/design.md", "design.html", "Design"),
     ]),
     ("Reference", [
         ("docs/reference.md", "reference.html", "CLI and configuration"),

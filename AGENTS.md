@@ -1,6 +1,6 @@
 # AGENTS.md
 
-Read [`CONSTITUTION.md`](CONSTITUTION.md) before changing this repository and
+Read [`docs/design.md`](docs/design.md) before changing this repository and
 [`CONTRIBUTING.md`](CONTRIBUTING.md) before committing. They are binding.
 
 ## Check the executable in use
@@ -19,7 +19,7 @@ Collars and role briefs are read at hitch time. Existing agents retain the copy
 already in their context. Model selection is also a launch choice: drop the old
 window and hitch a new one to change it.
 
-`CONTRACT.md` is read at hitch time like the rest. Where a collar declares a
+The embedded contract is read at hitch time like the rest. Where a collar declares a
 `role_prompt` option it also enters the harness's system prompt. A running agent
 keeps the prose it launched with, so edits apply to later hitches.
 
@@ -33,7 +33,7 @@ fail, and require immediate observable readiness before asserting state.
 ## Keep the agent surface small
 
 Gangline is substrate: tmux lifecycle, attributed verified delivery, direct
-observation, collars, shipped prose in `CONTRACT.md` and `roles/`, native hooks,
+observation, collars, shipped prose, native hooks,
 native compaction, context readings, provider limits, and recorded curfews. It
 does not coordinate work or supervise agents.
 
@@ -41,7 +41,7 @@ does not coordinate work or supervise agents.
   logic belongs in named `harness` primitives rather than harness-name branches
   in `cmd/gang`.
 - Do not add the machinery classes prohibited by principles 1 and 7 in
-  `CONSTITUTION.md`.
+  [`docs/design.md`](docs/design.md).
 - Do not add speculative surfaces without a live consumer.
 - Fail loudly when a native TUI or event shape can no longer be interpreted.
 - Put operator security choices in operator configuration. Collars must not
@@ -85,10 +85,8 @@ request.
 | Document | Holds |
 |---|---|
 | `README.md` | what Gangline is and why it exists |
-| `CONSTITUTION.md` | project design principles |
-| `CONTRACT.md` | the standing terms every hitched agent is held to |
 | `ARCHITECTURE.md` | layers, message path, and package map |
-| `docs/design.md` | the decisions that still shape the code |
+| `docs/design.md` | project design principles and decisions |
 | `docs/reference.md` | exact commands, environment, and collar contract |
 | `docs/operations.md` | unattended operation and recovery |
 | `CONTRIBUTING.md` | setup, the gate, and commits |

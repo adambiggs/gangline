@@ -1,4 +1,4 @@
-package gangline
+package prose
 
 import (
 	"bytes"

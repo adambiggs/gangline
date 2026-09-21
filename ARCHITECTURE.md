@@ -3,6 +3,8 @@
 Gangline is one Go module and one `gang` binary. Its functional core decides
 state transitions; a thin command layer observes tmux and native harnesses,
 turns those observations into events, and executes the resulting effects.
+The principles and tradeoffs behind this structure live in
+[docs/design.md](docs/design.md).
 
 ## Packages
 
@@ -40,22 +42,12 @@ Commands and native hooks use the same state loop:
 5. execute the returned effects against tmux or the harness; and
 6. feed each observed outcome back through the loop as another event.
 
-Appending intent before effects makes interruption inspectable. Recovery can
-retry an operation whose outcome is still safely pending, while a send whose
-keystrokes landed without a matching native witness becomes `unverified` and is
-never duplicated automatically.
-
 ## Verified delivery
 
 A send renders a nonce-bearing attributed envelope, verifies that the native
 composer is empty, pastes the envelope, waits for the TUI to settle, and submits
 it. Delivery succeeds only when `UserPromptSubmit` reports the same prompt under
 the collar's declared normalization.
-
-Codex exposes the prompt byte-for-byte. Claude Code may wrap a bracketed paste
-in a matching `pasted_content` element; Gangline removes only that exact wrapper
-and still compares every inner envelope byte. A missing, malformed, or changed
-witness records `delivery_unverified`.
 
 ## State and schemas
 

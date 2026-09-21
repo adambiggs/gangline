@@ -122,8 +122,8 @@ removes that directory after every active hitch is stopped.
 
 ## Startup prose
 
-Gangline embeds `CONTRACT.md` and the shipped `roles/*.md`. Operator files under
-`GANG_CONFIG_DIR` override them:
+Gangline embeds its shipped contract and role briefs from `internal/prose/`.
+Operator files under `GANG_CONFIG_DIR` override them:
 
 - `CONTRACT.md` supplies standing terms;
 - `DOCTRINE.md` adds optional operator guidance; and

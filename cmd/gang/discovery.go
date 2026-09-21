@@ -12,8 +12,8 @@ import (
 	"time"
 	"unicode/utf8"
 
-	gangline "github.com/adambiggs/gangline"
 	"github.com/adambiggs/gangline/harness"
+	"github.com/adambiggs/gangline/internal/prose"
 )
 
 var collarNamePattern = regexp.MustCompile(`^[a-z][a-z0-9-]*$`)
@@ -145,7 +145,7 @@ func (cmd command) roles(arguments []string) error {
 	if err != nil {
 		return err
 	}
-	shipped, err := gangline.RoleNames()
+	shipped, err := prose.RoleNames()
 	if err != nil {
 		return err
 	}

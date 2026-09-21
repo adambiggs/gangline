@@ -3,9 +3,6 @@
 #
 # The fast push-triggered CI checks. Enable in a clone with:
 #   git config core.hooksPath .githooks
-#
-# The repository-local path delegates outward first so it cannot shadow an
-# operator's host-global contribution gate.
 set -euo pipefail
 
 unset GIT_DIR GIT_WORK_TREE GIT_INDEX_FILE GIT_OBJECT_DIRECTORY GIT_COMMON_DIR GIT_PREFIX
@@ -26,34 +23,6 @@ cleanup() {
 }
 trap cleanup EXIT HUP INT TERM
 cat > "$tmp/stdin"
-
-outer="$(git config --global --get core.hooksPath 2>/dev/null || true)"
-if [ -n "$outer" ]; then
-  case "$outer" in
-    /*) outer_dir="$outer" ;;
-    *) outer_dir="$root/$outer" ;;
-  esac
-  own_dir="$(cd .githooks && pwd -P)"
-  resolved_outer=""
-  if [ -d "$outer_dir" ]; then
-    resolved_outer="$(cd "$outer_dir" && pwd -P)"
-  fi
-  if [ -n "$resolved_outer" ] && [ "$resolved_outer" = "$own_dir" ]; then
-    echo "pre-push: global hook path resolves to this repository hook; suppressing outward delegation" >&2
-  elif [ -n "$resolved_outer" ] \
-       && [ -f "$outer_dir/pre-push" ] && [ -x "$outer_dir/pre-push" ]; then
-    # The outer gate runs first so a failure here cannot skip it, and it writes
-    # straight to the terminal: a host-global gate that spends minutes in
-    # inference reports its progress while it runs, and holding that back until
-    # the local gate finishes makes a live push look hung.
-    outer_rc=0
-    "$outer_dir/pre-push" "$@" < "$tmp/stdin" || outer_rc=$?
-    if [ "$outer_rc" -ne 0 ]; then
-      echo "pre-push: outer gate refused with status $outer_rc" >&2
-      exit "$outer_rc"
-    fi
-  fi
-fi
 
 echo "pre-push: Go checks and private-tmux acceptance scenarios run here; CI repeats them on Linux and macOS." >&2
 

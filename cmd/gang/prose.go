@@ -7,7 +7,7 @@ import (
 	"path/filepath"
 	"unicode/utf8"
 
-	gangline "github.com/adambiggs/gangline"
+	"github.com/adambiggs/gangline/internal/prose"
 )
 
 const maximumProseBytes = 256 << 10
@@ -28,7 +28,7 @@ func (cmd command) startupProse(role string) (startupProse, error) {
 		return startupProse{}, err
 	}
 	if contract == nil {
-		contract, err = gangline.Contract()
+		contract, err = prose.Contract()
 		if err != nil {
 			return startupProse{}, err
 		}
@@ -53,7 +53,7 @@ func (cmd command) startupProse(role string) (startupProse, error) {
 			return startupProse{}, err
 		}
 		if roleBody == nil {
-			roleBody, err = gangline.Role(role)
+			roleBody, err = prose.Role(role)
 			if err != nil {
 				return startupProse{}, fmt.Errorf("role %q is not available", role)
 			}
