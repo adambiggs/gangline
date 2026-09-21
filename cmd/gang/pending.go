@@ -25,7 +25,6 @@ func (cmd command) curfew([]string) error    { return pending("curfew") }
 func (cmd command) status([]string) error    { return pending("status") }
 func (cmd command) tick([]string) error      { return pending("tick") }
 func (cmd command) hook([]string) error      { return pending("hook") }
-func (cmd command) capture([]string) error   { return pending("capture") }
 func (cmd command) whoami([]string) error    { return pending("whoami") }
 func (cmd command) roster([]string) error    { return pending("roster") }
 func (cmd command) teams([]string) error     { return pending("teams") }
