@@ -54,6 +54,12 @@ answers them. A hitch that is not ready exits with status 4 and points the
 operator at the pane. This keeps security choices out of collars and preserves
 the harness's own interaction model.
 
+Runtime permission and approval surfaces are recorded as `blocked`. The collar
+selects a screen primitive with separate prompt and choice rules, while a
+native permission hook supplies an earlier signal when available. Delivery
+stays queued until direct observation clears the surface; Gangline never types
+through it or chooses an answer.
+
 ## Keep the event log authoritative
 
 The per-team JSONL log is the source of truth. Snapshots carry the event count,

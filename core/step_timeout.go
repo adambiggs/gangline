@@ -72,6 +72,8 @@ func stepTimedOut(state State, event OperationTimedOut) (State, []Effect) {
 		hitch.Status = HitchActive
 		hitch.Activity = ActivityWedged
 		hitch.DropDeadline = time.Time{}
+		hitch.BlockedEvidence = ""
+		hitch.BlockedFrom = ""
 		hitch.PreviousActivity = ""
 		hitch.WedgeEvidence = event.Evidence
 		state.Hitches[hitch.ID] = hitch

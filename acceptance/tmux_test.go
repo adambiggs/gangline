@@ -271,6 +271,7 @@ collar: {
 	  submit: {name: "enter-submit"}
 	  submit_witness: {name: "claude-pasted-content"}
 	  turn_boundary: {name: "hook-boundary"}
+	  blocked: {name: "screen-blocked", params: {prompt: "BLOCKED", choice: "ALLOW"}}
   context: {name: "codex-screen-context"}
   provider_limits: {name: "codex-screen-limits"}
   wedge: {name: "stable-busy-screen", params: {busy: "WORKING", after: "1ns"}}

@@ -40,6 +40,10 @@ collar: {
 		submit: {name: "enter-submit", params: {paste: "bracketed", settle: "400ms"}}
 		submit_witness: {name: "exact-prompt"}
 		turn_boundary: {name: "hook-boundary"}
+		blocked: {name: "screen-blocked", params: {
+			prompt: "Would you like to run|Do you want to allow|requires approval|approval required"
+			choice: "Yes, proceed|Yes, and don't ask again|Press enter to confirm"
+		}}
 		context: {name: "codex-screen-context"}
 		provider_limits: {name: "codex-screen-limits"}
 		wedge: {name: "stable-busy-screen", params: {busy: "esc to interrupt", after: "5m"}}

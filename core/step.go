@@ -20,6 +20,10 @@ func Step(state State, event Event) (State, []Effect) {
 		return stepTurnStarted(next, event)
 	case TurnBoundaryReached:
 		return stepTurnBoundary(next, event)
+	case BlockedDetected:
+		return stepBlockedDetected(next, event)
+	case BlockedCleared:
+		return stepBlockedCleared(next, event)
 	case SendRequested:
 		return stepSendRequested(next, event)
 	case TimedDeliveryReleased:

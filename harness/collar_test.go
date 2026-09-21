@@ -36,6 +36,7 @@ collar: {
 		composer: {name: "composer-read"}
 		submit: {name: "submit"}
 		turn_boundary: {name: "hook-boundary"}
+		blocked: {name: "screen-blocked", params: {prompt: "BLOCKED", choice: "ALLOW"}}
 		context: {name: "screen-context"}
 		provider_limits: {name: "screen-limits"}
 		wedge: {name: "stable-busy-screen"}

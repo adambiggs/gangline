@@ -55,6 +55,10 @@ func EncodeEvent(event Event) ([]byte, error) {
 		record.At, record.HitchID = event.At, event.HitchID
 	case TurnBoundaryReached:
 		record.At, record.HitchID = event.At, event.HitchID
+	case BlockedDetected:
+		record.At, record.HitchID, record.Evidence = event.At, event.HitchID, event.Evidence
+	case BlockedCleared:
+		record.At, record.HitchID = event.At, event.HitchID
 	case SendRequested:
 		record.At, record.Envelope, record.Deadline = event.At, &event.Envelope, &event.Deadline
 		if !event.NotBefore.IsZero() {
@@ -142,6 +146,10 @@ func DecodeEvent(data []byte) (Event, error) {
 		return TurnStarted{At: record.At, HitchID: record.HitchID}, nil
 	case "turn_boundary_reached":
 		return TurnBoundaryReached{At: record.At, HitchID: record.HitchID}, nil
+	case "blocked_detected":
+		return BlockedDetected{At: record.At, HitchID: record.HitchID, Evidence: record.Evidence}, nil
+	case "blocked_cleared":
+		return BlockedCleared{At: record.At, HitchID: record.HitchID}, nil
 	case "send_requested":
 		event := SendRequested{At: record.At, Envelope: *record.Envelope, Deadline: *record.Deadline}
 		if record.NotBefore != nil {

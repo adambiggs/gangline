@@ -86,6 +86,31 @@ func TestStepDeliveryWaitsForTurnBoundary(t *testing.T) {
 	}
 }
 
+func TestStepBlockedHoldsDeliveryUntilClearBoundary(t *testing.T) {
+	state := busyHitch(t)
+	state, effects := Step(state, BlockedDetected{At: testNow, HitchID: "worker-id", Evidence: "approval required"})
+	assertEffect(t, effects, nil)
+	if hitch := state.Hitches["worker-id"]; hitch.Activity != ActivityBlocked || hitch.BlockedFrom != ActivityBusy {
+		t.Fatalf("blocked hitch = %#v", hitch)
+	}
+	envelope := Envelope{
+		ID: "e-blocked", From: Sender{Kind: SenderAgent, Name: "lead", HitchID: "lead-id"},
+		To: "worker", Message: Message{Text: "hold this"}, CreatedAt: testNow,
+	}
+	state, effects = Step(state, SendRequested{At: testNow, Envelope: envelope, Deadline: testDeadline})
+	assertEffect(t, effects, nil)
+	if state.Deliveries[envelope.ID].Status != DeliveryQueued {
+		t.Fatalf("blocked delivery = %#v", state.Deliveries[envelope.ID])
+	}
+	state, effects = Step(state, BlockedCleared{At: testNow, HitchID: "worker-id"})
+	assertEffect(t, effects, nil)
+	if state.Hitches["worker-id"].Activity != ActivityBusy {
+		t.Fatalf("cleared activity = %q", state.Hitches["worker-id"].Activity)
+	}
+	state, effects = Step(state, TurnBoundaryReached{At: testNow, HitchID: "worker-id"})
+	assertEffect(t, effects, DeliverEnvelope{Envelope: envelope, Pane: "%2", Deadline: testDeadline})
+}
+
 func TestStepCompactionRunsBeforeQueuedDelivery(t *testing.T) {
 	state := twoActiveHitches(t)
 	state, _ = Step(state, TurnStarted{At: testNow, HitchID: "worker-id"})

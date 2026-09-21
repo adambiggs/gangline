@@ -44,6 +44,8 @@ func stepDropSucceeded(state State, event DropSucceeded) (State, []Effect) {
 	hitch.DropDeadline = time.Time{}
 	hitch.InterruptDeadline = time.Time{}
 	hitch.InterruptReason = ""
+	hitch.BlockedEvidence = ""
+	hitch.BlockedFrom = ""
 	hitch.PreviousActivity = ""
 	state.Hitches[hitch.ID] = hitch
 	return state, nil

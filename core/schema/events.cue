@@ -21,15 +21,17 @@ import "time"
 	role?: string
 	directory: #ID
 	status?: "starting" | "booting" | "active" | "dropping" | "dropped" | "failed"
-	activity?: "unknown" | "idle" | "busy" | "delivering" | "compacting" | "interrupting" | "wedged"
+	activity?: "unknown" | "idle" | "busy" | "delivering" | "compacting" | "interrupting" | "blocked" | "wedged"
 	pane?: string
 	boot_deadline?: #Time
 	drop_deadline?: #Time
 	interrupt_deadline?: #Time
 	interrupt_reason?: string
 	pending_compact_id?: #ID
+	blocked_evidence?: #Text
+	blocked_from?: "unknown" | "idle" | "busy" | "delivering" | "compacting" | "interrupting" | "blocked" | "wedged"
 	wedge_evidence?: #Text
-	previous_activity?: "unknown" | "idle" | "busy" | "delivering" | "compacting" | "interrupting" | "wedged"
+	previous_activity?: "unknown" | "idle" | "busy" | "delivering" | "compacting" | "interrupting" | "blocked" | "wedged"
 })
 
 #Envelope: close({
@@ -50,7 +52,7 @@ import "time"
 })
 
 #Event: #HitchRequested | #AdoptRequested | #RenameRequested | #HitchSpawned | #HitchReady | #HitchLaunchFailed |
-	#TurnStarted | #TurnBoundaryReached | #SendRequested | #TimedDeliveryReleased | #TimedDeliveriesCleared | #DeliverySucceeded |
+	#TurnStarted | #TurnBoundaryReached | #BlockedDetected | #BlockedCleared | #SendRequested | #TimedDeliveryReleased | #TimedDeliveriesCleared | #DeliverySucceeded |
 	#DeliveryDeferred | #DeliveryFailed | #DeliveryUnverified |
 	#CompactionRequested | #CompactionCompleted | #CompactionFailed | #InterruptRequested | #InterruptSucceeded | #InterruptFailed |
 	#DropRequested | #DropSucceeded | #DropFailed | #WedgeDetected |
@@ -64,6 +66,8 @@ import "time"
 #HitchLaunchFailed: close({type: "hitch_launch_failed", at: #Time, hitch_id: #ID, reason: #Text})
 #TurnStarted: close({type: "turn_started", at: #Time, hitch_id: #ID})
 #TurnBoundaryReached: close({type: "turn_boundary_reached", at: #Time, hitch_id: #ID})
+#BlockedDetected: close({type: "blocked_detected", at: #Time, hitch_id: #ID, evidence: #Text})
+#BlockedCleared: close({type: "blocked_cleared", at: #Time, hitch_id: #ID})
 #SendRequested: close({type: "send_requested", at: #Time, envelope: #Envelope, deadline: #Time, not_before?: #Time})
 #TimedDeliveryReleased: close({type: "timed_delivery_released", at: #Time, envelope_id: #ID})
 #TimedDeliveriesCleared: close({type: "timed_deliveries_cleared", at: #Time, recipient: #ID})

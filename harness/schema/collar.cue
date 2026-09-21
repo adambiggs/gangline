@@ -60,6 +60,7 @@ package harness
 		submit:        #Invocation
 		submit_witness: #Invocation
 		turn_boundary: #Invocation
+		blocked:       #Invocation
 		context:       #Invocation
 		provider_limits: #Invocation
 		wedge:         #Invocation

@@ -72,6 +72,7 @@ type Primitives struct {
 	Submit         Invocation   `json:"submit"`
 	SubmitWitness  Invocation   `json:"submit_witness"`
 	TurnBoundary   Invocation   `json:"turn_boundary"`
+	Blocked        Invocation   `json:"blocked"`
 	Context        Invocation   `json:"context"`
 	ProviderLimits Invocation   `json:"provider_limits"`
 	Wedge          Invocation   `json:"wedge"`
@@ -151,6 +152,7 @@ func validateCollar(collar Collar) error {
 		{"submit", collar.Primitives.Submit, []string{"enter-submit"}},
 		{"submit witness", collar.Primitives.SubmitWitness, []string{"exact-prompt", "claude-pasted-content"}},
 		{"turn boundary", collar.Primitives.TurnBoundary, []string{"hook-boundary"}},
+		{"blocked", collar.Primitives.Blocked, []string{"screen-blocked"}},
 		{"context", collar.Primitives.Context, []string{"claude-screen-context", "codex-screen-context"}},
 		{"provider limits", collar.Primitives.ProviderLimits, []string{"claude-screen-limits", "codex-screen-limits"}},
 		{"wedge", collar.Primitives.Wedge, []string{"stable-busy-screen"}},
@@ -176,6 +178,11 @@ func validateCollar(collar Collar) error {
 		}
 		if !known {
 			return fmt.Errorf("%s names unknown primitive %q", check.where, check.value.Name)
+		}
+	}
+	for _, name := range []string{"prompt", "choice"} {
+		if _, err := blockedPattern(collar.Primitives.Blocked, name); err != nil {
+			return err
 		}
 	}
 	for selector, bands := range collar.ContextBands {

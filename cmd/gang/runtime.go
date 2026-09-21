@@ -128,6 +128,10 @@ func (run *runtime) recover() (core.State, error) {
 	if err != nil {
 		return core.State{}, err
 	}
+	state, err = run.refreshBlocked(state)
+	if err != nil {
+		return core.State{}, err
+	}
 	for _, id := range core.DueTimedDeliveries(state, time.Now()) {
 		state, err = run.drive(core.TimedDeliveryReleased{At: time.Now(), EnvelopeID: id})
 		if err != nil {
@@ -149,6 +153,42 @@ func (run *runtime) recover() (core.State, error) {
 			if err != nil {
 				return core.State{}, err
 			}
+		}
+	}
+	return state, nil
+}
+
+func (run *runtime) refreshBlocked(state core.State) (core.State, error) {
+	backend, err := run.cmd.tmux(run.settings)
+	if err != nil {
+		return core.State{}, err
+	}
+	for id, hitch := range state.Hitches {
+		if hitch.Status != core.HitchActive {
+			continue
+		}
+		collar, loadErr := loadCollar(hitch.Collar, run.settings)
+		if loadErr != nil {
+			return core.State{}, loadErr
+		}
+		screen, captureErr := backend.Capture(context.Background(), substrate.PaneID(hitch.Pane))
+		if captureErr != nil {
+			continue
+		}
+		blocked, found, detectErr := harness.DetectBlocked(collar.Primitives.Blocked, screen)
+		if detectErr != nil {
+			return core.State{}, detectErr
+		}
+		switch {
+		case found && hitch.Activity != core.ActivityBlocked:
+			state, err = run.drive(core.BlockedDetected{At: time.Now(), HitchID: id, Evidence: blocked.Evidence})
+		case !found && hitch.Activity == core.ActivityBlocked:
+			if _, composerErr := harness.ReadComposer(collar.Primitives.Composer, screen); composerErr == nil {
+				state, err = run.drive(core.BlockedCleared{At: time.Now(), HitchID: id})
+			}
+		}
+		if err != nil {
+			return core.State{}, err
 		}
 	}
 	return state, nil
@@ -384,6 +424,13 @@ func (run *runtime) deliver(state core.State, backend interface {
 	screen, err := backend.Capture(context.Background(), substrate.PaneID(effect.Pane))
 	if err != nil {
 		return core.DeliveryDeferred{At: now, EnvelopeID: effect.Envelope.ID, Reason: err.Error()}, nil
+	}
+	blocked, found, err := harness.DetectBlocked(collar.Primitives.Blocked, screen)
+	if err != nil {
+		return core.DeliveryFailedEvent{At: now, EnvelopeID: effect.Envelope.ID, Reason: err.Error()}, nil
+	}
+	if found {
+		return core.BlockedDetected{At: now, HitchID: hitch.ID, Evidence: blocked.Evidence}, nil
 	}
 	composer, err := harness.ReadComposer(collar.Primitives.Composer, screen)
 	if err != nil || composer.Text != "" {

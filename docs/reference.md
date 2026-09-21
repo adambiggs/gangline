@@ -146,7 +146,7 @@ The value declares:
 - `models`: catalog and selected-model primitives and the model option;
 - `options`: optional effort and role-prompt argument templates;
 - `primitives`: startup, composer, submit, submit witness, turn boundary,
-  context, provider limits, and wedge operations;
+  runtime blocked, context, provider limits, and wedge operations;
 - `actions`: interrupt, compact, and recovery; and
 - `context_bands`: ordered named thresholds per model selector.
 

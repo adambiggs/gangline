@@ -20,6 +20,10 @@ func EventName(event Event) string {
 		return "turn_started"
 	case TurnBoundaryReached:
 		return "turn_boundary_reached"
+	case BlockedDetected:
+		return "blocked_detected"
+	case BlockedCleared:
+		return "blocked_cleared"
 	case SendRequested:
 		return "send_requested"
 	case TimedDeliveryReleased:

@@ -514,6 +514,26 @@ func (cmd command) hook(arguments []string) error {
 	if err != nil {
 		return err
 	}
+	state, err = run.refreshBlocked(state)
+	if err != nil {
+		return err
+	}
+	hitch = state.Hitches[id]
+	if hookEvent.Kind == "permission-requested" {
+		if hitch.Activity != core.ActivityBlocked {
+			_, err = run.drive(core.BlockedDetected{
+				At: time.Now(), HitchID: id, Evidence: "native permission request reported by collar hook",
+			})
+		}
+		return err
+	}
+	if boundary == harness.TurnFinished && hitch.Activity == core.ActivityBlocked {
+		state, err = run.drive(core.BlockedCleared{At: time.Now(), HitchID: id})
+		if err != nil {
+			return err
+		}
+		hitch = state.Hitches[id]
+	}
 	if boundary == harness.TurnStarted && hookEvent.Payload["prompt"] != "" {
 		witness := run.deliveryWitnessPath(id)
 		file, openErr := os.OpenFile(witness, os.O_WRONLY|syscall.O_NONBLOCK, 0)
@@ -764,8 +784,14 @@ func (cmd command) status(arguments []string) error {
 		return refuseError("agent %q is not registered", name)
 	}
 	_, err = fmt.Fprintf(cmd.stdout, "%s\t%s\t%s\n", hitch.Name, hitch.Status, hitch.Activity)
-	if err == nil && why && hitch.WedgeEvidence != "" {
-		_, err = fmt.Fprintln(cmd.stdout, hitch.WedgeEvidence)
+	if err == nil && why {
+		evidence := hitch.WedgeEvidence
+		if hitch.Activity == core.ActivityBlocked {
+			evidence = hitch.BlockedEvidence
+		}
+		if evidence != "" {
+			_, err = fmt.Fprintln(cmd.stdout, evidence)
+		}
 	}
 	return err
 }

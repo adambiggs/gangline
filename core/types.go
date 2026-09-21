@@ -34,6 +34,7 @@ const (
 	ActivityDelivering   HitchActivity = "delivering"
 	ActivityCompacting   HitchActivity = "compacting"
 	ActivityInterrupting HitchActivity = "interrupting"
+	ActivityBlocked      HitchActivity = "blocked"
 	ActivityWedged       HitchActivity = "wedged"
 )
 
@@ -51,6 +52,8 @@ type Hitch struct {
 	InterruptDeadline time.Time     `json:"interrupt_deadline,omitempty"`
 	InterruptReason   string        `json:"interrupt_reason,omitempty"`
 	PendingCompactID  CompactionID  `json:"pending_compact_id,omitempty"`
+	BlockedEvidence   string        `json:"blocked_evidence,omitempty"`
+	BlockedFrom       HitchActivity `json:"blocked_from,omitempty"`
 	WedgeEvidence     string        `json:"wedge_evidence,omitempty"`
 	PreviousActivity  HitchActivity `json:"previous_activity,omitempty"`
 }

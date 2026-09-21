@@ -52,6 +52,17 @@ type TurnBoundaryReached struct {
 	HitchID HitchID   `json:"hitch_id"`
 }
 
+type BlockedDetected struct {
+	At       time.Time `json:"at"`
+	HitchID  HitchID   `json:"hitch_id"`
+	Evidence string    `json:"evidence"`
+}
+
+type BlockedCleared struct {
+	At      time.Time `json:"at"`
+	HitchID HitchID   `json:"hitch_id"`
+}
+
 type SendRequested struct {
 	At        time.Time `json:"at"`
 	Envelope  Envelope  `json:"envelope"`
@@ -200,6 +211,8 @@ func (HitchReady) isEvent()              {}
 func (HitchLaunchFailed) isEvent()       {}
 func (TurnStarted) isEvent()             {}
 func (TurnBoundaryReached) isEvent()     {}
+func (BlockedDetected) isEvent()         {}
+func (BlockedCleared) isEvent()          {}
 func (SendRequested) isEvent()           {}
 func (TimedDeliveryReleased) isEvent()   {}
 func (TimedDeliveriesCleared) isEvent()  {}

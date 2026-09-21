@@ -24,6 +24,8 @@ func TestEventCodecRoundTrip(t *testing.T) {
 		HitchLaunchFailed{At: now, HitchID: "h-1", Reason: "process exited"},
 		TurnStarted{At: now, HitchID: "h-1"},
 		TurnBoundaryReached{At: now, HitchID: "h-1"},
+		BlockedDetected{At: now, HitchID: "h-1", Evidence: "approval required"},
+		BlockedCleared{At: now, HitchID: "h-1"},
 		SendRequested{At: now, Envelope: envelope, Deadline: deadline},
 		SendRequested{At: now, Envelope: Envelope{ID: "e-2", From: Sender{Kind: SenderSelfDeclared, Name: "operator"}, To: "worker", Message: Message{Text: "later"}, CreatedAt: now}, Deadline: deadline, NotBefore: now.Add(30 * time.Second)},
 		TimedDeliveryReleased{At: now, EnvelopeID: "e-1"},

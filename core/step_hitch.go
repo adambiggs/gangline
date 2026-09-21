@@ -23,6 +23,8 @@ func stepAdoptRequested(state State, event AdoptRequested) (State, []Effect) {
 	hitch.InterruptDeadline = time.Time{}
 	hitch.InterruptReason = ""
 	hitch.PendingCompactID = ""
+	hitch.BlockedEvidence = ""
+	hitch.BlockedFrom = ""
 	hitch.WedgeEvidence = ""
 	hitch.PreviousActivity = ""
 	state.Hitches[hitch.ID] = hitch
@@ -73,6 +75,8 @@ func stepHitchRequested(state State, event HitchRequested) (State, []Effect) {
 	hitch.BootDeadline = event.BootDeadline
 	hitch.DropDeadline = time.Time{}
 	hitch.PendingCompactID = ""
+	hitch.BlockedEvidence = ""
+	hitch.BlockedFrom = ""
 	hitch.WedgeEvidence = ""
 	hitch.PreviousActivity = ""
 	state.Hitches[hitch.ID] = hitch

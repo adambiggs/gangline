@@ -37,6 +37,10 @@ collar: {
 		submit: {name: "enter-submit", params: {paste: "bracketed", settle: "400ms"}}
 		submit_witness: {name: "claude-pasted-content"}
 		turn_boundary: {name: "hook-boundary"}
+		blocked: {name: "screen-blocked", params: {
+			prompt: "Do you want to proceed\\?|Allow .*\\?|needs your permission|Permission required"
+			choice: "(?m)^[[:space:]❯>]*1\\. Yes|Yes, and don't ask again|Allow"
+		}}
 		context: {name: "claude-screen-context"}
 		provider_limits: {name: "claude-screen-limits"}
 		wedge: {name: "stable-busy-screen", params: {busy: "esc to interrupt|Retrying in [0-9]+s|API Error: 529 Overloaded\\.|▰|▱", after: "5m"}}
