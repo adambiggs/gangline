@@ -73,7 +73,7 @@ var commandUsage = map[string]string{
 	"rename":    "usage: gang rename OLD NEW\n",
 	"send":      "usage: gang send NAME [--from SENDER] [--live-only] [--supersede] [--at TIME]\n",
 	"run":       "usage: gang run -- COMMAND [ARG ...]\n",
-	"flush":     "usage: gang flush [NAME]\n",
+	"flush":     "usage: gang flush\n",
 	"queue":     "usage: gang queue [NAME]\n",
 	"interrupt": "usage: gang interrupt [NAME] [-m REASON]\n",
 	"compact":   "usage: gang compact [NAME] [--resume TEXT]\n       gang compact NAME --recover\n",

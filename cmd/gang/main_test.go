@@ -38,6 +38,21 @@ func TestArgumentErrorsAreUsageErrors(t *testing.T) {
 	}
 }
 
+func TestCommandsRejectIgnoredArguments(t *testing.T) {
+	for _, arguments := range [][]string{
+		{"flush", "worker"},
+		{"wait", "worker", "extra"},
+		{"cap", "extra"},
+		{"usage", "extra"},
+	} {
+		var stdout, stderr bytes.Buffer
+		status := runWithInput(arguments, strings.NewReader(""), &stdout, &stderr)
+		if status != exitUsage {
+			t.Fatalf("run(%q) status = %d, want %d", arguments, status, exitUsage)
+		}
+	}
+}
+
 func TestSettingsUseXDGStateRoot(t *testing.T) {
 	cmd := command{
 		getenv: func(name string) string {

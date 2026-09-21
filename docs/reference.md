@@ -43,7 +43,7 @@ otherwise `--task` supplies it.
 | `gang send NAME [--from NAME] [--live-only] [--supersede] [--at TIME]` | Read a body from stdin and deliver or queue it. |
 | `gang send NAME --at clear` | Clear timed deliveries for the recipient. |
 | `gang queue [NAME]` | List queued delivery ID, recipient, and sender rows. |
-| `gang flush [NAME]` | Run one recovery pass over pending deliveries. |
+| `gang flush` | Run one recovery pass over pending deliveries. |
 | `gang interrupt [NAME] [-m REASON]` | Interrupt an active or wedged native turn. |
 | `gang compact [NAME] [--resume TEXT]` | Submit the collar's compaction action and queue a continuation. |
 | `gang compact NAME --recover` | Apply the collar's declared compaction-recovery actions. |

@@ -576,8 +576,8 @@ func (cmd command) hostRun(arguments []string) error {
 }
 
 func (cmd command) flush(arguments []string) error {
-	if len(arguments) > 1 {
-		return usageError("flush: expected at most one agent")
+	if err := noArguments(arguments, "flush"); err != nil {
+		return err
 	}
 	return cmd.tick(nil)
 }
@@ -808,8 +808,8 @@ func (cmd command) cap(arguments []string) error {
 }
 
 func (cmd command) wait(arguments []string) error {
-	if len(arguments) < 1 {
-		return usageError("wait: agent name required")
+	if err := exactly(arguments, 1, "wait"); err != nil {
+		return err
 	}
 	// Waiting is event-driven for callers: a non-idle observation refuses now;
 	// callers can invoke again after their own hook/event barrier.
