@@ -185,15 +185,11 @@ func (cmd command) teamLog(run *runtime) ([]store.LogEntry, error) {
 func busySince(entries []store.LogEntry, id core.HitchID) time.Time {
 	var since time.Time
 	for _, entry := range entries {
-		switch event := entry.Event.(type) {
-		case core.TurnStarted:
-			if event.HitchID == id {
-				since = event.At
-			}
-		case core.TurnBoundaryReached:
-			if event.HitchID == id {
-				since = time.Time{}
-			}
+		if event, ok := entry.Event.(core.TurnStarted); ok && event.HitchID == id {
+			since = event.At
+		}
+		if event, ok := entry.Event.(core.TurnBoundaryReached); ok && event.HitchID == id {
+			since = time.Time{}
 		}
 	}
 	return since

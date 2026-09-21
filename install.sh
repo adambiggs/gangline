@@ -164,14 +164,6 @@ fi
 
 need tmux
 
-# `gang wait` uses indexed hook arrays and list-command filters, so Gangline's
-# complete call set requires tmux 3.2 even though its other calls are older.
-ver="$(tmux -V | tr -cd '0-9.')"
-major="${ver%%.*}"
-minor="${ver#*.}"; minor="${minor%%.*}"
-[ "$major" -gt 3 ] || { [ "$major" -eq 3 ] && [ "$minor" -ge 2 ]; } \
-  || die "tmux >= 3.2 required: gang wait needs indexed hooks and list-command filters, found $(tmux -V)"
-
 # Keep the tagged source so upgrades remain inspectable and reproducible. The
 # installed command itself is one static binary and has no runtime tree.
 if [ -d "$HOME_DIR/.git" ]; then
