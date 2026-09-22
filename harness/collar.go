@@ -67,6 +67,7 @@ type Invocation struct {
 }
 
 type Primitives struct {
+	MidTurn        bool         `json:"mid_turn,omitempty"`
 	Startup        []Invocation `json:"startup"`
 	Composer       Invocation   `json:"composer"`
 	Submit         Invocation   `json:"submit"`

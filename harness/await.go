@@ -153,3 +153,47 @@ func AwaitScreenSettle(ctx context.Context, capture captureScreen, pane substrat
 		}
 	}
 }
+
+// AwaitComposerSettle observes only input paint; native work may keep animating
+// the rest of the pane. The submit hook remains the authoritative byte witness.
+func AwaitComposerSettle(ctx context.Context, capture captureScreen, pane substrate.PaneID, collar Collar, settle time.Duration) error {
+	ticker := time.NewTicker(25 * time.Millisecond)
+	defer ticker.Stop()
+	observed := composerStability{}
+	for {
+		screen, err := capture(ctx, pane)
+		if err != nil {
+			return err
+		}
+		composer, err := ReadComposer(collar.Primitives.Composer, screen)
+		if err != nil {
+			return err
+		}
+		if observed.ready(composer.Text, time.Now(), settle) {
+			return nil
+		}
+		select {
+		case <-ctx.Done():
+			return fmt.Errorf("native composer did not settle before submission: %w", ctx.Err())
+		case <-ticker.C:
+		}
+	}
+}
+
+type composerStability struct {
+	text  string
+	since time.Time
+}
+
+func (observed *composerStability) ready(text string, now time.Time, settle time.Duration) bool {
+	if text == "" {
+		observed.text = ""
+		observed.since = time.Time{}
+		return false
+	}
+	if text != observed.text || observed.since.IsZero() {
+		observed.text = text
+		observed.since = now
+	}
+	return now.Sub(observed.since) >= settle
+}

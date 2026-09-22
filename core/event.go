@@ -64,6 +64,7 @@ type BlockedCleared struct {
 }
 
 type SendRequested struct {
+	MidTurn   bool      `json:"mid_turn,omitempty"`
 	At        time.Time `json:"at"`
 	Envelope  Envelope  `json:"envelope"`
 	Deadline  time.Time `json:"deadline"`

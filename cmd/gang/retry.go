@@ -14,7 +14,7 @@ func (run *runtime) awaitDelivery(state core.State, id core.EnvelopeID) (core.St
 		timer := time.NewTimer(delay)
 		defer timer.Stop()
 		<-timer.C
-	}, run.recover)
+	}, run.refreshDeliveries)
 }
 
 // The command requesting startup, or the native asynchronous boundary hook,

@@ -4,6 +4,7 @@ import (
 	"context"
 	"github.com/adambiggs/gangline/substrate"
 	"testing"
+	"time"
 )
 
 func TestIdleRequiresAnEmptyComposerWithoutNativeWork(t *testing.T) {
@@ -33,5 +34,25 @@ func TestIdleRequiresAnEmptyComposerWithoutNativeWork(t *testing.T) {
 	}
 	if _, err := Idle(collar, testScreen(testCells("unrecognized surface", false))); err == nil {
 		t.Fatal("unrecognized surface accepted")
+	}
+}
+
+func TestComposerSettlesWhileNativeWorkAnimates(t *testing.T) {
+	collar, _ := EmbeddedCollar("codex")
+	now := time.Unix(100, 0)
+	observed := composerStability{}
+	for i, status := range []string{"Working |", "Working /", "Working -"} {
+		screen := testScreen(testCells(status, false), testCells("› steer this turn", false))
+		composer, err := ReadComposer(collar.Primitives.Composer, screen)
+		if err != nil {
+			t.Fatal(err)
+		}
+		ready := observed.ready(composer.Text, now.Add(time.Duration(i)*200*time.Millisecond), 400*time.Millisecond)
+		if ready != (i == 2) {
+			t.Fatalf("frame %d ready=%v", i, ready)
+		}
+	}
+	if observed.ready("changed input", now.Add(time.Second), 400*time.Millisecond) {
+		t.Fatal("changed composer bypassed settling")
 	}
 }

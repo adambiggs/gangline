@@ -98,11 +98,13 @@ const (
 )
 
 type Delivery struct {
-	Envelope  Envelope       `json:"envelope"`
-	Status    DeliveryStatus `json:"status"`
-	Deadline  time.Time      `json:"deadline"`
-	NotBefore time.Time      `json:"not_before,omitempty"`
-	Reason    string         `json:"reason,omitempty"`
+	MidTurn    bool           `json:"mid_turn,omitempty"`
+	DuringTurn bool           `json:"during_turn,omitempty"`
+	Envelope   Envelope       `json:"envelope"`
+	Status     DeliveryStatus `json:"status"`
+	Deadline   time.Time      `json:"deadline"`
+	NotBefore  time.Time      `json:"not_before,omitempty"`
+	Reason     string         `json:"reason,omitempty"`
 }
 
 type CompactionStatus string

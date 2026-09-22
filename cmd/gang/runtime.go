@@ -76,9 +76,9 @@ func (run *runtime) load() (core.State, error) {
 	return state, closeErr
 }
 
-// appendEvent records exactly one fact while holding the team lock. Effects
-// are returned to the caller and run only after the lock closes.
-func (run *runtime) appendEvent(event core.Event) (previous, next core.State, effects []core.Effect, err error) {
+// appendEvent records intent and claims native input under the same team lock.
+// A contended input claim is deferred before the writer releases that lock.
+func (run *runtime) appendEvent(event core.Event, held map[core.HitchID]*os.File) (previous, next core.State, effects []core.Effect, err error) {
 	locked, err := run.lock()
 	if err != nil {
 		return core.State{}, core.State{}, nil, err
@@ -92,10 +92,39 @@ func (run *runtime) appendEvent(event core.Event) (previous, next core.State, ef
 	if err != nil {
 		return core.State{}, core.State{}, nil, err
 	}
+	next, effects = core.Step(state, event)
+	var ready []core.Effect
+	var deferred []core.Event
+	for _, effect := range effects {
+		if delivery, ok := effect.(core.DeliverEnvelope); ok {
+			hitch, found := activeByName(next, string(delivery.Envelope.To))
+			if !found {
+				return core.State{}, core.State{}, nil, fmt.Errorf("delivery recipient disappeared before input ownership")
+			}
+			if held[hitch.ID] == nil {
+				owner, lockErr := run.paths().LockInput(run.settings.Session, string(hitch.ID))
+				if errors.Is(lockErr, store.ErrLocked) {
+					deferred = append(deferred, core.DeliveryDeferred{At: time.Now(), EnvelopeID: delivery.Envelope.ID, Reason: "another command still owns native input"})
+					continue
+				}
+				if lockErr != nil {
+					return core.State{}, core.State{}, nil, lockErr
+				}
+				held[hitch.ID] = owner
+			}
+		}
+		ready = append(ready, effect)
+	}
 	if err := locked.Append(event); err != nil {
 		return core.State{}, core.State{}, nil, err
 	}
-	next, effects = core.Step(state, event)
+	for _, refusal := range deferred {
+		if err := locked.Append(refusal); err != nil {
+			return core.State{}, core.State{}, nil, err
+		}
+		next, _ = core.Step(next, refusal)
+	}
+	effects = ready
 	if err := locked.SaveSnapshot(next); err != nil {
 		return core.State{}, core.State{}, nil, err
 	}
@@ -103,12 +132,18 @@ func (run *runtime) appendEvent(event core.Event) (previous, next core.State, ef
 }
 
 func (run *runtime) drive(events ...core.Event) (core.State, error) {
+	held := make(map[core.HitchID]*os.File)
+	defer func() {
+		for _, file := range held {
+			_ = file.Close()
+		}
+	}()
 	var latest core.State
 	queue := append([]core.Event(nil), events...)
 	for len(queue) != 0 {
 		event := queue[0]
 		queue = queue[1:]
-		previous, state, effects, err := run.appendEvent(event)
+		previous, state, effects, err := run.appendEvent(event, held)
 		if err != nil {
 			return core.State{}, err
 		}

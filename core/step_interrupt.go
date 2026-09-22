@@ -4,7 +4,7 @@ import "time"
 
 func stepInterruptRequested(state State, event InterruptRequested) (State, []Effect) {
 	hitch, ok := activeHitchByID(state, event.HitchID)
-	if !ok || (hitch.Activity != ActivityBusy && hitch.Activity != ActivityWedged) {
+	if !ok || (hitch.Activity != ActivityBusy && hitch.Activity != ActivityWedged) || deliveryInProgress(state, hitch.Name) {
 		return rejected(state, event, event.At, "hitch is not in an interruptible turn")
 	}
 	if !validDeadline(event.At, event.Deadline) {

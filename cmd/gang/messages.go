@@ -36,9 +36,17 @@ func (cmd command) send(arguments []string) error {
 			return err
 		}
 	}
+	hitch, found := activeByName(state, options.Name)
+	if !found {
+		return refuseError("agent %q is not active", options.Name)
+	}
+	collar, err := loadCollar(hitch.Collar, run.settings)
+	if err != nil {
+		return err
+	}
 	if options.LiveOnly {
 		hitch, ok := activeByName(state, options.Name)
-		if !ok || hitch.Activity != core.ActivityIdle {
+		if !ok || (hitch.Activity != core.ActivityIdle && !(hitch.Activity == core.ActivityBusy && collar.Primitives.MidTurn)) {
 			return refuseError("agent %q is not immediately deliverable", options.Name)
 		}
 	}
@@ -59,11 +67,17 @@ func (cmd command) send(arguments []string) error {
 		deadline = notBefore.Add(run.deliveryBudget())
 	}
 	state, err = run.drive(core.SendRequested{
-		At: now, Deadline: deadline, NotBefore: notBefore,
+		At: now, Deadline: deadline, NotBefore: notBefore, MidTurn: collar.Primitives.MidTurn,
 		Envelope: core.Envelope{ID: core.EnvelopeID(id), From: sender, To: core.AgentName(options.Name), Message: core.Message{Text: body}, CreatedAt: now},
 	})
 	if err != nil {
 		return err
+	}
+	if candidate := state.Deliveries[core.EnvelopeID(id)]; candidate.Status == core.DeliveryQueued && candidate.MidTurn && candidate.NotBefore.IsZero() {
+		state, err = run.awaitDelivery(state, core.EnvelopeID(id))
+		if err != nil {
+			return err
+		}
 	}
 	delivery, ok := state.Deliveries[core.EnvelopeID(id)]
 	if !ok {

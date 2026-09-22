@@ -56,8 +56,12 @@ These decisions record non-obvious tradeoffs that still shape Gangline 1.0.
 
 Every command appends its input event and snapshots the resulting state before
 it touches tmux or a native harness. The observed outcome is another event.
-After interruption, replay therefore distinguishes work that was never
-attempted from work whose outcome is unknown.
+After interruption, replay distinguishes known pre-input refusals from work
+whose outcome is unknown. A per-hitch file lock is claimed under the team lock before its delivery intent
+is published, and owns native input through the outcome append. Contention is
+recorded as a pre-input deferral before the team lock is released. Recovery skips a live owner; an absent owner with an unresolved
+delivery intent becomes unverified and is never typed again. The lock file is
+removed with the team state.
 
 An effect is retried only while duplication is safe. A delivery whose input
 keystrokes landed without a matching native submit witness becomes
@@ -131,8 +135,9 @@ native dispatcher must first return from that hook to accept the next prompt.
 
 All three paths share exponential backoff and a configurable finite deadline.
 The deadline bounds the lifetime of the owning command or hook; no resident
-watcher is introduced. Attempts require an empty composer without the collar's
-native busy marker. After input lands, a separate short witness budget limits
+watcher is introduced. Attempts require a recognized empty composer. Collars that declare native
+mid-turn submission can accept a send while a turn runs; other collars also
+require the native busy marker to be absent. After input lands, a separate short witness budget limits
 uncertainty, and unverified input is never retried automatically.
 
 Compaction completion releases the continuation without requiring a later Stop.
@@ -180,3 +185,23 @@ minutes and never exercises the operator's live team.
 the snapshot writer's lock. An append notification can precede lock release;
 that contention is not a failed wait. An unfinished record cannot establish
 idle, and malformed completed records still fail loudly.
+
+### Admit steering through native input
+
+A collar's `mid_turn` capability declares that normal submission enters the
+running turn. Each send records that capability for replay; old events retain
+their idle-only behavior. The reducer keeps a running turn's activity separate
+from its in-flight delivery, serializes input, and preserves intervening Stop
+facts. A failed or deferred steer cannot manufacture an idle boundary.
+
+A mid-turn send settles only the composer, since output and busy indicators may
+continue to animate. Delivery requires the same native byte-matching submission
+witness as an idle send. A mismatch or absent witness remains unverified and is
+not retried. Mid-turn acceptance does not claim the agent has read or acted on
+the message. Native submission arguments and witness rules belong to collars.
+
+The sender owns bounded retries of a safely deferred mid-turn send and can stay
+in the command for `GANG_DELIVERY_TIMEOUT`, including while the native composer
+is occupied or the recipient cannot yet receive input. Harness tool-call budgets
+should accommodate that configured command budget. Unsupported collars still
+return their spool receipt immediately; scheduled sends retain their schedule.

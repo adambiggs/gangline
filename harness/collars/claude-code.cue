@@ -32,6 +32,7 @@ collar: {
 		role_prompt: {args: ["--append-system-prompt", "{{value}}"]}
 	}
 	primitives: {
+		mid_turn: true
 		startup: [{name: "claude-trust-prompt"}, {name: "claude-composer"}]
 		composer: {name: "claude-composer"}
 		submit: {name: "enter-submit", params: {paste: "bracketed", settle: "400ms"}}

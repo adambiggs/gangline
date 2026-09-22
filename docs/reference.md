@@ -163,7 +163,7 @@ The value declares:
   event and payload mappings;
 - `models`: catalog and selected-model primitives and the model option;
 - `options`: optional effort and role-prompt argument templates;
-- `primitives`: startup, composer, submit, submit witness, turn boundary,
+- `primitives`: optional `mid_turn` capability (false when absent), startup, composer, submit, submit witness, turn boundary,
   runtime blocked, context, provider limits, and wedge operations;
 - `actions`: interrupt, compact, and recovery; and
 - `context_bands`: ordered named thresholds per model selector.
@@ -172,3 +172,10 @@ Logic stays in committed Go primitives. A collar selects and parameterizes
 those primitives; unknown primitive names fail during collar validation.
 Shipped collars are embedded CUE values under `harness/collars/` and pass
 through the same loader as operator collars.
+
+A send to a busy recipient uses native mid-turn submission when its collar
+advertises `primitives.mid_turn`. It reports delivered only after native
+submission is verified, while the recipient remains busy. Collars without this
+capability keep sends queued until idle. The sending command waits through deferred native submissions for up to the
+configured delivery budget; `gang tick` never retypes an abandoned in-flight
+submission whose outcome is unknown.

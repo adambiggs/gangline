@@ -55,6 +55,7 @@ package harness
 		role_prompt?: #Option
 	})
 	primitives: close({
+		mid_turn?: bool
 		startup:       [...#Invocation] & [_, ...]
 		composer:      #Invocation
 		submit:        #Invocation

@@ -28,6 +28,7 @@ func stepSendRequested(state State, event SendRequested) (State, []Effect) {
 	}
 	state.Deliveries[envelope.ID] = Delivery{
 		Envelope:  envelope,
+		MidTurn:   event.MidTurn,
 		Status:    DeliveryQueued,
 		Deadline:  event.Deadline,
 		NotBefore: event.NotBefore,
@@ -75,9 +76,11 @@ func stepDeliverySucceeded(state State, event DeliverySucceeded) (State, []Effec
 	}
 	delivery.Status = DeliveryDelivered
 	state.Deliveries[event.EnvelopeID] = delivery
-	hitch.Activity = ActivityBusy
+	if !delivery.DuringTurn {
+		hitch.Activity = ActivityBusy
+	}
 	state.Hitches[hitch.ID] = hitch
-	return state, nil
+	return dispatchNext(state, hitch.ID)
 }
 
 func stepDeliveryRetryRequested(state State, event DeliveryRetryRequested) (State, []Effect) {
@@ -86,13 +89,16 @@ func stepDeliveryRetryRequested(state State, event DeliveryRetryRequested) (Stat
 		return rejected(state, event, event.At, "delivery is not queued for immediate retry")
 	}
 	hitch, ok := activeHitchByName(state, delivery.Envelope.To)
-	if !ok || hitch.Activity != ActivityIdle {
-		return rejected(state, event, event.At, "recipient is not active and idle")
+	if !ok || (hitch.Activity != ActivityIdle && !(hitch.Activity == ActivityBusy && delivery.MidTurn)) || deliveryInProgress(state, hitch.Name) {
+		return rejected(state, event, event.At, "recipient cannot accept another delivery")
 	}
 	delivery.Status = DeliveryDelivering
+	delivery.DuringTurn = hitch.Activity == ActivityBusy
 	delivery.Reason = ""
 	state.Deliveries[event.EnvelopeID] = delivery
-	hitch.Activity = ActivityDelivering
+	if !delivery.DuringTurn {
+		hitch.Activity = ActivityDelivering
+	}
 	state.Hitches[hitch.ID] = hitch
 	return state, []Effect{DeliverEnvelope{Envelope: delivery.Envelope, Pane: hitch.Pane, Deadline: delivery.Deadline}}
 }
@@ -105,7 +111,9 @@ func stepDeliveryDeferred(state State, event DeliveryDeferred) (State, []Effect)
 	delivery.Status = DeliveryQueued
 	delivery.Reason = event.Reason
 	state.Deliveries[event.EnvelopeID] = delivery
-	hitch.Activity = ActivityIdle
+	if !delivery.DuringTurn {
+		hitch.Activity = ActivityIdle
+	}
 	state.Hitches[hitch.ID] = hitch
 	return state, nil
 }
@@ -118,7 +126,9 @@ func stepDeliveryFailed(state State, event DeliveryFailedEvent) (State, []Effect
 	delivery.Status = DeliveryFailed
 	delivery.Reason = event.Reason
 	state.Deliveries[event.EnvelopeID] = delivery
-	hitch.Activity = ActivityIdle
+	if !delivery.DuringTurn {
+		hitch.Activity = ActivityIdle
+	}
 	state.Hitches[hitch.ID] = hitch
 	return dispatchNext(state, hitch.ID)
 }
@@ -139,10 +149,10 @@ func stepDeliveryUnverified(state State, event DeliveryUnverifiedEvent) (State, 
 
 func dispatchNext(state State, hitchID HitchID) (State, []Effect) {
 	hitch, ok := activeHitchByID(state, hitchID)
-	if !ok || hitch.Activity != ActivityIdle {
+	if !ok || (hitch.Activity != ActivityIdle && hitch.Activity != ActivityBusy) || deliveryInProgress(state, hitch.Name) {
 		return state, nil
 	}
-	if hitch.PendingCompactID != "" {
+	if hitch.PendingCompactID != "" && hitch.Activity == ActivityIdle {
 		compact := state.Compactions[hitch.PendingCompactID]
 		compact.Status = CompactionRunning
 		state.Compactions[compact.ID] = compact
@@ -155,10 +165,16 @@ func dispatchNext(state State, hitchID HitchID) (State, []Effect) {
 		if delivery.Status != DeliveryQueued || delivery.Envelope.To != hitch.Name || !delivery.NotBefore.IsZero() {
 			continue
 		}
+		if hitch.Activity == ActivityBusy && !delivery.MidTurn {
+			return state, nil
+		}
+		delivery.DuringTurn = hitch.Activity == ActivityBusy
 		delivery.Status = DeliveryDelivering
 		delivery.Reason = ""
 		state.Deliveries[id] = delivery
-		hitch.Activity = ActivityDelivering
+		if !delivery.DuringTurn {
+			hitch.Activity = ActivityDelivering
+		}
 		state.Hitches[hitch.ID] = hitch
 		return state, []Effect{DeliverEnvelope{Envelope: delivery.Envelope, Pane: hitch.Pane, Deadline: delivery.Deadline}}
 	}
@@ -204,8 +220,18 @@ func activeDelivery(state State, id EnvelopeID) (Delivery, Hitch, bool) {
 		return Delivery{}, Hitch{}, false
 	}
 	hitch, ok := activeHitchByName(state, delivery.Envelope.To)
-	if !ok || hitch.Activity != ActivityDelivering {
+	if !ok || (!delivery.DuringTurn && hitch.Activity != ActivityDelivering) {
 		return Delivery{}, Hitch{}, false
 	}
 	return delivery, hitch, true
+}
+
+// In-flight input is serialized independently of the recipient's running turn.
+func deliveryInProgress(state State, recipient AgentName) bool {
+	for _, delivery := range state.Deliveries {
+		if delivery.Envelope.To == recipient && delivery.Status == DeliveryDelivering {
+			return true
+		}
+	}
+	return false
 }

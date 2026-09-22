@@ -35,6 +35,7 @@ collar: {
 		effort: {args: ["-c", "model_reasoning_effort={{value}}"]}
 	}
 	primitives: {
+		mid_turn: true
 		startup: [{name: "codex-trust-prompt"}, {name: "codex-composer"}]
 		composer: {name: "codex-composer"}
 		submit: {name: "enter-submit", params: {paste: "bracketed", settle: "400ms"}}

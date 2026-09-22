@@ -14,6 +14,7 @@ import (
 var eventSchema []byte
 
 type eventRecord struct {
+	MidTurn      bool             `json:"mid_turn,omitempty"`
 	Type         string           `json:"type"`
 	At           time.Time        `json:"at"`
 	Hitch        *Hitch           `json:"hitch,omitempty"`
@@ -60,6 +61,7 @@ func EncodeEvent(event Event) ([]byte, error) {
 	case BlockedCleared:
 		record.At, record.HitchID = event.At, event.HitchID
 	case SendRequested:
+		record.MidTurn = event.MidTurn
 		record.At, record.Envelope, record.Deadline = event.At, &event.Envelope, &event.Deadline
 		if !event.NotBefore.IsZero() {
 			record.NotBefore = &event.NotBefore
@@ -155,7 +157,7 @@ func DecodeEvent(data []byte) (Event, error) {
 	case "blocked_cleared":
 		return BlockedCleared{At: record.At, HitchID: record.HitchID}, nil
 	case "send_requested":
-		event := SendRequested{At: record.At, Envelope: *record.Envelope, Deadline: *record.Deadline}
+		event := SendRequested{MidTurn: record.MidTurn, At: record.At, Envelope: *record.Envelope, Deadline: *record.Deadline}
 		if record.NotBefore != nil {
 			event.NotBefore = *record.NotBefore
 		}

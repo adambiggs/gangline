@@ -49,9 +49,17 @@ func (run *runtime) deliver(state core.State, backend interface {
 		return core.DeliveryFailedEvent{At: now, EnvelopeID: effect.Envelope.ID, Reason: err.Error()}, nil
 	}
 	if found {
+		if state.Deliveries[effect.Envelope.ID].DuringTurn {
+			return core.DeliveryDeferred{At: now, EnvelopeID: effect.Envelope.ID, Reason: blocked.Evidence}, nil
+		}
 		return core.BlockedDetected{At: now, HitchID: hitch.ID, Evidence: blocked.Evidence}, nil
 	}
 	idle, err := harness.Idle(collar, screen)
+	midTurn := collar.Primitives.MidTurn && state.Deliveries[effect.Envelope.ID].MidTurn
+	if midTurn {
+		composer, readErr := harness.ReadComposer(collar.Primitives.Composer, screen)
+		idle, err = composer.Text == "", readErr
+	}
 	if err != nil || !idle {
 		reason := "native turn is not idle with an empty composer"
 		if err != nil {
@@ -91,7 +99,13 @@ func (run *runtime) deliver(state core.State, backend interface {
 	}
 	ctx, cancel := context.WithDeadline(context.Background(), deadline)
 	defer cancel()
-	if err := harness.AwaitScreenSettle(ctx, backend.Capture, substrate.PaneID(effect.Pane), screen, settle); err != nil {
+	var settleErr error
+	if midTurn {
+		settleErr = harness.AwaitComposerSettle(ctx, backend.Capture, substrate.PaneID(effect.Pane), collar, settle)
+	} else {
+		settleErr = harness.AwaitScreenSettle(ctx, backend.Capture, substrate.PaneID(effect.Pane), screen, settle)
+	}
+	if err := settleErr; err != nil {
 		return core.DeliveryUnverifiedEvent{At: time.Now(), EnvelopeID: effect.Envelope.ID, Evidence: err.Error()}, nil
 	}
 	// Recapture supplies diagnostic evidence when the native renderer is fast

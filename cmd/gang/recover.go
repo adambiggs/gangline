@@ -2,6 +2,8 @@ package main
 
 import (
 	"context"
+	"errors"
+	"github.com/adambiggs/gangline/store"
 	"time"
 
 	"github.com/adambiggs/gangline/core"
@@ -41,6 +43,13 @@ func (run *runtime) recover() (core.State, error) {
 	}
 	effects := core.PendingEffects(state)
 	for _, effect := range effects {
+		if delivery, ok := effect.(core.DeliverEnvelope); ok {
+			state, err = run.recoverDelivery(delivery)
+			if err != nil {
+				return core.State{}, err
+			}
+			continue
+		}
 		outcome, err := run.executeEffect(state, effect)
 		if err != nil {
 			return core.State{}, err
@@ -109,11 +118,9 @@ func (run *runtime) refreshBlocked(state core.State) (core.State, error) {
 	return state, nil
 }
 
-// retryQueuedDeliveries turns a directly observed empty composer into the
-// boundary fact that releases parked delivery. A hook normally records that
-// boundary, but a refused delivery or compaction can leave no later hook for a
-// durable queue to ride. One delivery per recipient keeps the pass bounded and
-// preserves the rule that a submitted turn must finish before the next send.
+// retryQueuedDeliveries uses direct composer evidence to retry known pre-input
+// refusals. Capable collars can submit while busy without inventing a boundary;
+// other collars require a directly observed native idle composer.
 func (run *runtime) retryQueuedDeliveries(state core.State) (core.State, error) {
 	backend, err := run.cmd.tmux(run.settings)
 	if err != nil {
@@ -130,6 +137,16 @@ func (run *runtime) retryQueuedDeliveries(state core.State) (core.State, error) 
 			continue
 		}
 		seen[hitch.ID] = true
+		inFlight := false
+		for _, other := range state.Deliveries {
+			if other.Envelope.To == hitch.Name && other.Status == core.DeliveryDelivering {
+				inFlight = true
+				break
+			}
+		}
+		if inFlight {
+			continue
+		}
 		if (hitch.Activity != core.ActivityBusy && hitch.Activity != core.ActivityIdle) || hitch.PendingCompactID != "" {
 			continue
 		}
@@ -142,11 +159,15 @@ func (run *runtime) retryQueuedDeliveries(state core.State) (core.State, error) 
 			continue
 		}
 		idle, readErr := harness.Idle(collar, screen)
+		if delivery.MidTurn && collar.Primitives.MidTurn {
+			composer, composerErr := harness.ReadComposer(collar.Primitives.Composer, screen)
+			idle, readErr = composer.Text == "", composerErr
+		}
 		if readErr != nil || !idle {
 			continue
 		}
 		now := time.Now()
-		if hitch.Activity == core.ActivityIdle {
+		if hitch.Activity == core.ActivityIdle || delivery.MidTurn {
 			state, err = run.drive(core.DeliveryRetryRequested{At: now, EnvelopeID: envelopeID})
 		} else {
 			state, err = run.drive(core.TurnBoundaryReached{At: now, HitchID: hitch.ID})
@@ -156,4 +177,49 @@ func (run *runtime) retryQueuedDeliveries(state core.State) (core.State, error) 
 		}
 	}
 	return state, nil
+}
+
+func (run *runtime) recoverDelivery(effect core.DeliverEnvelope) (core.State, error) {
+	state, err := run.load()
+	if err != nil {
+		return core.State{}, err
+	}
+	hitch, ok := activeByName(state, string(effect.Envelope.To))
+	if !ok {
+		return state, nil
+	}
+	owner, err := run.paths().LockInput(run.settings.Session, string(hitch.ID))
+	if errors.Is(err, store.ErrLocked) {
+		return state, nil
+	}
+	if err != nil {
+		return core.State{}, err
+	}
+	defer owner.Close()
+	state, err = run.load()
+	if err != nil {
+		return core.State{}, err
+	}
+	if state.Deliveries[effect.Envelope.ID].Status != core.DeliveryDelivering {
+		return state, nil
+	}
+	return run.drive(core.DeliveryUnverifiedEvent{At: time.Now(), EnvelopeID: effect.Envelope.ID, Evidence: "delivery owner exited before recording its native input outcome"})
+}
+
+// A deferred delivery's owner retries known pre-input refusals only. It does
+// not replay other commands' effects or recover unrelated hitches.
+func (run *runtime) refreshDeliveries() (core.State, error) {
+	state, err := run.load()
+	if err != nil {
+		return core.State{}, err
+	}
+	state, err = run.refreshBlocked(state)
+	if err != nil {
+		return core.State{}, err
+	}
+	state, err = run.expireQueuedDeliveries(state, time.Now())
+	if err != nil {
+		return core.State{}, err
+	}
+	return run.retryQueuedDeliveries(state)
 }

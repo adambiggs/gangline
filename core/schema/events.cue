@@ -68,7 +68,7 @@ import "time"
 #TurnBoundaryReached: close({type: "turn_boundary_reached", at: #Time, hitch_id: #ID})
 #BlockedDetected: close({type: "blocked_detected", at: #Time, hitch_id: #ID, evidence: #Text})
 #BlockedCleared: close({type: "blocked_cleared", at: #Time, hitch_id: #ID})
-#SendRequested: close({type: "send_requested", at: #Time, envelope: #Envelope, deadline: #Time, not_before?: #Time})
+#SendRequested: close({mid_turn?: bool, type: "send_requested", at: #Time, envelope: #Envelope, deadline: #Time, not_before?: #Time})
 #TimedDeliveryReleased: close({type: "timed_delivery_released", at: #Time, envelope_id: #ID})
 #TimedDeliveriesCleared: close({type: "timed_deliveries_cleared", at: #Time, recipient: #ID})
 #DeliverySucceeded: close({type: "delivery_succeeded", at: #Time, envelope_id: #ID})
