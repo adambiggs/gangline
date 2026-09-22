@@ -51,7 +51,7 @@ import "time"
 	reason?: #Text
 })
 
-#Event: #HitchRequested | #AdoptRequested | #RenameRequested | #HitchSpawned | #HitchReady | #HitchLaunchFailed |
+#Event: #NativeHook | #HitchRequested | #AdoptRequested | #RenameRequested | #HitchSpawned | #HitchReady | #HitchLaunchFailed |
 	#TurnStarted | #TurnBoundaryReached | #BlockedDetected | #BlockedCleared | #SendRequested | #TimedDeliveryReleased | #TimedDeliveriesCleared | #DeliverySucceeded |
 	#DeliveryRetryRequested | #DeliveryDeferred | #DeliveryFailed | #DeliveryUnverified |
 	#CompactionRequested | #CompactionCompleted | #CompactionFailed | #InterruptRequested | #InterruptSucceeded | #InterruptFailed |
@@ -99,3 +99,13 @@ import "time"
 #CurfewSet: close({type: "curfew_set", at: #Time, deadline: #Time})
 #CurfewCleared: close({type: "curfew_cleared", at: #Time})
 #TransitionRejected: close({type: "transition_rejected", at: #Time, event: #ID, reason: #Text})
+
+#NativeHook: close({
+ type: "native_hook"
+ at: #Time
+ id: #ID
+ hitch_id?: #ID
+ native_event?: #Text
+ status: "received" | "completed" | "ignored" | "failed"
+ reason?: #Text
+})

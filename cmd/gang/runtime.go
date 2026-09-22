@@ -49,11 +49,7 @@ func (run *runtime) initial() core.State {
 func (run *runtime) paths() store.Paths { return store.Paths{Root: run.settings.StateRoot} }
 
 func (run *runtime) lock() (*store.LockedTeam, error) {
-	locked, err := run.paths().Lock(run.settings.Session)
-	if errors.Is(err, store.ErrLocked) {
-		return nil, refuseError("team %q is busy; retry the command", run.settings.Session)
-	}
-	return locked, err
+	return run.paths().LockWait(run.settings.Session)
 }
 
 func (run *runtime) load() (core.State, error) {

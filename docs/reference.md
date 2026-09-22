@@ -182,3 +182,10 @@ submission whose outcome is unknown.
 setting. Existing pending events can contain older deadlines; those timestamps
 do not expire their delivery. Unknown input outcomes remain unverified and are
 not retried automatically.
+
+Native hook invocations appear in the event log as `native_hook` records. The
+`id` pairs receipt (`received`) with its outcome (`completed`, `ignored`, or
+`failed`); `native_event` names the harness event and `hitch_id` attributes it.
+Failures carry `reason`. These observations preserve hook evidence without
+changing replayed lifecycle state. A normal contended hook waits for the event
+writer; a late hook after recipient drop records an ignored outcome.

@@ -30,15 +30,54 @@ func (cmd command) tick(arguments []string) error {
 	return run.observeWedges(state)
 }
 
-func (cmd command) hook(arguments []string) error {
+func (cmd command) hook(arguments []string) (result error) {
 	if err := noArguments(arguments, "hook"); err != nil {
 		return err
 	}
+	// Drain the native input before waiting on any team transaction.
+	payload, readErr := io.ReadAll(io.LimitReader(cmd.stdin, maximumMessageBytes+1))
+	run, err := cmd.runtime()
+	if err != nil {
+		return err
+	}
+	invocation, err := randomID("hook")
+	if err != nil {
+		return err
+	}
 	id := core.HitchID(cmd.environment("GANGLINE_HITCH_ID"))
+	var native struct {
+		Name  string `json:"hook_event_name"`
+		Event string `json:"event"`
+	}
+	_ = json.Unmarshal(payload, &native)
+	if native.Name == "" {
+		native.Name = native.Event
+	}
+	observation := core.NativeHook{At: time.Now(), ID: invocation, HitchID: id, NativeEvent: native.Name, Status: "received"}
+	defer func() {
+		observation.At = time.Now()
+		if result != nil {
+			observation.Status, observation.Reason = "failed", result.Error()
+		} else if observation.Status != "ignored" {
+			observation.Status = "completed"
+		}
+		if err := run.recordNativeHook(observation); err != nil {
+			result = errors.Join(result, fmt.Errorf("record native hook outcome: %w", err))
+		}
+	}()
+	if err := run.recordNativeHook(observation); err != nil {
+		return err
+	}
+	if readErr != nil {
+		return readErr
+	}
+	if len(payload) > maximumMessageBytes {
+		return refuseError("native hook payload exceeds maximum size")
+	}
 	if id == "" {
 		return refuseError("hook has no GANGLINE_HITCH_ID")
 	}
-	run, state, err := cmd.loaded()
+	state, err := run.load()
 	if err != nil {
 		return err
 	}
@@ -50,13 +89,19 @@ func (cmd command) hook(arguments []string) error {
 	if err != nil {
 		return err
 	}
-	payload, err := io.ReadAll(io.LimitReader(cmd.stdin, maximumMessageBytes+1))
-	if err != nil {
-		return err
-	}
+
 	boundary, hookEvent, err := harness.DetectTurnBoundary(collar, payload)
 	if err != nil {
 		return err
+	}
+	if hitch.Status == core.HitchDropping || hitch.Status == core.HitchDropped || hitch.Status == core.HitchFailed {
+		observation.Status, observation.Reason = "ignored", "recipient is no longer active"
+		return nil
+	}
+	// Activity does not change lifecycle state. Avoid scanning unrelated panes on
+	// every tool hook; boundary and permission hooks retain direct observation.
+	if hookEvent.Kind == "activity" {
+		return nil
 	}
 	state, err = run.refreshBlocked(state)
 	if err != nil {
@@ -81,6 +126,9 @@ func (cmd command) hook(arguments []string) error {
 	if boundary == harness.TurnStarted && hookEvent.Payload["prompt"] != "" {
 		witness := run.deliveryWitnessPath(id)
 		file, openErr := os.OpenFile(witness, os.O_WRONLY|syscall.O_NONBLOCK, 0)
+		if openErr != nil && !errors.Is(openErr, syscall.ENOENT) && !errors.Is(openErr, syscall.ENXIO) {
+			return fmt.Errorf("open native submission witness: %w", openErr)
+		}
 		if openErr == nil {
 			_, writeErr := io.WriteString(file, hookEvent.Payload["prompt"])
 			closeErr := file.Close()
@@ -127,6 +175,17 @@ func (cmd command) hook(arguments []string) error {
 		return run.finishBoundaryDeliveries(state, hitch.ID)
 	}
 	return err
+}
+
+// Recording the hook itself does not depend on loading or reducing team state:
+// a load/decode failure must still leave its diagnostic in the event log.
+func (run *runtime) recordNativeHook(event core.NativeHook) error {
+	locked, err := run.lock()
+	if err != nil {
+		return err
+	}
+	appendErr := locked.Append(event)
+	return errors.Join(appendErr, locked.Close())
 }
 
 func (cmd command) log(arguments []string) error {

@@ -70,6 +70,8 @@ func Step(state State, event Event) (State, []Effect) {
 		return stepCurfewSet(next, event)
 	case CurfewCleared:
 		return stepCurfewCleared(next, event)
+	case NativeHook:
+		return next, nil
 	case TransitionRejected:
 		return next, nil
 	}

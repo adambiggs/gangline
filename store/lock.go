@@ -16,6 +16,16 @@ type LockedTeam struct {
 }
 
 func (paths Paths) Lock(team string) (*LockedTeam, error) {
+	return paths.lock(team, syscall.LOCK_EX|syscall.LOCK_NB)
+}
+
+// LockWait serializes short log transactions, including one-shot native hooks
+// and delivery outcomes. No native effects hold this lock.
+func (paths Paths) LockWait(team string) (*LockedTeam, error) {
+	return paths.lock(team, syscall.LOCK_EX)
+}
+
+func (paths Paths) lock(team string, flags int) (*LockedTeam, error) {
 	teamPaths, err := paths.Team(team)
 	if err != nil {
 		return nil, err
@@ -27,7 +37,7 @@ func (paths Paths) Lock(team string) (*LockedTeam, error) {
 	if err != nil {
 		return nil, fmt.Errorf("open team lock: %w", err)
 	}
-	if err := syscall.Flock(int(lock.Fd()), syscall.LOCK_EX|syscall.LOCK_NB); err != nil {
+	if err := syscall.Flock(int(lock.Fd()), flags); err != nil {
 		closeErr := lock.Close()
 		if errors.Is(err, syscall.EWOULDBLOCK) || errors.Is(err, syscall.EAGAIN) {
 			return nil, ErrLocked

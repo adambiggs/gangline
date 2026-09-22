@@ -70,6 +70,8 @@ func EventName(event Event) string {
 		return "curfew_set"
 	case CurfewCleared:
 		return "curfew_cleared"
+	case NativeHook:
+		return "native_hook"
 	case TransitionRejected:
 		return "transition_rejected"
 	}

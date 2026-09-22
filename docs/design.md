@@ -217,3 +217,23 @@ command until native acceptance or recipient drop. Unsupported collars return
 their spool receipt immediately; scheduled sends retain their schedule. Harness
 tool cancellation does not erase the durable queue. Operators can inspect the
 queue and event log independently of the requesting command.
+
+### Record one-shot native hooks without losing contention
+
+Runtime commands and native hooks wait in the kernel for the short event-log
+transaction lock. A sender must also wait when a hook records its outcome
+after publishing the native receipt; contention cannot discard that sender's
+delivery outcome. The lock is
+released before any native input or effects, so a submit hook never waits on
+an owner holding that lock while awaiting its receipt. The harness owns the
+hook process lifetime; no polling loop or background retry worker is added.
+
+Each invocation appends a `native_hook` receipt and its completed, ignored, or
+failed outcome, paired by invocation ID. These observations do not infer a
+turn transition. Late hooks from a dropped recipient are recorded as ignored;
+normal activity hooks record evidence without scanning unrelated panes. Actual
+decode, state, and I/O errors remain visible to the harness and are recorded
+with their reason. The diagnostic append does not require successful replay,
+so a state-load failure can still leave evidence. If storage itself is
+unwritable, stderr reports that recording failure rather than claiming it was
+logged. Hook records share the team event log's deletion path.

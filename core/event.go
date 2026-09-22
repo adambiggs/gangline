@@ -252,3 +252,16 @@ func (OperationTimedOut) isEvent()       {}
 func (CurfewSet) isEvent()               {}
 func (CurfewCleared) isEvent()           {}
 func (TransitionRejected) isEvent()      {}
+
+// NativeHook records receipt and outcome without inferring a lifecycle change.
+// ID pairs the outcome with its receipt even when native hooks overlap.
+type NativeHook struct {
+	At          time.Time `json:"at"`
+	ID          string    `json:"id"`
+	HitchID     HitchID   `json:"hitch_id,omitempty"`
+	NativeEvent string    `json:"native_event,omitempty"`
+	Status      string    `json:"status"`
+	Reason      string    `json:"reason,omitempty"`
+}
+
+func (NativeHook) isEvent() {}
