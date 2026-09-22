@@ -129,7 +129,7 @@ an explicit socket is supplied. `GANG_TMUX` selects the tmux executable for
 tests and native collar probes.
 
 Each team is stored at `STATE_ROOT/v1/TEAM/`. `events.jsonl` is authoritative;
-`snapshot.json` is an integrity-checked loading shortcut. `gang down SESSION`
+`snapshot.json` records an integrity-checked checkpoint. `gang down SESSION`
 removes that directory after every active or failed hitch is dropped.
 
 ## Startup prose

@@ -15,7 +15,7 @@ sealed sum types checked for exhaustive switches.
 
 `store` owns the versioned state root, one advisory lock per team, append-only
 JSONL event logs, and snapshots. The event log is authoritative; a snapshot is
-only a validated shortcut for replaying it.
+an integrity-checked checkpoint. Loading replays the log with the current reducer.
 
 `substrate` defines terminal values and the common backend interface: spawn,
 capture, send keys, kill, and attach. The tmux backend also owns session and
@@ -36,7 +36,7 @@ loader.
 Commands and native hooks use the same state loop:
 
 1. lock one team's store;
-2. load its snapshot and replay any later log entries;
+2. validate its snapshot prefix and replay the event log;
 3. append the input event before doing external work;
 4. fold the event with `core.Step`, save the snapshot, and unlock;
 5. execute the returned effects against tmux or the harness; and
@@ -52,7 +52,7 @@ the collar's declared normalization.
 ## State and schemas
 
 The default root is `${XDG_STATE_HOME:-~/.local/state}/gangline/v1/TEAM/`.
-`events.jsonl` is the source of truth and `snapshot.json` accelerates loading.
+`events.jsonl` is the source of truth and `snapshot.json` records a checkpoint.
 The event schema lives in `core/schema/events.cue`.
 
 Collars live in `harness/collars/*.cue` or an operator directory selected by
