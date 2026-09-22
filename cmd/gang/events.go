@@ -7,6 +7,8 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"os/exec"
+	"syscall"
 	"time"
 
 	"github.com/adambiggs/gangline/core"
@@ -14,211 +16,159 @@ import (
 	"github.com/adambiggs/gangline/store"
 )
 
-func (cmd command) tick(arguments []string) error {
-	if err := noArguments(arguments, "tick"); err != nil {
-		return err
-	}
-	run, err := cmd.runtime()
+// hookNotice contains bounded routing evidence, never a prompt or transcript.
+// The detached tick validates it against the agent's current native session.
+type hookNotice struct {
+	Kind        string    `json:"kind"`
+	NativeEvent string    `json:"native_event"`
+	At          time.Time `json:"at"`
+	SessionID   string    `json:"session_id,omitempty"`
+	TurnID      string    `json:"turn_id,omitempty"`
+	Transcript  string    `json:"transcript,omitempty"`
+}
+
+func (cmd command) hook(args []string) error {
+	err := cmd.handleHook(args)
 	if err != nil {
-		return err
-	}
-	state, err := run.recover()
-	if err != nil {
-		return err
-	}
-	if err := run.finishCapacityRecovery(state); err != nil {
-		return err
-	}
-	state, err = run.load()
-	if err != nil {
-		return err
-	}
-	if err := run.observeWedges(state); err != nil {
-		return err
-	}
-	for _, hitch := range state.Hitches {
-		if hitch.Status != core.HitchActive {
-			continue
+		if cmd.stderr != nil {
+			_, _ = fmt.Fprintf(cmd.stderr, "gang hook: %v\n", err)
 		}
-		collar, err := loadCollar(hitch.Collar, run.settings)
-		if err != nil {
-			return err
-		}
-		if err := run.observeHook(hitch, collar, harness.HookEvent{Kind: "reading-request"}); err != nil {
-			return err
+		if run, setupErr := cmd.runtime(); setupErr == nil {
+			_ = run.team.Append(core.Event{Type: "hook_failed", At: cmd.now(), HitchID: core.HitchID(cmd.environment("GANGLINE_HITCH_ID")), Reason: err.Error()})
 		}
 	}
 	return nil
 }
-
-func (cmd command) hook(arguments []string) (result error) {
-	if err := noArguments(arguments, "hook"); err != nil {
+func (cmd command) handleHook(args []string) error {
+	if err := noArguments(args, "hook"); err != nil {
 		return err
 	}
-	// Drain the native input before waiting on any team transaction.
-	payload, readErr := io.ReadAll(io.LimitReader(cmd.stdin, maximumHookBytes+1))
-	run, err := cmd.runtime()
+	payload, err := io.ReadAll(io.LimitReader(cmd.stdin, maximumHookBytes+1))
 	if err != nil {
 		return err
 	}
-	invocation, err := randomID("hook")
+	if len(payload) > maximumHookBytes {
+		return fmt.Errorf("hook payload exceeds maximum size")
+	}
+	run, err := cmd.runtime()
 	if err != nil {
 		return err
 	}
 	id := core.HitchID(cmd.environment("GANGLINE_HITCH_ID"))
-	var native struct {
-		Name  string `json:"hook_event_name"`
-		Event string `json:"event"`
+	p, err := run.team.Agent(id)
+	if err != nil {
+		return err
 	}
-	_ = json.Unmarshal(payload, &native)
-	if native.Name == "" {
-		native.Name = native.Event
+	a, err := p.Read()
+	if err != nil {
+		return err
 	}
-	witnessPublished := false
-	observation := core.NativeHook{At: time.Now(), ID: invocation, HitchID: id, NativeEvent: native.Name, Status: "received"}
-	defer func() {
-		observation.At = time.Now()
-		if result != nil {
-			observation.Status, observation.Reason = "failed", result.Error()
-			if !witnessPublished && (native.Name == "UserPromptSubmit" || native.Name == "") {
-				result = errors.Join(result, run.failPendingWitness(id, result))
+	c, err := loadCollar(a.Collar, run.settings)
+	if err != nil {
+		return err
+	}
+	_, event, err := harness.DetectTurnBoundary(c, payload)
+	if err != nil {
+		return err
+	}
+	receipt, err := randomID("hook")
+	if err != nil {
+		return err
+	}
+	if err := run.record(a, core.Event{Type: "native_hook", ID: receipt, NativeEvent: event.NativeEvent, Status: event.Kind}); err != nil {
+		return err
+	}
+	switch event.Kind {
+	case "turn-started":
+		return p.WriteWitness(store.Witness{ID: receipt, At: cmd.now(), Prompt: event.Payload["prompt"], SessionID: event.Payload["session_id"], TurnID: event.Payload["turn_id"], Transcript: event.Payload["transcript_path"]})
+	case "turn-finished", "turn-failed", "compaction-finished":
+		n := hookNotice{Kind: event.Kind, NativeEvent: event.NativeEvent, At: cmd.now(), SessionID: event.Payload["session_id"], TurnID: event.Payload["turn_id"], Transcript: event.Payload["transcript_path"]}
+		for _, value := range []string{n.SessionID, n.TurnID, n.Transcript, n.NativeEvent} {
+			if len(value) > 4096 {
+				return fmt.Errorf("hook routing metadata exceeds maximum size")
 			}
-		} else if observation.Status != "ignored" {
-			observation.Status = "completed"
 		}
-		if err := run.recordNativeHook(observation); err != nil {
-			result = errors.Join(result, fmt.Errorf("record native hook outcome: %w", err))
+		if cmd.detach != nil {
+			return cmd.detach(string(id), n)
 		}
-	}()
-	if err := run.recordNativeHook(observation); err != nil {
-		return err
+		return cmd.detachTick(string(id), n, run.settings)
 	}
-	if readErr != nil {
-		return readErr
-	}
-	if len(payload) > maximumHookBytes {
-		return refuseError("native hook payload exceeds maximum size")
-	}
-	if id == "" {
-		return refuseError("hook has no GANGLINE_HITCH_ID")
-	}
-	state, err := run.load()
+	return nil
+}
+func (cmd command) detachTick(id string, n hookNotice, s settings) error {
+	exe, err := os.Executable()
 	if err != nil {
 		return err
 	}
-	hitch, ok := state.Hitches[id]
-	if !ok {
-		return refuseError("hook hitch %q is not registered", id)
-	}
-	collar, err := loadCollar(hitch.Collar, run.settings)
+	data, err := json.Marshal(n)
 	if err != nil {
 		return err
 	}
-
-	boundary, hookEvent, err := harness.DetectTurnBoundary(collar, payload)
+	child := exec.Command(exe, "tick", "--agent", id)
+	child.SysProcAttr = &syscall.SysProcAttr{Setsid: true}
+	child.Env = append(os.Environ(), "GANGLINE_BOUNDARY="+string(data), "GANG_SESSION="+s.Session, "GANG_STATE_ROOT="+s.StateRoot, "GANG_CONFIG_DIR="+s.ConfigDir)
+	if s.Socket != "" {
+		child.Env = append(child.Env, "GANG_TMUX_SOCKET="+s.Socket)
+	}
+	if s.CollarDir != "" {
+		child.Env = append(child.Env, "GANG_COLLARS="+s.CollarDir)
+	}
+	// Nil standard streams connect to the null device, not the harness pipes.
+	if err := child.Start(); err != nil {
+		return err
+	}
+	return child.Process.Release()
+}
+func (cmd command) tick(args []string) error {
+	id := ""
+	flags := quietFlagSet("tick")
+	flags.StringVar(&id, "agent", "", "hitch ID")
+	if err := flags.Parse(args); err != nil || flags.NArg() != 0 {
+		return usageError("tick: expected optional --agent ID")
+	}
+	run, err := cmd.runtime()
 	if err != nil {
 		return err
 	}
-	if hitch.Status == core.HitchDropping || hitch.Status == core.HitchDropped || hitch.Status == core.HitchFailed {
-		observation.Status, observation.Reason = "ignored", "recipient is no longer active"
-		return nil
-	}
-	// Observation runs after the witness and lifecycle work even on failure.
-	observed := false
-	var observationErr error
-	observe := func() {
-		if !observed {
-			observed = true
-			observationErr = run.observeHook(hitch, collar, hookEvent)
-		}
-	}
-	defer func() { observe(); result = errors.Join(result, observationErr) }()
-	// Activity does not change lifecycle state. Avoid scanning unrelated panes on
-	// every tool hook; boundary and permission hooks retain direct observation.
-	if hookEvent.Kind == "activity" {
-		if hitch.Capacity.Fingerprint != "" {
-			_, err = run.drive(core.CapacityCleared{At: time.Now(), HitchID: id})
-		}
-		return err
-	}
-	if boundary == harness.TurnStarted {
-		pending := false
-		for _, delivery := range state.Deliveries {
-			pending = pending || delivery.Envelope.To == hitch.Name && delivery.Status == core.DeliveryDelivering
-		}
-		if err := run.publishNativeWitness(id, hookEvent.Payload["prompt"], pending); err != nil {
+	var notice hookNotice
+	if id != "" && cmd.environment("GANGLINE_BOUNDARY") != "" {
+		if err := json.Unmarshal([]byte(cmd.environment("GANGLINE_BOUNDARY")), &notice); err != nil {
 			return err
 		}
-		witnessPublished = true
-		// A synchronous submit hook must return before this harness accepts
-		// further input. Receipt publication cannot drive unrelated deliveries.
-		if pending {
-			return nil
-		}
-		if hitch.Activity == core.ActivityIdle {
-			_, err = run.drive(core.TurnStarted{At: time.Now(), HitchID: id})
-		}
-		return err
 	}
-	state, err = run.refreshBlocked(state)
+	if id != "" {
+		return run.tickAgent(core.HitchID(id), notice, true)
+	}
+	agents, err := run.team.ListAgents()
 	if err != nil {
 		return err
 	}
-	hitch = state.Hitches[id]
-	if hookEvent.Kind == "permission-requested" {
-		if hitch.Activity != core.ActivityBlocked {
-			_, err = run.drive(core.BlockedDetected{
-				At: time.Now(), HitchID: id, Evidence: "native permission request reported by collar hook",
-			})
-		}
+	return eachAgent(agents, func(a core.Agent) error { return run.tickAgent(a.ID, hookNotice{}, false) })
+}
+func (cmd command) log(args []string) error {
+	filter, files, err := parseLogFilter(args, true)
+	if err != nil {
 		return err
 	}
-	if boundary == harness.TurnFinished && hitch.Activity == core.ActivityBlocked {
-		state, err = run.drive(core.BlockedCleared{At: time.Now(), HitchID: id})
+	path := ""
+	if len(files) > 0 {
+		path = files[0]
+	} else {
+		run, err := cmd.runtime()
 		if err != nil {
 			return err
 		}
-		hitch = state.Hitches[id]
+		path = run.team.Log
 	}
-	observe()
-	now := time.Now()
-	switch boundary {
-	case harness.TurnStarted:
-		if hitch.Activity == core.ActivityIdle {
-			_, err = run.drive(core.TurnStarted{At: now, HitchID: id})
-		}
-	case harness.TurnFinished:
-		state, err = run.drive(core.TurnBoundaryReached{At: now, HitchID: id})
-	case harness.TurnCompactionFinished:
-		if hitch.PendingCompactID != "" {
-			compact := state.Compactions[hitch.PendingCompactID]
-			continuation := core.Envelope{ID: core.EnvelopeID("resume-" + string(compact.ID)), From: core.Sender{Kind: core.SenderSelfDeclared, Name: "compact"}, To: hitch.Name, Message: compact.Resume, CreatedAt: now}
-			state, err = run.drive(core.CompactionCompleted{At: now, CompactionID: compact.ID, Continuation: &continuation})
-		}
-	case harness.TurnCompactionStarted:
-		// The request event already records the durable start intent.
-	default:
-		// Activity and permission hooks are valid evidence but not boundaries.
-	}
-	if err == nil && (boundary == harness.TurnFinished || boundary == harness.TurnCompactionFinished) {
-		return run.finishBoundaryDeliveries(state, hitch.ID)
-	}
-	return err
-}
-
-// Recording the hook itself does not depend on loading or reducing team state:
-// a load/decode failure must still leave its diagnostic in the event log.
-func (run *runtime) recordNativeHook(event core.NativeHook) error {
-	locked, err := run.lock()
+	f, err := os.Open(path)
 	if err != nil {
 		return err
 	}
-	appendErr := locked.Append(event)
-	return errors.Join(appendErr, locked.Close())
+	defer f.Close()
+	return writeFilteredLog(cmd.stdout, f, filter)
 }
-
-func (cmd command) log(arguments []string) error {
-	filter, _, err := parseLogFilter(arguments, false)
+func (cmd command) wait(args []string) error {
+	o, err := parseWait(args)
 	if err != nil {
 		return err
 	}
@@ -226,121 +176,61 @@ func (cmd command) log(arguments []string) error {
 	if err != nil {
 		return err
 	}
-	paths, err := run.paths().Team(run.settings.Session)
+	a, err := run.resolve(o.Name)
 	if err != nil {
 		return err
 	}
-	file, err := os.Open(paths.Events)
-	if os.IsNotExist(err) {
-		return nil
-	}
+	p, err := run.team.Agent(a.ID)
 	if err != nil {
 		return err
 	}
-	defer file.Close()
-	return writeFilteredLog(cmd.stdout, file, filter)
-}
-
-func (cmd command) replay(arguments []string) error {
-	filter, files, err := parseLogFilter(arguments, true)
-	if err != nil {
-		return err
-	}
-	reader := cmd.stdin
-	if len(files) == 1 {
-		f, err := os.Open(files[0])
-		if err != nil {
-			return err
-		}
-		defer f.Close()
-		reader = f
-	}
-	if filter.Agent != "" || filter.Type != "" {
-		return writeFilteredLog(cmd.stdout, reader, filter)
-	}
-	entries, err := store.ReadLog(reader)
-	if err != nil {
-		return err
-	}
-	state := store.Replay(core.NewState(core.Team{ID: "replay", Name: "replay"}), entries)
-	encoder := json.NewEncoder(cmd.stdout)
-	encoder.SetIndent("", "  ")
-	return encoder.Encode(state)
-}
-
-func (cmd command) wait(arguments []string) error {
-	options, err := parseWait(arguments)
-	if err != nil {
-		return err
-	}
-	run, err := cmd.runtime()
-	if err != nil {
-		return err
-	}
-
-	deadline := time.Now().Add(options.Timeout)
-	ctx, cancel := context.WithDeadline(context.Background(), deadline)
+	ctx, cancel := cmd.timeout(o.Timeout)
 	defer cancel()
-	paths, err := run.paths().Team(run.settings.Session)
-	if err != nil {
-		return err
-	}
 	for {
-		state, size, complete, err := store.ObserveLog(paths.Events, run.initial())
+		watch, err := cmd.watch(p.State)
 		if err != nil {
 			return err
 		}
-		hitch, ok := activeByName(state, options.Name)
-		if !ok {
-			return refuseError("agent %q is not active", options.Name)
+		a, err = p.Read()
+		if err != nil {
+			_ = watch.Close()
+			return err
 		}
-		if complete && hitch.Activity == core.ActivityIdle {
+		l, current, lockErr := run.acquire(a.ID, false)
+		if lockErr == nil {
+			a = current
+			if err := run.release(l); err != nil {
+				_ = watch.Close()
+				return err
+			}
+		} else if !errors.Is(lockErr, store.ErrLocked) {
+			_ = watch.Close()
+			return lockErr
+		} else {
+			a, _ = core.Step(a, core.Event{Type: "deadline_checked", At: cmd.now(), HitchID: a.ID})
+		}
+		if a.Status == core.Active && a.Activity == core.Idle {
+			_ = watch.Close()
 			return nil
 		}
-		if !time.Now().Before(deadline) {
-			if !complete {
-				return fmt.Errorf("event log has an incomplete append at the wait deadline")
-			}
-			return run.waitTimedOut(hitch, deadline)
+		if a.Status == core.Failed || a.Status == core.Dropping {
+			_ = watch.Close()
+			return refuseError("agent %q is %s", a.Name, a.Status)
 		}
-		appendWait, watchErr := cmd.appendWait(paths.Events, size)
-		if watchErr != nil {
-			return watchErr
+		if o.Timeout == 0 {
+			_ = watch.Close()
+			return refuseError("agent %q is not idle", a.Name)
 		}
-		waitErr := appendWait.Wait(ctx)
-		closeErr := appendWait.Close()
-		if waitErr != nil {
-			if errors.Is(waitErr, context.DeadlineExceeded) {
-				return run.waitTimedOut(hitch, deadline)
-			}
-			return waitErr
+		err = watch.Wait(ctx)
+		closeErr := watch.Close()
+		if errors.Is(err, context.DeadlineExceeded) {
+			return refuseError("agent %q did not become idle before the wait deadline", a.Name)
+		}
+		if err != nil {
+			return err
 		}
 		if closeErr != nil {
 			return closeErr
 		}
 	}
-}
-
-type appendWait interface {
-	Wait(context.Context) error
-	Close() error
-}
-
-func (cmd command) appendWait(path string, after int64) (appendWait, error) {
-	if cmd.newAppendWait != nil {
-		return cmd.newAppendWait(path, after)
-	}
-	return store.NewAppendWait(path, after)
-}
-
-func (run *runtime) waitTimedOut(hitch core.Hitch, deadline time.Time) error {
-	now := time.Now()
-	_, err := run.drive(core.OperationTimedOut{
-		At: now, Operation: core.TimeoutWait, ID: string(hitch.ID), Deadline: deadline,
-		Evidence: "wait deadline elapsed before an idle boundary",
-	})
-	if err != nil {
-		return err
-	}
-	return refuseError("agent %q did not reach an idle boundary before the wait deadline", hitch.Name)
 }

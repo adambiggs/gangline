@@ -18,6 +18,11 @@ type linuxProcessHandle struct {
 	process *os.Process
 }
 
+func bootIdentity() (string, error) {
+	data, err := os.ReadFile("/proc/sys/kernel/random/boot_id")
+	return strings.TrimSpace(string(data)), err
+}
+
 func observeProcess(pid int) (processObservation, error) {
 	stat, err := os.Open(fmt.Sprintf("/proc/%d/stat", pid))
 	if err != nil {

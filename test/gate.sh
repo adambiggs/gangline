@@ -18,7 +18,7 @@ ROOT="$(cd -P "$(dirname "$0")/.." && pwd)"
 if [ -z "${_GANGLINE_GATE_LOCKED:-}" ]; then
   export _GANGLINE_GATE_LOCKED=1
   outer_rc=0
-  flock -E 75 -o -w 3 /tmp/gangline-heavy.lock timeout 110 "$0" "$@" || outer_rc=$?
+  flock -E 75 -o -w 3 "${TMPDIR:-/tmp}/gangline-heavy.lock" timeout 110 "$0" "$@" || outer_rc=$?
   if [ "$outer_rc" -eq 75 ]; then
     printf 'gate: VERDICT UNKNOWN (status 75); another gate owns the host lock.\n'
   fi

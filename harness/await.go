@@ -4,7 +4,6 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"reflect"
 	"regexp"
 	"strings"
 	"time"
@@ -29,29 +28,6 @@ func Idle(collar Collar, screen substrate.Screen) (bool, error) {
 		return false, err
 	}
 	return composer.Text == "" && !busy.MatchString(strings.Join(screenLines(screen, true), "\n")), nil
-}
-
-func AwaitIdle(ctx context.Context, capture captureScreen, pane substrate.PaneID, collar Collar) error {
-	ticker := time.NewTicker(25 * time.Millisecond)
-	defer ticker.Stop()
-	for {
-		screen, err := capture(ctx, pane)
-		if err != nil {
-			return err
-		}
-		idle, err := Idle(collar, screen)
-		if err != nil {
-			return err
-		}
-		if idle {
-			return nil
-		}
-		select {
-		case <-ctx.Done():
-			return fmt.Errorf("native turn did not become idle after interruption: %w", ctx.Err())
-		case <-ticker.C:
-		}
-	}
 }
 
 // AwaitComposerText waits until the native composer shows stable expected text.
@@ -124,37 +100,6 @@ func AwaitStartup(ctx context.Context, capture captureScreen, pane substrate.Pan
 			return Startup{}, substrate.Screen{}, ctx.Err()
 		case <-deadline.C:
 			return Startup{}, substrate.Screen{}, fmt.Errorf("native startup was not observable within 5s: %w", lastErr)
-		case <-ticker.C:
-		}
-	}
-}
-
-// AwaitScreenSettle waits until a changed native screen remains stable.
-func AwaitScreenSettle(ctx context.Context, capture captureScreen, pane substrate.PaneID, before substrate.Screen, settle time.Duration) error {
-	ticker := time.NewTicker(25 * time.Millisecond)
-	defer ticker.Stop()
-	var last substrate.Screen
-	var stableSince time.Time
-	for {
-		screen, err := capture(ctx, pane)
-		if err != nil {
-			return fmt.Errorf("observe native screen settling: %w", err)
-		}
-		if !reflect.DeepEqual(screen, before) {
-			if stableSince.IsZero() || !reflect.DeepEqual(screen, last) {
-				stableSince = time.Now()
-				last = screen
-			}
-			if time.Since(stableSince) >= settle {
-				return nil
-			}
-		} else {
-			stableSince = time.Time{}
-			last = substrate.Screen{}
-		}
-		select {
-		case <-ctx.Done():
-			return fmt.Errorf("native composer did not settle before submission: %w", ctx.Err())
 		case <-ticker.C:
 		}
 	}

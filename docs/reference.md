@@ -43,7 +43,7 @@ A failed agent keeps its name until you drop it.
 | Command | Effect |
 | --- | --- |
 | `gang send NAME [--from NAME] [--live-only] [--supersede] [--at TIME]` | Send stdin to an agent. |
-| `gang send NAME --at clear` | Clear the agent's scheduled messages. |
+| `gang send NAME --at clear` | Clear the sender's scheduled messages for this agent. |
 | `gang queue [NAME]` | List queued messages. |
 | `gang interrupt [NAME] [-m REASON]` | Interrupt an agent's turn. |
 | `gang compact [NAME] [--resume TEXT]` | Compact an agent's context and queue a follow-up message. |
@@ -54,7 +54,7 @@ anywhere else `--from` is required, and the envelope marks the name
 `self-declared:`.
 
 - `--live-only` sends only if the agent can take the message now.
-- `--supersede` clears the agent's older scheduled messages first.
+- `--supersede` clears the sender's older scheduled messages for this recipient first.
 - `--at` takes a duration (`45m`) or a local time (`14:30`).
 
 A message can be at most 1 MiB once rendered. Longer ones are refused, never
@@ -72,9 +72,8 @@ split; put the details in a file and send its path.
 | `gang context --widget NAME\|off` | Show one agent's context in the tmux status line, or turn it off. |
 | `gang statusline [--install]` | Render Claude's status line; `--install` sets it up. |
 | `gang limits [NAME]` | Show provider usage limits. |
-| `gang log [--agent NAME\|HITCH_ID] [--type TYPE\|KIND]` | Print the team's events. |
-| `gang replay [--agent NAME\|HITCH_ID] [--type TYPE\|KIND] [EVENTS.jsonl]` | Rebuild state from an event file, or filter it. |
-| `gang tick` | Retry pending work and resume after provider errors. |
+| `gang log [--agent NAME\|HITCH_ID] [--type TYPE\|KIND] [LOG.jsonl]` | Print the team's events. |
+| `gang tick [--agent ID]` | Retry pending work and resume after provider errors. |
 | `gang wait NAME [--timeout DURATION]` | Wait until an agent is idle (default 30s; `0` checks once). |
 | `gang whoami` | Print the agent this pane belongs to. |
 | `gang teams` | List teams. |
@@ -134,7 +133,12 @@ Environment only:
 | `GANG_TMUX_SOCKET` | tmux's default | tmux socket |
 | `GANG_TMUX` | `tmux` | tmux executable |
 
-A team's state is under `STATE_ROOT/v1/TEAM/`. `gang down` deletes it.
+A team's state is under `STATE_ROOT/teams/TEAM/`. It contains `team.json`,
+`log.jsonl`, `names/NAME -> ID` claims, and `agents/ID/` directories.
+Each agent directory contains `agent.json`, `lock`, `witness`, and
+`inbox/{tmp,new,cur,failed}/`. `gang drop` removes its agent directory and name
+claim; `gang down` deletes the team directory. Terminal inbox directories
+retain the latest result; use `gang log` for history.
 
 ## Startup prose
 

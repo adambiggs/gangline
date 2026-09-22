@@ -2,6 +2,7 @@ package tmux
 
 import (
 	"context"
+	"os"
 	"os/exec"
 	"path/filepath"
 	"strings"
@@ -13,7 +14,12 @@ func TestContextWidgetIsSessionScopedAndRestoresInheritance(t *testing.T) {
 	if err != nil {
 		t.Skip("tmux required")
 	}
-	socket := filepath.Join(t.TempDir(), "widget.sock")
+	root, err := os.MkdirTemp(os.TempDir(), "widget-")
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = os.RemoveAll(root) })
+	socket := filepath.Join(root, "tmux.sock")
 	const session = "gangline-widget-test"
 	runTmux(t, binary, socket, "-f", "/dev/null", "new-session", "-d", "-s", session)
 	t.Cleanup(func() { runTmux(t, binary, socket, "kill-session", "-t", "="+session) })

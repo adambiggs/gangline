@@ -200,8 +200,6 @@ fi
 need tmux
 
 # Keep the tagged source so upgrades remain inspectable and reproducible.
-# Compiled releases install a static binary; retained-tree shell releases keep
-# their own command layout.
 if [ -L "$HOME_DIR" ] || { [ -e "$HOME_DIR" ] && [ ! -d "$HOME_DIR/.git" ]; }; then
   die "$HOME_DIR exists and is not an installer-managed release"
 fi
@@ -225,7 +223,7 @@ trap cleanup_stage EXIT
 trap 'cleanup_stage; exit 1' HUP INT TERM
 
 # Clone and validate the selected tag away from the active checkout. A failed
-# classification, build, or smoke test therefore leaves the installed command
+# build or smoke test therefore leaves the installed command
 # and retained source untouched.
 candidate="$stage_root/release"
 git -c advice.detachedHead=false clone --branch "$tag" --depth 1 --quiet \
@@ -240,21 +238,10 @@ if [ -e "$BIN_DIR/gang" ] && [ ! -f "$BIN_DIR/gang" ] && [ ! -L "$BIN_DIR/gang" 
   die "$BIN_DIR/gang exists and is not a file or a symlink — move it aside"
 fi
 if [ -f "$candidate/go.mod" ] && [ -d "$candidate/cmd/gang" ]; then
-  release_kind=compiled
   candidate_command="$stage_root/gang"
   CGO_ENABLED=0 go -C "$candidate" build -trimpath \
     -ldflags "-s -w -X main.version=$latest" -o "$candidate_command" ./cmd/gang \
     || die "could not build gang $tag"
-elif [ -x "$candidate/bin/gang" ] && [ -r "$candidate/version.txt" ]; then
-  release_kind=retained-tree
-  candidate_command="$candidate/bin/gang"
-  need python3
-  python3 -c 'import json; assert json.loads("{\"ok\": true}")["ok"]' >/dev/null 2>&1 \
-    || die "working python3 with JSON support required by $tag"
-  legacy_version="$(cat "$candidate/version.txt")" \
-    || die "could not read the release version at $candidate/version.txt"
-  [ "$legacy_version" = "$latest" ] \
-    || die "$tag has mismatched version.txt value '$legacy_version'"
 else
   die "$tag has an unsupported release layout"
 fi
@@ -283,20 +270,7 @@ fi
 
 mkdir -p "$BIN_DIR"
 activation_ok=1
-case "$release_kind" in
-  compiled)
-    mv -f "$candidate_command" "$BIN_DIR/gang" || activation_ok=0
-    ;;
-  retained-tree)
-    if [ "$BIN_DIR/gang" != "$HOME_DIR/bin/gang" ]; then
-      new_link="$BIN_DIR/.gang.new.$$"
-      ln -s "$HOME_DIR/bin/gang" "$new_link" \
-        && mv -f "$new_link" "$BIN_DIR/gang" \
-        || activation_ok=0
-      [ "$activation_ok" -eq 1 ] || rm -f "$new_link"
-    fi
-    ;;
-esac
+mv -f "$candidate_command" "$BIN_DIR/gang" || activation_ok=0
 if [ "$activation_ok" -ne 1 ]; then
   failed_candidate="$stage_root/failed-release"
   if [ "$had_previous" -eq 1 ] \
@@ -312,11 +286,8 @@ installed_version="$("$BIN_DIR/gang" --version)" \
   || die "installed, but '$BIN_DIR/gang --version' failed"
 [ "$installed_version" = "gangline $latest" ] \
   || die "installed version mismatch: expected 'gangline $latest', got '$installed_version'"
-if [ "$release_kind" = compiled ]; then
-  # Repair the retired checkout status-line path without replacing custom settings.
-  "$BIN_DIR/gang" statusline --install \
-    || die "installed, but status-line settings repair failed"
-fi
+"$BIN_DIR/gang" statusline --install \
+  || die "installed, but status-line settings installation failed"
 "$BIN_DIR/gang" collars >/dev/null \
   || die "installed, but 'gang collars' failed"
 

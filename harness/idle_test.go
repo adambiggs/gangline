@@ -1,8 +1,6 @@
 package harness
 
 import (
-	"context"
-	"github.com/adambiggs/gangline/substrate"
 	"testing"
 	"time"
 )
@@ -25,11 +23,7 @@ func TestIdleRequiresAnEmptyComposerWithoutNativeWork(t *testing.T) {
 			if err != nil || idle != test.idle {
 				t.Fatalf("idle = %v, error = %v", idle, err)
 			}
-			if test.idle {
-				if err := AwaitIdle(context.Background(), func(context.Context, substrate.PaneID) (substrate.Screen, error) { return screen, nil }, "%1", collar); err != nil {
-					t.Fatal(err)
-				}
-			}
+
 		})
 	}
 	if _, err := Idle(collar, testScreen(testCells("unrecognized surface", false))); err == nil {

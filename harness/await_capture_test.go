@@ -20,9 +20,7 @@ func TestNativeWaitsReturnCaptureFailure(t *testing.T) {
 		"composer text": func(ctx context.Context) error {
 			return AwaitComposerText(ctx, capture, "%1", collar, "hello", time.Second)
 		},
-		"screen settle": func(ctx context.Context) error {
-			return AwaitScreenSettle(ctx, capture, "%1", substrate.Screen{}, time.Second)
-		},
+
 		"startup": func(ctx context.Context) error { _, _, err := AwaitStartup(ctx, capture, "%1", collar); return err },
 	} {
 		t.Run(name, func(t *testing.T) {

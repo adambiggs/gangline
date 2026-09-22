@@ -73,13 +73,16 @@ and resumes agents whose turn ended on a provider error.
 
 To stop a turn, `gang interrupt worker -m 'Stop and report current evidence.'`.
 To compact, `gang compact worker --resume 'Read the saved state and continue.'`.
+The follow-up queues as soon as the compaction command is submitted. Gang
+verifies its submission through the usual submit hook; the harness controls
+when it executes.
 If a compaction gets stuck, `gang compact worker --recover` runs the collar's
 recovery steps.
 
 `gang collar check NAME` tests a harness in throwaway tmux sessions.
 
-To look at a team's history without tmux, copy its events file and run
-`gang replay path/to/events.jsonl`. Keep the team directory when diagnosing a
+To look at a team's history without tmux, copy its audit log and run
+`gang log path/to/log.jsonl`. Keep the team directory when diagnosing a
 failure.
 
 ## Stop a team

@@ -178,14 +178,6 @@ class Site:
             dest = self.out / "docs" / here
             dest.parent.mkdir(parents=True, exist_ok=True)
             dest.write_text(page, encoding="utf-8")
-        legacy = self.out / "docs" / "constitution.html"
-        legacy.write_text(
-            '<!doctype html><meta charset="utf-8">'
-            '<meta http-equiv="refresh" content="0; url=design.html">'
-            '<link rel="canonical" href="design.html">'
-            '<title>Design</title><p>Moved to <a href="design.html">Design</a>.</p>',
-            encoding="utf-8",
-        )
         return self.check()
 
     def check(self):

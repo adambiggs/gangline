@@ -30,7 +30,7 @@ func TestTranscriptCursorRejectsWrongSessionAndTruncation(t *testing.T) {
 		t.Fatal(err)
 	}
 	if len(second.Readings) != 0 || second.Offset != first.Offset {
-		t.Fatalf("partial line or old evidence replayed: %#v", second)
+		t.Fatalf("partial or previously consumed record repeated: %#v", second)
 	}
 	if _, err := ReadTranscript(primitive, strings.NewReader(input[:first.Offset-2]), "s1", first.Offset, time.Time{}); err == nil {
 		t.Fatal("truncated transcript accepted")
@@ -58,37 +58,31 @@ func TestStatuslineUnknownIsNotZero(t *testing.T) {
 }
 
 func TestInstallStatuslinePreservesCustomSettings(t *testing.T) {
-	for _, custom := range []bool{false, true} {
-		path := filepath.Join(t.TempDir(), "settings.json")
-		command := "/opt/gangline/statusline/claude-code-context.sh"
-		if custom {
-			command = "my-footer"
-		}
-		data := `{"permissions":{"defaultMode":"default"},"statusLine":{"type":"command","command":"` + command + `"}}`
-		if err := os.WriteFile(path, []byte(data), 0600); err != nil {
-			t.Fatal(err)
-		}
-		changed, err := InstallStatusline(path, "/opt/Gang Line/gang")
-		if err != nil {
-			t.Fatal(err)
-		}
-		got, err := os.ReadFile(path)
-		if err != nil {
-			t.Fatal(err)
-		}
-		if custom {
-			if changed || string(got) != data {
-				t.Fatalf("custom settings changed: %s", got)
-			}
-		} else {
-			if !changed || !strings.Contains(string(got), "statusline") || strings.Contains(string(got), "claude-code-context.sh") || !strings.Contains(string(got), "defaultMode") {
-				t.Fatalf("migration = %s", got)
-			}
-		}
+	path := filepath.Join(t.TempDir(), "settings.json")
+	data := []byte(`{"permissions":{"defaultMode":"default"},"statusLine":{"type":"command","command":"my-footer"}}`)
+	if err := os.WriteFile(path, data, 0600); err != nil {
+		t.Fatal(err)
+	}
+	changed, err := InstallStatusline(path, "/opt/Gang Line/gang")
+	if err != nil || changed {
+		t.Fatalf("custom setting: changed=%t error=%v", changed, err)
+	}
+	got, err := os.ReadFile(path)
+	if err != nil || string(got) != string(data) {
+		t.Fatalf("custom settings changed: %s %v", got, err)
+	}
+	empty := filepath.Join(t.TempDir(), "settings.json")
+	changed, err = InstallStatusline(empty, "/opt/Gang Line/gang")
+	if err != nil || !changed {
+		t.Fatalf("absent setting: changed=%t error=%v", changed, err)
+	}
+	got, err = os.ReadFile(empty)
+	if err != nil || !strings.Contains(string(got), "statusline") {
+		t.Fatalf("missing installed command: %s %v", got, err)
 	}
 }
 
-func TestClaudeLaunchRepairsManagedStatusline(t *testing.T) {
+func TestClaudeLaunchInstallsManagedStatusline(t *testing.T) {
 	collar, err := EmbeddedCollar("claude-code")
 	if err != nil {
 		t.Fatal(err)

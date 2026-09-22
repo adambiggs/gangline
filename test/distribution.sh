@@ -40,126 +40,14 @@ commit_release() {
 }
 
 run_install() {
-  local repo=$1 home=$2 output=$3
-  mkdir -p "$home"
-  HOME="$home" \
+  local repo=$1 install_root=$2 output=$3
+  mkdir -p "$install_root"
     GANGLINE_REPO="file://$repo" \
-    GANGLINE_HOME="$home/.local/share/gangline" \
-    GANGLINE_BIN="$home/.local/bin" \
+    GANGLINE_HOME="$install_root/.local/share/gangline" \
+    GANGLINE_BIN="$install_root/.local/bin" \
     PATH="$scratch/shims:$PATH" \
     /bin/sh "$ROOT/install.sh" >"$output"
 }
-
-legacy_repo="$scratch/legacy-repo"
-init_repo "$legacy_repo"
-mkdir -p "$legacy_repo/bin"
-cat >"$legacy_repo/bin/gang" <<'EOF'
-#!/bin/sh
-case "${1:-}" in
-  --version) printf 'gangline 0.9.0\n' ;;
-  collars) printf 'codex\n' ;;
-  *) exit 2 ;;
-esac
-EOF
-chmod +x "$legacy_repo/bin/gang"
-printf '0.9.0\n' >"$legacy_repo/version.txt"
-commit_release "$legacy_repo" 0.9.0
-git -C "$legacy_repo" tag gangline-v01.0.0
-git -C "$legacy_repo" tag gangline-v0.9.0-rc1
-git -C "$legacy_repo" tag gangline-v10x.20.30
-
-legacy_home="$scratch/legacy-home"
-run_install "$legacy_repo" "$legacy_home" "$scratch/legacy-install.out"
-legacy_version="$("$legacy_home/.local/bin/gang" --version)"
-[ "$legacy_version" = 'gangline 0.9.0' ] || {
-  printf 'distribution: legacy install returned %s\n' "$legacy_version" >&2
-  exit 1
-}
-printf 'distribution: legacy release install passed (gangline 0.9.0)\n'
-
-git -C "$legacy_repo" tag gangline-v2.0.0
-if run_install "$legacy_repo" "$legacy_home" "$scratch/legacy-unknown.out" \
-  2>"$scratch/legacy-unknown.err"; then
-  echo 'distribution: unknown upgrade layout replaced the legacy install' >&2
-  exit 1
-fi
-grep -F "mismatched version.txt value '0.9.0'" "$scratch/legacy-unknown.err" >/dev/null
-[ "$("$legacy_home/.local/bin/gang" --version)" = 'gangline 0.9.0' ] || {
-  echo 'distribution: unknown upgrade layout damaged the legacy command' >&2
-  exit 1
-}
-git -C "$legacy_repo" tag -d gangline-v2.0.0 >/dev/null
-
-rm -f "$legacy_repo/bin/gang" "$legacy_repo/version.txt"
-mkdir -p "$legacy_repo/cmd/gang"
-cat >"$legacy_repo/go.mod" <<'EOF'
-module example.invalid/gangline-transition-fixture
-
-go 1.23
-EOF
-printf 'package main\nfunc main( {\n' >"$legacy_repo/cmd/gang/main.go"
-git -C "$legacy_repo" add -A
-git -C "$legacy_repo" commit -qm 'test: broken compiled release'
-git -C "$legacy_repo" tag gangline-v1.0.0
-if run_install "$legacy_repo" "$legacy_home" "$scratch/legacy-build-failure.out" \
-  2>"$scratch/legacy-build-failure.err"; then
-  echo 'distribution: failed compiled build replaced the legacy install' >&2
-  exit 1
-fi
-grep -F 'could not build gang gangline-v1.0.0' "$scratch/legacy-build-failure.err" >/dev/null
-[ "$("$legacy_home/.local/bin/gang" --version)" = 'gangline 0.9.0' ] || {
-  echo 'distribution: failed compiled build damaged the legacy command' >&2
-  exit 1
-}
-
-cat >"$legacy_repo/cmd/gang/main.go" <<'EOF'
-package main
-
-import (
-	"fmt"
-	"os"
-)
-
-var version = "dev"
-
-func main() {
-	if len(os.Args) < 2 {
-		os.Exit(2)
-	}
-	switch os.Args[1] {
-	case "--version":
-		if len(os.Args) != 2 {
-			os.Exit(2)
-		}
-		fmt.Printf("gangline %s\n", version)
-	case "collars":
-		if len(os.Args) != 2 {
-			os.Exit(2)
-		}
-		fmt.Println("codex")
-	case "statusline":
-		if len(os.Args) != 3 || os.Args[2] != "--install" {
-			os.Exit(2)
-		}
-	default:
-		os.Exit(2)
-	}
-}
-EOF
-git -C "$legacy_repo" add cmd/gang/main.go
-git -C "$legacy_repo" commit -qm 'test: compiled transition release'
-git -C "$legacy_repo" tag -d gangline-v1.0.0 >/dev/null
-git -C "$legacy_repo" tag gangline-v1.0.0
-run_install "$legacy_repo" "$legacy_home" "$scratch/legacy-transition.out"
-[ "$("$legacy_home/.local/bin/gang" --version)" = 'gangline 1.0.0' ] || {
-  echo 'distribution: current bootstrap did not migrate the legacy install' >&2
-  exit 1
-}
-[ ! -L "$legacy_home/.local/bin/gang" ] || {
-  echo 'distribution: legacy migration left a retained-tree symlink' >&2
-  exit 1
-}
-printf 'distribution: failed upgrades preserve legacy; bootstrap migration passed\n'
 
 go_repo="$scratch/go-repo"
 init_repo "$go_repo"
@@ -238,7 +126,6 @@ printf 'distribution: Go release install passed (gangline 1.0.0)\n'
 
 large_version=99999999999999999999.0.0
 git -C "$go_repo" tag "gangline-v$large_version"
-HOME="$go_home" \
   GANGLINE_REPO="file://$go_repo" \
   GANGLINE_HOME="$go_home/.local/share/gangline" \
   GANGLINE_BIN="$go_home/.local/bin" \

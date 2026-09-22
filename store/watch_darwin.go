@@ -12,12 +12,12 @@ import (
 func newFileWatch(path string) (<-chan error, func() error, error) {
 	file, err := os.Open(path)
 	if err != nil {
-		return nil, nil, fmt.Errorf("open event log for watch: %w", err)
+		return nil, nil, fmt.Errorf("open state directory for watch: %w", err)
 	}
 	queue, err := syscall.Kqueue()
 	if err != nil {
 		_ = file.Close()
-		return nil, nil, fmt.Errorf("create event log watch: %w", err)
+		return nil, nil, fmt.Errorf("create state directory watch: %w", err)
 	}
 	change := syscall.Kevent_t{
 		Ident:  uint64(file.Fd()),
@@ -28,7 +28,7 @@ func newFileWatch(path string) (<-chan error, func() error, error) {
 	if _, err := syscall.Kevent(queue, []syscall.Kevent_t{change}, nil, nil); err != nil {
 		_ = syscall.Close(queue)
 		_ = file.Close()
-		return nil, nil, fmt.Errorf("watch event log: %w", err)
+		return nil, nil, fmt.Errorf("watch state directory: %w", err)
 	}
 	events := make(chan error, 1)
 	go func() {

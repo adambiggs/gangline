@@ -12,7 +12,7 @@ func TestDetectWedgeRequiresStableBusyActiveTurn(t *testing.T) {
 		Name:   "stable-busy-screen",
 		Params: map[string]string{"busy": "esc to interrupt", "after": "5m"},
 	}, WedgeObservation{
-		Previous: screen, Current: screen, BusySince: since,
+		Previous: ScreenFingerprint(screen), Current: screen, BusySince: since,
 		ObservedAt: since.Add(5 * time.Minute), TurnActive: true,
 	})
 	if err != nil {
@@ -29,7 +29,7 @@ func TestDetectWedgeRejectsChangedScreen(t *testing.T) {
 		Name:   "stable-busy-screen",
 		Params: map[string]string{"busy": "Retrying", "after": "1m"},
 	}, WedgeObservation{
-		Previous:  testScreen(testCells("Retrying 1", false)),
+		Previous:  ScreenFingerprint(testScreen(testCells("Retrying 1", false))),
 		Current:   testScreen(testCells("Retrying 2", false)),
 		BusySince: since, ObservedAt: since.Add(time.Minute), TurnActive: true,
 	})

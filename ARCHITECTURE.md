@@ -7,7 +7,7 @@ One Go module, one `gang` binary. Design rules are in
 
 - `core` decides what happens next: given an agent's state and an event, it
   returns the new state and the actions to take. No I/O, no clock.
-- `store` keeps each agent's directory: state, inbox, and event file.
+- `store` keeps each agent's directory: state and inbox.
 - `substrate` talks to tmux: create, read, type into, and kill panes.
 - `harness` loads collars and knows how to read and drive each harness. It
   doesn't import `core`.
@@ -22,6 +22,14 @@ One Go module, one `gang` binary. Design rules are in
 
 ## Files
 
-Team state lives under `${XDG_STATE_HOME:-~/.local/state}/gangline/v1/TEAM/`,
-one directory per agent. Collars live in `harness/collars/` or the directory
-named by `GANG_COLLARS`.
+Team state lives under `STATE_ROOT/teams/TEAM/`. `team.json` holds the curfew;
+`log.jsonl` is an append-only audit log. Only `gang log` reads it. Name claims
+are symlinks in `names/`, pointing to immutable hitch IDs.
+
+Each `agents/ID/` contains `agent.json`, its own `lock`, the submit `witness`,
+and `inbox/{tmp,new,cur,failed}/`. State and witnesses are replaced atomically.
+Pending messages live in `new/`; terminal directories retain the latest
+result, and the audit log retains history. Commands do work proportional to
+current pending work and the agents requested, independently of settled history.
+
+Collars live in `harness/collars/` or the directory named by `GANG_COLLARS`.

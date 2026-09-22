@@ -1,10 +1,15 @@
 package main
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"io"
 	"os"
+	"time"
+
+	"github.com/adambiggs/gangline/harness"
+	"github.com/adambiggs/gangline/substrate"
 )
 
 var version = "dev"
@@ -34,14 +39,20 @@ func refuseError(format string, arguments ...any) error {
 }
 
 type command struct {
-	stdin         io.Reader
-	stdout        io.Writer
-	stderr        io.Writer
-	getenv        func(string) string
-	lookupEnv     func(string) (string, bool)
-	getwd         func() (string, error)
-	userHomeDir   func() (string, error)
-	newAppendWait func(string, int64) (appendWait, error)
+	stdin        io.Reader
+	stdout       io.Writer
+	stderr       io.Writer
+	getenv       func(string) string
+	lookupEnv    func(string) (string, bool)
+	getwd        func() (string, error)
+	userHomeDir  func() (string, error)
+	clock        func() time.Time
+	newWatch     func(string) (changeWait, error)
+	newTimeout   func(context.Context, time.Duration) (context.Context, context.CancelFunc)
+	inputBackend harnessInput
+	settleInput  func(context.Context, harnessInput, substrate.PaneID, harness.Collar, time.Duration) error
+	detach       func(string, hookNotice) error
+	afterUnlock  func()
 }
 
 func main() {
@@ -122,8 +133,6 @@ func (cmd command) execute(args []string) error {
 		return cmd.context(arguments)
 	case "log":
 		return cmd.log(arguments)
-	case "replay":
-		return cmd.replay(arguments)
 	case "limits":
 		return cmd.limits(arguments)
 	case "wait":

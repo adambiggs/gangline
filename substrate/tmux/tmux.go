@@ -119,28 +119,24 @@ func (backend *Backend) launch(ctx context.Context, action string, arguments []s
 }
 
 func (backend *Backend) Windows(ctx context.Context) ([]Window, error) {
-	output, err := backend.run(ctx, "list-windows", "-t", backend.config.Session, "-F", "#{window_id}")
+	output, err := backend.run(ctx, "list-panes", "-s", "-t", backend.config.Session, "-F", "#{pane_id}\t#{window_name}")
 	if err != nil {
-		return nil, tmuxError("list windows", err, output)
+		return nil, tmuxError("list panes", err, output)
 	}
-	identifiers := lines(output)
-	windows := make([]Window, 0, len(identifiers))
-	for _, identifier := range identifiers {
-		panes, err := backend.run(ctx, "list-panes", "-t", identifier, "-F", "#{pane_id}")
-		if err != nil {
-			return nil, tmuxError("list panes", err, panes)
+	var windows []Window
+	for _, line := range strings.Split(strings.TrimSuffix(output, "\n"), "\n") {
+		if line == "" {
+			continue
 		}
-		for _, paneID := range lines(panes) {
-			pane := substrate.PaneID(paneID)
-			if err := validPaneID(pane); err != nil {
-				return nil, fmt.Errorf("list panes: %w", err)
-			}
-			name, err := backend.windowName(ctx, pane)
-			if err != nil {
-				return nil, err
-			}
-			windows = append(windows, Window{Pane: substrate.Pane{ID: pane}, Name: name})
+		id, name, ok := strings.Cut(line, "\t")
+		if !ok {
+			return nil, fmt.Errorf("list panes: malformed record %q", line)
 		}
+		pane := substrate.PaneID(id)
+		if err := validPaneID(pane); err != nil {
+			return nil, err
+		}
+		windows = append(windows, Window{Pane: substrate.Pane{ID: pane}, Name: name})
 	}
 	return windows, nil
 }
@@ -363,14 +359,6 @@ func tmuxError(action string, err error, output string) error {
 		return fmt.Errorf("%s: %w", action, err)
 	}
 	return fmt.Errorf("%s: %w: %s", action, err, output)
-}
-
-func (backend *Backend) windowName(ctx context.Context, pane substrate.PaneID) (string, error) {
-	output, err := backend.run(ctx, "display-message", "-p", "-t", string(pane), "#{window_name}")
-	if err != nil {
-		return "", tmuxError("read window name", err, output)
-	}
-	return strings.TrimSuffix(output, "\n"), nil
 }
 
 func lines(output string) []string {

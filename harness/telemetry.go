@@ -121,25 +121,9 @@ func ReadTranscript(invocation Invocation, input io.ReadSeeker, session string, 
 	if session == "" {
 		return Transcript{}, fmt.Errorf("session log requires a native session_id")
 	}
-	if _, err := input.Seek(0, io.SeekStart); err != nil {
-		return Transcript{}, err
-	}
-	first, err := bufio.NewReader(input).ReadBytes('\n')
+	headerEnd, err := transcriptHeader(input, session)
 	if err != nil {
-		return Transcript{}, fmt.Errorf("read session metadata: %w", err)
-	}
-	var meta struct {
-		Model   string `json:"model"`
-		Type    string `json:"type"`
-		Payload struct {
-			ID string `json:"id"`
-		} `json:"payload"`
-	}
-	if err := json.Unmarshal(first, &meta); err != nil {
 		return Transcript{}, err
-	}
-	if meta.Type != "session_meta" || meta.Payload.ID != session {
-		return Transcript{}, fmt.Errorf("session log metadata does not match native session %q", session)
 	}
 	size, err := input.Seek(0, io.SeekEnd)
 	if err != nil {
@@ -149,13 +133,17 @@ func ReadTranscript(invocation Invocation, input io.ReadSeeker, session string, 
 		return Transcript{}, fmt.Errorf("session log truncated: cursor %d exceeds size %d", offset, size)
 	}
 	if offset == 0 {
-		offset = int64(len(first))
+		offset = headerEnd
+	}
+	offset, err = boundedTranscriptStart(input, offset, size)
+	if err != nil {
+		return Transcript{}, err
 	}
 	if _, err := input.Seek(offset, io.SeekStart); err != nil {
 		return Transcript{}, err
 	}
 	result := Transcript{Offset: offset}
-	reader := bufio.NewReader(input)
+	reader := bufio.NewReader(io.LimitReader(input, size-offset))
 	for {
 		line, err := reader.ReadBytes('\n')
 		if err == io.EOF {
@@ -300,7 +288,18 @@ func StatuslineMeasurementTime(data []byte, r Reading) (*time.Time, error) {
 		return nil, err
 	}
 	defer file.Close()
-	reader := bufio.NewReader(file)
+	size, err := file.Seek(0, io.SeekEnd)
+	if err != nil {
+		return nil, err
+	}
+	start, err := boundedTranscriptStart(file, 0, size)
+	if err != nil {
+		return nil, err
+	}
+	if _, err := file.Seek(start, io.SeekStart); err != nil {
+		return nil, err
+	}
+	reader := bufio.NewReader(io.LimitReader(file, size-start))
 	var at *time.Time
 	for {
 		line, err := reader.ReadBytes('\n')

@@ -1,145 +1,189 @@
 package main
 
 import (
+	"context"
+	"errors"
 	"fmt"
 	"os"
-	"sort"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/adambiggs/gangline/core"
+	"github.com/adambiggs/gangline/store"
 )
 
-func (cmd command) up(arguments []string) error {
+func (cmd command) up(args []string) error {
 	name := "lead"
-	if len(arguments) != 0 && !strings.HasPrefix(arguments[0], "-") {
-		name = arguments[0]
-		arguments = arguments[1:]
+	if len(args) > 0 && !strings.HasPrefix(args[0], "-") {
+		name, args = args[0], args[1:]
 	}
-	hitchArguments := append([]string{name, "--role", "lead"}, arguments...)
-	if err := cmd.hitch(hitchArguments); err != nil {
+	if err := cmd.hitch(append([]string{name, "--role", "lead"}, args...)); err != nil {
 		return err
 	}
-	if file, ok := cmd.stdin.(*os.File); ok {
-		if info, err := file.Stat(); err == nil && info.Mode()&os.ModeCharDevice != 0 {
+	if f, ok := cmd.stdin.(*os.File); ok {
+		if info, err := f.Stat(); err == nil && info.Mode()&os.ModeCharDevice != 0 {
 			return cmd.attach(nil)
 		}
 	}
 	return nil
 }
-
-func (cmd command) down(arguments []string) error {
-	if err := exactly(arguments, 1, "down"); err != nil {
+func (cmd command) down(args []string) error {
+	if err := exactly(args, 1, "down"); err != nil {
 		return err
 	}
-	settings, err := cmd.settings()
+	run, err := cmd.runtime()
 	if err != nil {
 		return err
 	}
-	if arguments[0] != settings.Session {
-		return refuseError("down requires the configured session name %q", settings.Session)
+	if args[0] != run.settings.Session {
+		return refuseError("down requires configured session %q", run.settings.Session)
 	}
-	run := &runtime{cmd: cmd, settings: settings}
-	state, err := run.load()
+	agents, err := run.team.ListAgents()
 	if err != nil {
 		return err
 	}
-	names := make([]string, 0)
-	for _, hitch := range state.Hitches {
-		if hitch.Status == core.HitchActive || hitch.Status == core.HitchFailed {
-			names = append(names, string(hitch.Name))
-		}
-	}
-	sort.Strings(names)
-	for _, name := range names {
-		if err := cmd.drop([]string{name}); err != nil {
-			return err
-		}
-	}
-	paths, err := run.paths().Team(settings.Session)
-	if err != nil {
+	if err := eachAgent(agents, func(a core.Agent) error { return run.drop(a.ID) }); err != nil {
 		return err
 	}
-	if err := os.RemoveAll(paths.Directory); err != nil {
-		return fmt.Errorf("remove stopped team state: %w", err)
-	}
-	return nil
+	return os.RemoveAll(run.team.Directory)
 }
-
-func (cmd command) curfew(arguments []string) error {
-	if len(arguments) > 1 {
-		return usageError("curfew: expected duration, HH:MM, clear, or no argument")
+func eachAgent(agents []core.Agent, action func(core.Agent) error) error {
+	results := make([]error, len(agents))
+	var group sync.WaitGroup
+	for i, a := range agents {
+		group.Go(func() { results[i] = action(a) })
 	}
-	run, state, err := cmd.loaded()
+	group.Wait()
+	return errors.Join(results...)
+}
+func (cmd command) curfew(args []string) error {
+	if len(args) > 1 {
+		return usageError("curfew: expected deadline, clear, or no argument")
+	}
+	run, err := cmd.runtime()
 	if err != nil {
 		return err
 	}
-	if len(arguments) == 0 {
-		if state.Team.Curfew.IsZero() {
+	team, err := run.team.ReadTeam()
+	if err != nil {
+		return err
+	}
+	if len(args) == 0 {
+		if team.Curfew.IsZero() {
 			_, err = fmt.Fprintln(cmd.stdout, "clear")
 		} else {
-			_, err = fmt.Fprintln(cmd.stdout, state.Team.Curfew.Format(time.RFC3339))
+			_, err = fmt.Fprintln(cmd.stdout, team.Curfew.Format(time.RFC3339))
 		}
 		return err
 	}
-	if arguments[0] == "clear" {
-		if state.Team.Curfew.IsZero() {
-			return refuseError("team curfew is already clear")
+	event := core.Event{Type: "curfew_set", At: cmd.now()}
+	if args[0] == "clear" {
+		team.Curfew = time.Time{}
+		event.Type = "curfew_cleared"
+	} else {
+		team.Curfew, err = parseSchedule(args[0], cmd.now())
+		if err != nil {
+			return usageError("curfew: %v", err)
 		}
-		_, err = run.drive(core.CurfewCleared{At: time.Now()})
+		event.Deadline = team.Curfew
+	}
+	if err := run.team.WriteTeam(team); err != nil {
 		return err
 	}
-	now := time.Now()
-	deadline, err := parseSchedule(arguments[0], now)
+	return run.team.Append(event)
+}
+func (cmd command) whoami(args []string) error {
+	if err := noArguments(args, "whoami"); err != nil {
+		return err
+	}
+	run, err := cmd.runtime()
 	if err != nil {
-		return usageError("curfew: %v", err)
+		return err
 	}
-	_, err = run.drive(core.CurfewSet{At: now, Deadline: deadline})
+	a, err := run.resolve("")
+	if err != nil {
+		return err
+	}
+	_, err = fmt.Fprintln(cmd.stdout, a.Name)
 	return err
 }
-
-func (cmd command) whoami(arguments []string) error {
-	if err := noArguments(arguments, "whoami"); err != nil {
-		return err
-	}
-	_, state, err := cmd.loaded()
+func (run *runtime) observeRoster(agents []core.Agent) ([]core.Agent, error) {
+	b, err := run.cmd.tmux(run.settings)
 	if err != nil {
-		return err
+		return nil, err
 	}
-	pane := cmd.environment("TMUX_PANE")
-	for _, hitch := range state.Hitches {
-		if hitch.Pane == pane && hitch.Status == core.HitchActive {
-			_, err = fmt.Fprintln(cmd.stdout, hitch.Name)
-			return err
+	windows, err := b.Windows(context.Background())
+	if err != nil {
+		exists, checkErr := b.SessionExists(context.Background())
+		if checkErr != nil {
+			return nil, checkErr
+		}
+		if exists {
+			return nil, err
 		}
 	}
-	return refuseError("current pane is not a registered active agent")
-}
-
-func (cmd command) roster(arguments []string) error {
-	porcelain := false
-	flags := quietFlagSet("roster")
-	flags.BoolVar(&porcelain, "porcelain", false, "machine format")
-	if err := flags.Parse(arguments); err != nil || flags.NArg() != 0 {
-		return usageError("roster: invalid arguments")
+	present := map[string]bool{}
+	titles := map[string]string{}
+	for _, w := range windows {
+		present[string(w.Pane.ID)] = true
+		titles[string(w.Pane.ID)] = w.Name
 	}
-	_, state, err := cmd.loaded()
-	if err != nil {
-		return err
-	}
-	hitches := make([]core.Hitch, 0, len(state.Hitches))
-	for _, hitch := range state.Hitches {
-		hitches = append(hitches, hitch)
-	}
-	sort.Slice(hitches, func(i, j int) bool { return hitches[i].Name < hitches[j].Name })
-	for _, hitch := range hitches {
-		if hitch.Status == core.HitchDropped {
+	for i, a := range agents {
+		l, current, err := run.acquire(a.ID, false)
+		if errors.Is(err, store.ErrLocked) {
 			continue
 		}
-		if porcelain {
-			_, err = fmt.Fprintf(cmd.stdout, "%s\t%s\t%s\t%s\t%s\n", hitch.Name, hitch.Status, hitch.Activity, hitch.Collar, hitch.Pane)
+		if err != nil {
+			return nil, err
+		}
+		if err := run.checkDeadlines(l, &current); err != nil {
+			_ = l.Close()
+			return nil, err
+		}
+		if current.Pane != "" && !present[current.Pane] && current.Status != core.Dropping && current.Status != core.Failed {
+			if err := run.apply(l, &current, core.Event{Type: "hitch_failed", Reason: "registered pane is absent from tmux"}); err != nil {
+				_ = l.Close()
+				return nil, err
+			}
+		}
+		agents[i] = current
+		if present[current.Pane] && titles[current.Pane] != windowTitle(current) {
+			if err := run.mark(current); err != nil {
+				_ = l.Close()
+				return nil, err
+			}
+		}
+		if err := run.release(l); err != nil {
+			return nil, err
+		}
+	}
+	return agents, nil
+}
+func (cmd command) roster(args []string) error {
+	machine := false
+	flags := quietFlagSet("roster")
+	flags.BoolVar(&machine, "porcelain", false, "machine format")
+	if err := flags.Parse(args); err != nil || flags.NArg() != 0 {
+		return usageError("roster: invalid arguments")
+	}
+	run, err := cmd.runtime()
+	if err != nil {
+		return err
+	}
+	agents, err := run.team.ListAgents()
+	if err != nil {
+		return err
+	}
+	agents, err = run.observeRoster(agents)
+	if err != nil {
+		return err
+	}
+	for _, a := range agents {
+		if machine {
+			_, err = fmt.Fprintf(cmd.stdout, "%s\t%s\t%s\t%s\t%s\n", a.Name, a.Status, a.Activity, a.Collar, a.Pane)
 		} else {
-			_, err = fmt.Fprintf(cmd.stdout, "%-16s %-10s %-14s %s\n", hitch.Name, hitch.Status, hitch.Activity, hitch.Collar)
+			_, err = fmt.Fprintf(cmd.stdout, "%-16s %-10s %-14s %s\n", a.Name, a.Status, a.Activity, a.Collar)
 		}
 		if err != nil {
 			return err
@@ -147,38 +191,35 @@ func (cmd command) roster(arguments []string) error {
 	}
 	return nil
 }
-
-func (cmd command) status(arguments []string) error {
-	why := false
+func (cmd command) status(args []string) error {
 	name := ""
-	flags := quietFlagSet("status")
-	flags.BoolVar(&why, "why", false, "include evidence")
-	if len(arguments) != 0 && !strings.HasPrefix(arguments[0], "-") {
-		name, arguments = arguments[0], arguments[1:]
+	if len(args) > 0 && !strings.HasPrefix(args[0], "-") {
+		name, args = args[0], args[1:]
 	}
-	if err := flags.Parse(arguments); err != nil || flags.NArg() != 0 {
+	why := false
+	flags := quietFlagSet("status")
+	flags.BoolVar(&why, "why", false, "evidence")
+	if err := flags.Parse(args); err != nil || flags.NArg() != 0 {
 		return usageError("status: invalid arguments")
 	}
-	_, state, err := cmd.loaded()
+	run, err := cmd.runtime()
 	if err != nil {
 		return err
 	}
-	if name == "" {
-		name = nameAtPane(state, cmd.environment("TMUX_PANE"))
+	a, err := run.resolve(name)
+	if err != nil {
+		return err
 	}
-	hitch, ok := hitchByName(state, name)
-	if !ok {
-		return refuseError("agent %q is not registered", name)
+	agents, err := run.observeRoster([]core.Agent{a})
+	if err != nil {
+		return err
 	}
-	_, err = fmt.Fprintf(cmd.stdout, "%s\t%s\t%s\n", hitch.Name, hitch.Status, hitch.Activity)
-	if err == nil && why {
-		evidence := hitch.WedgeEvidence
-		if hitch.Activity == core.ActivityBlocked {
-			evidence = hitch.BlockedEvidence
-		}
-		if evidence != "" {
-			_, err = fmt.Fprintln(cmd.stdout, evidence)
-		}
+	a = agents[0]
+	if _, err := fmt.Fprintf(cmd.stdout, "%s\t%s\t%s\n", a.Name, a.Status, a.Activity); err != nil {
+		return err
+	}
+	if why && a.Evidence != "" {
+		_, err = fmt.Fprintln(cmd.stdout, a.Evidence)
 	}
 	return err
 }

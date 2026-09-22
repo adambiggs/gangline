@@ -39,13 +39,12 @@ Talk to agents:
 Observe and control:
   roster    list the team
   status    inspect one agent
-  tick      retry pending effects
+  tick      drain due inbox work
   wait      wait for an idle boundary
   capture   read an agent's pane or composer
   context   read native context use
   statusline render or install the native context footer
   log       read the event log
-  replay    fold an event log offline
   limits    read current provider limits
   whoami    read this pane's identity
   attach    join the team in tmux
@@ -74,13 +73,12 @@ var commandUsage = map[string]string{
 	"compact":    "usage: gang compact [NAME] [--resume TEXT]\n       gang compact NAME --recover\n",
 	"statusline": "usage: gang statusline [--install]\n",
 	"context":    "usage: gang context [NAME]\n       gang context --widget NAME|off\n",
-	"log":        "usage: gang log [--agent NAME|HITCH_ID] [--type TYPE|KIND]\n",
-	"replay":     "usage: gang replay [--agent NAME|HITCH_ID] [--type TYPE|KIND] [EVENTS.jsonl]\n",
+	"log":        "usage: gang log [--agent NAME|HITCH_ID] [--type TYPE|KIND] [LOG.jsonl]\n",
 	"limits":     "usage: gang limits [NAME]\n",
 	"wait":       "usage: gang wait NAME [--timeout DURATION]\n",
 	"curfew":     "usage: gang curfew [DURATION | HH:MM | clear]\n",
 	"status":     "usage: gang status [NAME] [--why]\n",
-	"tick":       "usage: gang tick\n",
+	"tick":       "usage: gang tick [--agent ID]\n",
 	"capture":    "usage: gang capture [NAME] [LINES]\n       gang capture --composer [NAME]\n",
 	"whoami":     "usage: gang whoami\n",
 	"roster":     "usage: gang roster [--porcelain]\n",
@@ -105,20 +103,19 @@ var commandDescription = map[string]string{
 	"queue":      "List pending delivery identifiers, recipients, and senders.\n",
 	"interrupt":  "Send the collar's native interrupt and optionally deliver a reason after the turn stops.\n",
 	"compact":    "Request the collar's native compaction and place a continuation behind it.\n",
-	"statusline": "Read native status-line JSON on stdin; --install repairs absent or retired Gangline settings.\n",
+	"statusline": "Read native status-line JSON on stdin; --install fills an absent native setting.\n",
 	"context":    "Print the collar's native context reading without estimating missing data.\n",
 	"log":        "Print the configured team's durable JSONL event log.\n",
-	"replay":     "Fold a recorded JSONL event stream without contacting tmux or a harness.\n",
 	"limits":     "Read current provider limits from the collar's native source.\n",
-	"wait":       "Block on the event log until an agent reaches a recorded idle boundary or the deadline expires. A zero timeout checks once.\n",
+	"wait":       "Watch agent.json until an agent reaches a recorded idle boundary or the deadline expires. A zero timeout checks once.\n",
 	"curfew":     "Declare, inspect, or clear one team deadline.\n",
 	"status":     "Show one agent's recorded status and activity; --why adds recorded wedge evidence.\n",
-	"tick":       "Run one bounded retry pass over durable pending effects.\n",
+	"tick":       "Check deadlines and native recovery, then drain due inbox work.\n",
 	"capture":    "Print pane content, or only the native composer with --composer.\n",
 	"whoami":     "Print the registered identity of the calling Gangline pane.\n",
 	"roster":     "List the team's registered agents and conservative current states.\n",
 	"attach":     "Attach this terminal to the configured team session.\n",
-	"teams":      "List teams found in the versioned state root.\n",
+	"teams":      "List teams found in the teams directory.\n",
 	"drop":       "Stop one registered agent pane and cancel its pending work.\n",
 	"down":       "Drop every live agent, then remove the stopped team's runtime state.\n",
 	"collars":    "List embedded and operator-provided CUE collars.\n",

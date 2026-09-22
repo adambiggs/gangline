@@ -2,55 +2,36 @@ package store
 
 import (
 	"context"
-	"fmt"
-	"os"
+	"path/filepath"
 )
 
-type AppendWait struct {
-	events  <-chan error
-	close   func() error
-	changed bool
+type ChangeWait struct {
+	events <-chan error
+	close  func() error
 }
 
-func NewAppendWait(path string, after int64) (*AppendWait, error) {
-	if after < 0 {
-		return nil, fmt.Errorf("event log size is negative")
-	}
-	events, closeWatch, err := newFileWatch(path)
+// Watch registers the parent directory. Read the target after registration,
+// then wait: an atomic replacement cannot fall between registration and read.
+func Watch(path string) (*ChangeWait, error) {
+	events, closeWatch, err := newFileWatch(filepath.Dir(path))
 	if err != nil {
 		return nil, err
 	}
-	info, err := os.Stat(path)
-	if err != nil {
-		_ = closeWatch()
-		return nil, fmt.Errorf("stat event log after watch registration: %w", err)
-	}
-	if info.Size() != after {
-		if err := closeWatch(); err != nil {
-			return nil, err
-		}
-		return &AppendWait{changed: true}, nil
-	}
-	return &AppendWait{events: events, close: closeWatch}, nil
+	return &ChangeWait{events, closeWatch}, nil
 }
-
-func (wait *AppendWait) Wait(ctx context.Context) error {
-	if wait.changed {
-		return nil
-	}
+func (w *ChangeWait) Wait(ctx context.Context) error {
 	select {
-	case err := <-wait.events:
+	case err := <-w.events:
 		return err
 	case <-ctx.Done():
 		return ctx.Err()
 	}
 }
-
-func (wait *AppendWait) Close() error {
-	if wait == nil || wait.close == nil {
+func (w *ChangeWait) Close() error {
+	if w == nil || w.close == nil {
 		return nil
 	}
-	closeWatch := wait.close
-	wait.close = nil
-	return closeWatch()
+	f := w.close
+	w.close = nil
+	return f()
 }

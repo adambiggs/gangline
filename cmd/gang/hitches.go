@@ -2,67 +2,62 @@ package main
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
-	"time"
 
 	"github.com/adambiggs/gangline/core"
 	"github.com/adambiggs/gangline/harness"
+	"github.com/adambiggs/gangline/store"
+	"github.com/adambiggs/gangline/substrate"
+	"github.com/adambiggs/gangline/substrate/tmux"
 )
 
-func (cmd command) hitch(arguments []string) error {
-	settings, err := cmd.settings()
+func (cmd command) hitch(args []string) (result error) {
+	run, err := cmd.runtime()
 	if err != nil {
 		return err
 	}
-	directory, err := cmd.getwd()
+	dir, err := cmd.getwd()
 	if err != nil {
 		return err
 	}
-	options, err := parseHitch(arguments, settings.Collar, directory)
+	o, err := parseHitch(args, run.settings.Collar, dir)
 	if err != nil {
 		return err
 	}
-	directory, err = filepath.Abs(options.Directory)
+	dir, err = filepath.Abs(o.Directory)
 	if err != nil {
-		return fmt.Errorf("resolve hitch directory: %w", err)
+		return err
 	}
-	info, err := os.Stat(directory)
+	info, err := os.Stat(dir)
 	if err != nil || !info.IsDir() {
-		return refuseError("hitch directory %q is not an accessible directory", directory)
+		return refuseError("hitch directory %q is not accessible", dir)
 	}
-	collar, err := loadCollar(options.Collar, settings)
+	c, err := loadCollar(o.Collar, run.settings)
 	if err != nil {
 		return err
 	}
-	if options.Effort != "" && options.Model == "" {
+	if o.Effort != "" && o.Model == "" {
 		return usageError("hitch: --effort requires --model")
 	}
-	run := &runtime{cmd: cmd, settings: settings}
-	state, err := run.load()
-	if err != nil {
-		return err
-	}
-	if existing, found := hitchByName(state, options.Name); found {
-		return refuseError("agent name %q is already registered with status %s", options.Name, existing.Status)
-	}
-	if options.Model != "" {
-		ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
-		catalog, discoverErr := harness.DiscoverModels(ctx, collar)
+	if o.Model != "" {
+		ctx, cancel := context.WithTimeout(context.Background(), operationTimeout)
+		catalog, err := harness.DiscoverModels(ctx, c)
 		cancel()
-		if discoverErr != nil {
-			return discoverErr
+		if err != nil {
+			return err
 		}
-		if harness.ValidateModel(catalog, options.Model) == harness.ModelUnrecognized {
-			return refuseError("model %q is not recognized by collar %q", options.Model, options.Collar)
+		if harness.ValidateModel(catalog, o.Model) == harness.ModelUnrecognized {
+			return refuseError("model %q is not recognized", o.Model)
 		}
-		if options.Effort != "" && harness.ValidateEffort(catalog, options.Model, options.Effort) == harness.ModelUnrecognized {
-			return refuseError("effort %q is not recognized for model %q", options.Effort, options.Model)
+		if o.Effort != "" && harness.ValidateEffort(catalog, o.Model, o.Effort) == harness.ModelUnrecognized {
+			return refuseError("effort %q is not recognized", o.Effort)
 		}
 	}
-	assignment := options.Task
-	if options.Stdin {
+	assignment := o.Task
+	if o.Stdin {
 		assignment, err = readBody(cmd.stdin)
 		if err != nil {
 			return err
@@ -71,111 +66,7 @@ func (cmd command) hitch(arguments []string) error {
 	if assignment == "" {
 		assignment = "Begin the role you were assigned and wait for an attributed Gangline message."
 	}
-	brief, err := cmd.startupProse(options.Role)
-	if err != nil {
-		return err
-	}
-	startup := composeStartup(options.Name, brief, assignment)
-	now := time.Now()
-	hitchRaw, err := randomID("hitch")
-	if err != nil {
-		return err
-	}
-	envelopeRaw, err := randomID("startup")
-	if err != nil {
-		return err
-	}
-	hitchID := core.HitchID(hitchRaw)
-	if _, err := renderEnvelope("self-declared:hitch", envelopeRaw, "assignment", startup); err != nil {
-		return err
-	}
-	record := startupRecord{
-		Model: options.Model, Effort: options.Effort, Resume: options.Resume,
-		RolePrompt: composeStartup(options.Name, brief, ""),
-		Event: core.SendRequested{
-			At: now,
-			Envelope: core.Envelope{
-				ID: core.EnvelopeID(envelopeRaw), From: core.Sender{Kind: core.SenderSelfDeclared, Name: "hitch"},
-				To: core.AgentName(options.Name), Message: core.Message{Text: startup}, CreatedAt: now,
-			},
-		},
-	}
-	if err := run.writeStartup(hitchID, record); err != nil {
-		return fmt.Errorf("queue startup assignment: %w", err)
-	}
-	state, err = run.drive(core.HitchRequested{
-		At: now, BootDeadline: now.Add(bootTimeout),
-		Hitch: core.Hitch{ID: hitchID, Name: core.AgentName(options.Name), Collar: options.Collar, Role: options.Role, Directory: directory},
-	})
-	if err != nil {
-		return err
-	}
-	hitch := state.Hitches[hitchID]
-	switch hitch.Status {
-	case core.HitchActive:
-		delivery, ok := state.Deliveries[record.Event.Envelope.ID]
-		if !ok {
-			return refuseError("startup assignment for %q was not recorded", options.Name)
-		}
-		if delivery.Status == core.DeliveryQueued || delivery.Status == core.DeliveryDelivering {
-			if _, err := fmt.Fprintf(cmd.stderr, "gang: startup assignment to %q is queued; waiting for native acceptance or recipient drop\n", options.Name); err != nil {
-				return err
-			}
-			state, err = run.awaitDelivery(state, delivery.Envelope.ID)
-			if err != nil {
-				return err
-			}
-			delivery = state.Deliveries[delivery.Envelope.ID]
-			hitch = state.Hitches[hitchID]
-		}
-		switch delivery.Status {
-		case core.DeliveryDelivered:
-			_, err = fmt.Fprintf(cmd.stdout, "%s\t%s\n", options.Name, hitch.Pane)
-			return err
-		case core.DeliveryUnverified:
-			if hitch.Activity == core.ActivityBlocked {
-				return commandError{status: exitNative, text: "native prompt needs attention; startup input remains unverified: " + delivery.Reason}
-			}
-			return commandError{status: exitUnknown, text: "startup assignment may have landed but could not be verified: " + delivery.Reason}
-		case core.DeliveryFailed:
-			return commandError{status: exitNative, text: fmt.Sprintf("%s launched in %s but its startup assignment was not delivered: %s", options.Name, hitch.Pane, delivery.Reason)}
-		default:
-			return fmt.Errorf("startup assignment ended in unexpected state %q", delivery.Status)
-		}
-	case core.HitchBooting:
-		return commandError{status: exitNative, text: fmt.Sprintf("%s launched in %s but is not ready; resolve its native prompt, then run 'gang tick'", options.Name, hitch.Pane)}
-	default:
-		return refuseError("hitch %s failed to launch: %s", options.Name, hitch.WedgeEvidence)
-	}
-}
-
-func (cmd command) adopt(arguments []string) error {
-	if len(arguments) < 1 {
-		return usageError("adopt: agent name required")
-	}
-	name := arguments[0]
-	if err := validateAgentName(name); err != nil {
-		return err
-	}
-	settings, err := cmd.settings()
-	if err != nil {
-		return err
-	}
-	collar := settings.Collar
-	flags := quietFlagSet("adopt")
-	flags.StringVar(&collar, "c", collar, "harness collar")
-	flags.StringVar(&collar, "collar", collar, "harness collar")
-	if err := flags.Parse(arguments[1:]); err != nil || flags.NArg() != 0 {
-		return usageError("adopt: expected NAME -c COLLAR")
-	}
-	if _, err := loadCollar(collar, settings); err != nil {
-		return err
-	}
-	pane := cmd.environment("TMUX_PANE")
-	if pane == "" {
-		return refuseError("adopt must run inside the pane being adopted")
-	}
-	directory, err := cmd.getwd()
+	brief, err := cmd.startupProse(o.Role)
 	if err != nil {
 		return err
 	}
@@ -183,70 +74,334 @@ func (cmd command) adopt(arguments []string) error {
 	if err != nil {
 		return err
 	}
-	run := &runtime{cmd: cmd, settings: settings}
-	_, err = run.drive(core.AdoptRequested{At: time.Now(), Pane: pane, Hitch: core.Hitch{
-		ID: core.HitchID(id), Name: core.AgentName(name), Collar: collar, Directory: directory,
-	}})
-	return err
+	eid, err := randomID("startup")
+	if err != nil {
+		return err
+	}
+	now := cmd.now()
+	a := core.Agent{ID: core.HitchID(id), Name: core.AgentName(o.Name), Collar: o.Collar, Role: o.Role, Directory: dir, Status: core.Starting, Activity: core.Unknown, CreatedAt: now, ChangedAt: now, BootDeadline: now.Add(bootTimeout)}
+	e := core.Envelope{ID: core.EnvelopeID(eid), Recipient: a.ID, To: a.Name, From: core.Sender{Kind: core.SenderSelfDeclared, Name: "hitch"}, Message: core.Message{Text: composeStartup(o.Name, brief, assignment)}, CreatedAt: now}
+	if _, err := envelopeText(e); err != nil {
+		return err
+	}
+	exe, err := os.Executable()
+	if err != nil {
+		return err
+	}
+	rolePrompt := ""
+	if c.Options.RolePrompt != nil {
+		rolePrompt = composeStartup(o.Name, brief, "")
+	}
+	launch, err := harness.RenderLaunch(c, harness.LaunchOptions{ResumeSession: o.Resume, HookCommand: []string{exe, "hook"}, HookTimeoutSeconds: boundaryHookTimeoutSeconds, Model: o.Model, Effort: o.Effort, RolePrompt: rolePrompt})
+	if err != nil {
+		return err
+	}
+	launch = applyLaunchPolicy(launch, o.Collar, run.settings)
+	if err := run.team.Create(); err != nil {
+		return err
+	}
+	l, err := run.team.CreateAgent(a)
+	if errors.Is(err, store.ErrNameTaken) {
+		return refuseError("agent name %q is already claimed", o.Name)
+	}
+	if err != nil {
+		return err
+	}
+	defer func() { result = errors.Join(result, run.release(l)) }()
+	if err := run.record(a, core.Event{Type: "hitch_claimed"}); err != nil {
+		return err
+	}
+	if err := l.Paths.Publish(e); err != nil {
+		return err
+	}
+	if err := run.record(a, core.Event{Type: "send_queued", Envelope: &e}); err != nil {
+		return err
+	}
+	b, err := cmd.tmux(run.settings)
+	if err != nil {
+		return err
+	}
+	spec := launch.SpawnSpec(windowTitle(a), dir)
+	for k, v := range map[string]string{"GANG_SESSION": run.settings.Session, "GANG_STATE_ROOT": run.settings.StateRoot, "GANG_COLLAR": o.Collar, "GANG_CONFIG_DIR": run.settings.ConfigDir, "GANGLINE_HITCH_ID": id} {
+		spec.Env[k] = v
+	}
+	if run.settings.Socket != "" {
+		spec.Env["GANG_TMUX_SOCKET"] = run.settings.Socket
+	}
+	if run.settings.CollarDir != "" {
+		spec.Env["GANG_COLLARS"] = run.settings.CollarDir
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), bootTimeout)
+	defer cancel()
+	exists, err := b.SessionExists(ctx)
+	if err != nil {
+		return err
+	}
+	var pane substrate.Pane
+	if exists {
+		pane, err = b.Spawn(ctx, spec)
+	} else {
+		pane, err = b.CreateSession(ctx, spec)
+	}
+	if err != nil {
+		_ = run.apply(l, &a, core.Event{Type: "hitch_failed", Reason: err.Error()})
+		return err
+	}
+	identity, err := b.Identity(ctx, pane.ID)
+	if err != nil {
+		return err
+	}
+	a.Process = storedIdentity(identity)
+	if err := run.apply(l, &a, core.Event{Type: "hitch_spawned", Pane: string(pane.ID)}); err != nil {
+		return err
+	}
+	if err := run.mark(a); err != nil {
+		return err
+	}
+	startup, _, err := harness.AwaitStartup(ctx, b.Capture, pane.ID, c)
+	if err != nil {
+		return err
+	}
+	if startup.State != harness.StartupReady {
+		return commandError{status: exitNative, text: fmt.Sprintf("%s needs attention in %s: %s", a.Name, a.Pane, startup.Prompt)}
+	}
+	if err := run.apply(l, &a, core.Event{Type: "hitch_ready"}); err != nil {
+		return err
+	}
+	if err := run.mark(a); err != nil {
+		return err
+	}
+	outcome, err := run.drainFrom(l, a, e.ID)
+	if err != nil {
+		return err
+	}
+	if err := deliveryResult(outcome); err != nil {
+		return err
+	}
+	if _, err := fmt.Fprintf(cmd.stdout, "%s\t%s\n", a.Name, a.Pane); err != nil {
+		return err
+	}
+	return nil
 }
-
-func (cmd command) rename(arguments []string) error {
-	if err := exactly(arguments, 2, "rename"); err != nil {
-		return err
-	}
-	if err := validateAgentName(arguments[1]); err != nil {
-		return err
-	}
-	run, state, err := cmd.loaded()
-	if err != nil {
-		return err
-	}
-	hitch, ok := activeByName(state, arguments[0])
-	if !ok {
-		return refuseError("agent %q is not active", arguments[0])
-	}
-	if existing, exists := hitchByName(state, arguments[1]); exists {
-		return refuseError("agent name %q is already registered with status %s", arguments[1], existing.Status)
-	}
-	_, err = run.drive(core.RenameRequested{At: time.Now(), HitchID: hitch.ID, Name: core.AgentName(arguments[1])})
-	return err
+func storedIdentity(i tmux.Identity) core.ProcessIdentity {
+	return core.ProcessIdentity{PID: i.PID, Started: i.Started, Version: i.Version, UniqueID: i.UniqueID, BootID: i.BootID}
 }
-
-func (cmd command) drop(arguments []string) error {
-	name, err := requiredName(arguments, "drop")
+func nativeIdentity(i core.ProcessIdentity) tmux.Identity {
+	return tmux.Identity{PID: i.PID, Started: i.Started, Version: i.Version, UniqueID: i.UniqueID, BootID: i.BootID}
+}
+func (cmd command) adopt(args []string) (result error) {
+	if len(args) == 0 {
+		return usageError("adopt: name required")
+	}
+	if err := validateAgentName(args[0]); err != nil {
+		return err
+	}
+	run, err := cmd.runtime()
 	if err != nil {
 		return err
 	}
-	run, state, err := cmd.loaded()
+	collar := run.settings.Collar
+	flags := quietFlagSet("adopt")
+	flags.StringVar(&collar, "c", collar, "collar")
+	flags.StringVar(&collar, "collar", collar, "collar")
+	if err := flags.Parse(args[1:]); err != nil || flags.NArg() != 0 {
+		return usageError("adopt: expected NAME -c COLLAR")
+	}
+	if _, err := loadCollar(collar, run.settings); err != nil {
+		return err
+	}
+	pane := cmd.environment("TMUX_PANE")
+	if pane == "" {
+		return refuseError("adopt requires the current tmux pane")
+	}
+	dir, err := cmd.getwd()
 	if err != nil {
 		return err
 	}
-	hitch, ok := dropCandidateByName(state, name)
-	if !ok {
-		return refuseError("agent %q is not active or failed", name)
+	id, err := randomID("hitch")
+	if err != nil {
+		return err
 	}
-	var pending []core.EnvelopeID
-	for _, id := range state.DeliveryOrder {
-		delivery := state.Deliveries[id]
-		if delivery.Envelope.To == hitch.Name && (delivery.Status == core.DeliveryQueued || delivery.Status == core.DeliveryDelivering) {
-			pending = append(pending, id)
+	b, err := cmd.tmux(run.settings)
+	if err != nil {
+		return err
+	}
+	identity, err := b.Identity(context.Background(), substrate.PaneID(pane))
+	if err != nil {
+		return err
+	}
+	a := core.Agent{ID: core.HitchID(id), Name: core.AgentName(args[0]), Collar: collar, Directory: dir, Pane: pane, Status: core.Active, Activity: core.Idle, Process: storedIdentity(identity), CreatedAt: cmd.now(), ChangedAt: cmd.now()}
+	if err := run.team.Create(); err != nil {
+		return err
+	}
+	l, err := run.team.CreateAgent(a)
+	if errors.Is(err, store.ErrNameTaken) {
+		return refuseError("name %q is already claimed", a.Name)
+	}
+	if err != nil {
+		return err
+	}
+	defer func() { result = errors.Join(result, run.release(l)) }()
+	if err := run.record(a, core.Event{Type: "adopted"}); err != nil {
+		return err
+	}
+	return run.mark(a)
+}
+func (cmd command) rename(args []string) (result error) {
+	if err := exactly(args, 2, "rename"); err != nil {
+		return err
+	}
+	if err := validateAgentName(args[1]); err != nil {
+		return err
+	}
+	run, err := cmd.runtime()
+	if err != nil {
+		return err
+	}
+	a, err := run.resolve(args[0])
+	if err != nil {
+		return err
+	}
+	l, a, err := run.acquire(a.ID, false)
+	if err != nil {
+		return err
+	}
+	defer func() { result = errors.Join(result, run.release(l)) }()
+	if a.Name == core.AgentName(args[1]) {
+		return nil
+	}
+	a.RenameFrom, a.RenameTo = a.Name, core.AgentName(args[1])
+	if err := l.Save(a); err != nil {
+		return err
+	}
+	if err := run.team.FinishRename(l, &a); err != nil {
+		if errors.Is(err, store.ErrNameTaken) {
+			a.RenameFrom, a.RenameTo = "", ""
+			if saveErr := l.Save(a); saveErr != nil {
+				return saveErr
+			}
+			return refuseError("name %q is already claimed", args[1])
+		}
+		return err
+	}
+	if err := run.record(a, core.Event{Type: "renamed"}); err != nil {
+		return err
+	}
+	return run.mark(a)
+}
+func (cmd command) drop(args []string) error {
+	name, err := requiredName(args, "drop")
+	if err != nil {
+		return err
+	}
+	run, err := cmd.runtime()
+	if err != nil {
+		return err
+	}
+	id, err := run.team.ResolveName(name)
+	if err != nil {
+		return err
+	}
+	p, err := run.team.Agent(id)
+	if err != nil {
+		return err
+	}
+	if _, err := p.Read(); errors.Is(err, os.ErrNotExist) {
+		return run.team.RemoveName(core.AgentName(name), id)
+	} else if err != nil {
+		return err
+	}
+	return run.drop(id)
+}
+func (run *runtime) drop(id core.HitchID) error {
+	p, err := run.team.Agent(id)
+	if err != nil {
+		return err
+	}
+	l, err := p.LockAgent()
+	if err != nil {
+		return err
+	}
+	defer l.Close()
+	a, err := p.Read()
+	if err != nil {
+		return err
+	}
+	b, err := run.cmd.tmux(run.settings)
+	if err != nil {
+		return err
+	}
+	if a.Process.PID != 0 {
+		var owned *tmux.Owned
+		if len(a.Teardown) > 0 {
+			ids := make([]tmux.Identity, len(a.Teardown))
+			for i, p := range a.Teardown {
+				ids[i] = nativeIdentity(p)
+			}
+			owned, err = tmux.AcquireRecorded(ids)
+		} else {
+			owned, err = b.AcquireTree(context.Background(), substrate.PaneID(a.Pane), nativeIdentity(a.Process))
+			if err == nil {
+				for _, p := range owned.Identities() {
+					a.Teardown = append(a.Teardown, storedIdentity(p))
+				}
+				err = l.Save(a)
+			}
+		}
+		if err != nil {
+			if owned != nil {
+				_ = owned.Close()
+			}
+			return err
+		}
+		defer owned.Close()
+		// Teardown has its own fresh budget. Stored operation deadlines cannot stop it.
+		ctx, cancel := context.WithTimeout(context.Background(), operationTimeout)
+		defer cancel()
+		if err := owned.Stop(ctx); err != nil {
+			return err
+		}
+		if err := b.RemovePane(ctx, substrate.PaneID(a.Pane), nativeIdentity(a.Process)); err != nil {
+			return err
 		}
 	}
-	now := time.Now()
-	state, err = run.drive(core.DropRequested{At: now, HitchID: hitch.ID, Deadline: now.Add(operationTimeout)})
+	if a.Status != core.Dropping {
+		if err := l.CleanResult(&a); err != nil {
+			return err
+		}
+		if err := run.recoverInput(l, &a); err != nil {
+			return err
+		}
+	}
+	if err := run.apply(l, &a, core.Event{Type: "drop_started"}); err != nil {
+		return err
+	}
+	pending, err := l.SealInbox()
 	if err != nil {
 		return err
 	}
-	if state.Hitches[hitch.ID].Status != core.HitchDropped {
-		return refuseError("agent %q was not stopped; inspect 'gang log'", name)
+	for _, e := range pending {
+		from, _ := p.EnvelopePath("tmp/drop", e.ID)
+		to, _ := p.EnvelopePath("failed", e.ID)
+		if err := run.record(a, core.Event{Type: "delivery_failed", ID: string(e.ID), Reason: "recipient was dropped"}); err != nil {
+			return err
+		}
+		if err := os.Rename(from, to); err != nil {
+			return err
+		}
 	}
-	for _, id := range pending {
-		delivery := state.Deliveries[id]
-		if delivery.Envelope.To == hitch.Name && delivery.Status == core.DeliveryFailed && delivery.Reason == "recipient was dropped" {
-			if _, err := fmt.Fprintf(cmd.stdout, "%s\tfailed\t%s\n", id, delivery.Reason); err != nil {
+	if err := run.record(a, core.Event{Type: "drop_finished"}); err != nil {
+		return err
+	}
+	for _, name := range []core.AgentName{a.RenameFrom, a.RenameTo} {
+		if name != "" && name != a.Name {
+			if err := run.team.RemoveName(name, a.ID); err != nil {
 				return err
 			}
 		}
 	}
-	return nil
+	if err := os.RemoveAll(p.Directory); err != nil {
+		return err
+	}
+	return run.team.RemoveName(a.Name, a.ID)
 }

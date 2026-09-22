@@ -5,11 +5,9 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
-	"strings"
 )
 
-// InstallStatusline replaces only the deleted Gangline status-line script (or
-// an absent setting). Operator-authored status lines remain operator-owned.
+// InstallStatusline fills an absent setting and preserves existing settings.
 func InstallStatusline(path, executable string) (bool, error) {
 	settings := map[string]json.RawMessage{}
 	data, err := os.ReadFile(path)
@@ -24,18 +22,8 @@ func InstallStatusline(path, executable string) (bool, error) {
 			return false, fmt.Errorf("Claude settings must be an object")
 		}
 	}
-	if old, ok := settings["statusLine"]; ok {
-		var setting struct {
-			Type    string `json:"type"`
-			Command string `json:"command"`
-		}
-		if err := json.Unmarshal(old, &setting); err != nil {
-			return false, fmt.Errorf("decode statusLine setting: %w", err)
-		}
-		command := strings.Trim(strings.TrimSpace(setting.Command), "\"'")
-		if setting.Type != "command" || !strings.HasSuffix(command, "/statusline/claude-code-context.sh") {
-			return false, nil
-		}
+	if _, exists := settings["statusLine"]; exists {
+		return false, nil
 	}
 	replacement, err := json.Marshal(map[string]string{"type": "command", "command": shellJoin([]string{executable, "statusline"})})
 	if err != nil {

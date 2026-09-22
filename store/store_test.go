@@ -1,286 +1,236 @@
 package store
 
 import (
-	"bytes"
-	"encoding/json"
+	"context"
 	"errors"
+	"fmt"
 	"os"
 	"path/filepath"
-	"reflect"
+	"strings"
+	"sync"
 	"testing"
 	"time"
 
 	"github.com/adambiggs/gangline/core"
 )
 
-var storeNow = time.Date(2026, 9, 21, 8, 0, 0, 0, time.UTC)
-var storeDeadline = storeNow.Add(time.Minute)
-
-func TestTeamPathsStayInsideRoot(t *testing.T) {
-	paths, err := (Paths{Root: "/state/gangline"}).Team("example")
+func testTeam(t *testing.T) TeamPaths {
+	t.Helper()
+	p, err := (Paths{Root: t.TempDir()}).Team("test")
 	if err != nil {
 		t.Fatal(err)
 	}
-	if paths.Events != "/state/gangline/v1/example/events.jsonl" {
-		t.Fatalf("events path = %q", paths.Events)
+	if err := p.Create(); err != nil {
+		t.Fatal(err)
 	}
-	invalid := []string{"", ".", "..", "../other", "other/team"}
-	for _, team := range invalid {
-		if _, err := (Paths{Root: "/state/gangline"}).Team(team); err == nil {
-			t.Fatalf("team %q passed path validation", team)
+	return p
+}
+func testAgent(id, name string) core.Agent {
+	return core.Agent{ID: core.HitchID(id), Name: core.AgentName(name), Collar: "codex", Directory: "/work", Status: core.Active, Activity: core.Idle}
+}
+func TestNamesAreClaimedExactlyOnce(t *testing.T) {
+	p := testTeam(t)
+	start := make(chan struct{})
+	results := make(chan error, 2)
+	for i := 0; i < 2; i++ {
+		go func(i int) {
+			<-start
+			l, err := p.CreateAgent(testAgent(fmt.Sprintf("a%d", i), "worker"))
+			if l != nil {
+				_ = l.Close()
+			}
+			results <- err
+		}(i)
+	}
+	close(start)
+	success, refused := 0, 0
+	for i := 0; i < 2; i++ {
+		err := <-results
+		if err == nil {
+			success++
+		} else if errors.Is(err, ErrNameTaken) {
+			refused++
+		} else {
+			t.Fatal(err)
 		}
 	}
-}
-
-func TestTeamLockRefusesContentionImmediately(t *testing.T) {
-	paths := Paths{Root: t.TempDir()}
-	first, err := paths.Lock("example")
+	agents, err := p.ListAgents()
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer first.Close()
-	if _, err := paths.Lock("example"); !errors.Is(err, ErrLocked) {
-		t.Fatalf("second lock error = %v, want ErrLocked", err)
-	}
-	if err := first.Close(); err != nil {
-		t.Fatal(err)
-	}
-	second, err := paths.Lock("example")
+	dirs, err := os.ReadDir(p.Agents)
 	if err != nil {
-		t.Fatalf("lock after release: %v", err)
-	}
-	if err := second.Close(); err != nil {
 		t.Fatal(err)
+	}
+	if success != 1 || refused != 1 || len(agents) != 1 || len(dirs) != 1 {
+		t.Fatalf("claims: success=%d refused=%d agents=%d dirs=%d", success, refused, len(agents), len(dirs))
 	}
 }
-
-func TestAppendLoadSnapshotAndRecoverIntent(t *testing.T) {
-	team := lockedTeam(t)
-	initial := core.NewState(core.Team{ID: "team-1", Name: "example"})
-	hitch := core.Hitch{ID: "h-1", Name: "worker", Collar: "codex", Directory: "/work"}
-	requested := core.HitchRequested{At: storeNow, Hitch: hitch, BootDeadline: storeDeadline}
-	if err := team.Append(requested); err != nil {
-		t.Fatal(err)
-	}
-	state, count, err := team.Load(initial)
+func TestStrictAgentDecodeNamesFile(t *testing.T) {
+	p := testTeam(t)
+	l, err := p.CreateAgent(testAgent("a", "worker"))
 	if err != nil {
 		t.Fatal(err)
 	}
-	if count != 1 || state.Hitches["h-1"].Status != core.HitchStarting {
-		t.Fatalf("count=%d state=%#v", count, state)
-	}
-	if effects := core.PendingEffects(state); len(effects) != 1 || reflect.TypeOf(effects[0]) != reflect.TypeOf(core.SpawnHitch{}) {
-		t.Fatalf("pending effects = %#v", effects)
-	}
-
-	spawned := core.HitchSpawned{At: storeNow, HitchID: "h-1", Pane: "%1"}
-	if err := team.Append(spawned); err != nil {
-		t.Fatal(err)
-	}
-	state, _, err = team.Load(initial)
+	_ = l.Close()
+	data, err := os.ReadFile(l.Paths.State)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := team.SaveSnapshot(state); err != nil {
+	data = []byte(strings.Replace(string(data), `"id":"a"`, `"id":"a","extra":true`, 1))
+	if err := os.WriteFile(l.Paths.State, data, 0600); err != nil {
 		t.Fatal(err)
 	}
-	if err := team.Append(core.HitchReady{At: storeNow, HitchID: "h-1"}); err != nil {
-		t.Fatal(err)
-	}
-	state, count, err = team.Load(initial)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if count != 3 || state.Hitches["h-1"].Status != core.HitchActive || state.Hitches["h-1"].Activity != core.ActivityIdle {
-		t.Fatalf("count=%d state=%#v", count, state)
-	}
-	if effects := core.PendingEffects(state); len(effects) != 0 {
-		t.Fatalf("pending effects = %#v", effects)
+	if _, err := l.Paths.Read(); err == nil || !strings.Contains(err.Error(), l.Paths.State) {
+		t.Fatalf("decode error lacks file: %v", err)
 	}
 }
-
-func TestLogAndReplayDataFunctions(t *testing.T) {
-	initial := core.NewState(core.Team{ID: "team-1", Name: "example"})
-	events := []core.Event{
-		core.AdoptRequested{At: storeNow, Hitch: core.Hitch{ID: "h-1", Name: "worker", Collar: "codex", Directory: "/work"}, Pane: "%1"},
-		core.TurnStarted{At: storeNow, HitchID: "h-1"},
-		core.WedgeDetected{At: storeNow, HitchID: "h-1", Evidence: "unchanged screen"},
+func TestConcurrentAppendsAreCompleteLinesWithoutAgentLocks(t *testing.T) {
+	p := testTeam(t)
+	l, err := p.CreateAgent(testAgent("a", "worker"))
+	if err != nil {
+		t.Fatal(err)
 	}
-	var log bytes.Buffer
-	for _, event := range events {
-		data, err := core.EncodeEvent(event)
+	defer l.Close()
+	var group sync.WaitGroup
+	errs := make(chan error, 24)
+	for i := 0; i < 24; i++ {
+		group.Go(func() {
+			errs <- p.Append(core.Event{Type: "native_hook", At: time.Date(2026, 9, 22, 0, 0, 0, 0, time.UTC), HitchID: "a", Status: "activity"})
+		})
+	}
+	group.Wait()
+	close(errs)
+	for err := range errs {
 		if err != nil {
 			t.Fatal(err)
 		}
-		log.Write(data)
-		log.WriteByte('\n')
 	}
-	entries, err := ReadLog(&log)
+	f, err := os.Open(p.Log)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(entries) != 3 || entries[2].Sequence != 3 || core.EventName(entries[2].Event) != "wedge_detected" {
-		t.Fatalf("entries = %#v", entries)
+	defer f.Close()
+	count := 0
+	if err := ReadLog(f, func(core.Event) error { count++; return nil }); err != nil {
+		t.Fatal(err)
 	}
-	state := Replay(initial, entries)
-	if state.Hitches["h-1"].Activity != core.ActivityWedged || state.Hitches["h-1"].WedgeEvidence != "unchanged screen" {
-		t.Fatalf("replayed state = %#v", state)
+	if count != 24 {
+		t.Fatalf("audit lines=%d", count)
+	}
+}
+func TestWatchSeesSameSizeAtomicReplacement(t *testing.T) {
+	p := testTeam(t)
+	l, err := p.CreateAgent(testAgent("a", "worker"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer l.Close()
+	watch, err := Watch(l.Paths.State)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer watch.Close()
+	a, err := l.Paths.Read()
+	if err != nil {
+		t.Fatal(err)
+	}
+	a.Activity = core.Busy
+	if err := l.Save(a); err != nil {
+		t.Fatal(err)
+	}
+	if err := watch.Wait(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	got, err := l.Paths.Read()
+	if err != nil || got.Activity != core.Busy {
+		t.Fatalf("state after change: %+v %v", got, err)
+	}
+}
+func TestSealedInboxRejectsPublisherAndCannotReappear(t *testing.T) {
+	p := testTeam(t)
+	l, err := p.CreateAgent(testAgent("a", "worker"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer l.Close()
+	e := core.Envelope{ID: "msg", Recipient: "a", To: "worker", From: core.Sender{Kind: core.SenderSelfDeclared, Name: "operator"}, Message: core.Message{Text: "hello"}, CreatedAt: time.Now()}
+	staged, err := jsonTemp(filepath.Join(l.Paths.Inbox, "tmp"), e)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := l.SealInbox(); err != nil {
+		t.Fatal(err)
+	}
+	dest, _ := l.Paths.EnvelopePath("new", e.ID)
+	if err := os.Rename(staged, dest); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("publisher crossed sealed inbox: %v", err)
+	}
+	if err := l.Paths.Publish(e); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("publisher recreated inbox: %v", err)
+	}
+	if err := os.RemoveAll(p.Directory); err != nil {
+		t.Fatal(err)
+	}
+	if err := l.Paths.WriteWitness(Witness{ID: "w"}); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("hook recreated state: %v", err)
+	}
+	if err := p.Append(core.Event{Type: "native_hook", At: time.Now()}); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("audit recreated state: %v", err)
 	}
 }
 
-func TestReadLogRejectsTornAndInvalidRecords(t *testing.T) {
-	tests := []struct {
-		name string
-		log  string
-	}{
-		{name: "torn final record", log: `{"type":"wedge_cleared"}`},
-		{name: "empty record", log: "\n"},
-		{name: "invalid event", log: "{}\n"},
-	}
-	for _, test := range tests {
-		t.Run(test.name, func(t *testing.T) {
-			if _, err := ReadLog(bytes.NewBufferString(test.log)); err == nil {
-				t.Fatal("invalid log was accepted")
-			}
-		})
-	}
-}
-
-func TestSnapshotRejectsStateNotDerivedFromLog(t *testing.T) {
-	team := lockedTeam(t)
-	state := core.NewState(core.Team{ID: "team-1", Name: "example"})
-	state.Hitches["invented"] = core.Hitch{ID: "invented", Name: "invented", Status: core.HitchActive}
-	if err := team.SaveSnapshot(state); err == nil {
-		t.Fatal("snapshot accepted state not present in the event log")
-	}
-}
-
-func TestLoadReplaysSnapshotFromPreviousReducer(t *testing.T) {
-	team := lockedTeam(t)
-	initial := core.NewState(core.Team{ID: "team-1", Name: "example"})
-	event := core.AdoptRequested{At: storeNow, Hitch: core.Hitch{ID: "h-1", Name: "worker", Collar: "codex", Directory: "/work"}, Pane: "%1"}
-	if err := team.Append(event); err != nil {
-		t.Fatal(err)
-	}
-	state, _, err := team.Load(initial)
+func TestRenameRecoveryHandlesNameReuse(t *testing.T) {
+	p := testTeam(t)
+	a := testAgent("a", "old")
+	l, err := p.CreateAgent(a)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := team.SaveSnapshot(state); err != nil {
+	defer l.Close()
+	a.RenameFrom, a.RenameTo = "old", "new"
+	if err := l.Save(a); err != nil {
 		t.Fatal(err)
 	}
-	snapshot, _, err := team.readSnapshot()
+	other, err := p.CreateAgent(testAgent("b", "new"))
 	if err != nil {
 		t.Fatal(err)
 	}
-	// A prior reducer assigned different activity to the same recorded event.
-	hitch := snapshot.State.Hitches["h-1"]
-	hitch.Activity = core.ActivityBusy
-	snapshot.State.Hitches["h-1"] = hitch
-	data, err := json.Marshal(snapshot)
+	defer other.Close()
+	if err := p.FinishRename(l, &a); !errors.Is(err, ErrNameTaken) {
+		t.Fatalf("conflict=%v", err)
+	}
+	saved, err := l.Paths.Read()
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := os.WriteFile(team.paths.Snapshot, data, 0o600); err != nil {
+	if saved.RenameTo != "" || saved.Name != "old" {
+		t.Fatalf("conflict poisoned state: %+v", saved)
+	}
+	if err := p.RemoveName("new", "b"); err != nil {
 		t.Fatal(err)
 	}
-	loaded, count, err := team.Load(initial)
-	if err != nil {
+	a.RenameFrom, a.RenameTo = "old", "new"
+	if err := p.ClaimName("new", "a"); err != nil {
 		t.Fatal(err)
 	}
-	if count != 1 || loaded.Hitches["h-1"].Activity != core.ActivityIdle {
-		t.Fatalf("cached activity survived replay: count=%d hitch=%#v", count, loaded.Hitches["h-1"])
-	}
-	next := core.TurnStarted{At: storeNow, HitchID: "h-1"}
-	if err := team.Append(next); err != nil {
+	a.Name = "new"
+	if err := l.Save(a); err != nil {
 		t.Fatal(err)
 	}
-	loaded, _ = core.Step(loaded, next)
-	if err := team.SaveSnapshot(loaded); err != nil {
-		t.Fatalf("snapshot after the next operation: %v", err)
-	}
-}
-
-func TestLoadRejectsSnapshotWhoseLogPrefixChanged(t *testing.T) {
-	team := lockedTeam(t)
-	initial := core.NewState(core.Team{ID: "team-1", Name: "example"})
-	event := core.AdoptRequested{At: storeNow, Hitch: core.Hitch{ID: "h-1", Name: "worker", Collar: "codex", Directory: "/work"}, Pane: "%1"}
-	if err := team.Append(event); err != nil {
+	if err := p.RemoveName("old", "a"); err != nil {
 		t.Fatal(err)
 	}
-	state, _, err := team.Load(initial)
-	if err != nil {
+	if err := p.ClaimName("old", "c"); err != nil {
 		t.Fatal(err)
 	}
-	if err := team.SaveSnapshot(state); err != nil {
+	if err := p.FinishRename(l, &a); err != nil {
 		t.Fatal(err)
 	}
-	data, err := os.ReadFile(team.paths.Events)
-	if err != nil {
-		t.Fatal(err)
+	if id, err := p.ResolveName("old"); err != nil || id != "c" {
+		t.Fatalf("reused alias=%s %v", id, err)
 	}
-	data[0] = '['
-	if err := os.WriteFile(team.paths.Events, data, 0o600); err != nil {
-		t.Fatal(err)
+	if a.RenameTo != "" || a.Name != "new" {
+		t.Fatalf("unfinished rename: %+v", a)
 	}
-	if _, _, err := team.Load(initial); err == nil {
-		t.Fatal("snapshot accepted a changed event-log prefix")
-	}
-}
-
-func TestSnapshotReplacementLeavesNoTemporaryFiles(t *testing.T) {
-	team := lockedTeam(t)
-	state := core.NewState(core.Team{ID: "team-1", Name: "example"})
-	if err := team.SaveSnapshot(state); err != nil {
-		t.Fatal(err)
-	}
-	if err := team.SaveSnapshot(state); err != nil {
-		t.Fatal(err)
-	}
-	matches, err := filepath.Glob(filepath.Join(team.paths.Directory, ".snapshot-*"))
-	if err != nil {
-		t.Fatal(err)
-	}
-	if len(matches) != 0 {
-		t.Fatalf("snapshot temporary files remain: %v", matches)
-	}
-}
-
-func TestSnapshotCanonicalizesTimesAndPreservesCurfew(t *testing.T) {
-	team := lockedTeam(t)
-	now := time.Now()
-	deadline := now.Add(time.Hour)
-	initial := core.NewState(core.Team{ID: "team-1", Name: "example"})
-	event := core.CurfewSet{At: now, Deadline: deadline}
-	if err := team.Append(event); err != nil {
-		t.Fatal(err)
-	}
-	state, effects := core.Step(initial, event)
-	if len(effects) != 0 {
-		t.Fatalf("effects = %#v", effects)
-	}
-	if err := team.SaveSnapshot(state); err != nil {
-		t.Fatalf("save state containing monotonic times: %v", err)
-	}
-	loaded, count, err := team.Load(initial)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if count != 1 || !loaded.Team.Curfew.Equal(deadline) {
-		t.Fatalf("count=%d curfew=%s", count, loaded.Team.Curfew)
-	}
-}
-
-func lockedTeam(t *testing.T) *LockedTeam {
-	t.Helper()
-	team, err := (Paths{Root: t.TempDir()}).Lock("example")
-	if err != nil {
-		t.Fatal(err)
-	}
-	t.Cleanup(func() {
-		if err := team.Close(); err != nil {
-			t.Errorf("close store: %v", err)
-		}
-	})
-	return team
 }

@@ -34,9 +34,7 @@ conflicts with one, change the design or change the principle first.
 
 ## Decisions
 
-Choices whose reasons aren't obvious from the code. Where the code still uses
-the old team lock and log replay, it's being moved over to what's described
-here.
+Choices whose reasons aren't obvious from the code.
 
 ### Record intent before acting
 
@@ -57,10 +55,12 @@ foreground. A shell that just looks like a composer gets refused.
 
 ### Kill only what the agent started
 
-Dropping an agent also kills the processes it started, including ones that
-detached. Gang records them before closing the pane and signals them through a
-kernel handle, never a bare PID, so a reused PID can't hit an unrelated
-process.
+Dropping an agent also kills its observable descendants, including those in
+separate process groups. Gang records native identity at spawn and validates it when acquiring kernel
+handles for drop. It records the processes selected for teardown before
+signalling them, so a reused PID cannot hit an unrelated process and a partial
+drop can finish safely. Descendants already reparented away from the recorded
+process tree cannot be discovered this way.
 
 ### Wait out permission prompts
 
@@ -81,8 +81,8 @@ operator-set budget runs out.
 
 ### Each agent has its own state
 
-An agent's state, inbox, and events live in its own directory, and gang locks
-only the agent it's acting on.
+An agent's state and inbox live in its own directory. Gang locks only the
+agent it is acting on and appends audit events to the team's log.
 
 ### Show state in window names
 
@@ -92,5 +92,6 @@ until it's dropped, so it can't be mixed up with a replacement.
 
 ### Hooks append and exit
 
-A hook appends one line to its agent's event file and exits, without taking a
-lock.
+A hook appends one line to the team's audit log without taking a lock. Submit
+hooks publish a witness. Turn-end and compaction-end hooks start a detached
+tick for their agent and exit without waiting.

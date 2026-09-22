@@ -239,27 +239,6 @@ func reapOwnedProcesses(ctx context.Context, owned []processIdentity) error {
 			return fmt.Errorf("wait for recorded process %d: %w", identity.pid, err)
 		}
 	}
-	// Exit notification can precede the parent's reap. Preserve the final
-	// process-table observation, but never use it to acquire another handle.
-	records, err := readProcessTable(ctx)
-	if err != nil {
-		return err
-	}
-	for _, identity := range owned {
-		if _, present := records[identity.pid]; !present {
-			continue
-		}
-		current, err := readCurrentProcess(identity.pid)
-		if errors.Is(err, os.ErrNotExist) || errors.Is(err, syscall.ESRCH) {
-			continue
-		}
-		if err != nil {
-			return fmt.Errorf("verify recorded process %d exit: %w", identity.pid, err)
-		}
-		if current.started == identity.started {
-			return fmt.Errorf("reap pane descendants: recorded process %d remains after termination", identity.pid)
-		}
-	}
 	return nil
 }
 

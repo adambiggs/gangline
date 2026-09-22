@@ -10,14 +10,14 @@ import (
 )
 
 func newFileWatch(path string) (<-chan error, func() error, error) {
-	fd, err := syscall.InotifyInit1(syscall.IN_CLOEXEC)
+	fd, err := syscall.InotifyInit1(syscall.IN_CLOEXEC | syscall.IN_NONBLOCK)
 	if err != nil {
-		return nil, nil, fmt.Errorf("create event log watch: %w", err)
+		return nil, nil, fmt.Errorf("create state directory watch: %w", err)
 	}
-	file := os.NewFile(uintptr(fd), "event-log-watch")
-	if _, err := syscall.InotifyAddWatch(fd, path, syscall.IN_MODIFY|syscall.IN_CLOSE_WRITE|syscall.IN_DELETE_SELF|syscall.IN_MOVE_SELF); err != nil {
+	file := os.NewFile(uintptr(fd), "state-directory-watch")
+	if _, err := syscall.InotifyAddWatch(fd, path, syscall.IN_MODIFY|syscall.IN_CLOSE_WRITE|syscall.IN_DELETE_SELF|syscall.IN_MOVE_SELF|syscall.IN_MOVED_TO|syscall.IN_CREATE|syscall.IN_DELETE); err != nil {
 		_ = file.Close()
-		return nil, nil, fmt.Errorf("watch event log: %w", err)
+		return nil, nil, fmt.Errorf("watch state directory: %w", err)
 	}
 	events := make(chan error, 1)
 	go func() {

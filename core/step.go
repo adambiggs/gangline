@@ -1,96 +1,99 @@
 package core
 
-func Step(state State, event Event) (State, []Effect) {
-	next := cloneState(state)
+import "time"
 
-	switch event := event.(type) {
-	case CapacityDetected:
-		return stepCapacityDetected(next, event)
-	case CapacityRetryRequested:
-		return stepCapacityRetryRequested(next, event)
-	case CapacityExpired:
-		return stepCapacityExpired(next, event)
-	case CapacityCleared:
-		return stepCapacityCleared(next, event)
-	case HitchRequested:
-		return stepHitchRequested(next, event)
-	case AdoptRequested:
-		return stepAdoptRequested(next, event)
-	case RenameRequested:
-		return stepRenameRequested(next, event)
-	case HitchSpawned:
-		return stepHitchSpawned(next, event)
-	case HitchReady:
-		return stepHitchReady(next, event)
-	case HitchLaunchFailed:
-		return stepHitchLaunchFailed(next, event)
-	case TurnStarted:
-		return stepTurnStarted(next, event)
-	case TurnBoundaryReached:
-		return stepTurnBoundary(next, event)
-	case BlockedDetected:
-		return stepBlockedDetected(next, event)
-	case BlockedCleared:
-		return stepBlockedCleared(next, event)
-	case SendRequested:
-		return stepSendRequested(next, event)
-	case TimedDeliveryReleased:
-		return stepTimedDeliveryReleased(next, event)
-	case TimedDeliveriesCleared:
-		return stepTimedDeliveriesCleared(next, event)
-	case DeliveryInputStarted:
-		return stepDeliveryInputStarted(next, event)
-	case DeliverySucceeded:
-		return stepDeliverySucceeded(next, event)
-	case DeliveryRetryRequested:
-		return stepDeliveryRetryRequested(next, event)
-	case DeliveryDeferred:
-		return stepDeliveryDeferred(next, event)
-	case DeliveryFailedEvent:
-		return stepDeliveryFailed(next, event)
-	case DeliveryUnverifiedEvent:
-		return stepDeliveryUnverified(next, event)
-	case CompactionRequested:
-		return stepCompactionRequested(next, event)
-	case CompactionCompleted:
-		return stepCompactionCompleted(next, event)
-	case CompactionSubmitted:
-		return stepCompactionSubmitted(next, event)
-	case CompactionUnverifiedEvent:
-		return stepCompactionUnverified(next, event)
-	case CompactionFailedEvent:
-		return stepCompactionFailed(next, event)
-	case InterruptRequested:
-		return stepInterruptRequested(next, event)
-	case InterruptSucceeded:
-		return stepInterruptSucceeded(next, event)
-	case InterruptFailed:
-		return stepInterruptFailed(next, event)
-	case DropRequested:
-		return stepDropRequested(next, event)
-	case DropSucceeded:
-		return stepDropSucceeded(next, event)
-	case DropFailed:
-		return stepDropFailed(next, event)
-	case PaneVanished:
-		return stepPaneVanished(next, event)
-	case WedgeDetected:
-		return stepWedgeDetected(next, event)
-	case WedgeCleared:
-		return stepWedgeCleared(next, event)
-	case OperationTimedOut:
-		return stepTimedOut(next, event)
-	case CurfewSet:
-		return stepCurfewSet(next, event)
-	case CurfewCleared:
-		return stepCurfewCleared(next, event)
-	case Observation:
-		return next, nil
-	case NativeHook:
-		return next, nil
-	case TransitionRejected:
-		return next, nil
+func Step(agent Agent, event Event) (Agent, []Effect) {
+	if event.HitchID != agent.ID || event.At.IsZero() {
+		return agent, []Effect{{Kind: "reject", Reason: "event does not identify this agent and its time"}}
 	}
-
-	return next, nil
+	if agent.Compaction != nil {
+		c := *agent.Compaction
+		agent.Compaction = &c
+	}
+	switch event.Type {
+	case "hitch_spawned":
+		agent.Pane, agent.Status = event.Pane, Booting
+	case "hitch_ready":
+		agent.Status, agent.Activity, agent.BootDeadline = Active, Idle, time.Time{}
+	case "hitch_failed":
+		agent.Status, agent.Activity, agent.Evidence = Failed, Unknown, event.Reason
+	case "activity_observed":
+		if agent.Status == Active {
+			agent.Activity, agent.Evidence = event.Activity, event.Reason
+		}
+	case "input_started":
+		if agent.Input != nil {
+			return agent, []Effect{{Kind: "reject", Reason: "input already in progress"}}
+		}
+		agent.Input = &InputIntent{ID: event.ID, Kind: event.Status, At: event.At}
+	case "input_finished":
+		if agent.Input == nil || agent.Input.ID != event.ID {
+			return agent, []Effect{{Kind: "reject", Reason: "input result has no matching intent"}}
+		}
+		agent.Input = nil
+		if event.Status == "delivered" {
+			agent.Activity, agent.Native.SubmittedAt = Busy, event.At
+		} else if event.Status == "unverified" {
+			agent.Activity, agent.Evidence = Wedged, event.Reason
+		}
+	case "compaction_requested":
+		if agent.Compaction != nil && (agent.Compaction.Status == "queued" || agent.Compaction.Status == "submitted" && !agent.Compaction.Continuation) {
+			return agent, []Effect{{Kind: "reject", Reason: "compaction already pending"}}
+		}
+		if event.Compaction == nil {
+			return agent, []Effect{{Kind: "reject", Reason: "compaction is required"}}
+		}
+		c := *event.Compaction
+		agent.Compaction = &c
+	case "compaction_submitted":
+		if agent.Compaction == nil || agent.Compaction.ID != event.ID {
+			return agent, nil
+		}
+		agent.Compaction.Status, agent.Activity, agent.Input = "submitted", Compacting, nil
+	case "compaction_unverified":
+		if agent.Compaction == nil || agent.Compaction.ID != event.ID {
+			return agent, nil
+		}
+		agent.Compaction.Status, agent.Activity, agent.Evidence, agent.Input = "unverified", Wedged, event.Reason, nil
+	case "interrupt_requested":
+		agent.Activity, agent.InterruptDeadline = Interrupting, event.Deadline
+	case "interrupt_completed":
+		agent.Activity, agent.InterruptDeadline = Idle, time.Time{}
+	case "drop_started":
+		agent.Status = Dropping
+	case "capacity_detected":
+		if agent.Capacity.Fingerprint != event.Fingerprint {
+			if agent.Capacity.Deadline.IsZero() {
+				agent.Capacity.Deadline = event.Deadline
+			}
+			agent.Capacity.Fingerprint, agent.Capacity.Evidence = event.Fingerprint, event.Reason
+			agent.Capacity.NextAt = event.At.Add(RetryDelay(agent.Capacity.Attempts))
+			agent.Capacity.Submitted = false
+		}
+	case "capacity_submitted":
+		agent.Capacity.Submitted = true
+		agent.Capacity.Attempts++
+	case "capacity_cleared":
+		agent.Capacity = Capacity{}
+	case "deadline_checked":
+		if agent.Status == Dropping {
+			return agent, nil
+		}
+		if !agent.BootDeadline.IsZero() && !event.At.Before(agent.BootDeadline) && (agent.Status == Starting || agent.Status == Booting) {
+			agent.Status, agent.Evidence = Failed, "boot deadline elapsed"
+		}
+		if agent.Activity == Interrupting && !agent.InterruptDeadline.IsZero() && !event.At.Before(agent.InterruptDeadline) {
+			agent.Activity, agent.Evidence = Wedged, "interrupt deadline elapsed"
+		}
+		if c := agent.Compaction; c != nil && c.Status == "queued" && !event.At.Before(c.Deadline) {
+			c.Status, agent.Activity, agent.Evidence = "unverified", Wedged, "compaction deadline elapsed"
+		}
+		if !agent.Capacity.Deadline.IsZero() && !event.At.Before(agent.Capacity.Deadline) {
+			agent.Activity, agent.Evidence = Wedged, "provider capacity recovery deadline elapsed"
+		}
+	default:
+		return agent, nil
+	}
+	agent.ChangedAt = event.At
+	return agent, nil
 }

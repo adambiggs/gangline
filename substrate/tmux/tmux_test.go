@@ -141,7 +141,7 @@ func TestBackendCreatesAndKillsSession(t *testing.T) {
 	}
 }
 
-func TestBackendKillReapsDetachedDescendant(t *testing.T) {
+func TestBackendKillStopsDetachedDescendant(t *testing.T) {
 	binary, err := exec.LookPath("tmux")
 	if err != nil {
 		t.Skip("tmux is required")
@@ -185,13 +185,23 @@ func TestBackendKillReapsDetachedDescendant(t *testing.T) {
 	if err != nil || pid <= 0 {
 		t.Fatalf("detached pid = %q, %v", data, err)
 	}
-	t.Cleanup(func() { _ = syscall.Kill(pid, syscall.SIGKILL) })
+	observation, err := observeProcess(pid)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer observation.close()
+	identity, err := pinObservedProcess(observation.record, observation.read, openProcessHandle)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer identity.handle.close()
+	t.Cleanup(func() { _ = identity.handle.signal(syscall.SIGKILL) })
 
 	if err := backend.Kill(context.Background(), pane.ID); err != nil {
 		t.Fatal(err)
 	}
-	if err := syscall.Kill(pid, 0); err == nil || err != syscall.ESRCH {
-		t.Fatalf("detached descendant %d remains after pane kill: %v", pid, err)
+	if err := identity.handle.wait(context.Background()); err != nil {
+		t.Fatalf("detached descendant %d did not exit: %v", pid, err)
 	}
 }
 

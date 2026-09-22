@@ -47,7 +47,7 @@ func (cmd command) teams(arguments []string) error {
 	if err != nil {
 		return err
 	}
-	directory := filepath.Join(settings.StateRoot, store.LayoutVersion)
+	directory := filepath.Join(settings.StateRoot, "teams")
 	entries, err := os.ReadDir(directory)
 	if os.IsNotExist(err) {
 		return nil
@@ -63,7 +63,7 @@ func (cmd command) teams(arguments []string) error {
 		if err != nil {
 			return fmt.Errorf("list teams: %w", err)
 		}
-		if _, err := os.Stat(paths.Events); err != nil {
+		if _, err := os.Stat(paths.State); err != nil {
 			if os.IsNotExist(err) {
 				continue
 			}

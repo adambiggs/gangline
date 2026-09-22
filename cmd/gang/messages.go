@@ -2,112 +2,29 @@ package main
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"strings"
 	"time"
 
 	"github.com/adambiggs/gangline/core"
+	"github.com/adambiggs/gangline/harness"
+	"github.com/adambiggs/gangline/store"
 	"github.com/adambiggs/gangline/substrate"
 )
 
-func (cmd command) send(arguments []string) error {
-	options, err := parseSend(arguments)
-	if err != nil {
-		return err
-	}
-	run, state, err := cmd.loaded()
-	if err != nil {
-		return err
-	}
-	if options.At == "clear" {
-		_, err = run.drive(core.TimedDeliveriesCleared{At: time.Now(), Recipient: core.AgentName(options.Name)})
-		return err
-	}
-	body, err := readBody(cmd.stdin)
-	if err != nil {
-		return err
-	}
-	sender, err := cmd.sender(state, options.From)
-	if err != nil {
-		return err
-	}
-	hitch, found := activeByName(state, options.Name)
-	if !found {
-		return refuseError("agent %q is not active", options.Name)
-	}
-	collar, err := loadCollar(hitch.Collar, run.settings)
-	if err != nil {
-		return err
-	}
-	if options.LiveOnly {
-		hitch, ok := activeByName(state, options.Name)
-		if !ok || (hitch.Activity != core.ActivityIdle && !(hitch.Activity == core.ActivityBusy && collar.Primitives.MidTurn)) {
-			return refuseError("agent %q is not immediately deliverable", options.Name)
-		}
-	}
-	now := time.Now()
-	var notBefore time.Time
-	if options.At != "" {
-		notBefore, err = parseSchedule(options.At, now)
+func (run *runtime) sender(declared string) (core.Sender, error) {
+	if pane := run.cmd.environment("TMUX_PANE"); pane != "" {
+		agents, err := run.team.ListAgents()
 		if err != nil {
-			return usageError("send: --at: %v", err)
+			return core.Sender{}, err
 		}
-	}
-	id, err := randomID("msg")
-	if err != nil {
-		return err
-	}
-	wireSender := string(sender.Name)
-	if sender.Kind == core.SenderSelfDeclared {
-		wireSender = "self-declared:" + wireSender
-	}
-	if _, err := renderEnvelope(wireSender, id, "", body); err != nil {
-		return err
-	}
-	if options.Supersede {
-		if _, err := run.drive(core.TimedDeliveriesCleared{At: time.Now(), Recipient: core.AgentName(options.Name)}); err != nil {
-			return err
-		}
-	}
-	state, err = run.drive(core.SendRequested{
-		At: now, NotBefore: notBefore, MidTurn: collar.Primitives.MidTurn,
-		Envelope: core.Envelope{ID: core.EnvelopeID(id), From: sender, To: core.AgentName(options.Name), Message: core.Message{Text: body}, CreatedAt: now},
-	})
-	if err != nil {
-		return err
-	}
-	if candidate := state.Deliveries[core.EnvelopeID(id)]; candidate.Status == core.DeliveryQueued && candidate.MidTurn && candidate.NotBefore.IsZero() {
-		state, err = run.awaitDelivery(state, core.EnvelopeID(id))
-		if err != nil {
-			return err
-		}
-	}
-	delivery, ok := state.Deliveries[core.EnvelopeID(id)]
-	if !ok {
-		return refuseError("send was rejected; inspect 'gang log'")
-	}
-	if delivery.Status == core.DeliveryUnverified {
-		return commandError{status: exitUnknown, text: "delivery may have landed but could not be verified: " + delivery.Reason}
-	}
-	if delivery.Status == core.DeliveryFailed {
-		return refuseError("delivery failed: %s", delivery.Reason)
-	}
-	if delivery.Status == core.DeliveryQueued {
-		_, err = fmt.Fprintf(cmd.stdout, "%s\tqueued\n", id)
-		return err
-	}
-	_, err = fmt.Fprintf(cmd.stdout, "%s\t%s\n", id, delivery.Status)
-	return err
-}
-
-func (cmd command) sender(state core.State, declared string) (core.Sender, error) {
-	if pane := cmd.environment("TMUX_PANE"); pane != "" {
-		for _, hitch := range state.Hitches {
-			if hitch.Pane == pane && hitch.Status == core.HitchActive {
-				if declared != "" && declared != string(hitch.Name) {
-					return core.Sender{}, refuseError("--from cannot override observed pane identity %q", hitch.Name)
+		for _, a := range agents {
+			if a.Pane == pane && a.Status == core.Active {
+				if declared != "" {
+					return core.Sender{}, refuseError("--from is not allowed inside a registered agent pane")
 				}
-				return core.Sender{Kind: core.SenderAgent, Name: hitch.Name, HitchID: hitch.ID}, nil
+				return core.Sender{Kind: core.SenderAgent, Name: a.Name, HitchID: a.ID}, nil
 			}
 		}
 	}
@@ -116,122 +33,354 @@ func (cmd command) sender(state core.State, declared string) (core.Sender, error
 	}
 	return core.Sender{Kind: core.SenderSelfDeclared, Name: core.AgentName(declared)}, nil
 }
-
-func (cmd command) queue(arguments []string) error {
-	if len(arguments) > 1 {
-		return usageError("queue: expected at most one agent")
-	}
-	_, state, err := cmd.loaded()
+func (cmd command) send(args []string) (result error) {
+	o, err := parseSend(args)
 	if err != nil {
 		return err
 	}
-	name := ""
-	if len(arguments) == 1 {
-		name = arguments[0]
+	run, err := cmd.runtime()
+	if err != nil {
+		return err
 	}
-	for _, id := range state.DeliveryOrder {
-		delivery := state.Deliveries[id]
-		if delivery.Status != core.DeliveryQueued || name != "" && string(delivery.Envelope.To) != name {
-			continue
-		}
-		if _, err := fmt.Fprintf(cmd.stdout, "%s\t%s\t%s\n", id, delivery.Envelope.To, delivery.Envelope.From.Name); err != nil {
+	a, err := run.resolve(o.Name)
+	if err != nil {
+		return err
+	}
+	sender, err := run.sender(o.From)
+	if err != nil {
+		return err
+	}
+	if sender.HitchID == a.ID {
+		return refuseError("sender and recipient are the same hitch")
+	}
+	if a.Status != core.Active && a.Status != core.Booting {
+		return refuseError("recipient is not active")
+	}
+	p, err := run.team.Agent(a.ID)
+	if err != nil {
+		return err
+	}
+	now := cmd.now()
+	var e core.Envelope
+	if o.At != "clear" {
+		body, err := readBody(cmd.stdin)
+		if err != nil {
 			return err
+		}
+		var due time.Time
+		if o.At != "" {
+			due, err = parseSchedule(o.At, now)
+			if err != nil {
+				return usageError("send: --at: %v", err)
+			}
+		}
+		id, err := randomID("msg")
+		if err != nil {
+			return err
+		}
+		e = core.Envelope{ID: core.EnvelopeID(id), Recipient: a.ID, To: a.Name, From: sender, Message: core.Message{Text: body}, CreatedAt: now, NotBefore: due}
+		if _, err := envelopeText(e); err != nil {
+			return err
+		}
+	}
+	var l *store.LockedAgent
+	if o.Supersede || o.At == "clear" || o.LiveOnly {
+		l, a, err = run.acquire(a.ID, false)
+		if errors.Is(err, store.ErrLocked) {
+			return refuseError("recipient is busy with an input operation")
+		}
+		if err != nil {
+			return err
+		}
+		defer func() { result = errors.Join(result, run.release(l)) }()
+	}
+	if o.Supersede || o.At == "clear" {
+		removed, err := l.ClearScheduled(sender)
+		if err != nil {
+			return err
+		}
+		for _, e := range removed {
+			if err := run.record(a, core.Event{Type: "send_cancelled", ID: string(e.ID), Reason: "sender cleared scheduled delivery"}); err != nil {
+				return err
+			}
+		}
+		if o.At == "clear" {
+			return nil
+		}
+	}
+	if o.LiveOnly {
+		if err := run.checkDeadlines(l, &a); err != nil {
+			return err
+		}
+		c, err := loadCollar(a.Collar, run.settings)
+		if err != nil {
+			return err
+		}
+		b, err := run.input()
+		if err != nil {
+			return err
+		}
+		free, err := run.available(a, b, c)
+		if err != nil {
+			return err
+		}
+		if !free {
+			return refuseError("recipient cannot accept input now")
+		}
+		queued, err := p.ListNew()
+		if err != nil {
+			return err
+		}
+		for _, pending := range queued {
+			if !pending.NotBefore.After(now) {
+				return refuseError("recipient has earlier due messages")
+			}
+		}
+	}
+	if err := p.Publish(e); err != nil {
+		return err
+	}
+	if err := run.record(a, core.Event{Type: "send_queued", Envelope: &e}); err != nil {
+		return err
+	}
+	outcome := "queued"
+	if l != nil {
+		outcome, err = run.drainFrom(l, a, e.ID)
+	} else {
+		outcome, err = run.drain(a.ID, e.ID)
+	}
+	if err != nil {
+		return err
+	}
+	if _, err := fmt.Fprintf(cmd.stdout, "%s\t%s\n", e.ID, outcome); err != nil {
+		return err
+	}
+	return deliveryResult(outcome)
+}
+func (cmd command) queue(args []string) error {
+	if len(args) > 1 {
+		return usageError("queue: expected at most one agent")
+	}
+	run, err := cmd.runtime()
+	if err != nil {
+		return err
+	}
+	var agents []core.Agent
+	if len(args) == 1 {
+		a, err := run.resolve(args[0])
+		if err != nil {
+			return err
+		}
+		agents = []core.Agent{a}
+	} else {
+		agents, err = run.team.ListAgents()
+		if err != nil {
+			return err
+		}
+	}
+	for _, a := range agents {
+		p, err := run.team.Agent(a.ID)
+		if err != nil {
+			return err
+		}
+		messages, err := p.ListNew()
+		if err != nil {
+			return err
+		}
+		for _, e := range messages {
+			if _, err := fmt.Fprintf(cmd.stdout, "%s\t%s\t%s\n", e.ID, a.Name, e.From.Name); err != nil {
+				return err
+			}
 		}
 	}
 	return nil
 }
-
-func (cmd command) interrupt(arguments []string) error {
+func (cmd command) interrupt(args []string) (result error) {
 	name := ""
-	if len(arguments) != 0 && !strings.HasPrefix(arguments[0], "-") {
-		name, arguments = arguments[0], arguments[1:]
+	if len(args) > 0 && !strings.HasPrefix(args[0], "-") {
+		name, args = args[0], args[1:]
 	}
 	reason := ""
 	flags := quietFlagSet("interrupt")
 	flags.StringVar(&reason, "m", "", "reason")
-	if err := flags.Parse(arguments); err != nil || flags.NArg() != 0 {
+	if err := flags.Parse(args); err != nil || flags.NArg() != 0 {
 		return usageError("interrupt: invalid arguments")
 	}
-	run, state, err := cmd.loaded()
+	run, err := cmd.runtime()
 	if err != nil {
 		return err
 	}
-	if name == "" {
-		name = nameAtPane(state, cmd.environment("TMUX_PANE"))
-		if name == "" {
-			name = string(state.Team.Name)
+	a, err := run.resolve(name)
+	if err != nil {
+		return err
+	}
+	l, a, err := run.acquire(a.ID, false)
+	if err != nil {
+		return err
+	}
+	defer func() { result = errors.Join(result, run.release(l)) }()
+	if a.Status != core.Active {
+		return refuseError("recipient is not active")
+	}
+	c, err := loadCollar(a.Collar, run.settings)
+	if err != nil {
+		return err
+	}
+	b, err := run.input()
+	if err != nil {
+		return err
+	}
+	if err := run.apply(l, &a, core.Event{Type: "interrupt_requested", Deadline: cmd.now().Add(operationTimeout)}); err != nil {
+		return err
+	}
+	id, err := randomID("interrupt")
+	if err != nil {
+		return err
+	}
+	if err := run.apply(l, &a, core.Event{Type: "input_started", ID: id, Status: "interrupt"}); err != nil {
+		return err
+	}
+	if err := sendHarnessKeys(context.Background(), b, substrate.PaneID(a.Pane), c, c.Actions.Interrupt.Input()); err != nil {
+		return err
+	}
+	a.Input = nil
+	if err := l.Save(a); err != nil {
+		return err
+	}
+	if reason != "" {
+		e := core.Envelope{ID: core.EnvelopeID(id), Recipient: a.ID, To: a.Name, From: core.Sender{Kind: core.SenderSelfDeclared, Name: "interrupt"}, Message: core.Message{Text: reason}, CreatedAt: cmd.now()}
+		if err := l.Paths.Publish(e); err != nil {
+			return err
+		}
+		if err := run.record(a, core.Event{Type: "send_queued", Envelope: &e}); err != nil {
+			return err
 		}
 	}
-	hitch, ok := activeByName(state, name)
-	if !ok {
-		return refuseError("agent %q is not active", name)
-	}
-	if hitch.Activity != core.ActivityBusy && hitch.Activity != core.ActivityWedged {
-		return refuseError("agent %q is not in an interruptible turn", name)
-	}
-	now := time.Now()
-	_, err = run.drive(core.InterruptRequested{At: now, HitchID: hitch.ID, Reason: reason, Deadline: now.Add(operationTimeout)})
-	return err
+	return run.mark(a)
 }
-
-func (cmd command) compact(arguments []string) error {
-	options, err := parseCompact(arguments)
+func (cmd command) compact(args []string) (result error) {
+	o, err := parseCompact(args)
 	if err != nil {
 		return err
 	}
-	run, state, err := cmd.loaded()
+	run, err := cmd.runtime()
 	if err != nil {
 		return err
 	}
-	name := options.Name
-	if name == "" {
-		name = nameAtPane(state, cmd.environment("TMUX_PANE"))
+	a, err := run.resolve(o.Name)
+	if err != nil {
+		return err
 	}
-	hitch, ok := activeByName(state, name)
-	if !ok {
-		return refuseError("agent %q is not active", name)
+	l, a, err := run.acquire(a.ID, false)
+	if err != nil {
+		return err
 	}
-	if options.Recover {
-		collar, err := loadCollar(hitch.Collar, run.settings)
-		if err != nil {
+	defer func() { result = errors.Join(result, run.release(l)) }()
+	c, err := loadCollar(a.Collar, run.settings)
+	if err != nil {
+		return err
+	}
+	b, err := run.input()
+	if err != nil {
+		return err
+	}
+	if o.Recover {
+		if a.Compaction == nil {
+			return refuseError("no compaction to recover")
+		}
+		if err := run.apply(l, &a, core.Event{Type: "input_started", ID: a.Compaction.ID, Status: "compaction"}); err != nil {
 			return err
 		}
-		backend, err := cmd.tmux(run.settings)
-		if err != nil {
-			return err
-		}
-		for _, action := range collar.Actions.CompactRecover {
-			if err := sendHarnessKeys(context.Background(), backend, substrate.PaneID(hitch.Pane), collar, action.Input()); err != nil {
+		for _, action := range c.Actions.CompactRecover {
+			if err := sendHarnessKeys(context.Background(), b, substrate.PaneID(a.Pane), c, action.Input()); err != nil {
 				return err
 			}
 		}
-		if hitch.PendingCompactID != "" {
-			_, err = run.drive(core.CompactionFailedEvent{At: time.Now(), CompactionID: hitch.PendingCompactID, Reason: "operator requested native compaction recovery"})
-		}
-		return err
+		return run.apply(l, &a, core.Event{Type: "compaction_unverified", ID: a.Compaction.ID, Reason: "operator requested recovery; inspect the harness before retrying"})
 	}
-	resume := options.Resume
+	if a.Status != core.Active {
+		return refuseError("recipient is not active")
+	}
+	resume := o.Resume
 	if resume == "" {
-		resume = "Your context was just compacted. Re-read your brief and durable state, then resume your lane or report it complete."
+		resume = "Your context was compacted. Re-read your brief and durable state, then resume your work or report it complete."
 	}
 	id, err := randomID("compact")
 	if err != nil {
 		return err
 	}
-	now := time.Now()
 	if _, err := renderEnvelope("self-declared:compact", "resume-"+id, "", resume); err != nil {
 		return err
 	}
-	state, err = run.drive(core.CompactionRequested{At: now, Compaction: core.Compaction{ID: core.CompactionID(id), HitchID: hitch.ID, Resume: core.Message{Text: resume}, Deadline: now.Add(operationTimeout)}})
+	now := cmd.now()
+	compact := core.Compaction{ID: id, Resume: core.Message{Text: resume}, StartedAt: now, Deadline: now.Add(operationTimeout), Status: "queued"}
+	if err := run.apply(l, &a, core.Event{Type: "compaction_requested", Compaction: &compact}); err != nil {
+		return err
+	}
+	if err := run.startCompaction(l, &a); err != nil {
+		return err
+	}
+	outcome, err := run.drainFrom(l, a, core.EnvelopeID("resume-"+id))
 	if err != nil {
 		return err
 	}
-	compact := state.Compactions[core.CompactionID(id)]
-	if compact.Status == core.CompactionFailed {
-		return refuseError("compaction failed: %s", compact.Reason)
+	return deliveryResult(outcome)
+}
+func (run *runtime) startCompaction(l *store.LockedAgent, a *core.Agent) error {
+	if a.Compaction == nil || a.Compaction.Status != "queued" || a.Activity != core.Idle {
+		return nil
 	}
-	if compact.Status == core.CompactionUnverified {
-		return commandError{status: exitUnknown, text: "compaction may have landed but could not be verified: " + compact.Reason}
+	c, err := loadCollar(a.Collar, run.settings)
+	if err != nil {
+		return err
 	}
-	return nil
+	b, err := run.input()
+	if err != nil {
+		return err
+	}
+	free, err := run.available(*a, b, c)
+	if err != nil || !free {
+		return err
+	}
+	a.Compaction.StartedAt = run.cmd.now()
+	a.Compaction.Deadline = a.Compaction.StartedAt.Add(operationTimeout)
+	if err := run.apply(l, a, core.Event{Type: "input_started", ID: a.Compaction.ID, Status: "compaction"}); err != nil {
+		return err
+	}
+	action, err := harness.RenderAction(c.Actions.Compact, map[string]string{"instructions": a.Compaction.Resume.Text})
+	if err != nil {
+		return err
+	}
+	input, err := harness.SubmitInput(c.Primitives.Submit, action.Text)
+	if err != nil {
+		return err
+	}
+	ctx, cancel := run.cmd.timeout(operationTimeout)
+	defer cancel()
+	pane := substrate.PaneID(a.Pane)
+	if err := sendHarnessKeys(ctx, b, pane, c, input); err != nil {
+		return err
+	}
+	settle, err := harness.SubmitSettle(c.Primitives.Submit)
+	if err != nil {
+		return err
+	}
+	if run.cmd.settleInput != nil {
+		err = run.cmd.settleInput(ctx, b, pane, c, settle)
+	} else {
+		err = harness.AwaitComposerSettle(ctx, b.Capture, pane, c, settle)
+	}
+	if err != nil {
+		return err
+	}
+	if err := sendHarnessKeys(ctx, b, pane, c, substrate.Keys{Names: action.Keys, Submit: action.Submit}); err != nil {
+		return err
+	}
+	if err := run.apply(l, a, core.Event{Type: "compaction_submitted", ID: a.Compaction.ID}); err != nil {
+		return err
+	}
+	if err := run.continueCompaction(l, a); err != nil {
+		return err
+	}
+	return run.mark(*a)
 }

@@ -1,8 +1,8 @@
 package harness
 
 import (
+	"crypto/sha256"
 	"fmt"
-	"reflect"
 	"regexp"
 	"strings"
 	"time"
@@ -11,7 +11,7 @@ import (
 )
 
 type WedgeObservation struct {
-	Previous   substrate.Screen
+	Previous   string
 	Current    substrate.Screen
 	BusySince  time.Time
 	ObservedAt time.Time
@@ -38,7 +38,7 @@ func DetectWedge(invocation Invocation, observation WedgeObservation) (Wedge, er
 	if !observation.TurnActive || observation.BusySince.IsZero() || observation.ObservedAt.Before(observation.BusySince.Add(threshold)) {
 		return Wedge{}, nil
 	}
-	if !reflect.DeepEqual(observation.Previous, observation.Current) {
+	if observation.Previous != ScreenFingerprint(observation.Current) {
 		return Wedge{}, nil
 	}
 	plain := strings.Join(screenLines(observation.Current, true), "\n")
@@ -49,6 +49,10 @@ func DetectWedge(invocation Invocation, observation WedgeObservation) (Wedge, er
 		Detected: true,
 		Evidence: boundedTail(plain, 20),
 	}, nil
+}
+
+func ScreenFingerprint(screen substrate.Screen) string {
+	return fmt.Sprintf("%x", sha256.Sum256([]byte(strings.Join(screenLines(screen, true), "\n"))))
 }
 
 func boundedTail(text string, lines int) string {

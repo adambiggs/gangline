@@ -34,6 +34,11 @@ type darwinProcessHandle struct {
 	kqueue  int
 }
 
+func bootIdentity() (string, error) {
+	value, err := syscall.Sysctl("kern.boottime")
+	return fmt.Sprintf("%x", value), err
+}
+
 func readDarwinProcess(pid int) (processRecord, uint32, error) {
 	var info darwinProcessInfo
 	size := unsafe.Sizeof(info)
