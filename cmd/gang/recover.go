@@ -31,6 +31,10 @@ func (run *runtime) recover() (core.State, error) {
 			return core.State{}, err
 		}
 	}
+	state, err = run.expireQueuedDeliveries(state, time.Now())
+	if err != nil {
+		return core.State{}, err
+	}
 	state, err = run.retryQueuedDeliveries(state)
 	if err != nil {
 		return core.State{}, err
@@ -46,6 +50,24 @@ func (run *runtime) recover() (core.State, error) {
 			if err != nil {
 				return core.State{}, err
 			}
+		}
+	}
+	return state, nil
+}
+
+func (run *runtime) expireQueuedDeliveries(state core.State, now time.Time) (core.State, error) {
+	var err error
+	for _, id := range state.DeliveryOrder {
+		delivery := state.Deliveries[id]
+		if delivery.Status != core.DeliveryQueued || !delivery.NotBefore.IsZero() || now.Before(delivery.Deadline) {
+			continue
+		}
+		state, err = run.drive(core.OperationTimedOut{
+			At: now, Operation: core.TimeoutDelivery, ID: string(id), Deadline: delivery.Deadline,
+			Evidence: "delivery deadline elapsed before input",
+		})
+		if err != nil {
+			return core.State{}, err
 		}
 	}
 	return state, nil
@@ -108,7 +130,7 @@ func (run *runtime) retryQueuedDeliveries(state core.State) (core.State, error) 
 			continue
 		}
 		seen[hitch.ID] = true
-		if hitch.Activity != core.ActivityBusy || hitch.PendingCompactID != "" {
+		if (hitch.Activity != core.ActivityBusy && hitch.Activity != core.ActivityIdle) || hitch.PendingCompactID != "" {
 			continue
 		}
 		collar, loadErr := loadCollar(hitch.Collar, run.settings)
@@ -123,7 +145,12 @@ func (run *runtime) retryQueuedDeliveries(state core.State) (core.State, error) 
 		if readErr != nil || composer.Text != "" {
 			continue
 		}
-		state, err = run.drive(core.TurnBoundaryReached{At: time.Now(), HitchID: hitch.ID})
+		now := time.Now()
+		if hitch.Activity == core.ActivityIdle {
+			state, err = run.drive(core.DeliveryRetryRequested{At: now, EnvelopeID: envelopeID})
+		} else {
+			state, err = run.drive(core.TurnBoundaryReached{At: now, HitchID: hitch.ID})
+		}
 		if err != nil {
 			return core.State{}, err
 		}

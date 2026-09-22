@@ -38,6 +38,8 @@ otherwise `--task` supplies it.
 
 `up` defaults the role to `lead` and the working directory to the caller's
 current directory. An explicit `--role` or `--dir` overrides that default.
+A safely deferred startup assignment is retried by the hitch command until it
+is delivered or its startup-delivery deadline expires.
 A failed hitch retains its name until `gang drop NAME` removes that generation;
 another hitch or rename cannot reuse it first.
 

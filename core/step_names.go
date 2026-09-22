@@ -32,6 +32,8 @@ func EventName(event Event) string {
 		return "timed_deliveries_cleared"
 	case DeliverySucceeded:
 		return "delivery_succeeded"
+	case DeliveryRetryRequested:
+		return "delivery_retry_requested"
 	case DeliveryDeferred:
 		return "delivery_deferred"
 	case DeliveryFailedEvent:

@@ -13,9 +13,11 @@ import (
 )
 
 const (
-	bootTimeout      = 30 * time.Second
-	deliveryTimeout  = 30 * time.Second
-	operationTimeout = 30 * time.Second
+	bootTimeout            = 30 * time.Second
+	deliveryTimeout        = 30 * time.Second
+	startupDeliveryTimeout = 5 * time.Minute
+	startupRetryInterval   = 100 * time.Millisecond
+	operationTimeout       = 30 * time.Second
 )
 
 type runtime struct {

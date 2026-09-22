@@ -178,6 +178,9 @@ func TestCommandLifecycleOnPrivateTmux(t *testing.T) {
 	if !startupDelivered {
 		t.Fatal("startup delivery was not recorded")
 	}
+	if output, status := runGang("", "capture", "lead"); status != 0 || !strings.Contains(output, "WORKING") {
+		t.Fatalf("capture decorated agent status %d:\n%s", status, output)
+	}
 	if output, err := runner.run("wait-for", "received"); err != nil {
 		t.Fatalf("wait for startup delivery: %v\n%s", err, output)
 	}

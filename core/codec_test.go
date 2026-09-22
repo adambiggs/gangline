@@ -31,6 +31,7 @@ func TestEventCodecRoundTrip(t *testing.T) {
 		TimedDeliveryReleased{At: now, EnvelopeID: "e-1"},
 		TimedDeliveriesCleared{At: now, Recipient: "worker"},
 		DeliverySucceeded{At: now, EnvelopeID: "e-1"},
+		DeliveryRetryRequested{At: now, EnvelopeID: "e-1"},
 		DeliveryDeferred{At: now, EnvelopeID: "e-1", Reason: "busy"},
 		DeliveryFailedEvent{At: now, EnvelopeID: "e-1", Reason: "pane gone"},
 		DeliveryUnverifiedEvent{At: now, EnvelopeID: "e-1", Evidence: "composer changed"},

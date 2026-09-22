@@ -70,6 +70,8 @@ func EncodeEvent(event Event) ([]byte, error) {
 		record.At, record.Recipient = event.At, event.Recipient
 	case DeliverySucceeded:
 		record.At, record.EnvelopeID = event.At, event.EnvelopeID
+	case DeliveryRetryRequested:
+		record.At, record.EnvelopeID = event.At, event.EnvelopeID
 	case DeliveryDeferred:
 		record.At, record.EnvelopeID, record.Reason = event.At, event.EnvelopeID, event.Reason
 	case DeliveryFailedEvent:
@@ -164,6 +166,8 @@ func DecodeEvent(data []byte) (Event, error) {
 		return TimedDeliveriesCleared{At: record.At, Recipient: record.Recipient}, nil
 	case "delivery_succeeded":
 		return DeliverySucceeded{At: record.At, EnvelopeID: record.EnvelopeID}, nil
+	case "delivery_retry_requested":
+		return DeliveryRetryRequested{At: record.At, EnvelopeID: record.EnvelopeID}, nil
 	case "delivery_deferred":
 		return DeliveryDeferred{At: record.At, EnvelopeID: record.EnvelopeID, Reason: record.Reason}, nil
 	case "delivery_failed":

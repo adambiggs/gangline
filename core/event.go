@@ -85,6 +85,13 @@ type DeliverySucceeded struct {
 	EnvelopeID EnvelopeID `json:"envelope_id"`
 }
 
+// DeliveryRetryRequested records a direct empty-composer observation that
+// makes one queued envelope safe to attempt again.
+type DeliveryRetryRequested struct {
+	At         time.Time  `json:"at"`
+	EnvelopeID EnvelopeID `json:"envelope_id"`
+}
+
 // DeliveryDeferred is a known refusal before any input was sent. It is safe to
 // retry the envelope at a later native turn boundary.
 type DeliveryDeferred struct {
@@ -224,6 +231,7 @@ func (SendRequested) isEvent()           {}
 func (TimedDeliveryReleased) isEvent()   {}
 func (TimedDeliveriesCleared) isEvent()  {}
 func (DeliverySucceeded) isEvent()       {}
+func (DeliveryRetryRequested) isEvent()  {}
 func (DeliveryDeferred) isEvent()        {}
 func (DeliveryFailedEvent) isEvent()     {}
 func (DeliveryUnverifiedEvent) isEvent() {}

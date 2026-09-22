@@ -90,7 +90,7 @@ func (cmd command) hitch(arguments []string) error {
 		Model: options.Model, Effort: options.Effort, Resume: options.Resume,
 		RolePrompt: composeStartup(options.Name, brief, ""),
 		Event: core.SendRequested{
-			At: now, Deadline: now.Add(deliveryTimeout),
+			At: now, Deadline: now.Add(startupDeliveryTimeout),
 			Envelope: core.Envelope{
 				ID: core.EnvelopeID(envelopeRaw), From: core.Sender{Kind: core.SenderSelfDeclared, Name: "hitch"},
 				To: core.AgentName(options.Name), Message: core.Message{Text: startup}, CreatedAt: now,
@@ -110,13 +110,69 @@ func (cmd command) hitch(arguments []string) error {
 	hitch := state.Hitches[hitchID]
 	switch hitch.Status {
 	case core.HitchActive:
-		_, err = fmt.Fprintf(cmd.stdout, "%s\t%s\n", options.Name, hitch.Pane)
-		return err
+		delivery, ok := state.Deliveries[record.Event.Envelope.ID]
+		if !ok {
+			return refuseError("startup assignment for %q was not recorded", options.Name)
+		}
+		if delivery.Status == core.DeliveryQueued || delivery.Status == core.DeliveryDelivering {
+			if _, err := fmt.Fprintf(cmd.stderr, "gang: startup assignment to %q is queued; waiting up to %s for its native composer to become safe\n", options.Name, startupDeliveryTimeout); err != nil {
+				return err
+			}
+			state, err = run.awaitStartupDelivery(state, delivery.Envelope.ID)
+			if err != nil {
+				return err
+			}
+			delivery = state.Deliveries[delivery.Envelope.ID]
+			hitch = state.Hitches[hitchID]
+		}
+		switch delivery.Status {
+		case core.DeliveryDelivered:
+			_, err = fmt.Fprintf(cmd.stdout, "%s\t%s\n", options.Name, hitch.Pane)
+			return err
+		case core.DeliveryUnverified:
+			return commandError{status: exitUnknown, text: "startup assignment may have landed but could not be verified: " + delivery.Reason}
+		case core.DeliveryFailed:
+			return commandError{status: exitNative, text: fmt.Sprintf("%s launched in %s but its startup assignment was not delivered: %s", options.Name, hitch.Pane, delivery.Reason)}
+		default:
+			return fmt.Errorf("startup assignment ended in unexpected state %q", delivery.Status)
+		}
 	case core.HitchBooting:
 		return commandError{status: exitNative, text: fmt.Sprintf("%s launched in %s but is not ready; resolve its native prompt, then run 'gang tick'", options.Name, hitch.Pane)}
 	default:
 		return refuseError("hitch %s failed to launch: %s", options.Name, hitch.WedgeEvidence)
 	}
+}
+
+func (run *runtime) awaitStartupDelivery(state core.State, id core.EnvelopeID) (core.State, error) {
+	ticker := time.NewTicker(startupRetryInterval)
+	defer ticker.Stop()
+	return awaitStartupDelivery(state, id, ticker.C, run.recover)
+}
+
+func awaitStartupDelivery(state core.State, id core.EnvelopeID, observations <-chan time.Time, refresh func() (core.State, error)) (core.State, error) {
+	delivery, ok := state.Deliveries[id]
+	if !ok {
+		return core.State{}, fmt.Errorf("startup assignment %q is not recorded", id)
+	}
+	for delivery.Status == core.DeliveryQueued || delivery.Status == core.DeliveryDelivering {
+		observedAt, open := <-observations
+		if !open {
+			return core.State{}, fmt.Errorf("startup delivery observation source closed")
+		}
+		var err error
+		state, err = refresh()
+		if err != nil {
+			return core.State{}, err
+		}
+		delivery, ok = state.Deliveries[id]
+		if !ok {
+			return core.State{}, fmt.Errorf("startup assignment %q disappeared during retry", id)
+		}
+		if !observedAt.Before(delivery.Deadline) && (delivery.Status == core.DeliveryQueued || delivery.Status == core.DeliveryDelivering) {
+			return core.State{}, fmt.Errorf("startup assignment %q remained pending after its delivery deadline", id)
+		}
+	}
+	return state, nil
 }
 
 func (cmd command) adopt(arguments []string) error {

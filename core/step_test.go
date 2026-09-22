@@ -73,11 +73,11 @@ func TestStepDeliveryWaitsForTurnBoundary(t *testing.T) {
 
 	state, effects = Step(state, DeliveryDeferred{At: testNow, EnvelopeID: "e-1", Reason: "composer occupied"})
 	assertEffect(t, effects, nil)
-	if state.Deliveries["e-1"].Status != DeliveryQueued || state.Hitches["worker-id"].Activity != ActivityBusy {
+	if state.Deliveries["e-1"].Status != DeliveryQueued || state.Hitches["worker-id"].Activity != ActivityIdle {
 		t.Fatalf("deferred state = %#v %#v", state.Deliveries["e-1"], state.Hitches["worker-id"])
 	}
 
-	state, effects = Step(state, TurnBoundaryReached{At: testNow, HitchID: "worker-id"})
+	state, effects = Step(state, DeliveryRetryRequested{At: testNow, EnvelopeID: "e-1"})
 	assertEffect(t, effects, DeliverEnvelope{Envelope: envelope, Pane: "%2", Deadline: testDeadline})
 	state, effects = Step(state, DeliverySucceeded{At: testNow, EnvelopeID: "e-1"})
 	assertEffect(t, effects, nil)
@@ -107,7 +107,20 @@ func TestStepBlockedHoldsDeliveryUntilClearBoundary(t *testing.T) {
 	if state.Hitches["worker-id"].Activity != ActivityBusy {
 		t.Fatalf("cleared activity = %q", state.Hitches["worker-id"].Activity)
 	}
+	assertEffect(t, effects, nil)
 	state, effects = Step(state, TurnBoundaryReached{At: testNow, HitchID: "worker-id"})
+	assertEffect(t, effects, DeliverEnvelope{Envelope: envelope, Pane: "%2", Deadline: testDeadline})
+}
+
+func TestStepBlockedDeliveryRetriesWhenDialogClears(t *testing.T) {
+	state := deliveringHitch(t)
+	envelope := state.Deliveries["e-1"].Envelope
+	state, effects := Step(state, BlockedDetected{At: testNow, HitchID: "worker-id", Evidence: "another surface owns input"})
+	assertEffect(t, effects, nil)
+	if hitch := state.Hitches["worker-id"]; hitch.Activity != ActivityBlocked || hitch.BlockedFrom != ActivityIdle {
+		t.Fatalf("blocked delivery hitch = %#v", hitch)
+	}
+	state, effects = Step(state, BlockedCleared{At: testNow, HitchID: "worker-id"})
 	assertEffect(t, effects, DeliverEnvelope{Envelope: envelope, Pane: "%2", Deadline: testDeadline})
 }
 
@@ -225,6 +238,19 @@ func TestStepTimeouts(t *testing.T) {
 			event: OperationTimedOut{At: testDeadline, Operation: TimeoutDelivery, ID: "e-1", Deadline: testDeadline, Evidence: "verification deadline passed"},
 			check: func(t *testing.T, state State) {
 				if state.Deliveries["e-1"].Status != DeliveryUnverified || state.Hitches["worker-id"].Activity != ActivityWedged {
+					t.Fatalf("state = %#v", state)
+				}
+			},
+		},
+		{
+			name: "queued delivery fails without wedging", state: func(t *testing.T) State {
+				state := deliveringHitch(t)
+				state, _ = Step(state, DeliveryDeferred{At: testNow, EnvelopeID: "e-1", Reason: "another surface owns input"})
+				return state
+			},
+			event: OperationTimedOut{At: testDeadline, Operation: TimeoutDelivery, ID: "e-1", Deadline: testDeadline, Evidence: "delivery deadline elapsed before input"},
+			check: func(t *testing.T, state State) {
+				if state.Deliveries["e-1"].Status != DeliveryFailed || state.Hitches["worker-id"].Activity != ActivityIdle {
 					t.Fatalf("state = %#v", state)
 				}
 			},

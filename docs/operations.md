@@ -49,6 +49,11 @@ gang hitch worker -c codex -d "$PWD" -m MODEL -e EFFORT \
   -r worker -t 'Trace the failure and report the smallest reproduction.'
 ```
 
+If a native dialog appears after the composer first looked ready, the hitch
+keeps the startup assignment queued and retries it after the dialog clears.
+The startup delivery has a human-scale deadline; `gang roster` reports the
+directly observed idle or blocked pane state while the hitch command waits.
+
 From a registered agent pane:
 
 ```sh

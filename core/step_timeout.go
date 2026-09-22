@@ -28,8 +28,18 @@ func stepTimedOut(state State, event OperationTimedOut) (State, []Effect) {
 		state.Hitches[hitch.ID] = hitch
 		return state, nil
 	case TimeoutDelivery:
+		delivery, exists := state.Deliveries[EnvelopeID(event.ID)]
+		if !exists || !event.Deadline.Equal(delivery.Deadline) {
+			return rejected(state, event, event.At, "delivery timeout does not match an in-progress delivery")
+		}
+		if delivery.Status == DeliveryQueued {
+			delivery.Status = DeliveryFailed
+			delivery.Reason = event.Evidence
+			state.Deliveries[delivery.Envelope.ID] = delivery
+			return state, nil
+		}
 		delivery, hitch, ok := activeDelivery(state, EnvelopeID(event.ID))
-		if !ok || !event.Deadline.Equal(delivery.Deadline) {
+		if !ok {
 			return rejected(state, event, event.At, "delivery timeout does not match an in-progress delivery")
 		}
 		delivery.Status = DeliveryUnverified

@@ -174,11 +174,11 @@ func (cmd command) capture(arguments []string) error {
 		return err
 	}
 
-	settings, err := cmd.settings()
+	run, state, err := cmd.loaded()
 	if err != nil {
 		return err
 	}
-	backend, err := cmd.tmux(settings)
+	backend, err := cmd.tmux(run.settings)
 	if err != nil {
 		return err
 	}
@@ -190,10 +190,11 @@ func (cmd command) capture(arguments []string) error {
 		}
 		pane = substrate.Pane{ID: substrate.PaneID(paneID)}
 	} else {
-		pane, err = backend.PaneNamed(context.Background(), name)
-	}
-	if err != nil {
-		return err
+		hitch, targetErr := cmd.observationTarget(name, state)
+		if targetErr != nil {
+			return targetErr
+		}
+		pane = substrate.Pane{ID: substrate.PaneID(hitch.Pane)}
 	}
 	screen, err := backend.Capture(context.Background(), pane.ID)
 	if err != nil {

@@ -121,6 +121,19 @@ native permission hook supplies an earlier signal when available. Delivery
 stays queued until direct observation clears the surface; Gangline never types
 through it or chooses an answer.
 
+### Keep startup delivery with the hitch command
+
+A harness can draw a permission dialog after its composer first looked ready.
+When that race safely refuses startup delivery before input, `gang hitch` keeps
+the queued assignment and observes the pane until the dialog clears or the
+startup-delivery deadline expires. The command is the bounded retry owner; no
+resident watcher or harness-specific callback is introduced.
+
+The startup-delivery deadline is longer than an ordinary send deadline because
+a person may need to read and answer the native dialog. Between attempts the
+hitch is recorded idle unless direct evidence says it is blocked, so roster
+state describes the pane rather than the retry owner's lifetime.
+
 ### Keep the event log authoritative
 
 The per-team JSONL log is the source of truth. Snapshots carry the event count,

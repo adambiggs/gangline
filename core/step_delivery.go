@@ -80,6 +80,23 @@ func stepDeliverySucceeded(state State, event DeliverySucceeded) (State, []Effec
 	return state, nil
 }
 
+func stepDeliveryRetryRequested(state State, event DeliveryRetryRequested) (State, []Effect) {
+	delivery, ok := state.Deliveries[event.EnvelopeID]
+	if !ok || delivery.Status != DeliveryQueued || !delivery.NotBefore.IsZero() {
+		return rejected(state, event, event.At, "delivery is not queued for immediate retry")
+	}
+	hitch, ok := activeHitchByName(state, delivery.Envelope.To)
+	if !ok || hitch.Activity != ActivityIdle {
+		return rejected(state, event, event.At, "recipient is not active and idle")
+	}
+	delivery.Status = DeliveryDelivering
+	delivery.Reason = ""
+	state.Deliveries[event.EnvelopeID] = delivery
+	hitch.Activity = ActivityDelivering
+	state.Hitches[hitch.ID] = hitch
+	return state, []Effect{DeliverEnvelope{Envelope: delivery.Envelope, Pane: hitch.Pane, Deadline: delivery.Deadline}}
+}
+
 func stepDeliveryDeferred(state State, event DeliveryDeferred) (State, []Effect) {
 	delivery, hitch, ok := activeDelivery(state, event.EnvelopeID)
 	if !ok || event.Reason == "" {
@@ -88,7 +105,7 @@ func stepDeliveryDeferred(state State, event DeliveryDeferred) (State, []Effect)
 	delivery.Status = DeliveryQueued
 	delivery.Reason = event.Reason
 	state.Deliveries[event.EnvelopeID] = delivery
-	hitch.Activity = ActivityBusy
+	hitch.Activity = ActivityIdle
 	state.Hitches[hitch.ID] = hitch
 	return state, nil
 }

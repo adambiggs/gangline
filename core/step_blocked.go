@@ -10,7 +10,7 @@ func stepBlockedDetected(state State, event BlockedDetected) (State, []Effect) {
 		previous = ActivityBusy
 	}
 	if hitch.Activity == ActivityDelivering {
-		previous = ActivityBusy
+		previous = ActivityIdle
 		for id, delivery := range state.Deliveries {
 			if delivery.Envelope.To != hitch.Name || delivery.Status != DeliveryDelivering {
 				continue

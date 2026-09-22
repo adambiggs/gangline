@@ -32,6 +32,8 @@ func Step(state State, event Event) (State, []Effect) {
 		return stepTimedDeliveriesCleared(next, event)
 	case DeliverySucceeded:
 		return stepDeliverySucceeded(next, event)
+	case DeliveryRetryRequested:
+		return stepDeliveryRetryRequested(next, event)
 	case DeliveryDeferred:
 		return stepDeliveryDeferred(next, event)
 	case DeliveryFailedEvent:

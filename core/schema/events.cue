@@ -53,7 +53,7 @@ import "time"
 
 #Event: #HitchRequested | #AdoptRequested | #RenameRequested | #HitchSpawned | #HitchReady | #HitchLaunchFailed |
 	#TurnStarted | #TurnBoundaryReached | #BlockedDetected | #BlockedCleared | #SendRequested | #TimedDeliveryReleased | #TimedDeliveriesCleared | #DeliverySucceeded |
-	#DeliveryDeferred | #DeliveryFailed | #DeliveryUnverified |
+	#DeliveryRetryRequested | #DeliveryDeferred | #DeliveryFailed | #DeliveryUnverified |
 	#CompactionRequested | #CompactionCompleted | #CompactionFailed | #InterruptRequested | #InterruptSucceeded | #InterruptFailed |
 	#DropRequested | #DropSucceeded | #DropFailed | #PaneVanished | #WedgeDetected |
 	#WedgeCleared | #OperationTimedOut | #CurfewSet | #CurfewCleared | #TransitionRejected
@@ -72,6 +72,7 @@ import "time"
 #TimedDeliveryReleased: close({type: "timed_delivery_released", at: #Time, envelope_id: #ID})
 #TimedDeliveriesCleared: close({type: "timed_deliveries_cleared", at: #Time, recipient: #ID})
 #DeliverySucceeded: close({type: "delivery_succeeded", at: #Time, envelope_id: #ID})
+#DeliveryRetryRequested: close({type: "delivery_retry_requested", at: #Time, envelope_id: #ID})
 #DeliveryDeferred: close({type: "delivery_deferred", at: #Time, envelope_id: #ID, reason: #Text})
 #DeliveryFailed: close({type: "delivery_failed", at: #Time, envelope_id: #ID, reason: #Text})
 #DeliveryUnverified: close({type: "delivery_unverified", at: #Time, envelope_id: #ID, evidence: #Text})
