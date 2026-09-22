@@ -1,300 +1,96 @@
 # Design
 
-These principles and decisions define Gangline's design. Use them to decide
-whether a change belongs here; if a change conflicts with a principle,
-redesign it before implementation.
+Gangline's principles and the decisions that follow from them. If a change
+conflicts with one, change the design or change the principle first.
 
 ## Principles
 
-Harness machinery grows faster than the work it serves, and components built
-to guard a system create defects of their own.
-
-1. **Minimize bespoke integration surface.** Integrate only through universal
-   surfaces: the tty (tmux), the shell (`gang` as a CLI), and open standards a
-   harness speaks natively (e.g. MCP). tmux is the default transport — agents
-   are tmux windows, messages are keystrokes, observation is `capture-pane`,
-   termination is `kill-window`, and state lives in a per-team append-only
-   event log. A harness-specific code path requires a section below proving no
-   universal surface can carry the value. No bespoke message buses, databases,
-   or daemons.
-2. **Every message is attributed; trust is assumed.** A sender identity is
-   required. Where Gangline can see the sending window it reads the name off
-   that window and refuses a claimed identity, so an agent cannot casually sign
-   as a peer. Where it cannot see one — the operator's own shell — the name
-   stands as claimed. This is attribution, not authentication, and it holds
-   because the system is single-tenant by design: anyone at the keyboard is the
-   operator. Never build authentication, generation fencing, or anti-tamper
-   into this repo.
-3. **Delivered means verified.** A send is confirmed by the harness's native
-   submit hook or it fails loudly. No fire-and-forget, no success receipts for
-   messages nobody saw.
-4. **Harness integration is a collar, not a plugin.** Per-harness knowledge
-   lives in a collar, never as a harness-name branch in `cmd/gang`; the collar
-   contract itself is documented in `docs/reference.md`. Code inside a harness
-   requires a section below proving the value is real and unachievable any
-   other way.
-5. **Nothing lands without a live consumer.** If nothing invokes it the day it
-   merges, it does not merge.
-6. **Everything has a deletion path.** Any artifact this system produces —
-   logs, state, records — must say how and when it dies.
-7. **The harness never manages itself.** Gangline may not grow a component
-   whose job is watching, policing, or coordinating another Gangline component.
-   That loop is how a harness ends up spending most of its code on itself.
-8. **Fail loud.** No silent fallbacks, no degraded modes that pretend to be
-   healthy, no fabricated status. A regex that stops matching a new TUI version
-   must break the command, visibly.
-9. **Size is watched, not capped.** Growth must justify itself against the
-   mission: support long-running multi-agent sessions with minimal machinery.
-   When in doubt, the answer is prose in an agent's prompt, not code in this
-   repo.
+1. **Use universal surfaces.** Agents are tmux windows, messages are
+   keystrokes, observation is `capture-pane`, and `gang` is a CLI. No message
+   bus, database, or daemon.
+2. **Every message names its sender.** Gang reads the name from the sending
+   window. From the operator's shell, it takes the name given.
+3. **Delivered means verified.** A message is delivered only when the
+   harness's own submit hook reports it. Otherwise the send fails visibly.
+4. **Harness differences are data.** Each harness, such as Claude Code or
+   Codex, has one CUE file (its collar) that says how to launch it, hook it up,
+   and read its screen. `cmd/gang` has no harness-specific code.
+5. **Build only what's used.** Don't merge code that nothing calls yet.
+6. **Everything Gangline writes gets cleaned up.** Every file it creates has a
+   command that removes it.
+7. **Fail loud.** When something breaks, the command errors. No fallbacks, no
+   reporting a state Gangline didn't observe, and no code that works around
+   Gangline's own bugs.
+8. **Prefer prose to code.** If an agent's prompt can handle it, don't write
+   code for it.
+9. **Gang adds no waiting.** Gang's work for one agent never waits on its work
+   for another, a hook never holds up its harness, and nothing gets slower as
+   the team runs longer.
+10. **Smallest fix, with its cost.** Choose the least machinery that fixes the
+    root cause, and say what it costs per operation and how that grows.
+11. **Security choices stay with the operator.** Gang never answers a
+    harness's trust, login, or permission prompt, and a collar can't loosen a
+    sandbox or approval setting.
 
 ## Decisions
 
-These decisions record non-obvious tradeoffs that still shape Gangline 1.0.
+Choices whose reasons aren't obvious from the code. Where the code still uses
+the old team lock and log replay, it's being moved over to what's described
+here.
 
-### Append intent before external effects
+### Record intent before acting
 
-Every command appends its input event and snapshots the resulting state before
-it touches tmux or a native harness. The observed outcome is another event.
-After interruption, replay distinguishes known pre-input refusals from work
-whose outcome is unknown. A per-hitch file lock is claimed under the team lock before its delivery intent
-is published, and owns native input through the outcome append. Contention is
-recorded as a pre-input deferral before the team lock is released. Recovery skips a live owner; an absent owner with an unresolved
-delivery intent becomes unverified and is never typed again. The lock file is
-removed with the team state.
+Gang records what it's about to do before touching tmux or a harness, then
+records what happened. If it dies in between, the unfinished step is marked
+unknown and never retried, so a message is never typed twice.
 
-An effect is retried only while duplication is safe. A delivery or compaction whose input
-keystrokes landed without a matching native submit witness becomes
-`delivery_unverified` and is not sent again automatically.
+### Check what was submitted, not the screen
 
-### Verify submission through native hooks
+Text on screen only proves it was pasted. Gang checks that the harness's submit
+hook reports the exact message it sent, including its one-time ID. Anything
+missing or different counts as unknown, not delivered.
 
-Pane paint proves only that text appeared in a terminal. Delivery requires the
-native `UserPromptSubmit` hook to report the attributed, nonce-bearing envelope.
+### Only type into the harness
 
-The collar declares the comparison primitive. Codex uses exact prompt bytes.
-Claude Code may wrap bracketed paste bytes in a `pasted_content` element;
-Gangline accepts only a well-formed wrapper whose opening and closing IDs match,
-then compares the entire inner envelope byte-for-byte. Missing, malformed, or
-changed hook data remains unknown rather than success.
+Before typing, gang checks that the harness process is in the pane's
+foreground. A shell that just looks like a composer gets refused.
 
-The submit-witness FIFO reader is opened before Enter. Its first native readable
-event distinguishes an absent writer from a closed handoff; no auxiliary process
-or keepalive writer supplies readiness. Hook failures settle the pending send
-as unverified in the event log, which its input owner observes. Receipt transfer
-never holds the team transaction lock or dispatches another native input effect.
+### Kill only what the agent started
 
-The log records when delivery input starts. A concurrent native trust observation
-can block the pane but cannot requeue input after that point. Clearing trust
-does not make an unverified envelope safe to retry.
+Dropping an agent also kills the processes it started, including ones that
+detached. Gang records them before closing the pane and signals them through a
+kernel handle, never a bare PID, so a reused PID can't hit an unrelated
+process.
 
-### Bind terminal input to the foreground harness
+### Wait out permission prompts
 
-Before it sends any input, Gangline reads tmux's pane process and the host
-process table. The expected collar executable must be a descendant in the
-terminal's foreground process group. A shell or replacement program may paint
-a convincing composer, but it cannot receive Gangline input; the refusal is
-recorded as the effect's outcome.
+An agent showing a permission prompt is marked blocked, and messages queue
+until the prompt is gone.
 
-Process identity corroborates the native composer and hook evidence rather
-than replacing either. Keeping the process-tree query in `substrate` also keeps
-host and tmux details out of harness primitives and the command state machine.
+### Deliver as soon as it's sent
 
-### Reap only descendants recorded before pane termination
+Messages queue in the recipient's inbox and are typed as soon as the composer
+is free, mid-turn included. They wait as long as the recipient is alive;
+dropping it fails them.
 
-Before tmux removes a pane, Gangline binds descendant signals and exit
-observation to recorded native identities. Linux retains a pidfd validated
-through the same open `/proc/PID/stat` file around acquisition. Darwin records
-the native unique ID and PID version, registers exit observation before pane
-removal, and signals through the kernel audit-token primitive. Unsupported
-identity-bound APIs refuse before pane removal; there is no numeric-PID fallback.
+### Resume after provider errors
 
-The snapshot catches descendants that changed session or process group with
-`setsid`. Handles are released on snapshot, tmux, signal, and wait failures.
-A changed Darwin audit identity during teardown is an explicit incomplete result.
-A final native observation checks for surviving recorded identities after exit
-notification, which can precede process reaping. Executable names do not prove
-ownership and are excluded.
+A provider error can end a turn without a Stop hook. `gang tick` spots the
+error on screen and sends one continuation per error, backing off, until an
+operator-set budget runs out.
 
-### Put harness differences in CUE collars and Go primitives
+### Each agent has its own state
 
-The command layer has no branches on harness names. A collar declares launch
-arguments, hook payload mappings, primitive selections, actions, and context
-bands. Branching logic lives in a named Go primitive so it is testable and a
-third-party collar can select the same behavior.
+An agent's state, inbox, and events live in its own directory, and gang locks
+only the agent it's acting on.
 
-Operator collars pass through the same schema and loader as embedded collars.
-Unknown fields and primitive names fail before launch.
+### Show state in window names
 
-### Leave native choices with the native harness
+Window names show each agent's state: `?name?` changing, `~name~` idle,
+`-name-` working, `!name!` blocked or failed. A failed agent keeps its name
+until it's dropped, so it can't be mixed up with a replacement.
 
-Gangline recognizes trust, authentication, and permission surfaces but never
-answers them. A hitch that is not ready exits with status 4 and points the
-operator at the pane. This keeps security choices out of collars and preserves
-the harness's own interaction model.
+### Hooks append and exit
 
-Runtime permission and approval surfaces are recorded as `blocked`. The collar
-selects a screen primitive with separate prompt and choice rules, while a
-native permission hook supplies an earlier signal when available. Delivery
-stays queued until direct observation clears the surface; Gangline never types
-through it or chooses an answer.
-
-### Keep deferred delivery with its command or native boundary hook
-
-A harness can draw a permission dialog after its composer first looked ready.
-Startup delivery stays with `gang hitch`; queued sends and compaction
-continuations stay with the native asynchronous Stop or PostCompact hook that
-releases them. A synchronous boundary hook cannot wait for submission: the
-native dispatcher must first return from that hook to accept the next prompt.
-
-All three paths share exponential backoff, but a live recipient's send has no
-expiry. An agent may work for hours. Its message stays pending until verified
-native acceptance or recipient drop, which fails pending sends with a visible
-reason. An old recorded delivery deadline does not expire pending work after
-upgrade. Startup readiness still has a deadline when no native process answers.
-
-The requesting command or native hook owns retry attempts; no resident watcher
-is introduced. A native harness may impose its own hook-process lifetime, but
-ending that process does not expire durable queued work. Later boundaries or an
-explicit recovery command can retry known pre-input refusals. Attempts require
-a recognized empty composer. Capable collars can accept mid-turn input; other
-collars also require the busy marker to be absent.
-
-After submission, the owner waits for the native witness while the recipient
-remains live. Periodic liveness checks detect disappearance or drop, not elapsed
-message age. Native input errors, mismatched witnesses, and an abandoned input
-owner remain unknown and are never automatically retyped. Composer paint and
-non-answering startup keep their diagnostic bounds.
-
-New compaction completion events carry their continuation so one append records
-both facts. Legacy completion events retain their previous replay semantics.
-Compaction claims the same input lock as delivery; recorded Enter is distinct
-from native completion, and recovery never retypes an unresolved command.
-
-Compaction completion releases the continuation without requiring a later Stop.
-Interruption records idle only after direct native observation confirms it,
-then releases queued work. Sending Escape alone does not prove interruption.
-
-### Bound provider-capacity recovery separately from user sends
-
-A terminal provider error can omit the native Stop hook. An explicit `gang tick`
-owns observation and exponential continuation retries within an operator-set
-recovery budget. The collar must prove an idle composer and the terminal error
-following the latest visible prompt; historical errors and active native retry
-are not boundaries. A recorded fingerprint and nonce-bearing continuation
-prevent repeated observations from creating duplicate input or resetting the
-budget. Successful native activity ends the episode. No resident watcher is
-introduced, and expiry leaves ordinary queued messages intact.
-
-### Keep the event log authoritative
-
-The per-team JSONL log is the source of truth. Snapshots carry the event count,
-log byte length, and digest needed to validate that they describe the same log;
-changed event bytes are refused. State is replayed with the current binary even
-when the snapshot's prefix matches: an upgrade can change reducer semantics
-without changing event bytes. This costs a full replay per load, but prevents a
-prior binary's cached interpretation from stranding the next operation after
-its intent has been appended.
-
-`gang down` is the deletion path: after active hitches stop, it removes the
-team directory. Evidence that must outlive teardown is copied before that
-command.
-
-`gang wait` registers a native file notification on that log, then rechecks its
-length to close the registration race. It folds each append until the target is
-idle or the caller's deadline expires. A timeout is itself appended as an event;
-waiting never polls or changes the target hitch's activity.
-
-### Project recorded state into tmux window names
-
-Managed tmux window names carry a compact projection of the event-log state:
-question marks mean a lifecycle transition, tildes idle, hyphens working, and
-exclamation marks blocked, wedged, or failed. The projection changes after the
-event is recorded and `gang tick` reconciles drift, so a tmux rename never
-becomes a second source of truth.
-
-A failed hitch continues to occupy its agent name until an explicit drop. This
-prevents an old generation and its pane from becoming indistinguishable from a
-replacement, while preserving `gang drop` as the deletion path.
-
-### Keep the mandatory gate immediate
-
-Unit tests use supplied times and direct state. Black-box scenarios use private
-tmux sockets and event barriers. The local gate has a hard ceiling below two
-minutes and never exercises the operator's live team.
-
-`gang wait` observes complete newline-terminated log records without acquiring
-the snapshot writer's lock. An append notification can precede lock release;
-that contention is not a failed wait. An unfinished record cannot establish
-idle, and malformed completed records still fail loudly.
-
-### Admit steering through native input
-
-A collar's `mid_turn` capability declares that normal submission enters the
-running turn. Each send records that capability for replay; old events retain
-their idle-only behavior. The reducer keeps a running turn's activity separate
-from its in-flight delivery, serializes input, and preserves intervening Stop
-facts. A failed or deferred steer cannot manufacture an idle boundary.
-
-A mid-turn send settles only the composer, since output and busy indicators may
-continue to animate. Delivery requires the same native byte-matching submission
-witness as an idle send. A mismatch or absent witness remains unverified and is
-not retried. Mid-turn acceptance does not claim the agent has read or acted on
-the message. Native submission arguments and witness rules belong to collars.
-
-The sender owns retries of a safely deferred mid-turn send and can remain in the
-command until native acceptance or recipient drop. Unsupported collars return
-their spool receipt immediately; scheduled sends retain their schedule. Harness
-tool cancellation does not erase the durable queue. Operators can inspect the
-queue and event log independently of the requesting command.
-
-### Record one-shot native hooks without losing contention
-
-Runtime commands and native hooks wait in the kernel for the short event-log
-transaction lock. A sender must also wait when a hook records its outcome
-after publishing the native receipt; contention cannot discard that sender's
-delivery outcome. The lock is
-released before any native input or effects, so a submit hook never waits on
-an owner holding that lock while awaiting its receipt. The harness owns the
-hook process lifetime; no polling loop or background retry worker is added.
-
-Each invocation appends a `native_hook` receipt and its completed, ignored, or
-failed outcome, paired by invocation ID. These observations do not infer a
-turn transition. Late hooks from a dropped recipient are recorded as ignored;
-normal activity hooks record evidence without scanning unrelated panes. Actual
-decode, state, and I/O errors remain visible to the harness and are recorded
-with their reason. The diagnostic append does not require successful replay,
-so a state-load failure can still leave evidence. If storage itself is
-unwritable, stderr reports that recording failure rather than claiming it was
-logged. Hook records share the team event log's deletion path.
-
-
-### Normalize native evidence without a watcher
-
-The team log carries normalized native readings alongside Gangline lifecycle
-facts. A native reading does not drive the reducer: an error is not necessarily
-a turn end, and an automatic compaction cannot complete an unrelated requested
-compaction. Multiple sources may witness one event, so aggregation keeps source
-identity rather than treating every receipt as a distinct turn.
-
-Native hooks cannot supply all context, limits, or automatic lifecycle evidence.
-Claude's status-line JSON and Codex's session log are the native sources selected
-by collar primitives. Universal terminal capture cannot recover their timestamps,
-exact token usage, or events that have scrolled away. Collection stays with hooks
-and explicit commands. No resident observer or harness telemetry exporter is
-introduced. Native session metadata binds transcript evidence to a hitch; its
-complete-record cursor and observations are appended together under the team
-lock, avoiding lost or duplicated records after interruption. Latest-reading
-files are disposable projections and share the team log's deletion path.
-
-Boundary snapshots preserve source timestamps and unknowns. Claude status-line
-payloads carry no timestamp, so post-compaction freshness requires corroborating
-native assistant usage; delayed callbacks cannot restore stale context. A native
-parser error is recorded and returned after valid hook lifecycle work proceeds,
-so diagnostic failure does not suppress delivery evidence or queued continuation.
-
-The installed binary supplies the status-line renderer. Installation repairs only
-an absent setting or the retired Gangline script, while collar launch settings
-bind managed hitches to the actual binary used at launch. The optional tmux widget
-uses session options and restores their previous value or inheritance; user-global
-configuration remains outside its ownership.
+A hook appends one line to its agent's event file and exits, without taking a
+lock.
