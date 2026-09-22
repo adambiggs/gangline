@@ -56,6 +56,7 @@ package harness
 	})
 	primitives: close({
  telemetry?: #Invocation
+		capacity?: #Invocation
 		mid_turn?: bool
 		startup:       [...#Invocation] & [_, ...]
 		composer:      #Invocation

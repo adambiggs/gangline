@@ -84,22 +84,37 @@ func (run *runtime) appendEvent(event core.Event, held map[core.HitchID]*os.File
 	next, effects = core.Step(state, event)
 	var ready []core.Effect
 	var deferred []core.Event
-	for _, effect := range effects {
-		if delivery, ok := effect.(core.DeliverEnvelope); ok {
-			hitch, found := activeByName(next, string(delivery.Envelope.To))
+	for index := 0; index < len(effects); index++ {
+		effect := effects[index]
+		var hitchID core.HitchID
+		var refusal core.Event
+		switch effect := effect.(type) {
+		case core.DeliverEnvelope:
+			hitch, found := activeByName(next, string(effect.Envelope.To))
 			if !found {
 				return core.State{}, core.State{}, nil, fmt.Errorf("delivery recipient disappeared before input ownership")
 			}
-			if held[hitch.ID] == nil {
-				owner, lockErr := run.paths().LockInput(run.settings.Session, string(hitch.ID))
+			hitchID = hitch.ID
+			refusal = core.DeliveryDeferred{At: time.Now(), EnvelopeID: effect.Envelope.ID, Reason: "another command still owns native input"}
+		case core.CompactHitch:
+			hitchID = effect.Compaction.HitchID
+			refusal = core.CompactionFailedEvent{At: time.Now(), CompactionID: effect.Compaction.ID, Reason: "another command still owns native input; compaction was not typed"}
+		case core.AwaitBoot, core.InterruptHitch, core.KillHitch, core.RecordEvent, core.SpawnHitch:
+		}
+		if hitchID != "" {
+			if held[hitchID] == nil {
+				owner, lockErr := run.paths().LockInput(run.settings.Session, string(hitchID))
 				if errors.Is(lockErr, store.ErrLocked) {
-					deferred = append(deferred, core.DeliveryDeferred{At: time.Now(), EnvelopeID: delivery.Envelope.ID, Reason: "another command still owns native input"})
+					deferred = append(deferred, refusal)
+					var released []core.Effect
+					next, released = core.Step(next, refusal)
+					effects = append(effects, released...)
 					continue
 				}
 				if lockErr != nil {
 					return core.State{}, core.State{}, nil, lockErr
 				}
-				held[hitch.ID] = owner
+				held[hitchID] = owner
 			}
 		}
 		ready = append(ready, effect)
@@ -111,7 +126,6 @@ func (run *runtime) appendEvent(event core.Event, held map[core.HitchID]*os.File
 		if err := locked.Append(refusal); err != nil {
 			return core.State{}, core.State{}, nil, err
 		}
-		next, _ = core.Step(next, refusal)
 	}
 	effects = ready
 	if err := locked.SaveSnapshot(next); err != nil {

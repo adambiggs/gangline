@@ -4,6 +4,14 @@ import "fmt"
 
 func EventName(event Event) string {
 	switch event.(type) {
+	case CapacityDetected:
+		return "capacity_detected"
+	case CapacityRetryRequested:
+		return "capacity_retry_requested"
+	case CapacityExpired:
+		return "capacity_expired"
+	case CapacityCleared:
+		return "capacity_cleared"
 	case HitchRequested:
 		return "hitch_requested"
 	case AdoptRequested:
@@ -30,6 +38,8 @@ func EventName(event Event) string {
 		return "timed_delivery_released"
 	case TimedDeliveriesCleared:
 		return "timed_deliveries_cleared"
+	case DeliveryInputStarted:
+		return "delivery_input_started"
 	case DeliverySucceeded:
 		return "delivery_succeeded"
 	case DeliveryRetryRequested:
@@ -44,6 +54,10 @@ func EventName(event Event) string {
 		return "compaction_requested"
 	case CompactionCompleted:
 		return "compaction_completed"
+	case CompactionSubmitted:
+		return "compaction_submitted"
+	case CompactionUnverifiedEvent:
+		return "compaction_unverified"
 	case CompactionFailedEvent:
 		return "compaction_failed"
 	case InterruptRequested:

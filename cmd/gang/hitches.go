@@ -86,6 +86,9 @@ func (cmd command) hitch(arguments []string) error {
 		return err
 	}
 	hitchID := core.HitchID(hitchRaw)
+	if _, err := renderEnvelope("self-declared:hitch", envelopeRaw, "assignment", startup); err != nil {
+		return err
+	}
 	record := startupRecord{
 		Model: options.Model, Effort: options.Effort, Resume: options.Resume,
 		RolePrompt: composeStartup(options.Name, brief, ""),
@@ -130,6 +133,9 @@ func (cmd command) hitch(arguments []string) error {
 			_, err = fmt.Fprintf(cmd.stdout, "%s\t%s\n", options.Name, hitch.Pane)
 			return err
 		case core.DeliveryUnverified:
+			if hitch.Activity == core.ActivityBlocked {
+				return commandError{status: exitNative, text: "native prompt needs attention; startup input remains unverified: " + delivery.Reason}
+			}
 			return commandError{status: exitUnknown, text: "startup assignment may have landed but could not be verified: " + delivery.Reason}
 		case core.DeliveryFailed:
 			return commandError{status: exitNative, text: fmt.Sprintf("%s launched in %s but its startup assignment was not delivered: %s", options.Name, hitch.Pane, delivery.Reason)}

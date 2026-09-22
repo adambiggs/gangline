@@ -63,7 +63,7 @@ recorded as a pre-input deferral before the team lock is released. Recovery skip
 delivery intent becomes unverified and is never typed again. The lock file is
 removed with the team state.
 
-An effect is retried only while duplication is safe. A delivery whose input
+An effect is retried only while duplication is safe. A delivery or compaction whose input
 keystrokes landed without a matching native submit witness becomes
 `delivery_unverified` and is not sent again automatically.
 
@@ -77,6 +77,16 @@ Claude Code may wrap bracketed paste bytes in a `pasted_content` element;
 Gangline accepts only a well-formed wrapper whose opening and closing IDs match,
 then compares the entire inner envelope byte-for-byte. Missing, malformed, or
 changed hook data remains unknown rather than success.
+
+The submit-witness FIFO reader is opened before Enter. Its first native readable
+event distinguishes an absent writer from a closed handoff; no auxiliary process
+or keepalive writer supplies readiness. Hook failures settle the pending send
+as unverified in the event log, which its input owner observes. Receipt transfer
+never holds the team transaction lock or dispatches another native input effect.
+
+The log records when delivery input starts. A concurrent native trust observation
+can block the pane but cannot requeue input after that point. Clearing trust
+does not make an unverified envelope safe to retry.
 
 ### Bind terminal input to the foreground harness
 
@@ -92,15 +102,19 @@ host and tmux details out of harness primitives and the command state machine.
 
 ### Reap only descendants recorded before pane termination
 
-Before tmux removes a pane, Gangline records every descendant using its PID and
-start time. After pane termination it signals only matching survivors, first
-with `SIGTERM` and then, when direct observation still finds them, `SIGKILL`.
-A final process-table observation must find none of those identities.
+Before tmux removes a pane, Gangline binds descendant signals and exit
+observation to recorded native identities. Linux retains a pidfd validated
+through the same open `/proc/PID/stat` file around acquisition. Darwin records
+the native unique ID and PID version, registers exit observation before pane
+removal, and signals through the kernel audit-token primitive. Unsupported
+identity-bound APIs refuse before pane removal; there is no numeric-PID fallback.
 
 The snapshot catches descendants that changed session or process group with
-`setsid`, while the start time prevents a reused PID from inheriting ownership.
-Executable names are deliberately excluded: they neither prove ownership nor
-remain stable across wrapper scripts and re-exec.
+`setsid`. Handles are released on snapshot, tmux, signal, and wait failures.
+A changed Darwin audit identity during teardown is an explicit incomplete result.
+A final native observation checks for surviving recorded identities after exit
+notification, which can precede process reaping. Executable names do not prove
+ownership and are excluded.
 
 ### Put harness differences in CUE collars and Go primitives
 
@@ -152,9 +166,25 @@ message age. Native input errors, mismatched witnesses, and an abandoned input
 owner remain unknown and are never automatically retyped. Composer paint and
 non-answering startup keep their diagnostic bounds.
 
+New compaction completion events carry their continuation so one append records
+both facts. Legacy completion events retain their previous replay semantics.
+Compaction claims the same input lock as delivery; recorded Enter is distinct
+from native completion, and recovery never retypes an unresolved command.
+
 Compaction completion releases the continuation without requiring a later Stop.
 Interruption records idle only after direct native observation confirms it,
 then releases queued work. Sending Escape alone does not prove interruption.
+
+### Bound provider-capacity recovery separately from user sends
+
+A terminal provider error can omit the native Stop hook. An explicit `gang tick`
+owns observation and exponential continuation retries within an operator-set
+recovery budget. The collar must prove an idle composer and the terminal error
+following the latest visible prompt; historical errors and active native retry
+are not boundaries. A recorded fingerprint and nonce-bearing continuation
+prevent repeated observations from creating duplicate input or resetting the
+budget. Successful native activity ends the episode. No resident watcher is
+introduced, and expiry leaves ordinary queued messages intact.
 
 ### Keep the event log authoritative
 

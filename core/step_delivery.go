@@ -69,6 +69,16 @@ func stepTimedDeliveriesCleared(state State, event TimedDeliveriesCleared) (Stat
 	return state, nil
 }
 
+func stepDeliveryInputStarted(state State, event DeliveryInputStarted) (State, []Effect) {
+	delivery, _, ok := activeDelivery(state, event.EnvelopeID)
+	if !ok || delivery.InputStarted {
+		return rejected(state, event, event.At, "delivery input cannot start")
+	}
+	delivery.InputStarted = true
+	state.Deliveries[event.EnvelopeID] = delivery
+	return state, nil
+}
+
 func stepDeliverySucceeded(state State, event DeliverySucceeded) (State, []Effect) {
 	delivery, hitch, ok := activeDelivery(state, event.EnvelopeID)
 	if !ok {
@@ -76,7 +86,9 @@ func stepDeliverySucceeded(state State, event DeliverySucceeded) (State, []Effec
 	}
 	delivery.Status = DeliveryDelivered
 	state.Deliveries[event.EnvelopeID] = delivery
-	if !delivery.DuringTurn {
+	if hitch.Activity == ActivityBlocked {
+		hitch.BlockedFrom = ActivityBusy
+	} else if !delivery.DuringTurn {
 		hitch.Activity = ActivityBusy
 	}
 	state.Hitches[hitch.ID] = hitch
@@ -141,7 +153,15 @@ func stepDeliveryUnverified(state State, event DeliveryUnverifiedEvent) (State, 
 	delivery.Status = DeliveryUnverified
 	delivery.Reason = event.Evidence
 	state.Deliveries[event.EnvelopeID] = delivery
-	hitch.Activity = ActivityWedged
+	if event.BlockedEvidence != "" || hitch.Activity == ActivityBlocked {
+		hitch.Activity = ActivityBlocked
+		hitch.BlockedFrom = ActivityWedged
+		if event.BlockedEvidence != "" {
+			hitch.BlockedEvidence = event.BlockedEvidence
+		}
+	} else {
+		hitch.Activity = ActivityWedged
+	}
 	hitch.WedgeEvidence = event.Evidence
 	state.Hitches[hitch.ID] = hitch
 	return state, nil
@@ -162,7 +182,7 @@ func dispatchNext(state State, hitchID HitchID) (State, []Effect) {
 	}
 	for _, id := range state.DeliveryOrder {
 		delivery := state.Deliveries[id]
-		if delivery.Status != DeliveryQueued || delivery.Envelope.To != hitch.Name || !delivery.NotBefore.IsZero() {
+		if delivery.Status != DeliveryQueued || delivery.Envelope.To != hitch.Name || !delivery.NotBefore.IsZero() || delivery.CapacityRecovery {
 			continue
 		}
 		if hitch.Activity == ActivityBusy && !delivery.MidTurn {
@@ -220,7 +240,7 @@ func activeDelivery(state State, id EnvelopeID) (Delivery, Hitch, bool) {
 		return Delivery{}, Hitch{}, false
 	}
 	hitch, ok := activeHitchByName(state, delivery.Envelope.To)
-	if !ok || (!delivery.DuringTurn && hitch.Activity != ActivityDelivering) {
+	if !ok || (!delivery.DuringTurn && hitch.Activity != ActivityDelivering && !(delivery.InputStarted && hitch.Activity == ActivityBlocked)) {
 		return Delivery{}, Hitch{}, false
 	}
 	return delivery, hitch, true

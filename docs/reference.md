@@ -62,7 +62,14 @@ Inside an active Gangline pane, `send` derives the sender from the pane and
 refuses an overriding `--from`. Outside the team, `--from` is required and the
 wire envelope marks it `self-declared:`.
 
-`--live-only` refuses unless the recipient is recorded idle. `--supersede`
+The maximum message size is 1 MiB for the JSON-encoded rendered envelope,
+including attribution and escaping. Refusal is on stderr and directs the sender
+to put details in a state file and send its path; input is never split or
+truncated. Native hook objects have a separate 2 MiB budget for the prompt,
+paste wrapper, and metadata. A failed or oversized pending hook receipt leaves
+the delivery unverified instead of waiting indefinitely.
+
+`--live-only` requires recorded idle or a busy recipient with mid-turn support. `--supersede`
 clears older timed work for that recipient before sending. `--at` accepts a
 duration such as `45m` or a local `HH:MM` time.
 
@@ -181,6 +188,12 @@ submission is verified, while the recipient remains busy. Collars without this
 capability keep sends queued until idle. The sending command waits through deferred native submissions until acceptance
 or recipient drop; `gang tick` never retypes an abandoned in-flight
 submission whose outcome is unknown.
+
+`GANG_CAPACITY_TIMEOUT` is a positive duration (default `5m`) accepted in the
+operator configuration and environment. It bounds provider-capacity recovery
+owned by `gang tick`, using exponential delays from `100ms` to `30s`. It does
+not set a user-message expiry. The collar's optional `capacity` primitive
+recognizes terminal provider failures; native busy/retry surfaces remain busy.
 
 `GANG_DELIVERY_TIMEOUT` is no longer accepted: live sends do not have an expiry
 setting. Existing pending events can contain older deadlines; those timestamps

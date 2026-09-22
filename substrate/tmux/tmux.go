@@ -3,6 +3,7 @@ package tmux
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"os"
 	"os/exec"
@@ -223,7 +224,7 @@ func (backend *Backend) Capture(ctx context.Context, pane substrate.PaneID) (sub
 	return screen, nil
 }
 
-func (backend *Backend) Kill(ctx context.Context, pane substrate.PaneID) error {
+func (backend *Backend) Kill(ctx context.Context, pane substrate.PaneID) (result error) {
 	if err := validPaneID(pane); err != nil {
 		return err
 	}
@@ -231,6 +232,7 @@ func (backend *Backend) Kill(ctx context.Context, pane substrate.PaneID) error {
 	if err != nil {
 		return fmt.Errorf("record pane descendants: %w", err)
 	}
+	defer func() { result = errors.Join(result, closeOwnedProcesses(owned)) }()
 	output, err := backend.run(ctx, "kill-window", "-t", string(pane))
 	if err != nil {
 		return tmuxError("kill pane", err, output)

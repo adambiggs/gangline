@@ -42,3 +42,15 @@ func blockedPattern(invocation Invocation, name string) (*regexp.Regexp, error) 
 	}
 	return pattern, nil
 }
+
+// InputBlocked includes launch trust that can appear after the first composer.
+func InputBlocked(collar Collar, screen substrate.Screen) (Blocked, bool, error) {
+	startup, err := InspectStartup(collar, screen)
+	if err != nil {
+		return Blocked{}, false, err
+	}
+	if startup.State == StartupTrustRequired {
+		return Blocked{Evidence: startup.Prompt}, true, nil
+	}
+	return DetectBlocked(collar.Primitives.Blocked, screen)
+}

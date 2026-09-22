@@ -11,7 +11,9 @@ not label a message with a sender that Gangline did not supply. An envelope
 whose sender reads `self-declared:<name>` carries a name Gangline did not
 observe, so treat that sender as unverified.
 
-Messages are pushed to you at a turn boundary, so never poll for them.
+Messages are pushed through native input, including during a running turn when
+your collar supports it. Never poll for messages. Native acceptance confirms
+submission; it does not mean you have read or acted on the message.
 
 A message whose envelope reads `assignment` is the work you were hitched for:
 begin it in the turn that reads it, and your completion report is its reply.

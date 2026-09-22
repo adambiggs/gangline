@@ -6,10 +6,8 @@ import (
 	"fmt"
 	"github.com/adambiggs/gangline/store"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"strings"
-	"syscall"
 	"time"
 
 	"github.com/adambiggs/gangline/core"
@@ -28,6 +26,11 @@ func (run *runtime) deliver(state core.State, backend interface {
 	SendKeys(context.Context, substrate.PaneID, substrate.Keys) error
 }, effect core.DeliverEnvelope) (core.Event, error) {
 	now := time.Now()
+	budget, err := capacitySubmissionBudget(state, effect.Envelope.ID, now)
+	if err != nil {
+		return core.DeliveryFailedEvent{At: now, EnvelopeID: effect.Envelope.ID, Reason: err.Error()}, nil
+	}
+
 	var hitch core.Hitch
 	for _, candidate := range state.Hitches {
 		if candidate.Name == effect.Envelope.To && candidate.Status == core.HitchActive {
@@ -43,7 +46,7 @@ func (run *runtime) deliver(state core.State, backend interface {
 	if err != nil {
 		return core.DeliveryDeferred{At: now, EnvelopeID: effect.Envelope.ID, Reason: err.Error()}, nil
 	}
-	blocked, found, err := harness.DetectBlocked(collar.Primitives.Blocked, screen)
+	blocked, found, err := harness.InputBlocked(collar, screen)
 	if err != nil {
 		return core.DeliveryFailedEvent{At: now, EnvelopeID: effect.Envelope.ID, Reason: err.Error()}, nil
 	}
@@ -85,6 +88,13 @@ func (run *runtime) deliver(state core.State, backend interface {
 	if err := requireHarnessForeground(context.Background(), backend, substrate.PaneID(effect.Pane), collar); err != nil {
 		return core.DeliveryDeferred{At: time.Now(), EnvelopeID: effect.Envelope.ID, Reason: err.Error()}, nil
 	}
+	state, err = run.drive(core.DeliveryInputStarted{At: time.Now(), EnvelopeID: effect.Envelope.ID})
+	if err != nil {
+		return nil, err
+	}
+	if delivery := state.Deliveries[effect.Envelope.ID]; delivery.Status != core.DeliveryDelivering || !delivery.InputStarted {
+		return core.DeliveryDeferred{At: time.Now(), EnvelopeID: effect.Envelope.ID, Reason: "native input ownership changed before paste"}, nil
+	}
 	if err := backend.SendKeys(context.Background(), substrate.PaneID(effect.Pane), input); err != nil {
 		return core.DeliveryUnverifiedEvent{At: time.Now(), EnvelopeID: effect.Envelope.ID, Evidence: "text input returned an error: " + err.Error()}, nil
 	}
@@ -92,44 +102,62 @@ func (run *runtime) deliver(state core.State, backend interface {
 	if err != nil {
 		return core.DeliveryUnverifiedEvent{At: time.Now(), EnvelopeID: effect.Envelope.ID, Evidence: err.Error()}, nil
 	}
-	settleCtx, stopSettling := context.WithTimeout(context.Background(), deliveryTimeout)
+	settleCtx, stopSettling := context.WithTimeout(context.Background(), budget)
 	defer stopSettling()
+	captureForInput := func(ctx context.Context, pane substrate.PaneID) (substrate.Screen, error) {
+		current, err := backend.Capture(ctx, pane)
+		if err != nil {
+			return substrate.Screen{}, err
+		}
+		blocked, found, err := harness.InputBlocked(collar, current)
+		if err != nil {
+			return substrate.Screen{}, err
+		}
+		if found {
+			return substrate.Screen{}, nativeInputBlocked{evidence: blocked.Evidence}
+		}
+		return current, nil
+	}
+	unverified := func(err error) core.Event {
+		result := core.DeliveryUnverifiedEvent{At: time.Now(), EnvelopeID: effect.Envelope.ID, Evidence: err.Error()}
+		var blocked nativeInputBlocked
+		if errors.As(err, &blocked) {
+			result.BlockedEvidence = blocked.evidence
+		}
+		return result
+	}
 	var settleErr error
 	if midTurn {
-		settleErr = harness.AwaitComposerSettle(settleCtx, backend.Capture, substrate.PaneID(effect.Pane), collar, settle)
+		settleErr = harness.AwaitComposerSettle(settleCtx, captureForInput, substrate.PaneID(effect.Pane), collar, settle)
 	} else {
-		settleErr = harness.AwaitScreenSettle(settleCtx, backend.Capture, substrate.PaneID(effect.Pane), screen, settle)
+		settleErr = harness.AwaitScreenSettle(settleCtx, captureForInput, substrate.PaneID(effect.Pane), screen, settle)
 	}
-	if err := settleErr; err != nil {
-		return core.DeliveryUnverifiedEvent{At: time.Now(), EnvelopeID: effect.Envelope.ID, Evidence: err.Error()}, nil
+	if settleErr != nil {
+		return unverified(settleErr), nil
 	}
-	// Recapture supplies diagnostic evidence when the native renderer is fast
-	// enough. The exact UserPromptSubmit payload below is authoritative: long
-	// composers can be clipped and a TUI may still be painting immediately
-	// after tmux accepted the literal bytes.
-	if readback, captureErr := backend.Capture(context.Background(), substrate.PaneID(effect.Pane)); captureErr == nil {
-		_, _ = harness.ReadComposer(collar.Primitives.Composer, readback)
+	// Native trust can take input after the composer appeared. This observation
+	// is a submission guard; a raced surface after it remains unknown.
+	if _, err := captureForInput(context.Background(), substrate.PaneID(effect.Pane)); err != nil {
+		return unverified(err), nil
 	}
+
 	witness := run.deliveryWitnessPath(hitch.ID)
-	_ = os.Remove(witness)
-	if err := syscall.Mkfifo(witness, 0o600); err != nil {
+	reader, witnessed, err := openNativeWitness(witness)
+	if err != nil {
 		return core.DeliveryUnverifiedEvent{At: time.Now(), EnvelopeID: effect.Envelope.ID, Evidence: "prepare native submit witness: " + err.Error()}, nil
 	}
 	defer os.Remove(witness)
-	ctx, cancel := context.WithCancel(context.Background())
-	defer cancel()
-	reader := exec.CommandContext(ctx, "cat", witness)
-	witnessed := make(chan nativeWitnessResult, 1)
-	go func() {
-		data, readErr := reader.Output()
-		witnessed <- nativeWitnessResult{data: data, err: readErr}
-	}()
+	defer reader.Close()
 	if err := sendHarnessKeys(context.Background(), backend, substrate.PaneID(effect.Pane), collar, substrate.Keys{Submit: true}); err != nil {
 		return core.DeliveryUnverifiedEvent{At: time.Now(), EnvelopeID: effect.Envelope.ID, Evidence: "submit returned an error after verified text input: " + err.Error()}, nil
 	}
-	checkpoints := time.NewTicker(deliveryTimeout)
+	checkpoints := time.NewTicker(budget)
 	defer checkpoints.Stop()
 	result, waitErr := awaitNativeWitness(witnessed, checkpoints.C, func() error {
+		if _, err := capacitySubmissionBudget(state, effect.Envelope.ID, time.Now()); err != nil {
+			return err
+		}
+
 		paths, pathErr := run.paths().Team(run.settings.Session)
 		if pathErr != nil {
 			return pathErr
@@ -142,11 +170,17 @@ func (run *runtime) deliver(state core.State, backend interface {
 			return nil
 		}
 		delivery := current.Deliveries[effect.Envelope.ID]
+		if delivery.Status == core.DeliveryUnverified {
+			return fmt.Errorf("native submission is unverified: %s", delivery.Reason)
+		}
 		if delivery.Status == core.DeliveryFailed || delivery.Status == core.DeliveryCancelled {
 			return refuseError("delivery failed: %s", delivery.Reason)
 		}
 		if current.Hitches[hitch.ID].Status == core.HitchDropping {
 			return nil
+		}
+		if _, err := captureForInput(context.Background(), substrate.PaneID(effect.Pane)); err != nil {
+			return err
 		}
 		if err := requireHarnessForeground(context.Background(), backend, substrate.PaneID(effect.Pane), collar); err != nil {
 			return fmt.Errorf("native process no longer answers for the pending submission: %w", err)
@@ -158,7 +192,7 @@ func (run *runtime) deliver(state core.State, backend interface {
 		if errors.As(waitErr, &commandErr) {
 			return nil, waitErr
 		}
-		return core.DeliveryUnverifiedEvent{At: time.Now(), EnvelopeID: effect.Envelope.ID, Evidence: waitErr.Error()}, nil
+		return unverified(waitErr), nil
 	}
 	if result.err != nil {
 		return core.DeliveryUnverifiedEvent{At: time.Now(), EnvelopeID: effect.Envelope.ID, Evidence: "native submit witness failed: " + result.err.Error()}, nil
@@ -221,4 +255,10 @@ func awaitNativeWitness(witnessed <-chan nativeWitnessResult, checkpoints <-chan
 			}
 		}
 	}
+}
+
+type nativeInputBlocked struct{ evidence string }
+
+func (e nativeInputBlocked) Error() string {
+	return "native input needs attention after paste: " + e.evidence
 }

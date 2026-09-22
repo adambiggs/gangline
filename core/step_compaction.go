@@ -28,10 +28,44 @@ func stepCompactionCompleted(state State, event CompactionCompleted) (State, []E
 	if !ok {
 		return rejected(state, event, event.At, "compaction is not in progress")
 	}
+	if envelope := event.Continuation; envelope != nil {
+		_, exists := state.Deliveries[envelope.ID]
+		if exists || envelope.ID == "" || envelope.To != hitch.Name || envelope.Message != compact.Resume ||
+			envelope.From != (Sender{Kind: SenderSelfDeclared, Name: "compact"}) || event.At.IsZero() {
+			return rejected(state, event, event.At, "compaction continuation does not match its request")
+		}
+	}
 	compact.Status = CompactionSucceeded
 	state.Compactions[compact.ID] = compact
 	hitch.PendingCompactID = ""
 	hitch.Activity = ActivityIdle
+	state.Hitches[hitch.ID] = hitch
+	if event.Continuation != nil {
+		return stepSendRequested(state, SendRequested{At: event.At, Envelope: *event.Continuation})
+	}
+	return state, nil
+}
+
+func stepCompactionSubmitted(state State, event CompactionSubmitted) (State, []Effect) {
+	compact, _, ok := activeCompaction(state, event.CompactionID)
+	if !ok {
+		// A fast completion hook may already have settled the compaction.
+		return state, nil
+	}
+	compact.Submitted = true
+	state.Compactions[compact.ID] = compact
+	return state, nil
+}
+
+func stepCompactionUnverified(state State, event CompactionUnverifiedEvent) (State, []Effect) {
+	compact, hitch, ok := activeCompaction(state, event.CompactionID)
+	if !ok || event.Evidence == "" {
+		return rejected(state, event, event.At, "compaction is not in progress or evidence is empty")
+	}
+	compact.Status, compact.Reason = CompactionUnverified, event.Evidence
+	state.Compactions[compact.ID] = compact
+	hitch.PendingCompactID = ""
+	hitch.Activity, hitch.WedgeEvidence = ActivityWedged, event.Evidence
 	state.Hitches[hitch.ID] = hitch
 	return state, nil
 }

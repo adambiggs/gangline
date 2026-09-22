@@ -27,6 +27,10 @@ func (run *runtime) recover() (core.State, error) {
 	if err != nil {
 		return core.State{}, err
 	}
+	state, err = run.refreshCapacity(state, time.Now())
+	if err != nil {
+		return core.State{}, err
+	}
 	for _, id := range core.DueTimedDeliveries(state, time.Now()) {
 		state, err = run.drive(core.TimedDeliveryReleased{At: time.Now(), EnvelopeID: id})
 		if err != nil {
@@ -39,6 +43,13 @@ func (run *runtime) recover() (core.State, error) {
 	}
 	effects := core.PendingEffects(state)
 	for _, effect := range effects {
+		if compact, ok := effect.(core.CompactHitch); ok {
+			state, err = run.recoverCompaction(compact)
+			if err != nil {
+				return core.State{}, err
+			}
+			continue
+		}
 		if delivery, ok := effect.(core.DeliverEnvelope); ok {
 			state, err = run.recoverDelivery(delivery)
 			if err != nil {
@@ -60,6 +71,38 @@ func (run *runtime) recover() (core.State, error) {
 	return state, nil
 }
 
+// A recorded compact intent never authorizes recovery to type the command
+// again. A live owner finishes input; submitted commands await PostCompact.
+func (run *runtime) recoverCompaction(effect core.CompactHitch) (core.State, error) {
+	state, err := run.load()
+	if err != nil {
+		return core.State{}, err
+	}
+	owner, err := run.paths().LockInput(run.settings.Session, string(effect.Compaction.HitchID))
+	if errors.Is(err, store.ErrLocked) {
+		return state, nil
+	}
+	if err != nil {
+		return core.State{}, err
+	}
+	defer owner.Close()
+	state, err = run.load()
+	if err != nil {
+		return core.State{}, err
+	}
+	compact := state.Compactions[effect.Compaction.ID]
+	if compact.Status != core.CompactionRunning {
+		return state, nil
+	}
+	if !compact.Submitted {
+		return run.drive(core.CompactionUnverifiedEvent{At: time.Now(), CompactionID: compact.ID, Evidence: "compaction owner exited before recording its native input outcome"})
+	}
+	if !time.Now().Before(compact.Deadline) {
+		return run.drive(core.OperationTimedOut{At: time.Now(), Operation: core.TimeoutCompaction, ID: string(compact.ID), Deadline: compact.Deadline, Evidence: "compaction deadline elapsed without a native completion witness"})
+	}
+	return state, nil
+}
+
 func (run *runtime) refreshBlocked(state core.State) (core.State, error) {
 	backend, err := run.cmd.tmux(run.settings)
 	if err != nil {
@@ -77,7 +120,7 @@ func (run *runtime) refreshBlocked(state core.State) (core.State, error) {
 		if captureErr != nil {
 			continue
 		}
-		blocked, found, detectErr := harness.DetectBlocked(collar.Primitives.Blocked, screen)
+		blocked, found, detectErr := harness.InputBlocked(collar, screen)
 		if detectErr != nil {
 			return core.State{}, detectErr
 		}
@@ -107,7 +150,7 @@ func (run *runtime) retryQueuedDeliveries(state core.State) (core.State, error) 
 	seen := make(map[core.HitchID]bool)
 	for _, envelopeID := range state.DeliveryOrder {
 		delivery := state.Deliveries[envelopeID]
-		if delivery.Status != core.DeliveryQueued || !delivery.NotBefore.IsZero() {
+		if delivery.Status != core.DeliveryQueued || !delivery.NotBefore.IsZero() || delivery.CapacityRecovery {
 			continue
 		}
 		hitch, ok := activeByName(state, string(delivery.Envelope.To))

@@ -59,24 +59,27 @@ func AwaitComposerText(ctx context.Context, capture captureScreen, pane substrat
 	ticker := time.NewTicker(25 * time.Millisecond)
 	defer ticker.Stop()
 	var stableSince time.Time
+	var lastErr error
 	for {
 		screen, err := capture(ctx, pane)
-		if err == nil {
-			composer, readErr := ReadComposer(collar.Primitives.Composer, screen)
-			if readErr == nil && composer.Text == want {
-				if stableSince.IsZero() {
-					stableSince = time.Now()
-				}
-				if time.Since(stableSince) >= settle {
-					return nil
-				}
-			} else {
-				stableSince = time.Time{}
+		if err != nil {
+			return fmt.Errorf("observe native composer: %w", err)
+		}
+		composer, readErr := ReadComposer(collar.Primitives.Composer, screen)
+		lastErr = readErr
+		if readErr == nil && composer.Text == want {
+			if stableSince.IsZero() {
+				stableSince = time.Now()
 			}
+			if time.Since(stableSince) >= settle {
+				return nil
+			}
+		} else {
+			stableSince = time.Time{}
 		}
 		select {
 		case <-ctx.Done():
-			return fmt.Errorf("native composer did not show submitted text: %w", ctx.Err())
+			return fmt.Errorf("native composer did not show submitted text: %w", errors.Join(ctx.Err(), lastErr))
 		case <-ticker.C:
 		}
 	}
@@ -114,7 +117,7 @@ func AwaitStartup(ctx context.Context, capture captureScreen, pane substrate.Pan
 				lastErr = errors.New(startup.Prompt)
 			}
 		} else {
-			lastErr = err
+			return Startup{}, substrate.Screen{}, fmt.Errorf("observe native startup: %w", err)
 		}
 		select {
 		case <-ctx.Done():
@@ -134,7 +137,10 @@ func AwaitScreenSettle(ctx context.Context, capture captureScreen, pane substrat
 	var stableSince time.Time
 	for {
 		screen, err := capture(ctx, pane)
-		if err == nil && !reflect.DeepEqual(screen, before) {
+		if err != nil {
+			return fmt.Errorf("observe native screen settling: %w", err)
+		}
+		if !reflect.DeepEqual(screen, before) {
 			if stableSince.IsZero() || !reflect.DeepEqual(screen, last) {
 				stableSince = time.Now()
 				last = screen

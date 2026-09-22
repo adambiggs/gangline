@@ -20,7 +20,7 @@ func (run *runtime) awaitDelivery(state core.State, id core.EnvelopeID) (core.St
 // The command requesting startup, or the native asynchronous boundary hook,
 // owns retries until acceptance or drop. Elapsed time never expires the send.
 func awaitDelivery(state core.State, id core.EnvelopeID, wait func(time.Duration), refresh func() (core.State, error)) (core.State, error) {
-	delay := startupRetryInterval
+	attempt := 0
 	for {
 		delivery, ok := state.Deliveries[id]
 		if !ok {
@@ -29,13 +29,13 @@ func awaitDelivery(state core.State, id core.EnvelopeID, wait func(time.Duration
 		if delivery.Status != core.DeliveryQueued && delivery.Status != core.DeliveryDelivering {
 			return state, nil
 		}
-		wait(delay)
+		wait(core.RetryDelay(attempt))
 		var err error
 		state, err = refresh()
 		if err != nil {
 			return core.State{}, err
 		}
-		delay = min(delay*2, maximumRetryDelay)
+		attempt++
 	}
 }
 

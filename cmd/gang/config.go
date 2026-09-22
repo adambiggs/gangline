@@ -7,21 +7,23 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"time"
 
 	"github.com/adambiggs/gangline/harness"
 	"github.com/adambiggs/gangline/substrate/tmux"
 )
 
 type settings struct {
-	Session        string
-	StateRoot      string
-	Collar         string
-	Socket         string
-	ConfigDir      string
-	CollarDir      string
-	LaunchArgs     map[string][]string
-	LaunchArgsJSON string
-	Origins        map[string]string
+	CapacityTimeout time.Duration
+	Session         string
+	StateRoot       string
+	Collar          string
+	Socket          string
+	ConfigDir       string
+	CollarDir       string
+	LaunchArgs      map[string][]string
+	LaunchArgsJSON  string
+	Origins         map[string]string
 }
 
 func (cmd command) settings() (settings, error) {
@@ -62,11 +64,13 @@ func (cmd command) settings() (settings, error) {
 		ConfigDir:  configDir,
 		Origins:    make(map[string]string),
 	}
+	capacityTimeout := "5m"
 	values := map[string]*string{
-		"GANG_SESSION":     &result.Session,
-		"GANG_COLLAR":      &result.Collar,
-		"GANG_COLLARS":     &result.CollarDir,
-		"GANG_LAUNCH_ARGS": &result.LaunchArgsJSON,
+		"GANG_CAPACITY_TIMEOUT": &capacityTimeout,
+		"GANG_SESSION":          &result.Session,
+		"GANG_COLLAR":           &result.Collar,
+		"GANG_COLLARS":          &result.CollarDir,
+		"GANG_LAUNCH_ARGS":      &result.LaunchArgsJSON,
 	}
 	for name, destination := range values {
 		if value, ok := configured[name]; ok {
@@ -90,6 +94,10 @@ func (cmd command) settings() (settings, error) {
 			return settings{}, fmt.Errorf("%s must not be blank", label)
 		}
 	}
+	result.CapacityTimeout, err = time.ParseDuration(capacityTimeout)
+	if err != nil || result.CapacityTimeout <= 0 {
+		return settings{}, fmt.Errorf("GANG_CAPACITY_TIMEOUT must be a positive duration")
+	}
 	if result.CollarDir != "" && !filepath.IsAbs(result.CollarDir) {
 		return settings{}, fmt.Errorf("GANG_COLLARS must be an absolute path")
 	}
@@ -112,10 +120,11 @@ func (cmd command) settings() (settings, error) {
 }
 
 var configurationKeys = map[string]bool{
-	"GANG_COLLAR":      true,
-	"GANG_SESSION":     true,
-	"GANG_COLLARS":     true,
-	"GANG_LAUNCH_ARGS": true,
+	"GANG_CAPACITY_TIMEOUT": true,
+	"GANG_COLLAR":           true,
+	"GANG_SESSION":          true,
+	"GANG_COLLARS":          true,
+	"GANG_LAUNCH_ARGS":      true,
 }
 
 func readConfiguration(filename string) (map[string]string, error) {

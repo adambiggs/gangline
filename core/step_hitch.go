@@ -137,6 +137,8 @@ func stepTurnBoundary(state State, event TurnBoundaryReached) (State, []Effect) 
 	}
 	hitch.Activity = ActivityIdle
 	hitch.WedgeEvidence = ""
+	cancelCapacityDelivery(state, hitch, "native turn completed")
+	hitch.Capacity = CapacityRecovery{}
 	state.Hitches[hitch.ID] = hitch
 	return dispatchNext(state, hitch.ID)
 }

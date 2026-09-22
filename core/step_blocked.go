@@ -9,10 +9,14 @@ func stepBlockedDetected(state State, event BlockedDetected) (State, []Effect) {
 	if hitch.Activity == ActivityIdle {
 		previous = ActivityBusy
 	}
-	if hitch.Activity == ActivityDelivering {
+	if hitch.Activity == ActivityDelivering || deliveryInProgress(state, hitch.Name) {
 		previous = ActivityIdle
 		for id, delivery := range state.Deliveries {
 			if delivery.Envelope.To != hitch.Name || delivery.Status != DeliveryDelivering {
+				continue
+			}
+			if delivery.InputStarted {
+				previous = ActivityWedged
 				continue
 			}
 			delivery.Status = DeliveryQueued
@@ -35,6 +39,11 @@ func stepBlockedCleared(state State, event BlockedCleared) (State, []Effect) {
 	activity := hitch.BlockedFrom
 	if activity == "" || activity == ActivityDelivering || activity == ActivityBlocked {
 		activity = ActivityBusy
+	}
+	for _, delivery := range state.Deliveries {
+		if delivery.Envelope.To == hitch.Name && delivery.Status == DeliveryDelivering && !delivery.DuringTurn {
+			activity = ActivityDelivering
+		}
 	}
 	hitch.Activity = activity
 	hitch.BlockedFrom = ""

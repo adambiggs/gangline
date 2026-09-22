@@ -36,6 +36,10 @@ collar: {
 	}
 	primitives: {
  telemetry: {name: "codex-session-log"}
+		capacity: {name: "codex-terminal-capacity", params: {
+			error: "Selected model is at capacity. Please try a different model."
+			retrying: "(?i)reconnecting|retrying|retry in"
+		}}
 		mid_turn: true
 		startup: [{name: "codex-trust-prompt"}, {name: "codex-composer"}]
 		composer: {name: "codex-composer"}

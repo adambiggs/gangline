@@ -224,17 +224,6 @@ func TestProcessTableSelectsOnlyPaneForegroundGroup(t *testing.T) {
 	}
 }
 
-func TestRecordedProcessIdentityRejectsReusedPID(t *testing.T) {
-	owned := []processIdentity{{pid: 200, started: "Sun Sep 21 08:00:01 2026"}}
-	records, err := parseProcessTable(`200 1 200 200 Sun Sep 21 08:00:02 2026 replacement`)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if survivors := matchingProcesses(owned, records); len(survivors) != 0 {
-		t.Fatalf("reused PID matched recorded identity: %#v", survivors)
-	}
-}
-
 func runTmux(t *testing.T, binary, socket string, arguments ...string) string {
 	t.Helper()
 	output, err := runTmuxResult(binary, socket, arguments...)

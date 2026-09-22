@@ -3,6 +3,7 @@ package main
 import (
 	"bytes"
 	"fmt"
+	"io"
 	"os"
 	"path/filepath"
 	"unicode/utf8"
@@ -66,12 +67,24 @@ func (cmd command) startupProse(role string) (startupProse, error) {
 }
 
 func readOptionalProse(filename string) ([]byte, error) {
-	data, err := os.ReadFile(filename)
+	file, err := os.Open(filename)
 	if os.IsNotExist(err) {
 		return nil, nil
 	}
 	if err != nil {
 		return nil, fmt.Errorf("read %s: %w", filename, err)
+	}
+	defer file.Close()
+	return readProse(filename, file)
+}
+
+func readProse(label string, reader io.Reader) ([]byte, error) {
+	data, err := io.ReadAll(io.LimitReader(reader, maximumProseBytes+1))
+	if err != nil {
+		return nil, fmt.Errorf("read %s: %w", label, err)
+	}
+	if err := validateProse(label, data); err != nil {
+		return nil, err
 	}
 	return data, nil
 }

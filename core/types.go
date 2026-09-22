@@ -39,24 +39,25 @@ const (
 )
 
 type Hitch struct {
-	ID                HitchID       `json:"id"`
-	Name              AgentName     `json:"name"`
-	Collar            string        `json:"collar"`
-	Role              string        `json:"role,omitempty"`
-	Directory         string        `json:"directory"`
-	Status            HitchStatus   `json:"status,omitempty"`
-	Activity          HitchActivity `json:"activity,omitempty"`
-	Pane              string        `json:"pane,omitempty"`
-	BootDeadline      time.Time     `json:"boot_deadline,omitempty"`
-	DropDeadline      time.Time     `json:"drop_deadline,omitempty"`
-	InterruptDeadline time.Time     `json:"interrupt_deadline,omitempty"`
-	InterruptReason   string        `json:"interrupt_reason,omitempty"`
-	PendingCompactID  CompactionID  `json:"pending_compact_id,omitempty"`
-	BlockedEvidence   string        `json:"blocked_evidence,omitempty"`
-	BlockedFrom       HitchActivity `json:"blocked_from,omitempty"`
-	WedgeEvidence     string        `json:"wedge_evidence,omitempty"`
-	PreviousStatus    HitchStatus   `json:"previous_status,omitempty"`
-	PreviousActivity  HitchActivity `json:"previous_activity,omitempty"`
+	Capacity          CapacityRecovery `json:"capacity,omitzero"`
+	ID                HitchID          `json:"id"`
+	Name              AgentName        `json:"name"`
+	Collar            string           `json:"collar"`
+	Role              string           `json:"role,omitempty"`
+	Directory         string           `json:"directory"`
+	Status            HitchStatus      `json:"status,omitempty"`
+	Activity          HitchActivity    `json:"activity,omitempty"`
+	Pane              string           `json:"pane,omitempty"`
+	BootDeadline      time.Time        `json:"boot_deadline,omitempty"`
+	DropDeadline      time.Time        `json:"drop_deadline,omitempty"`
+	InterruptDeadline time.Time        `json:"interrupt_deadline,omitempty"`
+	InterruptReason   string           `json:"interrupt_reason,omitempty"`
+	PendingCompactID  CompactionID     `json:"pending_compact_id,omitempty"`
+	BlockedEvidence   string           `json:"blocked_evidence,omitempty"`
+	BlockedFrom       HitchActivity    `json:"blocked_from,omitempty"`
+	WedgeEvidence     string           `json:"wedge_evidence,omitempty"`
+	PreviousStatus    HitchStatus      `json:"previous_status,omitempty"`
+	PreviousActivity  HitchActivity    `json:"previous_activity,omitempty"`
 }
 
 type Message struct {
@@ -98,13 +99,15 @@ const (
 )
 
 type Delivery struct {
-	MidTurn    bool           `json:"mid_turn,omitempty"`
-	DuringTurn bool           `json:"during_turn,omitempty"`
-	Envelope   Envelope       `json:"envelope"`
-	Status     DeliveryStatus `json:"status"`
-	Deadline   time.Time      `json:"deadline"`
-	NotBefore  time.Time      `json:"not_before,omitempty"`
-	Reason     string         `json:"reason,omitempty"`
+	InputStarted     bool           `json:"input_started,omitempty"`
+	CapacityRecovery bool           `json:"capacity_recovery,omitempty"`
+	MidTurn          bool           `json:"mid_turn,omitempty"`
+	DuringTurn       bool           `json:"during_turn,omitempty"`
+	Envelope         Envelope       `json:"envelope"`
+	Status           DeliveryStatus `json:"status"`
+	Deadline         time.Time      `json:"deadline"`
+	NotBefore        time.Time      `json:"not_before,omitempty"`
+	Reason           string         `json:"reason,omitempty"`
 }
 
 type CompactionStatus string
@@ -119,12 +122,13 @@ const (
 )
 
 type Compaction struct {
-	ID       CompactionID     `json:"id"`
-	HitchID  HitchID          `json:"hitch_id"`
-	Resume   Message          `json:"resume"`
-	Deadline time.Time        `json:"deadline"`
-	Status   CompactionStatus `json:"status,omitempty"`
-	Reason   string           `json:"reason,omitempty"`
+	Submitted bool             `json:"submitted,omitempty"`
+	ID        CompactionID     `json:"id"`
+	HitchID   HitchID          `json:"hitch_id"`
+	Resume    Message          `json:"resume"`
+	Deadline  time.Time        `json:"deadline"`
+	Status    CompactionStatus `json:"status,omitempty"`
+	Reason    string           `json:"reason,omitempty"`
 }
 
 type State struct {

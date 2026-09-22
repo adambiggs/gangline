@@ -202,6 +202,7 @@ func (cmd command) config(arguments []string) error {
 		{"GANG_COLLAR", settings.Collar},
 		{"GANG_COLLARS", valueOr(settings.CollarDir, "unset")},
 		{"GANG_LAUNCH_ARGS", valueOr(settings.LaunchArgsJSON, "unset")},
+		{"GANG_CAPACITY_TIMEOUT", settings.CapacityTimeout.String()},
 		{"GANG_STATE_ROOT", settings.StateRoot},
 		{"GANG_CONFIG_DIR", settings.ConfigDir},
 		{"GANG_TMUX_SOCKET", valueOr(settings.Socket, "default")},

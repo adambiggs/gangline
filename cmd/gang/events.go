@@ -7,7 +7,6 @@ import (
 	"fmt"
 	"io"
 	"os"
-	"syscall"
 	"time"
 
 	"github.com/adambiggs/gangline/core"
@@ -24,6 +23,13 @@ func (cmd command) tick(arguments []string) error {
 		return err
 	}
 	state, err := run.recover()
+	if err != nil {
+		return err
+	}
+	if err := run.finishCapacityRecovery(state); err != nil {
+		return err
+	}
+	state, err = run.load()
 	if err != nil {
 		return err
 	}
@@ -50,7 +56,7 @@ func (cmd command) hook(arguments []string) (result error) {
 		return err
 	}
 	// Drain the native input before waiting on any team transaction.
-	payload, readErr := io.ReadAll(io.LimitReader(cmd.stdin, maximumMessageBytes+1))
+	payload, readErr := io.ReadAll(io.LimitReader(cmd.stdin, maximumHookBytes+1))
 	run, err := cmd.runtime()
 	if err != nil {
 		return err
@@ -68,11 +74,15 @@ func (cmd command) hook(arguments []string) (result error) {
 	if native.Name == "" {
 		native.Name = native.Event
 	}
+	witnessPublished := false
 	observation := core.NativeHook{At: time.Now(), ID: invocation, HitchID: id, NativeEvent: native.Name, Status: "received"}
 	defer func() {
 		observation.At = time.Now()
 		if result != nil {
 			observation.Status, observation.Reason = "failed", result.Error()
+			if !witnessPublished && (native.Name == "UserPromptSubmit" || native.Name == "") {
+				result = errors.Join(result, run.failPendingWitness(id, result))
+			}
 		} else if observation.Status != "ignored" {
 			observation.Status = "completed"
 		}
@@ -86,7 +96,7 @@ func (cmd command) hook(arguments []string) (result error) {
 	if readErr != nil {
 		return readErr
 	}
-	if len(payload) > maximumMessageBytes {
+	if len(payload) > maximumHookBytes {
 		return refuseError("native hook payload exceeds maximum size")
 	}
 	if id == "" {
@@ -126,7 +136,29 @@ func (cmd command) hook(arguments []string) (result error) {
 	// Activity does not change lifecycle state. Avoid scanning unrelated panes on
 	// every tool hook; boundary and permission hooks retain direct observation.
 	if hookEvent.Kind == "activity" {
-		return nil
+		if hitch.Capacity.Fingerprint != "" {
+			_, err = run.drive(core.CapacityCleared{At: time.Now(), HitchID: id})
+		}
+		return err
+	}
+	if boundary == harness.TurnStarted {
+		pending := false
+		for _, delivery := range state.Deliveries {
+			pending = pending || delivery.Envelope.To == hitch.Name && delivery.Status == core.DeliveryDelivering
+		}
+		if err := run.publishNativeWitness(id, hookEvent.Payload["prompt"], pending); err != nil {
+			return err
+		}
+		witnessPublished = true
+		// A synchronous submit hook must return before this harness accepts
+		// further input. Receipt publication cannot drive unrelated deliveries.
+		if pending {
+			return nil
+		}
+		if hitch.Activity == core.ActivityIdle {
+			_, err = run.drive(core.TurnStarted{At: time.Now(), HitchID: id})
+		}
+		return err
 	}
 	state, err = run.refreshBlocked(state)
 	if err != nil {
@@ -148,23 +180,6 @@ func (cmd command) hook(arguments []string) (result error) {
 		}
 		hitch = state.Hitches[id]
 	}
-	if boundary == harness.TurnStarted && hookEvent.Payload["prompt"] != "" {
-		witness := run.deliveryWitnessPath(id)
-		file, openErr := os.OpenFile(witness, os.O_WRONLY|syscall.O_NONBLOCK, 0)
-		if openErr != nil && !errors.Is(openErr, syscall.ENOENT) && !errors.Is(openErr, syscall.ENXIO) {
-			return fmt.Errorf("open native submission witness: %w", openErr)
-		}
-		if openErr == nil {
-			_, writeErr := io.WriteString(file, hookEvent.Payload["prompt"])
-			closeErr := file.Close()
-			if writeErr != nil {
-				return writeErr
-			}
-			if closeErr != nil {
-				return closeErr
-			}
-		}
-	}
 	observe()
 	now := time.Now()
 	switch boundary {
@@ -177,20 +192,8 @@ func (cmd command) hook(arguments []string) (result error) {
 	case harness.TurnCompactionFinished:
 		if hitch.PendingCompactID != "" {
 			compact := state.Compactions[hitch.PendingCompactID]
-			state, err = run.drive(core.CompactionCompleted{At: now, CompactionID: hitch.PendingCompactID})
-			if err == nil {
-				id, idErr := randomID("resume")
-				if idErr != nil {
-					return idErr
-				}
-				state, err = run.drive(core.SendRequested{
-					At: now,
-					Envelope: core.Envelope{
-						ID: core.EnvelopeID(id), From: core.Sender{Kind: core.SenderSelfDeclared, Name: "compact"},
-						To: hitch.Name, Message: compact.Resume, CreatedAt: now,
-					},
-				})
-			}
+			continuation := core.Envelope{ID: core.EnvelopeID("resume-" + string(compact.ID)), From: core.Sender{Kind: core.SenderSelfDeclared, Name: "compact"}, To: hitch.Name, Message: compact.Resume, CreatedAt: now}
+			state, err = run.drive(core.CompactionCompleted{At: now, CompactionID: compact.ID, Continuation: &continuation})
 		}
 	case harness.TurnCompactionStarted:
 		// The request event already records the durable start intent.

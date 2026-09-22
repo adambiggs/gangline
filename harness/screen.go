@@ -133,22 +133,26 @@ func readClaudeComposer(screen substrate.Screen) (Composer, error) {
 
 func trustPrompt(name string, screen substrate.Screen) (string, bool) {
 	flat := strings.Join(screenLines(screen, true), "\n")
-	selected := regexp.MustCompile(`(?m)^[[:space:]]*[❯›>] `).MatchString(flat)
+	if name == "codex-trust-prompt" {
+		title := regexp.MustCompile(`(?im)^[[:space:]]*(?:[0-9]+ )?hooks need review(?: before they can run)?[[:space:]]*$`)
+		choice := regexp.MustCompile(`(?m)^[[:space:]]*[❯›>] (?:[0-9]+\. )?(?:Review hooks|Stop|PostCompact|UserPromptSubmit|PreCompact|PostToolUse|PermissionRequest)(?:[[:space:]]|$)`)
+		if title.MatchString(flat) && choice.MatchString(flat) {
+			return "native hooks need review before they can run", true
+		}
+	}
+	selected := regexp.MustCompile(`(?m)^[[:space:]]*[❯›>] (?:[0-9]+\. )?(?:Yes|No|Trust|Allow|Continue)(?:[,[:space:]]|$)`).MatchString(flat)
 	if !selected {
 		return "", false
 	}
 	patterns := []string{"Do you trust the contents of this directory?"}
-	if name == "codex-trust-prompt" {
-		patterns = append(patterns, "Hooks need review")
-	} else {
-		patterns = append(patterns,
-			"Only use Claude Code with files you trust",
-			"Quick safety check: Is this a project you created or one you trust?",
-		)
+	if name == "claude-trust-prompt" {
+		patterns = append(patterns, "Only use Claude Code with files you trust", "Important: Only use Claude Code with files you trust", "Quick safety check: Is this a project you created or one you trust?")
 	}
 	for _, pattern := range patterns {
-		if strings.Contains(flat, pattern) {
-			return pattern, true
+		for _, line := range strings.Split(flat, "\n") {
+			if strings.HasPrefix(strings.TrimSpace(line), pattern) {
+				return pattern, true
+			}
 		}
 	}
 	return "", false

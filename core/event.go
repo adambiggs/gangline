@@ -81,6 +81,14 @@ type TimedDeliveriesCleared struct {
 	Recipient AgentName `json:"recipient"`
 }
 
+// DeliveryInputStarted records the point after which retry could duplicate input.
+type DeliveryInputStarted struct {
+	At         time.Time  `json:"at"`
+	EnvelopeID EnvelopeID `json:"envelope_id"`
+}
+
+func (DeliveryInputStarted) isEvent() {}
+
 type DeliverySucceeded struct {
 	At         time.Time  `json:"at"`
 	EnvelopeID EnvelopeID `json:"envelope_id"`
@@ -110,9 +118,10 @@ type DeliveryFailedEvent struct {
 // DeliveryUnverifiedEvent means input may have landed. It is terminal and is
 // never retried automatically.
 type DeliveryUnverifiedEvent struct {
-	At         time.Time  `json:"at"`
-	EnvelopeID EnvelopeID `json:"envelope_id"`
-	Evidence   string     `json:"evidence"`
+	BlockedEvidence string     `json:"blocked_evidence,omitempty"`
+	At              time.Time  `json:"at"`
+	EnvelopeID      EnvelopeID `json:"envelope_id"`
+	Evidence        string     `json:"evidence"`
 }
 
 type CompactionRequested struct {
@@ -123,6 +132,22 @@ type CompactionRequested struct {
 type CompactionCompleted struct {
 	At           time.Time    `json:"at"`
 	CompactionID CompactionID `json:"compaction_id"`
+	// Legacy completions queue their continuation in a separate SendRequested.
+	Continuation *Envelope `json:"continuation,omitempty"`
+}
+
+// CompactionSubmitted records that native submission was issued, not that
+// compaction completed. Only the native completion hook proves completion.
+type CompactionSubmitted struct {
+	At           time.Time    `json:"at"`
+	CompactionID CompactionID `json:"compaction_id"`
+}
+
+// CompactionUnverifiedEvent is terminal: input may have landed and is not retried.
+type CompactionUnverifiedEvent struct {
+	At           time.Time    `json:"at"`
+	CompactionID CompactionID `json:"compaction_id"`
+	Evidence     string       `json:"evidence"`
 }
 
 type CompactionFailedEvent struct {
@@ -218,40 +243,42 @@ type TransitionRejected struct {
 	Reason string    `json:"reason"`
 }
 
-func (HitchRequested) isEvent()          {}
-func (AdoptRequested) isEvent()          {}
-func (RenameRequested) isEvent()         {}
-func (HitchSpawned) isEvent()            {}
-func (HitchReady) isEvent()              {}
-func (HitchLaunchFailed) isEvent()       {}
-func (TurnStarted) isEvent()             {}
-func (TurnBoundaryReached) isEvent()     {}
-func (BlockedDetected) isEvent()         {}
-func (BlockedCleared) isEvent()          {}
-func (SendRequested) isEvent()           {}
-func (TimedDeliveryReleased) isEvent()   {}
-func (TimedDeliveriesCleared) isEvent()  {}
-func (DeliverySucceeded) isEvent()       {}
-func (DeliveryRetryRequested) isEvent()  {}
-func (DeliveryDeferred) isEvent()        {}
-func (DeliveryFailedEvent) isEvent()     {}
-func (DeliveryUnverifiedEvent) isEvent() {}
-func (CompactionRequested) isEvent()     {}
-func (CompactionCompleted) isEvent()     {}
-func (CompactionFailedEvent) isEvent()   {}
-func (InterruptRequested) isEvent()      {}
-func (InterruptSucceeded) isEvent()      {}
-func (InterruptFailed) isEvent()         {}
-func (DropRequested) isEvent()           {}
-func (DropSucceeded) isEvent()           {}
-func (DropFailed) isEvent()              {}
-func (PaneVanished) isEvent()            {}
-func (WedgeDetected) isEvent()           {}
-func (WedgeCleared) isEvent()            {}
-func (OperationTimedOut) isEvent()       {}
-func (CurfewSet) isEvent()               {}
-func (CurfewCleared) isEvent()           {}
-func (TransitionRejected) isEvent()      {}
+func (HitchRequested) isEvent()            {}
+func (AdoptRequested) isEvent()            {}
+func (RenameRequested) isEvent()           {}
+func (HitchSpawned) isEvent()              {}
+func (HitchReady) isEvent()                {}
+func (HitchLaunchFailed) isEvent()         {}
+func (TurnStarted) isEvent()               {}
+func (TurnBoundaryReached) isEvent()       {}
+func (BlockedDetected) isEvent()           {}
+func (BlockedCleared) isEvent()            {}
+func (SendRequested) isEvent()             {}
+func (TimedDeliveryReleased) isEvent()     {}
+func (TimedDeliveriesCleared) isEvent()    {}
+func (DeliverySucceeded) isEvent()         {}
+func (DeliveryRetryRequested) isEvent()    {}
+func (DeliveryDeferred) isEvent()          {}
+func (DeliveryFailedEvent) isEvent()       {}
+func (DeliveryUnverifiedEvent) isEvent()   {}
+func (CompactionRequested) isEvent()       {}
+func (CompactionCompleted) isEvent()       {}
+func (CompactionSubmitted) isEvent()       {}
+func (CompactionUnverifiedEvent) isEvent() {}
+func (CompactionFailedEvent) isEvent()     {}
+func (InterruptRequested) isEvent()        {}
+func (InterruptSucceeded) isEvent()        {}
+func (InterruptFailed) isEvent()           {}
+func (DropRequested) isEvent()             {}
+func (DropSucceeded) isEvent()             {}
+func (DropFailed) isEvent()                {}
+func (PaneVanished) isEvent()              {}
+func (WedgeDetected) isEvent()             {}
+func (WedgeCleared) isEvent()              {}
+func (OperationTimedOut) isEvent()         {}
+func (CurfewSet) isEvent()                 {}
+func (CurfewCleared) isEvent()             {}
+func (TransitionRejected) isEvent()        {}
 
 // NativeHook records receipt and outcome without inferring a lifecycle change.
 // ID pairs the outcome with its receipt even when native hooks overlap.

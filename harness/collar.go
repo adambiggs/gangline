@@ -68,6 +68,7 @@ type Invocation struct {
 
 type Primitives struct {
 	Telemetry      *Invocation  `json:"telemetry,omitempty"`
+	Capacity       *Invocation  `json:"capacity,omitempty"`
 	MidTurn        bool         `json:"mid_turn,omitempty"`
 	Startup        []Invocation `json:"startup"`
 	Composer       Invocation   `json:"composer"`
@@ -124,6 +125,11 @@ func LoadCollar(filename string, data []byte) (Collar, error) {
 }
 
 func validateCollar(collar Collar) error {
+	if collar.Primitives.Capacity != nil {
+		if err := validateCapacity(*collar.Primitives.Capacity); err != nil {
+			return err
+		}
+	}
 	if !argsContain(collar.Models.Option.Args, "{{value}}") {
 		return fmt.Errorf("model option does not contain {{value}}")
 	}

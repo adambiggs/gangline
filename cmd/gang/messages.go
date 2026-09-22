@@ -31,11 +31,6 @@ func (cmd command) send(arguments []string) error {
 	if err != nil {
 		return err
 	}
-	if options.Supersede {
-		if _, err := run.drive(core.TimedDeliveriesCleared{At: time.Now(), Recipient: core.AgentName(options.Name)}); err != nil {
-			return err
-		}
-	}
 	hitch, found := activeByName(state, options.Name)
 	if !found {
 		return refuseError("agent %q is not active", options.Name)
@@ -61,6 +56,18 @@ func (cmd command) send(arguments []string) error {
 	id, err := randomID("msg")
 	if err != nil {
 		return err
+	}
+	wireSender := string(sender.Name)
+	if sender.Kind == core.SenderSelfDeclared {
+		wireSender = "self-declared:" + wireSender
+	}
+	if _, err := renderEnvelope(wireSender, id, "", body); err != nil {
+		return err
+	}
+	if options.Supersede {
+		if _, err := run.drive(core.TimedDeliveriesCleared{At: time.Now(), Recipient: core.AgentName(options.Name)}); err != nil {
+			return err
+		}
 	}
 	state, err = run.drive(core.SendRequested{
 		At: now, NotBefore: notBefore, MidTurn: collar.Primitives.MidTurn,
@@ -212,6 +219,19 @@ func (cmd command) compact(arguments []string) error {
 		return err
 	}
 	now := time.Now()
-	_, err = run.drive(core.CompactionRequested{At: now, Compaction: core.Compaction{ID: core.CompactionID(id), HitchID: hitch.ID, Resume: core.Message{Text: resume}, Deadline: now.Add(operationTimeout)}})
-	return err
+	if _, err := renderEnvelope("self-declared:compact", "resume-"+id, "", resume); err != nil {
+		return err
+	}
+	state, err = run.drive(core.CompactionRequested{At: now, Compaction: core.Compaction{ID: core.CompactionID(id), HitchID: hitch.ID, Resume: core.Message{Text: resume}, Deadline: now.Add(operationTimeout)}})
+	if err != nil {
+		return err
+	}
+	compact := state.Compactions[core.CompactionID(id)]
+	if compact.Status == core.CompactionFailed {
+		return refuseError("compaction failed: %s", compact.Reason)
+	}
+	if compact.Status == core.CompactionUnverified {
+		return commandError{status: exitUnknown, text: "compaction may have landed but could not be verified: " + compact.Reason}
+	}
+	return nil
 }

@@ -4,6 +4,14 @@ func Step(state State, event Event) (State, []Effect) {
 	next := cloneState(state)
 
 	switch event := event.(type) {
+	case CapacityDetected:
+		return stepCapacityDetected(next, event)
+	case CapacityRetryRequested:
+		return stepCapacityRetryRequested(next, event)
+	case CapacityExpired:
+		return stepCapacityExpired(next, event)
+	case CapacityCleared:
+		return stepCapacityCleared(next, event)
 	case HitchRequested:
 		return stepHitchRequested(next, event)
 	case AdoptRequested:
@@ -30,6 +38,8 @@ func Step(state State, event Event) (State, []Effect) {
 		return stepTimedDeliveryReleased(next, event)
 	case TimedDeliveriesCleared:
 		return stepTimedDeliveriesCleared(next, event)
+	case DeliveryInputStarted:
+		return stepDeliveryInputStarted(next, event)
 	case DeliverySucceeded:
 		return stepDeliverySucceeded(next, event)
 	case DeliveryRetryRequested:
@@ -44,6 +54,10 @@ func Step(state State, event Event) (State, []Effect) {
 		return stepCompactionRequested(next, event)
 	case CompactionCompleted:
 		return stepCompactionCompleted(next, event)
+	case CompactionSubmitted:
+		return stepCompactionSubmitted(next, event)
+	case CompactionUnverifiedEvent:
+		return stepCompactionUnverified(next, event)
 	case CompactionFailedEvent:
 		return stepCompactionFailed(next, event)
 	case InterruptRequested:

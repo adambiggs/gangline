@@ -184,10 +184,17 @@ func (run *runtime) killHitch(backend *tmux.Backend, effect core.KillHitch) (cor
 	return core.DropSucceeded{At: time.Now(), HitchID: effect.HitchID}, nil
 }
 
-func (run *runtime) compactHitch(state core.State, backend *tmux.Backend, effect core.CompactHitch) (core.Event, error) {
+func (run *runtime) compactHitch(state core.State, backend interface {
+	Capture(context.Context, substrate.PaneID) (substrate.Screen, error)
+	ForegroundProcesses(context.Context, substrate.PaneID) ([]substrate.Process, error)
+	SendKeys(context.Context, substrate.PaneID, substrate.Keys) error
+}, effect core.CompactHitch) (core.Event, error) {
 	now := time.Now()
 	fail := func(at time.Time, err error) core.Event {
 		return core.CompactionFailedEvent{At: at, CompactionID: effect.Compaction.ID, Reason: err.Error()}
+	}
+	unknown := func(err error) core.Event {
+		return core.CompactionUnverifiedEvent{At: time.Now(), CompactionID: effect.Compaction.ID, Evidence: err.Error()}
 	}
 	if !now.Before(effect.Compaction.Deadline) {
 		return core.OperationTimedOut{At: now, Operation: core.TimeoutCompaction, ID: string(effect.Compaction.ID), Deadline: effect.Compaction.Deadline, Evidence: "compaction deadline elapsed"}, nil
@@ -206,8 +213,11 @@ func (run *runtime) compactHitch(state core.State, backend *tmux.Backend, effect
 		return fail(now, err), nil
 	}
 	composer, err := harness.ReadComposer(collar.Primitives.Composer, screen)
-	if err != nil || composer.Text != "" {
-		return nil, nil
+	if err != nil {
+		return fail(now, err), nil
+	}
+	if composer.Text != "" {
+		return fail(now, fmt.Errorf("native composer is not empty; compaction was not typed")), nil
 	}
 	settle, err := harness.SubmitSettle(collar.Primitives.Submit)
 	if err != nil {
@@ -218,16 +228,21 @@ func (run *runtime) compactHitch(state core.State, backend *tmux.Backend, effect
 	if err != nil {
 		return fail(now, err), nil
 	}
-	if err := sendHarnessKeys(context.Background(), backend, pane, collar, input); err != nil {
+	if err := requireHarnessForeground(context.Background(), backend, pane, collar); err != nil {
 		return fail(now, err), nil
+	}
+	if err := backend.SendKeys(context.Background(), pane, input); err != nil {
+		return unknown(fmt.Errorf("compaction text input returned an error: %w", err)), nil
 	}
 	ctx, cancel := context.WithDeadline(context.Background(), effect.Compaction.Deadline)
 	defer cancel()
-	if err := harness.AwaitComposerText(ctx, backend.Capture, pane, collar, action.Text, settle); err != nil {
-		return fail(time.Now(), err), nil
+	// Native composers may collapse pasted text. Stable recognized input is
+	// enough to press Enter; PostCompact remains the completion witness.
+	if err := harness.AwaitComposerSettle(ctx, backend.Capture, pane, collar, settle); err != nil {
+		return unknown(err), nil
 	}
 	if err := sendHarnessKeys(context.Background(), backend, pane, collar, substrate.Keys{Names: action.Keys, Submit: action.Submit}); err != nil {
-		return fail(time.Now(), err), nil
+		return unknown(fmt.Errorf("compaction submit returned an error: %w", err)), nil
 	}
-	return nil, nil
+	return core.CompactionSubmitted{At: time.Now(), CompactionID: effect.Compaction.ID}, nil
 }

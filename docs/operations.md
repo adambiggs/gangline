@@ -49,10 +49,12 @@ gang hitch worker -c codex -d "$PWD" -m MODEL -e EFFORT \
   -r worker -t 'Trace the failure and report the smallest reproduction.'
 ```
 
-If a native dialog appears after the composer first looked ready, the hitch
-keeps the startup assignment queued and retries it after the dialog clears.
-The startup delivery has a human-scale deadline; `gang roster` reports the
-directly observed idle or blocked pane state while the hitch command waits.
+If a native dialog appears before input, the hitch keeps the startup assignment
+queued and retries it after the dialog clears. Live sends have no expiry;
+startup readiness is bounded only while no native process answers. If hook
+review takes input after paste, the assignment remains unverified and the pane
+is blocked for operator attention. Gangline never approves the review or retypes
+unknown input. Inspect the pane before deciding whether to send again.
 
 From a registered agent pane:
 
@@ -68,7 +70,10 @@ printf '%s\n' 'Run the focused test and report the result.' |
 ```
 
 A successful command prints a delivery ID and either `delivered` or `queued`.
-Queued work remains in the event log until a safe native boundary releases it.
+Queued work remains in the event log until native acceptance or recipient drop.
+Capable collars accept input during a running turn; other collars wait for a
+safe native boundary. Oversized messages are refused: put supporting detail in
+a state file and send its path.
 Status 5 means input may have landed but the native hook did not prove the
 attributed envelope; inspect the recipient before retrying.
 
@@ -117,8 +122,17 @@ Replay a copied log without tmux or a native harness:
 gang replay path/to/events.jsonl
 ```
 
-Snapshots are disposable acceleration; the log is authoritative. Preserve the
-team directory when diagnosing a failure.
+Snapshots are integrity-checked checkpoints of the authoritative event log.
+Loads verify the recorded prefix and replay the full log with the current
+binary. Preserve the team directory when diagnosing a failure.
+
+When a provider capacity error ends a turn without a native Stop hook, run
+`gang tick`. The command observes the terminal error and an empty idle composer,
+releases queued work, and owns continuation retries with exponential backoff.
+`GANG_CAPACITY_TIMEOUT` bounds that recovery episode. Later ticks resume the
+recorded schedule; no resident watcher starts recovery automatically. Expiry
+requests attention and never expires ordinary pending messages. Ongoing native
+retries and ambiguous or clipped error screens are not idle evidence.
 
 ## Stop a team
 
@@ -135,6 +149,11 @@ reserved until it is dropped. `gang down` requires the exact configured
 session name, drops all active and failed hitches, and then removes the team's
 v1 state directory, including its event log. Copy evidence first if it must
 survive.
+
+Teardown requires Linux pidfds or macOS native audit-token signalling. If the
+identity-bound API is unavailable, `drop` and `down` refuse before removing the
+pane. A Darwin audit identity that changes during teardown produces an explicit
+incomplete result rather than signalling a replacement by PID.
 
 Never use an unaimed `tmux kill-server` or `tmux kill-session`; Gangline teams
 may share a tmux server with unrelated work.

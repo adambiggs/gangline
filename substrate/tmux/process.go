@@ -16,13 +16,32 @@ import (
 
 type processRecord struct {
 	substrate.Process
-	foregroundGroup int
-	started         string
+	foregroundGroup          int
+	started                  string
+	uniqueID, parentUniqueID uint64
+	version                  uint32
+}
+
+// processObservation retains the native identity source until all selected
+// ancestors have been validated and their signalling handles acquired.
+type processObservation struct {
+	record processRecord
+	read   func() (processRecord, error)
+	close  func() error
 }
 
 type processIdentity struct {
 	pid     int
 	started string
+	handle  processHandle
+}
+
+// A handle binds signalling and exit observation to one native process.
+// A numeric PID, even paired with a timestamp, cannot implement this contract.
+type processHandle interface {
+	signal(syscall.Signal) error
+	wait(context.Context) error
+	close() error
 }
 
 // ForegroundProcesses returns the descendants of tmux's pane process that
@@ -62,11 +81,15 @@ func (backend *Backend) ForegroundProcesses(ctx context.Context, pane substrate.
 }
 
 func (backend *Backend) paneProcess(ctx context.Context, pane substrate.PaneID) (int, error) {
-	output, err := backend.run(ctx, "display-message", "-p", "-t", string(pane), "#{pane_pid}")
+	output, err := backend.run(ctx, "display-message", "-p", "-t", string(pane), "#{pane_pid} #{pane_dead}")
 	if err != nil {
 		return 0, tmuxError("read pane process", err, output)
 	}
-	root, err := strconv.Atoi(strings.TrimSpace(output))
+	fields := strings.Fields(output)
+	if len(fields) != 2 || fields[1] != "0" {
+		return 0, fmt.Errorf("read pane process: no live pane process in %q", strings.TrimSpace(output))
+	}
+	root, err := strconv.Atoi(fields[0])
 	if err != nil || root <= 0 {
 		return 0, fmt.Errorf("read pane process: tmux returned %q", strings.TrimSpace(output))
 	}
@@ -83,85 +106,195 @@ func readProcessTable(ctx context.Context) (map[int]processRecord, error) {
 	return parseProcessTable(string(data))
 }
 
-func (backend *Backend) ownedProcesses(ctx context.Context, pane substrate.PaneID) ([]processIdentity, error) {
+func (backend *Backend) ownedProcesses(ctx context.Context, pane substrate.PaneID) (owned []processIdentity, result error) {
 	root, err := backend.paneProcess(ctx, pane)
 	if err != nil {
 		return nil, err
 	}
-	records, err := readProcessTable(ctx)
+	// Capture the root before enumerating the rest. In particular, do not
+	// relabel a coarse ps snapshot with a replacement root's native identity.
+	rootObservation, err := observeProcess(root)
 	if err != nil {
 		return nil, err
 	}
-	if _, ok := records[root]; !ok {
-		return nil, fmt.Errorf("read process tree: pane process %d was not present", root)
-	}
-	owned := make([]processIdentity, 0, 1)
-	for pid, record := range records {
-		if descendsFrom(pid, root, records) {
-			owned = append(owned, processIdentity{pid: pid, started: record.started})
+	observations := map[int]processObservation{root: rootObservation}
+	defer func() {
+		for _, observation := range observations {
+			result = errors.Join(result, observation.close())
 		}
+		if result != nil {
+			result = errors.Join(result, closeOwnedProcesses(owned))
+			owned = nil
+		}
+	}()
+	enumerated, err := readProcessTable(ctx)
+	if err != nil {
+		return nil, err
 	}
-	sort.Slice(owned, func(left, right int) bool { return owned[left].pid > owned[right].pid })
+	if err := observeProcessCandidates(root, enumerated, observations, observeProcess); err != nil {
+		return nil, err
+	}
+	owned, err = pinOwnedProcesses(root, nativeAncestry(observations), func(record processRecord) (processIdentity, error) {
+		observation := observations[record.PID]
+		return pinObservedProcess(observation.record, observation.read, openProcessHandle)
+	})
+	if err != nil {
+		return nil, err
+	}
+	// tmux must still associate this live pane with the captured root. A
+	// dead pane can retain a PID that has already been reused elsewhere.
+	currentRoot, err := backend.paneProcess(ctx, pane)
+	if err != nil {
+		return owned, err
+	}
+	if currentRoot != root {
+		return owned, fmt.Errorf("pane process changed during identity acquisition")
+	}
 	return owned, nil
 }
 
-func reapOwnedProcesses(ctx context.Context, owned []processIdentity) error {
-	survivors, err := survivingProcesses(ctx, owned)
-	if err != nil {
-		return err
-	}
-	if err := signalProcesses(survivors, syscall.SIGTERM); err != nil {
-		return err
-	}
-	survivors, err = survivingProcesses(ctx, owned)
-	if err != nil {
-		return err
-	}
-	if err := signalProcesses(survivors, syscall.SIGKILL); err != nil {
-		return err
-	}
-	for _, survivor := range survivors {
-		if err := waitProcessExit(ctx, survivor.pid); err != nil {
-			return fmt.Errorf("wait for recorded process %d: %w", survivor.pid, err)
+func observeProcessCandidates(root int, enumerated map[int]processRecord, observations map[int]processObservation, observe func(int) (processObservation, error)) error {
+	// ps bounds descriptor use to possible descendants. Membership here
+	// authorizes only an observation; retained native ancestry and identity
+	// validation below decide which processes can receive signals.
+	for pid := range enumerated {
+		if pid == root || !descendsFrom(pid, root, enumerated) {
+			continue
 		}
-	}
-	survivors, err = survivingProcesses(ctx, owned)
-	if err != nil {
-		return err
-	}
-	if len(survivors) != 0 {
-		pids := make([]string, len(survivors))
-		for index, survivor := range survivors {
-			pids[index] = strconv.Itoa(survivor.pid)
+		observation, err := observe(pid)
+		if errors.Is(err, os.ErrNotExist) || errors.Is(err, syscall.ESRCH) {
+			continue
 		}
-		return fmt.Errorf("reap pane descendants: recorded processes %s remain after termination", strings.Join(pids, ","))
+		if err != nil {
+			return fmt.Errorf("observe process %d: %w", pid, err)
+		}
+		observations[pid] = observation
 	}
 	return nil
 }
 
-func survivingProcesses(ctx context.Context, owned []processIdentity) ([]processIdentity, error) {
-	records, err := readProcessTable(ctx)
-	if err != nil {
-		return nil, err
-	}
-	return matchingProcesses(owned, records), nil
-}
-
-func matchingProcesses(owned []processIdentity, records map[int]processRecord) []processIdentity {
-	var survivors []processIdentity
-	for _, identity := range owned {
-		record, ok := records[identity.pid]
-		if ok && record.started == identity.started {
-			survivors = append(survivors, identity)
+func nativeAncestry(observations map[int]processObservation) map[int]processRecord {
+	records := make(map[int]processRecord, len(observations))
+	uniquePIDs := make(map[uint64]int, len(observations))
+	for pid, observation := range observations {
+		if observation.record.uniqueID != 0 {
+			uniquePIDs[observation.record.uniqueID] = pid
 		}
 	}
-	return survivors
+	for pid, observation := range observations {
+		record := observation.record
+		if record.uniqueID != 0 {
+			// Darwin provides the parent's native unique ID in the same
+			// observation, so reused numeric PIDs cannot join two lineages.
+			record.ParentPID = uniquePIDs[record.parentUniqueID]
+		}
+		records[pid] = record
+	}
+	return records
+}
+
+func pinOwnedProcesses(root int, records map[int]processRecord, open func(processRecord) (processIdentity, error)) ([]processIdentity, error) {
+	if _, ok := records[root]; !ok {
+		return nil, fmt.Errorf("read process tree: pane process %d was not present", root)
+	}
+	pids := make([]int, 0, len(records))
+	for pid := range records {
+		if descendsFrom(pid, root, records) {
+			pids = append(pids, pid)
+		}
+	}
+	sort.Sort(sort.Reverse(sort.IntSlice(pids)))
+	owned := make([]processIdentity, 0, len(pids))
+	for _, pid := range pids {
+		identity, err := open(records[pid])
+		if err != nil {
+			return nil, errors.Join(fmt.Errorf("pin recorded process %d: %w", pid, err), closeOwnedProcesses(owned))
+		}
+		owned = append(owned, identity)
+	}
+	return owned, nil
+}
+
+func closeOwnedProcesses(owned []processIdentity) error {
+	var result error
+	for _, identity := range owned {
+		if identity.handle != nil {
+			if err := identity.handle.close(); err != nil {
+				result = errors.Join(result, fmt.Errorf("release recorded process %d: %w", identity.pid, err))
+			}
+		}
+	}
+	return result
+}
+
+func reapOwnedProcesses(ctx context.Context, owned []processIdentity) error {
+	if err := signalProcesses(owned, syscall.SIGTERM); err != nil {
+		return err
+	}
+	if err := signalProcesses(owned, syscall.SIGKILL); err != nil {
+		return err
+	}
+	for _, identity := range owned {
+		if err := identity.handle.wait(ctx); err != nil {
+			return fmt.Errorf("wait for recorded process %d: %w", identity.pid, err)
+		}
+	}
+	// Exit notification can precede the parent's reap. Preserve the final
+	// process-table observation, but never use it to acquire another handle.
+	records, err := readProcessTable(ctx)
+	if err != nil {
+		return err
+	}
+	for _, identity := range owned {
+		if _, present := records[identity.pid]; !present {
+			continue
+		}
+		current, err := readCurrentProcess(identity.pid)
+		if errors.Is(err, os.ErrNotExist) || errors.Is(err, syscall.ESRCH) {
+			continue
+		}
+		if err != nil {
+			return fmt.Errorf("verify recorded process %d exit: %w", identity.pid, err)
+		}
+		if current.started == identity.started {
+			return fmt.Errorf("reap pane descendants: recorded process %d remains after termination", identity.pid)
+		}
+	}
+	return nil
+}
+
+// pinObservedProcess reads the native identity on both sides of handle
+// acquisition. Linux supplies reads from one open procfs file, so a recycled
+// PID cannot make either read refer to a replacement, even within one tick.
+func pinObservedProcess(expected processRecord, read func() (processRecord, error), open func(processRecord) (processHandle, error)) (processIdentity, error) {
+	before, err := read()
+	if err != nil {
+		return processIdentity{}, err
+	}
+	if before.PID != expected.PID || before.ParentPID != expected.ParentPID || before.started == "" || before.started != expected.started || before.parentUniqueID != expected.parentUniqueID {
+		return processIdentity{}, fmt.Errorf("process %d changed before identity acquisition", expected.PID)
+	}
+	handle, err := open(before)
+	if err != nil {
+		return processIdentity{}, err
+	}
+	after, err := read()
+	if err == nil && (after.PID != before.PID || after.ParentPID != before.ParentPID || after.started != before.started || after.parentUniqueID != before.parentUniqueID) {
+		err = fmt.Errorf("process %d changed during identity acquisition", expected.PID)
+	}
+	if err != nil {
+		return processIdentity{}, errors.Join(err, handle.close())
+	}
+	return processIdentity{pid: before.PID, started: before.started, handle: handle}, nil
 }
 
 func signalProcesses(processes []processIdentity, signal syscall.Signal) error {
 	for _, identity := range processes {
-		err := syscall.Kill(identity.pid, signal)
-		if err != nil && !errors.Is(err, syscall.ESRCH) {
+		if identity.handle == nil {
+			return fmt.Errorf("signal recorded process %d: no pinned process identity", identity.pid)
+		}
+		err := identity.handle.signal(signal)
+		if err != nil && !errors.Is(err, syscall.ESRCH) && !errors.Is(err, os.ErrProcessDone) {
 			return fmt.Errorf("signal recorded process %d: %w", identity.pid, err)
 		}
 	}

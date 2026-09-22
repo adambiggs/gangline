@@ -15,6 +15,7 @@ import "time"
 })
 
 #Hitch: close({
+	capacity?: #Capacity
 	id: #ID
 	name: #ID
 	collar: #ID
@@ -43,6 +44,7 @@ import "time"
 })
 
 #Compaction: close({
+	submitted?: bool
 	id: #ID
 	hitch_id: #ID
 	resume: #Message
@@ -51,14 +53,19 @@ import "time"
 	reason?: #Text
 })
 
-#Event: #Observation | #NativeHook | #HitchRequested | #AdoptRequested | #RenameRequested | #HitchSpawned | #HitchReady | #HitchLaunchFailed |
+#Event: #Observation | #CapacityDetected | #CapacityRetryRequested | #CapacityExpired | #CapacityCleared | #NativeHook | #HitchRequested | #AdoptRequested | #RenameRequested | #HitchSpawned | #HitchReady | #HitchLaunchFailed |
 	#TurnStarted | #TurnBoundaryReached | #BlockedDetected | #BlockedCleared | #SendRequested | #TimedDeliveryReleased | #TimedDeliveriesCleared | #DeliverySucceeded |
-	#DeliveryRetryRequested | #DeliveryDeferred | #DeliveryFailed | #DeliveryUnverified |
-	#CompactionRequested | #CompactionCompleted | #CompactionFailed | #InterruptRequested | #InterruptSucceeded | #InterruptFailed |
+	#DeliveryInputStarted | #DeliveryRetryRequested | #DeliveryDeferred | #DeliveryFailed | #DeliveryUnverified |
+	#CompactionRequested | #CompactionCompleted | #CompactionSubmitted | #CompactionUnverified | #CompactionFailed | #InterruptRequested | #InterruptSucceeded | #InterruptFailed |
 	#DropRequested | #DropSucceeded | #DropFailed | #PaneVanished | #WedgeDetected |
 	#WedgeCleared | #OperationTimedOut | #CurfewSet | #CurfewCleared | #TransitionRejected
 
 #HitchRequested: close({type: "hitch_requested", at: #Time, hitch: #Hitch, boot_deadline: #Time})
+#Capacity: close({fingerprint?: #ID, evidence?: #Text, deadline?: #Time, next_at?: #Time, attempts?: int & >=0, envelope_id?: #ID, expired?: bool})
+#CapacityDetected: close({type: "capacity_detected", at: #Time, hitch_id: #ID, fingerprint: #ID, evidence: #Text, deadline: #Time})
+#CapacityRetryRequested: close({type: "capacity_retry_requested", at: #Time, hitch_id: #ID, fingerprint: #ID})
+#CapacityExpired: close({type: "capacity_expired", at: #Time, hitch_id: #ID})
+#CapacityCleared: close({type: "capacity_cleared", at: #Time, hitch_id: #ID})
 #AdoptRequested: close({type: "adopt_requested", at: #Time, hitch: #Hitch, pane: #ID})
 #RenameRequested: close({type: "rename_requested", at: #Time, hitch_id: #ID, name: #ID})
 #HitchSpawned: close({type: "hitch_spawned", at: #Time, hitch_id: #ID, pane: #ID})
@@ -75,9 +82,12 @@ import "time"
 #DeliveryRetryRequested: close({type: "delivery_retry_requested", at: #Time, envelope_id: #ID})
 #DeliveryDeferred: close({type: "delivery_deferred", at: #Time, envelope_id: #ID, reason: #Text})
 #DeliveryFailed: close({type: "delivery_failed", at: #Time, envelope_id: #ID, reason: #Text})
-#DeliveryUnverified: close({type: "delivery_unverified", at: #Time, envelope_id: #ID, evidence: #Text})
+#DeliveryInputStarted: close({type: "delivery_input_started", at: #Time, envelope_id: #ID})
+#DeliveryUnverified: close({blocked_evidence?: #Text,type: "delivery_unverified", at: #Time, envelope_id: #ID, evidence: #Text})
 #CompactionRequested: close({type: "compaction_requested", at: #Time, compaction: #Compaction})
-#CompactionCompleted: close({type: "compaction_completed", at: #Time, compaction_id: #ID})
+#CompactionCompleted: close({type: "compaction_completed", at: #Time, compaction_id: #ID, continuation?: #Envelope})
+#CompactionSubmitted: close({type: "compaction_submitted", at: #Time, compaction_id: #ID})
+#CompactionUnverified: close({type: "compaction_unverified", at: #Time, compaction_id: #ID, evidence: #Text})
 #CompactionFailed: close({type: "compaction_failed", at: #Time, compaction_id: #ID, reason: #Text})
 #InterruptRequested: close({type: "interrupt_requested", at: #Time, hitch_id: #ID, reason?: string, deadline: #Time})
 #InterruptSucceeded: close({type: "interrupt_succeeded", at: #Time, hitch_id: #ID})

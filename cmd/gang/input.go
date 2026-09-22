@@ -3,6 +3,7 @@ package main
 import (
 	"crypto/rand"
 	"encoding/hex"
+	"encoding/json"
 	"fmt"
 	"io"
 	"regexp"
@@ -14,6 +15,10 @@ import (
 
 const maximumMessageBytes = 1 << 20
 
+// The prompt budget includes its JSON string encoding and Gangline envelope.
+// The hook object also carries native metadata and may wrap a pasted prompt.
+const maximumHookBytes = 2 * maximumMessageBytes
+
 func readBody(reader io.Reader) (string, error) {
 	limited := io.LimitReader(reader, maximumMessageBytes+1)
 	data, err := io.ReadAll(limited)
@@ -21,7 +26,7 @@ func readBody(reader io.Reader) (string, error) {
 		return "", fmt.Errorf("read message: %w", err)
 	}
 	if len(data) > maximumMessageBytes {
-		return "", refuseError("message is larger than %d bytes", maximumMessageBytes)
+		return "", refuseError("message exceeds the %d-byte encoded envelope budget; put details in a state file and send its path", maximumMessageBytes)
 	}
 	body := strings.TrimSuffix(string(data), "\n")
 	if body == "" {
@@ -60,7 +65,15 @@ func renderEnvelope(sender, nonce, marker, body string) (string, error) {
 		suffix = " " + marker
 	}
 	body = tagShapedTextPattern.ReplaceAllString(body, "$1")
-	return fmt.Sprintf("[gang:%s#%s%s] %s [/gang:%s#%s]", sender, nonce, suffix, body, sender, nonce), nil
+	wire := fmt.Sprintf("[gang:%s#%s%s] %s [/gang:%s#%s]", sender, nonce, suffix, body, sender, nonce)
+	encoded, err := json.Marshal(wire)
+	if err != nil {
+		return "", err
+	}
+	if len(encoded) > maximumMessageBytes {
+		return "", refuseError("message exceeds the %d-byte encoded envelope budget; put details in a state file and send its path", maximumMessageBytes)
+	}
+	return wire, nil
 }
 
 var durationPartPattern = regexp.MustCompile(`([0-9]+)([hms])`)

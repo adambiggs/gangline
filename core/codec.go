@@ -14,35 +14,46 @@ import (
 var eventSchema []byte
 
 type eventRecord struct {
-	Observation  *Observation     `json:"observation,omitempty"`
-	NativeEvent  string           `json:"native_event,omitempty"`
-	Status       string           `json:"status,omitempty"`
-	MidTurn      bool             `json:"mid_turn,omitempty"`
-	Type         string           `json:"type"`
-	At           time.Time        `json:"at"`
-	Hitch        *Hitch           `json:"hitch,omitempty"`
-	HitchID      HitchID          `json:"hitch_id,omitempty"`
-	Name         AgentName        `json:"name,omitempty"`
-	Pane         string           `json:"pane,omitempty"`
-	BootDeadline *time.Time       `json:"boot_deadline,omitempty"`
-	Envelope     *Envelope        `json:"envelope,omitempty"`
-	EnvelopeID   EnvelopeID       `json:"envelope_id,omitempty"`
-	Deadline     *time.Time       `json:"deadline,omitempty"`
-	NotBefore    *time.Time       `json:"not_before,omitempty"`
-	Recipient    AgentName        `json:"recipient,omitempty"`
-	Compaction   *Compaction      `json:"compaction,omitempty"`
-	CompactionID CompactionID     `json:"compaction_id,omitempty"`
-	Operation    TimeoutOperation `json:"operation,omitempty"`
-	ID           string           `json:"id,omitempty"`
-	Event        string           `json:"event,omitempty"`
-	Reason       string           `json:"reason,omitempty"`
-	Evidence     string           `json:"evidence,omitempty"`
+	Observation     *Observation     `json:"observation,omitempty"`
+	BlockedEvidence string           `json:"blocked_evidence,omitempty"`
+	Fingerprint     string           `json:"fingerprint,omitempty"`
+	Continuation    *Envelope        `json:"continuation,omitempty"`
+	NativeEvent     string           `json:"native_event,omitempty"`
+	Status          string           `json:"status,omitempty"`
+	MidTurn         bool             `json:"mid_turn,omitempty"`
+	Type            string           `json:"type"`
+	At              time.Time        `json:"at"`
+	Hitch           *Hitch           `json:"hitch,omitempty"`
+	HitchID         HitchID          `json:"hitch_id,omitempty"`
+	Name            AgentName        `json:"name,omitempty"`
+	Pane            string           `json:"pane,omitempty"`
+	BootDeadline    *time.Time       `json:"boot_deadline,omitempty"`
+	Envelope        *Envelope        `json:"envelope,omitempty"`
+	EnvelopeID      EnvelopeID       `json:"envelope_id,omitempty"`
+	Deadline        *time.Time       `json:"deadline,omitempty"`
+	NotBefore       *time.Time       `json:"not_before,omitempty"`
+	Recipient       AgentName        `json:"recipient,omitempty"`
+	Compaction      *Compaction      `json:"compaction,omitempty"`
+	CompactionID    CompactionID     `json:"compaction_id,omitempty"`
+	Operation       TimeoutOperation `json:"operation,omitempty"`
+	ID              string           `json:"id,omitempty"`
+	Event           string           `json:"event,omitempty"`
+	Reason          string           `json:"reason,omitempty"`
+	Evidence        string           `json:"evidence,omitempty"`
 }
 
 func EncodeEvent(event Event) ([]byte, error) {
 	record := eventRecord{Type: EventName(event)}
 
 	switch event := event.(type) {
+	case CapacityDetected:
+		record.At, record.HitchID, record.Fingerprint, record.Evidence, record.Deadline = event.At, event.HitchID, event.Fingerprint, event.Evidence, &event.Deadline
+	case CapacityRetryRequested:
+		record.At, record.HitchID, record.Fingerprint = event.At, event.HitchID, event.Fingerprint
+	case CapacityExpired:
+		record.At, record.HitchID = event.At, event.HitchID
+	case CapacityCleared:
+		record.At, record.HitchID = event.At, event.HitchID
 	case HitchRequested:
 		record.At, record.Hitch, record.BootDeadline = event.At, &event.Hitch, &event.BootDeadline
 	case AdoptRequested:
@@ -73,6 +84,8 @@ func EncodeEvent(event Event) ([]byte, error) {
 		record.At, record.EnvelopeID = event.At, event.EnvelopeID
 	case TimedDeliveriesCleared:
 		record.At, record.Recipient = event.At, event.Recipient
+	case DeliveryInputStarted:
+		record.At, record.EnvelopeID = event.At, event.EnvelopeID
 	case DeliverySucceeded:
 		record.At, record.EnvelopeID = event.At, event.EnvelopeID
 	case DeliveryRetryRequested:
@@ -82,11 +95,16 @@ func EncodeEvent(event Event) ([]byte, error) {
 	case DeliveryFailedEvent:
 		record.At, record.EnvelopeID, record.Reason = event.At, event.EnvelopeID, event.Reason
 	case DeliveryUnverifiedEvent:
+		record.BlockedEvidence = event.BlockedEvidence
 		record.At, record.EnvelopeID, record.Evidence = event.At, event.EnvelopeID, event.Evidence
 	case CompactionRequested:
 		record.At, record.Compaction = event.At, &event.Compaction
 	case CompactionCompleted:
+		record.At, record.CompactionID, record.Continuation = event.At, event.CompactionID, event.Continuation
+	case CompactionSubmitted:
 		record.At, record.CompactionID = event.At, event.CompactionID
+	case CompactionUnverifiedEvent:
+		record.At, record.CompactionID, record.Evidence = event.At, event.CompactionID, event.Evidence
 	case CompactionFailedEvent:
 		record.At, record.CompactionID, record.Reason = event.At, event.CompactionID, event.Reason
 	case InterruptRequested:
@@ -144,6 +162,14 @@ func DecodeEvent(data []byte) (Event, error) {
 	}
 
 	switch record.Type {
+	case "capacity_detected":
+		return CapacityDetected{At: record.At, HitchID: record.HitchID, Fingerprint: record.Fingerprint, Evidence: record.Evidence, Deadline: *record.Deadline}, nil
+	case "capacity_retry_requested":
+		return CapacityRetryRequested{At: record.At, HitchID: record.HitchID, Fingerprint: record.Fingerprint}, nil
+	case "capacity_expired":
+		return CapacityExpired{At: record.At, HitchID: record.HitchID}, nil
+	case "capacity_cleared":
+		return CapacityCleared{At: record.At, HitchID: record.HitchID}, nil
 	case "hitch_requested":
 		return HitchRequested{At: record.At, Hitch: *record.Hitch, BootDeadline: *record.BootDeadline}, nil
 	case "adopt_requested":
@@ -174,6 +200,8 @@ func DecodeEvent(data []byte) (Event, error) {
 		return TimedDeliveryReleased{At: record.At, EnvelopeID: record.EnvelopeID}, nil
 	case "timed_deliveries_cleared":
 		return TimedDeliveriesCleared{At: record.At, Recipient: record.Recipient}, nil
+	case "delivery_input_started":
+		return DeliveryInputStarted{At: record.At, EnvelopeID: record.EnvelopeID}, nil
 	case "delivery_succeeded":
 		return DeliverySucceeded{At: record.At, EnvelopeID: record.EnvelopeID}, nil
 	case "delivery_retry_requested":
@@ -183,11 +211,15 @@ func DecodeEvent(data []byte) (Event, error) {
 	case "delivery_failed":
 		return DeliveryFailedEvent{At: record.At, EnvelopeID: record.EnvelopeID, Reason: record.Reason}, nil
 	case "delivery_unverified":
-		return DeliveryUnverifiedEvent{At: record.At, EnvelopeID: record.EnvelopeID, Evidence: record.Evidence}, nil
+		return DeliveryUnverifiedEvent{BlockedEvidence: record.BlockedEvidence, At: record.At, EnvelopeID: record.EnvelopeID, Evidence: record.Evidence}, nil
 	case "compaction_requested":
 		return CompactionRequested{At: record.At, Compaction: *record.Compaction}, nil
 	case "compaction_completed":
-		return CompactionCompleted{At: record.At, CompactionID: record.CompactionID}, nil
+		return CompactionCompleted{At: record.At, CompactionID: record.CompactionID, Continuation: record.Continuation}, nil
+	case "compaction_submitted":
+		return CompactionSubmitted{At: record.At, CompactionID: record.CompactionID}, nil
+	case "compaction_unverified":
+		return CompactionUnverifiedEvent{At: record.At, CompactionID: record.CompactionID, Evidence: record.Evidence}, nil
 	case "compaction_failed":
 		return CompactionFailedEvent{At: record.At, CompactionID: record.CompactionID, Reason: record.Reason}, nil
 	case "interrupt_requested":
