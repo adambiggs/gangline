@@ -53,6 +53,8 @@
     a{color:var(--ink);text-decoration:none;transition:color 150ms,text-decoration-color 150ms}
     p a,li a{text-decoration:underline;text-decoration-color:var(--mute);text-decoration-thickness:1px;text-underline-offset:.18em}
     p a:hover,li a:hover{text-decoration-color:var(--ink)}
+    /* The full stop after "Mushing" is a link, but it should look like a full stop. */
+    p a.egg,p a.egg:hover{text-decoration:none;color:inherit;cursor:text;padding:0 .35em;margin:0 -.35em}
     ::selection{background:var(--sel)}
     :focus-visible{outline:2px solid var(--acc);outline-offset:3px}
     h1,h2,h3,p{margin:0}
@@ -226,7 +228,7 @@
       <div>
         <h1 class="serif name" data-blob>gangline</h1>
         <p class="entry"><span class="ipa">/ˈɡæŋˌlaɪn/</span> <i>noun</i></p>
-        <p class="serif statement"><i>Mushing.</i> The line that joins several harnesses into one team, and keeps it pulling together.</p>
+        <p class="serif statement"><i>Mushing<a class="egg" href="https://www.gutenberg.org/cache/epub/215/pg215-images.html#chap04" target="_blank" rel="noopener">.</a></i> The line that joins several harnesses into one team, and keeps it pulling together.</p>
         <nav class="sidenav" aria-label="Sections">
           <a href="#demo">Demo</a>
           <a href="#start">Start</a>
