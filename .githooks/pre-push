@@ -5,8 +5,6 @@
 #   git config core.hooksPath .githooks
 set -euo pipefail
 
-unset GIT_DIR GIT_WORK_TREE GIT_INDEX_FILE GIT_OBJECT_DIRECTORY GIT_COMMON_DIR GIT_PREFIX
-
 root="$(git rev-parse --show-toplevel)"
 cd "$root"
 
@@ -23,6 +21,26 @@ cleanup() {
 }
 trap cleanup EXIT HUP INT TERM
 cat > "$tmp/stdin"
+
+# Repository checks supplement the user's global hook. Both receive the
+# original remote arguments and complete ref stream, including deletions.
+if global_hooks="$(git config --global --path --get core.hooksPath)"; then
+  :
+else
+  rc=$?
+  [ "$rc" -eq 1 ] || exit "$rc"
+  global_hooks="${XDG_CONFIG_HOME:-$HOME/.config}/git/hooks"
+fi
+global_hook="$global_hooks/pre-push"
+if [ "$global_hook" -ef "$0" ]; then
+  echo "pre-push: global hook resolves to this repository hook; refusing recursive delegation." >&2
+  exit 1
+fi
+if [ -x "$global_hook" ]; then
+  "$global_hook" "$@" < "$tmp/stdin"
+fi
+
+unset GIT_DIR GIT_WORK_TREE GIT_INDEX_FILE GIT_OBJECT_DIRECTORY GIT_COMMON_DIR GIT_PREFIX
 
 echo "pre-push: Go checks and private-tmux acceptance scenarios run here; CI repeats them on Linux and macOS." >&2
 
