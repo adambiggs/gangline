@@ -63,9 +63,6 @@ func (cmd command) hitch(args []string) (result error) {
 			return err
 		}
 	}
-	if assignment == "" {
-		assignment = "Begin the role you were assigned and wait for an attributed Gangline message."
-	}
 	brief, err := cmd.startupProse(o.Role)
 	if err != nil {
 		return err
@@ -78,19 +75,27 @@ func (cmd command) hitch(args []string) (result error) {
 	if err != nil {
 		return err
 	}
+	sender, err := run.observedSender()
+	if err != nil {
+		return err
+	}
+	if sender.Kind == "" {
+		sender = core.Sender{Kind: core.SenderGangline, Name: "hitch"}
+	}
+	rolePrompt, message := startupMessages(o.Name, brief, assignment, c.Options.RolePrompt != nil)
+	purpose := "startup"
+	if assignment != "" {
+		purpose = "assignment"
+	}
 	now := cmd.now()
 	a := core.Agent{ID: core.HitchID(id), Name: core.AgentName(o.Name), Collar: o.Collar, Role: o.Role, Directory: dir, Status: core.Starting, Activity: core.Unknown, CreatedAt: now, ChangedAt: now, BootDeadline: now.Add(bootTimeout)}
-	e := core.Envelope{ID: core.EnvelopeID(eid), Recipient: a.ID, To: a.Name, From: core.Sender{Kind: core.SenderSelfDeclared, Name: "hitch"}, Message: core.Message{Text: composeStartup(o.Name, brief, assignment)}, CreatedAt: now}
+	e := core.Envelope{ID: core.EnvelopeID(eid), Recipient: a.ID, To: a.Name, From: sender, Purpose: purpose, Message: core.Message{Text: message}, CreatedAt: now}
 	if _, err := envelopeText(e); err != nil {
 		return err
 	}
 	exe, err := os.Executable()
 	if err != nil {
 		return err
-	}
-	rolePrompt := ""
-	if c.Options.RolePrompt != nil {
-		rolePrompt = composeStartup(o.Name, brief, "")
 	}
 	launch, err := harness.RenderLaunch(c, harness.LaunchOptions{ResumeSession: o.Resume, HookCommand: []string{exe, "hook"}, HookTimeoutSeconds: boundaryHookTimeoutSeconds, Model: o.Model, Effort: o.Effort, RolePrompt: rolePrompt})
 	if err != nil {

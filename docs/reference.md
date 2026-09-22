@@ -149,8 +149,19 @@ override them:
 - `DOCTRINE.md` adds your own guidance; and
 - `roles/NAME.md` replaces or adds a role brief.
 
-A collar with a `role_prompt` option puts this prose in the harness's system
-prompt. The assignment is still sent as the first message.
+Put persistent operator policy, including provider, model, effort, and staffing
+choices, in `DOCTRINE.md`. Operator instructions take precedence over role
+briefs, including local overrides. Gangline copies these files without
+reflowing their text.
+
+A collar with a `role_prompt` option puts standing prose in the harness's
+system prompt and sends only the assignment as the first message. Other
+collars receive the prose and assignment together in that message. Without a
+task, the startup message states that no assignment was supplied.
+
+Startup names the launching agent when its pane is registered; otherwise its
+sender is `gangline:hitch`, identifying Gangline itself. The envelope is marked
+`assignment` only when a task was supplied, or `startup` otherwise.
 
 ## Collars
 

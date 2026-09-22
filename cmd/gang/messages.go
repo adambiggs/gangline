@@ -14,6 +14,23 @@ import (
 )
 
 func (run *runtime) sender(declared string) (core.Sender, error) {
+	sender, err := run.observedSender()
+	if err != nil {
+		return core.Sender{}, err
+	}
+	if sender.Kind != "" {
+		if declared != "" {
+			return core.Sender{}, refuseError("--from is not allowed inside a registered agent pane")
+		}
+		return sender, nil
+	}
+	if declared == "" {
+		return core.Sender{}, refuseError("sender is outside the team; provide --from NAME")
+	}
+	return core.Sender{Kind: core.SenderSelfDeclared, Name: core.AgentName(declared)}, nil
+}
+
+func (run *runtime) observedSender() (core.Sender, error) {
 	if pane := run.cmd.environment("TMUX_PANE"); pane != "" {
 		agents, err := run.team.ListAgents()
 		if err != nil {
@@ -21,17 +38,11 @@ func (run *runtime) sender(declared string) (core.Sender, error) {
 		}
 		for _, a := range agents {
 			if a.Pane == pane && a.Status == core.Active {
-				if declared != "" {
-					return core.Sender{}, refuseError("--from is not allowed inside a registered agent pane")
-				}
 				return core.Sender{Kind: core.SenderAgent, Name: a.Name, HitchID: a.ID}, nil
 			}
 		}
 	}
-	if declared == "" {
-		return core.Sender{}, refuseError("sender is outside the team; provide --from NAME")
-	}
-	return core.Sender{Kind: core.SenderSelfDeclared, Name: core.AgentName(declared)}, nil
+	return core.Sender{}, nil
 }
 func (cmd command) send(args []string) (result error) {
 	o, err := parseSend(args)

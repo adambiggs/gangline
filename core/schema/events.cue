@@ -5,10 +5,11 @@ import "time"
 #Activity: "unknown" | "idle" | "busy" | "compacting" | "interrupting" | "blocked" | "wedged"
 #Envelope: close({
  id: #ID
- from: close({kind: "agent" | "self_declared", name: #ID, hitch_id?: #ID})
+ from: close({kind: "agent" | "self_declared" | "gangline", name: #ID, hitch_id?: #ID})
  to: #ID
  recipient: #ID
  message: close({text: #ID})
+ purpose?: "startup" | "assignment"
  created_at: #Time
  not_before?: #Time
  outcome?: "delivered" | "failed" | "unverified" | "cancelled"

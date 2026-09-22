@@ -39,14 +39,12 @@ func sendHarnessKeys(ctx context.Context, b harnessInput, pane substrate.PaneID,
 }
 func envelopeText(e core.Envelope) (string, error) {
 	sender := string(e.From.Name)
-	marker := ""
 	if e.From.Kind == core.SenderSelfDeclared {
 		sender = "self-declared:" + sender
-		if e.From.Name == "hitch" {
-			marker = "assignment"
-		}
+	} else if e.From.Kind == core.SenderGangline {
+		sender = "gangline:" + sender
 	}
-	return renderEnvelope(sender, string(e.ID), marker, e.Message.Text)
+	return renderEnvelope(sender, string(e.ID), e.Purpose, e.Message.Text)
 }
 
 // available observes the composer even during a running turn. A permission

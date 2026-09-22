@@ -119,7 +119,25 @@ func TestCommandLifecycleOnPrivateTmux(t *testing.T) {
 		}
 	}
 	waitReceived(worker, 1)
-	check("", "hitch", "second", "-t", "second assignment")
+	argv, err := os.ReadFile(filepath.Join(root, "argv"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	received, err := os.ReadFile(filepath.Join(root, "received"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Count(string(argv), "# Gangline delivery contract") != 1 || strings.Contains(string(received), "# Gangline delivery contract") || strings.Contains(string(argv), "acceptance assignment") {
+		t.Fatalf("standing prose or task duplicated across launch and startup: argv=%q received=%q", argv, received)
+	}
+	if !strings.HasPrefix(string(received), "[gang:gangline:hitch#startup-") || !strings.Contains(string(received), " assignment] Assignment:\n\nacceptance assignment") {
+		t.Fatalf("startup lacks Gangline attribution or assignment: %q", received)
+	}
+	// Launch from the registered worker pane to observe the assignment's author.
+	outsideEnvironment := environment
+	environment = append(environment, "TMUX_PANE="+worker.Pane)
+	check("", "hitch", "second")
+	environment = outsideEnvironment
 	sid, err := team.ResolveName("second")
 	if err != nil {
 		t.Fatal(err)
@@ -133,6 +151,13 @@ func TestCommandLifecycleOnPrivateTmux(t *testing.T) {
 		t.Fatal(err)
 	}
 	waitReceived(second, 1)
+	received, err = os.ReadFile(filepath.Join(root, "received"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(received), "[gang:worker#startup-") || !strings.Contains(string(received), " startup] No assignment was supplied.") {
+		t.Fatalf("taskless startup lacks observed author or invents an assignment: %q", received)
+	}
 	wp, err := team.Agent(worker.ID)
 	if err != nil {
 		t.Fatal(err)

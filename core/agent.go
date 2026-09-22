@@ -111,6 +111,7 @@ type Sender struct {
 const (
 	SenderAgent        = "agent"
 	SenderSelfDeclared = "self_declared"
+	SenderGangline     = "gangline"
 )
 
 func (s Sender) SameIdentity(other Sender) bool {
@@ -129,6 +130,7 @@ type Envelope struct {
 	To        AgentName  `json:"to"`
 	Recipient HitchID    `json:"recipient"`
 	Message   Message    `json:"message"`
+	Purpose   string     `json:"purpose,omitempty"`
 	CreatedAt time.Time  `json:"created_at"`
 	NotBefore time.Time  `json:"not_before,omitzero"`
 	Outcome   string     `json:"outcome,omitempty"`

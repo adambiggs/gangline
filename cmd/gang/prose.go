@@ -102,7 +102,19 @@ func validateProse(label string, data []byte) error {
 	return nil
 }
 
-func composeStartup(name string, prose startupProse, assignment string) string {
+func startupMessages(name string, prose startupProse, assignment string, systemPrompt bool) (prompt, message string) {
+	message = "No assignment was supplied."
+	if assignment != "" {
+		message = "Assignment:\n\n" + assignment
+	}
+	standing := composeStartup(name, prose)
+	if systemPrompt {
+		return standing, message
+	}
+	return "", standing + "\n\n" + message
+}
+
+func composeStartup(name string, prose startupProse) string {
 	var result bytes.Buffer
 	fmt.Fprintf(&result, "You are %s in Gangline. Read the standing contract below before anything else.\n\n", name)
 	result.Write(prose.Contract)
@@ -111,12 +123,8 @@ func composeStartup(name string, prose startupProse, assignment string) string {
 		result.Write(prose.Doctrine)
 	}
 	if len(prose.Role) != 0 {
-		result.WriteString("\n\nRole brief:\n\n")
+		result.WriteString("\n\nRole brief (operator instructions take precedence, including provider, model, effort, and staffing policy):\n\n")
 		result.Write(prose.Role)
-	}
-	if assignment != "" {
-		result.WriteString("\n\nAssignment:\n\n")
-		result.WriteString(assignment)
 	}
 	return result.String()
 }
