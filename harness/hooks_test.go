@@ -47,10 +47,14 @@ func TestDetectTurnBoundaryIgnoresActivityHook(t *testing.T) {
 
 func TestSubmittedPromptMatchesClaudePastedContent(t *testing.T) {
 	sent := "[gang:lead#message-1] first\nsecond [/gang:lead#message-1]"
-	witness := "\n\n<pasted_content id=\"c623\">\n" + sent + "\n</pasted_content id=\"c623\">\n"
-	matched, err := SubmittedPromptMatches(Invocation{Name: "claude-pasted-content"}, sent, witness)
-	if err != nil || !matched {
-		t.Fatalf("matched = %v, err = %v", matched, err)
+	for _, witness := range []string{
+		"\n\n<pasted_content id=\"c623\">\n" + sent + "\n</pasted_content id=\"c623\">\n",
+		"<pasted_content id=\"c623\">\n" + sent + "\n</pasted_content id=\"c623\">",
+	} {
+		matched, err := SubmittedPromptMatches(Invocation{Name: "claude-pasted-content"}, sent, witness)
+		if err != nil || !matched {
+			t.Fatalf("matched = %v, err = %v for %q", matched, err, witness)
+		}
 	}
 }
 

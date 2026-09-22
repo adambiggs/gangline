@@ -78,15 +78,22 @@ func SubmittedPromptMatches(primitive Invocation, sent, witnessed string) (bool,
 		if witnessed == sent {
 			return true, nil
 		}
-		const prefix = "\n\n<pasted_content id=\""
-		if !strings.HasPrefix(witnessed, prefix) {
+		framed := witnessed
+		if strings.HasPrefix(framed, "\n\n") {
+			framed = strings.TrimPrefix(framed, "\n\n")
+		} else {
+			framed = strings.TrimPrefix(framed, "\n")
+		}
+		const prefix = "<pasted_content id=\""
+		if !strings.HasPrefix(framed, prefix) {
 			return false, nil
 		}
-		identifier, wrapped, found := strings.Cut(strings.TrimPrefix(witnessed, prefix), "\">\n")
+		identifier, wrapped, found := strings.Cut(strings.TrimPrefix(framed, prefix), "\">\n")
 		if !found || identifier == "" || strings.ContainsAny(identifier, "\"\r\n<>") {
 			return false, nil
 		}
-		suffix := "\n</pasted_content id=\"" + identifier + "\">\n"
+		suffix := "\n</pasted_content id=\"" + identifier + "\">"
+		wrapped = strings.TrimSuffix(wrapped, "\n")
 		if !strings.HasSuffix(wrapped, suffix) {
 			return false, nil
 		}
