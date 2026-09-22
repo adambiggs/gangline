@@ -116,6 +116,8 @@ func (cmd command) execute(args []string) error {
 		return cmd.interrupt(arguments)
 	case "compact":
 		return cmd.compact(arguments)
+	case "statusline":
+		return cmd.statusline(arguments)
 	case "context":
 		return cmd.context(arguments)
 	case "log":

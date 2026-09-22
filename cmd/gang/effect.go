@@ -110,7 +110,12 @@ func (run *runtime) awaitBoot(state core.State, backend *tmux.Backend, effect co
 		return core.HitchLaunchFailed{At: time.Now(), HitchID: effect.HitchID, Reason: err.Error()}, nil
 	}
 	startup, _, observeErr := harness.AwaitStartup(context.Background(), backend.Capture, substrate.PaneID(effect.Pane), collar)
-	return bootObservationOutcome(time.Now(), effect, startup, observeErr), nil
+	outcome := bootObservationOutcome(time.Now(), effect, startup, observeErr)
+	if observation, ok := outcome.(core.Observation); ok {
+		observation.Collar = hitch.Collar
+		outcome = observation
+	}
+	return outcome, nil
 }
 
 func bootObservationOutcome(now time.Time, effect core.AwaitBoot, startup harness.Startup, observeErr error) core.Event {
@@ -119,7 +124,7 @@ func bootObservationOutcome(now time.Time, effect core.AwaitBoot, startup harnes
 		case harness.StartupReady:
 			return core.HitchReady{At: now, HitchID: effect.HitchID}
 		case harness.StartupTrustRequired:
-			return nil
+			return core.Observation{At: now, HitchID: effect.HitchID, Readings: []core.Reading{{Kind: "blocked", Source: "screen", Status: "observed", Reason: startup.Prompt}}}
 		}
 	}
 	if now.Before(effect.Deadline) {

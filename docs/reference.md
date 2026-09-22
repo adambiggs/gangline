@@ -74,10 +74,12 @@ duration such as `45m` or a local `HH:MM` time.
 | `gang status [NAME] [--why]` | Show one hitch and any recorded wedge evidence. |
 | `gang capture [NAME] [LINES]` | Render a parsed pane screen. |
 | `gang capture --composer [NAME]` | Read the collar-recognized composer. |
-| `gang context [NAME]` | Read native context use and the active collar band. |
-| `gang limits [NAME]` | Read provider-limit rows visible in the native TUI. |
-| `gang log` | Print the configured team's authoritative JSONL log. |
-| `gang replay [EVENTS.jsonl]` | Fold a log from a file or stdin and print state as JSON. |
+| `gang context [NAME]` | Read the latest recorded native context use and active collar band; unknown readings exit 5. |
+| `gang context --widget NAME\|off` | Show one agent’s context in this team’s tmux status line, or restore the prior session setting. |
+| `gang statusline [--install]` | Render Claude’s native stdin payload; `--install` repairs absent or retired Gangline status-line settings. |
+| `gang limits [NAME]` | Read the latest native provider-limit readings; unsupported or unavailable readings exit 5. |
+| `gang log [--agent NAME\|HITCH_ID] [--type TYPE\|KIND]` | Print the configured team’s authoritative JSONL log, optionally filtered. |
+| `gang replay [--agent NAME\|HITCH_ID] [--type TYPE\|KIND] [EVENTS.jsonl]` | Without filters, fold a file/stdin log into state JSON. With filters, emit matching event JSONL using the full history for attribution. |
 | `gang tick` | Retry pending effects, release safe queued delivery, and observe wedges. |
 | `gang wait NAME [--timeout DURATION]` | Block on event-log appends until the agent is idle; defaults to 30 seconds and `--timeout 0` checks once. |
 | `gang whoami` | Print the active hitch bound to the current pane. |
@@ -158,11 +160,13 @@ The value declares:
 
 - `launch`: command, normal/resume/probe arguments, and environment;
 - `hooks`: launch arguments containing `{{hook.command.json}}`, plus native
-  event and payload mappings;
+  event and payload mappings; `{{statusline.command.json}}` renders the installed
+  binary’s status-line callback;
 - `models`: catalog and selected-model primitives and the model option;
 - `options`: optional effort and role-prompt argument templates;
 - `primitives`: optional `mid_turn` capability (false when absent), startup, composer, submit, submit witness, turn boundary,
-  runtime blocked, context, provider limits, and wedge operations;
+  runtime blocked, context, provider limits, and wedge operations. Optional `telemetry`
+  selects `claude-status-line` or `codex-session-log` for structured observations;
 - `actions`: interrupt, compact, and recovery; and
 - `context_bands`: ordered named thresholds per model selector.
 
@@ -189,3 +193,73 @@ Native hook invocations appear in the event log as `native_hook` records. The
 Failures carry `reason`. These observations preserve hook evidence without
 changing replayed lifecycle state. A normal contended hook waits for the event
 writer; a late hook after recipient drop records an ignored outcome.
+
+
+### Structured observations
+
+Both shipped collars append `observation` events to the team log. Each event
+identifies its hitch, collar, native session, and a batch of `readings`. A reading
+has `kind`, `source`, and `status`; optional `at` is the native measurement time,
+while the enclosing event's `at` is Gangline's collection time. Missing native
+timestamps stay absent. Status is `observed`, `unknown`, or `error`, with a
+`reason` for missing or malformed evidence. Context uses `used`, `limit`, and
+`percent` (0–100 scale); provider limits use labelled `limits` with percentages
+and Unix `reset_at` seconds. Context may exceed the nominal limit.
+
+Sources are `native-hook`, `session-log`, `status-line`, and `screen`. Kinds
+include `turn-started`, `turn-finished`, `compaction-started`,
+`compaction-finished`, `compaction-checkpoint`, `context`, `provider-limits`,
+`error`, `blocked`, `model`, and `activity`. A native session checkpoint is evidence of
+compaction, not a second completion event. Hooks and session logs can witness
+the same turn or compaction: select one source when counting, and preserve the
+other as corroboration. Gangline's delivery intents/outcomes, dialog transitions,
+and requested compactions retain their existing event types. Startup trust is
+recorded as a screen observation; `hitch_ready` is its directly observed
+clearance. Observation events do not cause lifecycle transitions.
+
+Claude's collar installs the absolute `gang statusline` command for new hitches.
+The installer replaces an absent status line or the retired
+`statusline/claude-code-context.sh` command in `~/.claude/settings.json`, preserving
+unrelated custom settings. Existing hitches keep their launch settings until
+re-hitched. Standalone Claude invocations can render without a Gangline identity.
+Context is the native input plus cache-read and cache-creation tokens. When the
+payload supplies `transcript_path`, matching latest assistant usage corroborates
+its measurement timestamp. Post-compaction readings remain unknown until a
+provably newer measurement arrives; an unversioned delayed callback cannot make
+old context current. Payload fields follow the native
+[status-line contract](https://code.claude.com/docs/en/statusline).
+
+Codex context and limits come from `event_msg.token_count` in the hook-provided
+session log. Context uses `last_token_usage.total_tokens` and
+`model_context_window`, never cumulative session usage. Native `turn_context` records supply the model
+for context bands. Session metadata must
+match the hook's `session_id`; changed paths and truncated logs fail visibly.
+Complete-record cursors commit with their readings in one event. Earlier history
+on resume and incomplete final records are not current hitch evidence. Hooks,
+`gang tick`, `gang context`, and `gang limits` collect known transcripts; there
+is no watcher. Events without a subsequent callback become visible at the next
+explicit collection. This format is a native implementation surface, not a
+stable hook API; malformed recognized records fail loudly, as described in the
+native [hook documentation](https://developers.openai.com/codex/hooks).
+
+Turn and compaction hooks record a snapshot of the latest available context and
+limits with their original source/time. This does not assert that a measurement
+was taken at that boundary. Missing readings stay unknown. Claude's terminal
+`StopFailure` hook records the provider error and turn end; Codex session-log
+errors are observations and do not themselves manufacture a turn end. Unsupported
+provider windows remain unknown. Readings are projected atomically to
+`readings/HITCH_ID.json` under the team directory and rebuilt from the log if
+removed. `gang down` deletes observations, readings, cursors, and widget state.
+
+Filters match event types or reading kinds, for example
+`gang log --agent worker --type context`. Agent names refer to their name at the
+time of each event; use the immutable hitch ID across renames. The agent filter targets the recipient of delivery events. Delivery, timeout, and
+compaction outcomes are joined through the full history. A filtered observation
+contains only matching readings. Filtered output is an evidence projection, not
+a complete log suitable for reconstructing team state.
+
+The optional widget appends a context value to this team's session `status-right`.
+It updates from callbacks for the selected hitch. Global tmux options and user
+configuration files are untouched. Disabling restores the previous local value
+or inheritance; if the operator has since changed `status-right`, Gangline
+refuses to overwrite that change.

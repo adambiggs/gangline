@@ -3,6 +3,8 @@ package main
 import (
 	"context"
 	"fmt"
+	"os"
+	"path/filepath"
 	"strconv"
 	"time"
 
@@ -12,6 +14,9 @@ import (
 )
 
 func (cmd command) context(arguments []string) error {
+	if len(arguments) > 0 && arguments[0] == "--widget" {
+		return cmd.contextWidget(arguments[1:])
+	}
 	name, err := observationName(arguments, "context")
 	if err != nil {
 		return err
@@ -24,15 +29,35 @@ func (cmd command) context(arguments []string) error {
 	if err != nil {
 		return err
 	}
+	collar, err := loadCollar(hitch.Collar, run.settings)
+	if err != nil {
+		return err
+	}
+	if collar.Primitives.Telemetry != nil {
+		if err := run.observeHook(hitch, collar, harness.HookEvent{Kind: "reading-request"}); err != nil {
+			return err
+		}
+		h, err := run.latestReadings(hitch.ID)
+		if err != nil {
+			return err
+		}
+		r := h.Context
+		if r.Status != "observed" || r.Used == nil || r.Limit == nil || r.Percent == nil {
+			return commandError{status: exitUnknown, text: r.Reason}
+		}
+		bandName := "none"
+		band := harness.ActiveContextBand(collar, r.Model, harness.ContextReading{Used: *r.Used, Limit: *r.Limit, Percent: *r.Percent / 100})
+		if band != nil {
+			bandName = band.Name
+		}
+		_, err = fmt.Fprintf(cmd.stdout, "%s\t%d/%d\t%.0f%%\t%s\n", hitch.Name, *r.Used, *r.Limit, *r.Percent, bandName)
+		return err
+	}
 	backend, err := cmd.tmux(run.settings)
 	if err != nil {
 		return err
 	}
 	screen, err := backend.Capture(context.Background(), substrate.PaneID(hitch.Pane))
-	if err != nil {
-		return err
-	}
-	collar, err := loadCollar(hitch.Collar, run.settings)
 	if err != nil {
 		return err
 	}
@@ -66,15 +91,33 @@ func (cmd command) limits(arguments []string) error {
 	if err != nil {
 		return err
 	}
+	collar, err := loadCollar(hitch.Collar, run.settings)
+	if err != nil {
+		return err
+	}
+	if collar.Primitives.Telemetry != nil {
+		if err := run.observeHook(hitch, collar, harness.HookEvent{Kind: "reading-request"}); err != nil {
+			return err
+		}
+		h, err := run.latestReadings(hitch.ID)
+		if err != nil {
+			return err
+		}
+		if h.Limits.Status != "observed" {
+			return commandError{status: exitUnknown, text: h.Limits.Reason}
+		}
+		for _, w := range h.Limits.Limits {
+			if _, err := fmt.Fprintf(cmd.stdout, "%s\t%.0f%%\t%s\n", w.Label, w.UsedPercent, time.Unix(w.ResetAt, 0).UTC().Format(time.RFC3339)); err != nil {
+				return err
+			}
+		}
+		return nil
+	}
 	backend, err := cmd.tmux(run.settings)
 	if err != nil {
 		return err
 	}
 	screen, err := backend.Capture(context.Background(), substrate.PaneID(hitch.Pane))
-	if err != nil {
-		return err
-	}
-	collar, err := loadCollar(hitch.Collar, run.settings)
 	if err != nil {
 		return err
 	}
@@ -206,4 +249,54 @@ func (cmd command) capture(arguments []string) error {
 	}
 	_, err = fmt.Fprintln(cmd.stdout, text)
 	return err
+}
+
+func (cmd command) contextWidget(arguments []string) error {
+	if len(arguments) != 1 {
+		return usageError("context --widget: expected an agent name or off")
+	}
+	run, err := cmd.runtime()
+	if err != nil {
+		return err
+	}
+	backend, err := cmd.tmux(run.settings)
+	if err != nil {
+		return err
+	}
+	paths, err := run.paths().Team(run.settings.Session)
+	if err != nil {
+		return err
+	}
+	marker := filepath.Join(paths.Directory, "context-widget.json")
+	if arguments[0] == "off" {
+		if err := backend.ContextWidget(context.Background(), "", ""); err != nil {
+			return err
+		}
+		if err := os.Remove(marker); err != nil && !os.IsNotExist(err) {
+			return err
+		}
+		return nil
+	}
+	state, err := run.load()
+	if err != nil {
+		return err
+	}
+	hitch, err := cmd.observationTarget(arguments[0], state)
+	if err != nil {
+		return err
+	}
+	latest, err := run.latestReadings(hitch.ID)
+	if err != nil {
+		return err
+	}
+	if err := backend.ContextWidget(context.Background(), string(hitch.ID), contextWidgetText(string(hitch.Name), latest.Context)); err != nil {
+		return err
+	}
+	return atomicJSON(marker, string(hitch.ID))
+}
+func contextWidgetText(name string, r core.Reading) string {
+	if r.Status != "observed" || r.Percent == nil {
+		return name + " context ?"
+	}
+	return fmt.Sprintf("%s context %.0f%%", name, *r.Percent)
 }

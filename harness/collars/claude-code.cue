@@ -11,15 +11,16 @@ collar: {
 	hooks: {
 		install_args: [
 			"--settings",
-			"{\"hooks\":{\"UserPromptSubmit\":[{\"hooks\":[{\"type\":\"command\",\"command\":{{hook.command.json}}}]}],\"PostToolUse\":[{\"matcher\":\"*\",\"hooks\":[{\"type\":\"command\",\"command\":{{hook.command.json}}}]}],\"Stop\":[{\"hooks\":[{\"type\":\"command\",\"command\":{{hook.command.json}},\"async\":true}]}],\"PermissionRequest\":[{\"hooks\":[{\"type\":\"command\",\"command\":{{hook.command.json}}}]}],\"PreCompact\":[{\"hooks\":[{\"type\":\"command\",\"command\":{{hook.command.json}}}]}],\"PostCompact\":[{\"hooks\":[{\"type\":\"command\",\"command\":{{hook.command.json}},\"async\":true}]}]}}",
+			"{\"statusLine\":{\"type\":\"command\",\"command\":{{statusline.command.json}}},\"hooks\":{\"UserPromptSubmit\":[{\"hooks\":[{\"type\":\"command\",\"command\":{{hook.command.json}}}]}],\"PostToolUse\":[{\"matcher\":\"*\",\"hooks\":[{\"type\":\"command\",\"command\":{{hook.command.json}}}]}],\"StopFailure\":[{\"hooks\":[{\"type\":\"command\",\"command\":{{hook.command.json}},\"async\":true}]}],\"Stop\":[{\"hooks\":[{\"type\":\"command\",\"command\":{{hook.command.json}},\"async\":true}]}],\"PermissionRequest\":[{\"hooks\":[{\"type\":\"command\",\"command\":{{hook.command.json}}}]}],\"PreCompact\":[{\"hooks\":[{\"type\":\"command\",\"command\":{{hook.command.json}}}]}],\"PostCompact\":[{\"hooks\":[{\"type\":\"command\",\"command\":{{hook.command.json}},\"async\":true}]}]}}",
 		]
 		events: {
 			userpromptsubmit: {event: "turn-started", payload: {session_id: "session_id", transcript_path: "transcript_path", prompt: "prompt"}}
 			posttooluse: {event: "activity", payload: {session_id: "session_id", transcript_path: "transcript_path"}}
-			stop: {event: "turn-finished", payload: {session_id: "session_id", transcript_path: "transcript_path"}}
+			stopfailure: {event: "turn-failed", payload: {session_id: "session_id", transcript_path: "transcript_path", error: "error", error_details: "error_details"}}
+ stop: {event: "turn-finished", payload: {session_id: "session_id", transcript_path: "transcript_path"}}
 			permissionrequest: {event: "permission-requested", payload: {session_id: "session_id"}}
-			precompact: {event: "compaction-started", payload: {session_id: "session_id", trigger: "trigger"}}
-			postcompact: {event: "compaction-finished", payload: {session_id: "session_id", trigger: "trigger"}}
+			precompact: {event: "compaction-started", payload: {session_id: "session_id", trigger: "trigger", transcript_path: "transcript_path"}}
+			postcompact: {event: "compaction-finished", payload: {session_id: "session_id", trigger: "trigger", transcript_path: "transcript_path"}}
 		}
 	}
 	models: {
@@ -32,6 +33,7 @@ collar: {
 		role_prompt: {args: ["--append-system-prompt", "{{value}}"]}
 	}
 	primitives: {
+ telemetry: {name: "claude-status-line"}
 		mid_turn: true
 		startup: [{name: "claude-trust-prompt"}, {name: "claude-composer"}]
 		composer: {name: "claude-composer"}

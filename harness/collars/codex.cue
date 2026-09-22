@@ -22,8 +22,8 @@ collar: {
 			posttooluse: {event: "activity", payload: {session_id: "session_id", transcript_path: "transcript_path", turn_id: "turn_id"}}
 			stop: {event: "turn-finished", payload: {session_id: "session_id", transcript_path: "transcript_path", turn_id: "turn_id"}}
 			permissionrequest: {event: "permission-requested", payload: {session_id: "session_id", turn_id: "turn_id"}}
-			precompact: {event: "compaction-started", payload: {session_id: "session_id", trigger: "trigger"}}
-			postcompact: {event: "compaction-finished", payload: {session_id: "session_id", trigger: "trigger"}}
+			precompact: {event: "compaction-started", payload: {session_id: "session_id", trigger: "trigger", transcript_path: "transcript_path"}}
+			postcompact: {event: "compaction-finished", payload: {session_id: "session_id", trigger: "trigger", transcript_path: "transcript_path"}}
 		}
 	}
 	models: {
@@ -35,6 +35,7 @@ collar: {
 		effort: {args: ["-c", "model_reasoning_effort={{value}}"]}
 	}
 	primitives: {
+ telemetry: {name: "codex-session-log"}
 		mid_turn: true
 		startup: [{name: "codex-trust-prompt"}, {name: "codex-composer"}]
 		composer: {name: "codex-composer"}
@@ -42,7 +43,7 @@ collar: {
 		submit_witness: {name: "exact-prompt"}
 		turn_boundary: {name: "hook-boundary"}
 		blocked: {name: "screen-blocked", params: {
-			prompt: "Would you like to run|Do you want to allow|requires approval|approval required"
+			prompt: "Would you like to run|Do you want to allow|requires approval|approval required|Hooks need review"
 			choice: "Yes, proceed|Yes, and don't ask again|Press enter to confirm"
 		}}
 		context: {name: "codex-screen-context"}

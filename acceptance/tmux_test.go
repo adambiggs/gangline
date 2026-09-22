@@ -142,6 +142,11 @@ func TestCommandLifecycleOnPrivateTmux(t *testing.T) {
 		return "", -1
 	}
 
+	receivedCount := 0
+	waitReceived := func() (string, error) {
+		receivedCount++
+		return runner.run("wait-for", fmt.Sprintf("received-%d", receivedCount))
+	}
 	up := exec.Command(gangBinary, "up", "-c", "acceptance", "--stdin")
 	up.Dir = repository
 	up.Env = environment
@@ -181,7 +186,7 @@ func TestCommandLifecycleOnPrivateTmux(t *testing.T) {
 	if output, status := runGang("", "capture", "lead"); status != 0 || !strings.Contains(output, "READY") {
 		t.Fatalf("capture decorated agent status %d:\n%s", status, output)
 	}
-	if output, err := runner.run("wait-for", "received"); err != nil {
+	if output, err := waitReceived(); err != nil {
 		t.Fatalf("wait for startup delivery: %v\n%s", err, output)
 	}
 	assertWindowName(t, runner, session, "-lead-")
@@ -223,7 +228,7 @@ func TestCommandLifecycleOnPrivateTmux(t *testing.T) {
 		screen, _ := runner.run("capture-pane", "-p", "-J", "-t", session)
 		t.Fatalf("send status %d:\n%s\nscreen:\n%s", status, output, screen)
 	}
-	if output, err := runner.run("wait-for", "received"); err != nil {
+	if output, err := waitReceived(); err != nil {
 		t.Fatalf("wait for ordinary delivery: %v\n%s", err, output)
 	}
 	runHook("Stop")
@@ -231,7 +236,7 @@ func TestCommandLifecycleOnPrivateTmux(t *testing.T) {
 	if output, status := runGang(multiline, "send", "lead", "--from", "tester"); status != 0 {
 		t.Fatalf("normalized multiline send status %d:\n%s", status, output)
 	}
-	if output, err := runner.run("wait-for", "received"); err != nil {
+	if output, err := waitReceived(); err != nil {
 		t.Fatalf("wait for normalized multiline delivery: %v\n%s", err, output)
 	}
 	state = loadAcceptanceState(t, filepath.Join(root, "state"), session)
@@ -250,7 +255,7 @@ func TestCommandLifecycleOnPrivateTmux(t *testing.T) {
 		if output, status := runGang("", "tick"); status != 0 {
 			t.Fatalf("queued retry status %d:\n%s", status, output)
 		}
-		if output, err := runner.run("wait-for", "received"); err != nil {
+		if output, err := waitReceived(); err != nil {
 			t.Fatalf("wait for queued retry: %v\n%s", err, output)
 		}
 		delivered := loadAcceptanceState(t, filepath.Join(root, "state"), session)
@@ -262,11 +267,11 @@ func TestCommandLifecycleOnPrivateTmux(t *testing.T) {
 	if output, status := runGang("", "compact", "lead", "--resume", "resume after compact"); status != 0 {
 		t.Fatalf("compact status %d:\n%s", status, output)
 	}
-	if output, err := runner.run("wait-for", "received"); err != nil {
+	if output, err := waitReceived(); err != nil {
 		t.Fatalf("wait for compact command: %v\n%s", err, output)
 	}
 	runHook("PostCompact")
-	if output, err := runner.run("wait-for", "received"); err != nil {
+	if output, err := waitReceived(); err != nil {
 		t.Fatalf("wait for compaction continuation: %v\n%s", err, output)
 	}
 	runHook("Stop")
@@ -344,7 +349,9 @@ collar: {
 
 func loadAcceptanceState(t *testing.T, root, session string) core.State {
 	t.Helper()
-	locked, err := (store.Paths{Root: root}).Lock(session)
+	// Native hook diagnostics may still be appending after delivery is witnessed.
+	// Acquire the transaction barrier before inspecting the committed state.
+	locked, err := (store.Paths{Root: root}).LockWait(session)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -551,6 +558,7 @@ func runCommandHarness() int {
 	}
 	reader := bufio.NewReader(os.Stdin)
 	var input strings.Builder
+	receivedCount := 0
 	for {
 		value, err := reader.ReadByte()
 		if err != nil {
@@ -590,7 +598,8 @@ func runCommandHarness() int {
 		}
 		input.Reset()
 		renderCommandComposer("")
-		if err := signal("received"); err != nil {
+		receivedCount++
+		if err := signal(fmt.Sprintf("received-%d", receivedCount)); err != nil {
 			fmt.Fprintln(os.Stderr, err)
 			return 1
 		}

@@ -51,7 +51,7 @@ import "time"
 	reason?: #Text
 })
 
-#Event: #NativeHook | #HitchRequested | #AdoptRequested | #RenameRequested | #HitchSpawned | #HitchReady | #HitchLaunchFailed |
+#Event: #Observation | #NativeHook | #HitchRequested | #AdoptRequested | #RenameRequested | #HitchSpawned | #HitchReady | #HitchLaunchFailed |
 	#TurnStarted | #TurnBoundaryReached | #BlockedDetected | #BlockedCleared | #SendRequested | #TimedDeliveryReleased | #TimedDeliveriesCleared | #DeliverySucceeded |
 	#DeliveryRetryRequested | #DeliveryDeferred | #DeliveryFailed | #DeliveryUnverified |
 	#CompactionRequested | #CompactionCompleted | #CompactionFailed | #InterruptRequested | #InterruptSucceeded | #InterruptFailed |
@@ -108,4 +108,34 @@ import "time"
  native_event?: #Text
  status: "received" | "completed" | "ignored" | "failed"
  reason?: #Text
+})
+
+#Reading: close({
+ kind: #ID
+ source: "native-hook" | "session-log" | "status-line" | "screen"
+ native_event?: #Text
+ at?: #Time
+ status: "observed" | "unknown" | "error"
+ reason?: #Text
+ model?: #Text
+ used?: int & >=0
+ limit?: int & >0
+ percent?: number & >=0
+ limits?: [...close({label: #Text, used_percent: number & >=0, reset_at: int & >0})]
+})
+#Observation: close({
+ type: "observation"
+ at: #Time
+ hitch_id: #ID
+ let ObservedAt = at
+ let ObservedHitch = hitch_id
+ observation: close({
+  at: ObservedAt
+  hitch_id: ObservedHitch
+  collar: #ID
+  session_id?: #Text
+  transcript?: #Text
+  offset?: int & >=0
+  readings: [...#Reading]
+ })
 })

@@ -27,7 +27,22 @@ func (cmd command) tick(arguments []string) error {
 	if err != nil {
 		return err
 	}
-	return run.observeWedges(state)
+	if err := run.observeWedges(state); err != nil {
+		return err
+	}
+	for _, hitch := range state.Hitches {
+		if hitch.Status != core.HitchActive {
+			continue
+		}
+		collar, err := loadCollar(hitch.Collar, run.settings)
+		if err != nil {
+			return err
+		}
+		if err := run.observeHook(hitch, collar, harness.HookEvent{Kind: "reading-request"}); err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 func (cmd command) hook(arguments []string) (result error) {
@@ -98,6 +113,16 @@ func (cmd command) hook(arguments []string) (result error) {
 		observation.Status, observation.Reason = "ignored", "recipient is no longer active"
 		return nil
 	}
+	// Observation runs after the witness and lifecycle work even on failure.
+	observed := false
+	var observationErr error
+	observe := func() {
+		if !observed {
+			observed = true
+			observationErr = run.observeHook(hitch, collar, hookEvent)
+		}
+	}
+	defer func() { observe(); result = errors.Join(result, observationErr) }()
 	// Activity does not change lifecycle state. Avoid scanning unrelated panes on
 	// every tool hook; boundary and permission hooks retain direct observation.
 	if hookEvent.Kind == "activity" {
@@ -140,6 +165,7 @@ func (cmd command) hook(arguments []string) (result error) {
 			}
 		}
 	}
+	observe()
 	now := time.Now()
 	switch boundary {
 	case harness.TurnStarted:
@@ -189,8 +215,9 @@ func (run *runtime) recordNativeHook(event core.NativeHook) error {
 }
 
 func (cmd command) log(arguments []string) error {
-	if len(arguments) != 0 {
-		return usageError("log filters are not available in the v1 event log; use gang log")
+	filter, _, err := parseLogFilter(arguments, false)
+	if err != nil {
+		return err
 	}
 	run, err := cmd.runtime()
 	if err != nil {
@@ -208,22 +235,25 @@ func (cmd command) log(arguments []string) error {
 		return err
 	}
 	defer file.Close()
-	_, err = io.Copy(cmd.stdout, file)
-	return err
+	return writeFilteredLog(cmd.stdout, file, filter)
 }
 
 func (cmd command) replay(arguments []string) error {
-	if len(arguments) > 1 {
-		return usageError("replay: expected at most one event log")
+	filter, files, err := parseLogFilter(arguments, true)
+	if err != nil {
+		return err
 	}
 	reader := cmd.stdin
-	if len(arguments) == 1 {
-		file, err := os.Open(arguments[0])
+	if len(files) == 1 {
+		f, err := os.Open(files[0])
 		if err != nil {
 			return err
 		}
-		defer file.Close()
-		reader = file
+		defer f.Close()
+		reader = f
+	}
+	if filter.Agent != "" || filter.Type != "" {
+		return writeFilteredLog(cmd.stdout, reader, filter)
 	}
 	entries, err := store.ReadLog(reader)
 	if err != nil {

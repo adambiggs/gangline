@@ -167,7 +167,7 @@ func (run *runtime) observeWedges(state core.State) error {
 }
 
 func (run *runtime) teamLog() ([]store.LogEntry, error) {
-	locked, err := run.paths().Lock(run.settings.Session)
+	locked, err := run.lock()
 	if err != nil {
 		return nil, err
 	}

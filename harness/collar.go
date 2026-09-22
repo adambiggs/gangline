@@ -67,6 +67,7 @@ type Invocation struct {
 }
 
 type Primitives struct {
+	Telemetry      *Invocation  `json:"telemetry,omitempty"`
 	MidTurn        bool         `json:"mid_turn,omitempty"`
 	Startup        []Invocation `json:"startup"`
 	Composer       Invocation   `json:"composer"`
@@ -157,6 +158,13 @@ func validateCollar(collar Collar) error {
 		{"context", collar.Primitives.Context, []string{"claude-screen-context", "codex-screen-context"}},
 		{"provider limits", collar.Primitives.ProviderLimits, []string{"claude-screen-limits", "codex-screen-limits"}},
 		{"wedge", collar.Primitives.Wedge, []string{"stable-busy-screen"}},
+	}
+	if collar.Primitives.Telemetry != nil {
+		checks = append(checks, struct {
+			where   string
+			value   Invocation
+			allowed []string
+		}{"telemetry", *collar.Primitives.Telemetry, []string{"codex-session-log", "claude-status-line"}})
 	}
 	if collar.Models.Selected != nil {
 		checks = append(checks, struct {

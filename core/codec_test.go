@@ -16,6 +16,7 @@ func TestEventCodecRoundTrip(t *testing.T) {
 	}
 	compact := Compaction{ID: "c-1", HitchID: "h-1", Resume: Message{Text: "continue"}, Deadline: deadline, Status: CompactionQueued}
 	events := []Event{
+		Observation{At: now, HitchID: "h-1", Collar: "codex", SessionID: "s1", Transcript: "/state/session.jsonl", Offset: 120, Readings: []Reading{{Kind: "context", Source: "session-log", At: &now, Status: "unknown", Reason: "no token count"}}},
 		NativeHook{At: now, ID: "hook-1", HitchID: "h-1", NativeEvent: "PostToolUse", Status: "received"},
 		NativeHook{At: now, ID: "hook-1", HitchID: "h-1", NativeEvent: "PostToolUse", Status: "completed"},
 		NativeHook{At: now, ID: "hook-2", Status: "failed", Reason: "missing hitch identity"},

@@ -209,6 +209,9 @@ mv -f "$new_binary" "$BIN_DIR/gang" \
   || die "could not install $BIN_DIR/gang"
 trap - EXIT HUP INT TERM
 
+# Repair the retired checkout status-line path without replacing custom settings.
+"$BIN_DIR/gang" statusline --install || die "installed, but status-line settings repair failed"
+
 # Execute the installed binary before reporting success.
 "$BIN_DIR/gang" collars >/dev/null || die "installed, but 'gang collars' failed"
 

@@ -11,6 +11,7 @@ func TestEmbeddedCollarsDetectRuntimeApprovalSurfaces(t *testing.T) {
 		collar string
 		lines  []string
 	}{
+		{collar: "codex", lines: []string{"Hooks need review", "› 1. Review hooks", "2. Trust all and continue", "Press enter to confirm or esc to go back"}},
 		{collar: "claude-code", lines: []string{"Bash command", "Do you want to proceed?", "❯ 1. Yes", "  2. No"}},
 		{collar: "codex", lines: []string{"Would you like to run the following command?", "› 1. Yes, proceed", "  2. No"}},
 	}

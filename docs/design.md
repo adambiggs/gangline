@@ -237,3 +237,34 @@ with their reason. The diagnostic append does not require successful replay,
 so a state-load failure can still leave evidence. If storage itself is
 unwritable, stderr reports that recording failure rather than claiming it was
 logged. Hook records share the team event log's deletion path.
+
+
+### Normalize native evidence without a watcher
+
+The team log carries normalized native readings alongside Gangline lifecycle
+facts. A native reading does not drive the reducer: an error is not necessarily
+a turn end, and an automatic compaction cannot complete an unrelated requested
+compaction. Multiple sources may witness one event, so aggregation keeps source
+identity rather than treating every receipt as a distinct turn.
+
+Native hooks cannot supply all context, limits, or automatic lifecycle evidence.
+Claude's status-line JSON and Codex's session log are the native sources selected
+by collar primitives. Universal terminal capture cannot recover their timestamps,
+exact token usage, or events that have scrolled away. Collection stays with hooks
+and explicit commands. No resident observer or harness telemetry exporter is
+introduced. Native session metadata binds transcript evidence to a hitch; its
+complete-record cursor and observations are appended together under the team
+lock, avoiding lost or duplicated records after interruption. Latest-reading
+files are disposable projections and share the team log's deletion path.
+
+Boundary snapshots preserve source timestamps and unknowns. Claude status-line
+payloads carry no timestamp, so post-compaction freshness requires corroborating
+native assistant usage; delayed callbacks cannot restore stale context. A native
+parser error is recorded and returned after valid hook lifecycle work proceeds,
+so diagnostic failure does not suppress delivery evidence or queued continuation.
+
+The installed binary supplies the status-line renderer. Installation repairs only
+an absent setting or the retired Gangline script, while collar launch settings
+bind managed hitches to the actual binary used at launch. The optional tmux widget
+uses session options and restores their previous value or inheritance; user-global
+configuration remains outside its ownership.

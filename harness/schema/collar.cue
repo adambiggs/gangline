@@ -9,7 +9,7 @@ package harness
 })
 
 #Hook: close({
-	event: "turn-started" | "turn-finished" | "permission-requested" | "compaction-started" | "compaction-finished" | "activity"
+	event: "turn-started" | "turn-finished" | "permission-requested" | "compaction-started" | "compaction-finished" | "activity" | "turn-failed"
 	payload?: [string]: string
 })
 
@@ -55,6 +55,7 @@ package harness
 		role_prompt?: #Option
 	})
 	primitives: close({
+ telemetry?: #Invocation
 		mid_turn?: bool
 		startup:       [...#Invocation] & [_, ...]
 		composer:      #Invocation

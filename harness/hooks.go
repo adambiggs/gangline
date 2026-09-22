@@ -30,6 +30,9 @@ func DetectTurnBoundary(collar Collar, data []byte) (TurnBoundary, HookEvent, er
 	if err != nil {
 		return "", HookEvent{}, err
 	}
+	if event.Kind == "turn-failed" {
+		return TurnFinished, event, nil
+	}
 	switch TurnBoundary(event.Kind) {
 	case TurnStarted, TurnFinished, TurnCompactionStarted, TurnCompactionFinished:
 		return TurnBoundary(event.Kind), event, nil

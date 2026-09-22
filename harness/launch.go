@@ -12,6 +12,7 @@ import (
 
 type LaunchOptions struct {
 	ResumeSession      string
+	StatuslineCommand  []string
 	HookCommand        []string
 	HookTimeoutSeconds int
 	Model              string
@@ -65,9 +66,18 @@ func RenderLaunch(collar Collar, options LaunchOptions) (Command, error) {
 		if err != nil {
 			return Command{}, fmt.Errorf("encode hook command: %w", err)
 		}
+		statusline := options.StatuslineCommand
+		if len(statusline) == 0 {
+			statusline = []string{options.HookCommand[0], "statusline"}
+		}
+		statusEncoded, err := json.Marshal(shellJoin(statusline))
+		if err != nil {
+			return Command{}, err
+		}
 		hookArgs, err := renderArgs(collar.Hooks.InstallArgs, map[string]string{
-			"hook.command.json": string(encoded),
-			"hook.timeout":      strconv.Itoa(timeout),
+			"hook.command.json":       string(encoded),
+			"statusline.command.json": string(statusEncoded),
+			"hook.timeout":            strconv.Itoa(timeout),
 		})
 		if err != nil {
 			return Command{}, fmt.Errorf("render %s hooks: %w", collar.Name, err)

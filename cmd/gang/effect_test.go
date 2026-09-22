@@ -18,8 +18,8 @@ func TestBootObservationPrecedesDeadlineFailure(t *testing.T) {
 		t.Fatalf("ready observation = %#v, want HitchReady", ready)
 	}
 
-	if prompt := bootObservationOutcome(deadline.Add(time.Minute), effect, harness.Startup{State: harness.StartupTrustRequired}, nil); prompt != nil {
-		t.Fatalf("operator prompt observation = %#v, want boot to remain pending", prompt)
+	if prompt := bootObservationOutcome(deadline.Add(time.Minute), effect, harness.Startup{State: harness.StartupTrustRequired}, nil); prompt == nil {
+		t.Fatalf("operator prompt observation = %#v, want trust evidence while boot remains pending", prompt)
 	}
 
 	if pending := bootObservationOutcome(deadline.Add(-time.Second), effect, harness.Startup{}, errors.New("not observable")); pending != nil {

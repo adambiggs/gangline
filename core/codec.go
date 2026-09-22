@@ -14,6 +14,7 @@ import (
 var eventSchema []byte
 
 type eventRecord struct {
+	Observation  *Observation     `json:"observation,omitempty"`
 	NativeEvent  string           `json:"native_event,omitempty"`
 	Status       string           `json:"status,omitempty"`
 	MidTurn      bool             `json:"mid_turn,omitempty"`
@@ -113,6 +114,8 @@ func EncodeEvent(event Event) ([]byte, error) {
 		record.At, record.Deadline = event.At, &event.Deadline
 	case CurfewCleared:
 		record.At = event.At
+	case Observation:
+		record.At, record.HitchID, record.Observation = event.At, event.HitchID, &event
 	case NativeHook:
 		record.At, record.ID, record.HitchID = event.At, event.ID, event.HitchID
 		record.NativeEvent, record.Status, record.Reason = event.NativeEvent, event.Status, event.Reason
@@ -211,6 +214,8 @@ func DecodeEvent(data []byte) (Event, error) {
 		return CurfewSet{At: record.At, Deadline: *record.Deadline}, nil
 	case "curfew_cleared":
 		return CurfewCleared{At: record.At}, nil
+	case "observation":
+		return *record.Observation, nil
 	case "native_hook":
 		return NativeHook{At: record.At, ID: record.ID, HitchID: record.HitchID, NativeEvent: record.NativeEvent, Status: record.Status, Reason: record.Reason}, nil
 	case "transition_rejected":
