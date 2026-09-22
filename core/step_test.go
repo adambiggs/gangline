@@ -139,10 +139,10 @@ func TestStepCompactionRunsBeforeQueuedDelivery(t *testing.T) {
 	assertEffect(t, effects, CompactHitch{Compaction: wantCompact, Pane: "%2"})
 
 	state, _ = Step(state, CompactionCompleted{At: testNow, CompactionID: "c-1"})
-	if state.Compactions["c-1"].Status != CompactionSucceeded || state.Hitches["worker-id"].Activity != ActivityBusy {
+	if state.Compactions["c-1"].Status != CompactionSucceeded || state.Hitches["worker-id"].Activity != ActivityIdle {
 		t.Fatalf("compaction state = %#v %#v", state.Compactions["c-1"], state.Hitches["worker-id"])
 	}
-	state, effects = Step(state, TurnBoundaryReached{At: testNow, HitchID: "worker-id"})
+	state, effects = Step(state, DeliveryRetryRequested{At: testNow, EnvelopeID: "e-1"})
 	assertEffect(t, effects, DeliverEnvelope{Envelope: envelope, Pane: "%2", Deadline: testDeadline})
 }
 
@@ -162,7 +162,7 @@ func TestStepAdoptRenameAndInterrupt(t *testing.T) {
 	state, effects = Step(state, InterruptRequested{At: testNow, HitchID: "worker-id", Reason: "stop", Deadline: testDeadline})
 	assertEffect(t, effects, InterruptHitch{HitchID: "worker-id", Pane: "%2", Reason: "stop", Deadline: testDeadline})
 	state = apply(t, state, InterruptSucceeded{At: testNow, HitchID: "worker-id"})
-	if state.Hitches["worker-id"].Activity != ActivityBusy {
+	if state.Hitches["worker-id"].Activity != ActivityIdle {
 		t.Fatalf("activity = %q", state.Hitches["worker-id"].Activity)
 	}
 }

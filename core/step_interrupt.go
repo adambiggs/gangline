@@ -23,12 +23,13 @@ func stepInterruptSucceeded(state State, event InterruptSucceeded) (State, []Eff
 	if !ok || hitch.Activity != ActivityInterrupting {
 		return rejected(state, event, event.At, "interrupt is not in progress")
 	}
-	hitch.Activity = ActivityBusy
+	hitch.Activity = ActivityIdle
+	hitch.WedgeEvidence = ""
 	hitch.InterruptDeadline = time.Time{}
 	hitch.InterruptReason = ""
 	hitch.PreviousActivity = ""
 	state.Hitches[hitch.ID] = hitch
-	return state, nil
+	return dispatchNext(state, hitch.ID)
 }
 
 func stepInterruptFailed(state State, event InterruptFailed) (State, []Effect) {

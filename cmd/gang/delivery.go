@@ -27,7 +27,7 @@ func (run *runtime) deliver(state core.State, backend interface {
 }, effect core.DeliverEnvelope) (core.Event, error) {
 	now := time.Now()
 	if !now.Before(effect.Deadline) {
-		return core.OperationTimedOut{At: now, Operation: core.TimeoutDelivery, ID: string(effect.Envelope.ID), Deadline: effect.Deadline, Evidence: "delivery deadline elapsed before verified submit"}, nil
+		return core.DeliveryFailedEvent{At: now, EnvelopeID: effect.Envelope.ID, Reason: "delivery deadline elapsed before input"}, nil
 	}
 	var hitch core.Hitch
 	for _, candidate := range state.Hitches {
@@ -51,9 +51,9 @@ func (run *runtime) deliver(state core.State, backend interface {
 	if found {
 		return core.BlockedDetected{At: now, HitchID: hitch.ID, Evidence: blocked.Evidence}, nil
 	}
-	composer, err := harness.ReadComposer(collar.Primitives.Composer, screen)
-	if err != nil || composer.Text != "" {
-		reason := "composer is not empty"
+	idle, err := harness.Idle(collar, screen)
+	if err != nil || !idle {
+		reason := "native turn is not idle with an empty composer"
 		if err != nil {
 			reason = err.Error()
 		}
@@ -85,7 +85,11 @@ func (run *runtime) deliver(state core.State, backend interface {
 	if err != nil {
 		return core.DeliveryUnverifiedEvent{At: time.Now(), EnvelopeID: effect.Envelope.ID, Evidence: err.Error()}, nil
 	}
-	ctx, cancel := context.WithDeadline(context.Background(), effect.Deadline)
+	deadline := effect.Deadline
+	if attempt := time.Now().Add(deliveryTimeout); attempt.Before(deadline) {
+		deadline = attempt
+	}
+	ctx, cancel := context.WithDeadline(context.Background(), deadline)
 	defer cancel()
 	if err := harness.AwaitScreenSettle(ctx, backend.Capture, substrate.PaneID(effect.Pane), screen, settle); err != nil {
 		return core.DeliveryUnverifiedEvent{At: time.Now(), EnvelopeID: effect.Envelope.ID, Evidence: err.Error()}, nil

@@ -99,18 +99,18 @@ func (cmd command) hook(arguments []string) error {
 			_, err = run.drive(core.TurnStarted{At: now, HitchID: id})
 		}
 	case harness.TurnFinished:
-		_, err = run.drive(core.TurnBoundaryReached{At: now, HitchID: id})
+		state, err = run.drive(core.TurnBoundaryReached{At: now, HitchID: id})
 	case harness.TurnCompactionFinished:
 		if hitch.PendingCompactID != "" {
 			compact := state.Compactions[hitch.PendingCompactID]
-			_, err = run.drive(core.CompactionCompleted{At: now, CompactionID: hitch.PendingCompactID})
+			state, err = run.drive(core.CompactionCompleted{At: now, CompactionID: hitch.PendingCompactID})
 			if err == nil {
 				id, idErr := randomID("resume")
 				if idErr != nil {
 					return idErr
 				}
-				_, err = run.drive(core.SendRequested{
-					At: now, Deadline: now.Add(deliveryTimeout),
+				state, err = run.drive(core.SendRequested{
+					At: now, Deadline: now.Add(run.deliveryBudget()),
 					Envelope: core.Envelope{
 						ID: core.EnvelopeID(id), From: core.Sender{Kind: core.SenderSelfDeclared, Name: "compact"},
 						To: hitch.Name, Message: compact.Resume, CreatedAt: now,
@@ -122,6 +122,9 @@ func (cmd command) hook(arguments []string) error {
 		// The request event already records the durable start intent.
 	default:
 		// Activity and permission hooks are valid evidence but not boundaries.
+	}
+	if err == nil && (boundary == harness.TurnFinished || boundary == harness.TurnCompactionFinished) {
+		return run.finishBoundaryDeliveries(state, hitch.ID)
 	}
 	return err
 }
@@ -178,16 +181,9 @@ func (cmd command) wait(arguments []string) error {
 	if err != nil {
 		return err
 	}
-	run, state, err := cmd.loaded()
+	run, err := cmd.runtime()
 	if err != nil {
 		return err
-	}
-	hitch, ok := activeByName(state, options.Name)
-	if !ok {
-		return refuseError("agent %q is not active", options.Name)
-	}
-	if hitch.Activity == core.ActivityIdle {
-		return nil
 	}
 
 	deadline := time.Now().Add(options.Timeout)
@@ -198,25 +194,24 @@ func (cmd command) wait(arguments []string) error {
 		return err
 	}
 	for {
-		info, statErr := os.Stat(paths.Events)
-		if statErr != nil {
-			return fmt.Errorf("stat event log before wait: %w", statErr)
-		}
-		state, err = run.load()
+		state, size, complete, err := store.ObserveLog(paths.Events, run.initial())
 		if err != nil {
 			return err
 		}
-		hitch, ok = activeByName(state, options.Name)
+		hitch, ok := activeByName(state, options.Name)
 		if !ok {
 			return refuseError("agent %q is not active", options.Name)
 		}
-		if hitch.Activity == core.ActivityIdle {
+		if complete && hitch.Activity == core.ActivityIdle {
 			return nil
 		}
 		if !time.Now().Before(deadline) {
+			if !complete {
+				return fmt.Errorf("event log has an incomplete append at the wait deadline")
+			}
 			return run.waitTimedOut(hitch, deadline)
 		}
-		appendWait, watchErr := cmd.appendWait(paths.Events, info.Size())
+		appendWait, watchErr := cmd.appendWait(paths.Events, size)
 		if watchErr != nil {
 			return watchErr
 		}

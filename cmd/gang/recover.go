@@ -141,8 +141,8 @@ func (run *runtime) retryQueuedDeliveries(state core.State) (core.State, error) 
 		if captureErr != nil {
 			continue
 		}
-		composer, readErr := harness.ReadComposer(collar.Primitives.Composer, screen)
-		if readErr != nil || composer.Text != "" {
+		idle, readErr := harness.Idle(collar, screen)
+		if readErr != nil || !idle {
 			continue
 		}
 		now := time.Now()

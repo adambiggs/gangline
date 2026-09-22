@@ -5,12 +5,54 @@ import (
 	"errors"
 	"fmt"
 	"reflect"
+	"regexp"
+	"strings"
 	"time"
 
 	"github.com/adambiggs/gangline/substrate"
 )
 
 type captureScreen func(context.Context, substrate.PaneID) (substrate.Screen, error)
+
+// Idle requires a recognized empty composer and no declared native busy marker.
+func Idle(collar Collar, screen substrate.Screen) (bool, error) {
+	composer, err := ReadComposer(collar.Primitives.Composer, screen)
+	if err != nil {
+		return false, err
+	}
+	pattern := collar.Primitives.Wedge.Params["busy"]
+	if pattern == "" {
+		return false, fmt.Errorf("collar has no native busy expression")
+	}
+	busy, err := regexp.Compile(pattern)
+	if err != nil {
+		return false, err
+	}
+	return composer.Text == "" && !busy.MatchString(strings.Join(screenLines(screen, true), "\n")), nil
+}
+
+func AwaitIdle(ctx context.Context, capture captureScreen, pane substrate.PaneID, collar Collar) error {
+	ticker := time.NewTicker(25 * time.Millisecond)
+	defer ticker.Stop()
+	for {
+		screen, err := capture(ctx, pane)
+		if err != nil {
+			return err
+		}
+		idle, err := Idle(collar, screen)
+		if err != nil {
+			return err
+		}
+		if idle {
+			return nil
+		}
+		select {
+		case <-ctx.Done():
+			return fmt.Errorf("native turn did not become idle after interruption: %w", ctx.Err())
+		case <-ticker.C:
+		}
+	}
+}
 
 // AwaitComposerText waits until the native composer shows stable expected text.
 func AwaitComposerText(ctx context.Context, capture captureScreen, pane substrate.PaneID, collar Collar, want string, settle time.Duration) error {

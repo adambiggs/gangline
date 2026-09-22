@@ -141,3 +141,30 @@ func TestWaitBlocksForAnIdleBoundary(t *testing.T) {
 		t.Fatalf("wait completed with hitch = %#v", state.Hitches["h-1"])
 	}
 }
+
+func TestWaitObservesIdleWhileAppenderStillOwnsLock(t *testing.T) {
+	root := t.TempDir()
+	values := map[string]string{"GANG_SESSION": "wait-writer", "GANG_STATE_ROOT": root, "XDG_CONFIG_HOME": root}
+	cmd := command{getenv: func(key string) string { return values[key] }, userHomeDir: func() (string, error) { return root, nil }}
+	run, err := cmd.runtime()
+	if err != nil {
+		t.Fatal(err)
+	}
+	locked, err := run.paths().Lock(run.settings.Session)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer locked.Close()
+	for _, event := range []core.Event{
+		core.AdoptRequested{At: time.Now(), Pane: "%1", Hitch: core.Hitch{ID: "h-1", Name: "worker", Collar: "codex", Directory: root}},
+		core.TurnStarted{At: time.Now(), HitchID: "h-1"},
+		core.TurnBoundaryReached{At: time.Now(), HitchID: "h-1"},
+	} {
+		if err := locked.Append(event); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := cmd.wait([]string{"worker", "--timeout", "0"}); err != nil {
+		t.Fatalf("complete idle append was hidden by writer's snapshot lock: %v", err)
+	}
+}

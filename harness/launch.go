@@ -4,18 +4,20 @@ import (
 	"encoding/json"
 	"fmt"
 	"regexp"
+	"strconv"
 	"strings"
 
 	"github.com/adambiggs/gangline/substrate"
 )
 
 type LaunchOptions struct {
-	ResumeSession string
-	HookCommand   []string
-	Model         string
-	Effort        string
-	RolePrompt    string
-	Probe         bool
+	ResumeSession      string
+	HookCommand        []string
+	HookTimeoutSeconds int
+	Model              string
+	Effort             string
+	RolePrompt         string
+	Probe              bool
 }
 
 type Command struct {
@@ -54,6 +56,10 @@ func RenderLaunch(collar Collar, options LaunchOptions) (Command, error) {
 		return Command{}, fmt.Errorf("collar %q requires a hook command", collar.Name)
 	}
 	if collar.Hooks != nil {
+		timeout := options.HookTimeoutSeconds
+		if timeout <= 0 {
+			timeout = 600
+		}
 		command := shellJoin(options.HookCommand)
 		encoded, err := json.Marshal(command)
 		if err != nil {
@@ -61,6 +67,7 @@ func RenderLaunch(collar Collar, options LaunchOptions) (Command, error) {
 		}
 		hookArgs, err := renderArgs(collar.Hooks.InstallArgs, map[string]string{
 			"hook.command.json": string(encoded),
+			"hook.timeout":      strconv.Itoa(timeout),
 		})
 		if err != nil {
 			return Command{}, fmt.Errorf("render %s hooks: %w", collar.Name, err)

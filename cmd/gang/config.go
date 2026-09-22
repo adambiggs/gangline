@@ -7,21 +7,23 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"time"
 
 	"github.com/adambiggs/gangline/harness"
 	"github.com/adambiggs/gangline/substrate/tmux"
 )
 
 type settings struct {
-	Session        string
-	StateRoot      string
-	Collar         string
-	Socket         string
-	ConfigDir      string
-	CollarDir      string
-	LaunchArgs     map[string][]string
-	LaunchArgsJSON string
-	Origins        map[string]string
+	Session         string
+	StateRoot       string
+	Collar          string
+	Socket          string
+	ConfigDir       string
+	CollarDir       string
+	LaunchArgs      map[string][]string
+	LaunchArgsJSON  string
+	Origins         map[string]string
+	DeliveryTimeout time.Duration
 }
 
 func (cmd command) settings() (settings, error) {
@@ -62,11 +64,13 @@ func (cmd command) settings() (settings, error) {
 		ConfigDir:  configDir,
 		Origins:    make(map[string]string),
 	}
+	deliveryBudget := startupDeliveryTimeout.String()
 	values := map[string]*string{
-		"GANG_SESSION":     &result.Session,
-		"GANG_COLLAR":      &result.Collar,
-		"GANG_COLLARS":     &result.CollarDir,
-		"GANG_LAUNCH_ARGS": &result.LaunchArgsJSON,
+		"GANG_DELIVERY_TIMEOUT": &deliveryBudget,
+		"GANG_SESSION":          &result.Session,
+		"GANG_COLLAR":           &result.Collar,
+		"GANG_COLLARS":          &result.CollarDir,
+		"GANG_LAUNCH_ARGS":      &result.LaunchArgsJSON,
 	}
 	for name, destination := range values {
 		if value, ok := configured[name]; ok {
@@ -80,6 +84,10 @@ func (cmd command) settings() (settings, error) {
 			*destination = value
 			result.Origins[name] = "environment"
 		}
+	}
+	result.DeliveryTimeout, err = time.ParseDuration(deliveryBudget)
+	if err != nil || result.DeliveryTimeout <= 0 {
+		return settings{}, fmt.Errorf("GANG_DELIVERY_TIMEOUT must be a positive duration")
 	}
 	for label, value := range map[string]string{
 		"GANG_SESSION":    result.Session,
@@ -112,10 +120,11 @@ func (cmd command) settings() (settings, error) {
 }
 
 var configurationKeys = map[string]bool{
-	"GANG_COLLAR":      true,
-	"GANG_SESSION":     true,
-	"GANG_COLLARS":     true,
-	"GANG_LAUNCH_ARGS": true,
+	"GANG_DELIVERY_TIMEOUT": true,
+	"GANG_COLLAR":           true,
+	"GANG_SESSION":          true,
+	"GANG_COLLARS":          true,
+	"GANG_LAUNCH_ARGS":      true,
 }
 
 func readConfiguration(filename string) (map[string]string, error) {

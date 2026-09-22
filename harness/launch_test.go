@@ -29,6 +29,28 @@ func TestRenderLaunchInstallsHooksAndOptions(t *testing.T) {
 	}
 }
 
+func TestCodexBoundaryHooksDoNotBlockNativeSubmission(t *testing.T) {
+	collar, err := EmbeddedCollar("codex")
+	if err != nil {
+		t.Fatal(err)
+	}
+	command, err := RenderLaunch(collar, LaunchOptions{HookCommand: []string{"gang", "hook"}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, event := range []string{"Stop", "PostCompact"} {
+		found := false
+		for _, arg := range command.Args {
+			if strings.HasPrefix(arg, "hooks."+event+"=") {
+				found = strings.Contains(arg, "async = true")
+			}
+		}
+		if !found {
+			t.Errorf("%s holds the native boundary while awaiting submission", event)
+		}
+	}
+}
+
 func TestRenderLaunchResume(t *testing.T) {
 	collar, err := EmbeddedCollar("claude-code")
 	if err != nil {

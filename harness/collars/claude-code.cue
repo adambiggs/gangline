@@ -11,7 +11,7 @@ collar: {
 	hooks: {
 		install_args: [
 			"--settings",
-			"{\"hooks\":{\"UserPromptSubmit\":[{\"hooks\":[{\"type\":\"command\",\"command\":{{hook.command.json}}}]}],\"PostToolUse\":[{\"matcher\":\"*\",\"hooks\":[{\"type\":\"command\",\"command\":{{hook.command.json}}}]}],\"Stop\":[{\"hooks\":[{\"type\":\"command\",\"command\":{{hook.command.json}}}]}],\"PermissionRequest\":[{\"hooks\":[{\"type\":\"command\",\"command\":{{hook.command.json}}}]}],\"PreCompact\":[{\"hooks\":[{\"type\":\"command\",\"command\":{{hook.command.json}}}]}],\"PostCompact\":[{\"hooks\":[{\"type\":\"command\",\"command\":{{hook.command.json}}}]}]}}",
+			"{\"hooks\":{\"UserPromptSubmit\":[{\"hooks\":[{\"type\":\"command\",\"command\":{{hook.command.json}}}]}],\"PostToolUse\":[{\"matcher\":\"*\",\"hooks\":[{\"type\":\"command\",\"command\":{{hook.command.json}}}]}],\"Stop\":[{\"hooks\":[{\"type\":\"command\",\"command\":{{hook.command.json}},\"async\":true}]}],\"PermissionRequest\":[{\"hooks\":[{\"type\":\"command\",\"command\":{{hook.command.json}}}]}],\"PreCompact\":[{\"hooks\":[{\"type\":\"command\",\"command\":{{hook.command.json}}}]}],\"PostCompact\":[{\"hooks\":[{\"type\":\"command\",\"command\":{{hook.command.json}},\"async\":true}]}]}}",
 		]
 		events: {
 			userpromptsubmit: {event: "turn-started", payload: {session_id: "session_id", transcript_path: "transcript_path", prompt: "prompt"}}

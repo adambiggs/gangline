@@ -14,7 +14,7 @@ func TestPrePushDelegatesGlobalHook(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	for _, scenario := range []string{"configured", "fallback", "refusal", "recursion"} {
+	for _, scenario := range []string{"configured", "fallback", "refusal", "recursion", "callback"} {
 		t.Run(scenario, func(t *testing.T) {
 			root := t.TempDir()
 			config := filepath.Join(root, "global-config")
@@ -42,13 +42,16 @@ func TestPrePushDelegatesGlobalHook(t *testing.T) {
 				status = 23
 			}
 			write(filepath.Join(hooks, "pre-push"), fmt.Sprintf("#!/bin/sh\nset -eu\nprintf '%%s\\n' \"$@\" > \"$HOOK_FIXTURE/args\"\ncat > \"$HOOK_FIXTURE/refs\"\nexit %d\n", status), 0o700)
+			if scenario == "callback" {
+				write(filepath.Join(hooks, "pre-push"), "#!/bin/sh\nset -eu\nprintf '%s\\n' \"$@\" > \"$HOOK_FIXTURE/args\"\ncat > \"$HOOK_FIXTURE/refs\"\nprintf 'call\\n' >> \"$HOOK_FIXTURE/calls\"\n[ \"${HOOK_DEPTH:-0}\" -lt 2 ] || exit 97\nexport HOOK_DEPTH=$(( ${HOOK_DEPTH:-0} + 1 ))\nbash \"$HOOK_ENTRY\" \"$@\" < \"$HOOK_FIXTURE/refs\"\n", 0o700)
+			}
 			env := []string{}
 			for _, entry := range os.Environ() {
 				if !strings.HasPrefix(entry, "GIT_") && !strings.HasPrefix(entry, "XDG_CONFIG_HOME=") {
 					env = append(env, entry)
 				}
 			}
-			env = append(env, "GIT_CONFIG_NOSYSTEM=1", "GIT_CONFIG_GLOBAL="+config, "XDG_CONFIG_HOME="+filepath.Join(root, "config"), "HOOK_FIXTURE="+root)
+			env = append(env, "GIT_CONFIG_NOSYSTEM=1", "GIT_CONFIG_GLOBAL="+config, "XDG_CONFIG_HOME="+filepath.Join(root, "config"), "HOOK_FIXTURE="+root, "HOOK_ENTRY="+hook)
 			init := exec.Command("git", "init", "--quiet", root)
 			init.Env = env
 			if output, err := init.CombinedOutput(); err != nil {
@@ -76,6 +79,12 @@ func TestPrePushDelegatesGlobalHook(t *testing.T) {
 			}
 			if scenario == "refusal" && strings.Contains(string(output), "Go checks") {
 				t.Fatalf("repository checks ran after global refusal: %s", output)
+			}
+			if scenario == "callback" {
+				calls, err := os.ReadFile(filepath.Join(root, "calls"))
+				if err != nil || string(calls) != "call\n" {
+					t.Fatalf("global callback recursed: %q, %v", calls, err)
+				}
 			}
 		})
 	}

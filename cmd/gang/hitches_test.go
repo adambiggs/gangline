@@ -18,13 +18,9 @@ func TestStartupDeliveryRetriesWithoutAnOperatorTick(t *testing.T) {
 		Status:   core.DeliveryQueued, Deadline: deadline, Reason: "another surface owns input",
 	}
 
-	// A supplied observation is the fake clock: the production retry margin is
-	// 100ms against a five-minute startup budget, while the gate budget is 90s.
-	observations := make(chan time.Time, 1)
-	observations <- now.Add(startupRetryInterval)
-	close(observations)
+	fakeNow := now
 	attempts := 0
-	got, err := awaitStartupDelivery(state, id, observations, func() (core.State, error) {
+	got, err := awaitDelivery(state, id, func() time.Time { return fakeNow }, func(delay time.Duration) { fakeNow = fakeNow.Add(delay) }, func() (core.State, error) {
 		attempts++
 		delivery := state.Deliveries[id]
 		delivery.Status = core.DeliveryDelivered

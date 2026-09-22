@@ -5,6 +5,12 @@
 #   git config core.hooksPath .githooks
 set -euo pipefail
 
+# The outer invocation runs repository checks after global delegation returns.
+# A global hook calling back here must not start that chain a second time.
+if [ "${_GANGLINE_PRE_PUSH_ACTIVE:-0}" = 1 ]; then
+  exit 0
+fi
+
 root="$(git rev-parse --show-toplevel)"
 cd "$root"
 
@@ -37,7 +43,7 @@ if [ "$global_hook" -ef "$0" ]; then
   exit 1
 fi
 if [ -x "$global_hook" ]; then
-  "$global_hook" "$@" < "$tmp/stdin"
+  _GANGLINE_PRE_PUSH_ACTIVE=1 "$global_hook" "$@" < "$tmp/stdin"
 fi
 
 unset GIT_DIR GIT_WORK_TREE GIT_INDEX_FILE GIT_OBJECT_DIRECTORY GIT_COMMON_DIR GIT_PREFIX

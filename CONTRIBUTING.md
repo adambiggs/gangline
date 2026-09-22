@@ -16,7 +16,9 @@ test/gate.sh
 The pre-push hook first runs the user's global pre-push hook, selected by global
 `core.hooksPath` or `${XDG_CONFIG_HOME:-~/.config}/git/hooks`, when executable.
 It passes the original remote arguments and ref updates to both hook stages;
-a global refusal stops the push before repository checks run.
+a global refusal stops the push before repository checks run. A scoped callback
+guard lets a global hook call the repository hook without recursing; the outer
+invocation still runs the repository checks once.
 
 A successful baseline ends with:
 

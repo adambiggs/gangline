@@ -31,7 +31,7 @@ func stepCompactionCompleted(state State, event CompactionCompleted) (State, []E
 	compact.Status = CompactionSucceeded
 	state.Compactions[compact.ID] = compact
 	hitch.PendingCompactID = ""
-	hitch.Activity = ActivityBusy
+	hitch.Activity = ActivityIdle
 	state.Hitches[hitch.ID] = hitch
 	return state, nil
 }

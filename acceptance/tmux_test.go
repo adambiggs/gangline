@@ -178,7 +178,7 @@ func TestCommandLifecycleOnPrivateTmux(t *testing.T) {
 	if !startupDelivered {
 		t.Fatal("startup delivery was not recorded")
 	}
-	if output, status := runGang("", "capture", "lead"); status != 0 || !strings.Contains(output, "WORKING") {
+	if output, status := runGang("", "capture", "lead"); status != 0 || !strings.Contains(output, "READY") {
 		t.Fatalf("capture decorated agent status %d:\n%s", status, output)
 	}
 	if output, err := runner.run("wait-for", "received"); err != nil {
@@ -266,12 +266,17 @@ func TestCommandLifecycleOnPrivateTmux(t *testing.T) {
 		t.Fatalf("wait for compact command: %v\n%s", err, output)
 	}
 	runHook("PostCompact")
-	runHook("Stop")
 	if output, err := runner.run("wait-for", "received"); err != nil {
 		t.Fatalf("wait for compaction continuation: %v\n%s", err, output)
 	}
 	runHook("Stop")
 	runHook("UserPromptSubmit")
+	if output, err := runner.run("send-keys", "-t", string(hitch.Pane), "C-b"); err != nil {
+		t.Fatalf("set native busy: %v\n%s", err, output)
+	}
+	if output, err := runner.run("wait-for", "native-busy"); err != nil {
+		t.Fatalf("observe native busy: %v\n%s", err, output)
+	}
 	if output, status := runGang("", "tick"); status != 0 {
 		t.Fatalf("first wedge observation status %d:\n%s", status, output)
 	}
@@ -555,6 +560,14 @@ func runCommandHarness() int {
 			fmt.Fprintln(os.Stderr, err)
 			return 1
 		}
+		if value == 2 {
+			fmt.Print("\x1b[HWORKING")
+			if err := signal("native-busy"); err != nil {
+				fmt.Fprintln(os.Stderr, err)
+				return 1
+			}
+			continue
+		}
 		if value != '\r' {
 			input.WriteByte(value)
 			renderCommandComposer(input.String())
@@ -613,7 +626,7 @@ func renderCommandComposer(input string) {
 	if len(lines) == 0 {
 		lines = []string{""}
 	}
-	fmt.Print("\x1b[2J\x1b[HWORKING\r\n", rule, "\r\n❯ ", lines[0], "\r\n")
+	fmt.Print("\x1b[2J\x1b[HREADY\r\n", rule, "\r\n❯ ", lines[0], "\r\n")
 	for _, line := range lines[1:] {
 		fmt.Print(line, "\r\n")
 	}

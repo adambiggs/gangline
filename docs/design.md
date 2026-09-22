@@ -121,18 +121,23 @@ native permission hook supplies an earlier signal when available. Delivery
 stays queued until direct observation clears the surface; Gangline never types
 through it or chooses an answer.
 
-### Keep startup delivery with the hitch command
+### Keep deferred delivery with its command or native boundary hook
 
 A harness can draw a permission dialog after its composer first looked ready.
-When that race safely refuses startup delivery before input, `gang hitch` keeps
-the queued assignment and observes the pane until the dialog clears or the
-startup-delivery deadline expires. The command is the bounded retry owner; no
-resident watcher or harness-specific callback is introduced.
+Startup delivery stays with `gang hitch`; queued sends and compaction
+continuations stay with the native asynchronous Stop or PostCompact hook that
+releases them. A synchronous boundary hook cannot wait for submission: the
+native dispatcher must first return from that hook to accept the next prompt.
 
-The startup-delivery deadline is longer than an ordinary send deadline because
-a person may need to read and answer the native dialog. Between attempts the
-hitch is recorded idle unless direct evidence says it is blocked, so roster
-state describes the pane rather than the retry owner's lifetime.
+All three paths share exponential backoff and a configurable finite deadline.
+The deadline bounds the lifetime of the owning command or hook; no resident
+watcher is introduced. Attempts require an empty composer without the collar's
+native busy marker. After input lands, a separate short witness budget limits
+uncertainty, and unverified input is never retried automatically.
+
+Compaction completion releases the continuation without requiring a later Stop.
+Interruption records idle only after direct native observation confirms it,
+then releases queued work. Sending Escape alone does not prove interruption.
 
 ### Keep the event log authoritative
 
@@ -170,3 +175,8 @@ replacement, while preserving `gang drop` as the deletion path.
 Unit tests use supplied times and direct state. Black-box scenarios use private
 tmux sockets and event barriers. The local gate has a hard ceiling below two
 minutes and never exercises the operator's live team.
+
+`gang wait` observes complete newline-terminated log records without acquiring
+the snapshot writer's lock. An append notification can precede lock release;
+that contention is not a failed wait. An unfinished record cannot establish
+idle, and malformed completed records still fail loudly.

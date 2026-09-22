@@ -90,7 +90,7 @@ func (cmd command) hitch(arguments []string) error {
 		Model: options.Model, Effort: options.Effort, Resume: options.Resume,
 		RolePrompt: composeStartup(options.Name, brief, ""),
 		Event: core.SendRequested{
-			At: now, Deadline: now.Add(startupDeliveryTimeout),
+			At: now, Deadline: now.Add(run.deliveryBudget()),
 			Envelope: core.Envelope{
 				ID: core.EnvelopeID(envelopeRaw), From: core.Sender{Kind: core.SenderSelfDeclared, Name: "hitch"},
 				To: core.AgentName(options.Name), Message: core.Message{Text: startup}, CreatedAt: now,
@@ -115,10 +115,10 @@ func (cmd command) hitch(arguments []string) error {
 			return refuseError("startup assignment for %q was not recorded", options.Name)
 		}
 		if delivery.Status == core.DeliveryQueued || delivery.Status == core.DeliveryDelivering {
-			if _, err := fmt.Fprintf(cmd.stderr, "gang: startup assignment to %q is queued; waiting up to %s for its native composer to become safe\n", options.Name, startupDeliveryTimeout); err != nil {
+			if _, err := fmt.Fprintf(cmd.stderr, "gang: startup assignment to %q is queued; waiting up to %s for its native composer to become safe\n", options.Name, run.deliveryBudget()); err != nil {
 				return err
 			}
-			state, err = run.awaitStartupDelivery(state, delivery.Envelope.ID)
+			state, err = run.awaitDelivery(state, delivery.Envelope.ID)
 			if err != nil {
 				return err
 			}
@@ -141,38 +141,6 @@ func (cmd command) hitch(arguments []string) error {
 	default:
 		return refuseError("hitch %s failed to launch: %s", options.Name, hitch.WedgeEvidence)
 	}
-}
-
-func (run *runtime) awaitStartupDelivery(state core.State, id core.EnvelopeID) (core.State, error) {
-	ticker := time.NewTicker(startupRetryInterval)
-	defer ticker.Stop()
-	return awaitStartupDelivery(state, id, ticker.C, run.recover)
-}
-
-func awaitStartupDelivery(state core.State, id core.EnvelopeID, observations <-chan time.Time, refresh func() (core.State, error)) (core.State, error) {
-	delivery, ok := state.Deliveries[id]
-	if !ok {
-		return core.State{}, fmt.Errorf("startup assignment %q is not recorded", id)
-	}
-	for delivery.Status == core.DeliveryQueued || delivery.Status == core.DeliveryDelivering {
-		observedAt, open := <-observations
-		if !open {
-			return core.State{}, fmt.Errorf("startup delivery observation source closed")
-		}
-		var err error
-		state, err = refresh()
-		if err != nil {
-			return core.State{}, err
-		}
-		delivery, ok = state.Deliveries[id]
-		if !ok {
-			return core.State{}, fmt.Errorf("startup assignment %q disappeared during retry", id)
-		}
-		if !observedAt.Before(delivery.Deadline) && (delivery.Status == core.DeliveryQueued || delivery.Status == core.DeliveryDelivering) {
-			return core.State{}, fmt.Errorf("startup assignment %q remained pending after its delivery deadline", id)
-		}
-	}
-	return state, nil
 }
 
 func (cmd command) adopt(arguments []string) error {

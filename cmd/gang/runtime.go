@@ -25,6 +25,13 @@ type runtime struct {
 	settings settings
 }
 
+func (run *runtime) deliveryBudget() time.Duration {
+	if run.settings.DeliveryTimeout > 0 {
+		return run.settings.DeliveryTimeout
+	}
+	return startupDeliveryTimeout
+}
+
 func (cmd command) runtime() (*runtime, error) {
 	settings, err := cmd.settings()
 	if err != nil {

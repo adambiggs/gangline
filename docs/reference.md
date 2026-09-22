@@ -39,7 +39,12 @@ otherwise `--task` supplies it.
 `up` defaults the role to `lead` and the working directory to the caller's
 current directory. An explicit `--role` or `--dir` overrides that default.
 A safely deferred startup assignment is retried by the hitch command until it
-is delivered or its startup-delivery deadline expires.
+is delivered or its configured delivery deadline expires. Deferred attempts back
+off from 100ms to a 30s cap. Native asynchronous boundary hooks use the same
+schedule for queued sends and compaction continuations. After input is sent,
+verification waits at most 30s and never retries unverified input. Scheduled
+messages start their delivery budget when due. Hook settings are launch-time
+configuration: hitch a new agent to pick up changed hook arguments or budgets.
 A failed hitch retains its name until `gang drop NAME` removes that generation;
 another hitch or rename cannot reuse it first.
 
@@ -120,6 +125,7 @@ The config file is `$GANG_CONFIG_DIR/config`, defaulting to
 | `GANG_SESSION` | `gangline` | Team and tmux session name. |
 | `GANG_COLLAR` | `claude-code` | Default collar for launch and model discovery. |
 | `GANG_COLLARS` | unset | Absolute directory of operator `NAME.cue` collars. |
+| `GANG_DELIVERY_TIMEOUT` | `5m` | Positive duration bounding deferred delivery, including startup, busy sends, and compaction continuations. |
 | `GANG_LAUNCH_ARGS` | unset | JSON object of collar names to extra launch-argument arrays. |
 
 Runtime-only variables are `GANG_CONFIG_DIR`, `GANG_STATE_ROOT`, `GANG_TMUX`,

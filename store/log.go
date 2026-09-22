@@ -15,6 +15,21 @@ type LogEntry struct {
 	Event    core.Event
 }
 
+// ObserveLog reads complete appended records without competing with the writer's
+// snapshot lock. An unfinished record is not evidence for an idle verdict.
+func ObserveLog(path string, initial core.State) (core.State, int64, bool, error) {
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return core.State{}, 0, false, err
+	}
+	end := bytes.LastIndexByte(data, '\n') + 1
+	entries, err := ReadLog(bytes.NewReader(data[:end]))
+	if err != nil {
+		return core.State{}, 0, false, err
+	}
+	return Replay(initial, entries), int64(len(data)), end == len(data), nil
+}
+
 func (team *LockedTeam) Append(event core.Event) error {
 	if err := team.checkLocked(); err != nil {
 		return err

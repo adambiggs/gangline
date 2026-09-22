@@ -64,11 +64,12 @@ func (run *runtime) spawn(backend *tmux.Backend, effect core.SpawnHitch) (core.E
 		rolePrompt = queued.RolePrompt
 	}
 	launch, err := harness.RenderLaunch(collar, harness.LaunchOptions{
-		ResumeSession: queued.Resume,
-		HookCommand:   []string{executable, "hook"},
-		Model:         queued.Model,
-		Effort:        queued.Effort,
-		RolePrompt:    rolePrompt,
+		ResumeSession:      queued.Resume,
+		HookCommand:        []string{executable, "hook"},
+		HookTimeoutSeconds: int(run.deliveryBudget()/time.Second) + 60,
+		Model:              queued.Model,
+		Effort:             queued.Effort,
+		RolePrompt:         rolePrompt,
 	})
 	if err != nil {
 		return core.HitchLaunchFailed{At: now, HitchID: effect.Hitch.ID, Reason: err.Error()}, nil
@@ -139,6 +140,11 @@ func (run *runtime) interruptHitch(state core.State, backend *tmux.Backend, effe
 	}
 	if err := sendHarnessKeys(context.Background(), backend, substrate.PaneID(effect.Pane), collar, collar.Actions.Interrupt.Input()); err != nil {
 		return core.InterruptFailed{At: now, HitchID: effect.HitchID, Reason: err.Error()}, nil
+	}
+	ctx, cancel := context.WithDeadline(context.Background(), effect.Deadline)
+	defer cancel()
+	if err := harness.AwaitIdle(ctx, backend.Capture, substrate.PaneID(effect.Pane), collar); err != nil {
+		return core.InterruptFailed{At: time.Now(), HitchID: effect.HitchID, Reason: err.Error()}, nil
 	}
 	return core.InterruptSucceeded{At: time.Now(), HitchID: effect.HitchID}, nil
 }
