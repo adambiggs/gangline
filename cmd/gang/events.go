@@ -110,7 +110,7 @@ func (cmd command) hook(arguments []string) error {
 					return idErr
 				}
 				state, err = run.drive(core.SendRequested{
-					At: now, Deadline: now.Add(run.deliveryBudget()),
+					At: now,
 					Envelope: core.Envelope{
 						ID: core.EnvelopeID(id), From: core.Sender{Kind: core.SenderSelfDeclared, Name: "compact"},
 						To: hitch.Name, Message: compact.Resume, CreatedAt: now,

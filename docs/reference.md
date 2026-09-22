@@ -28,7 +28,7 @@ directory, and `GANGLINE_REPO` changes the release source. Defaults are
 | `gang hitch NAME [OPTIONS]` | Launch a harness window and deliver its contract, role, and assignment. |
 | `gang adopt NAME -c COLLAR` | Register the current tmux pane without launch or startup delivery. |
 | `gang rename OLD NEW` | Rename an active hitch and its tmux window. |
-| `gang drop NAME` | Stop one active or failed hitch and cancel its pending work. |
+| `gang drop NAME` | Stop one active or failed hitch and visibly fail its pending sends. |
 | `gang down SESSION` | Drop every active or failed hitch and remove that team's v1 state directory. |
 
 Hitch options are `-c/--collar`, `-d/--dir`, `-m/--model`, `-e/--effort`,
@@ -38,13 +38,12 @@ otherwise `--task` supplies it.
 
 `up` defaults the role to `lead` and the working directory to the caller's
 current directory. An explicit `--role` or `--dir` overrides that default.
-A safely deferred startup assignment is retried by the hitch command until it
-is delivered or its configured delivery deadline expires. Deferred attempts back
-off from 100ms to a 30s cap. Native asynchronous boundary hooks use the same
-schedule for queued sends and compaction continuations. After input is sent,
-verification waits at most 30s and never retries unverified input. Scheduled
-messages start their delivery budget when due. Hook settings are launch-time
-configuration: hitch a new agent to pick up changed hook arguments or budgets.
+A safely deferred assignment to a ready, live recipient stays pending until
+native acceptance or recipient drop. Attempts back off from 100ms to a 30s cap;
+time does not expire the message. The same policy covers queued sends and
+compaction continuations. Startup readiness retains its deadline while no native
+process answers. Hook settings are launch-time configuration; changing the binary
+does not replace arguments captured by an existing harness.
 A failed hitch retains its name until `gang drop NAME` removes that generation;
 another hitch or rename cannot reuse it first.
 
@@ -125,7 +124,6 @@ The config file is `$GANG_CONFIG_DIR/config`, defaulting to
 | `GANG_SESSION` | `gangline` | Team and tmux session name. |
 | `GANG_COLLAR` | `claude-code` | Default collar for launch and model discovery. |
 | `GANG_COLLARS` | unset | Absolute directory of operator `NAME.cue` collars. |
-| `GANG_DELIVERY_TIMEOUT` | `5m` | Positive duration bounding deferred delivery, including startup, busy sends, and compaction continuations. |
 | `GANG_LAUNCH_ARGS` | unset | JSON object of collar names to extra launch-argument arrays. |
 
 Runtime-only variables are `GANG_CONFIG_DIR`, `GANG_STATE_ROOT`, `GANG_TMUX`,
@@ -176,6 +174,11 @@ through the same loader as operator collars.
 A send to a busy recipient uses native mid-turn submission when its collar
 advertises `primitives.mid_turn`. It reports delivered only after native
 submission is verified, while the recipient remains busy. Collars without this
-capability keep sends queued until idle. The sending command waits through deferred native submissions for up to the
-configured delivery budget; `gang tick` never retypes an abandoned in-flight
+capability keep sends queued until idle. The sending command waits through deferred native submissions until acceptance
+or recipient drop; `gang tick` never retypes an abandoned in-flight
 submission whose outcome is unknown.
+
+`GANG_DELIVERY_TIMEOUT` is no longer accepted: live sends do not have an expiry
+setting. Existing pending events can contain older deadlines; those timestamps
+do not expire their delivery. Unknown input outcomes remain unverified and are
+not retried automatically.

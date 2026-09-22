@@ -90,7 +90,7 @@ func (cmd command) hitch(arguments []string) error {
 		Model: options.Model, Effort: options.Effort, Resume: options.Resume,
 		RolePrompt: composeStartup(options.Name, brief, ""),
 		Event: core.SendRequested{
-			At: now, Deadline: now.Add(run.deliveryBudget()),
+			At: now,
 			Envelope: core.Envelope{
 				ID: core.EnvelopeID(envelopeRaw), From: core.Sender{Kind: core.SenderSelfDeclared, Name: "hitch"},
 				To: core.AgentName(options.Name), Message: core.Message{Text: startup}, CreatedAt: now,
@@ -115,7 +115,7 @@ func (cmd command) hitch(arguments []string) error {
 			return refuseError("startup assignment for %q was not recorded", options.Name)
 		}
 		if delivery.Status == core.DeliveryQueued || delivery.Status == core.DeliveryDelivering {
-			if _, err := fmt.Fprintf(cmd.stderr, "gang: startup assignment to %q is queued; waiting up to %s for its native composer to become safe\n", options.Name, run.deliveryBudget()); err != nil {
+			if _, err := fmt.Fprintf(cmd.stderr, "gang: startup assignment to %q is queued; waiting for native acceptance or recipient drop\n", options.Name); err != nil {
 				return err
 			}
 			state, err = run.awaitDelivery(state, delivery.Envelope.ID)
@@ -219,6 +219,13 @@ func (cmd command) drop(arguments []string) error {
 	if !ok {
 		return refuseError("agent %q is not active or failed", name)
 	}
+	var pending []core.EnvelopeID
+	for _, id := range state.DeliveryOrder {
+		delivery := state.Deliveries[id]
+		if delivery.Envelope.To == hitch.Name && (delivery.Status == core.DeliveryQueued || delivery.Status == core.DeliveryDelivering) {
+			pending = append(pending, id)
+		}
+	}
 	now := time.Now()
 	state, err = run.drive(core.DropRequested{At: now, HitchID: hitch.ID, Deadline: now.Add(operationTimeout)})
 	if err != nil {
@@ -226,6 +233,14 @@ func (cmd command) drop(arguments []string) error {
 	}
 	if state.Hitches[hitch.ID].Status != core.HitchDropped {
 		return refuseError("agent %q was not stopped; inspect 'gang log'", name)
+	}
+	for _, id := range pending {
+		delivery := state.Deliveries[id]
+		if delivery.Envelope.To == hitch.Name && delivery.Status == core.DeliveryFailed && delivery.Reason == "recipient was dropped" {
+			if _, err := fmt.Fprintf(cmd.stdout, "%s\tfailed\t%s\n", id, delivery.Reason); err != nil {
+				return err
+			}
+		}
 	}
 	return nil
 }

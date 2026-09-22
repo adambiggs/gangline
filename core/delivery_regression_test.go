@@ -23,3 +23,30 @@ func TestVerifiedInterruptLeavesHitchIdle(t *testing.T) {
 		t.Fatalf("verified interrupt left activity %s", state.Hitches["worker-id"].Activity)
 	}
 }
+
+func TestLiveDeliveryHasNoLifetimeDeadline(t *testing.T) {
+	state := twoActiveHitches(t)
+	state, _ = Step(state, TurnStarted{At: testNow, HitchID: "worker-id"})
+	envelope := Envelope{ID: "forever", From: Sender{Kind: SenderSelfDeclared, Name: "operator"}, To: "worker", Message: Message{Text: "later"}, CreatedAt: testNow}
+	state, _ = Step(state, SendRequested{At: testNow, Envelope: envelope})
+	if state.Deliveries["forever"].Status != DeliveryQueued {
+		t.Fatal("unbounded live delivery rejected")
+	}
+	state, _ = Step(state, DropRequested{At: testNow, HitchID: "worker-id", Deadline: testDeadline})
+	state, _ = Step(state, DropSucceeded{At: testNow, HitchID: "worker-id"})
+	if delivery := state.Deliveries["forever"]; delivery.Status != DeliveryFailed || delivery.Reason != "recipient was dropped" {
+		t.Fatalf("drop did not visibly fail pending send: %+v", delivery)
+	}
+}
+
+func TestUnboundedDeliverySurvivesEventCodec(t *testing.T) {
+	event := SendRequested{At: testNow, Envelope: Envelope{ID: "forever", From: Sender{Kind: SenderSelfDeclared, Name: "operator"}, To: "worker", Message: Message{Text: "later"}, CreatedAt: testNow}}
+	encoded, err := EncodeEvent(event)
+	if err != nil {
+		t.Fatal(err)
+	}
+	decoded, err := DecodeEvent(encoded)
+	if err != nil || !decoded.(SendRequested).Deadline.IsZero() {
+		t.Fatalf("unbounded deadline did not round trip: %v %v", decoded, err)
+	}
+}

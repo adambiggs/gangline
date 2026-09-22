@@ -62,12 +62,8 @@ func (cmd command) send(arguments []string) error {
 	if err != nil {
 		return err
 	}
-	deadline := now.Add(run.deliveryBudget())
-	if !notBefore.IsZero() {
-		deadline = notBefore.Add(run.deliveryBudget())
-	}
 	state, err = run.drive(core.SendRequested{
-		At: now, Deadline: deadline, NotBefore: notBefore, MidTurn: collar.Primitives.MidTurn,
+		At: now, NotBefore: notBefore, MidTurn: collar.Primitives.MidTurn,
 		Envelope: core.Envelope{ID: core.EnvelopeID(id), From: sender, To: core.AgentName(options.Name), Message: core.Message{Text: body}, CreatedAt: now},
 	})
 	if err != nil {

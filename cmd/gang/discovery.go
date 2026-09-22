@@ -198,7 +198,6 @@ func (cmd command) config(arguments []string) error {
 		return err
 	}
 	rows := [][2]string{
-		{"GANG_DELIVERY_TIMEOUT", settings.DeliveryTimeout.String()},
 		{"GANG_SESSION", settings.Session},
 		{"GANG_COLLAR", settings.Collar},
 		{"GANG_COLLARS", valueOr(settings.CollarDir, "unset")},

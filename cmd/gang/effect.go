@@ -66,7 +66,7 @@ func (run *runtime) spawn(backend *tmux.Backend, effect core.SpawnHitch) (core.E
 	launch, err := harness.RenderLaunch(collar, harness.LaunchOptions{
 		ResumeSession:      queued.Resume,
 		HookCommand:        []string{executable, "hook"},
-		HookTimeoutSeconds: int(run.deliveryBudget()/time.Second) + 60,
+		HookTimeoutSeconds: boundaryHookTimeoutSeconds,
 		Model:              queued.Model,
 		Effort:             queued.Effort,
 		RolePrompt:         rolePrompt,

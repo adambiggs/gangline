@@ -2,7 +2,9 @@ package main
 
 import (
 	"context"
+	"errors"
 	"fmt"
+	"github.com/adambiggs/gangline/store"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -26,9 +28,6 @@ func (run *runtime) deliver(state core.State, backend interface {
 	SendKeys(context.Context, substrate.PaneID, substrate.Keys) error
 }, effect core.DeliverEnvelope) (core.Event, error) {
 	now := time.Now()
-	if !now.Before(effect.Deadline) {
-		return core.DeliveryFailedEvent{At: now, EnvelopeID: effect.Envelope.ID, Reason: "delivery deadline elapsed before input"}, nil
-	}
 	var hitch core.Hitch
 	for _, candidate := range state.Hitches {
 		if candidate.Name == effect.Envelope.To && candidate.Status == core.HitchActive {
@@ -93,17 +92,13 @@ func (run *runtime) deliver(state core.State, backend interface {
 	if err != nil {
 		return core.DeliveryUnverifiedEvent{At: time.Now(), EnvelopeID: effect.Envelope.ID, Evidence: err.Error()}, nil
 	}
-	deadline := effect.Deadline
-	if attempt := time.Now().Add(deliveryTimeout); attempt.Before(deadline) {
-		deadline = attempt
-	}
-	ctx, cancel := context.WithDeadline(context.Background(), deadline)
-	defer cancel()
+	settleCtx, stopSettling := context.WithTimeout(context.Background(), deliveryTimeout)
+	defer stopSettling()
 	var settleErr error
 	if midTurn {
-		settleErr = harness.AwaitComposerSettle(ctx, backend.Capture, substrate.PaneID(effect.Pane), collar, settle)
+		settleErr = harness.AwaitComposerSettle(settleCtx, backend.Capture, substrate.PaneID(effect.Pane), collar, settle)
 	} else {
-		settleErr = harness.AwaitScreenSettle(ctx, backend.Capture, substrate.PaneID(effect.Pane), screen, settle)
+		settleErr = harness.AwaitScreenSettle(settleCtx, backend.Capture, substrate.PaneID(effect.Pane), screen, settle)
 	}
 	if err := settleErr; err != nil {
 		return core.DeliveryUnverifiedEvent{At: time.Now(), EnvelopeID: effect.Envelope.ID, Evidence: err.Error()}, nil
@@ -121,35 +116,62 @@ func (run *runtime) deliver(state core.State, backend interface {
 		return core.DeliveryUnverifiedEvent{At: time.Now(), EnvelopeID: effect.Envelope.ID, Evidence: "prepare native submit witness: " + err.Error()}, nil
 	}
 	defer os.Remove(witness)
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
 	reader := exec.CommandContext(ctx, "cat", witness)
-	type witnessResult struct {
-		data []byte
-		err  error
-	}
-	witnessed := make(chan witnessResult, 1)
+	witnessed := make(chan nativeWitnessResult, 1)
 	go func() {
 		data, readErr := reader.Output()
-		witnessed <- witnessResult{data: data, err: readErr}
+		witnessed <- nativeWitnessResult{data: data, err: readErr}
 	}()
 	if err := sendHarnessKeys(context.Background(), backend, substrate.PaneID(effect.Pane), collar, substrate.Keys{Submit: true}); err != nil {
 		return core.DeliveryUnverifiedEvent{At: time.Now(), EnvelopeID: effect.Envelope.ID, Evidence: "submit returned an error after verified text input: " + err.Error()}, nil
 	}
-	select {
-	case result := <-witnessed:
-		if result.err != nil {
-			return core.DeliveryUnverifiedEvent{At: time.Now(), EnvelopeID: effect.Envelope.ID, Evidence: "native submit witness failed: " + result.err.Error()}, nil
+	checkpoints := time.NewTicker(deliveryTimeout)
+	defer checkpoints.Stop()
+	result, waitErr := awaitNativeWitness(witnessed, checkpoints.C, func() error {
+		paths, pathErr := run.paths().Team(run.settings.Session)
+		if pathErr != nil {
+			return pathErr
 		}
-		matched, matchErr := harness.SubmittedPromptMatches(collar.Primitives.SubmitWitness, wire, string(result.data))
-		if matchErr != nil {
-			return core.DeliveryUnverifiedEvent{At: time.Now(), EnvelopeID: effect.Envelope.ID, Evidence: matchErr.Error()}, nil
+		current, _, complete, readErr := store.ObserveLog(paths.Events, run.initial())
+		if readErr != nil {
+			return readErr
 		}
-		if !matched {
-			return core.DeliveryUnverifiedEvent{At: time.Now(), EnvelopeID: effect.Envelope.ID, Evidence: "native submit witness did not match the attributed envelope"}, nil
+		if !complete {
+			return nil
 		}
-		return core.DeliverySucceeded{At: time.Now(), EnvelopeID: effect.Envelope.ID}, nil
-	case <-ctx.Done():
-		return core.DeliveryUnverifiedEvent{At: time.Now(), EnvelopeID: effect.Envelope.ID, Evidence: "native submit witness timed out after input was sent"}, nil
+		delivery := current.Deliveries[effect.Envelope.ID]
+		if delivery.Status == core.DeliveryFailed || delivery.Status == core.DeliveryCancelled {
+			return refuseError("delivery failed: %s", delivery.Reason)
+		}
+		if current.Hitches[hitch.ID].Status == core.HitchDropping {
+			return nil
+		}
+		if err := requireHarnessForeground(context.Background(), backend, substrate.PaneID(effect.Pane), collar); err != nil {
+			return fmt.Errorf("native process no longer answers for the pending submission: %w", err)
+		}
+		return nil
+	})
+	if waitErr != nil {
+		var commandErr commandError
+		if errors.As(waitErr, &commandErr) {
+			return nil, waitErr
+		}
+		return core.DeliveryUnverifiedEvent{At: time.Now(), EnvelopeID: effect.Envelope.ID, Evidence: waitErr.Error()}, nil
 	}
+	if result.err != nil {
+		return core.DeliveryUnverifiedEvent{At: time.Now(), EnvelopeID: effect.Envelope.ID, Evidence: "native submit witness failed: " + result.err.Error()}, nil
+	}
+	matched, matchErr := harness.SubmittedPromptMatches(collar.Primitives.SubmitWitness, wire, string(result.data))
+	if matchErr != nil {
+		return core.DeliveryUnverifiedEvent{At: time.Now(), EnvelopeID: effect.Envelope.ID, Evidence: matchErr.Error()}, nil
+	}
+	if !matched {
+		return core.DeliveryUnverifiedEvent{At: time.Now(), EnvelopeID: effect.Envelope.ID, Evidence: "native submit witness did not match the attributed envelope"}, nil
+	}
+	return core.DeliverySucceeded{At: time.Now(), EnvelopeID: effect.Envelope.ID}, nil
+
 }
 
 type harnessInput interface {
@@ -180,4 +202,23 @@ func requireHarnessForeground(ctx context.Context, backend harnessInput, pane su
 		commands[index] = process.Command
 	}
 	return fmt.Errorf("refuse input: pane foreground is %q, want harness %q", strings.Join(commands, ","), want)
+}
+
+type nativeWitnessResult struct {
+	data []byte
+	err  error
+}
+
+// Checkpoints detect recipient loss; they never expire a live submission.
+func awaitNativeWitness(witnessed <-chan nativeWitnessResult, checkpoints <-chan time.Time, checkRecipient func() error) (nativeWitnessResult, error) {
+	for {
+		select {
+		case result := <-witnessed:
+			return result, nil
+		case <-checkpoints:
+			if err := checkRecipient(); err != nil {
+				return nativeWitnessResult{}, err
+			}
+		}
+	}
 }

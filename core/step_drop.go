@@ -37,7 +37,7 @@ func stepDropSucceeded(state State, event DropSucceeded) (State, []Effect) {
 		if delivery.Envelope.To != hitch.Name || (delivery.Status != DeliveryQueued && delivery.Status != DeliveryDelivering) {
 			continue
 		}
-		delivery.Status = DeliveryCancelled
+		delivery.Status = DeliveryFailed
 		delivery.Reason = "recipient was dropped"
 		state.Deliveries[id] = delivery
 	}

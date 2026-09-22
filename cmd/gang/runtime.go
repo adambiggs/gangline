@@ -13,23 +13,16 @@ import (
 )
 
 const (
-	bootTimeout            = 30 * time.Second
-	deliveryTimeout        = 30 * time.Second
-	startupDeliveryTimeout = 5 * time.Minute
-	startupRetryInterval   = 100 * time.Millisecond
-	operationTimeout       = 30 * time.Second
+	bootTimeout                = 30 * time.Second
+	deliveryTimeout            = 30 * time.Second
+	boundaryHookTimeoutSeconds = 360
+	startupRetryInterval       = 100 * time.Millisecond
+	operationTimeout           = 30 * time.Second
 )
 
 type runtime struct {
 	cmd      command
 	settings settings
-}
-
-func (run *runtime) deliveryBudget() time.Duration {
-	if run.settings.DeliveryTimeout > 0 {
-		return run.settings.DeliveryTimeout
-	}
-	return startupDeliveryTimeout
 }
 
 func (cmd command) runtime() (*runtime, error) {

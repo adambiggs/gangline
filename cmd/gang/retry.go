@@ -10,7 +10,7 @@ import (
 const maximumRetryDelay = 30 * time.Second
 
 func (run *runtime) awaitDelivery(state core.State, id core.EnvelopeID) (core.State, error) {
-	return awaitDelivery(state, id, time.Now, func(delay time.Duration) {
+	return awaitDelivery(state, id, func(delay time.Duration) {
 		timer := time.NewTimer(delay)
 		defer timer.Stop()
 		<-timer.C
@@ -18,8 +18,8 @@ func (run *runtime) awaitDelivery(state core.State, id core.EnvelopeID) (core.St
 }
 
 // The command requesting startup, or the native asynchronous boundary hook,
-// owns this bounded retry. No process remains once its delivery is settled.
-func awaitDelivery(state core.State, id core.EnvelopeID, now func() time.Time, wait func(time.Duration), refresh func() (core.State, error)) (core.State, error) {
+// owns retries until acceptance or drop. Elapsed time never expires the send.
+func awaitDelivery(state core.State, id core.EnvelopeID, wait func(time.Duration), refresh func() (core.State, error)) (core.State, error) {
 	delay := startupRetryInterval
 	for {
 		delivery, ok := state.Deliveries[id]
@@ -29,21 +29,11 @@ func awaitDelivery(state core.State, id core.EnvelopeID, now func() time.Time, w
 		if delivery.Status != core.DeliveryQueued && delivery.Status != core.DeliveryDelivering {
 			return state, nil
 		}
-		remaining := delivery.Deadline.Sub(now())
-		pause := min(delay, max(remaining, 0))
-		if pause > 0 {
-			wait(pause)
-		}
+		wait(delay)
 		var err error
 		state, err = refresh()
 		if err != nil {
 			return core.State{}, err
-		}
-		if remaining <= 0 {
-			current := state.Deliveries[id]
-			if current.Status == core.DeliveryQueued || current.Status == core.DeliveryDelivering {
-				return core.State{}, fmt.Errorf("delivery %q remained pending after its deadline", id)
-			}
 		}
 		delay = min(delay*2, maximumRetryDelay)
 	}

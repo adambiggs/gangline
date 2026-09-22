@@ -10,8 +10,8 @@ func stepSendRequested(state State, event SendRequested) (State, []Effect) {
 	if envelope.ID == "" || envelope.To == "" || envelope.Message.Text == "" {
 		return rejected(state, event, event.At, "envelope id, recipient, and message are required")
 	}
-	if !validDeadline(event.At, event.Deadline) {
-		return rejected(state, event, event.At, "delivery deadline must be after event time")
+	if event.At.IsZero() || (!event.Deadline.IsZero() && !validDeadline(event.At, event.Deadline)) {
+		return rejected(state, event, event.At, "send time is required and any legacy deadline must be later")
 	}
 	if !event.NotBefore.IsZero() && !event.NotBefore.After(event.At) {
 		return rejected(state, event, event.At, "not-before time must be after event time")

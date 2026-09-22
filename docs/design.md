@@ -133,12 +133,24 @@ continuations stay with the native asynchronous Stop or PostCompact hook that
 releases them. A synchronous boundary hook cannot wait for submission: the
 native dispatcher must first return from that hook to accept the next prompt.
 
-All three paths share exponential backoff and a configurable finite deadline.
-The deadline bounds the lifetime of the owning command or hook; no resident
-watcher is introduced. Attempts require a recognized empty composer. Collars that declare native
-mid-turn submission can accept a send while a turn runs; other collars also
-require the native busy marker to be absent. After input lands, a separate short witness budget limits
-uncertainty, and unverified input is never retried automatically.
+All three paths share exponential backoff, but a live recipient's send has no
+expiry. An agent may work for hours. Its message stays pending until verified
+native acceptance or recipient drop, which fails pending sends with a visible
+reason. An old recorded delivery deadline does not expire pending work after
+upgrade. Startup readiness still has a deadline when no native process answers.
+
+The requesting command or native hook owns retry attempts; no resident watcher
+is introduced. A native harness may impose its own hook-process lifetime, but
+ending that process does not expire durable queued work. Later boundaries or an
+explicit recovery command can retry known pre-input refusals. Attempts require
+a recognized empty composer. Capable collars can accept mid-turn input; other
+collars also require the busy marker to be absent.
+
+After submission, the owner waits for the native witness while the recipient
+remains live. Periodic liveness checks detect disappearance or drop, not elapsed
+message age. Native input errors, mismatched witnesses, and an abandoned input
+owner remain unknown and are never automatically retyped. Composer paint and
+non-answering startup keep their diagnostic bounds.
 
 Compaction completion releases the continuation without requiring a later Stop.
 Interruption records idle only after direct native observation confirms it,
@@ -200,8 +212,8 @@ witness as an idle send. A mismatch or absent witness remains unverified and is
 not retried. Mid-turn acceptance does not claim the agent has read or acted on
 the message. Native submission arguments and witness rules belong to collars.
 
-The sender owns bounded retries of a safely deferred mid-turn send and can stay
-in the command for `GANG_DELIVERY_TIMEOUT`, including while the native composer
-is occupied or the recipient cannot yet receive input. Harness tool-call budgets
-should accommodate that configured command budget. Unsupported collars still
-return their spool receipt immediately; scheduled sends retain their schedule.
+The sender owns retries of a safely deferred mid-turn send and can remain in the
+command until native acceptance or recipient drop. Unsupported collars return
+their spool receipt immediately; scheduled sends retain their schedule. Harness
+tool cancellation does not erase the durable queue. Operators can inspect the
+queue and event log independently of the requesting command.
