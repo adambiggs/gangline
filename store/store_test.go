@@ -2,6 +2,7 @@ package store
 
 import (
 	"bytes"
+	"encoding/json"
 	"errors"
 	"os"
 	"path/filepath"
@@ -151,6 +152,52 @@ func TestSnapshotRejectsStateNotDerivedFromLog(t *testing.T) {
 	state.Hitches["invented"] = core.Hitch{ID: "invented", Name: "invented", Status: core.HitchActive}
 	if err := team.SaveSnapshot(state); err == nil {
 		t.Fatal("snapshot accepted state not present in the event log")
+	}
+}
+
+func TestLoadReplaysSnapshotFromPreviousReducer(t *testing.T) {
+	team := lockedTeam(t)
+	initial := core.NewState(core.Team{ID: "team-1", Name: "example"})
+	event := core.AdoptRequested{At: storeNow, Hitch: core.Hitch{ID: "h-1", Name: "worker", Collar: "codex", Directory: "/work"}, Pane: "%1"}
+	if err := team.Append(event); err != nil {
+		t.Fatal(err)
+	}
+	state, _, err := team.Load(initial)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := team.SaveSnapshot(state); err != nil {
+		t.Fatal(err)
+	}
+	snapshot, _, err := team.readSnapshot()
+	if err != nil {
+		t.Fatal(err)
+	}
+	// A prior reducer assigned different activity to the same recorded event.
+	hitch := snapshot.State.Hitches["h-1"]
+	hitch.Activity = core.ActivityBusy
+	snapshot.State.Hitches["h-1"] = hitch
+	data, err := json.Marshal(snapshot)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(team.paths.Snapshot, data, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	loaded, count, err := team.Load(initial)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if count != 1 || loaded.Hitches["h-1"].Activity != core.ActivityIdle {
+		t.Fatalf("cached activity survived replay: count=%d hitch=%#v", count, loaded.Hitches["h-1"])
+	}
+	next := core.TurnStarted{At: storeNow, HitchID: "h-1"}
+	if err := team.Append(next); err != nil {
+		t.Fatal(err)
+	}
+	loaded, _ = core.Step(loaded, next)
+	if err := team.SaveSnapshot(loaded); err != nil {
+		t.Fatalf("snapshot after the next operation: %v", err)
 	}
 }
 

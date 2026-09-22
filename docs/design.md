@@ -138,7 +138,11 @@ state describes the pane rather than the retry owner's lifetime.
 
 The per-team JSONL log is the source of truth. Snapshots carry the event count,
 log byte length, and digest needed to validate that they describe the same log;
-otherwise state is replayed.
+changed event bytes are refused. State is replayed with the current binary even
+when the snapshot's prefix matches: an upgrade can change reducer semantics
+without changing event bytes. This costs a full replay per load, but prevents a
+prior binary's cached interpretation from stranding the next operation after
+its intent has been appended.
 
 `gang down` is the deletion path: after active hitches stop, it removes the
 team directory. Evidence that must outlive teardown is copied before that

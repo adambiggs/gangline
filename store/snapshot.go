@@ -43,8 +43,6 @@ func (team *LockedTeam) Load(initial core.State) (core.State, uint64, error) {
 	}
 	defer file.Close()
 
-	state := initial
-	start := uint64(0)
 	if found {
 		if snapshot.State.Team.ID != initial.Team.ID || snapshot.State.Team.Name != initial.Team.Name {
 			return core.State{}, 0, errors.New("snapshot team does not match requested team")
@@ -52,20 +50,18 @@ func (team *LockedTeam) Load(initial core.State) (core.State, uint64, error) {
 		if err := verifySnapshotPrefix(file, snapshot); err != nil {
 			return core.State{}, 0, err
 		}
-		state = snapshot.State
-		start = snapshot.EventCount
-		if _, err := file.Seek(snapshot.LogBytes, io.SeekStart); err != nil {
-			return core.State{}, 0, fmt.Errorf("seek past snapshot prefix: %w", err)
+		if _, err := file.Seek(0, io.SeekStart); err != nil {
+			return core.State{}, 0, fmt.Errorf("rewind verified event log: %w", err)
 		}
 	}
+	// Reducer semantics can change without changing the event schema. The log
+	// prefix verifies its bytes, not a prior binary's interpretation of them.
+	// Rebuild with this binary before accepting another operation.
 	entries, err := ReadLog(file)
 	if err != nil {
-		return core.State{}, 0, fmt.Errorf("read events after snapshot: %w", err)
+		return core.State{}, 0, fmt.Errorf("read event log: %w", err)
 	}
-	for index := range entries {
-		entries[index].Sequence += start
-	}
-	return Replay(state, entries), start + uint64(len(entries)), nil
+	return Replay(initial, entries), uint64(len(entries)), nil
 }
 
 func (team *LockedTeam) SaveSnapshot(state core.State) error {
