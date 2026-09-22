@@ -82,8 +82,15 @@ func (cmd command) statusline(args []string) (result error) {
 			defer func() { result = errors.Join(result, run.release(l)) }()
 			a = current
 			a.Native.SessionID = session
-			acceptReadings(&a.Native, converted)
+			c, err := loadCollar(a.Collar, run.settings)
+			if err != nil {
+				return err
+			}
+			run.acceptContextReadings(&a, c, converted)
 			if err := l.Save(a); err != nil {
+				return err
+			}
+			if err := run.publishContextNotes(l, &a); err != nil {
 				return err
 			}
 			if err := run.publishContext(a); err != nil {
@@ -93,6 +100,16 @@ func (cmd command) statusline(args []string) (result error) {
 				return err
 			}
 		} else {
+			// Do not lose a crossing while another process owns this agent.
+			notice := hookNotice{SessionID: session, Readings: converted}
+			if cmd.detach != nil {
+				err = cmd.detach(string(id), notice)
+			} else {
+				err = cmd.detachTick(string(id), notice, run.settings)
+			}
+			if err != nil {
+				return err
+			}
 			acceptReadings(&a.Native, converted)
 		}
 		r = a.Native.Context

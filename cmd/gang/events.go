@@ -16,15 +16,16 @@ import (
 	"github.com/adambiggs/gangline/store"
 )
 
-// hookNotice contains bounded routing evidence, never a prompt or transcript.
+// hookNotice contains bounded routing and measurement evidence, never a prompt or transcript.
 // The detached tick validates it against the agent's current native session.
 type hookNotice struct {
-	Kind        string    `json:"kind"`
-	NativeEvent string    `json:"native_event"`
-	At          time.Time `json:"at"`
-	SessionID   string    `json:"session_id,omitempty"`
-	TurnID      string    `json:"turn_id,omitempty"`
-	Transcript  string    `json:"transcript,omitempty"`
+	Readings    []core.Reading `json:"readings,omitempty"`
+	Kind        string         `json:"kind"`
+	NativeEvent string         `json:"native_event"`
+	At          time.Time      `json:"at"`
+	SessionID   string         `json:"session_id,omitempty"`
+	TurnID      string         `json:"turn_id,omitempty"`
+	Transcript  string         `json:"transcript,omitempty"`
 }
 
 func (cmd command) hook(args []string) error {

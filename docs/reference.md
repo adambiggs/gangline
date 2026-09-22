@@ -187,3 +187,18 @@ errors as `observation` events. Each reading has a `kind`, a `source`
 
 Readings are collected by hooks and by `gang tick`, `gang context`, and
 `gang limits`. Nothing polls in the background.
+
+An upward crossing of `context_bands` sends a note from
+`self-declared:context-band` through the agent's normal inbox. A jump over
+several thresholds sends a note for each; repeated readings in the same band
+do not repeat it. Downward readings send nothing and allow later upward
+crossings. A model change or completed compaction starts band tracking afresh.
+Unknown context or an unknown model cannot decide a crossing.
+
+The `context_band_crossed` lifecycle event records the band in `status`, the
+native reading in `readings`, and the note's envelope and ID. Inspect it with
+`gang log --type context_band_crossed`; correlate the ID with delivery events
+to distinguish queued notes from verified submissions. Notes wait behind
+permission prompts just like other messages. Native telemetry is authoritative
+when the collar declares it; other collars use their screen context and model
+readings during `gang tick`.

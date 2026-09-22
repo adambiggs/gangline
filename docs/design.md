@@ -95,3 +95,13 @@ until it's dropped, so it can't be mixed up with a replacement.
 A hook appends one line to the team's audit log without taking a lock. Submit
 hooks publish a witness. Turn-end and compaction-end hooks start a detached
 tick for their agent and exit without waiting.
+
+### Notify on context crossings
+
+An observed upward crossing of a collar's context threshold queues a band note
+through ordinary delivery, with the deciding reading in a
+`context_band_crossed` lifecycle event. Persist publication intents beside the
+native cursor so interrupted publication can resume without repeating input.
+Unknown readings do not reset crossings. A lower observed reading, a model
+change, or completed compaction permits later crossings again. Notes carry
+context facts; the agent's standing instructions decide what to do with them.

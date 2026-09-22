@@ -54,6 +54,7 @@ type Agent struct {
 	Compaction        *Compaction       `json:"compaction,omitempty"`
 	Capacity          Capacity          `json:"capacity,omitzero"`
 	Native            NativeState       `json:"native,omitzero"`
+	ContextBands      ContextBandState  `json:"context_bands,omitzero"`
 	Process           ProcessIdentity   `json:"process,omitzero"`
 	Teardown          []ProcessIdentity `json:"teardown,omitempty"`
 	RenameFrom        AgentName         `json:"rename_from,omitempty"`
@@ -61,6 +62,22 @@ type Agent struct {
 	LastDelivered     EnvelopeID        `json:"last_delivered,omitempty"`
 	LastFailed        EnvelopeID        `json:"last_failed,omitempty"`
 	Cleanup           *ResultRef        `json:"cleanup,omitempty"`
+}
+
+// ContextBandState keeps the last known reading and publication intents under
+// the agent lock. Unknown readings never reset a crossing.
+type ContextBandState struct {
+	Model       string            `json:"model,omitempty"`
+	Percent     float64           `json:"percent,omitempty"`
+	CompactedAt time.Time         `json:"compacted_at,omitzero"`
+	Sequence    uint64            `json:"sequence,omitempty"`
+	Pending     []ContextBandNote `json:"pending,omitempty"`
+}
+
+type ContextBandNote struct {
+	Band     string   `json:"band"`
+	Reading  Reading  `json:"reading"`
+	Envelope Envelope `json:"envelope"`
 }
 
 type ProcessIdentity struct {

@@ -7,9 +7,7 @@ import (
 )
 
 func ActiveContextBand(collar Collar, model string, reading ContextReading) *ContextBand {
-	selector := contextSelector(collar.ContextBands, model)
-	bands := append([]ContextBand(nil), collar.ContextBands[selector]...)
-	sort.Slice(bands, func(left, right int) bool { return bands[left].At < bands[right].At })
+	bands := modelContextBands(collar, model)
 	var active *ContextBand
 	for index := range bands {
 		if reading.Percent < bands[index].At {
@@ -19,6 +17,24 @@ func ActiveContextBand(collar Collar, model string, reading ContextReading) *Con
 		active = &band
 	}
 	return active
+}
+
+// CrossedContextBands returns every upward threshold crossing, in order.
+func CrossedContextBands(collar Collar, model string, previous, current float64) []ContextBand {
+	var crossed []ContextBand
+	for _, band := range modelContextBands(collar, model) {
+		if previous < band.At && current >= band.At {
+			crossed = append(crossed, band)
+		}
+	}
+	return crossed
+}
+
+func modelContextBands(collar Collar, model string) []ContextBand {
+	selector := contextSelector(collar.ContextBands, model)
+	bands := append([]ContextBand(nil), collar.ContextBands[selector]...)
+	sort.Slice(bands, func(left, right int) bool { return bands[left].At < bands[right].At })
+	return bands
 }
 
 func contextSelector(bands map[string][]ContextBand, model string) string {

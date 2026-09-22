@@ -130,6 +130,9 @@ func (run *runtime) acquire(id core.HitchID, wait bool) (*store.LockedAgent, cor
 		err = run.recoverInput(l, &a)
 	}
 	if err == nil {
+		err = run.publishContextNotes(l, &a)
+	}
+	if err == nil {
 		err = run.continueCompaction(l, &a)
 	}
 	if err == nil {

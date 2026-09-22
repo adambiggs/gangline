@@ -84,13 +84,17 @@ func (run *runtime) tickAgent(id core.HitchID, notice hookNotice, wait bool) err
 		return err
 	}
 	if notice.Kind == "compaction-finished" && !notice.At.IsZero() {
-		acceptReadings(&a.Native, []core.Reading{{Kind: "compaction-finished", Source: "native-hook", At: &notice.At}})
+		run.acceptContextReadings(&a, c, []core.Reading{{Kind: "compaction-finished", Source: "native-hook", At: &notice.At}})
 		if err := l.Save(a); err != nil {
 			return err
 		}
 		if err := run.publishContext(a); err != nil {
 			return err
 		}
+	}
+	run.acceptContextReadings(&a, c, notice.Readings)
+	if err := run.observeContextBands(l, &a, c, screen); err != nil {
+		return err
 	}
 	blocked, found, err := harness.InputBlocked(c, screen)
 	if err != nil {
