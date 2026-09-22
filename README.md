@@ -20,16 +20,20 @@ Install the latest stable release:
 curl -fsSL https://raw.githubusercontent.com/adambiggs/gangline/main/install.sh | sh
 ```
 
-The installer checks out the newest `gangline-v*` tag, builds one static `gang`
-binary, and places it in `~/.local/bin` by default. Confirm the installation:
+The installer checks out the newest `gangline-v*` tag and places its `gang`
+command in `~/.local/bin` by default. Compiled releases build one static binary;
+tags with the retained-tree shell layout also require Python 3. Confirm the
+installation:
 
 ```sh
 gang --version
 gang collars
 ```
 
-Use `gang upgrade --check` to inspect the newest stable release and `gang
-upgrade` to install it.
+Use `gang upgrade --check` to inspect the newest stable release. Compiled
+installs use `gang upgrade` to install it. To move from a retained-tree shell
+release to a compiled release, rerun the installation command above so the
+current bootstrap can stage the transition safely.
 
 ## Start a team
 

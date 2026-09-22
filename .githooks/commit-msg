@@ -4,6 +4,22 @@
 #   git config core.hooksPath .githooks
 set -euo pipefail
 
+mode=message
+case "${1:-}" in
+  --subject-only)
+    mode=subject
+    shift
+    ;;
+  --*)
+    echo "commit-msg: unknown option '$1'" >&2
+    exit 1
+    ;;
+esac
+if [ "$#" -ne 1 ]; then
+  echo 'commit-msg: expected [--subject-only] MESSAGE_FILE' >&2
+  exit 1
+fi
+
 # The subject is the first line that is neither blank nor a git comment — the
 # message file arrives with the commented template still attached.
 #
@@ -30,9 +46,11 @@ fi
 # would break those commands rather than improve the history they produce.
 # `git revert` is not on this list: revert is a Conventional type, so its
 # generated subject gets edited into one like any other commit.
-case "$subject" in
-  "Merge "*|"fixup! "*|"squash! "*|"amend! "*) exit 0 ;;
-esac
+if [ "$mode" = message ]; then
+  case "$subject" in
+    "Merge "*|"fixup! "*|"squash! "*|"amend! "*) exit 0 ;;
+  esac
+fi
 
 # `git commit -m` stores its argument verbatim. A doubled backslash-n therefore
 # does not make the blank line its author intended; it publishes both escape
@@ -69,6 +87,7 @@ if printf '%s' "$subject" | grep -qE "^(${types})(\([a-z0-9._-]+\))?!?: .+"; the
   # A git comment line cannot carry it: the anchor rejects `# BREAKING CHANGE:`.
   printf '%s' "$subject" \
     | grep -qE "^(${types})(\([a-z0-9._-]+\))?!: " || exit 0
+  [ "$mode" != subject ] || exit 0
   frc=0
   grep -qE '^BREAKING[ -]CHANGE: .+' -- "$1" || frc=$?
   if [ "$frc" -gt 1 ]; then

@@ -39,5 +39,7 @@ for package in substrate harness; do
 done
 echo "go: substrate and harness do not import core"
 
+test/distribution.sh
+
 go test -count=1 -timeout=90s ./...
 echo "go: tests passed"

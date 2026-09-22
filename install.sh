@@ -19,7 +19,10 @@ BIN_DIR="${GANGLINE_BIN:-$HOME/.local/bin}"
 die() { echo "gangline: $*" >&2; exit 1; }
 need() { command -v "$1" >/dev/null 2>&1 || die "$1 is required but not installed"; }
 valid_number() {
-  case "$1" in 0|[1-9][0-9]*) return 0 ;; *) return 1 ;; esac
+  case "$1" in
+    ''|*[!0123456789]*|0?*) return 1 ;;
+    *) return 0 ;;
+  esac
 }
 parse_semver() {
   SEMVER_MAJOR="${1%%.*}"
@@ -32,6 +35,49 @@ parse_semver() {
   valid_number "$SEMVER_MAJOR" && valid_number "$SEMVER_MINOR" \
     && valid_number "$SEMVER_PATCH"
 }
+decimal_relation() {
+  left=$1 right=$2
+  left_length=${#left} right_length=${#right}
+  if [ "$left_length" -gt "$right_length" ]; then
+    printf '1\n'
+    return
+  elif [ "$left_length" -lt "$right_length" ]; then
+    printf '%s\n' '-1'
+    return
+  fi
+  while [ -n "$left" ]; do
+    left_digit=${left%"${left#?}"}
+    right_digit=${right%"${right#?}"}
+    if [ "$left_digit" -gt "$right_digit" ]; then
+      printf '1\n'
+      return
+    elif [ "$left_digit" -lt "$right_digit" ]; then
+      printf '%s\n' '-1'
+      return
+    fi
+    left=${left#?}
+    right=${right#?}
+  done
+  printf '0\n'
+}
+semver_relation() {
+  parse_semver "$1" || return 1
+  left_major=$SEMVER_MAJOR left_minor=$SEMVER_MINOR left_patch=$SEMVER_PATCH
+  parse_semver "$2" || return 1
+  for pair in \
+    "$left_major:$SEMVER_MAJOR" \
+    "$left_minor:$SEMVER_MINOR" \
+    "$left_patch:$SEMVER_PATCH"; do
+    left_number=${pair%%:*}
+    right_number=${pair#*:}
+    component_relation="$(decimal_relation "$left_number" "$right_number")"
+    if [ "$component_relation" -ne 0 ]; then
+      printf '%s\n' "$component_relation"
+      return
+    fi
+  done
+  printf '0\n'
+}
 
 need git
 need go
@@ -40,18 +86,15 @@ latest_release_tag() {
   refs="$(git ls-remote --refs --tags "$REPO" 'refs/tags/gangline-v*')" \
     || die "could not read release tags from $REPO"
   best_tag=""
-  best_major=0 best_minor=0 best_patch=0
+  best_version=""
   while read -r _ ref; do
     case "$ref" in refs/tags/gangline-v*) ;; *) continue ;; esac
     release="${ref#refs/tags/gangline-v}"
     parse_semver "$release" || continue
-    major=$SEMVER_MAJOR minor=$SEMVER_MINOR patch=$SEMVER_PATCH
     if [ -z "$best_tag" ] \
-      || [ "$major" -gt "$best_major" ] \
-      || { [ "$major" -eq "$best_major" ] && [ "$minor" -gt "$best_minor" ]; } \
-      || { [ "$major" -eq "$best_major" ] && [ "$minor" -eq "$best_minor" ] && [ "$patch" -gt "$best_patch" ]; }; then
+      || [ "$(semver_relation "$release" "$best_version")" -gt 0 ]; then
       best_tag="gangline-v$release"
-      best_major=$major best_minor=$minor best_patch=$patch
+      best_version=$release
     fi
   done <<EOF
 $refs
@@ -77,22 +120,14 @@ release_relation() { # current latest -> relation and the changed semver compone
   current_major=$SEMVER_MAJOR current_minor=$SEMVER_MINOR current_patch=$SEMVER_PATCH
   parse_semver "$2" || return 1
   latest_major=$SEMVER_MAJOR latest_minor=$SEMVER_MINOR latest_patch=$SEMVER_PATCH
-  relation=0 distance=current
-  if [ "$current_major" -ne "$latest_major" ]; then
+  relation="$(semver_relation "$1" "$2")" || return 1
+  distance=current
+  if [ "$current_major" != "$latest_major" ]; then
     distance=major
-  elif [ "$current_minor" -ne "$latest_minor" ]; then
+  elif [ "$current_minor" != "$latest_minor" ]; then
     distance=minor
-  elif [ "$current_patch" -ne "$latest_patch" ]; then
+  elif [ "$current_patch" != "$latest_patch" ]; then
     distance='patch'
-  fi
-  if [ "$current_major" -gt "$latest_major" ] \
-    || { [ "$current_major" -eq "$latest_major" ] && [ "$current_minor" -gt "$latest_minor" ]; } \
-    || { [ "$current_major" -eq "$latest_major" ] && [ "$current_minor" -eq "$latest_minor" ] && [ "$current_patch" -gt "$latest_patch" ]; }; then
-    relation=1
-  elif [ "$current_major" -lt "$latest_major" ] \
-    || { [ "$current_major" -eq "$latest_major" ] && [ "$current_minor" -lt "$latest_minor" ]; } \
-    || { [ "$current_major" -eq "$latest_major" ] && [ "$current_minor" -eq "$latest_minor" ] && [ "$current_patch" -lt "$latest_patch" ]; }; then
-    relation=-1
   fi
   printf '%s %s\n' "$relation" "$distance"
 }
@@ -164,56 +199,129 @@ fi
 
 need tmux
 
-# Keep the tagged source so upgrades remain inspectable and reproducible. The
-# installed command itself is one static binary and has no runtime tree.
+# Keep the tagged source so upgrades remain inspectable and reproducible.
+# Compiled releases install a static binary; retained-tree shell releases keep
+# their own command layout.
+if [ -L "$HOME_DIR" ] || { [ -e "$HOME_DIR" ] && [ ! -d "$HOME_DIR/.git" ]; }; then
+  die "$HOME_DIR exists and is not an installer-managed release"
+fi
 if [ -d "$HOME_DIR/.git" ]; then
   state="$(git -C "$HOME_DIR" status --porcelain)" \
     || die "could not inspect the existing install at $HOME_DIR"
   [ -z "$state" ] || die "$HOME_DIR has local changes; move them aside before upgrading"
   echo "installing $tag over $HOME_DIR"
-  shallow="$(git -C "$HOME_DIR" rev-parse --is-shallow-repository)" \
-    || die "could not determine whether $HOME_DIR is shallow"
-  case "$shallow" in
-    true)
-      git -C "$HOME_DIR" fetch --depth 1 --quiet "$REPO" "refs/tags/$tag" \
-        || die "could not fetch $tag from $REPO"
-      ;;
-    false)
-      git -C "$HOME_DIR" fetch --quiet "$REPO" "refs/tags/$tag" \
-        || die "could not fetch $tag from $REPO"
-      ;;
-    *) die "could not interpret the shallow-repository state '$shallow' for $HOME_DIR" ;;
-  esac
-  git -C "$HOME_DIR" checkout --detach --quiet FETCH_HEAD \
-    || die "could not check out release $tag in $HOME_DIR"
 else
   echo "installing $tag into $HOME_DIR"
-  mkdir -p "$(dirname "$HOME_DIR")"
-  # A release is a tag, so the clone lands on a detached HEAD and git explains
-  # that at length. --quiet does not cover the advice; only turning it off does.
-  git -c advice.detachedHead=false clone --branch "$tag" --depth 1 --quiet \
-    "$REPO" "$HOME_DIR" \
-    || die "could not clone release $tag from $REPO"
 fi
 
+home_parent="$(dirname "$HOME_DIR")"
+mkdir -p "$home_parent" "$BIN_DIR"
+stage_root="$(mktemp -d "$home_parent/.gangline-install.XXXXXX")" \
+  || die "could not create an installation stage beside $HOME_DIR"
+cleanup_stage() {
+  [ -z "$stage_root" ] || rm -rf "$stage_root"
+}
+trap cleanup_stage EXIT
+trap 'cleanup_stage; exit 1' HUP INT TERM
+
+# Clone and validate the selected tag away from the active checkout. A failed
+# classification, build, or smoke test therefore leaves the installed command
+# and retained source untouched.
+candidate="$stage_root/release"
+git -c advice.detachedHead=false clone --branch "$tag" --depth 1 --quiet \
+  "$REPO" "$candidate" \
+  || die "could not clone release $tag from $REPO"
+
 mkdir -p "$BIN_DIR"
+if [ -L "$BIN_DIR/gang" ] && [ -d "$BIN_DIR/gang" ]; then
+  die "$BIN_DIR/gang is a symlink to a directory — move it aside"
+fi
 if [ -e "$BIN_DIR/gang" ] && [ ! -f "$BIN_DIR/gang" ] && [ ! -L "$BIN_DIR/gang" ]; then
   die "$BIN_DIR/gang exists and is not a file or a symlink — move it aside"
 fi
-new_binary="$BIN_DIR/.gang.new.$$"
-trap 'rm -f "$new_binary"' EXIT HUP INT TERM
-CGO_ENABLED=0 go -C "$HOME_DIR" build -trimpath \
-  -ldflags "-s -w -X main.version=$latest" -o "$new_binary" ./cmd/gang \
-  || die "could not build gang $tag"
-mv -f "$new_binary" "$BIN_DIR/gang" \
-  || die "could not install $BIN_DIR/gang"
-trap - EXIT HUP INT TERM
+if [ -f "$candidate/go.mod" ] && [ -d "$candidate/cmd/gang" ]; then
+  release_kind=compiled
+  candidate_command="$stage_root/gang"
+  CGO_ENABLED=0 go -C "$candidate" build -trimpath \
+    -ldflags "-s -w -X main.version=$latest" -o "$candidate_command" ./cmd/gang \
+    || die "could not build gang $tag"
+elif [ -x "$candidate/bin/gang" ] && [ -r "$candidate/version.txt" ]; then
+  release_kind=retained-tree
+  candidate_command="$candidate/bin/gang"
+  need python3
+  python3 -c 'import json; assert json.loads("{\"ok\": true}")["ok"]' >/dev/null 2>&1 \
+    || die "working python3 with JSON support required by $tag"
+  legacy_version="$(cat "$candidate/version.txt")" \
+    || die "could not read the release version at $candidate/version.txt"
+  [ "$legacy_version" = "$latest" ] \
+    || die "$tag has mismatched version.txt value '$legacy_version'"
+else
+  die "$tag has an unsupported release layout"
+fi
 
-# Repair the retired checkout status-line path without replacing custom settings.
-"$BIN_DIR/gang" statusline --install || die "installed, but status-line settings repair failed"
+candidate_version="$("$candidate_command" --version)" \
+  || die "$tag failed its staged 'gang --version' check"
+[ "$candidate_version" = "gangline $latest" ] \
+  || die "$tag version mismatch: expected 'gangline $latest', got '$candidate_version'"
+"$candidate_command" collars >/dev/null \
+  || die "$tag failed its staged 'gang collars' check"
 
-# Execute the installed binary before reporting success.
-"$BIN_DIR/gang" collars >/dev/null || die "installed, but 'gang collars' failed"
+previous="$stage_root/previous"
+had_previous=0
+if [ -d "$HOME_DIR/.git" ]; then
+  mv "$HOME_DIR" "$previous" \
+    || die "could not preserve the installed release at $HOME_DIR"
+  had_previous=1
+fi
+if ! mv "$candidate" "$HOME_DIR"; then
+  if [ "$had_previous" -eq 1 ]; then
+    mv "$previous" "$HOME_DIR" \
+      || die "could not restore the installed release at $HOME_DIR"
+  fi
+  die "could not activate $tag at $HOME_DIR"
+fi
+
+mkdir -p "$BIN_DIR"
+activation_ok=1
+case "$release_kind" in
+  compiled)
+    mv -f "$candidate_command" "$BIN_DIR/gang" || activation_ok=0
+    ;;
+  retained-tree)
+    if [ "$BIN_DIR/gang" != "$HOME_DIR/bin/gang" ]; then
+      new_link="$BIN_DIR/.gang.new.$$"
+      ln -s "$HOME_DIR/bin/gang" "$new_link" \
+        && mv -f "$new_link" "$BIN_DIR/gang" \
+        || activation_ok=0
+      [ "$activation_ok" -eq 1 ] || rm -f "$new_link"
+    fi
+    ;;
+esac
+if [ "$activation_ok" -ne 1 ]; then
+  failed_candidate="$stage_root/failed-release"
+  if [ "$had_previous" -eq 1 ] \
+    && mv "$HOME_DIR" "$failed_candidate" \
+    && mv "$previous" "$HOME_DIR"; then
+    die "could not install $BIN_DIR/gang; the previous release was preserved"
+  fi
+  die "could not install $BIN_DIR/gang or restore the previous release"
+fi
+
+# Execute through the installed path before reporting success.
+installed_version="$("$BIN_DIR/gang" --version)" \
+  || die "installed, but '$BIN_DIR/gang --version' failed"
+[ "$installed_version" = "gangline $latest" ] \
+  || die "installed version mismatch: expected 'gangline $latest', got '$installed_version'"
+if [ "$release_kind" = compiled ]; then
+  # Repair the retired checkout status-line path without replacing custom settings.
+  "$BIN_DIR/gang" statusline --install \
+    || die "installed, but status-line settings repair failed"
+fi
+"$BIN_DIR/gang" collars >/dev/null \
+  || die "installed, but 'gang collars' failed"
+
+cleanup_stage
+stage_root=""
 
 echo
 echo "gang $tag installed -> $BIN_DIR/gang"

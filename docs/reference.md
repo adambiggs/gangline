@@ -7,8 +7,9 @@ the accepted shape for one command.
 
 Gangline supports macOS and Linux and requires Git, Go 1.27 or later, tmux 3.2
 or later, and Claude Code or Codex. The installer selects the newest stable
-`gangline-v*` tag, retains that checkout for inspectable upgrades, and builds a
-static binary with `CGO_ENABLED=0`.
+`gangline-v*` tag and retains that checkout for inspectable upgrades. Compiled
+releases build a static binary with `CGO_ENABLED=0`; tags with the retained-tree
+shell layout also require Python 3 with JSON support.
 
 ```sh
 curl -fsSL https://raw.githubusercontent.com/adambiggs/gangline/main/install.sh | sh
@@ -109,7 +110,7 @@ window name that drifted from the event log.
 | `gang config` | Print effective settings and their source. |
 | `gang curfew [DURATION\|HH:MM\|clear]` | Show, set, or clear the recorded team deadline. |
 | `gang --version` | Print the built release version. |
-| `gang upgrade [--check]` | Run the retained release installer's upgrade path. |
+| `gang upgrade [--check]` | Check or install through the retained release's installer. Retained-tree shell releases cross to a compiled release by rerunning the current bootstrap command above. |
 
 ## Exit status
 
