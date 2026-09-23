@@ -24,10 +24,12 @@ func TestContextBandNotesCrossings(t *testing.T) {
 			f.env["GANGLINE_HITCH_ID"] = "a"
 			model := "gpt-test"
 			low, high := 75.0, 90.0
+			highName := "red"
 			if collar == "claude-code" {
 				f.input.command = "claude"
 				f.input.screen = screenWithText("────────", "❯ ", "────────")
-				model, low, high = "claude-opus-test", 20, 40
+				model, low, high = "claude-opus-test", 10, 20
+				highName = "late"
 			}
 			p, _ := f.run.team.Agent(a.ID)
 			observe := func(percent float64, status string, at time.Time) {
@@ -61,7 +63,7 @@ func TestContextBandNotesCrossings(t *testing.T) {
 			if f.input.submits != 2 {
 				t.Fatalf("jump across yellow and red submitted %d notes, want 2", f.input.submits)
 			}
-			if !strings.Contains(f.input.pasted, "red") || !strings.Contains(f.input.pasted, "context-band") {
+			if !strings.Contains(f.input.pasted, highName) || !strings.Contains(f.input.pasted, "context-band") {
 				t.Fatalf("band envelope: %s", f.input.pasted)
 			}
 			observe(high+1, "observed", at.Add(2*time.Second))
@@ -286,5 +288,57 @@ func TestContextBandNotesPublicationRecovery(t *testing.T) {
 				t.Fatalf("recovered publication submitted %d notes", f.input.submits)
 			}
 		})
+	}
+}
+
+// A live reader may already be above the newly configured first threshold,
+// without having published any note under the previous policy.
+func TestClaudeEarlyContextBandFromStatusline(t *testing.T) {
+	f := newStateFixture(t)
+	a := f.add(t, "a", "worker", "claude-code")
+	f.env["GANGLINE_HITCH_ID"] = "a"
+	f.input.command, f.input.screen = "claude", screenWithText("────────", "❯ ", "────────")
+	p, _ := f.run.team.Agent(a.ID)
+	l, err := p.TryLock()
+	if err != nil {
+		t.Fatal(err)
+	}
+	a.ContextBands.Model, a.ContextBands.Percent = "claude-opus-test", 11
+	if err := l.Save(a); err != nil {
+		t.Fatal(err)
+	}
+	if err := l.Close(); err != nil {
+		t.Fatal(err)
+	}
+	var notices []hookNotice
+	f.cmd.detach = func(id string, n hookNotice) error {
+		notices = append(notices, n)
+		return nil
+	}
+	status := func(used int) {
+		t.Helper()
+		cmd := f.cmd
+		cmd.stdin = strings.NewReader(fmt.Sprintf(`{"session_id":"s","model":{"id":"claude-opus-test"},"context_window":{"context_window_size":1000000,"current_usage":{"input_tokens":%d,"cache_creation_input_tokens":0,"cache_read_input_tokens":0}}}`, used))
+		if err := cmd.statusline(nil); err != nil {
+			t.Fatal(err)
+		}
+		for _, n := range notices {
+			if err := f.run.tickAgent(a.ID, n, false); err != nil {
+				t.Fatal(err)
+			}
+		}
+		notices = nil
+	}
+	status(110000)
+	if f.input.submits != 1 || !strings.Contains(f.input.pasted, "early crossed (threshold 10%)") {
+		t.Fatalf("first eligible reading: submits=%d, wire=%q", f.input.submits, f.input.pasted)
+	}
+	status(110000)
+	if f.input.submits != 1 {
+		t.Fatalf("same reading repeated note: %d", f.input.submits)
+	}
+	status(200000)
+	if f.input.submits != 2 || !strings.Contains(f.input.pasted, "late crossed (threshold 20%)") {
+		t.Fatalf("late reading: submits=%d, wire=%q", f.input.submits, f.input.pasted)
 	}
 }

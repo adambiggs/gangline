@@ -55,8 +55,8 @@ collar: {
 	}
 	context_bands: {
 		"*": [
-			{name: "yellow", at: 0.20},
-			{name: "red", at: 0.40},
+			{name: "early", at: 0.10},
+			{name: "late", at: 0.20},
 		]
 		"*haiku*": [
 			{name: "yellow", at: 0.45},

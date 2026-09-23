@@ -34,7 +34,9 @@ func (run *runtime) noteContextBands(a *core.Agent, c harness.Collar) {
 		return
 	}
 	previous := state.Percent
-	if state.Model != r.Model {
+	// Until the first note, an older policy may have observed this usage
+	// without matching a band. Apply the current bands to that first note.
+	if state.Model != r.Model || state.Sequence == 0 {
 		previous = -1
 	}
 	for _, band := range harness.CrossedContextBands(c, r.Model, previous/100, *r.Percent/100) {

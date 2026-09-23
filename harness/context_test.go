@@ -7,8 +7,8 @@ func TestActiveContextBandUsesMostSpecificModelSelector(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if band := ActiveContextBand(collar, "claude-opus-5", ContextReading{Percent: 0.41}); band == nil || band.Name != "red" {
-		t.Fatalf("opus band = %+v, want red", band)
+	if band := ActiveContextBand(collar, "claude-opus-5", ContextReading{Percent: 0.41}); band == nil || band.Name != "late" {
+		t.Fatalf("opus band = %+v, want late", band)
 	}
 	if band := ActiveContextBand(collar, "claude-haiku-5", ContextReading{Percent: 0.41}); band != nil {
 		t.Fatalf("haiku band = %+v, want none", band)
