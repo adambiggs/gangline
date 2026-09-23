@@ -134,11 +134,14 @@ func (cmd command) send(args []string) (result error) {
 		if err != nil {
 			return err
 		}
-		free, err := run.available(a, b, c)
+		free, reason, err := run.available(l, &a, b, c)
 		if err != nil {
 			return err
 		}
 		if !free {
+			if reason != "" {
+				return refuseError("recipient cannot accept input now: %s", reason)
+			}
 			return refuseError("recipient cannot accept input now")
 		}
 		queued, err := p.ListNew()
@@ -352,7 +355,7 @@ func (run *runtime) startCompaction(l *store.LockedAgent, a *core.Agent) error {
 	if err != nil {
 		return err
 	}
-	free, err := run.available(*a, b, c)
+	free, _, err := run.available(l, a, b, c)
 	if err != nil || !free {
 		return err
 	}

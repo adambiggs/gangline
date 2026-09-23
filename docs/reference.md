@@ -58,6 +58,11 @@ anywhere else `--from` is required, and the envelope marks the name
 - `--supersede` clears the sender's older scheduled messages for this recipient first.
 - `--at` takes a duration (`45m`) or a local time (`14:30`).
 
+A recognized native choice menu keeps the agent blocked and the message queued.
+Send reports the observed prompt and choice on stderr; `--live-only` refuses
+without queuing. Resolve the menu in the native pane, then run `gang tick`.
+Gang does not choose a model or dismiss the menu.
+
 A message can be at most 1 MiB once rendered. Longer ones are refused, never
 split; put the details in a file and send its path.
 

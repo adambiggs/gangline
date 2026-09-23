@@ -47,8 +47,8 @@ collar: {
 		submit_witness: {name: "exact-prompt"}
 		turn_boundary: {name: "hook-boundary"}
 		blocked: {name: "screen-blocked", params: {
-			prompt: "Would you like to run|Do you want to allow|requires approval|approval required|Hooks need review"
-			choice: "Yes, proceed|Yes, and don't ask again|Press enter to confirm"
+			prompt: "Would you like to run|Do you want to allow|requires approval|approval required|Hooks need review|Giving this request a little extra[[:space:]]+thought"
+			choice: "Yes, proceed|Yes, and don't ask again|Press enter to confirm|(?m)^[ \t]*[› ]?[ \t]*[0-9]+[.] Retry with a faster model"
 		}}
 		context: {name: "codex-screen-context"}
 		provider_limits: {name: "codex-screen-limits"}

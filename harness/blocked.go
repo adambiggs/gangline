@@ -28,7 +28,7 @@ func DetectBlocked(invocation Invocation, screen substrate.Screen) (Blocked, boo
 	if !prompt.MatchString(text) || !choice.MatchString(text) {
 		return Blocked{}, false, nil
 	}
-	return Blocked{Evidence: "runtime approval surface matched collar prompt and choice rules"}, true, nil
+	return Blocked{Evidence: fmt.Sprintf("native input choice: %s; %s", strings.Join(strings.Fields(prompt.FindString(text)), " "), strings.Join(strings.Fields(choice.FindString(text)), " "))}, true, nil
 }
 
 func blockedPattern(invocation Invocation, name string) (*regexp.Regexp, error) {

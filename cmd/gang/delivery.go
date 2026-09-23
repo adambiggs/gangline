@@ -50,35 +50,43 @@ func envelopeText(e core.Envelope) (string, error) {
 
 // available observes the composer even during a running turn. A permission
 // prompt or foreign foreground process never qualifies as a free composer.
-func (run *runtime) available(a core.Agent, b harnessInput, c harness.Collar) (bool, error) {
+func (run *runtime) available(l *store.LockedAgent, a *core.Agent, b harnessInput, c harness.Collar) (bool, string, error) {
 	if a.Status != core.Active || a.Activity == core.Interrupting {
-		return false, nil
+		return false, "", nil
 	}
 	screen, err := b.Capture(context.Background(), substrate.PaneID(a.Pane))
 	if err != nil {
-		return false, err
+		return false, "", err
 	}
-	_, blocked, err := harness.InputBlocked(c, screen)
-	if err != nil || blocked {
-		return false, err
+	blocker, blocked, err := harness.InputBlocked(c, screen)
+	if err != nil {
+		return false, "", err
+	}
+	if blocked {
+		if a.Activity != core.Blocked || a.Evidence != blocker.Evidence {
+			if err := run.apply(l, a, core.Event{Type: "activity_observed", Activity: core.Blocked, Reason: blocker.Evidence}); err != nil {
+				return false, "", err
+			}
+		}
+		return false, blocker.Evidence, nil
 	}
 	composer, err := harness.ReadComposer(c.Primitives.Composer, screen)
 	if err != nil {
-		return false, err
+		return false, "", err
 	}
 	if composer.Text != "" {
-		return false, nil
+		return false, "", nil
 	}
 	if !c.Primitives.MidTurn {
 		idle, err := harness.Idle(c, screen)
 		if err != nil || !idle {
-			return false, err
+			return false, "", err
 		}
 	}
 	if err := requireHarnessForeground(context.Background(), b, substrate.PaneID(a.Pane), c); err != nil {
-		return false, err
+		return false, "", err
 	}
-	return true, nil
+	return true, "", nil
 }
 func (run *runtime) deliver(l *store.LockedAgent, a *core.Agent, e core.Envelope, b harnessInput, c harness.Collar) (string, error) {
 	wire, err := envelopeText(e)
@@ -115,9 +123,10 @@ func (run *runtime) deliver(l *store.LockedAgent, a *core.Agent, e core.Envelope
 		err = captureErr
 		if err == nil {
 			var blocked bool
-			_, blocked, err = harness.InputBlocked(c, screen)
+			var blocker harness.Blocked
+			blocker, blocked, err = harness.InputBlocked(c, screen)
 			if blocked && err == nil {
-				err = fmt.Errorf("native prompt needs attention after paste")
+				err = fmt.Errorf("native prompt needs attention after paste: %s", blocker.Evidence)
 			}
 		}
 	}
@@ -200,11 +209,16 @@ func (run *runtime) drainLocked(l *store.LockedAgent, a *core.Agent, target core
 		if strings.HasPrefix(string(a.LastFailed), "startup-") {
 			return result, pending, nil
 		}
-		free, err := run.available(*a, b, c)
+		free, reason, err := run.available(l, a, b, c)
 		if err != nil {
 			return result, pending, err
 		}
 		if !free {
+			if reason != "" && target != "" && run.cmd.stderr != nil {
+				if _, err := fmt.Fprintf(run.cmd.stderr, "%s input blocked: %s; message remains queued\n", a.Name, reason); err != nil {
+					return result, pending, err
+				}
+			}
 			return result, pending, nil
 		}
 		outcome, err := run.deliver(l, a, *next, b, c)
