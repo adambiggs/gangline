@@ -133,6 +133,7 @@ func (run *runtime) observeRoster(agents []core.Agent) ([]core.Agent, error) {
 	for i, a := range agents {
 		l, current, err := run.acquire(a.ID, false)
 		if errors.Is(err, store.ErrLocked) {
+			agents[i].Activity, agents[i].Evidence = core.Unknown, "native activity probe unavailable: agent state is locked"
 			continue
 		}
 		if err != nil {
@@ -160,15 +161,21 @@ func (run *runtime) observeRoster(agents []core.Agent) ([]core.Agent, error) {
 				return nil, err
 			}
 			screen, err := input.Capture(context.Background(), substrate.PaneID(current.Pane))
-			if err == nil {
+			if err != nil {
+				cause := err
+				err = run.observeProbeFailure(l, &current, cause)
+				if err == nil && run.cmd.stderr != nil {
+					_, err = fmt.Fprintf(run.cmd.stderr, "%s: %s\n", current.Name, current.Evidence)
+				}
+			} else {
 				err = run.observeCompaction(l, &current, c, screen)
-			}
-			var refusal commandError
-			if errors.As(err, &refusal) && refusal.status == exitNative {
-				err = nil
-			}
-			if err == nil {
-				err = run.observeActivity(l, &current, c, screen)
+				var refusal commandError
+				if errors.As(err, &refusal) && refusal.status == exitNative {
+					err = nil
+				}
+				if err == nil {
+					err = run.observeActivity(l, &current, c, screen)
+				}
 			}
 			if err != nil {
 				_ = l.Close()

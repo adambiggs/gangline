@@ -38,7 +38,7 @@ func Step(agent Agent, event Event) (Agent, []Effect) {
 		} else if event.Status == "accepted" {
 			agent.Activity, agent.Evidence = Busy, event.Reason
 		} else if event.Status == "unverified" {
-			agent.Activity, agent.Evidence = Wedged, event.Reason
+			agent.Activity, agent.Evidence = Unknown, "input submission unverified: "+event.Reason
 		}
 	case "compaction_requested":
 		if agent.Compaction != nil && (agent.Compaction.Status == "queued" || agent.Compaction.Status == "submitted" || agent.Compaction.Status == "completed" && !agent.Compaction.Continuation) {

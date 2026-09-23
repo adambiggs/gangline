@@ -376,7 +376,7 @@ func (run *runtime) startCompaction(l *store.LockedAgent, a *core.Agent) (result
 	pane := substrate.PaneID(a.Pane)
 	screen, err := b.Capture(ctx, pane)
 	if err != nil {
-		return err
+		return errors.Join(err, run.observeProbeFailure(l, a, err))
 	}
 	if err := run.observeActivity(l, a, c, screen); err != nil {
 		return err

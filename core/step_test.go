@@ -18,7 +18,7 @@ func TestInputIntentRequiresMatchingResult(t *testing.T) {
 		t.Fatal("unrelated result cleared input")
 	}
 	ended, effects := Step(started, Event{Type: "input_finished", At: now, HitchID: "a", ID: "m", Status: "unverified", Reason: "witness mismatch"})
-	if ended.Input != nil || ended.Activity != Wedged || len(effects) != 0 {
+	if ended.Input != nil || ended.Activity != Unknown || len(effects) != 0 {
 		t.Fatalf("unverified result: %+v", ended)
 	}
 	if a.Input != nil || started.Input == nil {

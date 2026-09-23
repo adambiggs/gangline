@@ -221,7 +221,7 @@ func (run *runtime) recoverInput(l *store.LockedAgent, a *core.Agent) error {
 	}
 	if kind != "envelope" {
 		a.Input = nil
-		a.Activity = core.Wedged
+		a.Activity = core.Unknown
 		a.Evidence = "input owner exited before recording the outcome"
 		return l.Save(*a)
 	}

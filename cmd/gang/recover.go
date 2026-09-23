@@ -46,7 +46,7 @@ func (run *runtime) tickAgent(id core.HitchID, notice hookNotice, wait bool) err
 	defer cancel()
 	screen, err := b.Capture(ctx, substrate.PaneID(a.Pane))
 	if err != nil {
-		return err
+		return errors.Join(err, run.observeProbeFailure(l, &a, err))
 	}
 	if a.Status == core.Booting {
 		startup, err := harness.InspectStartup(c, screen)

@@ -122,3 +122,11 @@ Compaction waits for a freshly observed native idle seam, even when ordinary
 messages support mid-turn input. Submitting the compact command is not proof
 that it ran: withhold the resume until a newer native completion event for the
 same session is observed. Refusal is failure; missing completion is unconfirmed.
+
+### Observation failures are unknown
+
+A probe timeout or missing submit witness describes Gangline's uncertainty,
+not a wedged native turn. Report unknown with the probe or input failure reason.
+A failed activity probe breaks the continuous screen observation window; a
+fresh successful observation can restore busy or idle. A locked status read
+also reports its observation as unavailable instead of presenting stale activity.

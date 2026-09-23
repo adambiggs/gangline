@@ -1,10 +1,13 @@
 package main
 
 import (
+	"context"
+	"errors"
 	"github.com/adambiggs/gangline/core"
 	"github.com/adambiggs/gangline/harness"
 	"github.com/adambiggs/gangline/store"
 	"github.com/adambiggs/gangline/substrate"
+	"time"
 )
 
 // observeActivity uses current pane evidence without changing message receipts.
@@ -54,4 +57,20 @@ func (run *runtime) observeActivity(l *store.LockedAgent, a *core.Agent, c harne
 		}
 	}
 	return nil
+}
+
+// A failed probe breaks the observation window; it cannot diagnose native work.
+func (run *runtime) observeProbeFailure(l *store.LockedAgent, a *core.Agent, cause error) error {
+	reason := "native activity probe failed: " + cause.Error()
+	if errors.Is(cause, context.DeadlineExceeded) {
+		reason = "native activity probe timed out: " + cause.Error()
+	}
+	a.ScreenFingerprint, a.ScreenSince = "", time.Time{}
+	if err := l.Save(*a); err != nil {
+		return err
+	}
+	if err := run.apply(l, a, core.Event{Type: "activity_observed", Activity: core.Unknown, Reason: reason}); err != nil {
+		return err
+	}
+	return run.mark(*a)
 }
