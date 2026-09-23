@@ -115,8 +115,14 @@
     @media (hover:none){.copy{opacity:.7}}
 
     /* Demo: a flat surface, like the code blocks, with the caption under it. */
-    .term{margin-top:2rem;border:1px solid var(--rule);background:#05090f}
+    .term{margin-top:2rem;max-width:420px;border:1px solid var(--rule);background:#05090f}
     .term video{display:block;width:100%;height:auto}
+    .demo-controls{display:flex;align-items:center;gap:.75rem;padding:.65rem .75rem;background:var(--bg);color:var(--ink)}
+    .demo-controls button{font:inherit;font-size:.875rem;min-width:3.5rem;color:inherit;background:none;border:1px solid var(--rule);padding:.3rem .5rem;cursor:pointer}
+    .demo-controls input{min-width:0;flex:1;accent-color:var(--acc)}
+    .demo-controls output{font: .75rem var(--mono);white-space:nowrap}
+    .demo-controls[hidden]{display:none}
+    @media(max-width:480px){.term{margin-left:-.75rem;margin-right:-.75rem}}
     .cap{margin-top:.75rem;color:var(--mute);font-size:.9375rem;text-wrap:pretty}
 
     /* Capability list, on the ruled-row pattern the rest of the site uses. */
@@ -234,15 +240,20 @@
       </section>
 
       <section id="demo" class="sec">
-        <h2 class="h2">One team, working</h2>
+        <h2 class="h2">See Gangline in action</h2>
         <div class="term">
           <video id="demo-video" autoplay loop muted playsinline controls preload="metadata"
                  poster="demo-poster.jpg"
-                 aria-label="Recorded excerpts of Claude Code handing a task to Codex and receiving its tested result.">
+                 aria-label="Claude Code sends Codex a Python task, Codex runs it, and its reply arrives.">
             <source id="demo-source" src="demo.mp4" type="video/mp4">
           </video>
+          <div class="demo-controls" hidden>
+            <button id="demo-toggle" type="button">Play</button>
+            <input id="demo-seek" type="range" min="0" max="1" step="0.1" value="0" aria-label="Recording position">
+            <output id="demo-time" aria-live="off">0:00</output>
+          </div>
         </div>
-        <p class="cap">Native harnesses, working as one team. Real session excerpts, reflowed for readability. <a href="demo.txt">Read the transcript</a>.</p>
+        <p class="cap">Claude Code hands a task to Codex. Codex writes and runs the code, then sends the result back. <a href="demo.txt">Read the transcript</a>.</p>
       </section>
 
       <section id="start" class="sec">

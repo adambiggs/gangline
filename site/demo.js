@@ -3,6 +3,31 @@
   const video = document.querySelector('#demo-video');
   const source = document.querySelector('#demo-source');
   if (!video || !source) return;
+  const controls = document.querySelector('.demo-controls');
+  const toggle = document.querySelector('#demo-toggle');
+  const seek = document.querySelector('#demo-seek');
+  const timeLabel = document.querySelector('#demo-time');
+  const format = n => `${Math.floor(n / 60)}:${String(Math.floor(n % 60)).padStart(2, '0')}`;
+  const update = () => {
+    const duration = Number.isFinite(video.duration) ? video.duration : 0;
+    toggle.textContent = video.paused ? 'Play' : 'Pause';
+    seek.max = duration || 1;
+    seek.value = video.currentTime;
+    timeLabel.value = `${format(video.currentTime)} / ${format(duration)}`;
+  };
+  toggle.addEventListener('click', () => {
+    if (video.paused) video.play().catch(() => update());
+    else video.pause();
+  });
+  seek.addEventListener('input', () => { video.currentTime = Number(seek.value); });
+  for (const event of ['timeupdate', 'loadedmetadata', 'play', 'pause']) video.addEventListener(event, update);
+  controls.hidden = false;
+  video.controls = false;
+  if (matchMedia('(prefers-reduced-motion: reduce)').matches) {
+    video.autoplay = false;
+    video.pause();
+  }
+  update();
   const media = matchMedia('(prefers-color-scheme: dark)');
   const version = new URL(source.src).search;
   let initialized = false;

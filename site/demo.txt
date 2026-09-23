@@ -1,21 +1,9 @@
-Real native session excerpts, reflowed for readability.
+Claude Code (guide) and Codex (builder)
 
-The handoff — Codex · builder
+[gang:guide#msg-8b059fcecb97673f81dd9322867544de]
+Write greet.py that prints: Hello, team! Run it and report the observed output to guide.
+[/gang:guide#msg-8b059fcecb97673f81dd9322867544de]
 
-[gang:guide#msg-37af28f9e773eabf31bbc3d281b90f48]
-Make hello.py print Hello, team! Run it and report the result.
-[/gang:guide#msg-37af28f9e773eabf31bbc3d281b90f48]
-
-The work — Codex · builder
-
-• Added .gang-briefs/demo-run/hello.py (+1 -0)
-    1 +print("Hello, team!")
-
-• Ran python3 .gang-briefs/demo-run/hello.py
-  └ Hello, team!
-
-The reply — Claude Code · guide
-
-[gang:builder#msg-73bdc83b6a819b8aeef417011bfbbc93]
-Created .gang-briefs/demo-run/hello.py. Ran python3 .gang-briefs/demo-run/hello.py; it exited 0 and printed: Hello, team!
-[/gang:builder#msg-73bdc83b6a819b8aeef417011bfbbc93]
+[gang:builder#msg-be313c8438181168cf18fe74ba71135b]
+Created greet.py and ran python3 greet.py. Observed output: Hello, team!
+[/gang:builder#msg-be313c8438181168cf18fe74ba71135b]
