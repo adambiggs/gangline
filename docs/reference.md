@@ -213,3 +213,9 @@ to distinguish queued notes from verified submissions. Notes wait behind
 permission prompts just like other messages. Native telemetry is authoritative
 when the collar declares it; other collars use their screen context and model
 readings during `gang tick`.
+
+Status and roster observe the current native pane; an unrecognized surface is
+unknown. Delivery receipts retain their original uncertainty even when the pane
+later becomes idle. Queued compaction waits for a free composer without expiring.
+Dropping an agent prints its observed native resume session, or explicitly says
+unknown when none was recorded.

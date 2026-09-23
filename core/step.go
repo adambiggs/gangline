@@ -85,9 +85,6 @@ func Step(agent Agent, event Event) (Agent, []Effect) {
 		if agent.Activity == Interrupting && !agent.InterruptDeadline.IsZero() && !event.At.Before(agent.InterruptDeadline) {
 			agent.Activity, agent.Evidence = Wedged, "interrupt deadline elapsed"
 		}
-		if c := agent.Compaction; c != nil && c.Status == "queued" && !event.At.Before(c.Deadline) {
-			c.Status, agent.Activity, agent.Evidence = "unverified", Wedged, "compaction deadline elapsed"
-		}
 		if !agent.Capacity.Deadline.IsZero() && !event.At.Before(agent.Capacity.Deadline) {
 			agent.Activity, agent.Evidence = Wedged, "provider capacity recovery deadline elapsed"
 		}

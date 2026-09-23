@@ -96,50 +96,8 @@ func (run *runtime) tickAgent(id core.HitchID, notice hookNotice, wait bool) err
 	if err := run.observeContextBands(l, &a, c, screen); err != nil {
 		return err
 	}
-	blocked, found, err := harness.InputBlocked(c, screen)
-	if err != nil {
+	if err := run.observeActivity(l, &a, c, screen); err != nil {
 		return err
-	}
-	activity, evidence := a.Activity, a.Evidence
-	if found {
-		activity, evidence = core.Blocked, blocked.Evidence
-	} else {
-		idle, err := harness.Idle(c, screen)
-		if err != nil {
-			return err
-		}
-		if idle {
-			activity, evidence = core.Idle, ""
-		} else {
-			if a.InterruptDeadline.IsZero() {
-				activity, evidence = core.Busy, ""
-			}
-		}
-	}
-	fingerprint := harness.ScreenFingerprint(screen)
-	if a.ScreenFingerprint != fingerprint {
-		a.ScreenFingerprint, a.ScreenSince = fingerprint, run.cmd.now()
-		if err := l.Save(a); err != nil {
-			return err
-		}
-	}
-	wedge, err := harness.DetectWedge(c.Primitives.Wedge, harness.WedgeObservation{
-		Previous: a.ScreenFingerprint, Current: screen, BusySince: a.ScreenSince,
-		ObservedAt: run.cmd.now(), TurnActive: activity == core.Busy,
-	})
-	if err != nil {
-		return err
-	}
-	if wedge.Detected {
-		activity, evidence = core.Wedged, wedge.Evidence
-	}
-	if a.Compaction != nil && a.Compaction.Status == "unverified" {
-		activity, evidence = core.Wedged, a.Evidence
-	}
-	if activity != a.Activity || evidence != a.Evidence {
-		if err := run.apply(l, &a, core.Event{Type: "activity_observed", Activity: activity, Reason: evidence}); err != nil {
-			return err
-		}
 	}
 	if a.Activity == core.Idle && !a.InterruptDeadline.IsZero() {
 		if err := run.apply(l, &a, core.Event{Type: "interrupt_completed"}); err != nil {

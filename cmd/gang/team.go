@@ -11,6 +11,7 @@ import (
 
 	"github.com/adambiggs/gangline/core"
 	"github.com/adambiggs/gangline/store"
+	"github.com/adambiggs/gangline/substrate"
 )
 
 func (cmd command) up(args []string) error {
@@ -143,6 +144,26 @@ func (run *runtime) observeRoster(agents []core.Agent) ([]core.Agent, error) {
 		}
 		if current.Pane != "" && !present[current.Pane] && current.Status != core.Dropping && current.Status != core.Failed {
 			if err := run.apply(l, &current, core.Event{Type: "hitch_failed", Reason: "registered pane is absent from tmux"}); err != nil {
+				_ = l.Close()
+				return nil, err
+			}
+		}
+		if present[current.Pane] && current.Status == core.Active {
+			c, err := loadCollar(current.Collar, run.settings)
+			if err != nil {
+				_ = l.Close()
+				return nil, err
+			}
+			input, err := run.input()
+			if err != nil {
+				_ = l.Close()
+				return nil, err
+			}
+			screen, err := input.Capture(context.Background(), substrate.PaneID(current.Pane))
+			if err == nil {
+				err = run.observeActivity(l, &current, c, screen)
+			}
+			if err != nil {
 				_ = l.Close()
 				return nil, err
 			}

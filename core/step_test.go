@@ -46,7 +46,7 @@ func TestCompactionStepDoesNotMutateInput(t *testing.T) {
 	now := time.Date(2026, 9, 22, 0, 0, 0, 0, time.UTC)
 	a := Agent{ID: "a", Status: Active, Activity: Idle, Compaction: &Compaction{ID: "c", Status: "queued", Deadline: now.Add(-time.Second)}}
 	got, _ := Step(a, Event{Type: "deadline_checked", HitchID: "a", At: now})
-	if a.Compaction.Status != "queued" || got.Compaction.Status != "unverified" {
+	if a.Compaction.Status != "queued" || got.Compaction.Status != "queued" {
 		t.Fatal("compaction ownership or deadline violated")
 	}
 }

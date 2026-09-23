@@ -395,6 +395,18 @@ func (run *runtime) drop(id core.HitchID) error {
 			return err
 		}
 	}
+	// A submit hook can have recorded identity after the last saved state.
+	witness, err := p.ReadWitness()
+	if err != nil && !errors.Is(err, os.ErrNotExist) {
+		return err
+	}
+	session := a.Native.SessionID
+	if session == "" && witness.SessionID != "" {
+		session = witness.SessionID
+	}
+	if session == "" {
+		session = "unknown"
+	}
 	if err := run.record(a, core.Event{Type: "drop_finished"}); err != nil {
 		return err
 	}
@@ -408,5 +420,9 @@ func (run *runtime) drop(id core.HitchID) error {
 	if err := os.RemoveAll(p.Directory); err != nil {
 		return err
 	}
-	return run.team.RemoveName(a.Name, a.ID)
+	if err := run.team.RemoveName(a.Name, a.ID); err != nil {
+		return err
+	}
+	_, err = fmt.Fprintf(run.cmd.stdout, "%s dropped; resume session: %s\n", a.Name, session)
+	return err
 }
