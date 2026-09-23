@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/adambiggs/gangline/core"
+	"github.com/adambiggs/gangline/harness"
 	"github.com/adambiggs/gangline/store"
 	"github.com/adambiggs/gangline/substrate"
 )
@@ -130,6 +131,9 @@ func (run *runtime) acquire(id core.HitchID, wait bool) (*store.LockedAgent, cor
 		err = run.recoverInput(l, &a)
 	}
 	if err == nil {
+		err = run.reconcileDelivery(l, &a)
+	}
+	if err == nil {
 		err = run.publishContextNotes(l, &a)
 	}
 	if err == nil {
@@ -175,6 +179,32 @@ func (run *runtime) release(l *store.LockedAgent) error {
 	return nil
 }
 func (run *runtime) checkDeadlines(l *store.LockedAgent, a *core.Agent) error {
+	// Trust can appear after AwaitStartup returns. Observe it before an
+	// expired boot budget converts an operator-owned prompt into failure.
+	if a.Status == core.Booting && !a.BootDeadline.IsZero() && !run.cmd.now().Before(a.BootDeadline) {
+		c, err := loadCollar(a.Collar, run.settings)
+		if err != nil {
+			return err
+		}
+		b, err := run.input()
+		if err != nil {
+			return err
+		}
+		screen, err := b.Capture(context.Background(), substrate.PaneID(a.Pane))
+		if err != nil {
+			return err
+		}
+		startup, err := harness.InspectStartup(c, screen)
+		if err != nil {
+			return err
+		}
+		if startup.State == harness.StartupTrustRequired {
+			return run.apply(l, a, core.Event{Type: "hitch_blocked", Reason: startup.Prompt})
+		}
+		if startup.State == harness.StartupReady {
+			return run.apply(l, a, core.Event{Type: "hitch_ready"})
+		}
+	}
 	next, _ := core.Step(*a, core.Event{Type: "deadline_checked", At: run.cmd.now(), HitchID: a.ID})
 	if next.Status == a.Status && next.Activity == a.Activity && next.Evidence == a.Evidence {
 		return nil

@@ -20,6 +20,7 @@ type hitchOptions struct {
 	Task      string
 	Role      string
 	Resume    string
+	Recover   bool
 	Stdin     bool
 }
 
@@ -42,6 +43,7 @@ func parseHitch(arguments []string, defaultCollar, defaultDirectory string) (hit
 	flags.StringVar(&options.Role, "r", "", "role brief")
 	flags.StringVar(&options.Role, "role", "", "role brief")
 	flags.StringVar(&options.Resume, "resume", "", "native session id")
+	flags.BoolVar(&options.Recover, "recover", false, "recover the original startup message")
 	flags.BoolVar(&options.Stdin, "stdin", false, "read assignment from stdin")
 	if err := flags.Parse(arguments[1:]); err != nil {
 		return hitchOptions{}, usageError("hitch: %v", err)
@@ -54,6 +56,9 @@ func parseHitch(arguments []string, defaultCollar, defaultDirectory string) (hit
 	}
 	if options.Collar == "" || options.Directory == "" {
 		return hitchOptions{}, usageError("hitch: collar and directory must not be empty")
+	}
+	if options.Recover && len(arguments) != 2 {
+		return hitchOptions{}, usageError("hitch: --recover takes only NAME")
 	}
 	return options, nil
 }

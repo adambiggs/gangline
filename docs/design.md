@@ -40,7 +40,9 @@ Choices whose reasons aren't obvious from the code.
 
 Gang records what it's about to do before touching tmux or a harness, then
 records what happened. If it dies in between, the unfinished step is marked
-unknown and never retried, so a message is never typed twice.
+unknown and never automatically retried, so a message is never typed twice.
+Explicit startup recovery can submit an original envelope still identified
+exactly in the composer; it never pastes the message again.
 
 ### Check what was submitted, not the screen
 
@@ -93,8 +95,10 @@ until it's dropped, so it can't be mixed up with a replacement.
 ### Hooks append and exit
 
 A hook appends one line to the team's audit log without taking a lock. Submit
-hooks publish a witness. Turn-end and compaction-end hooks start a detached
-tick for their agent and exit without waiting.
+hooks publish a witness and, when an uncertain receipt remains, start a
+detached tick to reconcile it.
+Turn-end and compaction-end hooks also start a detached tick for their agent
+and exit without waiting.
 
 ### Notify on context crossings
 

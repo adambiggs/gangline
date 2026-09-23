@@ -81,7 +81,18 @@ func (cmd command) handleHook(args []string) error {
 	}
 	switch event.Kind {
 	case "turn-started":
-		return p.WriteWitness(store.Witness{ID: receipt, At: cmd.now(), Prompt: event.Payload["prompt"], SessionID: event.Payload["session_id"], TurnID: event.Payload["turn_id"], Transcript: event.Payload["transcript_path"]})
+		if err := p.WriteWitness(store.Witness{ID: receipt, At: cmd.now(), Prompt: event.Payload["prompt"], SessionID: event.Payload["session_id"], TurnID: event.Payload["turn_id"], Transcript: event.Payload["transcript_path"]}); err != nil {
+			return err
+		}
+		if a.LastFailed == "" {
+			return nil
+		}
+		// The native queue may submit after the sending command has exited.
+		// A detached tick reconciles its receipt without holding up the hook.
+		if cmd.detach != nil {
+			return cmd.detach(string(id), hookNotice{Kind: "turn-started"})
+		}
+		return cmd.detachTick(string(id), hookNotice{Kind: "turn-started"}, run.settings)
 	case "turn-finished", "turn-failed", "compaction-finished":
 		n := hookNotice{Kind: event.Kind, NativeEvent: event.NativeEvent, At: cmd.now(), SessionID: event.Payload["session_id"], TurnID: event.Payload["turn_id"], Transcript: event.Payload["transcript_path"]}
 		for _, value := range []string{n.SessionID, n.TurnID, n.Transcript, n.NativeEvent} {

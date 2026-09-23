@@ -64,6 +64,9 @@ func (cmd command) send(args []string) (result error) {
 	if sender.HitchID == a.ID {
 		return refuseError("sender and recipient are the same hitch")
 	}
+	if strings.HasPrefix(string(a.LastFailed), "startup-") && o.At != "clear" {
+		return refuseError("startup contract input is unverified; inspect the recipient and run gang hitch %s --recover before sending another message", a.Name)
+	}
 	if a.Status != core.Active && a.Status != core.Booting {
 		return refuseError("recipient is not active")
 	}

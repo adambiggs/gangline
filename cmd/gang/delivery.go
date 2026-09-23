@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 
 	"github.com/adambiggs/gangline/core"
 	"github.com/adambiggs/gangline/harness"
@@ -148,6 +149,14 @@ func (run *runtime) deliver(l *store.LockedAgent, a *core.Agent, e core.Envelope
 	if err := run.finishInput(l, a, e, outcome, reason); err != nil {
 		return outcome, err
 	}
+	if outcome == "unverified" {
+		if err := run.reconcileDelivery(l, a); err != nil {
+			return outcome, err
+		}
+		if a.LastDelivered == e.ID {
+			outcome = "delivered"
+		}
+	}
 	if err := run.mark(*a); err != nil {
 		return outcome, err
 	}
@@ -186,6 +195,9 @@ func (run *runtime) drainLocked(l *store.LockedAgent, a *core.Agent, target core
 			}
 		}
 		if next == nil {
+			return result, pending, nil
+		}
+		if strings.HasPrefix(string(a.LastFailed), "startup-") {
 			return result, pending, nil
 		}
 		free, err := run.available(*a, b, c)

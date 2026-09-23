@@ -18,7 +18,16 @@ gang attach
 
 If the harness stops at a prompt during startup, gang exits with status 4 and
 names the pane. Attach, answer the prompt, detach, and run `gang tick` to
-finish startup.
+finish startup. A recognized trust prompt stays blocked without a boot deadline;
+the queued message retains the contract and assignment.
+
+If input became unverified after paste, resolve the native prompt and run
+`gang hitch NAME --recover`. Recovery submits the original envelope only when
+its exact text is still in the composer, without pasting again. If it cannot
+identify the original text, it refuses and prints the retained message path.
+Do not replace a lost startup message with ordinary `gang send`: that omits
+the original contract. A later matching native submit hook can also reconcile
+an uncertain receipt without resending it.
 
 To run more than one team, give each its own name, state root, and socket, and
 set them on every command for that team:

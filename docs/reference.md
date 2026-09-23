@@ -25,6 +25,7 @@ curl -fsSL https://raw.githubusercontent.com/adambiggs/gangline/main/install.sh 
 | Command | Effect |
 | --- | --- |
 | `gang up [NAME] [HITCH OPTIONS]` | Hitch the first agent (`lead` by default) and attach. |
+| `gang hitch NAME --recover` | Recover original startup text still present in the native composer. |
 | `gang hitch NAME [OPTIONS]` | Launch a harness window and send it its contract, role, and assignment. |
 | `gang adopt NAME -c COLLAR` | Register the current tmux pane as an agent. |
 | `gang rename OLD NEW` | Rename an agent and its window. |

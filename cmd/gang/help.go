@@ -64,7 +64,7 @@ Installation:
 
 var commandUsage = map[string]string{
 	"up":         "usage: gang up [NAME] [HITCH OPTIONS]\n",
-	"hitch":      "usage: gang hitch NAME [-c COLLAR] [-d DIR] [-m MODEL] [-e EFFORT] [-t TASK] [-r ROLE] [--resume SESSION] [--stdin]\n",
+	"hitch":      "usage: gang hitch NAME [-c COLLAR] [-d DIR] [-m MODEL] [-e EFFORT] [-t TASK] [-r ROLE] [--resume SESSION] [--stdin]\n       gang hitch NAME --recover\n",
 	"adopt":      "usage: gang adopt NAME -c COLLAR\n",
 	"rename":     "usage: gang rename OLD NEW\n",
 	"send":       "usage: gang send NAME [--from SENDER] [--live-only] [--supersede] [--at TIME]\n",

@@ -27,6 +27,9 @@ func (cmd command) hitch(args []string) (result error) {
 	if err != nil {
 		return err
 	}
+	if o.Recover {
+		return run.recoverStartup(o.Name)
+	}
 	dir, err = filepath.Abs(o.Directory)
 	if err != nil {
 		return err
@@ -168,7 +171,13 @@ func (cmd command) hitch(args []string) (result error) {
 		return err
 	}
 	if startup.State != harness.StartupReady {
-		return commandError{status: exitNative, text: fmt.Sprintf("%s needs attention in %s: %s", a.Name, a.Pane, startup.Prompt)}
+		if err := run.apply(l, &a, core.Event{Type: "hitch_blocked", Reason: startup.Prompt}); err != nil {
+			return err
+		}
+		if err := run.mark(a); err != nil {
+			return err
+		}
+		return startupAttention(a)
 	}
 	if err := run.apply(l, &a, core.Event{Type: "hitch_ready"}); err != nil {
 		return err
@@ -180,8 +189,11 @@ func (cmd command) hitch(args []string) (result error) {
 	if err != nil {
 		return err
 	}
+	if outcome == "queued" {
+		return startupAttention(a)
+	}
 	if err := deliveryResult(outcome); err != nil {
-		return err
+		return commandError{status: exitUnknown, text: fmt.Sprintf("startup input is unverified; inspect %s, resolve native prompts, then run gang hitch %s --recover; do not replace the contract with plain send", a.Pane, a.Name)}
 	}
 	if _, err := fmt.Fprintf(cmd.stdout, "%s\t%s\n", a.Name, a.Pane); err != nil {
 		return err

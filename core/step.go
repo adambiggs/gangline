@@ -15,6 +15,8 @@ func Step(agent Agent, event Event) (Agent, []Effect) {
 		agent.Pane, agent.Status = event.Pane, Booting
 	case "hitch_ready":
 		agent.Status, agent.Activity, agent.BootDeadline = Active, Idle, time.Time{}
+	case "hitch_blocked":
+		agent.Activity, agent.Evidence, agent.BootDeadline = Blocked, event.Reason, time.Time{}
 	case "hitch_failed":
 		agent.Status, agent.Activity, agent.Evidence = Failed, Unknown, event.Reason
 	case "activity_observed":

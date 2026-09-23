@@ -240,6 +240,7 @@ func TestSchedulesBecomeDueOnTick(t *testing.T) {
 
 func TestWaitChecksExpiredBootDeadline(t *testing.T) {
 	f := newStateFixture(t)
+	f.input.screen = screenWithText("still launching")
 	a := f.add(t, "a", "worker", "codex")
 	p, _ := f.run.team.Agent(a.ID)
 	l, err := p.TryLock()
@@ -365,6 +366,8 @@ func TestStatusMarksExpiredDeadlineFromTheObservedWindowTitle(t *testing.T) {
 # SPDX-License-Identifier: Apache-2.0
 case "$1" in
  list-panes) printf '%%1\t?worker?\n'; printf 'listed\n' >> "$(dirname "$0")/listed";;
+ capture-pane) printf 'still launching\n';;
+ display-message) printf '0,0,0\n';;
  rename-window) printf '%s\n' "$*" > "$(dirname "$0")/marked";;
  *) exit 91;;
 esac
