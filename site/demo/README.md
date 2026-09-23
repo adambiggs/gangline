@@ -5,10 +5,15 @@ socket. `demo.tape` records
 the native panes while the guide delegates a Python task, the builder writes
 and runs it, and the reply arrives. The terminal remains visible throughout
 that exchange. The tape sets the canvas, font, frame rate, typing speed and
-playback speed. Vertical panes keep the terminal text legible on phones.
+playback speed. The two panes sit side by side on a 1280x720 canvas, wide
+enough that neither harness truncates its status line. Phones scale the video
+down and can open it full screen.
 
 Run from a trusted linked worktree with `gang`, `tmux`, both authenticated
-harnesses, VHS, Chromium, ttyd and FFmpeg on PATH:
+harnesses, VHS, Chromium, ttyd and FFmpeg on PATH. Claude Code's status line
+uses U+23F5, which DejaVu Sans Mono lacks; fontconfig must find a font that
+covers it, such as Noto Sans Symbols 2, either installed or through
+`FONTCONFIG_FILE`:
 
 ```sh
 DEMO_STATE="$HOME/.local/state/gangline-demo-$(date +%s)" site/demo/record.sh
@@ -23,7 +28,10 @@ observe the peer harness process when delivering its reply. Run it only in
 the trusted demo worktree. A permission prompt needs the operator; a failed
 take is not a recording.
 
-The tape starts after both harnesses launch. Its keyboard request is ordinary
+The tape starts after both harnesses are idle. Codex's view is cleared first;
+Claude Code keeps its startup message on screen because clearing its
+conversation starts a new native session, and Gangline then cannot verify
+delivery of the reply. The keyboard request is ordinary
 operator input. All teammate envelopes come from `gang send` in registered
 agent panes; never add a sender name with `--from`.
 

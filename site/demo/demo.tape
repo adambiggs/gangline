@@ -4,9 +4,9 @@ Output site/demo/.demo-render.gif
 Output site/demo/.demo-render.mp4
 Set Shell bash
 Set FontFamily "DejaVu Sans Mono"
-Set FontSize 24
-Set Width 640
-Set Height 1320
+Set FontSize 16
+Set Width 1280
+Set Height 720
 Set Padding 10
 Set Framerate 15
 Set PlaybackSpeed 1

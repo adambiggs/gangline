@@ -1,9 +1,9 @@
 Claude Code (guide) and Codex (builder)
 
-[gang:guide#msg-8b059fcecb97673f81dd9322867544de]
-Write greet.py that prints: Hello, team! Run it and report the observed output to guide.
-[/gang:guide#msg-8b059fcecb97673f81dd9322867544de]
+[gang:guide#msg-d9bf0c39010ba899a6caec555621ea8c]
+Write greet.py that prints "Hello, team!", run it, and report the observed output to guide.
+[/gang:guide#msg-d9bf0c39010ba899a6caec555621ea8c]
 
-[gang:builder#msg-be313c8438181168cf18fe74ba71135b]
-Created greet.py and ran python3 greet.py. Observed output: Hello, team!
-[/gang:builder#msg-be313c8438181168cf18fe74ba71135b]
+[gang:builder#msg-431c50a8af00412f78dec9abd44bd8e4]
+Wrote greet.py and ran python3 greet.py. Observed output: Hello, team!
+[/gang:builder#msg-431c50a8af00412f78dec9abd44bd8e4]

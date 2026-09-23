@@ -20,6 +20,18 @@
     else video.pause();
   });
   seek.addEventListener('input', () => { video.currentTime = Number(seek.value); });
+  // The recording is a full-width terminal; full screen shows it at native size.
+  const fullscreen = document.querySelector('#demo-fullscreen');
+  const enter = () => {
+    if (video.requestFullscreen) video.requestFullscreen().catch(() => {});
+    else if (video.webkitEnterFullscreen) video.webkitEnterFullscreen();
+  };
+  if (video.requestFullscreen || video.webkitEnterFullscreen) {
+    fullscreen.hidden = false;
+    fullscreen.addEventListener('click', enter);
+    video.addEventListener('click', enter);
+    document.addEventListener('fullscreenchange', () => { video.controls = document.fullscreenElement === video; });
+  }
   for (const event of ['timeupdate', 'loadedmetadata', 'play', 'pause']) video.addEventListener(event, update);
   controls.hidden = false;
   video.controls = false;

@@ -20,6 +20,8 @@ export GANG_LAUNCH_ARGS
 GANG_LAUNCH_ARGS=$(python3 -c 'import json,sys; print(json.dumps({"codex":["--sandbox","danger-full-access","--add-dir",sys.argv[1],"--add-dir",sys.argv[2]]}))' "$DEMO_STATE" "$metadata")
 mkdir -p "$GANG_CONFIG_DIR/roles"
 for tool in gang tmux claude codex vhs ffmpeg; do command -v "$tool"; done
+# Claude Code's permission-mode footer uses U+23F5, which DejaVu Sans Mono lacks.
+fc-list ':charset=23f5' family | grep -q . || { echo 'Install a font covering U+23F5, such as Noto Sans Symbols 2, or point FONTCONFIG_FILE at one.' >&2; exit 1; }
 [ ! -e "$repo/greet.py" ] || { echo 'Preserve and remove the previous greet.py before recording.' >&2; exit 1; }
 cat > "$GANG_CONFIG_DIR/roles/demo.md" <<'ROLE'
 You are in a public terminal demonstration. Keep responses short. Do only the assigned task; no commits or extra checks. Messages use gang send NAME with stdin, never --from. When idle, say Ready. A guide delegates to builder and ends its turn. When builder replies, guide replies exactly: Demo complete: Hello, team! The builder writes greet.py, runs it, and reports the observed output to guide.
@@ -61,9 +63,9 @@ cleanup() {
   exit "$rc"
 }
 # A new explicit private socket; never inherit the live team's server.
-tmux -S "$GANG_TMUX_SOCKET" -f /dev/null new-session -d -s "$GANG_SESSION" -n recorder -x 38 -y 48 -c "$repo"
+tmux -S "$GANG_TMUX_SOCKET" -f /dev/null new-session -d -s "$GANG_SESSION" -n recorder -x 123 -y 36 -c "$repo"
 trap cleanup EXIT
-tmux -S "$GANG_TMUX_SOCKET" set-option -g default-size 38x48
+tmux -S "$GANG_TMUX_SOCKET" set-option -g default-size 123x36
 tmux -S "$GANG_TMUX_SOCKET" set-option -g status off
 [ "$(tmux -S "$GANG_TMUX_SOCKET" list-sessions -F '#S')" = "$GANG_SESSION" ]
 tmux -S "$GANG_TMUX_SOCKET" list-sessions
@@ -75,8 +77,8 @@ gang wait guide --timeout 120s
 guide=$(tmux -S "$GANG_TMUX_SOCKET" list-panes -a -F '#{pane_id} #{window_name}' | awk '$2 ~ /guide/ {print $1}')
 builder=$(tmux -S "$GANG_TMUX_SOCKET" list-panes -a -F '#{pane_id} #{window_name}' | awk '$2 ~ /builder/ {print $1}')
 [ -n "$guide" ] && [ -n "$builder" ]
-tmux -S "$GANG_TMUX_SOCKET" join-pane -v -s "$builder" -t "$guide"
-tmux -S "$GANG_TMUX_SOCKET" select-layout -t "$guide" even-vertical
+tmux -S "$GANG_TMUX_SOCKET" join-pane -h -s "$builder" -t "$guide"
+tmux -S "$GANG_TMUX_SOCKET" select-layout -t "$guide" even-horizontal
 tmux -S "$GANG_TMUX_SOCKET" set-option -g pane-border-status top
 tmux -S "$GANG_TMUX_SOCKET" set-option -g pane-border-format " #{?#{==:#{pane_id},$guide},Claude Code / guide,Codex / builder} "
 tmux -S "$GANG_TMUX_SOCKET" set-option -g pane-border-style 'fg=#7f8da0'
@@ -85,6 +87,9 @@ tmux -S "$GANG_TMUX_SOCKET" select-pane -t "$guide" -T 'Claude Code / guide'
 tmux -S "$GANG_TMUX_SOCKET" select-pane -t "$builder" -T 'Codex / builder'
 tmux -S "$GANG_TMUX_SOCKET" select-pane -t "$guide"
 tmux -S "$GANG_TMUX_SOCKET" select-window -t "$guide"
+# Codex binds Ctrl+L to clear its terminal view, so the recording opens on
+# the idle composer rather than the tail of the startup message.
+tmux -S "$GANG_TMUX_SOCKET" send-keys -t "$builder" C-l
 cd "$repo"
 vhs site/demo/demo.tape
 python3 site/demo/verify.py "$GANG_STATE_ROOT/teams/$GANG_SESSION/log.jsonl" "$DEMO_STATE/transcript.txt"
