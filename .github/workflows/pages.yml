@@ -28,7 +28,7 @@ jobs:
         run: |
           set -euo pipefail
           mkdir -p _site
-          cp site/index.html site/field.js _site/
+          cp site/index.html site/field.js site/demo.js site/demo.txt _site/
           # Pages caches everything for ten minutes and browsers hold scripts
           # longer, so the script's address carries its content hash: a new
           # field.js is a new URL the moment the page that names it arrives.
@@ -38,6 +38,12 @@ jobs:
           cp site/demo.gif site/demo-light.gif \
             site/demo.mp4 site/demo-light.mp4 \
             site/demo-poster.jpg site/demo-poster-light.jpg _site/
+          # A new replay must not reuse a cached video or poster URL.
+          demo_v=$(sha256sum site/demo*.mp4 site/demo-poster*.jpg site/demo.js | sha256sum | cut -c1-12)
+          sed -i "s|src=\"demo.js\"|src=\"demo.js?v=$demo_v\"|; s|src=\"demo.mp4\"|src=\"demo.mp4?v=$demo_v\"|; s|poster=\"demo-poster.jpg\"|poster=\"demo-poster.jpg?v=$demo_v\"|" _site/index.html
+          grep -Fq "src=\"demo.js?v=$demo_v\"" _site/index.html
+          grep -Fq "src=\"demo.mp4?v=$demo_v\"" _site/index.html
+          grep -Fq "poster=\"demo-poster.jpg?v=$demo_v\"" _site/index.html
           cp -R site/fonts _site/fonts
           # Install instructions point at the raw GitHub URL on purpose — what you
           # pipe is verifiably the repo file — so no /install copy is published.

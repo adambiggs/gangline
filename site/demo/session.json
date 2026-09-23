@@ -1,0 +1,22 @@
+[
+  {
+    "title": "The handoff",
+    "harness": "Codex · builder",
+    "text": "[gang:guide#msg-37af28f9e773eabf31bbc3d281b90f48]\nMake hello.py print Hello, team! Run it and report the result.\n[/gang:guide#msg-37af28f9e773eabf31bbc3d281b90f48]",
+    "seconds": 12,
+    "envelope": "msg-37af28f9e773eabf31bbc3d281b90f48"
+  },
+  {
+    "title": "The work",
+    "harness": "Codex · builder",
+    "text": "• Added .gang-briefs/demo-run/hello.py (+1 -0)\n    1 +print(\"Hello, team!\")\n\n• Ran python3 .gang-briefs/demo-run/hello.py\n  └ Hello, team!",
+    "seconds": 8
+  },
+  {
+    "title": "The reply",
+    "harness": "Claude Code · guide",
+    "text": "[gang:builder#msg-73bdc83b6a819b8aeef417011bfbbc93]\nCreated .gang-briefs/demo-run/hello.py. Ran python3 .gang-briefs/demo-run/hello.py; it exited 0 and printed: Hello, team!\n[/gang:builder#msg-73bdc83b6a819b8aeef417011bfbbc93]",
+    "seconds": 12,
+    "envelope": "msg-73bdc83b6a819b8aeef417011bfbbc93"
+  }
+]
