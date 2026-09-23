@@ -130,3 +130,7 @@ not a wedged native turn. Report unknown with the probe or input failure reason.
 A failed activity probe breaks the continuous screen observation window; a
 fresh successful observation can restore busy or idle. A locked status read
 also reports its observation as unavailable instead of presenting stale activity.
+
+A nonempty composer without a native busy indicator is blocked on unsubmitted
+input. The presence of a draft alone cannot establish that a turn is working;
+observation never submits or discards that draft.

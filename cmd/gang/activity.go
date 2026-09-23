@@ -3,11 +3,12 @@ package main
 import (
 	"context"
 	"errors"
+	"time"
+
 	"github.com/adambiggs/gangline/core"
 	"github.com/adambiggs/gangline/harness"
 	"github.com/adambiggs/gangline/store"
 	"github.com/adambiggs/gangline/substrate"
-	"time"
 )
 
 // observeActivity uses current pane evidence without changing message receipts.
@@ -25,13 +26,15 @@ func (run *runtime) observeActivity(l *store.LockedAgent, a *core.Agent, c harne
 			activity, evidence = core.Unknown, err.Error()
 		} else if idle {
 			activity, evidence = core.Idle, ""
-		} else {
-			if a.InterruptDeadline.IsZero() {
-				activity, evidence = core.Busy, ""
-			}
+		} else if busy, err := harness.Busy(c, screen); err != nil {
+			activity, evidence = core.Unknown, err.Error()
+		} else if !busy {
+			activity, evidence = core.Blocked, "native composer contains unsubmitted input"
+		} else if a.InterruptDeadline.IsZero() {
+			activity, evidence = core.Busy, ""
 		}
 	}
-	if a.Compaction != nil && a.Compaction.Status == "submitted" && !found {
+	if a.Compaction != nil && a.Compaction.Status == "submitted" && activity != core.Blocked {
 		activity, evidence = core.Compacting, "native compaction completion unconfirmed; resume withheld"
 	}
 	fingerprint := harness.ScreenFingerprint(screen)
