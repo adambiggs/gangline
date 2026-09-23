@@ -13,16 +13,17 @@ func parseScreen(raw string, cursor substrate.Cursor) (substrate.Screen, error) 
 	parser := screenParser{cursor: cursor}
 	for index := 0; index < len(raw); {
 		if raw[index] == '\x1b' {
-			next, err := parser.escape(raw, index)
-			if err != nil {
-				return substrate.Screen{}, err
-			}
-			index = next
+			index = parser.escape(raw, index)
 			continue
 		}
 		runeValue, width := utf8.DecodeRuneInString(raw[index:])
 		if runeValue == utf8.RuneError && width == 1 {
 			return substrate.Screen{}, fmt.Errorf("invalid UTF-8 at byte %d", index)
+		}
+		if runeValue >= 0x80 && runeValue <= 0x9f {
+			// An 8-bit C1 control is the ESC Fe sequence 0x40 below it.
+			index = parser.sequence(raw, byte(runeValue-0x40), index+width)
+			continue
 		}
 		if err := parser.control(runeValue); err != nil {
 			return substrate.Screen{}, err
@@ -54,6 +55,10 @@ func (parser *screenParser) control(value rune) error {
 		}
 	case '\t':
 		parser.column += 8 - parser.column%8
+	case '\x0e', '\x0f':
+		// SO and SI bracket charset cells in a capture; the cell text is
+		// kept as the ASCII the terminal would map, since the screen is
+		// read, not drawn.
 	default:
 		if value < 0x20 || value == 0x7f {
 			return fmt.Errorf("unsupported control character U+%04X", value)
@@ -65,72 +70,124 @@ func (parser *screenParser) control(value rune) error {
 	return nil
 }
 
-func (parser *screenParser) escape(raw string, start int) (int, error) {
+// escape consumes the escape sequence at start and returns the index of the
+// first byte after it. Sequences that do not render are skipped, and a
+// malformed one is abandoned where it breaks so the capture still parses:
+// the screen is observed, never driven, so a lost escape costs at most the
+// attribute or position it carried.
+func (parser *screenParser) escape(raw string, start int) int {
 	if start+1 >= len(raw) {
-		return 0, fmt.Errorf("truncated escape at byte %d", start)
+		return len(raw)
 	}
-	if raw[start+1] != '[' {
-		return 0, fmt.Errorf("unsupported escape at byte %d", start)
+	intro := raw[start+1]
+	if intro < 0x20 || intro > 0x7e {
+		// A control byte or non-ASCII byte cannot introduce a sequence;
+		// only the ESC is dropped.
+		return start + 1
 	}
-	end := start + 2
-	for end < len(raw) && (raw[end] < 0x40 || raw[end] > 0x7e) {
+	if intro <= 0x2f {
+		// nF: intermediates then one final byte, such as ESC ( B.
+		end := start + 2
+		for end < len(raw) && raw[end] >= 0x20 && raw[end] <= 0x2f {
+			end++
+		}
+		if end < len(raw) && raw[end] >= 0x30 && raw[end] <= 0x7e {
+			end++
+		}
+		return end
+	}
+	return parser.sequence(raw, intro, start+2)
+}
+
+// sequence consumes the body of an escape introduced by intro, which has
+// already been consumed, and returns the index of the first byte after it.
+func (parser *screenParser) sequence(raw string, intro byte, body int) int {
+	switch intro {
+	case '[':
+		return parser.csi(raw, body)
+	case ']':
+		return stringEnd(raw, body, true)
+	case 'P', 'X', '^', '_':
+		return stringEnd(raw, body, false)
+	default:
+		// Fp, Fs and single C1 controls such as ESC 7, ESC =, ESC M, NEL.
+		return body
+	}
+}
+
+// stringEnd skips an OSC, DCS, SOS, PM or APC string to its terminator: ST
+// as ESC \ or U+009C, or BEL when bel is set. A bare ESC ends the string
+// without being consumed, and an unterminated string runs to the capture's
+// end, as it would on a terminal.
+func stringEnd(raw string, body int, bel bool) int {
+	for index := body; index < len(raw); index++ {
+		switch {
+		case raw[index] == '\x1b':
+			if index+1 < len(raw) && raw[index+1] == '\\' {
+				return index + 2
+			}
+			return index
+		case bel && raw[index] == '\x07':
+			return index + 1
+		case strings.HasPrefix(raw[index:], "\u009c"):
+			return index + len("\u009c")
+		}
+	}
+	return len(raw)
+}
+
+// csi parses a control sequence whose body starts at body: parameter and
+// intermediate bytes then one final byte. A control byte or ESC before the
+// final abandons the sequence and is parsed in its own right.
+func (parser *screenParser) csi(raw string, body int) int {
+	end := body
+	for end < len(raw) && raw[end] >= 0x20 && raw[end] <= 0x3f {
 		end++
 	}
-	if end == len(raw) {
-		return 0, fmt.Errorf("unterminated CSI escape at byte %d", start)
+	if end == len(raw) || raw[end] < 0x40 || raw[end] > 0x7e {
+		return end
 	}
-	parameters := raw[start+2 : end]
+	parameters := raw[body:end]
 	switch raw[end] {
 	case 'm':
-		if err := parser.sgr(parameters); err != nil {
-			return 0, err
-		}
+		parser.sgr(parameters)
 	case 'H', 'f':
-		if err := parser.position(parameters); err != nil {
-			return 0, err
-		}
+		parser.position(parameters)
 	case 'A', 'B', 'C', 'D':
-		if err := parser.move(raw[end], parameters); err != nil {
-			return 0, err
-		}
+		parser.move(raw[end], parameters)
 	case 'G':
-		column, err := oneBased(parameters)
-		if err != nil {
-			return 0, err
+		if column, err := oneBased(parameters); err == nil {
+			parser.column = column - 1
 		}
-		parser.column = column - 1
 	case 'h', 'l':
-		if parameters != "?25" {
-			return 0, fmt.Errorf("unsupported CSI %q%c", parameters, raw[end])
+		if parameters == "?25" {
+			parser.cursor.Visible = raw[end] == 'h'
 		}
-		parser.cursor.Visible = raw[end] == 'h'
 	case 'J':
-		if parameters != "2" {
-			return 0, fmt.Errorf("unsupported erase display %q", parameters)
+		if parameters == "2" {
+			parser.rows = nil
+			parser.row = 0
+			parser.column = 0
 		}
-		parser.rows = nil
-		parser.row = 0
-		parser.column = 0
 	case 'K':
 		if parameters != "" && parameters != "0" {
-			return 0, fmt.Errorf("unsupported erase line %q", parameters)
+			break
 		}
 		if parser.row < len(parser.rows) && parser.column < len(parser.rows[parser.row]) {
 			parser.rows[parser.row] = parser.rows[parser.row][:parser.column]
 		}
-	default:
-		return 0, fmt.Errorf("unsupported CSI %q%c", parameters, raw[end])
 	}
-	return end + 1, nil
+	return end + 1
 }
 
-func (parser *screenParser) sgr(parameters string) error {
-	values, err := csiValues(parameters)
-	if err != nil {
-		return fmt.Errorf("invalid SGR %q: %w", parameters, err)
-	}
+// sgr applies the attribute parameters it knows. An unknown parameter, and a
+// colon-separated group such as an underline style or colour, is ignored;
+// a malformed extended colour ends the sequence early.
+func (parser *screenParser) sgr(parameters string) {
+	values := sgrValues(parameters)
 	for index := 0; index < len(values); index++ {
 		switch value := values[index]; {
+		case value < 0:
 		case value == 0:
 			parser.attributes = substrate.Attributes{}
 		case value == 1:
@@ -164,28 +221,50 @@ func (parser *screenParser) sgr(parameters string) error {
 			parser.attributes.Foreground = indexed(uint8(value - 90 + 8))
 		case value >= 100 && value <= 107:
 			parser.attributes.Background = indexed(uint8(value - 100 + 8))
-		case value == 38 || value == 48:
+		case value == 38 || value == 48 || value == 58:
+			// 58 is the underscore colour: its arguments are consumed
+			// like a foreground's, and the colour itself is not kept.
 			color, consumed, err := extendedColor(values[index+1:])
 			if err != nil {
-				return err
+				return
 			}
-			if value == 38 {
+			switch value {
+			case 38:
 				parser.attributes.Foreground = color
-			} else {
+			case 48:
 				parser.attributes.Background = color
 			}
 			index += consumed
-		default:
-			return fmt.Errorf("unsupported SGR parameter %d", value)
 		}
 	}
-	return nil
 }
 
-func (parser *screenParser) position(parameters string) error {
+// sgrValues splits SGR parameters on ';'. An empty parameter is 0; a group
+// carrying ':' subparameters or a value that is not a small non-negative
+// integer is -1, which sgr ignores.
+func sgrValues(parameters string) []int {
+	if parameters == "" {
+		return []int{0}
+	}
+	parts := strings.Split(parameters, ";")
+	values := make([]int, len(parts))
+	for index, part := range parts {
+		switch value, err := strconv.Atoi(part); {
+		case part == "":
+			values[index] = 0
+		case err != nil || value < 0 || strings.Contains(part, ":"):
+			values[index] = -1
+		default:
+			values[index] = value
+		}
+	}
+	return values
+}
+
+func (parser *screenParser) position(parameters string) {
 	values, err := csiValues(parameters)
 	if err != nil || len(values) > 2 {
-		return fmt.Errorf("invalid cursor position %q", parameters)
+		return
 	}
 	row, column := 1, 1
 	if len(values) > 0 && values[0] != 0 {
@@ -196,13 +275,12 @@ func (parser *screenParser) position(parameters string) error {
 	}
 	parser.row = row - 1
 	parser.column = column - 1
-	return nil
 }
 
-func (parser *screenParser) move(kind byte, parameters string) error {
+func (parser *screenParser) move(kind byte, parameters string) {
 	distance, err := oneBased(parameters)
 	if err != nil {
-		return err
+		return
 	}
 	switch kind {
 	case 'A':
@@ -220,7 +298,6 @@ func (parser *screenParser) move(kind byte, parameters string) error {
 			parser.column = 0
 		}
 	}
-	return nil
 }
 
 func (parser *screenParser) ensure(row, column int) {
@@ -269,18 +346,27 @@ func extendedColor(values []int) (substrate.Color, int, error) {
 	}
 	switch values[0] {
 	case 5:
-		if values[1] > 255 {
+		if values[1] < 0 || values[1] > 255 {
 			return substrate.Color{}, 0, fmt.Errorf("invalid indexed color %d", values[1])
 		}
 		return indexed(uint8(values[1])), 2, nil
 	case 2:
-		if len(values) < 4 || values[1] > 255 || values[2] > 255 || values[3] > 255 {
+		if len(values) < 4 || !channels(values[1:4]) {
 			return substrate.Color{}, 0, fmt.Errorf("invalid RGB color")
 		}
 		return substrate.Color{Kind: substrate.ColorRGB, Red: uint8(values[1]), Green: uint8(values[2]), Blue: uint8(values[3])}, 4, nil
 	default:
 		return substrate.Color{}, 0, fmt.Errorf("unsupported extended color mode %d", values[0])
 	}
+}
+
+func channels(values []int) bool {
+	for _, value := range values {
+		if value < 0 || value > 255 {
+			return false
+		}
+	}
+	return true
 }
 
 func indexed(value uint8) substrate.Color {
