@@ -32,7 +32,9 @@ function ffmpeg(args) {
   if (result.status !== 0) throw Error(`ffmpeg failed: ${result.status}`);
 }
 try {
-  const page = await browser.newPage({ viewport: { width: 560, height: 724 }, deviceScaleFactor: 1 });
+  // Native controls keep their CSS size as the video shrinks on phones.
+  // Reserve enough raster space for them at the narrowest site layout.
+  const page = await browser.newPage({ viewport: { width: 560, height: 820 }, deviceScaleFactor: 1 });
   for (const light of [false, true]) {
     const suffix = light ? '-light' : '';
     const colors = light ? ['#e9f0f8', '#12202e', '#42546a', '#b4531c', '#b7c9db'] : ['#06090f', '#e9eef7', '#b2bed0', '#f0a23c', '#324052'];
@@ -47,7 +49,7 @@ try {
         h1{margin:0 0 8px;font:26px/1.4 mono;color:${accent}}
         h2{margin:0 0 24px;font:22px/1.4 mono;color:${soft}}
         pre{margin:0;white-space:pre-wrap;overflow-wrap:anywhere;font:inherit}
-        footer{position:absolute;bottom:64px;left:0;right:0;padding:20px 24px;border-top:1px solid ${border};font-size:18px;color:${soft}}
+        footer{position:absolute;bottom:160px;left:0;right:0;padding:20px 24px;border-top:1px solid ${border};font-size:18px;color:${soft}}
         .progress{display:flex;gap:8px;margin-top:12px}.progress i{height:3px;flex:1;background:${border}}.progress i.active{background:${accent}}
       </style><header>Claude Code <b>↔</b> Codex</header><main>
       <h1>${i + 1}. ${escape(slide.title)}</h1><h2>${escape(slide.harness)}</h2><pre>${escape(slide.text)}</pre></main>
