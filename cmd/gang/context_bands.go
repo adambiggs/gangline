@@ -39,7 +39,7 @@ func (run *runtime) noteContextBands(a *core.Agent, c harness.Collar) {
 		e := core.Envelope{
 			ID: core.EnvelopeID(fmt.Sprintf("context-%020d", state.Sequence)), Recipient: a.ID, To: a.Name,
 			From: core.Sender{Kind: core.SenderSelfDeclared, Name: "context-band"}, CreatedAt: run.cmd.now(),
-			Message: core.Message{Text: fmt.Sprintf("Context band %s crossed (threshold %.0f%%): native context is %d/%d tokens (%.0f%%), model %s. Follow your standing context-management instructions at the next natural checkpoint.", band.Name, band.At*100, *r.Used, *r.Limit, *r.Percent, r.Model)},
+			Message: core.Message{Text: fmt.Sprintf("Context band %s crossed (threshold %.0f%%): %s, model %s. Follow your standing context-management instructions at the next natural checkpoint.", band.Name, band.At*100, contextUsageText(*r.Used, *r.Limit, *r.Percent), r.Model)},
 		}
 		state.Pending = append(state.Pending, core.ContextBandNote{Band: band.Name, Reading: r, Envelope: e})
 	}

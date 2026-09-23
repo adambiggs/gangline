@@ -115,9 +115,9 @@ func (cmd command) statusline(args []string) (result error) {
 		r = a.Native.Context
 	}
 	if r.Status != "observed" || r.Used == nil || r.Limit == nil || r.Percent == nil {
-		_, err = fmt.Fprintln(cmd.stdout, "context unknown: "+r.Reason)
+		_, err = fmt.Fprintln(cmd.stdout, "unknown: "+r.Reason)
 	} else {
-		_, err = fmt.Fprintf(cmd.stdout, "context %d/%d (%.0f%%)\n", *r.Used, *r.Limit, *r.Percent)
+		_, err = fmt.Fprintln(cmd.stdout, contextUsageText(*r.Used, *r.Limit, *r.Percent))
 	}
 	return err
 }

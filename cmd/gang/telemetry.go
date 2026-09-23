@@ -120,7 +120,10 @@ func (run *runtime) publishContext(a core.Agent) error {
 }
 func contextWidgetText(name string, r core.Reading) string {
 	if r.Status != "observed" || r.Percent == nil {
-		return name + " context ?"
+		return name + " ?"
 	}
-	return fmt.Sprintf("%s context %.0f%%", name, *r.Percent)
+	if r.Used != nil && r.Limit != nil {
+		return name + " " + contextUsageText(*r.Used, *r.Limit, *r.Percent)
+	}
+	return fmt.Sprintf("%s %.0f%%", name, *r.Percent)
 }

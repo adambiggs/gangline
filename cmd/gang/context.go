@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"strconv"
+	"strings"
 	"time"
 
 	"github.com/adambiggs/gangline/harness"
@@ -55,7 +56,7 @@ func (cmd command) context(args []string) error {
 		if band := harness.ActiveContextBand(c, r.Model, harness.ContextReading{Used: *r.Used, Limit: *r.Limit, Percent: *r.Percent / 100}); band != nil {
 			bandName = band.Name
 		}
-		_, err = fmt.Fprintf(cmd.stdout, "%s\t%d/%d\t%.0f%%\t%s\n", a.Name, *r.Used, *r.Limit, *r.Percent, bandName)
+		_, err = fmt.Fprintf(cmd.stdout, "%s\t%s/%s\t%.0f%%\t%s\n", a.Name, compactTokenCount(*r.Used), compactTokenCount(*r.Limit), *r.Percent, bandName)
 		return err
 	}
 	b, err := run.input()
@@ -78,7 +79,7 @@ func (cmd command) context(args []string) error {
 	if band := harness.ActiveContextBand(c, model, r); band != nil {
 		bandName = band.Name
 	}
-	_, err = fmt.Fprintf(cmd.stdout, "%s\t%d/%d\t%.0f%%\t%s\n", a.Name, r.Used, r.Limit, r.Percent*100, bandName)
+	_, err = fmt.Fprintf(cmd.stdout, "%s\t%s/%s\t%.0f%%\t%s\n", a.Name, compactTokenCount(r.Used), compactTokenCount(r.Limit), r.Percent*100, bandName)
 	return err
 }
 func (cmd command) limits(args []string) error {
@@ -225,4 +226,20 @@ func (cmd command) contextWidget(args []string) error {
 		return err
 	}
 	return b.ContextWidget(context.Background(), string(a.ID), contextWidgetText(string(a.Name), a.Native.Context))
+}
+
+// Compact only presentation; native readings retain their exact token counts.
+func compactTokenCount(n int64) string {
+	switch {
+	case n >= 999500:
+		return strings.TrimSuffix(strconv.FormatFloat(float64(n)/1000000, 'f', 1, 64), ".0") + "M"
+	case n >= 1000:
+		return fmt.Sprintf("%.0fk", float64(n)/1000)
+	default:
+		return strconv.FormatInt(n, 10)
+	}
+}
+
+func contextUsageText(used, limit int64, percent float64) string {
+	return fmt.Sprintf("%s/%s (%.0f%%)", compactTokenCount(used), compactTokenCount(limit), percent)
 }
