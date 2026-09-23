@@ -61,8 +61,9 @@ printf '%s\n' 'Run the focused test and report the result.' |
   gang send worker --from operator
 ```
 
-`gang send` prints a message ID and `delivered` or `queued`. A queued message
-waits until the agent takes it or is dropped. Status 5 means the text may have
+`gang send` prints a message ID and `delivered`, `accepted`, or `queued`.
+An accepted message belongs to the native input queue; do not send it again.
+A queued message waits until the agent takes it or is dropped. Status 5 means the text may have
 been typed but the harness never confirmed it; look at the agent before
 sending again.
 

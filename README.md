@@ -19,7 +19,15 @@ Install the latest stable release:
 curl -fsSL https://raw.githubusercontent.com/adambiggs/gangline/main/install.sh | sh
 ```
 
-This installs the latest release's `gang` into `~/.local/bin`. Check it:
+This installs the latest release's `gang` into `~/.local/bin`. If the installer
+reports that directory is missing from your PATH, add it to your shell startup
+file and reload your shell:
+
+```sh
+export PATH="$HOME/.local/bin:$PATH"
+```
+
+Older shell-based releases also need Python. Check the installed command:
 
 ```sh
 gang --version

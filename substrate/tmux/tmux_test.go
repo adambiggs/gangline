@@ -47,12 +47,28 @@ func runDetachedHelper() int {
 	return 0
 }
 
+// Keep the socket path below the Unix socket limit even when the OS uses a
+// long temporary root. t.TempDir adds the full test name to that path.
+func privateTmuxRoot(t *testing.T) string {
+	t.Helper()
+	root, err := os.MkdirTemp(os.TempDir(), "tmux-")
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() {
+		if err := os.RemoveAll(root); err != nil {
+			t.Error(err)
+		}
+	})
+	return root
+}
+
 func TestBackendDrivesPrivateTmuxServer(t *testing.T) {
 	binary, err := exec.LookPath("tmux")
 	if err != nil {
 		t.Skip("tmux is required")
 	}
-	root := t.TempDir()
+	root := privateTmuxRoot(t)
 	socket := filepath.Join(root, "tmux.sock")
 	const session = "substrate-test"
 	runTmux(t, binary, socket, "new-session", "-d", "-s", session)
@@ -121,7 +137,7 @@ func TestBackendCreatesAndKillsSession(t *testing.T) {
 	if err != nil {
 		t.Skip("tmux is required")
 	}
-	root := t.TempDir()
+	root := privateTmuxRoot(t)
 	backend, err := New(Config{Binary: binary, Socket: filepath.Join(root, "tmux.sock"), Session: "created"})
 	if err != nil {
 		t.Fatal(err)
@@ -146,7 +162,7 @@ func TestBackendKillStopsDetachedDescendant(t *testing.T) {
 	if err != nil {
 		t.Skip("tmux is required")
 	}
-	root := t.TempDir()
+	root := privateTmuxRoot(t)
 	socket := filepath.Join(root, "tmux.sock")
 	pidFile := filepath.Join(root, "detached.pid")
 	const session = "reap-detached-test"

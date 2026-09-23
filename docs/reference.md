@@ -6,7 +6,8 @@ arguments.
 ## Install
 
 Gangline runs on macOS and Linux. It needs Git, Go 1.27 or later, tmux 3.2 or
-later, and Claude Code or Codex.
+later, and Claude Code or Codex. Older shell-based releases also need Python.
+The installer prints a PATH instruction if `~/.local/bin` is not on your PATH.
 
 ```sh
 curl -fsSL https://raw.githubusercontent.com/adambiggs/gangline/main/install.sh | sh
