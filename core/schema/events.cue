@@ -12,7 +12,7 @@ import "time"
  purpose?: "startup" | "assignment"
  created_at: #Time
  not_before?: #Time
- outcome?: "delivered" | "failed" | "unverified" | "cancelled"
+ outcome?: "accepted" | "delivered" | "failed" | "unverified" | "cancelled"
  reason?: string
 })
 #Compaction: close({id: #ID, resume: close({text: string}), started_at: #Time, deadline: #Time, status: "queued" | "submitted" | "completed" | "failed" | "unverified", continuation?: bool, completed_at?: #Time, refusal_before?: int & >=0, reason?: string})
@@ -24,7 +24,7 @@ import "time"
 #Fields: close({
  type: "hitch_claimed" | "hitch_spawned" | "hitch_ready" | "hitch_blocked" | "hitch_failed" |
   "adopted" | "renamed" | "send_queued" | "send_cancelled" |
-  "input_started" | "input_finished" | "delivery_succeeded" | "delivery_failed" | "delivery_unverified" |
+  "input_started" | "input_finished" | "delivery_accepted" | "delivery_succeeded" | "delivery_failed" | "delivery_unverified" |
   "activity_observed" | "observation" | "native_hook" | "hook_failed" | "context_band_crossed" |
   "compaction_requested" | "compaction_submitted" | "compaction_completed" | "compaction_failed" | "compaction_unverified" |
   "interrupt_requested" | "interrupt_completed" | "deadline_checked" |
@@ -37,7 +37,7 @@ import "time"
 })
 
 #Event: #Fields & (
- {type: "hitch_claimed" | "hitch_spawned" | "hitch_ready" | "hitch_blocked" | "hitch_failed" | "adopted" | "renamed" | "send_cancelled" | "delivery_succeeded" | "delivery_failed" | "delivery_unverified" | "activity_observed" | "observation" | "native_hook" | "compaction_submitted" | "compaction_completed" | "compaction_failed" | "compaction_unverified" | "interrupt_requested" | "interrupt_completed" | "deadline_checked" | "drop_started" | "drop_finished" | "curfew_set" | "curfew_cleared" | "capacity_detected" | "capacity_submitted" | "capacity_cleared"} |
+ {type: "hitch_claimed" | "hitch_spawned" | "hitch_ready" | "hitch_blocked" | "hitch_failed" | "adopted" | "renamed" | "send_cancelled" | "delivery_accepted" | "delivery_succeeded" | "delivery_failed" | "delivery_unverified" | "activity_observed" | "observation" | "native_hook" | "compaction_submitted" | "compaction_completed" | "compaction_failed" | "compaction_unverified" | "interrupt_requested" | "interrupt_completed" | "deadline_checked" | "drop_started" | "drop_finished" | "curfew_set" | "curfew_cleared" | "capacity_detected" | "capacity_submitted" | "capacity_cleared"} |
  {type: "send_queued", envelope: #Envelope} |
  {type: "context_band_crossed", id: #ID, hitch_id: #ID, status: #ID, envelope: #Envelope, readings: [#Reading]} |
  {type: "input_started" | "input_finished", id: #ID, status: #ID, hitch_id: #ID} |

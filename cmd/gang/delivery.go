@@ -97,6 +97,29 @@ func (run *runtime) deliver(l *store.LockedAgent, a *core.Agent, e core.Envelope
 	if err != nil {
 		return "", err
 	}
+	var queue func(context.Context) (bool, error)
+	// Startup keeps its exact contract witness; queue previews cannot show it.
+	if c.Primitives.QueueWitness != nil && c.Primitives.MidTurn && e.Purpose == "" {
+		opener := wire[:strings.Index(wire, "]")+1]
+		queue = func(ctx context.Context) (bool, error) {
+			if err := requireHarnessForeground(ctx, b, substrate.PaneID(a.Pane), c); err != nil {
+				return false, err
+			}
+			screen, err := b.Capture(ctx, substrate.PaneID(a.Pane))
+			if err != nil {
+				return false, err
+			}
+			return harness.NativeQueueAccepted(c, screen, opener)
+		}
+		// A fresh one-time ID must not already appear before this submission.
+		seen, err := queue(context.Background())
+		if err != nil {
+			return "", err
+		}
+		if seen {
+			return "", fmt.Errorf("message already appears in native queue before input; inspect the recipient; do not resend")
+		}
+	}
 	old, err := l.Paths.ReadWitness()
 	if err != nil && !errors.Is(err, os.ErrNotExist) {
 		return "", err
@@ -134,18 +157,26 @@ func (run *runtime) deliver(l *store.LockedAgent, a *core.Agent, e core.Envelope
 		err = sendHarnessKeys(ctx, b, pane, c, substrate.Keys{Submit: true})
 	}
 	var witness store.Witness
+	var accepted bool
 	if err == nil {
-		witness, err = run.cmd.awaitWitness(ctx, l.Paths, old.ID)
+		witness, accepted, err = run.cmd.awaitReceipt(ctx, l.Paths, old.ID, queue)
 	}
-	if err == nil {
+	if err == nil && !accepted {
 		var matched bool
 		matched, err = harness.SubmittedPromptMatches(c.Primitives.SubmitWitness, wire, witness.Prompt)
 		if err == nil && !matched {
-			err = fmt.Errorf("submit witness does not match the message text and one-time ID")
+			if queue != nil && (a.Native.SessionID == "" || witness.SessionID == a.Native.SessionID) {
+				accepted, err = queue(ctx)
+			}
+			if err == nil && !accepted {
+				err = fmt.Errorf("submit witness does not match the message text and one-time ID")
+			}
 		}
 	}
 	if err != nil {
 		outcome, reason = "unverified", err.Error()
+	} else if accepted {
+		outcome, reason = "accepted", "native queue shows sender and one-time ID; do not resend"
 	} else {
 		if a.Native.SessionID != "" && witness.SessionID != "" && a.Native.SessionID != witness.SessionID {
 			outcome, reason = "unverified", "submit witness belongs to another native session"

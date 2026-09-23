@@ -84,7 +84,7 @@ func (cmd command) handleHook(args []string) error {
 		if err := p.WriteWitness(store.Witness{ID: receipt, At: cmd.now(), Prompt: event.Payload["prompt"], SessionID: event.Payload["session_id"], TurnID: event.Payload["turn_id"], Transcript: event.Payload["transcript_path"]}); err != nil {
 			return err
 		}
-		if a.LastFailed == "" {
+		if a.LastFailed == "" && a.LastAccepted == "" {
 			return nil
 		}
 		// The native queue may submit after the sending command has exited.

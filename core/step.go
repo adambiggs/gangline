@@ -35,6 +35,8 @@ func Step(agent Agent, event Event) (Agent, []Effect) {
 		agent.Input = nil
 		if event.Status == "delivered" {
 			agent.Activity, agent.Native.SubmittedAt = Busy, event.At
+		} else if event.Status == "accepted" {
+			agent.Activity, agent.Evidence = Busy, event.Reason
 		} else if event.Status == "unverified" {
 			agent.Activity, agent.Evidence = Wedged, event.Reason
 		}

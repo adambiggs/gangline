@@ -59,6 +59,7 @@ type Agent struct {
 	Teardown          []ProcessIdentity `json:"teardown,omitempty"`
 	RenameFrom        AgentName         `json:"rename_from,omitempty"`
 	RenameTo          AgentName         `json:"rename_to,omitempty"`
+	LastAccepted      EnvelopeID        `json:"last_accepted,omitempty"`
 	LastDelivered     EnvelopeID        `json:"last_delivered,omitempty"`
 	LastFailed        EnvelopeID        `json:"last_failed,omitempty"`
 	Cleanup           *ResultRef        `json:"cleanup,omitempty"`

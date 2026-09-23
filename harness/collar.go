@@ -74,6 +74,7 @@ type Primitives struct {
 	Startup        []Invocation `json:"startup"`
 	Composer       Invocation   `json:"composer"`
 	Submit         Invocation   `json:"submit"`
+	QueueWitness   *Invocation  `json:"queue_witness,omitempty"`
 	SubmitWitness  Invocation   `json:"submit_witness"`
 	TurnBoundary   Invocation   `json:"turn_boundary"`
 	Blocked        Invocation   `json:"blocked"`
@@ -169,6 +170,13 @@ func validateCollar(collar Collar) error {
 		{"context", collar.Primitives.Context, []string{"claude-screen-context", "codex-screen-context"}},
 		{"provider limits", collar.Primitives.ProviderLimits, []string{"claude-screen-limits", "codex-screen-limits"}},
 		{"wedge", collar.Primitives.Wedge, []string{"stable-busy-screen"}},
+	}
+	if collar.Primitives.QueueWitness != nil {
+		checks = append(checks, struct {
+			where   string
+			value   Invocation
+			allowed []string
+		}{"queue witness", *collar.Primitives.QueueWitness, []string{"codex-pending-input"}})
 	}
 	if collar.Primitives.Telemetry != nil {
 		checks = append(checks, struct {

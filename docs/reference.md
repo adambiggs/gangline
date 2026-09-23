@@ -50,6 +50,15 @@ A failed agent keeps its name until you drop it.
 | `gang compact [NAME] [--resume TEXT]` | Queue compaction at native idle; resume only after confirmed completion. |
 | `gang compact NAME --recover` | Run the collar's recovery actions for a stuck compaction. |
 
+A send reports `delivered` when the exact native submit hook confirms it.
+`accepted` means the native queue shows the sender and full one-time-ID opener;
+it exits successfully and says not to resend. Queue previews can truncate the
+body, so acceptance does not claim full-text submission or that the agent read
+or acted on it. `queued` remains in Gangline's spool. Without a submit witness
+or an identifiable native queue entry, the result is `unverified` and exits
+unsuccessfully. Native queue recognition is declared by the collar's optional
+`queue_witness` primitive; startup assignments still require exact hook proof.
+
 From an agent window, `send` uses that agent's name and refuses `--from`. From
 anywhere else `--from` is required, and the envelope marks the name
 `self-declared:`.

@@ -99,7 +99,7 @@ var commandDescription = map[string]string{
 	"hitch":      "Launch a native harness in a new team pane and deliver its contract, role, and assignment.\n",
 	"adopt":      "Register an existing pane without launching a harness or delivering startup prose.\n",
 	"rename":     "Change a registered agent name without restarting its harness.\n",
-	"send":       "Read a message from stdin. Delivery is submitted from an empty composer and verified by a native hook, or remains pending for a turn boundary.\n",
+	"send":       "Read a message from stdin. An exact native hook proves delivered; a native queue receipt proves accepted (do not resend). Otherwise input stays queued or is unverified.\n",
 	"queue":      "List pending delivery identifiers, recipients, and senders.\n",
 	"interrupt":  "Send the collar's native interrupt and optionally deliver a reason after the turn stops.\n",
 	"compact":    "Request the collar's native compaction and place a continuation behind it.\n",

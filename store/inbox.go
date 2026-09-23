@@ -101,6 +101,9 @@ func (l *LockedAgent) Settle(a *core.Agent, e core.Envelope, outcome, reason str
 	if outcome == "delivered" {
 		dir = "cur"
 		previous = a.LastDelivered
+	} else if outcome == "accepted" {
+		dir = "cur"
+		previous = a.LastAccepted
 	}
 	e.Outcome, e.Reason = outcome, reason
 	from, err := l.Paths.EnvelopePath("new", e.ID)
@@ -117,7 +120,9 @@ func (l *LockedAgent) Settle(a *core.Agent, e core.Envelope, outcome, reason str
 	if previous != "" && previous != e.ID {
 		a.Cleanup = &core.ResultRef{ID: previous, Directory: dir}
 	}
-	if dir == "cur" {
+	if outcome == "accepted" {
+		a.LastAccepted = e.ID
+	} else if dir == "cur" {
 		a.LastDelivered = e.ID
 	} else {
 		a.LastFailed = e.ID

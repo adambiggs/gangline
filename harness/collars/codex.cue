@@ -45,6 +45,7 @@ collar: {
 		composer: {name: "codex-composer"}
 		submit: {name: "enter-submit", params: {paste: "bracketed", settle: "400ms"}}
 		submit_witness: {name: "exact-prompt"}
+		queue_witness: {name: "codex-pending-input"}
 		turn_boundary: {name: "hook-boundary"}
 		blocked: {name: "screen-blocked", params: {
 			prompt: "Would you like to run|Do you want to allow|requires approval|approval required|Hooks need review|Giving this request a little extra[[:space:]]+thought"

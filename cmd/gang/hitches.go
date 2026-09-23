@@ -324,7 +324,11 @@ func (cmd command) drop(args []string) error {
 		return err
 	}
 	if _, err := p.Read(); errors.Is(err, os.ErrNotExist) {
-		return run.team.RemoveName(core.AgentName(name), id)
+		if err := run.team.RemoveName(core.AgentName(name), id); err != nil {
+			return err
+		}
+		_, err := fmt.Fprintf(cmd.stdout, "%s registration removed; native state missing; resume session: unknown\n", name)
+		return err
 	} else if err != nil {
 		return err
 	}

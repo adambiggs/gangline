@@ -169,6 +169,11 @@ func (cmd command) send(args []string) (result error) {
 	if err != nil {
 		return err
 	}
+	if outcome == "accepted" {
+		if _, err := fmt.Fprintln(cmd.stderr, "native queue accepted the message; do not resend"); err != nil {
+			return err
+		}
+	}
 	if _, err := fmt.Fprintf(cmd.stdout, "%s\t%s\n", e.ID, outcome); err != nil {
 		return err
 	}

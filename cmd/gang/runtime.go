@@ -246,11 +246,17 @@ func (run *runtime) recoverInput(l *store.LockedAgent, a *core.Agent) error {
 	if err != nil {
 		return fmt.Errorf("recover input %s: %w", id, err)
 	}
+	if a.LastAccepted == eid {
+		a.LastAccepted = ""
+	}
 	if a.LastDelivered == eid {
 		a.LastDelivered = ""
 	}
 	if a.LastFailed == eid {
 		a.LastFailed = ""
+	}
+	if e.Outcome == "accepted" {
+		return run.finishInput(l, a, e, "accepted", e.Reason)
 	}
 	return run.finishInput(l, a, e, "unverified", "input owner exited before recording the outcome")
 }
@@ -258,7 +264,7 @@ func (run *runtime) finishInput(l *store.LockedAgent, a *core.Agent, e core.Enve
 	if err := l.Settle(a, e, outcome, reason); err != nil {
 		return err
 	}
-	if err := run.record(*a, core.Event{Type: map[string]string{"delivered": "delivery_succeeded", "failed": "delivery_failed", "unverified": "delivery_unverified"}[outcome], ID: string(e.ID), Reason: reason}); err != nil {
+	if err := run.record(*a, core.Event{Type: map[string]string{"accepted": "delivery_accepted", "delivered": "delivery_succeeded", "failed": "delivery_failed", "unverified": "delivery_unverified"}[outcome], ID: string(e.ID), Reason: reason}); err != nil {
 		return err
 	}
 	return run.apply(l, a, core.Event{Type: "input_finished", ID: string(e.ID), Status: outcome, Reason: reason})

@@ -113,3 +113,8 @@ processes safely.
 
 Never run `tmux kill-server` or `tmux kill-session` without an exact target;
 other work may share the tmux server.
+
+A send that reports `accepted` belongs to the native input queue. Do not send it
+again. The retained receipt can become `delivered` if an exact native submit
+hook arrives later. An incomplete queue preview remains unverified; inspect the
+recipient before deciding how to recover.

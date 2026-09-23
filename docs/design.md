@@ -11,7 +11,8 @@ conflicts with one, change the design or change the principle first.
 2. **Every message names its sender.** Gang reads the name from the sending
    window. From the operator's shell, it takes the name given.
 3. **Delivered means verified.** A message is delivered only when the
-   harness's own submit hook reports it. Otherwise the send fails visibly.
+   harness's own submit hook reports it. Native queue ownership is a separate
+   successful `accepted` result; neither result means read or acted on.
 4. **Harness differences are data.** Each harness, such as Claude Code or
    Codex, has one CUE file (its collar) that says how to launch it, hook it up,
    and read its screen. `cmd/gang` has no harness-specific code.
@@ -48,7 +49,12 @@ exactly in the composer; it never pastes the message again.
 
 Text on screen only proves it was pasted. Gang checks that the harness's submit
 hook reports the exact message it sent, including its one-time ID. Anything
-missing or different counts as unknown, not delivered.
+missing or different cannot count as delivered. A freshly observed native
+queue entry may instead prove `accepted` when its declared layout shows the
+full sender and one-time-ID opener and the composer is empty. Queue previews
+can truncate bodies, so this receipt never substitutes for exact hook proof.
+Accepted input leaves the spool and must not be resent. Without either proof,
+the result remains unverified and the command fails visibly.
 
 ### Only type into the harness
 
