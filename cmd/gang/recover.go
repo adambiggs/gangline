@@ -102,6 +102,9 @@ func (run *runtime) tickAgent(id core.HitchID, notice hookNotice, wait bool) err
 	if err := run.observeContextBands(l, &a, c, screen); err != nil {
 		return err
 	}
+	if err := run.observeCompaction(l, &a, c, screen); err != nil {
+		return err
+	}
 	if err := run.observeActivity(l, &a, c, screen); err != nil {
 		return err
 	}
@@ -174,7 +177,16 @@ func (run *runtime) publishOnce(l *store.LockedAgent, a *core.Agent, e core.Enve
 }
 func (run *runtime) continueCompaction(l *store.LockedAgent, a *core.Agent) error {
 	c := a.Compaction
-	if c == nil || c.Status != "submitted" || c.Continuation {
+	if c == nil {
+		return nil
+	}
+	if (c.Status == "submitted" || c.Status == "unverified") && c.CompletedAt.After(c.StartedAt) {
+		if err := run.apply(l, a, core.Event{Type: "compaction_completed", ID: c.ID, At: c.CompletedAt}); err != nil {
+			return err
+		}
+		c = a.Compaction
+	}
+	if c.Status != "completed" || c.Continuation {
 		return nil
 	}
 	e := core.Envelope{ID: core.EnvelopeID("resume-" + c.ID), Recipient: a.ID, To: a.Name, From: core.Sender{Kind: core.SenderSelfDeclared, Name: "compact"}, Message: c.Resume, CreatedAt: run.cmd.now()}

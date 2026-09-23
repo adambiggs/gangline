@@ -109,3 +109,10 @@ native cursor so interrupted publication can resume without repeating input.
 Unknown readings do not reset crossings. A lower observed reading, a model
 change, or completed compaction permits later crossings again. Notes carry
 context facts; the agent's standing instructions decide what to do with them.
+
+### Confirm compaction before resuming
+
+Compaction waits for a freshly observed native idle seam, even when ordinary
+messages support mid-turn input. Submitting the compact command is not proof
+that it ran: withhold the resume until a newer native completion event for the
+same session is observed. Refusal is failure; missing completion is unconfirmed.

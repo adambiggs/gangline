@@ -337,14 +337,25 @@ func (cmd command) compact(args []string) (result error) {
 	if err := run.startCompaction(l, &a); err != nil {
 		return err
 	}
+	if a.Compaction.Status == "queued" {
+		_, err := fmt.Fprintf(cmd.stdout, "%s\tqueued; waiting for native idle; resume withheld\n", id)
+		return err
+	}
+	if a.Compaction.Status != "completed" {
+		return commandError{status: exitUnknown, text: "compaction submitted; native completion unconfirmed; resume withheld"}
+	}
 	outcome, err := run.drainFrom(l, a, core.EnvelopeID("resume-"+id))
 	if err != nil {
 		return err
 	}
-	return deliveryResult(outcome)
+	if err := deliveryResult(outcome); err != nil {
+		return err
+	}
+	_, err = fmt.Fprintf(cmd.stdout, "%s\tcompleted; resume %s\n", id, outcome)
+	return err
 }
-func (run *runtime) startCompaction(l *store.LockedAgent, a *core.Agent) error {
-	if a.Compaction == nil || a.Compaction.Status != "queued" || a.Activity != core.Idle {
+func (run *runtime) startCompaction(l *store.LockedAgent, a *core.Agent) (result error) {
+	if a.Compaction == nil || a.Compaction.Status != "queued" || a.Status != core.Active {
 		return nil
 	}
 	c, err := loadCollar(a.Collar, run.settings)
@@ -355,15 +366,38 @@ func (run *runtime) startCompaction(l *store.LockedAgent, a *core.Agent) error {
 	if err != nil {
 		return err
 	}
+	ctx, cancel := run.cmd.timeout(operationTimeout)
+	defer cancel()
+	pane := substrate.PaneID(a.Pane)
+	screen, err := b.Capture(ctx, pane)
+	if err != nil {
+		return err
+	}
+	if err := run.observeActivity(l, a, c, screen); err != nil {
+		return err
+	}
+	if a.Activity != core.Idle {
+		return nil
+	}
 	free, _, err := run.available(l, a, b, c)
 	if err != nil || !free {
 		return err
 	}
+	refusals, err := harness.ActionRefusals(c.Actions.Compact, screen)
+	if err != nil {
+		return err
+	}
+	a.Compaction.RefusalBefore = len(refusals)
 	a.Compaction.StartedAt = run.cmd.now()
 	a.Compaction.Deadline = a.Compaction.StartedAt.Add(operationTimeout)
 	if err := run.apply(l, a, core.Event{Type: "input_started", ID: a.Compaction.ID, Status: "compaction"}); err != nil {
 		return err
 	}
+	defer func() {
+		if result != nil && a.Input != nil {
+			result = errors.Join(result, run.apply(l, a, core.Event{Type: "compaction_unverified", ID: a.Compaction.ID, Reason: result.Error()}))
+		}
+	}()
 	action, err := harness.RenderAction(c.Actions.Compact, map[string]string{"instructions": a.Compaction.Resume.Text})
 	if err != nil {
 		return err
@@ -372,9 +406,6 @@ func (run *runtime) startCompaction(l *store.LockedAgent, a *core.Agent) error {
 	if err != nil {
 		return err
 	}
-	ctx, cancel := run.cmd.timeout(operationTimeout)
-	defer cancel()
-	pane := substrate.PaneID(a.Pane)
 	if err := sendHarnessKeys(ctx, b, pane, c, input); err != nil {
 		return err
 	}
@@ -390,10 +421,37 @@ func (run *runtime) startCompaction(l *store.LockedAgent, a *core.Agent) error {
 	if err != nil {
 		return err
 	}
+	screen, err = b.Capture(ctx, pane)
+	if err != nil {
+		return err
+	}
+	if blocker, blocked, err := harness.InputBlocked(c, screen); err != nil {
+		return err
+	} else if blocked {
+		return commandError{status: exitNative, text: "native compaction input blocked: " + blocker.Evidence + "; resume withheld"}
+	}
+	if _, err := harness.ReadComposer(c.Primitives.Composer, screen); err != nil {
+		return err
+	}
+	if busy, err := harness.Busy(c, screen); err != nil {
+		return err
+	} else if busy {
+		return commandError{status: exitNative, text: "native task became active before compaction submit; inspect the composer; resume withheld"}
+	}
 	if err := sendHarnessKeys(ctx, b, pane, c, substrate.Keys{Names: action.Keys, Submit: action.Submit}); err != nil {
 		return err
 	}
 	if err := run.apply(l, a, core.Event{Type: "compaction_submitted", ID: a.Compaction.ID}); err != nil {
+		return err
+	}
+	if err := run.refreshNative(l, a, c); err != nil {
+		return err
+	}
+	screen, err = b.Capture(ctx, pane)
+	if err != nil {
+		return err
+	}
+	if err := run.observeCompaction(l, a, c, screen); err != nil {
 		return err
 	}
 	if err := run.continueCompaction(l, a); err != nil {

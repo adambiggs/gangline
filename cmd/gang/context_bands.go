@@ -13,6 +13,9 @@ import (
 // compact, then cross them again. Save these intents with the native cursor.
 func (run *runtime) acceptContextReadings(a *core.Agent, c harness.Collar, readings []core.Reading) {
 	for _, r := range readings {
+		if pending := a.Compaction; pending != nil && (pending.Status == "submitted" || pending.Status == "unverified") && r.Kind == "compaction-finished" && r.At != nil && r.At.After(pending.StartedAt) {
+			pending.CompletedAt = *r.At
+		}
 		acceptReadings(&a.Native, []core.Reading{r})
 		run.noteContextBands(a, c)
 	}

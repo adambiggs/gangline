@@ -11,7 +11,7 @@ import (
 	"github.com/adambiggs/gangline/store"
 )
 
-func TestCompactionQueuesContinuationBeforeCompletion(t *testing.T) {
+func TestCompactionQueuesContinuationAfterCompletion(t *testing.T) {
 	for _, collar := range []string{"codex", "claude-code"} {
 		t.Run(collar, func(t *testing.T) {
 			f := newStateFixture(t)
@@ -39,12 +39,19 @@ func TestCompactionQueuesContinuationBeforeCompletion(t *testing.T) {
 				if err != nil {
 					return err
 				}
-				if a.Compaction.Status != "submitted" || a.Input == nil || a.Input.ID != "resume-"+a.Compaction.ID || a.Native.Transcript != "" {
+				if a.Compaction.Status != "completed" || a.Input == nil || a.Input.ID != "resume-"+a.Compaction.ID || a.Native.Transcript != "" {
 					t.Fatalf("continuation intent: %+v", a)
 				}
 				return p.WriteWitness(store.Witness{ID: "resume-witness", At: f.cmd.now(), Prompt: prompt, SessionID: "s"})
 			}
-			if err := f.cmd.compact([]string{"worker", "--resume", "continue the work"}); err != nil {
+			var ce commandError
+			if err := f.cmd.compact([]string{"worker", "--resume", "continue the work"}); !errors.As(err, &ce) || ce.status != exitUnknown {
+				t.Fatalf("submission: %v", err)
+			}
+			if f.input.submits != 1 {
+				t.Fatalf("resume preceded completion: submits=%d", f.input.submits)
+			}
+			if err := f.run.tickAgent(a.ID, hookNotice{Kind: "compaction-finished", SessionID: "s", At: f.cmd.now().Add(time.Second)}, false); err != nil {
 				t.Fatal(err)
 			}
 			a, err := p.Read()
@@ -86,14 +93,17 @@ func TestCompactionContinuationUsesNormalDelivery(t *testing.T) {
 				return p.WriteWitness(store.Witness{ID: "resume-witness", At: f.cmd.now(), Prompt: prompt, SessionID: "s"})
 			}
 			err := f.cmd.compact([]string{"worker"})
-			if outcome == "unverified" {
-				var ce commandError
-				if !errors.As(err, &ce) || ce.status != exitUnknown {
-					t.Fatalf("unverified result: %v", err)
-				}
-			} else if err != nil {
+			var ce commandError
+			if !errors.As(err, &ce) || ce.status != exitUnknown {
+				t.Fatalf("submission: %v", err)
+			}
+			if f.input.submits != 1 {
+				t.Fatal("resume preceded completion")
+			}
+			if err := f.run.tickAgent(a.ID, hookNotice{Kind: "compaction-finished", SessionID: "s", At: f.cmd.now().Add(time.Second)}, false); err != nil {
 				t.Fatal(err)
 			}
+
 			a, err = p.Read()
 			if err != nil {
 				t.Fatal(err)
@@ -154,9 +164,6 @@ func TestCompactionSubmissionRecovery(t *testing.T) {
 				t.Fatal(err)
 			}
 			wantSubmits, wantStatus := 0, "unverified"
-			if submitted {
-				wantSubmits, wantStatus = 1, "submitted"
-			}
 			if f.input.submits != wantSubmits || a.Compaction.Status != wantStatus || a.Input != nil {
 				t.Fatalf("recovery: %+v submits=%d", a, f.input.submits)
 			}

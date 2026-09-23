@@ -47,7 +47,7 @@ A failed agent keeps its name until you drop it.
 | `gang send NAME --at clear` | Clear the sender's scheduled messages for this agent. |
 | `gang queue [NAME]` | List queued messages. |
 | `gang interrupt [NAME] [-m REASON]` | Interrupt an agent's turn. |
-| `gang compact [NAME] [--resume TEXT]` | Compact an agent's context and queue a follow-up message. |
+| `gang compact [NAME] [--resume TEXT]` | Queue compaction at native idle; resume only after confirmed completion. |
 | `gang compact NAME --recover` | Run the collar's recovery actions for a stuck compaction. |
 
 From an agent window, `send` uses that agent's name and refuses `--from`. From
@@ -183,7 +183,7 @@ declares:
 - `primitives`: which built-in Go behaviors to use for startup, the composer,
   submission, turn ends, prompts, context, limits, and wedges, plus
   `mid_turn` and the optional `telemetry` source;
-- `actions`: key sequences for interrupt, compact, and recovery; and
+- `actions`: key sequences for interrupt, compact, and recovery, plus optional native refusal patterns; and
 - `context_bands`: named context thresholds per model.
 
 Unknown fields or primitive names fail before launch.

@@ -39,7 +39,7 @@ func Step(agent Agent, event Event) (Agent, []Effect) {
 			agent.Activity, agent.Evidence = Wedged, event.Reason
 		}
 	case "compaction_requested":
-		if agent.Compaction != nil && (agent.Compaction.Status == "queued" || agent.Compaction.Status == "submitted" && !agent.Compaction.Continuation) {
+		if agent.Compaction != nil && (agent.Compaction.Status == "queued" || agent.Compaction.Status == "submitted" || agent.Compaction.Status == "completed" && !agent.Compaction.Continuation) {
 			return agent, []Effect{{Kind: "reject", Reason: "compaction already pending"}}
 		}
 		if event.Compaction == nil {
@@ -52,11 +52,21 @@ func Step(agent Agent, event Event) (Agent, []Effect) {
 			return agent, nil
 		}
 		agent.Compaction.Status, agent.Activity, agent.Input = "submitted", Compacting, nil
+	case "compaction_completed":
+		if agent.Compaction == nil || agent.Compaction.ID != event.ID {
+			return agent, nil
+		}
+		agent.Compaction.Status, agent.Compaction.Reason, agent.Activity, agent.Evidence = "completed", "", Idle, ""
+	case "compaction_failed":
+		if agent.Compaction == nil || agent.Compaction.ID != event.ID {
+			return agent, nil
+		}
+		agent.Compaction.Status, agent.Compaction.Reason, agent.Activity, agent.Evidence, agent.Input = "failed", event.Reason, Unknown, event.Reason, nil
 	case "compaction_unverified":
 		if agent.Compaction == nil || agent.Compaction.ID != event.ID {
 			return agent, nil
 		}
-		agent.Compaction.Status, agent.Activity, agent.Evidence, agent.Input = "unverified", Wedged, event.Reason, nil
+		agent.Compaction.Status, agent.Compaction.Reason, agent.Activity, agent.Evidence, agent.Input = "unverified", event.Reason, Unknown, event.Reason, nil
 	case "interrupt_requested":
 		agent.Activity, agent.InterruptDeadline = Interrupting, event.Deadline
 	case "interrupt_completed":
@@ -86,6 +96,10 @@ func Step(agent Agent, event Event) (Agent, []Effect) {
 		}
 		if agent.Activity == Interrupting && !agent.InterruptDeadline.IsZero() && !event.At.Before(agent.InterruptDeadline) {
 			agent.Activity, agent.Evidence = Wedged, "interrupt deadline elapsed"
+		}
+		if c := agent.Compaction; c != nil && c.Status == "submitted" && !event.At.Before(c.Deadline) {
+			c.Status, c.Reason = "unverified", "native compaction completion unconfirmed; resume withheld"
+			agent.Activity, agent.Evidence = Unknown, c.Reason
 		}
 		if !agent.Capacity.Deadline.IsZero() && !event.At.Before(agent.Capacity.Deadline) {
 			agent.Activity, agent.Evidence = Wedged, "provider capacity recovery deadline elapsed"

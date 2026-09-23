@@ -82,9 +82,11 @@ and resumes agents whose turn ended on a provider error.
 
 To stop a turn, `gang interrupt worker -m 'Stop and report current evidence.'`.
 To compact, `gang compact worker --resume 'Read the saved state and continue.'`.
-The follow-up queues as soon as the compaction command is submitted. Gang
-verifies its submission through the usual submit hook; the harness controls
-when it executes.
+A busy agent queues the request until a native idle seam. Submitting the command
+is not completion: gang reports an unconfirmed result and withholds the resume
+until a newer native completion hook or transcript event confirms compaction.
+A native refusal is reported as failure. The follow-up then uses normal verified
+delivery. Use `gang status worker --why` to inspect the compaction outcome.
 If a compaction gets stuck, `gang compact worker --recover` runs the collar's
 recovery steps.
 

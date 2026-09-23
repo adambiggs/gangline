@@ -56,7 +56,7 @@ collar: {
 	}
 	actions: {
 		interrupt: {keys: ["Escape"]}
-		compact: {text: "/compact", submit: true}
+		compact: {text: "/compact", submit: true, refusal: "(?m)^[[:blank:]]*([■•!] )?'/compact' is disabled while a task is in progress[.]?[[:blank:]]*$"}
 		compact_recover: [{keys: ["Escape"]}, {keys: ["Enter"]}]
 	}
 	context_bands: {

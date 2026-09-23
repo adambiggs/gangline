@@ -4,6 +4,7 @@ import (
 	"embed"
 	"fmt"
 	"path/filepath"
+	"regexp"
 	"sort"
 	"strings"
 
@@ -88,9 +89,10 @@ type Actions struct {
 }
 
 type Action struct {
-	Text   string   `json:"text,omitempty"`
-	Keys   []string `json:"keys,omitempty"`
-	Submit bool     `json:"submit,omitempty"`
+	Refusal string   `json:"refusal,omitempty"`
+	Text    string   `json:"text,omitempty"`
+	Keys    []string `json:"keys,omitempty"`
+	Submit  bool     `json:"submit,omitempty"`
 }
 
 type ContextBand struct {
@@ -125,6 +127,9 @@ func LoadCollar(filename string, data []byte) (Collar, error) {
 }
 
 func validateCollar(collar Collar) error {
+	if _, err := regexp.Compile(collar.Actions.Compact.Refusal); err != nil {
+		return fmt.Errorf("compact refusal pattern: %w", err)
+	}
 	if collar.Primitives.Capacity != nil {
 		if err := validateCapacity(*collar.Primitives.Capacity); err != nil {
 			return err

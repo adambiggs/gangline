@@ -161,6 +161,13 @@ func (run *runtime) observeRoster(agents []core.Agent) ([]core.Agent, error) {
 			}
 			screen, err := input.Capture(context.Background(), substrate.PaneID(current.Pane))
 			if err == nil {
+				err = run.observeCompaction(l, &current, c, screen)
+			}
+			var refusal commandError
+			if errors.As(err, &refusal) && refusal.status == exitNative {
+				err = nil
+			}
+			if err == nil {
 				err = run.observeActivity(l, &current, c, screen)
 			}
 			if err != nil {
@@ -240,7 +247,12 @@ func (cmd command) status(args []string) error {
 		return err
 	}
 	if why && a.Evidence != "" {
-		_, err = fmt.Fprintln(cmd.stdout, a.Evidence)
+		if _, err := fmt.Fprintln(cmd.stdout, a.Evidence); err != nil {
+			return err
+		}
+	}
+	if why && a.Compaction != nil {
+		_, err = fmt.Fprintf(cmd.stdout, "compaction %s: %s\n", a.Compaction.Status, a.Compaction.Reason)
 	}
 	return err
 }

@@ -187,7 +187,7 @@ func TestCompactionPublicationRecoveryDoesNotDuplicateContinuation(t *testing.T)
 	if err != nil {
 		t.Fatal(err)
 	}
-	a.Compaction = &core.Compaction{ID: "c", Resume: core.Message{Text: "continue"}, StartedAt: f.cmd.now(), Deadline: f.cmd.now().Add(time.Minute), Status: "submitted"}
+	a.Compaction = &core.Compaction{ID: "c", Resume: core.Message{Text: "continue"}, StartedAt: f.cmd.now(), Deadline: f.cmd.now().Add(time.Minute), Status: "completed", CompletedAt: f.cmd.now().Add(time.Second)}
 	if err := l.Save(a); err != nil {
 		t.Fatal(err)
 	}

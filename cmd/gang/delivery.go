@@ -51,7 +51,7 @@ func envelopeText(e core.Envelope) (string, error) {
 // available observes the composer even during a running turn. A permission
 // prompt or foreign foreground process never qualifies as a free composer.
 func (run *runtime) available(l *store.LockedAgent, a *core.Agent, b harnessInput, c harness.Collar) (bool, string, error) {
-	if a.Status != core.Active || a.Activity == core.Interrupting {
+	if a.Status != core.Active || a.Activity == core.Interrupting || a.Compaction != nil && a.Compaction.Status == "submitted" {
 		return false, "", nil
 	}
 	screen, err := b.Capture(context.Background(), substrate.PaneID(a.Pane))
@@ -205,6 +205,12 @@ func (run *runtime) drainLocked(l *store.LockedAgent, a *core.Agent, target core
 		}
 		if next == nil {
 			return result, pending, nil
+		}
+		if next.From.Name == "compact" && strings.HasPrefix(string(next.ID), "resume-") {
+			c := a.Compaction
+			if c == nil || next.ID != core.EnvelopeID("resume-"+c.ID) || c.Status != "completed" {
+				return result, pending, nil
+			}
 		}
 		if strings.HasPrefix(string(a.LastFailed), "startup-") {
 			return result, pending, nil

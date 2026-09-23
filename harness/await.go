@@ -19,6 +19,12 @@ func Idle(collar Collar, screen substrate.Screen) (bool, error) {
 	if err != nil {
 		return false, err
 	}
+	busy, err := Busy(collar, screen)
+	return composer.Text == "" && !busy, err
+}
+
+// Busy checks native activity even while an action occupies the composer.
+func Busy(collar Collar, screen substrate.Screen) (bool, error) {
 	pattern := collar.Primitives.Wedge.Params["busy"]
 	if pattern == "" {
 		return false, fmt.Errorf("collar has no native busy expression")
@@ -27,7 +33,7 @@ func Idle(collar Collar, screen substrate.Screen) (bool, error) {
 	if err != nil {
 		return false, err
 	}
-	return composer.Text == "" && !busy.MatchString(strings.Join(screenLines(screen, true), "\n")), nil
+	return busy.MatchString(strings.Join(screenLines(screen, true), "\n")), nil
 }
 
 // AwaitComposerText waits until the native composer shows stable expected text.
