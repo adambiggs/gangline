@@ -111,15 +111,18 @@ func readClaudeComposer(screen substrate.Screen) (Composer, error) {
 	if opening < 0 {
 		return Composer{}, ErrNoComposer
 	}
-	if !named && closing-opening > 6 {
-		return Composer{}, ErrNoComposer
-	}
 	if named && !parentConversation(lines[closing+1:]) {
 		return Composer{}, ErrForeignComposer
 	}
 
 	first := firstNonblank(lines, opening+1, closing)
 	if first < 0 || !strings.HasPrefix(lines[first], "❯") {
+		return Composer{}, ErrNoComposer
+	}
+	// Pasting a wrapped message expands the input frame. A tall frame needs
+	// the active cursor inside its body to distinguish it from conversation
+	// history; height alone does not identify a non-composer surface.
+	if !named && closing-opening > 6 && (!screen.Cursor.Visible || screen.Cursor.Row < first || screen.Cursor.Row >= closing) {
 		return Composer{}, ErrNoComposer
 	}
 	body := append([]string(nil), lines[first:closing]...)
