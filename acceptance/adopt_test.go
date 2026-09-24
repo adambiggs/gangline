@@ -45,7 +45,7 @@ func TestAdoptOwnsExistingPrivatePane(t *testing.T) {
 	if listed, err := runner.run("list-sessions", "-F", "#{session_name}"); err != nil || strings.TrimSpace(listed) != session {
 		t.Fatalf("private server sessions = %q: %v", listed, err)
 	}
-	if output, err := runner.run("new-window", "-d", "-t", session, "-n", "candidate"); err != nil {
+	if output, err := runner.run("new-window", "-d", "-t", session, "-n", "candidate", "cat"); err != nil {
 		t.Fatalf("create candidate pane: %v\n%s", err, output)
 	}
 	pane := strings.TrimSpace(mustTmux(t, runner, "list-panes", "-t", session+":candidate", "-F", "#{pane_id}"))
@@ -67,6 +67,18 @@ func TestAdoptOwnsExistingPrivatePane(t *testing.T) {
 		}
 		return fmt.Sprintf("%v: %s", err, output), -1
 	}
+	t.Cleanup(func() {
+		teamDirectory := filepath.Join(root, "state", "teams", session)
+		if _, err := os.Stat(teamDirectory); errors.Is(err, os.ErrNotExist) {
+			return
+		} else if err != nil {
+			t.Errorf("inspect private team for cleanup: %v", err)
+			return
+		}
+		if output, status := runGang(environment, "down", session); status != 0 {
+			t.Errorf("remove private team status=%d: %s", status, output)
+		}
+	})
 	if output, status := runGang(append(environment, "TMUX_PANE="+pane), "adopt", "adopted", "-c", "codex"); status != 0 {
 		t.Fatalf("adopt status=%d: %s", status, output)
 	}
