@@ -39,6 +39,7 @@ func refuseError(format string, arguments ...any) error {
 }
 
 type command struct {
+	newScheduler func() watchdogScheduler
 	stdin        io.Reader
 	stdout       io.Writer
 	stderr       io.Writer

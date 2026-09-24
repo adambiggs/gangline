@@ -29,8 +29,9 @@ import "time"
   "compaction_requested" | "compaction_submitted" | "compaction_completed" | "compaction_failed" | "compaction_unverified" |
   "interrupt_requested" | "interrupt_completed" | "deadline_checked" |
   "drop_started" | "drop_finished" | "curfew_set" | "curfew_cleared" |
-  "capacity_detected" | "capacity_submitted" | "capacity_cleared"
+  "capacity_detected" | "capacity_submitted" | "capacity_cleared" | "tick" | "watchdog_unavailable" | "watchdog_failed"
  at: #Time
+ source?: "hook" | "command" | "watchdog"
  hitch_id?: #ID, name?: #ID, pane?: #ID, id?: #ID, reason?: string, status?: string
  activity?: #Activity, deadline?: #Time, envelope?: #Envelope, compaction?: #Compaction
  readings?: [...#Reading], native_event?: string, fingerprint?: #ID
@@ -41,5 +42,6 @@ import "time"
  {type: "send_queued", envelope: #Envelope} |
  {type: "context_band_crossed", id: #ID, hitch_id: #ID, status: #ID, envelope: #Envelope, readings: [#Reading]} |
  {type: "input_started" | "input_finished", id: #ID, status: #ID, hitch_id: #ID} |
- {type: "hook_failed", reason: #ID} |
+ {type: "hook_failed" | "watchdog_unavailable" | "watchdog_failed", reason: #ID} |
+ {type: "tick", source: "hook" | "command" | "watchdog"} |
  {type: "compaction_requested", compaction: #Compaction})

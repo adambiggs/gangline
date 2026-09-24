@@ -123,6 +123,33 @@ across renames.
 | `gang --version` | Print the version. |
 | `gang upgrade [--check]` | Check for or install the latest release. |
 
+### Idle-team watchdog
+
+On Linux with a systemd user manager, a whole-team `gang tick` arms a transient
+`systemd-run --user --on-active` timer for **60 seconds** (fixed, no backoff).
+The minute interval bounds idle refresh latency without constant wakeups.
+Systemd may coalesce expiry within its one-second accuracy window. The next
+whole-team tick replaces the timer and pushes the deadline out. An agent-scoped
+`gang tick --agent ID` arms only when none exists; it never postpones idle peers.
+Hitch and adopt also arm the initial timer.
+
+Watchdog ticks re-arm themselves and skip locked agents. Detached hook ticks
+retain their lock wait so a native boundary notice survives contention; the
+original hook does not wait. The audit `tick` event has `source` set to `watchdog`, `hook`, or
+`command`; `gang log` exposes it. `--source watchdog --watchdog UNIT` carries an
+internal generation token so a superseded timer cannot re-arm itself.
+Last drop and `gang down` disarm the timer. A concurrent timer transaction can
+make cleanup fail visibly; retry with `gang down SESSION`. Timer state and the
+unavailable marker live in the team directory and `gang down` removes them.
+
+On macOS or a host without a user scheduler, ordinary ticks work as before;
+`watchdog_unavailable` is logged once per team and no timer is armed. There is
+currently no launchd scheduler. A scheduler command failure logs
+`watchdog_failed`; agent work still proceeds and the command returns the error.
+Run `gang tick` after repairing the user manager.
+The watchdog requires the user manager to remain running, including across
+logout for unattended teams; it does not configure login lingering.
+
 ## Exit status
 
 | Status | Meaning |

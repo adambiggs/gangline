@@ -121,6 +121,8 @@ func (cmd command) hitch(args []string) (result error) {
 		return err
 	}
 	defer func() { result = errors.Join(result, run.release(l)) }()
+	_, schedulerErr := run.updateWatchdog("", false, false)
+	defer func() { result = errors.Join(result, schedulerErr) }()
 	if err := run.record(a, core.Event{Type: "hitch_claimed"}); err != nil {
 		return err
 	}
@@ -264,6 +266,8 @@ func (cmd command) adopt(args []string) (result error) {
 		return err
 	}
 	defer func() { result = errors.Join(result, run.release(l)) }()
+	_, schedulerErr := run.updateWatchdog("", false, false)
+	defer func() { result = errors.Join(result, schedulerErr) }()
 	if err := run.record(a, core.Event{Type: "adopted"}); err != nil {
 		return err
 	}
@@ -332,6 +336,9 @@ func (cmd command) drop(args []string) error {
 		if err := run.team.RemoveName(core.AgentName(name), id); err != nil {
 			return err
 		}
+		if err := run.disarmEmptyWatchdog(); err != nil {
+			return err
+		}
 		_, err := fmt.Fprintf(cmd.stdout, "%s registration removed; native state missing; resume session: unknown\n", name)
 		return err
 	} else if err != nil {
@@ -340,11 +347,28 @@ func (cmd command) drop(args []string) error {
 	return run.drop(id)
 }
 func (run *runtime) drop(id core.HitchID) error {
+	return run.dropWithLock(id, true)
+}
+func (run *runtime) dropWithLock(id core.HitchID, wait bool) error {
+	if err := run.dropAgent(id, wait); err != nil {
+		return err
+	}
+	return run.disarmEmptyWatchdog()
+}
+func (run *runtime) dropAgent(id core.HitchID, wait bool) error {
 	p, err := run.team.Agent(id)
 	if err != nil {
 		return err
 	}
-	l, err := p.LockAgent()
+	var l *store.LockedAgent
+	if wait {
+		l, err = p.LockAgent()
+	} else {
+		l, err = p.TryLock()
+	}
+	if errors.Is(err, store.ErrLocked) && !wait {
+		return nil
+	}
 	if err != nil {
 		return err
 	}

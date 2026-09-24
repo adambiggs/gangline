@@ -18,7 +18,7 @@ func (run *runtime) tickAgent(id core.HitchID, notice hookNotice, wait bool) err
 		return err
 	}
 	if !team.Curfew.IsZero() && !run.cmd.now().Before(team.Curfew) {
-		return run.drop(id)
+		return run.dropWithLock(id, wait)
 	}
 	l, a, err := run.acquire(id, wait)
 	if errors.Is(err, store.ErrLocked) || errors.Is(err, os.ErrNotExist) {

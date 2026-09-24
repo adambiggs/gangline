@@ -131,12 +131,14 @@ func (cmd command) detachTick(id string, n hookNotice, s settings) error {
 	}
 	return child.Process.Release()
 }
-func (cmd command) tick(args []string) error {
-	id := ""
+func (cmd command) tick(args []string) (result error) {
+	id, source, generation := "", "", ""
 	flags := quietFlagSet("tick")
 	flags.StringVar(&id, "agent", "", "hitch ID")
+	flags.StringVar(&source, "source", "", "tick source")
+	flags.StringVar(&generation, "watchdog", "", "watchdog generation")
 	if err := flags.Parse(args); err != nil || flags.NArg() != 0 {
-		return usageError("tick: expected optional --agent ID")
+		return usageError("tick: expected optional --agent ID or --source watchdog --watchdog UNIT")
 	}
 	run, err := cmd.runtime()
 	if err != nil {
@@ -147,6 +149,28 @@ func (cmd command) tick(args []string) error {
 		if err := json.Unmarshal([]byte(cmd.environment("GANGLINE_BOUNDARY")), &notice); err != nil {
 			return err
 		}
+	}
+	if source == "" {
+		source = "command"
+		if notice.Kind != "" {
+			source = "hook"
+		}
+	} else if source != "watchdog" || generation == "" || id != "" {
+		return usageError("tick: explicit source requires --source watchdog --watchdog UNIT")
+	}
+	if generation != "" && source != "watchdog" {
+		return usageError("tick: --watchdog requires --source watchdog")
+	}
+	proceed, err := run.updateWatchdog(generation, false, id == "")
+	if err != nil {
+		schedulerErr := err
+		defer func() { result = errors.Join(result, schedulerErr) }()
+	}
+	if err == nil && !proceed {
+		return nil
+	}
+	if err := run.team.Append(core.Event{Type: "tick", At: cmd.now(), Source: source}); err != nil {
+		return err
 	}
 	if id != "" {
 		return run.tickAgent(core.HitchID(id), notice, true)

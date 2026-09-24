@@ -44,7 +44,10 @@ func (cmd command) down(args []string) error {
 	if err != nil {
 		return err
 	}
-	if err := eachAgent(agents, func(a core.Agent) error { return run.drop(a.ID) }); err != nil {
+	if err := eachAgent(agents, func(a core.Agent) error { return run.dropAgent(a.ID, true) }); err != nil {
+		return err
+	}
+	if err := run.disarmEmptyWatchdog(); err != nil {
 		return err
 	}
 	return os.RemoveAll(run.team.Directory)

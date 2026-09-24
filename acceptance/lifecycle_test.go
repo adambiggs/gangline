@@ -73,6 +73,12 @@ func TestCommandLifecycleOnPrivateTmux(t *testing.T) {
 		}
 		return result{fmt.Sprintf("%v: %s", err, out), -1}
 	}
+	t.Cleanup(func() {
+		r := runGang("", "down", session)
+		if r.status != 0 {
+			t.Errorf("private team cleanup: %s", r.out)
+		}
+	})
 	check := func(input string, args ...string) string {
 		t.Helper()
 		r := runGang(input, args...)

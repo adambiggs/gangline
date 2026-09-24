@@ -106,6 +106,32 @@ detached tick to reconcile it.
 Turn-end and compaction-end hooks also start a detached tick for their agent
 and exit without waiting.
 
+### Keep idle teams moving
+
+A whole-team tick replaces a transient user watchdog timer. Its next tick
+re-arms before observing agents, so an idle team still drains messages and
+refreshes state. Agent-scoped hook ticks leave an existing deadline alone;
+one busy agent must not postpone work for idle peers. Hitch and adopt arm an
+initial timer. The fixed interval is documented in [reference.md](reference.md).
+
+The Linux scheduler uses systemd user timers, with no resident Gangline daemon.
+Other platforms and hosts without a user scheduler keep ordinary ticks and log
+that no watchdog is armed once per team. Timer failures are errors and audit
+events; they are not silently retried. A failed arm may require another tick.
+
+Whole-team and watchdog ticks skip occupied agent locks, including curfew
+teardown. Detached agent-scoped ticks retain their existing lock wait so native
+boundary notices survive contention without delaying the original hook. Timer transactions
+use a separate nonblocking lock released before agent work. Concurrent ticks
+leave timer replacement to its owner; cleanup reports contention rather than
+claiming a timer was removed. Generation tokens reject superseded timers.
+Dropping the last registration or removing the team disarms the timer; elapsed
+transient units are collected. Failed agents remain registered until dropped.
+
+Each replacement costs a bounded scheduler stop and start, independent of team
+size; each whole-team tick still visits the registered agents. Scoped ticks
+with an armed timer only read its marker. Scheduler calls have bounded budgets.
+
 ### Notify on context crossings
 
 An observed upward crossing of a collar's context threshold queues a band note
