@@ -1,5 +1,25 @@
 # Changelog
 
+## [1.2.0](https://github.com/adambiggs/gangline/compare/gangline-v1.1.0...gangline-v1.2.0) (2026-09-24)
+
+
+### Features
+
+* keep idle macOS teams moving with a launchd watchdog ([71a7ccd](https://github.com/adambiggs/gangline/commit/71a7ccd7aabdc4bd7cc5c8c0f6c7e618ba3cdf61))
+* keep idle teams moving with a rearming watchdog ([aa3731c](https://github.com/adambiggs/gangline/commit/aa3731ce85f2c019dfd0fb6f4c789f22b4a9820c))
+
+
+### Bug Fixes
+
+* explain models flag and native hook input ([70b7d90](https://github.com/adambiggs/gangline/commit/70b7d906cea22e9873f0521038e872d4ab684aaa)), closes [#50](https://github.com/adambiggs/gangline/issues/50)
+* identify context-band notices with concise system tags ([1b2abb6](https://github.com/adambiggs/gangline/commit/1b2abb61e6c5baf198b1faf22b45ddb2161fd38b))
+* load and clean up macOS watchdog in user domain ([28d4cbb](https://github.com/adambiggs/gangline/commit/28d4cbbbd2586c0fef06ca2495ad5e2c6bec1426))
+* recognize Claude tool activity in busy screens ([0d5ad11](https://github.com/adambiggs/gangline/commit/0d5ad1160165be20b7a7d01b70a531cf55355b39)), closes [#48](https://github.com/adambiggs/gangline/issues/48)
+* refuse hitches beside unregistered team panes ([bd8d1fb](https://github.com/adambiggs/gangline/commit/bd8d1fb3db584c113eb193f09332cc337f79d58a)), closes [#47](https://github.com/adambiggs/gangline/issues/47)
+* report reconciled send receipts before returning ([783c596](https://github.com/adambiggs/gangline/commit/783c596a39db0425d62834eba277f8448af31182))
+* tolerate missing composer frames after pasting input ([82e19c2](https://github.com/adambiggs/gangline/commit/82e19c27c57cef92d5e77158d0a9747b809bf09f))
+* use persisted short tokens for message envelopes ([2ff22b7](https://github.com/adambiggs/gangline/commit/2ff22b7c32845d2fd61d0407e2fb96089e636d58))
+
 ## [1.1.0](https://github.com/adambiggs/gangline/compare/gangline-v1.0.0...gangline-v1.1.0) (2026-09-24)
 
 
