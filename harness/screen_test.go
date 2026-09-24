@@ -48,6 +48,24 @@ func TestClaudeComposerReadsFramedMultilineBody(t *testing.T) {
 	}
 }
 
+func TestClaudeComposerIgnoresSuggestionAtInputCursor(t *testing.T) {
+	screen := testScreen(
+		testCells("────────", false),
+		testCells("❯\u00a0Try \"write a test for runtime.go\"", false),
+		testCells("────────", false),
+	)
+	screen.Cursor = substrate.Cursor{Row: 1, Column: 2, Visible: true}
+	composer, err := ReadComposer(Invocation{Name: "claude-composer"}, screen)
+	if err != nil || composer.Text != "" {
+		t.Fatalf("suggestion at input cursor = %+v, %v; want empty composer", composer, err)
+	}
+	screen.Cursor.Column = 34
+	composer, err = ReadComposer(Invocation{Name: "claude-composer"}, screen)
+	if err != nil || composer.Text != "Try \"write a test for runtime.go\"" {
+		t.Fatalf("typed text = %+v, %v", composer, err)
+	}
+}
+
 func TestClaudeOverlayOwnsInput(t *testing.T) {
 	screen := testScreen(
 		testCells("▔▔▔▔", false),
