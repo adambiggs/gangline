@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"os"
 	"path/filepath"
 	"strings"
@@ -129,10 +130,19 @@ if IFS= read -r request; then exit 87; fi
 }
 
 func TestLimitsQueryCancelledBeforeLaunch(t *testing.T) {
+	root := t.TempDir()
+	marker := filepath.Join(root, "started")
+	executable := filepath.Join(root, "provider")
+	if err := os.WriteFile(executable, []byte("#!/bin/sh\nprintf started > \"$START_MARKER\"\n"), 0700); err != nil {
+		t.Fatal(err)
+	}
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel()
-	collar := Collar{Name: "fixture", Launch: Launch{Command: "must-not-start"}, Primitives: Primitives{LimitsQuery: &Invocation{Name: "codex-app-server-limits"}}}
-	if limits, err := QueryProviderLimits(ctx, collar); err == nil || len(limits) != 0 {
+	collar := Collar{Name: "fixture", Launch: Launch{Command: executable, Env: map[string]string{"START_MARKER": marker}}, Primitives: Primitives{LimitsQuery: &Invocation{Name: "codex-app-server-limits"}}}
+	if limits, err := QueryProviderLimits(ctx, collar); !errors.Is(err, context.Canceled) || len(limits) != 0 {
 		t.Fatalf("limits = %#v, error = %v", limits, err)
+	}
+	if _, err := os.Stat(marker); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("cancelled provider started: %v", err)
 	}
 }
