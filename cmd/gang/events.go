@@ -8,8 +8,10 @@ import (
 	"io"
 	"os"
 	"os/exec"
+	"strings"
 	"syscall"
 	"time"
+	"unicode/utf8"
 
 	"github.com/adambiggs/gangline/core"
 	"github.com/adambiggs/gangline/harness"
@@ -26,6 +28,7 @@ type hookNotice struct {
 	SessionID   string         `json:"session_id,omitempty"`
 	TurnID      string         `json:"turn_id,omitempty"`
 	Transcript  string         `json:"transcript,omitempty"`
+	Failure     string         `json:"failure,omitempty"`
 }
 
 func (cmd command) hook(args []string) error {
@@ -76,7 +79,21 @@ func (cmd command) handleHook(args []string) error {
 	if err != nil {
 		return err
 	}
-	if err := run.record(a, core.Event{Type: "native_hook", ID: receipt, NativeEvent: event.NativeEvent, Status: event.Kind}); err != nil {
+	failure := ""
+	if event.Kind == "turn-failed" {
+		failure = strings.TrimSpace(event.Payload["error"])
+		if detail := strings.TrimSpace(event.Payload["error_details"]); detail != "" {
+			if failure != "" {
+				failure += ": "
+			}
+			failure += detail
+		}
+		if failure == "" {
+			failure = "native turn failed"
+		}
+		failure = boundedFailureReason(failure)
+	}
+	if err := run.record(a, core.Event{Type: "native_hook", ID: receipt, NativeEvent: event.NativeEvent, Status: event.Kind, Reason: failure}); err != nil {
 		return err
 	}
 	switch event.Kind {
@@ -84,17 +101,20 @@ func (cmd command) handleHook(args []string) error {
 		if err := p.WriteWitness(store.Witness{ID: receipt, At: cmd.now(), Prompt: event.Payload["prompt"], SessionID: event.Payload["session_id"], TurnID: event.Payload["turn_id"], Transcript: event.Payload["transcript_path"]}); err != nil {
 			return err
 		}
-		if a.LastFailed == "" && a.LastAccepted == "" {
-			return nil
+		// Always reconcile: a concurrent failure tick may have read the old
+		// witness before this write and save its result after our state read.
+		n := hookNotice{Kind: "turn-started", NativeEvent: event.NativeEvent, At: cmd.now(), SessionID: event.Payload["session_id"], TurnID: event.Payload["turn_id"], Transcript: event.Payload["transcript_path"]}
+		for _, value := range []string{n.SessionID, n.TurnID, n.Transcript, n.NativeEvent} {
+			if len(value) > 4096 {
+				return fmt.Errorf("hook routing metadata exceeds maximum size")
+			}
 		}
-		// The native queue may submit after the sending command has exited.
-		// A detached tick reconciles its receipt without holding up the hook.
 		if cmd.detach != nil {
-			return cmd.detach(string(id), hookNotice{Kind: "turn-started"})
+			return cmd.detach(string(id), n)
 		}
-		return cmd.detachTick(string(id), hookNotice{Kind: "turn-started"}, run.settings)
+		return cmd.detachTick(string(id), n, run.settings)
 	case "turn-finished", "turn-failed", "compaction-finished":
-		n := hookNotice{Kind: event.Kind, NativeEvent: event.NativeEvent, At: cmd.now(), SessionID: event.Payload["session_id"], TurnID: event.Payload["turn_id"], Transcript: event.Payload["transcript_path"]}
+		n := hookNotice{Kind: event.Kind, NativeEvent: event.NativeEvent, At: cmd.now(), SessionID: event.Payload["session_id"], TurnID: event.Payload["turn_id"], Transcript: event.Payload["transcript_path"], Failure: failure}
 		for _, value := range []string{n.SessionID, n.TurnID, n.Transcript, n.NativeEvent} {
 			if len(value) > 4096 {
 				return fmt.Errorf("hook routing metadata exceeds maximum size")
@@ -106,6 +126,19 @@ func (cmd command) handleHook(args []string) error {
 		return cmd.detachTick(string(id), n, run.settings)
 	}
 	return nil
+}
+
+func boundedFailureReason(reason string) string {
+	const limit = 4096
+	if len(reason) <= limit {
+		return reason
+	}
+	const suffix = " [truncated]"
+	end := limit - len(suffix)
+	for end > 0 && !utf8.RuneStart(reason[end]) {
+		end--
+	}
+	return reason[:end] + suffix
 }
 func (cmd command) detachTick(id string, n hookNotice, s settings) error {
 	exe, err := os.Executable()

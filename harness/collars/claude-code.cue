@@ -14,10 +14,10 @@ collar: {
 			"{\"statusLine\":{\"type\":\"command\",\"command\":{{statusline.command.json}}},\"hooks\":{\"UserPromptSubmit\":[{\"hooks\":[{\"type\":\"command\",\"command\":{{hook.command.json}}}]}],\"PostToolUse\":[{\"matcher\":\"*\",\"hooks\":[{\"type\":\"command\",\"command\":{{hook.command.json}}}]}],\"StopFailure\":[{\"hooks\":[{\"type\":\"command\",\"command\":{{hook.command.json}},\"async\":true}]}],\"Stop\":[{\"hooks\":[{\"type\":\"command\",\"command\":{{hook.command.json}},\"async\":true}]}],\"PermissionRequest\":[{\"hooks\":[{\"type\":\"command\",\"command\":{{hook.command.json}}}]}],\"PreCompact\":[{\"hooks\":[{\"type\":\"command\",\"command\":{{hook.command.json}}}]}],\"PostCompact\":[{\"hooks\":[{\"type\":\"command\",\"command\":{{hook.command.json}},\"async\":true}]}]}}",
 		]
 		events: {
-			userpromptsubmit: {event: "turn-started", payload: {session_id: "session_id", transcript_path: "transcript_path", prompt: "prompt"}}
+			userpromptsubmit: {event: "turn-started", payload: {session_id: "session_id", transcript_path: "transcript_path", prompt: "prompt", turn_id: "prompt_id"}}
 			posttooluse: {event: "activity", payload: {session_id: "session_id", transcript_path: "transcript_path"}}
-			stopfailure: {event: "turn-failed", payload: {session_id: "session_id", transcript_path: "transcript_path", error: "error", error_details: "error_details"}}
- stop: {event: "turn-finished", payload: {session_id: "session_id", transcript_path: "transcript_path"}}
+			stopfailure: {event: "turn-failed", payload: {session_id: "session_id", transcript_path: "transcript_path", turn_id: "prompt_id", error: "error", error_details: "error_details"}}
+ stop: {event: "turn-finished", payload: {session_id: "session_id", transcript_path: "transcript_path", turn_id: "prompt_id"}}
 			permissionrequest: {event: "permission-requested", payload: {session_id: "session_id"}}
 			precompact: {event: "compaction-started", payload: {session_id: "session_id", trigger: "trigger", transcript_path: "transcript_path"}}
 			postcompact: {event: "compaction-finished", payload: {session_id: "session_id", trigger: "trigger", transcript_path: "transcript_path"}}

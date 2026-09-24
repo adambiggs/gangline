@@ -192,13 +192,13 @@ func TestContextBandNotesStatuslineWhileLocked(t *testing.T) {
 		t.Fatal(err)
 	}
 	status(650) // Must finish without waiting for the lock we hold.
-	if len(deferred) != 2 {
+	if len(deferred) != 3 || deferred[1].Kind != "turn-started" || len(deferred[2].Readings) == 0 {
 		t.Fatalf("locked statusline lost its reading: %+v", deferred)
 	}
 	if err := l.Close(); err != nil {
 		t.Fatal(err)
 	}
-	if err := f.run.tickAgent(a.ID, deferred[1], false); err != nil {
+	if err := f.run.tickAgent(a.ID, deferred[2], false); err != nil {
 		t.Fatal(err)
 	}
 	status(650)

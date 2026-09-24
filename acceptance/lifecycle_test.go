@@ -11,7 +11,6 @@ import (
 	"testing"
 	"time"
 
-	"github.com/adambiggs/gangline/core"
 	"github.com/adambiggs/gangline/store"
 )
 
@@ -119,13 +118,6 @@ func TestCommandLifecycleOnPrivateTmux(t *testing.T) {
 		t.Fatalf("claimed agents: %+v %v", agents, err)
 	}
 	worker := agents[0]
-	waitReceived := func(a core.Agent, n int) {
-		t.Helper()
-		if out, err := runner.run("wait-for", fmt.Sprintf("received-%s-%d", a.ID, n)); err != nil {
-			t.Fatalf("receipt barrier: %v %s", err, out)
-		}
-	}
-	waitReceived(worker, 1)
 	argv, err := os.ReadFile(filepath.Join(root, "argv"))
 	if err != nil {
 		t.Fatal(err)
@@ -157,7 +149,6 @@ func TestCommandLifecycleOnPrivateTmux(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	waitReceived(second, 1)
 	received, err = os.ReadFile(filepath.Join(root, "received"))
 	if err != nil {
 		t.Fatal(err)
@@ -174,13 +165,29 @@ func TestCommandLifecycleOnPrivateTmux(t *testing.T) {
 		t.Fatal(err)
 	}
 	delivered := check("independent delivery", "send", "second", "--from", "operator")
-	if !strings.Contains(delivered, "delivered") {
-		t.Fatalf("other lock blocked delivery: %s", delivered)
-	}
 	if err := held.Close(); err != nil {
 		t.Fatal(err)
 	}
-	waitReceived(second, 2)
+	finishDelivery := func(result, body string) {
+		t.Helper()
+		outcome := strings.TrimSpace(result)
+		if !strings.HasSuffix(outcome, "\tdelivered") && !strings.HasSuffix(outcome, "\tqueued") {
+			t.Fatalf("other lock blocked delivery: %s", result)
+		}
+		barrier, err := sp.LockAgent()
+		if err != nil {
+			t.Fatal(err)
+		}
+		if err := barrier.Close(); err != nil {
+			t.Fatal(err)
+		}
+		check("", "tick")
+		received, err := os.ReadFile(filepath.Join(root, "received"))
+		if err != nil || !strings.Contains(string(received), body) {
+			t.Fatalf("native delivery ledger lacks %q: %q %v", body, received, err)
+		}
+	}
+	finishDelivery(delivered, "independent delivery")
 	if err := os.Chmod(team.Log, 0200); err != nil {
 		t.Fatal(err)
 	}
@@ -189,8 +196,7 @@ func TestCommandLifecycleOnPrivateTmux(t *testing.T) {
 	}
 	check("", "roster", "--porcelain")
 	check("", "status", "second")
-	check("audit independent delivery", "send", "second", "--from", "operator")
-	waitReceived(second, 3)
+	finishDelivery(check("audit independent delivery", "send", "second", "--from", "operator"), "audit independent delivery")
 	check("", "tick")
 	expired, err := wp.TryLock()
 	if err != nil {

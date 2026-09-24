@@ -20,9 +20,10 @@ const (
 )
 
 type runtime struct {
-	cmd      command
-	settings settings
-	team     store.TeamPaths
+	cmd              command
+	settings         settings
+	team             store.TeamPaths
+	afterWitnessRead func()
 }
 
 func (cmd command) runtime() (*runtime, error) {

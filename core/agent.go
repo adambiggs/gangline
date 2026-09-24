@@ -165,6 +165,8 @@ type NativeState struct {
 	SessionID   string    `json:"session_id,omitempty"`
 	TurnID      string    `json:"turn_id,omitempty"`
 	Transcript  string    `json:"transcript,omitempty"`
+	TurnFailure string    `json:"turn_failure,omitempty"`
+	FailedTurn  string    `json:"failed_turn,omitempty"`
 	Offset      int64     `json:"offset,omitempty"`
 	SubmittedAt time.Time `json:"submitted_at,omitzero"`
 	CompactedAt time.Time `json:"compacted_at,omitzero"`

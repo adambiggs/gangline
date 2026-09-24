@@ -34,6 +34,9 @@ func (run *runtime) tickAgent(id core.HitchID, notice hookNotice, wait bool) err
 	if a.Status == core.Dropping || a.Status == core.Failed {
 		return run.mark(a)
 	}
+	if err := run.reconcileNativeBoundary(l, &a, notice); err != nil {
+		return err
+	}
 	c, err := loadCollar(a.Collar, run.settings)
 	if err != nil {
 		return err
@@ -65,26 +68,6 @@ func (run *runtime) tickAgent(id core.HitchID, notice hookNotice, wait bool) err
 		if err := run.apply(l, &a, core.Event{Type: "hitch_ready"}); err != nil {
 			return err
 		}
-	}
-	if witness, err := l.Paths.ReadWitness(); err == nil && witness.At.After(a.Native.SubmittedAt) {
-		if a.Native.SessionID != "" && witness.SessionID != a.Native.SessionID {
-			return fmt.Errorf("native witness changed session identity")
-		}
-		a.Native.SessionID, a.Native.TurnID, a.Native.Transcript, a.Native.SubmittedAt = witness.SessionID, witness.TurnID, witness.Transcript, witness.At
-		if err := l.Save(a); err != nil {
-			return err
-		}
-	} else if err != nil && !errors.Is(err, os.ErrNotExist) {
-		return err
-	}
-	if notice.SessionID != "" && a.Native.SessionID != "" && notice.SessionID != a.Native.SessionID {
-		return fmt.Errorf("hook boundary belongs to another native session")
-	}
-	if a.Native.SessionID == "" {
-		a.Native.SessionID = notice.SessionID
-	}
-	if a.Native.Transcript == "" {
-		a.Native.Transcript = notice.Transcript
 	}
 	if err := run.refreshNative(l, &a, c); err != nil {
 		return err
@@ -168,6 +151,67 @@ func (run *runtime) tickAgent(id core.HitchID, notice hookNotice, wait bool) err
 	_, err = run.drainFrom(l, a, "")
 	return err
 }
+func (run *runtime) reconcileNativeBoundary(l *store.LockedAgent, a *core.Agent, notice hookNotice) error {
+	witness, witnessErr := l.Paths.ReadWitness()
+	if run.afterWitnessRead != nil {
+		run.afterWitnessRead()
+	}
+	if witnessErr == nil {
+		if a.Native.SessionID != "" && witness.SessionID != a.Native.SessionID {
+			return fmt.Errorf("native witness changed session identity")
+		}
+		if witness.At.After(a.Native.SubmittedAt) {
+			a.Native.SessionID, a.Native.TurnID, a.Native.Transcript, a.Native.SubmittedAt = witness.SessionID, witness.TurnID, witness.Transcript, witness.At
+			if err := l.Save(*a); err != nil {
+				return err
+			}
+		}
+		// UserPromptSubmit is synchronous: a distinct native prompt ID proves
+		// the prior failure no longer describes the current turn.
+		if a.Native.TurnFailure != "" && a.Native.FailedTurn != "" && witness.TurnID != "" && witness.TurnID != a.Native.FailedTurn {
+			a.Native.TurnFailure, a.Native.FailedTurn = "", ""
+			if err := l.Save(*a); err != nil {
+				return err
+			}
+		}
+	} else if !errors.Is(witnessErr, os.ErrNotExist) {
+		return witnessErr
+	}
+	if notice.SessionID != "" && a.Native.SessionID != "" && notice.SessionID != a.Native.SessionID {
+		return fmt.Errorf("hook boundary belongs to another native session")
+	}
+	if a.Native.SessionID == "" {
+		a.Native.SessionID = notice.SessionID
+	}
+	if a.Native.Transcript == "" {
+		a.Native.Transcript = notice.Transcript
+	}
+	if notice.Kind == "turn-failed" {
+		// A delayed async hook may start after the next synchronous submit.
+		// Only native prompt identity can attribute its reason to this turn.
+		reason := notice.Failure
+		if reason == "" {
+			reason = "native turn failed"
+		}
+		if notice.TurnID != "" && witnessErr == nil && witness.TurnID != "" && notice.TurnID != witness.TurnID {
+			// The old failure is still present in the raw native_hook audit event.
+		} else if notice.TurnID != "" && witnessErr == nil && witness.TurnID == notice.TurnID {
+			a.Native.TurnFailure, a.Native.FailedTurn = reason, notice.TurnID
+		} else {
+			a.Native.TurnFailure, a.Native.FailedTurn = "native failure without turn identity: "+reason, ""
+		}
+		if err := l.Save(*a); err != nil {
+			return err
+		}
+	} else if notice.Kind == "turn-finished" && a.Native.TurnFailure != "" && a.Native.FailedTurn == "" && notice.TurnID != "" && witnessErr == nil && notice.TurnID == witness.TurnID {
+		a.Native.TurnFailure = ""
+		if err := l.Save(*a); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
 func (run *runtime) publishOnce(l *store.LockedAgent, a *core.Agent, e core.Envelope) error {
 	for _, dir := range []string{"new", "cur", "failed"} {
 		_, err := l.Paths.ReadEnvelope(dir, e.ID)

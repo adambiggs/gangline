@@ -88,7 +88,7 @@ split; put the details in a file and send its path.
 | Command | Effect |
 | --- | --- |
 | `gang roster [--porcelain]` | List agents and their state. |
-| `gang status [NAME] [--why]` | Show one agent; `--why` adds wedge evidence. |
+| `gang status [NAME] [--why]` | Show one agent; `--why` adds activity evidence, including native failures. |
 | `gang capture [NAME] [LINES]` | Print an agent's screen. |
 | `gang capture --composer [NAME]` | Print what's in an agent's composer. |
 | `gang context [NAME]` | Show an agent's context use. |

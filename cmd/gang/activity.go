@@ -37,6 +37,9 @@ func (run *runtime) observeActivity(l *store.LockedAgent, a *core.Agent, c harne
 	if a.Compaction != nil && a.Compaction.Status == "submitted" && activity != core.Blocked {
 		activity, evidence = core.Compacting, "native compaction completion unconfirmed; resume follows confirmed completion"
 	}
+	if a.Native.TurnFailure != "" {
+		activity, evidence = core.Unknown, "native turn failed: "+a.Native.TurnFailure
+	}
 	fingerprint := harness.ScreenFingerprint(screen)
 	if a.ScreenFingerprint != fingerprint {
 		a.ScreenFingerprint, a.ScreenSince = fingerprint, run.cmd.now()
@@ -67,6 +70,9 @@ func (run *runtime) observeProbeFailure(l *store.LockedAgent, a *core.Agent, cau
 	reason := "native activity probe failed: " + cause.Error()
 	if errors.Is(cause, context.DeadlineExceeded) {
 		reason = "native activity probe timed out: " + cause.Error()
+	}
+	if a.Native.TurnFailure != "" {
+		reason = "native turn failed: " + a.Native.TurnFailure + "; " + reason
 	}
 	a.ScreenFingerprint, a.ScreenSince = "", time.Time{}
 	if err := l.Save(*a); err != nil {

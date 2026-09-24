@@ -105,11 +105,11 @@ func TestTerminalFailureIsANativeTurnBoundary(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	boundary, event, err := DetectTurnBoundary(collar, []byte(`{"hook_event_name":"StopFailure","error":"rate_limit","error_details":"try later"}`))
+	boundary, event, err := DetectTurnBoundary(collar, []byte(`{"hook_event_name":"StopFailure","prompt_id":"native-turn","error":"rate_limit","error_details":"try later"}`))
 	if err != nil {
 		t.Fatal(err)
 	}
-	if boundary != TurnFinished || event.Kind != "turn-failed" || event.Payload["error"] != "rate_limit" {
+	if boundary != TurnFailed || event.Kind != "turn-failed" || event.Payload["error"] != "rate_limit" || event.Payload["turn_id"] != "native-turn" {
 		t.Fatalf("failure = %q %#v", boundary, event)
 	}
 }

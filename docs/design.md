@@ -106,6 +106,16 @@ detached tick to reconcile it.
 Turn-end and compaction-end hooks also start a detached tick for their agent
 and exit without waiting.
 
+A failed native turn keeps its reason as non-idle activity. Claude's native
+prompt ID ties an asynchronous failure or success hook to the synchronous
+submit witness, so a late callback cannot change a newer turn. If native
+identity is missing, show the failure as unknown until an identified successful
+turn establishes a new boundary. A new identified submit clears an older
+attributed failure. Every submit schedules a detached reconciliation tick so
+a concurrent failure tick cannot leave stale state behind; the submit hook
+does not wait for it. Failure state is saved before the tick probes the pane,
+so a transient probe error cannot consume the one-shot boundary notice.
+
 ### Keep idle teams moving
 
 A whole-team tick replaces a transient user watchdog timer. Its next tick
