@@ -44,10 +44,13 @@ func TestDeadlinesAreAgentLocalAndDoNotStopDrop(t *testing.T) {
 }
 func TestCompactionStepDoesNotMutateInput(t *testing.T) {
 	now := time.Date(2026, 9, 22, 0, 0, 0, 0, time.UTC)
-	a := Agent{ID: "a", Status: Active, Activity: Idle, Compaction: &Compaction{ID: "c", Status: "queued", Deadline: now.Add(-time.Second)}}
+	a := Agent{ID: "a", Status: Active, Activity: Compacting, Compaction: &Compaction{ID: "c", Status: "submitted", Deadline: now.Add(-time.Second)}}
 	got, _ := Step(a, Event{Type: "deadline_checked", HitchID: "a", At: now})
-	if a.Compaction.Status != "queued" || got.Compaction.Status != "queued" {
-		t.Fatal("compaction ownership or deadline violated")
+	if got.Compaction.Status != "unverified" || got.Activity != Unknown {
+		t.Fatalf("expired compaction = %+v", got)
+	}
+	if a.Compaction.Status != "submitted" || a.Activity != Compacting {
+		t.Fatalf("Step mutated input compaction: %+v", a)
 	}
 }
 func TestEventValidationBeforeAppend(t *testing.T) {
