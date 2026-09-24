@@ -189,7 +189,11 @@ func (run *runtime) continueCompaction(l *store.LockedAgent, a *core.Agent) erro
 	if c.Status != "completed" || c.Continuation {
 		return nil
 	}
-	e := core.Envelope{ID: core.EnvelopeID("resume-" + c.ID), Recipient: a.ID, To: a.Name, From: core.Sender{Kind: core.SenderGangline, Name: "compact"}, Message: c.Resume, CreatedAt: run.cmd.now()}
+	sender := c.ResumeFrom
+	if sender.Kind == "" {
+		sender = core.Sender{Kind: core.SenderGangline, Name: "compact"}
+	}
+	e := core.Envelope{ID: core.EnvelopeID("resume-" + c.ID), Recipient: a.ID, To: a.Name, From: sender, Message: c.Resume, CreatedAt: run.cmd.now()}
 	if err := run.publishOnce(l, a, e); err != nil {
 		return err
 	}

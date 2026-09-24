@@ -21,3 +21,29 @@ func TestInterruptReasonCarriesGanglineSender(t *testing.T) {
 		t.Fatalf("interrupt reason: %+v", pending)
 	}
 }
+
+func TestCompactionStoresResumeProvenance(t *testing.T) {
+	for _, custom := range []bool{false, true} {
+		f := newStateFixture(t)
+		a := f.add(t, "a", "worker", "codex")
+		// A busy surface keeps the compaction queued for direct state inspection.
+		f.input.screen = screenWithText("esc to interrupt", "› ")
+		args := []string{"worker"}
+		want := core.Sender{Kind: core.SenderGangline, Name: "compact"}
+		if custom {
+			args = append(args, "--resume", "resume saved work")
+			want.Kind = core.SenderSelfDeclared
+		}
+		if err := f.cmd.compact(args); err != nil {
+			t.Fatal(err)
+		}
+		p, _ := f.run.team.Agent(a.ID)
+		got, err := p.Read()
+		if err != nil {
+			t.Fatal(err)
+		}
+		if got.Compaction == nil || got.Compaction.ResumeFrom != want {
+			t.Fatalf("custom=%v compaction=%+v want=%+v", custom, got.Compaction, want)
+		}
+	}
+}

@@ -18,6 +18,7 @@ func TestCompactionQueuesContinuationAfterCompletion(t *testing.T) {
 			f := newStateFixture(t)
 			a := f.add(t, "a", "worker", collar)
 			p, _ := f.run.team.Agent(a.ID)
+			f.env["TMUX_PANE"] = a.Pane
 			if collar == "claude-code" {
 				f.input.command = "claude"
 				f.input.screen = screenWithText("────────", "❯ ", "────────")
@@ -62,6 +63,9 @@ func TestCompactionQueuesContinuationAfterCompletion(t *testing.T) {
 			e, err := p.ReadEnvelope("cur", core.EnvelopeID("resume-"+a.Compaction.ID))
 			if err != nil || e.Outcome != "delivered" || a.Input != nil || f.input.submits != 2 {
 				t.Fatalf("continuation: %+v input=%+v submits=%d err=%v", e, a.Input, f.input.submits, err)
+			}
+			if e.From != (core.Sender{Kind: core.SenderAgent, Name: a.Name, HitchID: a.ID}) {
+				t.Fatalf("custom resume sender: %+v", e.From)
 			}
 			for _, at := range []time.Time{f.cmd.now().Add(-time.Second), f.cmd.now().Add(time.Second), f.cmd.now().Add(time.Second)} {
 				if err := f.run.tickAgent(a.ID, hookNotice{Kind: "compaction-finished", SessionID: "s", At: at}, false); err != nil {

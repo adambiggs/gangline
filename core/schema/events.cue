@@ -15,7 +15,7 @@ import "time"
  outcome?: "accepted" | "delivered" | "failed" | "unverified" | "cancelled"
  reason?: string
 })
-#Compaction: close({id: #ID, resume: close({text: string}), started_at: #Time, deadline: #Time, status: "queued" | "submitted" | "completed" | "failed" | "unverified", continuation?: bool, completed_at?: #Time, refusal_before?: int & >=0, reason?: string})
+#Compaction: close({id: #ID, resume: close({text: string}), resume_from?: close({kind: "agent" | "self_declared" | "gangline", name: #ID, hitch_id?: #ID}), started_at: #Time, deadline: #Time, status: "queued" | "submitted" | "completed" | "failed" | "unverified", continuation?: bool, completed_at?: #Time, refusal_before?: int & >=0, reason?: string})
 #Reading: close({
  kind: string, source: string, native_event?: string, at?: #Time, status: string, reason?: string, model?: string
  used?: int & >=0, limit?: int & >0, percent?: number & >=0

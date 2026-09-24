@@ -179,11 +179,12 @@ Startup names the launching agent when its pane is registered; otherwise its
 sender is `gangline:hitch`, identifying Gangline itself. The envelope is marked
 `assignment` only when a task was supplied, or `startup` otherwise.
 
-Every other message Gangline emits also carries a `gangline:` sender:
-`context-band`, `compact` (the resume note), `interrupt` (the reason), and
-`capacity-recovery`. A `--resume` note and an interrupt `-m` reason are text
-supplied by whoever ran the command. A completed compaction's resume note is
-delivered before any other queued message.
+Gangline's context-band notices, default compaction resume, interrupt reasons,
+and capacity recovery carry `gangline:` senders. A custom `--resume` note names
+the registered caller; outside a registered pane it carries
+`self-declared:compact`. Interrupt `-m` reasons are supplied by whoever ran the
+command. A completed compaction's resume note is delivered before any other
+queued message.
 
 ## Collars
 

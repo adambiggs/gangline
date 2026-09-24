@@ -141,6 +141,7 @@ type Envelope struct {
 type Compaction struct {
 	ID            string    `json:"id"`
 	Resume        Message   `json:"resume"`
+	ResumeFrom    Sender    `json:"resume_from,omitzero"`
 	StartedAt     time.Time `json:"started_at"`
 	Deadline      time.Time `json:"deadline"`
 	Status        string    `json:"status"`

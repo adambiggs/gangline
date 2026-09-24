@@ -323,6 +323,16 @@ func (cmd command) compact(args []string) (result error) {
 	if a.Status != core.Active {
 		return refuseError("recipient is not active")
 	}
+	resumeFrom := core.Sender{Kind: core.SenderGangline, Name: "compact"}
+	if o.Resume != "" {
+		resumeFrom, err = run.observedSender()
+		if err != nil {
+			return err
+		}
+		if resumeFrom.Kind == "" {
+			resumeFrom = core.Sender{Kind: core.SenderSelfDeclared, Name: "compact"}
+		}
+	}
 	resume := o.Resume
 	if resume == "" {
 		resume = "Your context was compacted. Re-read your brief and durable state, then resume your work or report it complete."
@@ -335,7 +345,7 @@ func (cmd command) compact(args []string) (result error) {
 		return err
 	}
 	now := cmd.now()
-	compact := core.Compaction{ID: id, Resume: core.Message{Text: resume}, StartedAt: now, Deadline: now.Add(operationTimeout), Status: "queued"}
+	compact := core.Compaction{ID: id, Resume: core.Message{Text: resume}, ResumeFrom: resumeFrom, StartedAt: now, Deadline: now.Add(operationTimeout), Status: "queued"}
 	if err := run.apply(l, &a, core.Event{Type: "compaction_requested", Compaction: &compact}); err != nil {
 		return err
 	}
