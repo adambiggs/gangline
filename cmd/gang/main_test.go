@@ -7,6 +7,7 @@ import (
 )
 
 func TestVersionAndHelpDoNotLoadRuntimeConfiguration(t *testing.T) {
+	t.Setenv("GANG_CAPACITY_TIMEOUT", "invalid-duration")
 	for _, test := range []struct {
 		args []string
 		want string
