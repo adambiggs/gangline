@@ -4,7 +4,7 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width,initial-scale=1">
   <title>Gangline: CLI agents connected in tmux</title>
-  <meta name="description" content="Start Claude Code and Codex agents in tmux, deliver attributed messages, and inspect long-running sessions.">
+  <meta name="description" content="Give a lead a task, let it recruit Claude Code and Codex teammates, and watch their work in tmux.">
   <meta name="color-scheme" content="light dark">
   <script src="demo.js" defer></script>
   <script>try{const t=localStorage.getItem('theme');if(t==='light'||t==='dark')document.documentElement.dataset.theme=t}catch{}</script>
@@ -227,15 +227,15 @@
         <a href="https://github.com/adambiggs/gangline">GitHub</a>
         <a href="docs/">Docs</a>
         <a href="docs/reference.html">Reference</a>
-        <a href="docs/design.html">Design principles</a>
+        <a href="docs/quickstart.html">Your first team</a>
       </div>
     </header>
 
     <main class="flow" data-quiet>
       <section class="sec lede">
-        <p>Gangline starts Claude Code and Codex in named tmux windows. It
-        delivers attributed messages only after a native submit hook verifies
-        them, and records each member’s state and pending input for recovery.</p>
+        <p>Give a lead a task and let it recruit Claude Code and Codex teammates.
+        Watch them work, send direction, and get a result back. Gangline keeps
+        each agent in its own tmux window with its native tools and permissions.</p>
         <pre><code>curl -fsSL https://raw.githubusercontent.com/adambiggs/gangline/main/install.sh | sh</code></pre>
       </section>
 
@@ -258,20 +258,23 @@
       </section>
 
       <section id="start" class="sec">
-        <h2 class="h2">Start</h2>
-        <p class="soft">Claude Code and Codex are first-class today; a collar is how
-        another harness joins. You need macOS or Linux, Git, Go 1.27 or later,
-        tmux 3.2 or later, and a supported harness. Run it once to complete its
-        normal sign-in and repository prompts, then open a team where it will
-        work.</p>
+        <h2 class="h2">Start your first team</h2>
+        <p class="soft">On Linux or macOS, install Gangline and run your chosen
+        harness once to complete login and repository trust prompts. Then start
+        a team from the repository where it should work. The
+        <a href="docs/quickstart.html">first-team tutorial</a> walks through
+        setup, an assignment, the result, and shutdown.</p>
 
-        <pre><code>cd ~/your/repo
-gang up -c claude-code -m sonnet -e high</code></pre>
+        <pre><code>gang up -c claude-code</code></pre>
 
         <p class="soft"><code>gang up</code> starts a team and attaches you to its
         <code>lead</code> window. Tell the lead what result you want in plain
-        language. It hitches and briefs teammates, messages them, judges their
-        reports, and drops them when their work is done.</p>
+        language. Ask it to recruit a worker, give the worker a job, and bring
+        you the result.</p>
+
+        <blockquote>Ask a Codex worker to find how this repository runs its
+        tests. Have it send you the command and supporting file paths, then
+        summarize the answer for me.</blockquote>
 
         <p class="soft">When you want to work with one agent directly, ask the
         lead to hitch and brief it, then switch to that tmux window. If you
@@ -283,40 +286,36 @@ gang up -c claude-code -m sonnet -e high</code></pre>
         <ul class="items">
           <li>
             <h3>One team in tmux</h3>
-            <p>Named native harness sessions share a tmux team and hand work to one
-            another by name, keeping their terminals, tools, and permissions.</p>
+            <p>Give agents separate jobs and switch between their windows to
+            follow the work. Each keeps its own terminal, tools, and permissions.</p>
           </li>
           <li>
-            <h3>Verified delivery</h3>
-            <p>Delivery counts only after the recipient's native submit hook
-            witnesses the attributed envelope. An unknown result stays unknown.</p>
+            <h3>Message by name</h3>
+            <p>Agents send each other work and replies. You can inspect the queue
+            and delivery receipts when a message needs attention.</p>
           </li>
           <li>
-            <h3>First-class, then collars</h3>
-            <p><code>Claude Code</code> and <code>Codex</code> are native sessions,
-            not simulations. A collar joins another harness without flattening it.</p>
+            <h3>Stay in control</h3>
+            <p>Talk to the lead, send a worker new direction, or interrupt a turn.
+            Native permission and trust prompts remain yours to answer.</p>
           </li>
         </ul>
 
-        <p class="soft">Gangline provides mechanisms, not work policy. A lead is
-        the fixed first role; other role briefs and optional operator guidance
-        are replaceable. There is no task graph, supervisor, daemon, or database.</p>
-
-        <p class="soft">Gangline works between top-level sessions, so each harness
-        keeps its strengths. See the <a href="docs/reference.html">reference</a>
-        for commands and refusals.</p>
+        <p class="soft">Your instructions decide assignments and staffing.
+        Use the <a href="docs/guides.html">guides</a> for daily work and the
+        <a href="docs/reference.html">reference</a> for commands and settings.</p>
       </section>
 
       <section id="long" class="sec">
         <h2 class="h2">Long-running work</h2>
-        <p class="soft">Native context and provider-limit readings, durable
-        event logs, compaction continuations, and recorded curfews keep long
-        sessions inspectable without a daemon or accounting database.</p>
+        <p class="soft">Check context use and provider limits, save working
+        state before compaction, and resume from a note when compaction finishes.</p>
 
         <p class="soft"><code>gang roster</code>, <code>gang capture</code>, and
         <code>gang status</code> show the evidence needed to decide whether to
         resume or remove an agent. The
-        <a href="docs/operations.html">operations guide</a> covers recovery.</p>
+        <a href="docs/troubleshooting.html">troubleshooting guide</a> starts
+        from what you can see.</p>
       </section>
 
       <footer class="ftr">
@@ -324,7 +323,7 @@ gang up -c claude-code -m sonnet -e high</code></pre>
           <a href="https://github.com/adambiggs/gangline">source</a>
           <a href="docs/">docs</a>
           <a href="docs/reference.html">reference</a>
-          <a href="docs/design.html">design principles</a>
+          <a href="docs/internals.html">internals</a>
           <a href="https://github.com/adambiggs/gangline/blob/main/LICENSE">Apache-2.0</a>
         </div>
         <p class="by">Made by <a href="https://adambig.gs" rel="author">Adam Biggs</a>.</p>

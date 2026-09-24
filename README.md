@@ -1,80 +1,39 @@
 # Gangline
 
-Gangline runs Claude Code and Codex agents as one team in tmux. Each agent is
-a normal harness in its own window, and agents message each other by name. A
-message counts as delivered only when the harness confirms it received it.
+Gangline puts Claude Code and Codex agents in a tmux team. Each keeps its own
+terminal, tools, permissions, and history. You can give agents separate jobs,
+send messages by name, and watch their work from the terminal.
 
-Gangline doesn't manage the agents. They keep their own UI, tools,
-permissions, and history, and your prompts decide how they work.
-
-## Install
-
-Gangline runs on macOS and Linux. It needs Git, Go 1.27 or later, tmux 3.2 or
-later, and Claude Code or Codex. Run each harness by itself once first, so its
-sign-in and trust prompts are out of the way.
-
-Install the latest stable release:
+Use it when you want to hand a result to a lead and let it recruit teammates,
+while you can inspect or steer any agent. Start in your repository:
 
 ```sh
-curl -fsSL https://raw.githubusercontent.com/adambiggs/gangline/main/install.sh | sh
+gang up -c claude-code
 ```
 
-This installs the latest release's `gang` into `~/.local/bin`. If the installer
-reports that directory is missing from your PATH, add it to your shell startup
-file and reload your shell:
+Then tell the lead what you want:
 
-```sh
-export PATH="$HOME/.local/bin:$PATH"
-```
+> Ask a Codex worker to find how this repository runs its tests. Have it send
+> you the command and supporting file paths, then summarize the answer for me.
 
-Older shell-based releases also need Python. Check the installed command:
-
-```sh
-gang --version
-gang collars
-```
-
-`gang upgrade --check` shows whether a newer release exists, and
-`gang upgrade` installs it.
-
-## Start a team
-
-From the repository where the team should work:
-
-```sh
-gang up -c claude-code -m sonnet -e high
-```
-
-This starts the tmux session, launches the first agent as `lead`, and
-attaches. Detach with `Ctrl-b d` and come back with `gang attach`.
-
-Common commands:
-
-```sh
-gang roster
-gang status lead --why
-gang capture lead
-gang hitch worker -c codex -d "$PWD" -r worker -t 'Run the focused checks.'
-printf '%s\n' 'Report the result.' | gang send worker --from operator
-gang log
-```
-
-From an agent's window, `gang send` signs the message with that agent's name.
-From your own shell, pass `--from`.
+The lead can brief a worker, receive its report, and bring the result back.
+Switch between their tmux windows to watch the work. Your instructions decide
+their assignments and staffing.
 
 <picture>
   <source media="(prefers-color-scheme: dark)" srcset="site/demo.gif">
   <source media="(prefers-color-scheme: light)" srcset="site/demo-light.gif">
-  <img alt="A Gangline team working in native terminal windows" src="site/demo.gif">
+  <img alt="Claude Code hands a task to Codex, which runs it and replies" src="site/demo.gif">
 </picture>
 
-## Documentation
+Claude Code hands Codex a task; Codex writes and runs the code, then sends the
+result back. [Read the demonstration transcript](site/demo.txt).
 
-- [Operations](docs/operations.md)
-- [CLI and collar reference](docs/reference.md)
-- [Architecture](ARCHITECTURE.md)
-- [Design decisions](docs/design.md)
-- [Contributing](CONTRIBUTING.md)
-- [Security](SECURITY.md)
+Start with [your first team](docs/quickstart.md). Then use the
+[guides](docs/guides.md) for daily tasks, [concepts](docs/concepts.md) for the
+mental model, and [reference](docs/reference.md) for commands and settings.
+[Troubleshooting](docs/troubleshooting.md) starts from what you can see;
+[internals](docs/internals.md) explains the implementation and design choices.
 
-Gangline is licensed under Apache-2.0.
+Gangline is licensed under Apache-2.0. See [contributing](CONTRIBUTING.md)
+and [security reporting](SECURITY.md).

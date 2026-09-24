@@ -27,25 +27,34 @@ from markdown_it import MarkdownIt
 REPO = Path(__file__).resolve().parent.parent
 GITHUB = "https://github.com/adambiggs/gangline"
 
-# Navigation order follows the reader's path: start, operate, understand,
-# look up exact behavior, then work on the project. Each entry is
+# Navigation follows the reader's path from a first team to daily tasks,
+# concepts, reference, and implementation. Each entry is
 # (source, output, nav label).
 GROUPS = [
-    ("Start", [
+    ("Getting started", [
         ("README.md", "index.html", "Overview"),
-        ("docs/operations.md", "operations.html", "Operations"),
+        ("docs/quickstart.md", "quickstart.html", "Your first team"),
     ]),
-    ("Understand", [
-        ("ARCHITECTURE.md", "architecture.html", "Architecture"),
-        ("docs/design.md", "design.html", "Design"),
+    ("Guides", [
+        ("docs/guides.md", "guides.html", "Work with a team"),
+        ("docs/troubleshooting.md", "troubleshooting.html", "Troubleshooting"),
+    ]),
+    ("Concepts", [
+        ("docs/concepts.md", "concepts.html", "How a team works"),
     ]),
     ("Reference", [
         ("docs/reference.md", "reference.html", "CLI and configuration"),
     ]),
-    ("Project", [
+    ("Internals and contributing", [
+        ("docs/internals.md", "internals.html", "Internals"),
         ("CONTRIBUTING.md", "contributing.html", "Contributing"),
         ("SECURITY.md", "security.html", "Security"),
     ]),
+]
+LINK_PAGES = [
+    ("docs/operations.md", "operations.html", "Operations"),
+    ("ARCHITECTURE.md", "architecture.html", "Architecture"),
+    ("docs/design.md", "design.html", "Design"),
 ]
 # Files under site/ are published at the site root beside the landing page.
 SITE_ASSETS = "site/"
@@ -57,7 +66,7 @@ HTML_URL_ATTR = re.compile(
 
 def pages():
     """Every published page as (source, output, label)."""
-    return [e for _, entries in GROUPS for e in entries]
+    return [e for _, entries in GROUPS for e in entries] + LINK_PAGES
 
 
 def slugify(text, seen):
