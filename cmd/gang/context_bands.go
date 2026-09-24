@@ -34,17 +34,23 @@ func (run *runtime) noteContextBands(a *core.Agent, c harness.Collar) {
 		return
 	}
 	previous := state.Percent
+	switch {
 	// Until the first note, an older policy may have observed this usage
 	// without matching a band. Apply the current bands to that first note.
-	if state.Model != r.Model || state.Sequence == 0 {
+	case state.Sequence == 0 || state.Model != "" && state.Model != r.Model:
 		previous = -1
+	// The first reading after compaction is the new baseline. A note asks
+	// the agent to compact, so it never repeats for the context it just
+	// compacted to.
+	case state.Model == "":
+		previous = *r.Percent
 	}
 	for _, band := range harness.CrossedContextBands(c, r.Model, previous/100, *r.Percent/100) {
 		state.Sequence++
 		e := core.Envelope{
 			ID: core.EnvelopeID(fmt.Sprintf("context-%020d", state.Sequence)), Recipient: a.ID, To: a.Name,
-			From: core.Sender{Kind: core.SenderSelfDeclared, Name: "context-band"}, CreatedAt: run.cmd.now(),
-			Message: core.Message{Text: fmt.Sprintf("Context band %s crossed (threshold %.0f%%): %s, model %s. Follow your standing context-management instructions at the next natural checkpoint.", band.Name, band.At*100, contextUsageText(*r.Used, *r.Limit, *r.Percent), r.Model)},
+			From: core.Sender{Kind: core.SenderGangline, Name: "context-band"}, CreatedAt: run.cmd.now(),
+			Message: core.Message{Text: fmt.Sprintf("Context band %s crossed (threshold %.0f%%): %s, model %s. At your next checkpoint, save your working state to a file, then run `gang compact --resume 'Resume from FILE'` to compact your own context.", band.Name, band.At*100, contextUsageText(*r.Used, *r.Limit, *r.Percent), r.Model)},
 		}
 		state.Pending = append(state.Pending, core.ContextBandNote{Band: band.Name, Reading: r, Envelope: e})
 	}

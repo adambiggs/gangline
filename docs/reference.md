@@ -222,10 +222,14 @@ Readings are collected by hooks and by `gang tick`, `gang context`, and
 `gang limits`. Nothing polls in the background.
 
 An upward crossing of `context_bands` sends a note from
-`self-declared:context-band` through the agent's normal inbox. A jump over
+`gangline:context-band` through the agent's normal inbox. The note states the
+reading and tells the agent to save its state and run
+`gang compact --resume`. A jump over
 several thresholds sends a note for each; repeated readings in the same band
 do not repeat it. Downward readings send nothing and allow later upward
-crossings. A model change or completed compaction starts band tracking afresh.
+crossings. A model change starts band tracking afresh. Once a note has been
+sent, the first reading after a completed compaction is the new baseline: bands
+at or below it send nothing.
 Unknown context or an unknown model cannot decide a crossing.
 
 The `context_band_crossed` lifecycle event records the band in `status`, the

@@ -63,7 +63,7 @@ func TestContextBandNotesCrossings(t *testing.T) {
 			if f.input.submits != 2 {
 				t.Fatalf("jump across yellow and red submitted %d notes, want 2", f.input.submits)
 			}
-			if !strings.Contains(f.input.pasted, highName) || !strings.Contains(f.input.pasted, "context-band") {
+			if !strings.Contains(f.input.pasted, highName) || !strings.Contains(f.input.pasted, "[gang:gangline:context-band#") || !strings.Contains(f.input.pasted, "run `gang compact --resume") {
 				t.Fatalf("band envelope: %s", f.input.pasted)
 			}
 			observe(high+1, "observed", at.Add(2*time.Second))
@@ -81,6 +81,11 @@ func TestContextBandNotesCrossings(t *testing.T) {
 				t.Fatal(err)
 			}
 			observe(high, "observed", at.Add(8*time.Second))
+			if f.input.submits != 3 {
+				t.Fatalf("first reading after compaction asked for another compaction: %d total notes, want 3", f.input.submits)
+			}
+			observe(low-1, "observed", at.Add(9*time.Second))
+			observe(high, "observed", at.Add(10*time.Second))
 			if f.input.submits != 5 {
 				t.Fatalf("post-compaction crossings submitted %d total notes, want 5", f.input.submits)
 			}

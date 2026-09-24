@@ -113,8 +113,11 @@ through ordinary delivery, with the deciding reading in a
 `context_band_crossed` lifecycle event. Persist publication intents beside the
 native cursor so interrupted publication can resume without repeating input.
 Unknown readings do not reset crossings. A lower observed reading, a model
-change, or completed compaction permits later crossings again. Notes carry
-context facts; the agent's standing instructions decide what to do with them.
+change, or completed compaction permits later crossings again. A note states
+the reading and tells the agent to save its state and compact itself with a
+resume note at its next checkpoint. Once a note has been sent, the first
+reading after compaction is the new baseline, so later notes do not ask the
+agent to compact the context it just compacted to.
 
 ### Confirm compaction before resuming
 
