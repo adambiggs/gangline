@@ -125,8 +125,12 @@ across renames.
 
 ### Idle-team watchdog
 
-On Linux with a systemd user manager, a whole-team `gang tick` arms a transient
-`systemd-run --user --on-active` timer for **60 seconds** (fixed, no backoff).
+On Linux with a systemd user manager or macOS with launchd, a whole-team
+`gang tick` arms a transient watchdog for **60 seconds** (fixed, no backoff).
+Linux uses `systemd-run --user --on-active`; macOS uses a `StartInterval`
+user agent with `LaunchOnlyOnce`.
+Neither needs a resident Gangline scheduler process. Expiry depends on
+an awake host and an available user scheduler.
 The minute interval bounds idle refresh latency without constant wakeups.
 Systemd may coalesce expiry within its one-second accuracy window. The next
 whole-team tick replaces the timer and pushes the deadline out. An agent-scoped
@@ -141,14 +145,20 @@ internal generation token so a superseded timer cannot re-arm itself.
 Last drop and `gang down` disarm the timer. A concurrent timer transaction can
 make cleanup fail visibly; retry with `gang down SESSION`. Timer state and the
 unavailable marker live in the team directory and `gang down` removes them.
+The launchd plist also lives there, outside the login-loaded LaunchAgents
+directory, and disarm removes it. An uncertain scheduler failure preserves
+the plist for a later cleanup attempt.
 
-On macOS or a host without a user scheduler, ordinary ticks work as before;
-`watchdog_unavailable` is logged once per team and no timer is armed. There is
-currently no launchd scheduler. A scheduler command failure logs
+On a host without a supported user scheduler, ordinary ticks work as before;
+`watchdog_unavailable` is logged once per team and no timer is armed.
+A scheduler command failure logs
 `watchdog_failed`; agent work still proceeds and the command returns the error.
 Run `gang tick` after repairing the user manager.
 The watchdog requires the user manager to remain running, including across
 logout for unattended teams; it does not configure login lingering.
+
+The launchd adapter is covered by fake-command tests on Linux. Native macOS
+timer replacement, self-rearm, and cleanup remain unverified.
 
 ## Exit status
 

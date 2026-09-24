@@ -18,6 +18,9 @@ import (
 
 const watchdogTimeout = time.Minute
 
+var watchdogEnvironmentKeys = []string{"GANG_SESSION", "GANG_STATE_ROOT", "GANG_CONFIG_DIR", "GANG_TMUX_SOCKET", "GANG_COLLARS", "GANG_TMUX", "GANG_CAPACITY_TIMEOUT", "PATH"}
+var watchdogUnsetEnvironment = []string{"TMUX", "TMUX_PANE", "TMUX_TMPDIR", "GANGLINE_BOUNDARY", "GANGLINE_HITCH_ID", "GANG_COLLAR", "GANG_LAUNCH_ARGS"}
+
 type watchdogScheduler interface {
 	Arm(string, string, map[string]string) error
 	Disarm(string) error
@@ -27,8 +30,8 @@ type systemdWatchdog struct{}
 
 func (systemdWatchdog) Arm(unit, executable string, environment map[string]string) error {
 	args := []string{"--user", "--collect", "--unit=" + unit, "--on-active=" + watchdogTimeout.String(), "--timer-property=AccuracySec=1s", "--timer-property=RemainAfterElapse=no", "--property=KillMode=process", "--working-directory=/"}
-	unset := []string{"TMUX", "TMUX_PANE", "TMUX_TMPDIR", "GANGLINE_BOUNDARY", "GANGLINE_HITCH_ID", "GANG_COLLAR", "GANG_LAUNCH_ARGS"}
-	for _, key := range []string{"GANG_SESSION", "GANG_STATE_ROOT", "GANG_CONFIG_DIR", "GANG_TMUX_SOCKET", "GANG_COLLARS", "GANG_TMUX", "GANG_CAPACITY_TIMEOUT", "PATH"} {
+	unset := append([]string(nil), watchdogUnsetEnvironment...)
+	for _, key := range watchdogEnvironmentKeys {
 		if value := environment[key]; value != "" {
 			args = append(args, "--setenv="+key+"="+value)
 		} else {
@@ -62,9 +65,12 @@ func watchdogCommand(name string, args ...string) ([]byte, error) {
 	}
 	return out, nil
 }
-func (cmd command) watchdogScheduler() watchdogScheduler {
+func (cmd command) watchdogScheduler(directory string) watchdogScheduler {
 	if cmd.newScheduler != nil {
 		return cmd.newScheduler()
+	}
+	if goruntime.GOOS == "darwin" {
+		return launchdWatchdog{directory: directory, domain: fmt.Sprintf("user/%d", os.Getuid()), command: watchdogCommand}
 	}
 	if goruntime.GOOS != "linux" {
 		return nil
@@ -140,7 +146,7 @@ func (run *runtime) updateWatchdog(generation string, cleanup, reset bool) (proc
 	if err != nil {
 		return false, err
 	}
-	scheduler := run.cmd.watchdogScheduler()
+	scheduler := run.cmd.watchdogScheduler(run.team.Directory)
 	if scheduler == nil {
 		if len(agents) == 0 || cleanup {
 			return false, nil
