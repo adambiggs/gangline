@@ -58,7 +58,7 @@ func TestLaunchdWatchdogPlist(t *testing.T) {
 			args = value.Strings
 		}
 	}
-	for key, want := range map[string]string{"Label": "string:" + unit, "WorkingDirectory": "string:/", "StartInterval": "integer:60", "LaunchOnlyOnce": "true:", "AbandonProcessGroup": "true:"} {
+	for key, want := range map[string]string{"Label": "string:" + unit, "WorkingDirectory": "string:/", "LimitLoadToSessionType": "string:Background", "StartInterval": "integer:60", "LaunchOnlyOnce": "true:", "AbandonProcessGroup": "true:"} {
 		if values[key] != want {
 			t.Errorf("%s: got %q, want %q", key, values[key], want)
 		}
@@ -125,10 +125,13 @@ func TestLaunchdWatchdogDisarmFailures(t *testing.T) {
 		removed      bool
 	}{
 		{"retired", "Could not find service \"gangline-test\" in domain for user: 501\n", failure, true},
+		{"retired uid wording", "Bad request.\nCould not find service \"gangline-test\" in domain for uid: 501\n", failure, true},
 		{"still loaded", "user/501/gangline-test = {}", nil, false},
 		{"unavailable domain", "Could not find domain for", failure, false},
 		{"permission denied", "Operation not permitted", failure, false},
+		{"other error before absence", "Operation not permitted\nCould not find service \"gangline-test\" in domain for uid: 501", failure, false},
 		{"different service", "Could not find service \"other\" in domain for user: 501", failure, false},
+		{"different uid", "Could not find service \"gangline-test\" in domain for uid: 502", failure, false},
 		{"empty error", "", failure, false},
 	} {
 		t.Run(tc.name, func(t *testing.T) {

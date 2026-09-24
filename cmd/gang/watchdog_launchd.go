@@ -58,7 +58,7 @@ func (s launchdWatchdog) Arm(unit, executable string, environment map[string]str
 		}
 		plist.Write(value)
 	}
-	fmt.Fprintf(&plist, `</array><key>WorkingDirectory</key><string>/</string><key>StartInterval</key><integer>%d</integer><key>LaunchOnlyOnce</key><true/><key>AbandonProcessGroup</key><true/></dict></plist>`, int(watchdogTimeout/time.Second))
+	fmt.Fprintf(&plist, `</array><key>WorkingDirectory</key><string>/</string><key>LimitLoadToSessionType</key><string>Background</string><key>StartInterval</key><integer>%d</integer><key>LaunchOnlyOnce</key><true/><key>AbandonProcessGroup</key><true/></dict></plist>`, int(watchdogTimeout/time.Second))
 	// Outside ~/Library/LaunchAgents: a reboot must not resurrect a stale team.
 	path := filepath.Join(s.directory, unit+".plist")
 	if err := os.WriteFile(path, []byte(plist.String()), 0600); err != nil {
@@ -76,7 +76,7 @@ func (s launchdWatchdog) Disarm(unit string) error {
 		// LaunchOnlyOnce may already have retired the job. Other failures,
 		// including a missing user domain, do not prove service absence.
 		out, probeErr := s.command("/bin/launchctl", "print", target)
-		if probeErr == nil || !strings.HasPrefix(strings.TrimSpace(string(out)), "Could not find service \""+unit+"\" in domain ") {
+		if probeErr == nil || !launchdServiceAbsent(string(out), unit, s.domain) {
 			return errors.Join(err, probeErr)
 		}
 	}
@@ -85,4 +85,19 @@ func (s launchdWatchdog) Disarm(unit string) error {
 		return nil
 	}
 	return err
+}
+
+func launchdServiceAbsent(output, unit, domain string) bool {
+	uid := strings.TrimPrefix(domain, "user/")
+	if uid == domain {
+		return false
+	}
+	message := strings.TrimSpace(output)
+	for _, kind := range []string{"uid", "user"} {
+		absent := fmt.Sprintf("Could not find service %q in domain for %s: %s", unit, kind, uid)
+		if message == absent || message == "Bad request.\n"+absent {
+			return true
+		}
+	}
+	return false
 }
