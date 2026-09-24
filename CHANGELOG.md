@@ -1,5 +1,18 @@
 # Changelog
 
+## [1.2.1](https://github.com/adambiggs/gangline/compare/gangline-v1.2.0...gangline-v1.2.1) (2026-09-24)
+
+
+### Bug Fixes
+
+* **cli:** generate complete flag help from parser definitions ([ab140c6](https://github.com/adambiggs/gangline/commit/ab140c6361c6234647e5a2c8e593398a02dc147b))
+* **cli:** show flag aliases on one help row ([85ba771](https://github.com/adambiggs/gangline/commit/85ba771cfe970bb79ae7805b5dfb6345dff3497a))
+* explain recovery when stopped team retains lead claim ([7552c09](https://github.com/adambiggs/gangline/commit/7552c09db2a8d14c84ec0300e116cc8f60afb455))
+* ignore Claude composer suggestion at empty input cursor ([12d06f3](https://github.com/adambiggs/gangline/commit/12d06f34ca0326a4fb5538ed281b4d39114c9446))
+* recognize wrapped Codex queue preview ([8ae8925](https://github.com/adambiggs/gangline/commit/8ae89258f2fcb9106860e858f56923ce8edc9d5a))
+* show failed native turns without attributing stale hooks ([600fd10](https://github.com/adambiggs/gangline/commit/600fd103e874cc0e9d90067254142078f7f47271))
+* treat vanished process stats as exited during teardown ([a9f95cf](https://github.com/adambiggs/gangline/commit/a9f95cfc26c1fcfffc8a3888101771eddd14980b))
+
 ## [1.2.0](https://github.com/adambiggs/gangline/compare/gangline-v1.1.0...gangline-v1.2.0) (2026-09-24)
 
 
