@@ -2,6 +2,7 @@ package prose
 
 import (
 	"bytes"
+	"os"
 	"testing"
 )
 
@@ -10,8 +11,12 @@ func TestEmbeddedProseComesFromCanonicalFiles(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !bytes.Contains(contract, []byte("# Gangline delivery contract")) {
-		t.Fatalf("unexpected contract: %q", contract)
+	source, err := os.ReadFile("CONTRACT.md")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !bytes.Equal(contract, source) {
+		t.Fatal("embedded contract differs from CONTRACT.md")
 	}
 	names, err := RoleNames()
 	if err != nil {
