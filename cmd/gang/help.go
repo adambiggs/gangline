@@ -53,13 +53,16 @@ Observe and control:
 Settings and discovery:
   curfew    set or show the team deadline
   collars   list harness collars
-  models    list a collar's models
+  models    list models for a collar (-c)
   roles     list role briefs
   config    show effective configuration
 
 Installation:
   --version print the release version
   upgrade   install or check the latest release
+
+Native integration:
+  hook      read native hook JSON from stdin
 `
 
 var commandUsage = map[string]string{
@@ -92,6 +95,7 @@ var commandUsage = map[string]string{
 	"roles":      "usage: gang roles\n",
 	"config":     "usage: gang config\n",
 	"upgrade":    "usage: gang upgrade [--check]\n",
+	"hook":       "usage: gang hook < native-hook.json\n",
 }
 
 var commandDescription = map[string]string{
@@ -124,6 +128,7 @@ var commandDescription = map[string]string{
 	"roles":      "List embedded and operator-provided role briefs.\n",
 	"config":     "Print persistent settings, effective values, and their sources.\n",
 	"upgrade":    "Check or install the latest stable release into an installer-managed tree.\n",
+	"hook":       "Read native hook JSON on stdin and resolve the pane by GANGLINE_HITCH_ID.\n",
 }
 
 func (cmd command) printHelp(name string) error {

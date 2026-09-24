@@ -83,3 +83,24 @@ func TestSettingsUseXDGStateRoot(t *testing.T) {
 		t.Fatalf("settings = %#v", got)
 	}
 }
+
+func TestHookHelpAndModelsIndex(t *testing.T) {
+	for _, args := range [][]string{{"hook", "--help"}, {"help", "hook"}} {
+		var stdout, stderr bytes.Buffer
+		if status := run(args, strings.NewReader(""), &stdout, &stderr); status != exitOK {
+			t.Fatalf("run(%q) status=%d stderr=%q", args, status, stderr.String())
+		}
+		for _, want := range []string{"usage: gang hook", "stdin", "GANGLINE_HITCH_ID"} {
+			if !strings.Contains(stdout.String(), want) {
+				t.Fatalf("run(%q) output %q lacks %q", args, stdout.String(), want)
+			}
+		}
+	}
+	var stdout, stderr bytes.Buffer
+	if status := run([]string{"help"}, strings.NewReader(""), &stdout, &stderr); status != exitOK {
+		t.Fatalf("help status=%d stderr=%q", status, stderr.String())
+	}
+	if !strings.Contains(stdout.String(), "models    list models for a collar (-c)") {
+		t.Fatalf("models index entry: %q", stdout.String())
+	}
+}
