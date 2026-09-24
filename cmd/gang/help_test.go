@@ -8,15 +8,64 @@ import (
 	"testing"
 )
 
-func helpOptionNames(output string) map[string]bool {
-	names := map[string]bool{}
+func helpOptionCounts(output string) map[string]int {
+	counts := map[string]int{}
 	for _, line := range strings.Split(output, "\n") {
 		fields := strings.Fields(line)
-		if len(fields) > 0 && strings.HasPrefix(fields[0], "-") {
-			names[fields[0]] = true
+		for _, field := range fields {
+			name := strings.TrimSuffix(field, ",")
+			if !strings.HasPrefix(name, "-") {
+				break
+			}
+			counts[name]++
 		}
 	}
+	return counts
+}
+
+func helpOptionNames(output string) map[string]bool {
+	names := map[string]bool{}
+	for name := range helpOptionCounts(output) {
+		names[name] = true
+	}
 	return names
+}
+
+func TestHelpGroupsAliases(t *testing.T) {
+	aliases := map[string][]string{
+		"up":     {"-c, --collar COLLAR", "-d, --dir DIR", "-m, --model MODEL", "-e, --effort EFFORT", "-t, --task TASK", "-r, --role ROLE"},
+		"hitch":  {"-c, --collar COLLAR", "-d, --dir DIR", "-m, --model MODEL", "-e, --effort EFFORT", "-t, --task TASK", "-r, --role ROLE"},
+		"adopt":  {"-c, --collar COLLAR"},
+		"models": {"-c, --collar COLLAR"},
+	}
+	for name := range commandUsage {
+		var stdout, stderr bytes.Buffer
+		if status := run([]string{"help", name}, strings.NewReader(""), &stdout, &stderr); status != exitOK {
+			t.Fatalf("help %s: status=%d stderr=%q", name, status, stderr.String())
+		}
+		if strings.Count(stdout.String(), "  -h, --help") != 1 {
+			t.Errorf("help %s does not group -h and --help once", name)
+		}
+		for _, label := range aliases[name] {
+			if strings.Count(stdout.String(), "  "+label) != 1 {
+				t.Errorf("help %s does not show %q once", name, label)
+			}
+		}
+	}
+	var stdout, stderr bytes.Buffer
+	if status := run([]string{"--help"}, strings.NewReader(""), &stdout, &stderr); status != exitOK {
+		t.Fatalf("top-level help: status=%d stderr=%q", status, stderr.String())
+	}
+	if strings.Count(stdout.String(), "  -h, --help") != 1 {
+		t.Error("top-level help does not group -h and --help once")
+	}
+	for name, labels := range aliases {
+		for _, label := range labels {
+			if !strings.Contains(stdout.String(), "  "+label) {
+				t.Errorf("top-level help misses %s alias row %q", name, label)
+			}
+		}
+	}
 }
 
 func expectedHelpOptions(name string) map[string]bool {
@@ -25,6 +74,17 @@ func expectedHelpOptions(name string) map[string]bool {
 		want[optionSpelling(option.name)] = true
 	}
 	return want
+}
+
+func helpHasOptionRow(output string, option optionSpec) bool {
+	for _, line := range strings.Split(output, "\n") {
+		if helpOptionNames(line)[optionSpelling(option.name)] &&
+			strings.Contains(line, optionArgument(option)) &&
+			strings.Contains(line, option.meaning) {
+			return true
+		}
+	}
+	return false
 }
 
 func TestCommandHelpMatchesAcceptedFlags(t *testing.T) {
@@ -45,10 +105,14 @@ func TestCommandHelpMatchesAcceptedFlags(t *testing.T) {
 			if !reflect.DeepEqual(got, want) {
 				t.Fatalf("help flags = %v, parser flags = %v", got, want)
 			}
+			for flag, count := range helpOptionCounts(help.String()) {
+				if count != 1 {
+					t.Errorf("help prints %s %d times", flag, count)
+				}
+			}
 			for _, option := range optionsFor(name) {
-				line := optionSpelling(option.name) + optionArgument(option)
-				if !strings.Contains(help.String(), line) || !strings.Contains(help.String(), option.meaning) {
-					t.Fatalf("missing flag shape or meaning for %s", line)
+				if !helpHasOptionRow(help.String(), option) {
+					t.Fatalf("missing flag shape or meaning for %s", optionSpelling(option.name))
 				}
 			}
 		})
@@ -89,8 +153,13 @@ func TestTopLevelHelpShowsEveryCommandFlag(t *testing.T) {
 		if !reflect.DeepEqual(got, want) {
 			t.Errorf("top-level %s flags = %v, want %v", name, got, want)
 		}
+		for flag, count := range helpOptionCounts(section) {
+			if count != 1 {
+				t.Errorf("top-level %s prints %s %d times", name, flag, count)
+			}
+		}
 		for _, option := range optionsFor(name) {
-			if !strings.Contains(section, optionSpelling(option.name)+optionArgument(option)) || !strings.Contains(section, option.meaning) {
+			if !helpHasOptionRow(section, option) {
 				t.Errorf("top-level help misses %s flag %s", name, option.name)
 			}
 		}

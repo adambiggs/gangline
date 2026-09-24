@@ -175,8 +175,18 @@ func optionSpelling(name string) string {
 
 func optionHelp(name string) string {
 	var out strings.Builder
-	for _, option := range optionsFor(name) {
-		fmt.Fprintf(&out, "  %-22s %s\n", optionSpelling(option.name)+optionArgument(option), option.meaning)
+	options := optionsFor(name)
+	for i := 0; i < len(options); i++ {
+		option := options[i]
+		label := optionSpelling(option.name)
+		if i+1 < len(options) && len(option.name) == 1 {
+			alias := options[i+1]
+			if len(alias.name) > 1 && alias.argument == option.argument && alias.meaning == option.meaning {
+				label += ", " + optionSpelling(alias.name)
+				i++
+			}
+		}
+		fmt.Fprintf(&out, "  %-22s %s\n", label+optionArgument(option), option.meaning)
 	}
 	return out.String()
 }
@@ -227,7 +237,7 @@ func (cmd command) printHelp(name string) error {
 	if name == "" {
 		var out strings.Builder
 		out.WriteString(commandInventory)
-		out.WriteString("\nGlobal flags:\n  --help                 show help\n  -h                     show help\n  --version              print the release version\n")
+		out.WriteString("\nGlobal flags:\n  -h, --help             show help\n  --version              print the release version\n")
 		out.WriteString("\nFlag syntax: the options in Command flags below accept one or two leading dashes; values can follow a space or =, and switches accept =true or =false.\n")
 		out.WriteString("\nCommand flags (run 'gang help COMMAND' for details):\n")
 		for _, commandName := range []string{"up", "hitch", "adopt", "send", "interrupt", "compact", "statusline", "context", "log", "limits", "wait", "status", "tick", "capture", "roster", "models", "upgrade"} {
@@ -248,7 +258,7 @@ func (cmd command) printHelp(name string) error {
 		_, err = fmt.Fprintf(cmd.stdout, "\nOptions:\n%s", flags)
 	}
 	if err == nil {
-		_, err = io.WriteString(cmd.stdout, "\n  --help                 show this help\n  -h                     show this help\n")
+		_, err = io.WriteString(cmd.stdout, "\nHelp:\n  -h, --help             show this help\n")
 	}
 	if err == nil && len(optionsFor(name)) != 0 {
 		_, err = io.WriteString(cmd.stdout, "\nFlag syntax: the Options block above accepts one or two leading dashes; values may use =VALUE, and switches accept =true or =false.\n")
