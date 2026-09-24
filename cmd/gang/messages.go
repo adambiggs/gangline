@@ -270,7 +270,7 @@ func (cmd command) interrupt(args []string) (result error) {
 		return err
 	}
 	if reason != "" {
-		e := core.Envelope{ID: core.EnvelopeID(id), Recipient: a.ID, To: a.Name, From: core.Sender{Kind: core.SenderSelfDeclared, Name: "interrupt"}, Message: core.Message{Text: reason}, CreatedAt: cmd.now()}
+		e := core.Envelope{ID: core.EnvelopeID(id), Recipient: a.ID, To: a.Name, From: core.Sender{Kind: core.SenderGangline, Name: "interrupt"}, Message: core.Message{Text: reason}, CreatedAt: cmd.now()}
 		if err := l.Paths.Publish(e); err != nil {
 			return err
 		}
@@ -331,7 +331,7 @@ func (cmd command) compact(args []string) (result error) {
 	if err != nil {
 		return err
 	}
-	if _, err := renderEnvelope("self-declared:compact", "resume-"+id, "", resume); err != nil {
+	if _, err := renderEnvelope("gangline:compact", "resume-"+id, "", resume); err != nil {
 		return err
 	}
 	now := cmd.now()

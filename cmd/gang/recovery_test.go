@@ -192,7 +192,7 @@ func TestCompactionPublicationRecoveryDoesNotDuplicateContinuation(t *testing.T)
 		t.Fatal(err)
 	}
 	// Stop at the publication boundary, before its state acknowledgement.
-	e := core.Envelope{ID: "resume-c", Recipient: a.ID, To: a.Name, From: core.Sender{Kind: core.SenderSelfDeclared, Name: "compact"}, Message: a.Compaction.Resume, CreatedAt: f.cmd.now().Add(-time.Second)}
+	e := core.Envelope{ID: "resume-c", Recipient: a.ID, To: a.Name, From: core.Sender{Kind: core.SenderGangline, Name: "compact"}, Message: a.Compaction.Resume, CreatedAt: f.cmd.now().Add(-time.Second)}
 	if err := p.Publish(e); err != nil {
 		t.Fatal(err)
 	}
@@ -310,6 +310,9 @@ func TestCapacityRecoveryIgnoresFutureSchedules(t *testing.T) {
 	}
 	if f.input.submits != 1 {
 		t.Fatalf("future schedule suppressed recovery: %d submits", f.input.submits)
+	}
+	if !strings.Contains(f.input.pasted, "[gang:gangline:capacity-recovery#") {
+		t.Fatalf("capacity recovery sender: %q", f.input.pasted)
 	}
 	pending, err := p.ListNew()
 	if err != nil {

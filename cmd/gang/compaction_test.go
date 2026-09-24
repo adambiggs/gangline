@@ -110,8 +110,9 @@ func TestCompactionContinuationUsesNormalDelivery(t *testing.T) {
 			}
 			id := core.EnvelopeID("resume-" + a.Compaction.ID)
 			if outcome == "queued" {
-				if _, err := p.ReadEnvelope("new", id); err != nil || f.input.submits != 1 {
-					t.Fatalf("occupied composer: submits=%d err=%v", f.input.submits, err)
+				e, err := p.ReadEnvelope("new", id)
+				if err != nil || f.input.submits != 1 || e.From.Kind != core.SenderGangline {
+					t.Fatalf("occupied composer: submits=%d from=%+v err=%v", f.input.submits, e.From, err)
 				}
 			} else {
 				e, err := p.ReadEnvelope("failed", id)

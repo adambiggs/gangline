@@ -128,7 +128,7 @@ func (run *runtime) tickAgent(id core.HitchID, notice hookNotice, wait bool) err
 			return err
 		}
 		if !a.Capacity.Submitted && !run.cmd.now().Before(a.Capacity.NextAt) && run.cmd.now().Before(a.Capacity.Deadline) {
-			e := core.Envelope{ID: core.EnvelopeID("capacity-" + a.Capacity.Fingerprint), Recipient: a.ID, To: a.Name, From: core.Sender{Kind: core.SenderSelfDeclared, Name: "capacity-recovery"}, Message: core.Message{Text: "Continue the interrupted work after the provider capacity error."}, CreatedAt: run.cmd.now()}
+			e := core.Envelope{ID: core.EnvelopeID("capacity-" + a.Capacity.Fingerprint), Recipient: a.ID, To: a.Name, From: core.Sender{Kind: core.SenderGangline, Name: "capacity-recovery"}, Message: core.Message{Text: "Continue the interrupted work after the provider capacity error."}, CreatedAt: run.cmd.now()}
 			pending, err := l.Paths.ListNew()
 			if err != nil {
 				return err
@@ -189,7 +189,7 @@ func (run *runtime) continueCompaction(l *store.LockedAgent, a *core.Agent) erro
 	if c.Status != "completed" || c.Continuation {
 		return nil
 	}
-	e := core.Envelope{ID: core.EnvelopeID("resume-" + c.ID), Recipient: a.ID, To: a.Name, From: core.Sender{Kind: core.SenderSelfDeclared, Name: "compact"}, Message: c.Resume, CreatedAt: run.cmd.now()}
+	e := core.Envelope{ID: core.EnvelopeID("resume-" + c.ID), Recipient: a.ID, To: a.Name, From: core.Sender{Kind: core.SenderGangline, Name: "compact"}, Message: c.Resume, CreatedAt: run.cmd.now()}
 	if err := run.publishOnce(l, a, e); err != nil {
 		return err
 	}
