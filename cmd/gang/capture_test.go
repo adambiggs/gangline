@@ -15,4 +15,7 @@ func TestRenderScreenDropsTerminalDeadSpaceAndBoundsLines(t *testing.T) {
 	if got := screen.Text(0); got != "one\ntwo" {
 		t.Fatalf("rendered screen = %q", got)
 	}
+	if got := screen.Text(1); got != "two" {
+		t.Fatalf("last rendered row = %q", got)
+	}
 }
