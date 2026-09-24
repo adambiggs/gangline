@@ -48,10 +48,10 @@ exactly in the composer; it never pastes the message again.
 ### Check what was submitted, not the screen
 
 Text on screen only proves it was pasted. Gang checks that the harness's submit
-hook reports the exact message it sent, including its one-time ID when present. Anything
+hook reports the exact message it sent, including its one-time token when present. Anything
 missing or different cannot count as delivered. A freshly observed native
 queue entry may instead prove `accepted` when its declared layout shows the
-full sender and one-time-ID opener and the composer is empty. Queue previews
+full sender and one-time-token opener and the composer is empty. Queue previews
 can truncate bodies, so this receipt never substitutes for exact hook proof.
 Accepted input leaves the spool and must not be resent. Without either proof,
 the result remains unverified and the command fails visibly.
@@ -140,9 +140,9 @@ with an armed timer only read its marker. Scheduler calls have bounded budgets.
 ### Notify on context crossings
 
 An observed upward crossing of a collar's context threshold queues a band note
-through ordinary delivery. Its `[gang:context-band]` tag omits the internal ID;
-only an exact submit hook can prove delivery, not a queue preview of the shared
-tag. If the hook is not available immediately after submission, record the note
+through ordinary delivery. Its `[gang:context-band#token]` tag omits the internal ID;
+only an exact submit hook proves delivery, not a queue preview. If the hook is
+not available immediately after submission, record the note
 as unverified and release the agent lock; a later exact hook can confirm it.
 The deciding reading is recorded in a
 `context_band_crossed` lifecycle event. Persist publication intents beside the

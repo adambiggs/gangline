@@ -4,6 +4,8 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 	"time"
@@ -28,7 +30,7 @@ func TestStartupTrustSurvivesDeadlineAndKeepsContract(t *testing.T) {
 		t.Fatal(err)
 	}
 	l.Close()
-	e := core.Envelope{ID: "startup-original", Recipient: a.ID, To: a.Name, From: core.Sender{Kind: core.SenderAgent, Name: "lead", HitchID: "lead-id"}, Message: core.Message{Text: "Standing contract: report completion.\nAssignment: fix it."}, CreatedAt: f.cmd.now()}
+	e := core.Envelope{ID: "original", Recipient: a.ID, To: a.Name, From: core.Sender{Kind: core.SenderAgent, Name: "lead", HitchID: "lead-id"}, Purpose: "assignment", Message: core.Message{Text: "Standing contract: report completion.\nAssignment: fix it."}, CreatedAt: f.cmd.now()}
 	if err := p.Publish(e); err != nil {
 		t.Fatal(err)
 	}
@@ -60,6 +62,19 @@ func TestStartupTrustSurvivesDeadlineAndKeepsContract(t *testing.T) {
 	if got.Message.Text != e.Message.Text || f.input.submits != 1 {
 		t.Fatalf("startup changed: %+v submits=%d", got, f.input.submits)
 	}
+	if err := f.run.recoverStartup("worker"); err != nil || !strings.Contains(f.out.String(), "delivered") || f.input.submits != 1 {
+		t.Fatalf("delivered startup recovery: %v output=%q submits=%d", err, f.out, f.input.submits)
+	}
+	path, err := p.EnvelopePath("cur", e.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Remove(path); err != nil {
+		t.Fatal(err)
+	}
+	if err := f.run.recoverStartup("worker"); err == nil || !strings.Contains(err.Error(), "no retained") {
+		t.Fatalf("cleaned startup receipt: %v", err)
+	}
 }
 
 type submitOnlyFixture struct{ *inputFixture }
@@ -72,62 +87,64 @@ func (b submitOnlyFixture) SendKeys(ctx context.Context, pane substrate.PaneID, 
 }
 
 func TestRecoverStartupSubmitsOriginalComposerWithoutRepaste(t *testing.T) {
-	for _, screen := range []string{"original", "empty", "prompt", "collapsed"} {
-		t.Run(screen, func(t *testing.T) {
-			f := newStateFixture(t)
-			a := f.add(t, "a", "worker", "codex")
-			p, _ := f.run.team.Agent(a.ID)
-			e := core.Envelope{ID: "startup-original", Recipient: a.ID, To: a.Name, From: core.Sender{Kind: core.SenderSelfDeclared, Name: "hitch"}, Message: core.Message{Text: "Standing contract: report completion. Assignment: fix it."}, CreatedAt: f.cmd.now()}
-			if err := p.Publish(e); err != nil {
-				t.Fatal(err)
-			}
-			l, err := p.TryLock()
-			if err != nil {
-				t.Fatal(err)
-			}
-			a.Input = &core.InputIntent{ID: string(e.ID), Kind: "envelope", At: f.cmd.now()}
-			if err := f.run.finishInput(l, &a, e, "unverified", "another surface owns input"); err != nil {
-				t.Fatal(err)
-			}
-			l.Close()
-			wire, err := envelopeText(e)
-			if err != nil {
-				t.Fatal(err)
-			}
-			f.input.pasted = wire // Input painted before trust took over. Recovery must not paste it again.
-			f.input.screen = screenWithText("› " + wire)
-			if screen == "empty" {
-				f.input.screen = screenWithText("READY", "› ")
-			}
-			if screen == "collapsed" {
-				f.input.screen = screenWithText(fmt.Sprintf("› [Pasted Content %d chars]", len(wire)))
-			}
-			if screen == "prompt" {
-				f.input.screen = screenWithText("Hooks need review", "› 1. Review hooks", "Press enter to confirm or esc to go back")
-			}
-			f.input.submit = func(prompt string) error {
-				return p.WriteWitness(store.Witness{ID: "recovered", At: f.cmd.now(), Prompt: prompt, SessionID: "s"})
-			}
-			f.cmd.inputBackend = submitOnlyFixture{f.input}
-			err = f.cmd.hitch([]string{"worker", "--recover"})
-			if screen != "original" {
-				var ce commandError
-				if !errors.As(err, &ce) || (ce.status != exitNative && ce.status != exitUnknown) || f.input.submits != 0 {
-					t.Fatalf("unsafe recovery err=%v submits=%d", err, f.input.submits)
+	for _, token := range []string{"", "0123456789abcdef"} {
+		for _, screen := range []string{"original", "empty", "prompt", "collapsed"} {
+			t.Run(fmt.Sprintf("token=%s/%s", token, screen), func(t *testing.T) {
+				f := newStateFixture(t)
+				a := f.add(t, "a", "worker", "codex")
+				p, _ := f.run.team.Agent(a.ID)
+				e := core.Envelope{ID: "original", Token: token, Recipient: a.ID, To: a.Name, From: core.Sender{Kind: core.SenderSelfDeclared, Name: "hitch"}, Purpose: "assignment", Message: core.Message{Text: "Standing contract: report completion. Assignment: fix it."}, CreatedAt: f.cmd.now()}
+				if err := p.Publish(e); err != nil {
+					t.Fatal(err)
 				}
-				return
-			}
-			if err != nil {
-				t.Fatal(err)
-			}
-			got, err := p.ReadEnvelope("cur", e.ID)
-			if err != nil {
-				t.Fatal(err)
-			}
-			if got.Message.Text != e.Message.Text || f.input.submits != 1 || !strings.Contains(f.out.String(), "delivered") {
-				t.Fatalf("recovery: %+v submits=%d output=%s", got, f.input.submits, f.out)
-			}
-		})
+				l, err := p.TryLock()
+				if err != nil {
+					t.Fatal(err)
+				}
+				a.Input = &core.InputIntent{ID: string(e.ID), Kind: "envelope", At: f.cmd.now()}
+				if err := f.run.finishInput(l, &a, e, "unverified", "another surface owns input"); err != nil {
+					t.Fatal(err)
+				}
+				l.Close()
+				wire, err := envelopeText(e)
+				if err != nil {
+					t.Fatal(err)
+				}
+				f.input.pasted = wire // Input painted before trust took over. Recovery must not paste it again.
+				f.input.screen = screenWithText("› " + wire)
+				if screen == "empty" {
+					f.input.screen = screenWithText("READY", "› ")
+				}
+				if screen == "collapsed" {
+					f.input.screen = screenWithText(fmt.Sprintf("› [Pasted Content %d chars]", len(wire)))
+				}
+				if screen == "prompt" {
+					f.input.screen = screenWithText("Hooks need review", "› 1. Review hooks", "Press enter to confirm or esc to go back")
+				}
+				f.input.submit = func(prompt string) error {
+					return p.WriteWitness(store.Witness{ID: "recovered", At: f.cmd.now(), Prompt: prompt, SessionID: "s"})
+				}
+				f.cmd.inputBackend = submitOnlyFixture{f.input}
+				err = f.cmd.hitch([]string{"worker", "--recover"})
+				if screen != "original" {
+					var ce commandError
+					if !errors.As(err, &ce) || (ce.status != exitNative && ce.status != exitUnknown) || f.input.submits != 0 {
+						t.Fatalf("unsafe recovery err=%v submits=%d", err, f.input.submits)
+					}
+					return
+				}
+				if err != nil {
+					t.Fatal(err)
+				}
+				got, err := p.ReadEnvelope("cur", e.ID)
+				if err != nil {
+					t.Fatal(err)
+				}
+				if got.Message.Text != e.Message.Text || f.input.submits != 1 || !strings.Contains(f.out.String(), "delivered") {
+					t.Fatalf("recovery: %+v submits=%d output=%s", got, f.input.submits, f.out)
+				}
+			})
+		}
 	}
 }
 
@@ -135,7 +152,13 @@ func TestPlainSendCannotReplaceUnverifiedStartupContract(t *testing.T) {
 	f := newStateFixture(t)
 	a := f.add(t, "a", "worker", "codex")
 	p, _ := f.run.team.Agent(a.ID)
-	a.LastFailed = "startup-original"
+	a.LastFailed = "original"
+	if err := p.Publish(core.Envelope{ID: a.LastFailed, Recipient: a.ID, To: a.Name, From: core.Sender{Kind: core.SenderGangline, Name: "hitch"}, Purpose: "assignment", Message: core.Message{Text: "original"}, CreatedAt: f.cmd.now()}); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Rename(filepath.Join(p.Inbox, "new", "original.json"), filepath.Join(p.Inbox, "failed", "original.json")); err != nil {
+		t.Fatal(err)
+	}
 	l, err := p.TryLock()
 	if err != nil {
 		t.Fatal(err)
@@ -151,6 +174,36 @@ func TestPlainSendCannotReplaceUnverifiedStartupContract(t *testing.T) {
 	err = f.cmd.send([]string{"worker", "--from", "operator"})
 	if err == nil || !strings.Contains(err.Error(), "--recover") || f.input.submits != 0 {
 		t.Fatalf("plain replacement err=%v submits=%d", err, f.input.submits)
+	}
+}
+
+func TestOrdinaryReceiptWithStartupLikeIDDoesNotBlockSend(t *testing.T) {
+	f := newStateFixture(t)
+	a := f.add(t, "a", "worker", "codex")
+	p, _ := f.run.team.Agent(a.ID)
+	e := core.Envelope{ID: "startup-decoy", Recipient: a.ID, To: a.Name, From: core.Sender{Kind: core.SenderSelfDeclared, Name: "operator"}, Message: core.Message{Text: "ordinary"}, CreatedAt: f.cmd.now()}
+	if err := p.Publish(e); err != nil {
+		t.Fatal(err)
+	}
+	l, err := p.TryLock()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := l.Settle(&a, e, "unverified", "fixture"); err != nil {
+		t.Fatal(err)
+	}
+	if err := l.Close(); err != nil {
+		t.Fatal(err)
+	}
+	if err := f.run.recoverStartup("worker"); err == nil || !strings.Contains(err.Error(), "no retained") {
+		t.Fatalf("ordinary message treated as startup: %v", err)
+	}
+	f.input.submit = func(prompt string) error {
+		return p.WriteWitness(store.Witness{ID: "replacement", At: f.cmd.now(), Prompt: prompt, SessionID: "s"})
+	}
+	f.cmd.stdin = strings.NewReader("follow-up")
+	if err := f.cmd.send([]string{"worker", "--from", "operator"}); err != nil || f.input.submits != 1 {
+		t.Fatalf("ordinary send blocked: %v submits=%d", err, f.input.submits)
 	}
 }
 

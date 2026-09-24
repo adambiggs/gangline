@@ -68,7 +68,9 @@ func (run *runtime) refreshNative(l *store.LockedAgent, a *core.Agent, c harness
 	for _, r := range parsed.Readings {
 		readings = append(readings, coreReading(r))
 	}
-	run.acceptContextReadings(a, c, readings)
+	if err := run.acceptContextReadings(a, c, readings); err != nil {
+		return err
+	}
 	a.Native.Offset = parsed.Offset
 	if err := l.Save(*a); err != nil {
 		return err

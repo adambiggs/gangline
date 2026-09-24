@@ -6,6 +6,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"regexp"
 	"strings"
 	"testing"
 	"time"
@@ -136,7 +137,7 @@ func TestCommandLifecycleOnPrivateTmux(t *testing.T) {
 	if strings.Count(string(argv), "# Gangline delivery contract") != 1 || strings.Contains(string(received), "# Gangline delivery contract") || strings.Contains(string(argv), "acceptance assignment") {
 		t.Fatalf("standing prose or task duplicated across launch and startup: argv=%q received=%q", argv, received)
 	}
-	if !strings.HasPrefix(string(received), "[gang:gangline:hitch#startup-") || !strings.Contains(string(received), " assignment] Assignment:\n\nacceptance assignment") {
+	if !regexp.MustCompile(`^\[gang:gangline:hitch#[0-9a-f]{16} assignment\]`).Match(received) || !strings.Contains(string(received), "Assignment:\n\nacceptance assignment") {
 		t.Fatalf("startup lacks Gangline attribution or assignment: %q", received)
 	}
 	// Launch from the registered worker pane to observe the assignment's author.
@@ -161,7 +162,7 @@ func TestCommandLifecycleOnPrivateTmux(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !strings.Contains(string(received), "[gang:worker#startup-") || !strings.Contains(string(received), " startup] No assignment was supplied.") {
+	if !regexp.MustCompile(`\[gang:worker#[0-9a-f]{16} startup\] No assignment was supplied\.`).Match(received) {
 		t.Fatalf("taskless startup lacks observed author or invents an assignment: %q", received)
 	}
 	wp, err := team.Agent(worker.ID)

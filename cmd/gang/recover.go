@@ -90,7 +90,9 @@ func (run *runtime) tickAgent(id core.HitchID, notice hookNotice, wait bool) err
 		return err
 	}
 	if notice.Kind == "compaction-finished" && !notice.At.IsZero() {
-		run.acceptContextReadings(&a, c, []core.Reading{{Kind: "compaction-finished", Source: "native-hook", At: &notice.At}})
+		if err := run.acceptContextReadings(&a, c, []core.Reading{{Kind: "compaction-finished", Source: "native-hook", At: &notice.At}}); err != nil {
+			return err
+		}
 		if err := l.Save(a); err != nil {
 			return err
 		}
@@ -98,7 +100,9 @@ func (run *runtime) tickAgent(id core.HitchID, notice hookNotice, wait bool) err
 			return err
 		}
 	}
-	run.acceptContextReadings(&a, c, notice.Readings)
+	if err := run.acceptContextReadings(&a, c, notice.Readings); err != nil {
+		return err
+	}
 	if err := run.observeContextBands(l, &a, c, screen); err != nil {
 		return err
 	}
@@ -128,7 +132,6 @@ func (run *runtime) tickAgent(id core.HitchID, notice hookNotice, wait bool) err
 			return err
 		}
 		if !a.Capacity.Submitted && !run.cmd.now().Before(a.Capacity.NextAt) && run.cmd.now().Before(a.Capacity.Deadline) {
-			e := core.Envelope{ID: core.EnvelopeID("capacity-" + a.Capacity.Fingerprint), Recipient: a.ID, To: a.Name, From: core.Sender{Kind: core.SenderGangline, Name: "capacity-recovery"}, Message: core.Message{Text: "Continue the interrupted work after the provider capacity error."}, CreatedAt: run.cmd.now()}
 			pending, err := l.Paths.ListNew()
 			if err != nil {
 				return err
@@ -141,6 +144,11 @@ func (run *runtime) tickAgent(id core.HitchID, notice hookNotice, wait bool) err
 				}
 			}
 			if !due {
+				token, err := randomEnvelopeToken()
+				if err != nil {
+					return err
+				}
+				e := core.Envelope{ID: core.EnvelopeID("capacity-" + a.Capacity.Fingerprint), Token: token, Recipient: a.ID, To: a.Name, From: core.Sender{Kind: core.SenderGangline, Name: "capacity-recovery"}, Message: core.Message{Text: "Continue the interrupted work after the provider capacity error."}, CreatedAt: run.cmd.now()}
 				if err := run.publishOnce(l, &a, e); err != nil {
 					return err
 				}
@@ -193,7 +201,11 @@ func (run *runtime) continueCompaction(l *store.LockedAgent, a *core.Agent) erro
 	if sender.Kind == "" {
 		sender = core.Sender{Kind: core.SenderGangline, Name: "compact"}
 	}
-	e := core.Envelope{ID: core.EnvelopeID("resume-" + c.ID), Recipient: a.ID, To: a.Name, From: sender, Message: c.Resume, CreatedAt: run.cmd.now()}
+	token, err := randomEnvelopeToken()
+	if err != nil {
+		return err
+	}
+	e := core.Envelope{ID: core.EnvelopeID("resume-" + c.ID), Token: token, Recipient: a.ID, To: a.Name, From: sender, Message: c.Resume, CreatedAt: run.cmd.now()}
 	if err := run.publishOnce(l, a, e); err != nil {
 		return err
 	}

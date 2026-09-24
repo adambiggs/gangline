@@ -1,6 +1,7 @@
 package main
 
 import (
+	"strings"
 	"testing"
 
 	"github.com/adambiggs/gangline/core"
@@ -19,6 +20,10 @@ func TestInterruptReasonCarriesGanglineSender(t *testing.T) {
 	}
 	if len(pending) != 1 || pending[0].From != (core.Sender{Kind: core.SenderGangline, Name: "interrupt"}) {
 		t.Fatalf("interrupt reason: %+v", pending)
+	}
+	wire, err := envelopeText(pending[0])
+	if err != nil || len(pending[0].Token) != 16 || !strings.Contains(wire, "#"+pending[0].Token+"]") || strings.Contains(wire, string(pending[0].ID)) {
+		t.Fatalf("interrupt token: %+v wire=%q err=%v", pending[0], wire, err)
 	}
 }
 

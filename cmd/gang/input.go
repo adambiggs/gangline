@@ -46,6 +46,14 @@ func randomID(prefix string) (string, error) {
 	return prefix + "-" + hex.EncodeToString(random[:]), nil
 }
 
+func randomEnvelopeToken() (string, error) {
+	var random [8]byte
+	if _, err := rand.Read(random[:]); err != nil {
+		return "", fmt.Errorf("create envelope token: %w", err)
+	}
+	return hex.EncodeToString(random[:]), nil
+}
+
 var envelopeTokenPattern = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9._:-]*$`)
 var envelopeMarkerPattern = regexp.MustCompile(`^[a-z][a-z-]*$`)
 var tagShapedTextPattern = regexp.MustCompile(`(?i)[\[［〔【]([[:space:]]*/?[[:space:]]*gang[[:space:]]*:)`)

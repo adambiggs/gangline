@@ -65,15 +65,19 @@ func (cmd command) send(args []string) (result error) {
 	if sender.HitchID == a.ID {
 		return refuseError("sender and recipient are the same hitch")
 	}
-	if strings.HasPrefix(string(a.LastFailed), "startup-") && o.At != "clear" {
-		return refuseError("startup contract input is unverified; inspect the recipient and run gang hitch %s --recover before sending another message", a.Name)
-	}
 	if a.Status != core.Active && a.Status != core.Booting {
 		return refuseError("recipient is not active")
 	}
 	p, err := run.team.Agent(a.ID)
 	if err != nil {
 		return err
+	}
+	_, failedStartup, err := retainedStartup(p, "failed", a.LastFailed)
+	if err != nil {
+		return err
+	}
+	if failedStartup && o.At != "clear" {
+		return refuseError("startup contract input is unverified; inspect the recipient and run gang hitch %s --recover before sending another message", a.Name)
 	}
 	now := cmd.now()
 	var e core.Envelope
@@ -93,7 +97,11 @@ func (cmd command) send(args []string) (result error) {
 		if err != nil {
 			return err
 		}
-		e = core.Envelope{ID: core.EnvelopeID(id), Recipient: a.ID, To: a.Name, From: sender, Message: core.Message{Text: body}, CreatedAt: now, NotBefore: due}
+		token, err := randomEnvelopeToken()
+		if err != nil {
+			return err
+		}
+		e = core.Envelope{ID: core.EnvelopeID(id), Token: token, Recipient: a.ID, To: a.Name, From: sender, Message: core.Message{Text: body}, CreatedAt: now, NotBefore: due}
 		if _, err := envelopeText(e); err != nil {
 			return err
 		}
@@ -278,7 +286,11 @@ func (cmd command) interrupt(args []string) (result error) {
 		return err
 	}
 	if reason != "" {
-		e := core.Envelope{ID: core.EnvelopeID(id), Recipient: a.ID, To: a.Name, From: core.Sender{Kind: core.SenderGangline, Name: "interrupt"}, Message: core.Message{Text: reason}, CreatedAt: cmd.now()}
+		token, err := randomEnvelopeToken()
+		if err != nil {
+			return err
+		}
+		e := core.Envelope{ID: core.EnvelopeID(id), Token: token, Recipient: a.ID, To: a.Name, From: core.Sender{Kind: core.SenderGangline, Name: "interrupt"}, Message: core.Message{Text: reason}, CreatedAt: cmd.now()}
 		if err := l.Paths.Publish(e); err != nil {
 			return err
 		}
@@ -349,7 +361,7 @@ func (cmd command) compact(args []string) (result error) {
 	if err != nil {
 		return err
 	}
-	if _, err := renderEnvelope("gangline:compact", "resume-"+id, "", resume); err != nil {
+	if _, err := envelopeText(core.Envelope{Token: "0123456789abcdef", From: resumeFrom, Message: core.Message{Text: resume}}); err != nil {
 		return err
 	}
 	now := cmd.now()

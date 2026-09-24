@@ -5,6 +5,7 @@ import "time"
 #Activity: "unknown" | "idle" | "busy" | "compacting" | "interrupting" | "blocked" | "wedged"
 #Envelope: close({
  id: #ID
+ token?: string & =~"^[0-9a-f]{16}$"
  from: close({kind: "agent" | "self_declared" | "gangline", name: #ID, hitch_id?: #ID})
  to: #ID
  recipient: #ID

@@ -67,6 +67,9 @@ func TestSendReportsNativeQueueAcceptance(t *testing.T) {
 			if err != nil || e.Outcome != "accepted" || !strings.Contains(e.Reason, "native queue") {
 				t.Fatalf("receipt: %+v %v", e, err)
 			}
+			if len(e.Token) != 16 || !strings.Contains(f.input.pasted, "#"+e.Token+"]") || strings.Contains(f.input.pasted, string(e.ID)) {
+				t.Fatalf("wire token differs from stored token: id=%s token=%q wire=%q", e.ID, e.Token, f.input.pasted)
+			}
 			got, err := p.Read()
 			if err != nil {
 				t.Fatal(err)
@@ -103,7 +106,7 @@ func TestSendDoesNotAcceptAmbiguousQueueEvidence(t *testing.T) {
 			f.input.submit = func(wire string) error {
 				switch kind {
 				case "wrong ID":
-					wire = strings.Replace(wire, "#msg-", "#different-", 1)
+					wire = strings.Replace(wire, "#", "#different", 1)
 				case "wrong sender":
 					wire = strings.Replace(wire, "operator#", "other#", 1)
 				case "clipped ID":

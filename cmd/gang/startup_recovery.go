@@ -4,7 +4,6 @@ import (
 	"errors"
 	"fmt"
 	"os"
-	"strings"
 
 	"github.com/adambiggs/gangline/core"
 	"github.com/adambiggs/gangline/harness"
@@ -14,6 +13,21 @@ import (
 
 func startupAttention(a core.Agent) error {
 	return commandError{status: exitNative, text: fmt.Sprintf("%s startup is queued in %s; resolve native prompts, then run gang tick; the original contract and assignment are retained", a.Name, a.Pane)}
+}
+
+func isStartupEnvelope(e core.Envelope) bool {
+	return e.Purpose == "startup" || e.Purpose == "assignment"
+}
+
+func retainedStartup(p store.AgentPaths, dir string, id core.EnvelopeID) (core.Envelope, bool, error) {
+	if id == "" {
+		return core.Envelope{}, false, nil
+	}
+	e, err := p.ReadEnvelope(dir, id)
+	if errors.Is(err, os.ErrNotExist) {
+		return core.Envelope{}, false, nil
+	}
+	return e, err == nil && isStartupEnvelope(e), err
 }
 
 // Recovery never reconstructs startup from today's prose or from an ordinary send.
@@ -32,7 +46,7 @@ func (run *runtime) recoverStartup(name string) (result error) {
 		return err
 	}
 	for _, e := range pending {
-		if strings.HasPrefix(string(e.ID), "startup-") {
+		if isStartupEnvelope(e) {
 			if err := l.Close(); err != nil {
 				return err
 			}
@@ -50,19 +64,23 @@ func (run *runtime) recoverStartup(name string) (result error) {
 			return err
 		}
 	}
-	if strings.HasPrefix(string(a.LastDelivered), "startup-") && !strings.HasPrefix(string(a.LastFailed), "startup-") {
+	_, deliveredStartup, err := retainedStartup(l.Paths, "cur", a.LastDelivered)
+	if err != nil {
+		return err
+	}
+	e, failedStartup, err := retainedStartup(l.Paths, "failed", a.LastFailed)
+	if err != nil {
+		return err
+	}
+	if deliveredStartup && !failedStartup {
 		_, err := fmt.Fprintf(run.cmd.stdout, "%s\tdelivered\n", a.LastDelivered)
 		return err
 	}
 	if a.Status != core.Active {
 		return refuseError("recipient is not active")
 	}
-	if !strings.HasPrefix(string(a.LastFailed), "startup-") {
+	if !failedStartup {
 		return refuseError("no retained unverified startup message for %s", name)
-	}
-	e, err := l.Paths.ReadEnvelope("failed", a.LastFailed)
-	if err != nil {
-		return err
 	}
 	if e.Outcome != "unverified" {
 		return refuseError("startup result is %s, not unverified", e.Outcome)

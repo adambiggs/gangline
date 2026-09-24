@@ -64,6 +64,9 @@ func TestCompactionQueuesContinuationAfterCompletion(t *testing.T) {
 			if err != nil || e.Outcome != "delivered" || a.Input != nil || f.input.submits != 2 {
 				t.Fatalf("continuation: %+v input=%+v submits=%d err=%v", e, a.Input, f.input.submits, err)
 			}
+			if len(e.Token) != 16 || !strings.Contains(f.input.pasted, "#"+e.Token+"]") || strings.Contains(f.input.pasted, string(e.ID)) {
+				t.Fatalf("resume leaked store ID: id=%s token=%q wire=%q", e.ID, e.Token, f.input.pasted)
+			}
 			if e.From != (core.Sender{Kind: core.SenderAgent, Name: a.Name, HitchID: a.ID}) {
 				t.Fatalf("custom resume sender: %+v", e.From)
 			}

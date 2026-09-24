@@ -127,6 +127,7 @@ func (s Sender) SameIdentity(other Sender) bool {
 
 type Envelope struct {
 	ID        EnvelopeID `json:"id"`
+	Token     string     `json:"token,omitempty"`
 	From      Sender     `json:"from"`
 	To        AgentName  `json:"to"`
 	Recipient HitchID    `json:"recipient"`

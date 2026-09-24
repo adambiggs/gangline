@@ -3,7 +3,6 @@ package main
 import (
 	"encoding/json"
 	"fmt"
-	"github.com/adambiggs/gangline/harness"
 	"os"
 	"path/filepath"
 	"strings"
@@ -11,6 +10,7 @@ import (
 	"time"
 
 	"github.com/adambiggs/gangline/core"
+	"github.com/adambiggs/gangline/harness"
 	"github.com/adambiggs/gangline/store"
 )
 
@@ -63,8 +63,12 @@ func TestContextBandNotesCrossings(t *testing.T) {
 			if f.input.submits != 2 {
 				t.Fatalf("jump across yellow and red submitted %d notes, want 2", f.input.submits)
 			}
-			if !strings.Contains(f.input.pasted, highName) || !strings.HasPrefix(f.input.pasted, "[gang:context-band] ") || !strings.HasSuffix(f.input.pasted, " [/gang:context-band]") || !strings.Contains(f.input.pasted, "run `gang compact --resume") {
+			if !strings.Contains(f.input.pasted, highName) || !strings.HasPrefix(f.input.pasted, "[gang:context-band#") || !strings.Contains(f.input.pasted, " [/gang:context-band#") || !strings.Contains(f.input.pasted, "run `gang compact --resume") {
 				t.Fatalf("band envelope: %s", f.input.pasted)
+			}
+			note, err := p.ReadEnvelope("cur", "context-2")
+			if err != nil || len(note.Token) != 16 || !strings.Contains(f.input.pasted, "#"+note.Token+"]") || strings.Contains(f.input.pasted, string(note.ID)) {
+				t.Fatalf("context note leaked store ID: id=%s token=%q wire=%q err=%v", note.ID, note.Token, f.input.pasted, err)
 			}
 			observe(high+1, "observed", at.Add(2*time.Second))
 			observe(0, "unknown", at.Add(3*time.Second))
@@ -269,7 +273,9 @@ func TestContextBandNotesPublicationRecovery(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			f.run.noteContextBands(&a, c)
+			if err := f.run.noteContextBands(&a, c); err != nil {
+				t.Fatal(err)
+			}
 			if len(a.ContextBands.Pending) != 1 {
 				t.Fatalf("no durable intent: %+v", a.ContextBands)
 			}

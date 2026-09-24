@@ -83,6 +83,10 @@ func (cmd command) hitch(args []string) (result error) {
 	if err != nil {
 		return err
 	}
+	token, err := randomEnvelopeToken()
+	if err != nil {
+		return err
+	}
 	sender, err := run.observedSender()
 	if err != nil {
 		return err
@@ -97,7 +101,7 @@ func (cmd command) hitch(args []string) (result error) {
 	}
 	now := cmd.now()
 	a := core.Agent{ID: core.HitchID(id), Name: core.AgentName(o.Name), Collar: o.Collar, Role: o.Role, Directory: dir, Status: core.Starting, Activity: core.Unknown, CreatedAt: now, ChangedAt: now, BootDeadline: now.Add(bootTimeout)}
-	e := core.Envelope{ID: core.EnvelopeID(eid), Recipient: a.ID, To: a.Name, From: sender, Purpose: purpose, Message: core.Message{Text: message}, CreatedAt: now}
+	e := core.Envelope{ID: core.EnvelopeID(eid), Token: token, Recipient: a.ID, To: a.Name, From: sender, Purpose: purpose, Message: core.Message{Text: message}, CreatedAt: now}
 	if _, err := envelopeText(e); err != nil {
 		return err
 	}

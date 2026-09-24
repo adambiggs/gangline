@@ -9,6 +9,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"regexp"
 	"strings"
 	"testing"
 	"time"
@@ -313,6 +314,9 @@ func TestCapacityRecoveryIgnoresFutureSchedules(t *testing.T) {
 	}
 	if !strings.Contains(f.input.pasted, "[gang:gangline:capacity-recovery#") {
 		t.Fatalf("capacity recovery sender: %q", f.input.pasted)
+	}
+	if !regexp.MustCompile(`\[gang:gangline:capacity-recovery#[0-9a-f]{16}\]`).MatchString(f.input.pasted) || strings.Contains(f.input.pasted, "capacity-"+a.Capacity.Fingerprint) {
+		t.Fatalf("capacity recovery leaked store ID: %q", f.input.pasted)
 	}
 	pending, err := p.ListNew()
 	if err != nil {

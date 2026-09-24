@@ -86,7 +86,9 @@ func (cmd command) statusline(args []string) (result error) {
 			if err != nil {
 				return err
 			}
-			run.acceptContextReadings(&a, c, converted)
+			if err := run.acceptContextReadings(&a, c, converted); err != nil {
+				return err
+			}
 			if err := l.Save(a); err != nil {
 				return err
 			}

@@ -44,7 +44,10 @@ func isContextBandNotice(e core.Envelope) bool {
 
 func envelopeText(e core.Envelope) (string, error) {
 	if isContextBandNotice(e) {
-		return renderEnvelopeTag("context-band", e.Purpose, e.Message.Text)
+		if e.Token == "" {
+			return renderEnvelopeTag("context-band", e.Purpose, e.Message.Text)
+		}
+		return renderEnvelope("context-band", e.Token, e.Purpose, e.Message.Text)
 	}
 	sender := string(e.From.Name)
 	if e.From.Kind == core.SenderSelfDeclared {
@@ -52,7 +55,11 @@ func envelopeText(e core.Envelope) (string, error) {
 	} else if e.From.Kind == core.SenderGangline {
 		sender = "gangline:" + sender
 	}
-	return renderEnvelope(sender, string(e.ID), e.Purpose, e.Message.Text)
+	token := e.Token
+	if token == "" { // An existing envelope may already be painted with its old ID opener.
+		token = string(e.ID)
+	}
+	return renderEnvelope(sender, token, e.Purpose, e.Message.Text)
 }
 
 // available observes the composer even during a running turn. A permission
@@ -105,8 +112,8 @@ func (run *runtime) deliver(l *store.LockedAgent, a *core.Agent, e core.Envelope
 		return "", err
 	}
 	var queue func(context.Context) (bool, error)
-	// Startup needs its exact contract witness. Context notes have no unique
-	// opener, so a queue preview cannot identify which note was accepted.
+	// Startup needs its exact contract witness. Context notes likewise keep
+	// exact hook proof rather than native queue acceptance.
 	if c.Primitives.QueueWitness != nil && c.Primitives.MidTurn && e.Purpose == "" && !isContextBandNotice(e) {
 		opener := wire[:strings.Index(wire, "]")+1]
 		queue = func(ctx context.Context) (bool, error) {
@@ -119,7 +126,7 @@ func (run *runtime) deliver(l *store.LockedAgent, a *core.Agent, e core.Envelope
 			}
 			return harness.NativeQueueAccepted(c, screen, opener)
 		}
-		// A fresh one-time ID must not already appear before this submission.
+		// A fresh one-time token must not already appear before this submission.
 		seen, err := queue(context.Background())
 		if err != nil {
 			return "", err
@@ -168,8 +175,8 @@ func (run *runtime) deliver(l *store.LockedAgent, a *core.Agent, e core.Envelope
 	var accepted bool
 	if err == nil {
 		if isContextBandNotice(e) {
-			// A queued note has no unique preview. Leave proof to a later
-			// hook instead of holding the agent lock waiting for its turn.
+			// Context notes use exact hook proof. Leave a queued note for a
+			// later hook instead of holding the agent lock waiting for its turn.
 			witness, err = l.Paths.ReadWitness()
 			if errors.Is(err, os.ErrNotExist) || err == nil && witness.ID == old.ID {
 				err = fmt.Errorf("context-band submit hook is not yet available")
@@ -186,14 +193,14 @@ func (run *runtime) deliver(l *store.LockedAgent, a *core.Agent, e core.Envelope
 				accepted, err = queue(ctx)
 			}
 			if err == nil && !accepted {
-				err = fmt.Errorf("submit witness does not match the message text and one-time ID")
+				err = fmt.Errorf("submit witness does not match the message text and one-time token")
 			}
 		}
 	}
 	if err != nil {
 		outcome, reason = "unverified", err.Error()
 	} else if accepted {
-		outcome, reason = "accepted", "native queue shows sender and one-time ID; do not resend"
+		outcome, reason = "accepted", "native queue shows sender and one-time token; do not resend"
 	} else {
 		if a.Native.SessionID != "" && witness.SessionID != "" && a.Native.SessionID != witness.SessionID {
 			outcome, reason = "unverified", "submit witness belongs to another native session"
@@ -272,7 +279,11 @@ func (run *runtime) drainLocked(l *store.LockedAgent, a *core.Agent, target core
 				return result, pending, nil
 			}
 		}
-		if strings.HasPrefix(string(a.LastFailed), "startup-") {
+		_, failedStartup, err := retainedStartup(l.Paths, "failed", a.LastFailed)
+		if err != nil {
+			return result, pending, err
+		}
+		if failedStartup {
 			return result, pending, nil
 		}
 		free, reason, err := run.available(l, a, b, c)

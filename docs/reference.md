@@ -59,7 +59,7 @@ A failed agent keeps its name until you drop it.
 | `gang compact NAME --recover` | Run the collar's recovery actions for a stuck compaction. |
 
 A send reports `delivered` when the exact native submit hook confirms it.
-`accepted` means the native queue shows the sender and full one-time-ID opener;
+`accepted` means the native queue shows the sender and full one-time-token opener;
 it exits successfully and says not to resend. Queue previews can truncate the
 body, so acceptance does not claim full-text submission or that the agent read
 or acted on it. `queued` remains in Gangline's spool. Without a submit witness
@@ -224,7 +224,7 @@ Startup names the launching agent when its pane is registered; otherwise its
 sender is `gangline:hitch`, identifying Gangline itself. The envelope is marked
 `assignment` only when a task was supplied, or `startup` otherwise.
 
-Gangline's context-band notices use `[gang:context-band]` tags without a message
+Gangline's context-band notices use `[gang:context-band#token]` tags without a message
 ID. Default compaction resume, interrupt reasons, and capacity recovery carry
 `gangline:` senders. A custom `--resume` note names
 the registered caller; outside a registered pane it carries
