@@ -10,6 +10,10 @@ import (
 )
 
 func newFileWatch(path string) (<-chan error, func() error, error) {
+	return newFileWatchKevent(path, syscall.Kevent)
+}
+
+func newFileWatchKevent(path string, kevent func(int, []syscall.Kevent_t, []syscall.Kevent_t, *syscall.Timespec) (int, error)) (<-chan error, func() error, error) {
 	file, err := os.Open(path)
 	if err != nil {
 		return nil, nil, fmt.Errorf("open state directory for watch: %w", err)
@@ -25,14 +29,21 @@ func newFileWatch(path string) (<-chan error, func() error, error) {
 		Flags:  syscall.EV_ADD | syscall.EV_CLEAR,
 		Fflags: syscall.NOTE_WRITE | syscall.NOTE_EXTEND | syscall.NOTE_DELETE | syscall.NOTE_RENAME,
 	}
-	if _, err := syscall.Kevent(queue, []syscall.Kevent_t{change}, nil, nil); err != nil {
+	if err := retryInterrupted(func() error {
+		_, err := kevent(queue, []syscall.Kevent_t{change}, nil, nil)
+		return err
+	}); err != nil {
 		_ = syscall.Close(queue)
 		_ = file.Close()
 		return nil, nil, fmt.Errorf("watch state directory: %w", err)
 	}
 	events := make(chan error, 1)
 	go func() {
-		_, err := syscall.Kevent(queue, nil, make([]syscall.Kevent_t, 1), nil)
+		ready := make([]syscall.Kevent_t, 1)
+		err := retryInterrupted(func() error {
+			_, err := kevent(queue, nil, ready, nil)
+			return err
+		})
 		events <- err
 	}()
 	var once sync.Once

@@ -2,8 +2,19 @@ package store
 
 import (
 	"context"
+	"errors"
 	"path/filepath"
+	"syscall"
 )
+
+func retryInterrupted(call func() error) error {
+	for {
+		err := call()
+		if !errors.Is(err, syscall.EINTR) {
+			return err
+		}
+	}
+}
 
 type ChangeWait struct {
 	events <-chan error
