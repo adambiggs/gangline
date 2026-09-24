@@ -1,0 +1,12 @@
+⏺ I'll check my identity and roster, get the Claude Code version, then reply to
+  the smoke test.
+
+  Bash(gang whoami; echo ---; gang roster; echo ---; claude --version)
+
+· Doing… (running PostToolUse hook · 7s · ↓ 317 tokens)
+  ⎿  Tip: Use /focus to see just your prompt, a one-line summary of the work,
+     and the response
+                                                                  40073 tokens
+────────────────────────────────────────────────────────────────────────────────
+❯
+────────────────────────────────────────────────────────────────────────────────

@@ -50,3 +50,37 @@ func TestComposerSettlesWhileNativeWorkAnimates(t *testing.T) {
 		t.Fatal("changed composer bypassed settling")
 	}
 }
+
+func TestClaudeToolRunScreenIsBusy(t *testing.T) {
+	collar, err := EmbeddedCollar("claude-code")
+	if err != nil {
+		t.Fatal(err)
+	}
+	screen := fixtureScreen(t, "claude-code-2.1.281-tool-run.txt")
+	busy, err := Busy(collar, screen)
+	if err != nil || !busy {
+		t.Fatalf("busy = %v, error = %v", busy, err)
+	}
+	idle, err := Idle(collar, screen)
+	if err != nil || idle {
+		t.Fatalf("idle = %v, error = %v", idle, err)
+	}
+}
+
+func TestClaudeCompletedProseDoesNotLookBusy(t *testing.T) {
+	collar, err := EmbeddedCollar("claude-code")
+	if err != nil {
+		t.Fatal(err)
+	}
+	screen := testScreen(
+		testCells("The completed response mentions running PostToolUse hook in prose.", false),
+		testCells("I also described · Doing… as a status label.", false),
+		testCells("────────────────────────────────────────────────────────────────────────────────", false),
+		testCells("❯", false),
+		testCells("────────────────────────────────────────────────────────────────────────────────", false),
+	)
+	idle, err := Idle(collar, screen)
+	if err != nil || !idle {
+		t.Fatalf("idle = %v, error = %v", idle, err)
+	}
+}
