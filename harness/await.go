@@ -117,21 +117,28 @@ func AwaitComposerSettle(ctx context.Context, capture captureScreen, pane substr
 	ticker := time.NewTicker(25 * time.Millisecond)
 	defer ticker.Stop()
 	observed := composerStability{}
+	var lastErr error
 	for {
 		screen, err := capture(ctx, pane)
 		if err != nil {
 			return err
 		}
 		composer, err := ReadComposer(collar.Primitives.Composer, screen)
-		if err != nil {
+		if err != nil && !errors.Is(err, ErrNoComposer) {
 			return err
 		}
-		if observed.ready(composer.Text, time.Now(), settle) {
+		lastErr = err
+		// A missing frame need not mean the pasted input was lost. Require
+		// a fresh stability window when it returns; never submit a missing
+		// composer or retry input that has already been pasted.
+		if err != nil {
+			observed = composerStability{}
+		} else if observed.ready(composer.Text, time.Now(), settle) {
 			return nil
 		}
 		select {
 		case <-ctx.Done():
-			return fmt.Errorf("native composer did not settle before submission: %w", ctx.Err())
+			return fmt.Errorf("native composer did not settle before submission: %w", errors.Join(ctx.Err(), lastErr))
 		case <-ticker.C:
 		}
 	}
