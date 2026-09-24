@@ -71,6 +71,9 @@ func (b *Backend) AcquireTree(ctx context.Context, pane substrate.PaneID, expect
 	if err != nil {
 		return nil, err
 	}
+	if len(owned) == 0 {
+		return &Owned{}, nil
+	}
 	ok := false
 	for _, p := range owned {
 		if p.pid == expected.PID && p.started == r.started {
@@ -81,20 +84,31 @@ func (b *Backend) AcquireTree(ctx context.Context, pane substrate.PaneID, expect
 		_ = closeOwnedProcesses(owned)
 		return nil, fmt.Errorf("pane process differs from its registered identity")
 	}
-	out := &Owned{processes: owned}
+	identities, err := currentOwnedIdentities(owned, boot, readCurrentProcess)
+	if err != nil {
+		_ = closeOwnedProcesses(owned)
+		return nil, err
+	}
+	out := &Owned{processes: owned, identities: identities}
+	return out, nil
+}
+
+func currentOwnedIdentities(owned []processIdentity, boot string, read func(int) (processRecord, error)) ([]Identity, error) {
+	var identities []Identity
 	for _, p := range owned {
-		r, err := readCurrentProcess(p.pid)
+		r, err := read(p.pid)
+		if processGone(err) {
+			continue
+		}
 		if err != nil {
-			_ = out.Close()
 			return nil, err
 		}
 		if r.started != p.started {
-			_ = out.Close()
 			return nil, fmt.Errorf("process changed during teardown preparation")
 		}
-		out.identities = append(out.identities, Identity{p.pid, p.started, r.version, r.uniqueID, boot})
+		identities = append(identities, Identity{p.pid, p.started, r.version, r.uniqueID, boot})
 	}
-	return out, nil
+	return identities, nil
 }
 
 func sameIdentity(expected Identity, actual processRecord) bool {

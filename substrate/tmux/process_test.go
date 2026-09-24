@@ -49,18 +49,21 @@ func TestPinObservedProcessRejectsReplacementDuringAcquisition(t *testing.T) {
 	}
 }
 
-func TestPinObservedProcessReleasesHandleWhenValidationDisappears(t *testing.T) {
+func TestPinObservedProcessKeepsHandleWhenValidationDisappears(t *testing.T) {
 	record := processRecord{Process: substrate.Process{PID: 200, ParentPID: 100}, started: "101"}
 	handle := &fakeProcessHandle{}
 	acquired := false
-	_, err := pinObservedProcess(record, func() (processRecord, error) {
+	identity, err := pinObservedProcess(record, func() (processRecord, error) {
 		if acquired {
 			return processRecord{}, syscall.ESRCH
 		}
 		return record, nil
 	}, func(processRecord) (processHandle, error) { acquired = true; return handle, nil })
-	if !errors.Is(err, syscall.ESRCH) || handle.closes != 1 {
-		t.Fatalf("vanished process: err=%v closes=%d", err, handle.closes)
+	if err != nil || identity.handle != handle || handle.closes != 0 {
+		t.Fatalf("vanished process lost its pinned handle: identity=%+v err=%v closes=%d", identity, err, handle.closes)
+	}
+	if err := identity.handle.close(); err != nil {
+		t.Fatal(err)
 	}
 }
 
@@ -103,6 +106,41 @@ func TestPinOwnedProcessesReleasesEarlierHandlesOnFailure(t *testing.T) {
 	})
 	if !errors.Is(err, syscall.EPERM) || handle.closes != 1 {
 		t.Fatalf("partial acquisition cleanup: err=%v closes=%d", err, handle.closes)
+	}
+}
+
+func TestPinOwnedProcessesSkipsVanishedChild(t *testing.T) {
+	root := processRecord{Process: substrate.Process{PID: 100}, started: "root"}
+	child := processRecord{Process: substrate.Process{PID: 200, ParentPID: 100}, started: "child"}
+	records := map[int]processRecord{100: root, 200: child}
+	owned, err := pinOwnedProcesses(100, records, func(record processRecord) (processIdentity, error) {
+		if record.PID == 200 {
+			return processIdentity{}, &os.PathError{Op: "open", Path: "/proc/200/stat", Err: os.ErrNotExist}
+		}
+		return processIdentity{pid: record.PID, handle: &fakeProcessHandle{}}, nil
+	})
+	if err != nil || len(owned) != 1 || owned[0].pid != 100 {
+		t.Fatalf("vanished child stopped acquisition: owned=%v err=%v", owned, err)
+	}
+	if err := closeOwnedProcesses(owned); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestPinOwnedProcessesReleasesChildrenWhenRootVanishes(t *testing.T) {
+	records := map[int]processRecord{
+		100: {Process: substrate.Process{PID: 100}},
+		200: {Process: substrate.Process{PID: 200, ParentPID: 100}},
+	}
+	childHandle := &fakeProcessHandle{}
+	owned, err := pinOwnedProcesses(100, records, func(record processRecord) (processIdentity, error) {
+		if record.PID == 100 {
+			return processIdentity{}, os.ErrNotExist
+		}
+		return processIdentity{pid: record.PID, handle: childHandle}, nil
+	})
+	if err != nil || len(owned) != 0 || childHandle.closes != 1 {
+		t.Fatalf("vanished root: owned=%v err=%v child closes=%d", owned, err, childHandle.closes)
 	}
 }
 

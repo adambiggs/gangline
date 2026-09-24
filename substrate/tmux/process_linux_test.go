@@ -151,7 +151,7 @@ func TestLinuxSnapshotReadCannotFollowExitedProcess(t *testing.T) {
 		opened = true
 		return &fakeProcessHandle{}, nil
 	})
-	if err == nil || opened {
+	if !processGone(err) || opened {
 		t.Fatalf("original procfs snapshot followed a PID after exit: err=%v opened=%v", err, opened)
 	}
 }

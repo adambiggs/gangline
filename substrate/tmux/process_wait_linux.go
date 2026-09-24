@@ -24,7 +24,8 @@ func bootIdentity() (string, error) {
 }
 
 func observeProcess(pid int) (processObservation, error) {
-	stat, err := os.Open(fmt.Sprintf("/proc/%d/stat", pid))
+	path := fmt.Sprintf("/proc/%d/stat", pid)
+	stat, err := os.Open(path)
 	if err != nil {
 		return processObservation{}, err
 	}
@@ -35,6 +36,9 @@ func observeProcess(pid int) (processObservation, error) {
 		data, err := io.ReadAll(stat)
 		if err != nil {
 			return processRecord{}, err
+		}
+		if len(data) == 0 {
+			return processRecord{}, &os.PathError{Op: "read", Path: path, Err: os.ErrNotExist}
 		}
 		return parseProcStat(string(data))
 	}

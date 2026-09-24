@@ -114,6 +114,9 @@ func (backend *Backend) ownedProcesses(ctx context.Context, pane substrate.PaneI
 	// Capture the root before enumerating the rest. In particular, do not
 	// relabel a coarse ps snapshot with a replacement root's native identity.
 	rootObservation, err := observeProcess(root)
+	if processGone(err) {
+		return nil, nil
+	}
 	if err != nil {
 		return nil, err
 	}
@@ -153,6 +156,10 @@ func (backend *Backend) ownedProcesses(ctx context.Context, pane substrate.PaneI
 	return owned, nil
 }
 
+func processGone(err error) bool {
+	return errors.Is(err, os.ErrNotExist) || errors.Is(err, syscall.ESRCH)
+}
+
 func observeProcessCandidates(root int, enumerated map[int]processRecord, observations map[int]processObservation, observe func(int) (processObservation, error)) error {
 	// ps bounds descriptor use to possible descendants. Membership here
 	// authorizes only an observation; retained native ancestry and identity
@@ -162,7 +169,7 @@ func observeProcessCandidates(root int, enumerated map[int]processRecord, observ
 			continue
 		}
 		observation, err := observe(pid)
-		if errors.Is(err, os.ErrNotExist) || errors.Is(err, syscall.ESRCH) {
+		if processGone(err) {
 			continue
 		}
 		if err != nil {
@@ -207,6 +214,12 @@ func pinOwnedProcesses(root int, records map[int]processRecord, open func(proces
 	owned := make([]processIdentity, 0, len(pids))
 	for _, pid := range pids {
 		identity, err := open(records[pid])
+		if processGone(err) {
+			if pid == root {
+				return nil, closeOwnedProcesses(owned)
+			}
+			continue
+		}
 		if err != nil {
 			return nil, errors.Join(fmt.Errorf("pin recorded process %d: %w", pid, err), closeOwnedProcesses(owned))
 		}
@@ -258,6 +271,9 @@ func pinObservedProcess(expected processRecord, read func() (processRecord, erro
 		return processIdentity{}, err
 	}
 	after, err := read()
+	if processGone(err) {
+		return processIdentity{pid: before.PID, started: before.started, handle: handle}, nil
+	}
 	if err == nil && (after.PID != before.PID || after.ParentPID != before.ParentPID || after.started != before.started || after.parentUniqueID != before.parentUniqueID) {
 		err = fmt.Errorf("process %d changed during identity acquisition", expected.PID)
 	}
