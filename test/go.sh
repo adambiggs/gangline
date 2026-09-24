@@ -41,5 +41,6 @@ echo "go: substrate and harness do not import core"
 
 test/distribution.sh
 
-go test -count=1 -timeout=90s ./...
+go test -count=1 -timeout=90s -skip '^TestLive(ClaudeCode|Codex)$' ./...
+GANGLINE_LIVE_PROVIDERS=1 go test -v -count=1 -timeout=175s -run '^TestLive(ClaudeCode|Codex)$' ./acceptance
 echo "go: tests passed"

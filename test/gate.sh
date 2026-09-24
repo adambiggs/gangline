@@ -9,6 +9,7 @@ unset GIT_DIR GIT_WORK_TREE GIT_INDEX_FILE GIT_OBJECT_DIRECTORY GIT_COMMON_DIR G
 # The gate prepares and runs disposable fixture lanes. Keep an agent pane's
 # return route and team selection from reaching them.
 unset TMUX TMUX_PANE GANG_TMUX GANG_TMUX_SOCKET GANG_CONFIG_DIR GANG_SESSION GANG_COLLARS
+unset GANGLINE_ACCEPTANCE_COLLARS
 
 ROOT="$(cd -P "$(dirname "$0")/.." && pwd)"
 
@@ -18,7 +19,7 @@ ROOT="$(cd -P "$(dirname "$0")/.." && pwd)"
 if [ -z "${_GANGLINE_GATE_LOCKED:-}" ]; then
   export _GANGLINE_GATE_LOCKED=1
   outer_rc=0
-  flock -E 75 -o -w 3 "${TMPDIR:-/tmp}/gangline-heavy.lock" timeout 110 "$0" "$@" || outer_rc=$?
+  flock -E 75 -o -w 3 "${TMPDIR:-/tmp}/gangline-heavy.lock" timeout 330 "$0" "$@" || outer_rc=$?
   if [ "$outer_rc" -eq 75 ]; then
     printf 'gate: VERDICT UNKNOWN (status 75); another gate owns the host lock.\n'
   fi
