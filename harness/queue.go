@@ -43,7 +43,7 @@ func NativeQueueAccepted(c Collar, screen substrate.Screen, opener string) (bool
 	start := end
 	for start > 0 {
 		line := lines[start-1]
-		if strings.TrimSpace(line) == "" || queueHeader(line) || strings.HasPrefix(line, "  ↳ ") || strings.HasPrefix(line, "    ") || strings.HasPrefix(line, "  (press ") {
+		if strings.TrimSpace(line) == "" || queueHeader(line) || queueHeaderContinuation(line) || strings.HasPrefix(line, "  ↳ ") || strings.HasPrefix(line, "    ") || strings.HasPrefix(line, "  (press ") {
 			start--
 			continue
 		}
@@ -78,12 +78,16 @@ func NativeQueueAccepted(c Collar, screen substrate.Screen, opener string) (bool
 }
 
 func queueHeader(line string) bool {
-	switch strings.TrimSpace(line) {
+	trimmed := strings.TrimSpace(line)
+	switch trimmed {
 	case "• Messages to be submitted after next tool call", "• Messages to be submitted at end of turn", "• Queued follow-up inputs":
 		return true
 	}
-	// Wide terminals keep this hint on the header line.
-	return strings.HasPrefix(strings.TrimSpace(line), "• Messages to be submitted after next tool call (press ") && strings.HasSuffix(strings.TrimSpace(line), " to interrupt and send immediately)")
+	return strings.HasPrefix(trimmed, "• Messages to be submitted after next tool call (press ")
+}
+
+func queueHeaderContinuation(line string) bool {
+	return strings.HasPrefix(line, "  ") && strings.HasSuffix(strings.TrimSpace(line), "immediately)")
 }
 
 func dimContent(row []substrate.Cell) bool {
