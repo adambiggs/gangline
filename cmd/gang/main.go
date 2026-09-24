@@ -96,6 +96,13 @@ func (cmd command) execute(args []string) error {
 		_, err := fmt.Fprintf(cmd.stdout, "gangline %s\n", version)
 		return err
 	}
+	if args[0] == "help" {
+		for _, argument := range args[1:] {
+			if argument == "--help" || argument == "-h" {
+				return cmd.printHelp("help")
+			}
+		}
+	}
 	if args[0] == "help" || args[0] == "--help" || args[0] == "-h" {
 		if len(args) > 2 {
 			return usageError("help: expected at most one command")
@@ -106,8 +113,10 @@ func (cmd command) execute(args []string) error {
 		}
 		return cmd.printHelp(name)
 	}
-	if len(args) == 2 && args[1] == "--help" {
-		return cmd.printHelp(args[0])
+	for _, argument := range args[1:] {
+		if argument == "--help" || argument == "-h" {
+			return cmd.printHelp(args[0])
+		}
 	}
 
 	name, arguments := args[0], args[1:]

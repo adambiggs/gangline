@@ -77,7 +77,9 @@ func (cmd command) teams(arguments []string) error {
 }
 
 func (cmd command) upgrade(arguments []string) error {
-	if len(arguments) > 1 || (len(arguments) == 1 && arguments[0] != "--check") {
+	check := false
+	flags := boundFlagSet("upgrade", map[string]any{"check": &check})
+	if err := flags.Parse(arguments); err != nil || flags.NArg() != 0 {
 		return usageError("upgrade accepts only --check")
 	}
 	home, err := cmd.userHomeDir()
@@ -90,7 +92,7 @@ func (cmd command) upgrade(arguments []string) error {
 		return fmt.Errorf("upgrade requires an installer-managed release at %s", installRoot)
 	}
 	processArgs := []string{installer}
-	if len(arguments) == 1 {
+	if check {
 		processArgs = append(processArgs, "--check")
 	}
 	process := exec.Command("sh", processArgs...)

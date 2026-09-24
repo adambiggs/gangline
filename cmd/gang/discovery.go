@@ -43,18 +43,12 @@ func (cmd command) models(arguments []string) error {
 	if err != nil {
 		return err
 	}
-	name := settings.Collar
-	flags := quietFlagSet("models")
-	flags.StringVar(&name, "c", name, "harness collar")
-	flags.StringVar(&name, "collar", name, "harness collar")
-	if err := flags.Parse(arguments); err != nil {
+	name, err := parseCollarFlags("models", arguments, settings.Collar)
+	if err != nil {
 		if err == flag.ErrHelp {
 			return cmd.printHelp("models")
 		}
 		return usageError("models: %v", err)
-	}
-	if flags.NArg() != 0 {
-		return usageError("models: unexpected argument %q", flags.Arg(0))
 	}
 	collar, err := loadCollar(name, settings)
 	if err != nil {

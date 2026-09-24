@@ -24,10 +24,18 @@ func observationName(args []string, name string) (string, error) {
 	return args[0], nil
 }
 func (cmd command) context(args []string) error {
-	if len(args) > 0 && args[0] == "--widget" {
-		return cmd.contextWidget(args[1:])
+	widget := ""
+	flags := boundFlagSet("context", map[string]any{"widget": &widget})
+	if err := flags.Parse(args); err != nil {
+		return usageError("context: %v", err)
 	}
-	name, err := observationName(args, "context")
+	if flagWasSet(flags, "widget") {
+		if flags.NArg() != 0 {
+			return usageError("context --widget: expected NAME or off")
+		}
+		return cmd.contextWidget([]string{widget})
+	}
+	name, err := observationName(flags.Args(), "context")
 	if err != nil {
 		return err
 	}
@@ -83,15 +91,20 @@ func (cmd command) context(args []string) error {
 	return err
 }
 func (cmd command) limits(args []string) error {
-	if len(args) > 0 && args[0] == "-c" {
-		if len(args) != 2 {
+	collar := ""
+	flags := boundFlagSet("limits", map[string]any{"c": &collar})
+	if err := flags.Parse(args); err != nil {
+		return usageError("limits: %v", err)
+	}
+	if flagWasSet(flags, "c") {
+		if flags.NArg() != 0 {
 			return usageError("limits -c: expected one collar and no agent")
 		}
 		s, err := cmd.settings()
 		if err != nil {
 			return err
 		}
-		c, err := loadCollar(args[1], s)
+		c, err := loadCollar(collar, s)
 		if err != nil {
 			return err
 		}
@@ -108,7 +121,7 @@ func (cmd command) limits(args []string) error {
 		}
 		return nil
 	}
-	name, err := observationName(args, "limits")
+	name, err := observationName(flags.Args(), "limits")
 	if err != nil {
 		return err
 	}
@@ -161,10 +174,11 @@ func (cmd command) limits(args []string) error {
 }
 func (cmd command) capture(args []string) error {
 	composer := false
-	if len(args) > 0 && args[0] == "--composer" {
-		composer = true
-		args = args[1:]
+	flags := boundFlagSet("capture", map[string]any{"composer": &composer})
+	if err := flags.Parse(args); err != nil {
+		return usageError("capture: %v", err)
 	}
+	args = flags.Args()
 	if len(args) > 2 {
 		return usageError("capture: too many arguments")
 	}

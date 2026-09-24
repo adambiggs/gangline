@@ -239,8 +239,7 @@ func (cmd command) interrupt(args []string) (result error) {
 		name, args = args[0], args[1:]
 	}
 	reason := ""
-	flags := quietFlagSet("interrupt")
-	flags.StringVar(&reason, "m", "", "reason")
+	flags := boundFlagSet("interrupt", map[string]any{"m": &reason})
 	if err := flags.Parse(args); err != nil || flags.NArg() != 0 {
 		return usageError("interrupt: invalid arguments")
 	}

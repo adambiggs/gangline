@@ -3,6 +3,7 @@ package main
 import (
 	"fmt"
 	"io"
+	"strings"
 )
 
 const welcomeHelp = `gang — a team of CLI agents in tmux
@@ -53,13 +54,18 @@ Observe and control:
 Settings and discovery:
   curfew    set or show the team deadline
   collars   list harness collars
+  collar    check an installed harness
   models    list models for a collar (-c)
   roles     list role briefs
   config    show effective configuration
 
 Installation:
   --version print the release version
+  version   print the release version
   upgrade   install or check the latest release
+
+Help:
+  help      show command help
 
 Native integration:
   hook      read native hook JSON from stdin
@@ -68,9 +74,9 @@ Native integration:
 var commandUsage = map[string]string{
 	"up":         "usage: gang up [NAME] [HITCH OPTIONS]\n",
 	"hitch":      "usage: gang hitch NAME [-c COLLAR] [-d DIR] [-m MODEL] [-e EFFORT] [-t TASK] [-r ROLE] [--resume SESSION] [--stdin]\n       gang hitch NAME --recover\n",
-	"adopt":      "usage: gang adopt NAME -c COLLAR\n",
+	"adopt":      "usage: gang adopt NAME [-c COLLAR]\n",
 	"rename":     "usage: gang rename OLD NEW\n",
-	"send":       "usage: gang send NAME [--from SENDER] [--live-only] [--supersede] [--at TIME]\n",
+	"send":       "usage: gang send NAME [--from SENDER] [--live-only] [--supersede] [--at DURATION|HH:MM|clear]\n",
 	"queue":      "usage: gang queue [NAME]\n",
 	"interrupt":  "usage: gang interrupt [NAME] [-m REASON]\n",
 	"compact":    "usage: gang compact [NAME] [--resume TEXT]\n       gang compact NAME --recover\n",
@@ -81,7 +87,7 @@ var commandUsage = map[string]string{
 	"wait":       "usage: gang wait NAME [--timeout DURATION]\n",
 	"curfew":     "usage: gang curfew [DURATION | HH:MM | clear]\n",
 	"status":     "usage: gang status [NAME] [--why]\n",
-	"tick":       "usage: gang tick [--agent ID]\n",
+	"tick":       "usage: gang tick [--agent ID]\n       gang tick --source watchdog --watchdog UNIT\n",
 	"capture":    "usage: gang capture [NAME] [LINES]\n       gang capture --composer [NAME]\n",
 	"whoami":     "usage: gang whoami\n",
 	"roster":     "usage: gang roster [--porcelain]\n",
@@ -96,6 +102,90 @@ var commandUsage = map[string]string{
 	"config":     "usage: gang config\n",
 	"upgrade":    "usage: gang upgrade [--check]\n",
 	"hook":       "usage: gang hook < native-hook.json\n",
+	"help":       "usage: gang help [COMMAND]\n",
+	"version":    "usage: gang version\n",
+}
+
+type optionSpec struct {
+	name, argument, meaning string
+}
+
+// These definitions drive both flag registration and help. A nonempty argument
+// names a required value; an empty argument denotes a boolean switch.
+var commandOptions = map[string][]optionSpec{
+	"hitch": {
+		{"c", "COLLAR", "harness collar"}, {"collar", "COLLAR", "harness collar"},
+		{"d", "DIR", "working directory"}, {"dir", "DIR", "working directory"},
+		{"m", "MODEL", "native model"}, {"model", "MODEL", "native model"},
+		{"e", "EFFORT", "reasoning effort"}, {"effort", "EFFORT", "reasoning effort"},
+		{"t", "TASK", "startup assignment"}, {"task", "TASK", "startup assignment"},
+		{"r", "ROLE", "role brief"}, {"role", "ROLE", "role brief"},
+		{"resume", "SESSION", "resume a native session"},
+		{"recover", "", "recover the original startup message"},
+		{"stdin", "", "read the assignment from stdin"},
+	},
+	"adopt": {{"c", "COLLAR", "harness collar"}, {"collar", "COLLAR", "harness collar"}},
+	"send": {
+		{"from", "SENDER", "outside sender identity"},
+		{"live-only", "", "refuse rather than queue"},
+		{"supersede", "", "replace older queued work"},
+		{"at", "DURATION|HH:MM|clear", "schedule delivery or clear scheduled messages"},
+	},
+	"interrupt": {{"m", "REASON", "reason to deliver after interrupt"}},
+	"compact": {
+		{"resume", "TEXT", "continuation after compaction"},
+		{"recover", "", "recover a stuck compaction"},
+	},
+	"statusline": {{"install", "", "install the native status line"}},
+	"context":    {{"widget", "NAME|off", "set or clear the context widget"}},
+	"log": {
+		{"agent", "NAME|HITCH_ID", "show events for one agent"},
+		{"type", "TYPE|KIND", "show events or readings of this type"},
+	},
+	"limits": {{"c", "COLLAR", "query a collar without an agent"}},
+	"wait":   {{"timeout", "DURATION", "maximum wait; zero checks once"}},
+	"status": {{"why", "", "include recorded wedge evidence"}},
+	"tick": {
+		{"agent", "ID", "tick one hitch ID"},
+		{"source", "watchdog", "identify a watchdog tick"},
+		{"watchdog", "UNIT", "watchdog generation token"},
+	},
+	"capture": {{"composer", "", "print only the native composer"}},
+	"roster":  {{"porcelain", "", "print machine-readable rows"}},
+	"models": {
+		{"c", "COLLAR", "harness collar"},
+		{"collar", "COLLAR", "harness collar"},
+	},
+	"upgrade": {{"check", "", "check for a release without installing"}},
+}
+
+func optionsFor(name string) []optionSpec {
+	if name == "up" {
+		return commandOptions["hitch"]
+	}
+	return commandOptions[name]
+}
+
+func optionSpelling(name string) string {
+	if len(name) == 1 {
+		return "-" + name
+	}
+	return "--" + name
+}
+
+func optionHelp(name string) string {
+	var out strings.Builder
+	for _, option := range optionsFor(name) {
+		fmt.Fprintf(&out, "  %-22s %s\n", optionSpelling(option.name)+optionArgument(option), option.meaning)
+	}
+	return out.String()
+}
+
+func optionArgument(option optionSpec) string {
+	if option.argument == "" {
+		return ""
+	}
+	return " " + option.argument
 }
 
 var commandDescription = map[string]string{
@@ -129,11 +219,21 @@ var commandDescription = map[string]string{
 	"config":     "Print persistent settings, effective values, and their sources.\n",
 	"upgrade":    "Check or install the latest stable release into an installer-managed tree.\n",
 	"hook":       "Read native hook JSON on stdin and resolve the pane by GANGLINE_HITCH_ID.\n",
+	"help":       "Show the command inventory or detailed help for one command.\n",
+	"version":    "Print the release version.\n",
 }
 
 func (cmd command) printHelp(name string) error {
 	if name == "" {
-		_, err := io.WriteString(cmd.stdout, commandInventory)
+		var out strings.Builder
+		out.WriteString(commandInventory)
+		out.WriteString("\nGlobal flags:\n  --help                 show help\n  -h                     show help\n  --version              print the release version\n")
+		out.WriteString("\nFlag syntax: the options in Command flags below accept one or two leading dashes; values can follow a space or =, and switches accept =true or =false.\n")
+		out.WriteString("\nCommand flags (run 'gang help COMMAND' for details):\n")
+		for _, commandName := range []string{"up", "hitch", "adopt", "send", "interrupt", "compact", "statusline", "context", "log", "limits", "wait", "status", "tick", "capture", "roster", "models", "upgrade"} {
+			fmt.Fprintf(&out, "  %s:\n%s", commandName, optionHelp(commandName))
+		}
+		_, err := io.WriteString(cmd.stdout, out.String())
 		return err
 	}
 	usage, ok := commandUsage[name]
@@ -141,5 +241,17 @@ func (cmd command) printHelp(name string) error {
 		return usageError("help: unknown command %q", name)
 	}
 	_, err := fmt.Fprintf(cmd.stdout, "%s\n%s", usage, commandDescription[name])
+	if err != nil {
+		return err
+	}
+	if flags := optionHelp(name); flags != "" {
+		_, err = fmt.Fprintf(cmd.stdout, "\nOptions:\n%s", flags)
+	}
+	if err == nil {
+		_, err = io.WriteString(cmd.stdout, "\n  --help                 show this help\n  -h                     show this help\n")
+	}
+	if err == nil && len(optionsFor(name)) != 0 {
+		_, err = io.WriteString(cmd.stdout, "\nFlag syntax: the Options block above accepts one or two leading dashes; values may use =VALUE, and switches accept =true or =false.\n")
+	}
 	return err
 }

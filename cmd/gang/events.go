@@ -133,10 +133,9 @@ func (cmd command) detachTick(id string, n hookNotice, s settings) error {
 }
 func (cmd command) tick(args []string) (result error) {
 	id, source, generation := "", "", ""
-	flags := quietFlagSet("tick")
-	flags.StringVar(&id, "agent", "", "hitch ID")
-	flags.StringVar(&source, "source", "", "tick source")
-	flags.StringVar(&generation, "watchdog", "", "watchdog generation")
+	flags := boundFlagSet("tick", map[string]any{
+		"agent": &id, "source": &source, "watchdog": &generation,
+	})
 	if err := flags.Parse(args); err != nil || flags.NArg() != 0 {
 		return usageError("tick: expected optional --agent ID or --source watchdog --watchdog UNIT")
 	}

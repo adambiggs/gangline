@@ -21,6 +21,13 @@ func TestParseSendRejectsUnsafeCombinations(t *testing.T) {
 	}
 }
 
+func TestSendAtAcceptsClear(t *testing.T) {
+	options, err := parseSend([]string{"worker", "--at", "clear"})
+	if err != nil || options.At != "clear" {
+		t.Fatalf("options=%+v err=%v", options, err)
+	}
+}
+
 func TestParseCompactAllowsSelfTarget(t *testing.T) {
 	got, err := parseCompact([]string{"--resume", "continue"})
 	if err != nil {

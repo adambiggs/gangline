@@ -13,7 +13,12 @@ import (
 )
 
 func (cmd command) statusline(args []string) (result error) {
-	if len(args) == 1 && args[0] == "--install" {
+	install := false
+	flags := boundFlagSet("statusline", map[string]any{"install": &install})
+	if err := flags.Parse(args); err != nil || flags.NArg() != 0 {
+		return usageError("statusline: invalid arguments")
+	}
+	if install {
 		home, err := cmd.userHomeDir()
 		if err != nil {
 			return err
@@ -27,9 +32,6 @@ func (cmd command) statusline(args []string) (result error) {
 			return err
 		}
 		_, err = fmt.Fprintf(cmd.stdout, "status-line settings updated: %t\n", changed)
-		return err
-	}
-	if err := noArguments(args, "statusline"); err != nil {
 		return err
 	}
 	data, err := io.ReadAll(io.LimitReader(cmd.stdin, maximumHookBytes+1))

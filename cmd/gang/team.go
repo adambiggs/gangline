@@ -19,7 +19,7 @@ func (cmd command) up(args []string) error {
 	if len(args) > 0 && !strings.HasPrefix(args[0], "-") {
 		name, args = args[0], args[1:]
 	}
-	if err := cmd.hitch(append([]string{name, "--role", "lead"}, args...)); err != nil {
+	if err := cmd.hitch(upHitchArguments(name, args)); err != nil {
 		return err
 	}
 	if f, ok := cmd.stdin.(*os.File); ok {
@@ -28,6 +28,14 @@ func (cmd command) up(args []string) error {
 		}
 	}
 	return nil
+}
+func upHitchArguments(name string, args []string) []string {
+	if len(args) == 1 {
+		if parsed, err := parseHitch([]string{name, args[0]}, "default", "default"); err == nil && parsed.Recover {
+			return []string{name, args[0]}
+		}
+	}
+	return append([]string{name, "--role", "lead"}, args...)
 }
 func (cmd command) down(args []string) error {
 	if err := exactly(args, 1, "down"); err != nil {
@@ -200,8 +208,7 @@ func (run *runtime) observeRoster(agents []core.Agent) ([]core.Agent, error) {
 }
 func (cmd command) roster(args []string) error {
 	machine := false
-	flags := quietFlagSet("roster")
-	flags.BoolVar(&machine, "porcelain", false, "machine format")
+	flags := boundFlagSet("roster", map[string]any{"porcelain": &machine})
 	if err := flags.Parse(args); err != nil || flags.NArg() != 0 {
 		return usageError("roster: invalid arguments")
 	}
@@ -235,8 +242,7 @@ func (cmd command) status(args []string) error {
 		name, args = args[0], args[1:]
 	}
 	why := false
-	flags := quietFlagSet("status")
-	flags.BoolVar(&why, "why", false, "evidence")
+	flags := boundFlagSet("status", map[string]any{"why": &why})
 	if err := flags.Parse(args); err != nil || flags.NArg() != 0 {
 		return usageError("status: invalid arguments")
 	}

@@ -257,12 +257,9 @@ func (cmd command) adopt(args []string) (result error) {
 	if err != nil {
 		return err
 	}
-	collar := run.settings.Collar
-	flags := quietFlagSet("adopt")
-	flags.StringVar(&collar, "c", collar, "collar")
-	flags.StringVar(&collar, "collar", collar, "collar")
-	if err := flags.Parse(args[1:]); err != nil || flags.NArg() != 0 {
-		return usageError("adopt: expected NAME -c COLLAR")
+	collar, err := parseCollarFlags("adopt", args[1:], run.settings.Collar)
+	if err != nil {
+		return usageError("adopt: %v", err)
 	}
 	if _, err := loadCollar(collar, run.settings); err != nil {
 		return err
