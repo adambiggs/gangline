@@ -38,6 +38,13 @@ Hitch options: `-c/--collar`, `-d/--dir`, `-m/--model`, `-e/--effort`,
 assignment from stdin). `-e` needs `-m`. `gang up` defaults to the `lead` role
 and the current directory.
 
+Before launching a resumed window for a collar with supported transcript
+discovery, Gangline verifies its native session identity. Discovery supports
+Codex session logs and Claude project transcripts, including their native
+configuration-directory overrides. Missing transcripts and mismatched
+identities are refused as unverified. Custom collars without supported
+transcript discovery retain their native CLI's resume validation.
+
 A failed agent keeps its name until you drop it.
 
 ### Messages and control

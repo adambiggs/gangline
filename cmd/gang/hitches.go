@@ -42,6 +42,11 @@ func (cmd command) hitch(args []string) (result error) {
 	if err != nil {
 		return err
 	}
+	if o.Resume != "" {
+		if err := harness.ValidateResume(c, o.Resume); err != nil {
+			return refuseError("%s", err)
+		}
+	}
 	if o.Effort != "" && o.Model == "" {
 		return usageError("hitch: --effort requires --model")
 	}
