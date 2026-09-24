@@ -53,6 +53,7 @@ collar: {
 		}}
 		context: {name: "codex-screen-context"}
 		provider_limits: {name: "codex-screen-limits"}
+		limits_query: {name: "codex-app-server-limits"}
 		wedge: {name: "stable-busy-screen", params: {busy: "esc to interrupt", after: "5m"}}
 	}
 	actions: {

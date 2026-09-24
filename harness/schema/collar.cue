@@ -68,6 +68,7 @@ package harness
 		blocked:       #Invocation
 		context:       #Invocation
 		provider_limits: #Invocation
+		limits_query?: #Invocation
 		wedge:         #Invocation
 	})
 	actions: close({

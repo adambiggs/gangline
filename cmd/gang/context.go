@@ -83,6 +83,31 @@ func (cmd command) context(args []string) error {
 	return err
 }
 func (cmd command) limits(args []string) error {
+	if len(args) > 0 && args[0] == "-c" {
+		if len(args) != 2 {
+			return usageError("limits -c: expected one collar and no agent")
+		}
+		s, err := cmd.settings()
+		if err != nil {
+			return err
+		}
+		c, err := loadCollar(args[1], s)
+		if err != nil {
+			return err
+		}
+		ctx, cancel := cmd.timeout(operationTimeout)
+		defer cancel()
+		limits, err := harness.QueryProviderLimits(ctx, c)
+		if err != nil {
+			return commandError{status: exitUnknown, text: err.Error()}
+		}
+		for _, w := range limits {
+			if _, err := fmt.Fprintf(cmd.stdout, "%s\t%.0f%%\t%s\n", w.Label, w.UsedPercent, time.Unix(w.ResetAt, 0).UTC().Format(time.RFC3339)); err != nil {
+				return err
+			}
+		}
+		return nil
+	}
 	name, err := observationName(args, "limits")
 	if err != nil {
 		return err

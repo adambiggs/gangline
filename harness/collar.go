@@ -80,6 +80,7 @@ type Primitives struct {
 	Blocked        Invocation   `json:"blocked"`
 	Context        Invocation   `json:"context"`
 	ProviderLimits Invocation   `json:"provider_limits"`
+	LimitsQuery    *Invocation  `json:"limits_query,omitempty"`
 	Wedge          Invocation   `json:"wedge"`
 }
 
@@ -184,6 +185,13 @@ func validateCollar(collar Collar) error {
 			value   Invocation
 			allowed []string
 		}{"telemetry", *collar.Primitives.Telemetry, []string{"codex-session-log", "claude-status-line"}})
+	}
+	if collar.Primitives.LimitsQuery != nil {
+		checks = append(checks, struct {
+			where   string
+			value   Invocation
+			allowed []string
+		}{"limits query", *collar.Primitives.LimitsQuery, []string{"codex-app-server-limits"}})
 	}
 	if collar.Models.Selected != nil {
 		checks = append(checks, struct {

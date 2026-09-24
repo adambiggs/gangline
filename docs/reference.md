@@ -94,7 +94,8 @@ split; put the details in a file and send its path.
 | `gang context [NAME]` | Show an agent's context use. |
 | `gang context --widget NAME\|off` | Show one agent's context in the tmux status line, or turn it off. |
 | `gang statusline [--install]` | Render Claude's status line; `--install` sets it up. |
-| `gang limits [NAME]` | Show provider usage limits. |
+| `gang limits [NAME]` | Show observed provider usage limits for an agent. |
+| `gang limits -c COLLAR` | Query native account limits without a live agent. |
 | `gang log [--agent NAME\|HITCH_ID] [--type TYPE\|KIND] [LOG.jsonl]` | Print the team's events. |
 | `gang tick [--agent ID]` | Retry pending work and resume after provider errors. |
 | `gang wait NAME [--timeout DURATION]` | Wait until an agent is idle (default 30s; `0` checks once). |
@@ -206,7 +207,7 @@ declares:
 - `options`: argument templates for effort and the role prompt;
 - `primitives`: which built-in Go behaviors to use for startup, the composer,
   submission, turn ends, prompts, context, limits, and wedges, plus
-  `mid_turn` and the optional `telemetry` source;
+  `mid_turn`, the optional `telemetry` source, and an optional `limits_query`;
 - `actions`: key sequences for interrupt, compact, and recovery, plus optional native refusal patterns; and
 - `context_bands`: named context thresholds per model.
 
@@ -228,6 +229,17 @@ errors as `observation` events. Each reading has a `kind`, a `source`
 
 Readings are collected by hooks and by `gang tick`, `gang context`, and
 `gang limits`. Nothing polls in the background.
+
+`gang limits -c codex` starts a private [native app server](https://learn.chatgpt.com/docs/app-server), reads its current
+account limits, then closes it. It creates no thread or model turn and does
+not answer login, trust, or permission requests. The query uses the collar's
+launch executable and environment, with the CLI's current account settings;
+interactive launch arguments and `GANG_LAUNCH_ARGS` do not apply. Its cost is
+native process startup plus an account request, independent of team size and
+session history. The optional `limits_query` primitive declares this support.
+Collars without it, including the bundled Claude Code collar, return unknown;
+use `gang limits NAME` for their observed agent readings. Failed queries never
+substitute cached session readings.
 
 An upward crossing of `context_bands` sends a note from
 `gangline:context-band` through the agent's normal inbox. The note states the
