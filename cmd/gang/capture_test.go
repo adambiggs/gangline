@@ -12,7 +12,7 @@ func TestRenderScreenDropsTerminalDeadSpaceAndBoundsLines(t *testing.T) {
 		{{Text: "t"}, {Text: "w"}, {Text: "o"}},
 		{{Text: " "}},
 	}}
-	if got := screen.Text(1); got != "two" {
+	if got := screen.Text(0); got != "one\ntwo" {
 		t.Fatalf("rendered screen = %q", got)
 	}
 }
