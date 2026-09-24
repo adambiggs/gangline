@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"os"
 	"strings"
 	"time"
 
@@ -168,6 +169,13 @@ func (cmd command) send(args []string) (result error) {
 	}
 	if err != nil {
 		return err
+	}
+	// A hook may promote this receipt after drain releases the input lock.
+	// Read this ID's retained receipt, not another message's latest result.
+	if receipt, readErr := p.ReadEnvelope("cur", e.ID); readErr == nil {
+		outcome = receipt.Outcome
+	} else if !errors.Is(readErr, os.ErrNotExist) {
+		return readErr
 	}
 	if outcome == "accepted" {
 		if _, err := fmt.Fprintln(cmd.stderr, "native queue accepted the message; do not resend"); err != nil {

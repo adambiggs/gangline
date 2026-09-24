@@ -1,6 +1,9 @@
 package main
 
 import (
+	"fmt"
+	"os"
+	"strings"
 	"testing"
 	"time"
 
@@ -63,5 +66,71 @@ func TestLateSubmitWitnessReconcilesWithoutRetyping(t *testing.T) {
 				t.Fatal("late witness retyped input")
 			}
 		})
+	}
+}
+
+func TestSendReportsReceiptReconciledAfterUnlock(t *testing.T) {
+	for _, initial := range []string{"unverified", "accepted"} {
+		for _, exact := range []bool{false, true} {
+			t.Run(fmt.Sprintf("%s/exact=%t", initial, exact), func(t *testing.T) {
+				f, a, p := queueSendFixture(t)
+				f.input.submit = func(wire string) error {
+					if initial == "accepted" {
+						f.input.screen = nativeQueueScreen(wire)
+					}
+					return nil
+				}
+				f.cmd.afterUnlock = func() {
+					prompt := f.input.pasted
+					if !exact {
+						prompt = "unrelated message"
+					}
+					if err := p.WriteWitness(store.Witness{ID: "late-hook", At: f.cmd.now(), SessionID: "s", Prompt: prompt}); err != nil {
+						t.Fatal(err)
+					}
+					l, _, err := f.run.acquire(a.ID, false)
+					if err != nil {
+						t.Fatal(err)
+					}
+					if err := l.Close(); err != nil {
+						t.Fatal(err)
+					}
+				}
+				err := f.cmd.send([]string{"worker", "--from", "operator"})
+				fields := strings.Fields(f.out.String())
+				if len(fields) != 2 {
+					t.Fatalf("output=%q error=%v", f.out.String(), err)
+				}
+				want := initial
+				if exact {
+					want = "delivered"
+				}
+				if fields[1] != want || (err != nil) != (want == "unverified") {
+					t.Fatalf("output=%q error=%v; want %s", f.out.String(), err, want)
+				}
+				log, err := os.Open(f.run.team.Log)
+				if err != nil {
+					t.Fatal(err)
+				}
+				defer log.Close()
+				final, succeeded := "", false
+				if err := store.ReadLog(log, func(e core.Event) error {
+					if e.ID == fields[0] {
+						if e.Type == "delivery_succeeded" {
+							succeeded = true
+						}
+						if e.Type == "input_finished" {
+							final = e.Status
+						}
+					}
+					return nil
+				}); err != nil {
+					t.Fatal(err)
+				}
+				if final != fields[1] || succeeded != exact || f.input.submits != 1 {
+					t.Fatalf("logged=%s succeeded=%t printed=%s submits=%d", final, succeeded, fields[1], f.input.submits)
+				}
+			})
+		}
 	}
 }
