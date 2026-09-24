@@ -117,6 +117,35 @@ func (cmd command) hitch(args []string) (result error) {
 	if err := run.team.Create(); err != nil {
 		return err
 	}
+	b, err := cmd.tmux(run.settings)
+	if err != nil {
+		return err
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), bootTimeout)
+	defer cancel()
+	exists, err := b.SessionExists(ctx)
+	if err != nil {
+		return err
+	}
+	if exists {
+		windows, err := b.Windows(ctx)
+		if err != nil {
+			return err
+		}
+		agents, err := run.team.ListAgents()
+		if err != nil {
+			return err
+		}
+		registered := make(map[string]bool, len(agents))
+		for _, agent := range agents {
+			registered[agent.Pane] = true
+		}
+		for _, window := range windows {
+			if !registered[string(window.Pane.ID)] && gangWindowTitle(window.Name) {
+				return refuseError("unregistered pane %s (%s) in team %q; inspect it, adopt it with 'gang adopt NAME -c COLLAR', or close that exact pane before hitching", window.Pane.ID, window.Name, run.settings.Session)
+			}
+		}
+	}
 	l, err := run.team.CreateAgent(a)
 	if errors.Is(err, store.ErrNameTaken) {
 		return refuseError("agent name %q is already claimed", o.Name)
@@ -136,10 +165,6 @@ func (cmd command) hitch(args []string) (result error) {
 	if err := run.record(a, core.Event{Type: "send_queued", Envelope: &e}); err != nil {
 		return err
 	}
-	b, err := cmd.tmux(run.settings)
-	if err != nil {
-		return err
-	}
 	spec := launch.SpawnSpec(windowTitle(a), dir)
 	for k, v := range map[string]string{"GANG_SESSION": run.settings.Session, "GANG_STATE_ROOT": run.settings.StateRoot, "GANG_COLLAR": o.Collar, "GANG_CONFIG_DIR": run.settings.ConfigDir, "GANGLINE_HITCH_ID": id} {
 		spec.Env[k] = v
@@ -149,12 +174,6 @@ func (cmd command) hitch(args []string) (result error) {
 	}
 	if run.settings.CollarDir != "" {
 		spec.Env["GANG_COLLARS"] = run.settings.CollarDir
-	}
-	ctx, cancel := context.WithTimeout(context.Background(), bootTimeout)
-	defer cancel()
-	exists, err := b.SessionExists(ctx)
-	if err != nil {
-		return err
 	}
 	var pane substrate.Pane
 	if exists {
@@ -210,6 +229,16 @@ func (cmd command) hitch(args []string) (result error) {
 		return err
 	}
 	return nil
+}
+func gangWindowTitle(name string) bool {
+	if len(name) < 3 || name[0] != name[len(name)-1] {
+		return false
+	}
+	switch name[0] {
+	case '?', '~', '-', '!':
+		return true
+	}
+	return false
 }
 func storedIdentity(i tmux.Identity) core.ProcessIdentity {
 	return core.ProcessIdentity{PID: i.PID, Started: i.Started, Version: i.Version, UniqueID: i.UniqueID, BootID: i.BootID}

@@ -35,7 +35,7 @@ func (cmd command) hook(args []string) error {
 			_, _ = fmt.Fprintf(cmd.stderr, "gang hook: %v\n", err)
 		}
 		if run, setupErr := cmd.runtime(); setupErr == nil {
-			_ = run.team.Append(core.Event{Type: "hook_failed", At: cmd.now(), HitchID: core.HitchID(cmd.environment("GANGLINE_HITCH_ID")), Reason: err.Error()})
+			_ = run.team.Append(core.Event{Type: "hook_failed", At: cmd.now(), HitchID: core.HitchID(cmd.environment("GANGLINE_HITCH_ID")), Pane: cmd.environment("TMUX_PANE"), Reason: err.Error()})
 		}
 	}
 	return nil

@@ -311,6 +311,7 @@ func TestHookFailureStillExitsZeroAndRecordsFailure(t *testing.T) {
 	f := newStateFixture(t)
 	f.add(t, "a", "worker", "codex")
 	f.env["GANGLINE_HITCH_ID"] = "a"
+	f.env["TMUX_PANE"] = "%77"
 	cmd := f.cmd
 	cmd.stdin = strings.NewReader("invalid JSON")
 	if err := cmd.hook(nil); err != nil {
@@ -322,5 +323,27 @@ func TestHookFailureStillExitsZeroAndRecordsFailure(t *testing.T) {
 	}
 	if !bytes.Contains(data, []byte(`"type":"hook_failed"`)) {
 		t.Fatalf("missing failure record: %s", data)
+	}
+	if !bytes.Contains(data, []byte(`"pane":"%77"`)) {
+		t.Fatalf("missing hook pane: %s", data)
+	}
+}
+
+func TestHitchRefusesUnregisteredPaneBeforeClaim(t *testing.T) {
+	f := newStateFixture(t)
+	fakeTmux := f.env["GANG_TMUX"]
+	if err := os.WriteFile(fakeTmux, []byte("#!/bin/sh\n# SPDX-License-Identifier: Apache-2.0\ncase \"$1\" in list-panes) printf '%%1\\t?lead?\\n';; has-session) exit 0;; *) exit 91;; esac\n"), 0700); err != nil {
+		t.Fatal(err)
+	}
+	err := f.cmd.hitch([]string{"lead", "-c", "codex"})
+	if err == nil || !strings.Contains(err.Error(), "unregistered pane %1") {
+		t.Fatalf("hitch error = %v, want unregistered pane refusal", err)
+	}
+	agents, err := f.run.team.ListAgents()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(agents) != 0 {
+		t.Fatalf("hitch claimed agents despite orphan pane: %+v", agents)
 	}
 }
