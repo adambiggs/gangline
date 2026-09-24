@@ -228,21 +228,47 @@ func TestNewRequiresSession(t *testing.T) {
 }
 
 func TestProcessTableSelectsOnlyPaneForegroundGroup(t *testing.T) {
-	records, err := parseProcessTable(`
-100 1 100 200 Sun Sep 21 08:00:00 2026 sh
-200 100 200 200 Sun Sep 21 08:00:01 2026 harness
-201 200 200 200 Sun Sep 21 08:00:02 2026 helper
-300 200 300 200 Sun Sep 21 08:00:03 2026 background worker
-`)
+	binary, err := exec.LookPath("tmux")
+	if err != nil {
+		t.Skip("tmux is required")
+	}
+	root := privateTmuxRoot(t)
+	socket := filepath.Join(root, "tmux.sock")
+	const session = "foreground-test"
+	runTmux(t, binary, socket, "new-session", "-d", "-s", session)
+	t.Cleanup(func() { runTmux(t, binary, socket, "kill-session", "-t", session) })
+	if listed := strings.TrimSpace(runTmux(t, binary, socket, "list-sessions", "-F", "#{session_name}")); listed != session {
+		t.Fatalf("private server sessions = %q, want %q", listed, session)
+	}
+	pane := strings.TrimSpace(runTmux(t, binary, socket, "list-panes", "-t", session, "-F", "#{pane_id}"))
+	pid, err := strconv.Atoi(strings.TrimSpace(runTmux(t, binary, socket, "display-message", "-p", "-t", pane, "#{pane_pid}")))
 	if err != nil {
 		t.Fatal(err)
 	}
-	root := records[100]
+	ps := filepath.Join(root, "ps")
+	observations := fmt.Sprintf(`#!/bin/sh
+cat <<'EOF'
+%d 1 100 200 Sun Sep 21 08:00:00 2026 sh
+200 %d 200 200 Sun Sep 21 08:00:01 2026 harness
+201 200 200 200 Sun Sep 21 08:00:02 2026 helper
+300 200 300 200 Sun Sep 21 08:00:03 2026 background worker
+EOF
+`, pid, pid)
+	if err := os.WriteFile(ps, []byte(observations), 0700); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("PATH", root+":"+os.Getenv("PATH"))
+	backend, err := New(Config{Binary: binary, Socket: socket, Session: session})
+	if err != nil {
+		t.Fatal(err)
+	}
+	processes, err := backend.ForegroundProcesses(context.Background(), substrate.PaneID(pane))
+	if err != nil {
+		t.Fatal(err)
+	}
 	var commands []string
-	for pid, record := range records {
-		if record.GroupID == root.foregroundGroup && descendsFrom(pid, 100, records) {
-			commands = append(commands, record.Command)
-		}
+	for _, process := range processes {
+		commands = append(commands, process.Command)
 	}
 	sort.Strings(commands)
 	if strings.Join(commands, ",") != "harness,helper" {
