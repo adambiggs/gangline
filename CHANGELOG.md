@@ -1,5 +1,29 @@
 # Changelog
 
+## [1.1.0](https://github.com/adambiggs/gangline/compare/gangline-v1.0.0...gangline-v1.1.0) (2026-09-24)
+
+
+### Features
+
+* **limits:** query account usage without a running team ([aa274d3](https://github.com/adambiggs/gangline/commit/aa274d3e9cf0d9990df9ba683fdde6bcc0de8fe9))
+
+
+### Bug Fixes
+
+* **compact:** preserve the author of custom resume notes ([2d6c3e0](https://github.com/adambiggs/gangline/commit/2d6c3e0b551c8d374d70f52944bc2bfbee66867b))
+* **compact:** state when the resume note arrives, and deliver it first ([33fa60d](https://github.com/adambiggs/gangline/commit/33fa60de84f1ad2d60c65802395bc8e6e83d5168)), closes [#38](https://github.com/adambiggs/gangline/issues/38)
+* **context:** band notes tell the agent to compact itself ([0b99ec7](https://github.com/adambiggs/gangline/commit/0b99ec76b2fccd2b42fe9919e1fe52d0277d81ba)), closes [#38](https://github.com/adambiggs/gangline/issues/38)
+* **context:** shorten notice IDs without reordering crossings ([77bb97d](https://github.com/adambiggs/gangline/commit/77bb97dfc1664983d42ea4f0a7db60712baf63f0))
+* **contract:** name the commands an agent uses ([b61c1e8](https://github.com/adambiggs/gangline/commit/b61c1e8a8fe04710d49a0c776b40ba98b0e3497b)), closes [#38](https://github.com/adambiggs/gangline/issues/38)
+* **hitch:** reject mismatched native resume identities before launch ([16df117](https://github.com/adambiggs/gangline/commit/16df117d6fd999a219765a9b7b4054c0718434c5))
+* send Gangline's own messages under a gangline sender ([aebfb8a](https://github.com/adambiggs/gangline/commit/aebfb8a6c0d78e4f386ad441c7f5ac8a5773d9b6)), closes [#38](https://github.com/adambiggs/gangline/issues/38)
+* **site:** keep playback controls below the demo text ([66312d9](https://github.com/adambiggs/gangline/commit/66312d9a0bc78273823a971a1d264354000415a0))
+* **site:** make the native team demo readable on phones ([d41368c](https://github.com/adambiggs/gangline/commit/d41368c973bd9b4c64fea7b6170cd43fc3d3c4e9))
+* **site:** record the demo as a landscape terminal ([76eb867](https://github.com/adambiggs/gangline/commit/76eb8677f076b0b73a73489f8b06b17001cf116c))
+* **site:** restore the live terminal demo recording ([3c5fec6](https://github.com/adambiggs/gangline/commit/3c5fec644d552eb494a729bf498719b404290ba6))
+* **store:** retry interrupted directory watch calls ([7884f66](https://github.com/adambiggs/gangline/commit/7884f660afde833a341319ee0d9e8f9ce5645df7))
+* **tmux:** skip every non-CSI escape in a captured pane ([7a6969a](https://github.com/adambiggs/gangline/commit/7a6969aea958b6f33aced8633b7bfa6866ea2f4b))
+
 ## [1.0.0](https://github.com/adambiggs/gangline/compare/gangline-v0.9.0...gangline-v1.0.0) (2026-09-23)
 
 
