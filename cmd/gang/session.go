@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"os"
 	"os/exec"
@@ -14,11 +15,11 @@ func (cmd command) attach(arguments []string) error {
 	if err := noArguments(arguments, "attach"); err != nil {
 		return err
 	}
-	settings, err := cmd.settings()
+	run, err := cmd.runtime()
 	if err != nil {
 		return err
 	}
-	backend, err := cmd.tmux(settings)
+	backend, err := cmd.tmux(run.settings)
 	if err != nil {
 		return err
 	}
@@ -27,16 +28,31 @@ func (cmd command) attach(arguments []string) error {
 		return err
 	}
 	if !exists {
-		return refuseError("no team %q is running; start it with 'gang up'", settings.Session)
+		return run.stoppedTeamError()
 	}
 	windows, err := backend.Windows(context.Background())
 	if err != nil {
 		return err
 	}
 	if len(windows) == 0 {
-		return fmt.Errorf("team %q has no panes", settings.Session)
+		return fmt.Errorf("team %q has no panes", run.settings.Session)
 	}
 	return backend.Attach(context.Background(), windows[0].Pane.ID)
+}
+
+func (run *runtime) stoppedTeamError() error {
+	_, err := run.team.ResolveName("lead")
+	if err == nil {
+		return leadClaimAdvice(run.settings.Session)
+	}
+	if !errors.Is(err, os.ErrNotExist) {
+		return err
+	}
+	return refuseError("no team %q is running; start it with 'gang up'", run.settings.Session)
+}
+
+func leadClaimAdvice(session string) error {
+	return refuseError("no team %q is running and agent name %q is already claimed; run 'gang drop lead' to release the name, or 'gang up NEW_NAME' to keep the record", session, "lead")
 }
 
 func (cmd command) teams(arguments []string) error {

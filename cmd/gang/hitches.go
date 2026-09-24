@@ -148,6 +148,9 @@ func (cmd command) hitch(args []string) (result error) {
 	}
 	l, err := run.team.CreateAgent(a)
 	if errors.Is(err, store.ErrNameTaken) {
+		if !exists && o.Name == "lead" {
+			return leadClaimAdvice(run.settings.Session)
+		}
 		return refuseError("agent name %q is already claimed", o.Name)
 	}
 	if err != nil {
