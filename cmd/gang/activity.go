@@ -35,7 +35,7 @@ func (run *runtime) observeActivity(l *store.LockedAgent, a *core.Agent, c harne
 		}
 	}
 	if a.Compaction != nil && a.Compaction.Status == "submitted" && activity != core.Blocked {
-		activity, evidence = core.Compacting, "native compaction completion unconfirmed; resume withheld"
+		activity, evidence = core.Compacting, "native compaction completion unconfirmed; resume follows confirmed completion"
 	}
 	fingerprint := harness.ScreenFingerprint(screen)
 	if a.ScreenFingerprint != fingerprint {

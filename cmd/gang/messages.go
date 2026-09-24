@@ -343,11 +343,11 @@ func (cmd command) compact(args []string) (result error) {
 		return err
 	}
 	if a.Compaction.Status == "queued" {
-		_, err := fmt.Fprintf(cmd.stdout, "%s\tqueued; waiting for native idle; resume withheld\n", id)
+		_, err := fmt.Fprintf(cmd.stdout, "%s\tqueued; waiting for native idle; resume follows confirmed completion\n", id)
 		return err
 	}
 	if a.Compaction.Status != "completed" {
-		return commandError{status: exitUnknown, text: "compaction submitted; native completion unconfirmed; resume withheld"}
+		return commandError{status: exitUnknown, text: "compaction submitted; native completion unconfirmed; resume follows confirmed completion"}
 	}
 	outcome, err := run.drainFrom(l, a, core.EnvelopeID("resume-"+id))
 	if err != nil {
@@ -433,7 +433,7 @@ func (run *runtime) startCompaction(l *store.LockedAgent, a *core.Agent) (result
 	if blocker, blocked, err := harness.InputBlocked(c, screen); err != nil {
 		return err
 	} else if blocked {
-		return commandError{status: exitNative, text: "native compaction input blocked: " + blocker.Evidence + "; resume withheld"}
+		return commandError{status: exitNative, text: "native compaction input blocked: " + blocker.Evidence + "; compaction not submitted"}
 	}
 	if _, err := harness.ReadComposer(c.Primitives.Composer, screen); err != nil {
 		return err
@@ -441,7 +441,7 @@ func (run *runtime) startCompaction(l *store.LockedAgent, a *core.Agent) (result
 	if busy, err := harness.Busy(c, screen); err != nil {
 		return err
 	} else if busy {
-		return commandError{status: exitNative, text: "native task became active before compaction submit; inspect the composer; resume withheld"}
+		return commandError{status: exitNative, text: "native task became active before compaction submit; inspect the composer; compaction not submitted"}
 	}
 	if err := sendHarnessKeys(ctx, b, pane, c, substrate.Keys{Names: action.Keys, Submit: action.Submit}); err != nil {
 		return err

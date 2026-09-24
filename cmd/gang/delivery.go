@@ -203,6 +203,19 @@ func (run *runtime) deliver(l *store.LockedAgent, a *core.Agent, e core.Envelope
 	return outcome, nil
 }
 
+// completedResume finds a completed compaction's resume note. It goes first:
+// it carries the state the agent needs before reading anything queued behind it.
+func completedResume(a *core.Agent, pending []core.Envelope) *core.Envelope {
+	if c := a.Compaction; c != nil && c.Status == "completed" {
+		for i := range pending {
+			if pending[i].ID == core.EnvelopeID("resume-"+c.ID) {
+				return &pending[i]
+			}
+		}
+	}
+	return nil
+}
+
 // drainLocked returns the queue it could not deliver. The owner uses those
 // identities to distinguish existing blocked work from arrivals during unlock.
 func (run *runtime) drainLocked(l *store.LockedAgent, a *core.Agent, target core.EnvelopeID) (string, []core.Envelope, error) {
@@ -227,11 +240,10 @@ func (run *runtime) drainLocked(l *store.LockedAgent, a *core.Agent, target core
 		if err != nil {
 			return result, nil, err
 		}
-		var next *core.Envelope
-		for i := range pending {
+		next := completedResume(a, pending)
+		for i := 0; next == nil && i < len(pending); i++ {
 			if !pending[i].NotBefore.After(run.cmd.now()) {
 				next = &pending[i]
-				break
 			}
 		}
 		if next == nil {

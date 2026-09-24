@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"errors"
+	"fmt"
 	"strings"
 	"testing"
 	"time"
@@ -97,6 +98,10 @@ func TestCompactionContinuationUsesNormalDelivery(t *testing.T) {
 			if !errors.As(err, &ce) || ce.status != exitUnknown {
 				t.Fatalf("submission: %v", err)
 			}
+			// The resume below is delivered, so the report must not call it withheld.
+			if !strings.HasSuffix(ce.text, "resume follows confirmed completion") {
+				t.Fatalf("submission report: %q", ce.text)
+			}
 			if f.input.submits != 1 {
 				t.Fatal("resume preceded completion")
 			}
@@ -169,5 +174,60 @@ func TestCompactionSubmissionRecovery(t *testing.T) {
 				t.Fatalf("recovery: %+v submits=%d", a, f.input.submits)
 			}
 		})
+	}
+}
+
+func TestCompletedCompactionResumesBeforeQueuedMessages(t *testing.T) {
+	f := newStateFixture(t)
+	a := f.add(t, "a", "worker", "codex")
+	p, _ := f.run.team.Agent(a.ID)
+	var prompts []string
+	f.input.submit = func(prompt string) error {
+		if strings.HasPrefix(prompt, "/compact") {
+			return nil
+		}
+		prompts = append(prompts, prompt)
+		return p.WriteWitness(store.Witness{ID: fmt.Sprintf("witness-%d", len(prompts)), At: f.cmd.now(), Prompt: prompt, SessionID: "s"})
+	}
+	var ce commandError
+	if err := f.cmd.compact([]string{"worker", "--resume", "state is in FILE"}); !errors.As(err, &ce) || ce.status != exitUnknown {
+		t.Fatalf("submission: %v", err)
+	}
+	// A teammate's message arrives while compaction is running.
+	e := core.Envelope{ID: "teammate", Recipient: a.ID, To: a.Name, From: core.Sender{Kind: core.SenderSelfDeclared, Name: "operator"}, Message: core.Message{Text: "sent during compaction"}, CreatedAt: f.cmd.now().Add(-time.Second)}
+	if err := p.Publish(e); err != nil {
+		t.Fatal(err)
+	}
+	if err := f.run.tickAgent(a.ID, hookNotice{Kind: "compaction-finished", SessionID: "s", At: f.cmd.now().Add(time.Second)}, false); err != nil {
+		t.Fatal(err)
+	}
+	if len(prompts) == 0 || !strings.Contains(prompts[0], "state is in FILE") {
+		t.Fatalf("first delivery after compaction was not the resume note: %q", prompts)
+	}
+}
+
+// An agent compacts itself from its own window during a running turn.
+func TestAgentCompactsItselfAfterItsTurn(t *testing.T) {
+	f := newStateFixture(t)
+	a := f.add(t, "a", "worker", "codex")
+	p, _ := f.run.team.Agent(a.ID)
+	f.env["TMUX_PANE"] = a.Pane
+	f.input.screen = screenWithText("• Working (esc to interrupt)", "", "› ")
+	if err := f.cmd.compact([]string{"--resume", "state is in FILE"}); err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(f.out.String(), "queued") || f.input.submits != 0 {
+		t.Fatalf("compaction during a turn: out=%q submits=%d", f.out.String(), f.input.submits)
+	}
+	f.input.screen = screenWithText("› ")
+	if err := f.run.tickAgent(a.ID, hookNotice{}, false); err != nil {
+		t.Fatal(err)
+	}
+	a, err := p.Read()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if f.input.submits != 1 || a.Compaction == nil || a.Compaction.Status != "submitted" || a.Compaction.Resume.Text != "state is in FILE" {
+		t.Fatalf("compaction after the turn: submits=%d compaction=%+v", f.input.submits, a.Compaction)
 	}
 }
