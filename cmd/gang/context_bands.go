@@ -48,7 +48,7 @@ func (run *runtime) noteContextBands(a *core.Agent, c harness.Collar) {
 	for _, band := range harness.CrossedContextBands(c, r.Model, previous/100, *r.Percent/100) {
 		state.Sequence++
 		e := core.Envelope{
-			ID: core.EnvelopeID(fmt.Sprintf("context-%020d", state.Sequence)), Recipient: a.ID, To: a.Name,
+			ID: core.EnvelopeID(fmt.Sprintf("context-%d", state.Sequence)), Recipient: a.ID, To: a.Name,
 			From: core.Sender{Kind: core.SenderGangline, Name: "context-band"}, CreatedAt: run.cmd.now(),
 			Message: core.Message{Text: fmt.Sprintf("Context band %s crossed (threshold %.0f%%): %s, model %s. At your next checkpoint, save your working state to a file, then run `gang compact --resume 'Resume from FILE'` to compact your own context.", band.Name, band.At*100, contextUsageText(*r.Used, *r.Limit, *r.Percent), r.Model)},
 		}

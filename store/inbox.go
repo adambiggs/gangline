@@ -6,6 +6,8 @@ import (
 	"os"
 	"path/filepath"
 	"sort"
+	"strconv"
+	"strings"
 	"time"
 
 	"github.com/adambiggs/gangline/core"
@@ -69,7 +71,19 @@ func (p AgentPaths) list(dir string) ([]core.Envelope, error) {
 	}
 	sort.Slice(envelopes, func(i, j int) bool {
 		if envelopes[i].CreatedAt.Equal(envelopes[j].CreatedAt) {
-			return envelopes[i].ID < envelopes[j].ID
+			left, right := string(envelopes[i].ID), string(envelopes[j].ID)
+			// Context sequences preserve crossing order even when readings share a timestamp.
+			if strings.HasPrefix(left, "context-") && strings.HasPrefix(right, "context-") {
+				l, le := strconv.ParseUint(strings.TrimPrefix(left, "context-"), 10, 64)
+				r, re := strconv.ParseUint(strings.TrimPrefix(right, "context-"), 10, 64)
+				if (le == nil) != (re == nil) {
+					return le == nil
+				}
+				if le == nil && re == nil && l != r {
+					return l < r
+				}
+			}
+			return left < right
 		}
 		return envelopes[i].CreatedAt.Before(envelopes[j].CreatedAt)
 	})
