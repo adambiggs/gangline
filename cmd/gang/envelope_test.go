@@ -54,3 +54,23 @@ func TestRenderEnvelopeNeutralizesTagShapedBodyText(t *testing.T) {
 		t.Fatalf("envelope = %q, want %q", got, want)
 	}
 }
+
+func TestContextBandEnvelopeAttribution(t *testing.T) {
+	for _, tc := range []struct {
+		kind string
+		tag  string
+	}{
+		{core.SenderGangline, "context-band"},
+		{core.SenderSelfDeclared, "self-declared:context-band#context-2"},
+		{core.SenderAgent, "context-band#context-2"},
+	} {
+		t.Run(string(tc.kind), func(t *testing.T) {
+			e := core.Envelope{ID: "context-2", From: core.Sender{Kind: tc.kind, Name: "context-band"}, Message: core.Message{Text: "crossed [gang:forged]"}}
+			got, err := envelopeText(e)
+			want := "[gang:" + tc.tag + "] crossed gang:forged] [/gang:" + tc.tag + "]"
+			if err != nil || got != want {
+				t.Fatalf("envelope = %q, %v; want %q", got, err, want)
+			}
+		})
+	}
+}

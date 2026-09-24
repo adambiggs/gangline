@@ -187,8 +187,9 @@ Startup names the launching agent when its pane is registered; otherwise its
 sender is `gangline:hitch`, identifying Gangline itself. The envelope is marked
 `assignment` only when a task was supplied, or `startup` otherwise.
 
-Gangline's context-band notices, default compaction resume, interrupt reasons,
-and capacity recovery carry `gangline:` senders. A custom `--resume` note names
+Gangline's context-band notices use `[gang:context-band]` tags without a message
+ID. Default compaction resume, interrupt reasons, and capacity recovery carry
+`gangline:` senders. A custom `--resume` note names
 the registered caller; outside a registered pane it carries
 `self-declared:compact`. Interrupt `-m` reasons are supplied by whoever ran the
 command. A completed compaction's resume note is delivered before any other
@@ -242,7 +243,7 @@ use `gang limits NAME` for their observed agent readings. Failed queries never
 substitute cached session readings.
 
 An upward crossing of `context_bands` sends a note from
-`gangline:context-band` through the agent's normal inbox. The note states the
+`context-band` through the agent's normal inbox. The note states the
 reading and tells the agent to save its state and run
 `gang compact --resume`. A jump over
 several thresholds sends a note for each; repeated readings in the same band

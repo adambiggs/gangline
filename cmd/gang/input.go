@@ -57,6 +57,10 @@ func renderEnvelope(sender, nonce, marker, body string) (string, error) {
 	if !envelopeTokenPattern.MatchString(nonce) {
 		return "", fmt.Errorf("envelope nonce %q is invalid", nonce)
 	}
+	return renderEnvelopeTag(sender+"#"+nonce, marker, body)
+}
+
+func renderEnvelopeTag(tag, marker, body string) (string, error) {
 	if marker != "" && !envelopeMarkerPattern.MatchString(marker) {
 		return "", fmt.Errorf("envelope marker %q is invalid", marker)
 	}
@@ -65,7 +69,7 @@ func renderEnvelope(sender, nonce, marker, body string) (string, error) {
 		suffix = " " + marker
 	}
 	body = tagShapedTextPattern.ReplaceAllString(body, "$1")
-	wire := fmt.Sprintf("[gang:%s#%s%s] %s [/gang:%s#%s]", sender, nonce, suffix, body, sender, nonce)
+	wire := fmt.Sprintf("[gang:%s%s] %s [/gang:%s]", tag, suffix, body, tag)
 	encoded, err := json.Marshal(wire)
 	if err != nil {
 		return "", err

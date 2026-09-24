@@ -38,7 +38,14 @@ func sendHarnessKeys(ctx context.Context, b harnessInput, pane substrate.PaneID,
 	}
 	return b.SendKeys(ctx, pane, keys)
 }
+func isContextBandNotice(e core.Envelope) bool {
+	return e.From.Kind == core.SenderGangline && e.From.Name == "context-band"
+}
+
 func envelopeText(e core.Envelope) (string, error) {
+	if isContextBandNotice(e) {
+		return renderEnvelopeTag("context-band", e.Purpose, e.Message.Text)
+	}
 	sender := string(e.From.Name)
 	if e.From.Kind == core.SenderSelfDeclared {
 		sender = "self-declared:" + sender
@@ -98,8 +105,9 @@ func (run *runtime) deliver(l *store.LockedAgent, a *core.Agent, e core.Envelope
 		return "", err
 	}
 	var queue func(context.Context) (bool, error)
-	// Startup keeps its exact contract witness; queue previews cannot show it.
-	if c.Primitives.QueueWitness != nil && c.Primitives.MidTurn && e.Purpose == "" {
+	// Startup needs its exact contract witness. Context notes have no unique
+	// opener, so a queue preview cannot identify which note was accepted.
+	if c.Primitives.QueueWitness != nil && c.Primitives.MidTurn && e.Purpose == "" && !isContextBandNotice(e) {
 		opener := wire[:strings.Index(wire, "]")+1]
 		queue = func(ctx context.Context) (bool, error) {
 			if err := requireHarnessForeground(ctx, b, substrate.PaneID(a.Pane), c); err != nil {
@@ -159,7 +167,16 @@ func (run *runtime) deliver(l *store.LockedAgent, a *core.Agent, e core.Envelope
 	var witness store.Witness
 	var accepted bool
 	if err == nil {
-		witness, accepted, err = run.cmd.awaitReceipt(ctx, l.Paths, old.ID, queue)
+		if isContextBandNotice(e) {
+			// A queued note has no unique preview. Leave proof to a later
+			// hook instead of holding the agent lock waiting for its turn.
+			witness, err = l.Paths.ReadWitness()
+			if errors.Is(err, os.ErrNotExist) || err == nil && witness.ID == old.ID {
+				err = fmt.Errorf("context-band submit hook is not yet available")
+			}
+		} else {
+			witness, accepted, err = run.cmd.awaitReceipt(ctx, l.Paths, old.ID, queue)
+		}
 	}
 	if err == nil && !accepted {
 		var matched bool

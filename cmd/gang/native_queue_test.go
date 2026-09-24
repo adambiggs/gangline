@@ -204,3 +204,50 @@ func TestSendRecognizesWrappedNativeQueueOpener(t *testing.T) {
 		t.Fatalf("wrapped receipt: %q", f.out)
 	}
 }
+
+func TestContextBandRequiresExactHookDespiteQueuePreview(t *testing.T) {
+	for _, exact := range []bool{false, true} {
+		t.Run(map[bool]string{false: "preview only", true: "exact hook"}[exact], func(t *testing.T) {
+			f, a, p := queueSendFixture(t)
+			e := core.Envelope{ID: "context-2", Recipient: a.ID, To: a.Name, From: core.Sender{Kind: core.SenderGangline, Name: "context-band"}, Message: core.Message{Text: "crossed"}, CreatedAt: f.cmd.now()}
+			if err := p.Publish(e); err != nil {
+				t.Fatal(err)
+			}
+			f.input.submit = func(wire string) error {
+				f.input.screen = nativeQueueScreen(wire)
+				if exact {
+					return p.WriteWitness(store.Witness{ID: "new-hook", At: f.cmd.now(), SessionID: "s", Prompt: wire})
+				}
+				return nil
+			}
+			f.cmd.newWatch = func(string) (changeWait, error) {
+				t.Fatal("context notice must not wait for a submit hook while holding the agent lock")
+				return nil, errors.New("unexpected witness wait")
+			}
+			f.run.cmd = f.cmd
+			if _, err := f.run.drain(a.ID, e.ID); err != nil {
+				t.Fatal(err)
+			}
+			dir, want := "failed", "unverified"
+			if exact {
+				dir, want = "cur", "delivered"
+			}
+			got, readErr := p.ReadEnvelope(dir, e.ID)
+			if readErr != nil || got.Outcome != want || f.input.submits != 1 {
+				t.Fatalf("receipt: %+v %v submits=%d", got, readErr, f.input.submits)
+			}
+			if !exact {
+				if err := p.WriteWitness(store.Witness{ID: "later-hook", At: f.cmd.now(), SessionID: "s", Prompt: f.input.pasted}); err != nil {
+					t.Fatal(err)
+				}
+				if err := f.run.tickAgent(a.ID, hookNotice{}, false); err != nil {
+					t.Fatal(err)
+				}
+				got, readErr = p.ReadEnvelope("cur", e.ID)
+				if readErr != nil || got.Outcome != "delivered" || f.input.submits != 1 {
+					t.Fatalf("late receipt: %+v %v submits=%d", got, readErr, f.input.submits)
+				}
+			}
+		})
+	}
+}

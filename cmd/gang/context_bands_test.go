@@ -63,7 +63,7 @@ func TestContextBandNotesCrossings(t *testing.T) {
 			if f.input.submits != 2 {
 				t.Fatalf("jump across yellow and red submitted %d notes, want 2", f.input.submits)
 			}
-			if !strings.Contains(f.input.pasted, highName) || !strings.Contains(f.input.pasted, "[gang:gangline:context-band#context-2]") || !strings.Contains(f.input.pasted, "run `gang compact --resume") {
+			if !strings.Contains(f.input.pasted, highName) || !strings.HasPrefix(f.input.pasted, "[gang:context-band] ") || !strings.HasSuffix(f.input.pasted, " [/gang:context-band]") || !strings.Contains(f.input.pasted, "run `gang compact --resume") {
 				t.Fatalf("band envelope: %s", f.input.pasted)
 			}
 			observe(high+1, "observed", at.Add(2*time.Second))
