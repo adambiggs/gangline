@@ -8,7 +8,7 @@ supply an explicit name when inspecting or controlling a single agent.
 
 | Command | Effect |
 | --- | --- |
-| `gang up [NAME] [HITCH OPTIONS]` | Start the configured team with its lead agent named `NAME` (default `lead`), then attach an interactive terminal. |
+| `gang up [NAME] [AGENT OPTIONS]` | Start the configured team with its lead agent named `NAME` (default `lead`), then attach an interactive terminal. |
 | `gang hitch NAME [OPTIONS]` | Launch an agent and deliver startup instructions and any task. |
 | `gang hitch NAME --recover` | Recover retained startup from its visible draft or a lone collapsed paste. |
 | `gang adopt NAME [-c COLLAR]` | Register the current pane without launching or delivering startup instructions. |
@@ -30,7 +30,7 @@ supply an explicit name when inspecting or controlling a single agent.
 | `-r`, `--role ROLE` | Role brief; `up` defaults to `lead`. |
 | `--stdin` | Read the assignment from stdin. |
 | `--resume SESSION` | Resume a native conversation. |
-| `--recover` | Recover an existing hitch's startup input. |
+| `--recover` | Recover an agent's retained startup input. |
 
 `adopt` also accepts `--collar`. Resume checks for the bundled collars require
 a matching native transcript. An unverifiable native session is refused.

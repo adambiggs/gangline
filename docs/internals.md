@@ -17,10 +17,10 @@ Collars live in `harness/collars/` or `GANG_COLLARS`.
 
 Team files live under `STATE_ROOT/teams/TEAM/`. `team.json` holds the curfew;
 `log.jsonl` is the append-only audit log. Name claims in `names/` point to
-immutable hitch IDs. Each `agents/ID/` contains `agent.json`, a `lock`, a submit
-`witness`, and `inbox/{tmp,new,cur,failed}/`. State and witnesses are replaced
-atomically. Pending messages live in `new/`; settled receipts retain their
-latest outcome, while the audit log retains history.
+immutable hitch IDs. Each `agents/ID/` contains `agent.json`, a `lock`,
+a submit `witness`, and `inbox/{tmp,new,cur,failed}/`. State and witnesses are
+replaced atomically. Pending messages live in `new/`; settled receipts retain
+their latest outcome, while the audit log retains history.
 
 Commands work over requested agents and pending work, independently of settled
 history. Each agent has its own lock. `gang drop` removes the registration and
@@ -90,7 +90,8 @@ uses ordinary delivery and precedes other queued messages.
 ## Watchdog
 
 A whole-team tick replaces a transient user-scheduler timer and re-arms it
-before observing agents. Hitch and adopt arm the initial timer. A scoped hook
+before observing agents. Gangline arms the initial timer when you hitch or
+adopt an agent. A scoped hook
 tick preserves an existing deadline so activity in one agent cannot postpone
 idle peers. Whole-team ticks skip occupied agent locks; detached scoped ticks
 can wait for a lock so native boundary notices survive contention.

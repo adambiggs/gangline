@@ -1,6 +1,6 @@
 # Concepts
 
-## Agents, hitches, and sessions
+## Agents, registrations, and sessions
 
 An **agent** is a Claude Code or Codex process running in a named tmux window.
 A **team** is the collection selected by `GANG_SESSION`. `gang up` starts its
@@ -8,13 +8,13 @@ first agent with the `lead` role and attaches your terminal. The lead's brief
 asks it to assign work to named agents and judge their completion reports.
 Your instructions decide the work and staffing.
 
-A **hitch** is one registration of an agent. It has a fixed ID and a name you
-can change with `gang rename`. Dropping and hitching the same name creates a
-new registration. A failed agent keeps its name until it is dropped.
+A registration records an agent with a fixed ID and a name you can change with
+`gang rename`. Dropping and hitching the same name creates a new registration.
+A failed agent keeps its name until it is dropped.
 
 A **native session** is the conversation history owned by Claude Code or
-Codex. It is separate from the tmux session that holds the team. A new hitch
-can resume a native session with `--resume SESSION`.
+Codex. It is separate from the tmux session that holds the team. A new
+registration can resume a native session with `--resume SESSION`.
 
 ## Messages and envelopes
 
@@ -45,7 +45,8 @@ dropping it fails pending messages.
 
 A **role brief** describes how an agent should work. The startup **contract**
 explains messaging and reporting. Optional operator **doctrine** supplies your
-own policy. Gangline combines these with the task supplied at hitch time.
+own policy. Gangline combines these with the task supplied when you hitch the
+agent.
 An `assignment` envelope contains work to begin; a `startup` envelope without
 a task supplies context only.
 
