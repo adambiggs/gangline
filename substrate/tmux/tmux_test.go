@@ -3,6 +3,7 @@ package tmux
 import (
 	"context"
 	"fmt"
+	"io"
 	"os"
 	"os/exec"
 	"os/signal"
@@ -20,10 +21,69 @@ import (
 const detachedHelperEnvironment = "GANGLINE_TMUX_DETACHED_HELPER"
 
 func TestMain(m *testing.M) {
+	if len(os.Args) > 1 && os.Args[1] == "--foreground-fixture" {
+		if err := runForegroundFixture(os.Args[2:]); err != nil {
+			fmt.Fprintln(os.Stderr, err)
+			os.Exit(1)
+		}
+		os.Exit(0)
+	}
 	if os.Getenv(detachedHelperEnvironment) == "1" {
 		os.Exit(runDetachedHelper())
 	}
 	os.Exit(m.Run())
+}
+
+// Children stay alive on a pipe owned by the pane root and exit when it exits.
+// The FIFO announces readiness without creating a transient signalling child.
+func runForegroundFixture(args []string) error {
+	if len(args) == 0 {
+		if _, err := os.Stdout.Write([]byte{'R'}); err != nil {
+			return err
+		}
+		_, err := io.Copy(io.Discard, os.Stdin)
+		return err
+	}
+	input, hold, err := os.Pipe()
+	if err != nil {
+		return err
+	}
+	defer input.Close()
+	defer hold.Close()
+	var pids []int
+	for _, name := range []string{"helper", "background-worker"} {
+		command := exec.Command(filepath.Join(filepath.Dir(os.Args[0]), name), "--foreground-fixture")
+		command.Stdin = input
+		ready, err := command.StdoutPipe()
+		if err != nil {
+			return err
+		}
+		command.Stderr = os.Stderr
+		command.SysProcAttr = &syscall.SysProcAttr{Setpgid: name == "background-worker"}
+		if err := command.Start(); err != nil {
+			return err
+		}
+		var acknowledgement [1]byte
+		_, err = io.ReadFull(ready, acknowledgement[:])
+		ready.Close()
+		if err != nil || acknowledgement[0] != 'R' {
+			return fmt.Errorf("%s readiness = %q, err=%v", name, acknowledgement, err)
+		}
+		pids = append(pids, command.Process.Pid)
+	}
+	ready, err := os.OpenFile(args[0], os.O_WRONLY, 0)
+	if err != nil {
+		return err
+	}
+	if _, err := fmt.Fprintf(ready, "%d %d\n", pids[0], pids[1]); err != nil {
+		ready.Close()
+		return err
+	}
+	if err := ready.Close(); err != nil {
+		return err
+	}
+	_, err = io.Copy(io.Discard, os.Stdin)
+	return err
 }
 
 func runDetachedHelper() int {
@@ -239,29 +299,48 @@ func TestProcessTableSelectsOnlyPaneForegroundGroup(t *testing.T) {
 	root := privateTmuxRoot(t)
 	socket := filepath.Join(root, "tmux.sock")
 	const session = "foreground-test"
-	runTmux(t, binary, socket, "new-session", "-d", "-s", session)
+	executable, err := os.Executable()
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, name := range []string{"harness", "helper", "background-worker"} {
+		if err := os.Symlink(executable, filepath.Join(root, name)); err != nil {
+			t.Fatal(err)
+		}
+	}
+	ready := filepath.Join(root, "ready")
+	if err := syscall.Mkfifo(ready, 0600); err != nil {
+		t.Fatal(err)
+	}
+	// Multiple command arguments execute the fixture directly, without login
+	// shell startup files or their short-lived children affecting the snapshot.
+	runTmux(t, binary, socket, "-f", "/dev/null", "new-session", "-d", "-s", session,
+		filepath.Join(root, "harness"), "--foreground-fixture", ready)
 	t.Cleanup(func() { runTmux(t, binary, socket, "kill-session", "-t", session) })
 	if listed := strings.TrimSpace(runTmux(t, binary, socket, "list-sessions", "-F", "#{session_name}")); listed != session {
 		t.Fatalf("private server sessions = %q, want %q", listed, session)
+	}
+	data, err := os.ReadFile(ready)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var helperPID, backgroundPID int
+	if _, err := fmt.Sscanf(string(data), "%d %d", &helperPID, &backgroundPID); err != nil {
+		t.Fatal(err)
 	}
 	pane := strings.TrimSpace(runTmux(t, binary, socket, "list-panes", "-t", session, "-F", "#{pane_id}"))
 	pid, err := strconv.Atoi(strings.TrimSpace(runTmux(t, binary, socket, "display-message", "-p", "-t", pane, "#{pane_pid}")))
 	if err != nil {
 		t.Fatal(err)
 	}
-	ps := filepath.Join(root, "ps")
-	observations := fmt.Sprintf(`#!/bin/sh
-cat <<'EOF'
-%d 1 100 200 Sun Sep 21 08:00:00 2026 sh
-200 %d 200 200 Sun Sep 21 08:00:01 2026 harness
-201 200 200 200 Sun Sep 21 08:00:02 2026 helper
-300 200 300 200 Sun Sep 21 08:00:03 2026 background worker
-EOF
-`, pid, pid)
-	if err := os.WriteFile(ps, []byte(observations), 0700); err != nil {
+	records, err := readProcessTable(context.Background(), pid)
+	if err != nil {
 		t.Fatal(err)
 	}
-	t.Setenv("PATH", root+":"+os.Getenv("PATH"))
+	background, ok := records[backgroundPID]
+	if !ok || !descendsFrom(backgroundPID, pid, records) || background.GroupID == records[pid].GroupID {
+		t.Fatalf("background child %d must exist in a separate process group: %+v", backgroundPID, background)
+	}
 	backend, err := New(Config{Binary: binary, Socket: socket, Session: session})
 	if err != nil {
 		t.Fatal(err)
@@ -270,9 +349,13 @@ EOF
 	if err != nil {
 		t.Fatal(err)
 	}
+	if len(processes) != 2 || !((processes[0].PID == pid && processes[1].PID == helperPID) ||
+		(processes[0].PID == helperPID && processes[1].PID == pid)) {
+		t.Fatalf("foreground processes = %+v, want pane %d and helper %d", processes, pid, helperPID)
+	}
 	var commands []string
 	for _, process := range processes {
-		commands = append(commands, process.Command)
+		commands = append(commands, filepath.Base(process.Command))
 	}
 	sort.Strings(commands)
 	if strings.Join(commands, ",") != "harness,helper" {
