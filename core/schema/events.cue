@@ -10,6 +10,7 @@ import "time"
  to: #ID
  recipient: #ID
  message: close({text: #ID})
+ startup?: close({contract: #ID, doctrine?: string, role?: string})
  purpose?: "startup" | "assignment"
  created_at: #Time
  not_before?: #Time

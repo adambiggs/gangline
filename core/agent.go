@@ -103,6 +103,12 @@ type ResultRef struct {
 type Message struct {
 	Text string `json:"text"`
 }
+
+type StartupSections struct {
+	Contract string `json:"contract"`
+	Doctrine string `json:"doctrine,omitempty"`
+	Role     string `json:"role,omitempty"`
+}
 type Sender struct {
 	Kind    string    `json:"kind"`
 	Name    AgentName `json:"name"`
@@ -126,17 +132,18 @@ func (s Sender) SameIdentity(other Sender) bool {
 }
 
 type Envelope struct {
-	ID        EnvelopeID `json:"id"`
-	Token     string     `json:"token,omitempty"`
-	From      Sender     `json:"from"`
-	To        AgentName  `json:"to"`
-	Recipient HitchID    `json:"recipient"`
-	Message   Message    `json:"message"`
-	Purpose   string     `json:"purpose,omitempty"`
-	CreatedAt time.Time  `json:"created_at"`
-	NotBefore time.Time  `json:"not_before,omitzero"`
-	Outcome   string     `json:"outcome,omitempty"`
-	Reason    string     `json:"reason,omitempty"`
+	ID        EnvelopeID       `json:"id"`
+	Token     string           `json:"token,omitempty"`
+	From      Sender           `json:"from"`
+	To        AgentName        `json:"to"`
+	Recipient HitchID          `json:"recipient"`
+	Message   Message          `json:"message"`
+	Startup   *StartupSections `json:"startup,omitempty"`
+	Purpose   string           `json:"purpose,omitempty"`
+	CreatedAt time.Time        `json:"created_at"`
+	NotBefore time.Time        `json:"not_before,omitzero"`
+	Outcome   string           `json:"outcome,omitempty"`
+	Reason    string           `json:"reason,omitempty"`
 }
 
 type Compaction struct {

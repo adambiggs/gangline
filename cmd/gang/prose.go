@@ -8,6 +8,7 @@ import (
 	"path/filepath"
 	"unicode/utf8"
 
+	"github.com/adambiggs/gangline/core"
 	"github.com/adambiggs/gangline/internal/prose"
 )
 
@@ -107,11 +108,23 @@ func startupMessages(name string, prose startupProse, assignment string, systemP
 	if assignment != "" {
 		message = "Assignment:\n\n" + assignment
 	}
-	standing := composeStartup(name, prose)
 	if systemPrompt {
-		return standing, message
+		return composeStartup(name, prose), message
 	}
-	return "", standing + "\n\n" + message
+	return "", message
+}
+
+func startupSections(name string, prose startupProse) *core.StartupSections {
+	sections := &core.StartupSections{
+		Contract: fmt.Sprintf("You are %s in Gangline. Read the standing contract below before anything else.\n\n%s", name, prose.Contract),
+	}
+	if len(prose.Doctrine) != 0 {
+		sections.Doctrine = "Operator doctrine:\n\n" + string(prose.Doctrine)
+	}
+	if len(prose.Role) != 0 {
+		sections.Role = "Role brief (operator instructions take precedence, including provider, model, effort, and staffing policy):\n\n" + string(prose.Role)
+	}
+	return sections
 }
 
 func composeStartup(name string, prose startupProse) string {

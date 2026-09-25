@@ -23,7 +23,15 @@ func TestStartupDeliversStandingProseOnce(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			all := strings.Join(launch.Args, "\n") + "\n" + message
+			e := core.Envelope{ID: "startup-1", Token: "0123456789abcdef", From: core.Sender{Kind: core.SenderAgent, Name: "lead", HitchID: "lead-hitch"}, Purpose: "assignment", Message: core.Message{Text: message}}
+			if collar.Options.RolePrompt == nil {
+				e.Startup = startupSections("worker", brief)
+			}
+			wire, err := envelopeText(e)
+			if err != nil {
+				t.Fatal(err)
+			}
+			all := strings.Join(launch.Args, "\n") + "\n" + wire
 			for _, body := range []string{string(brief.Contract), string(brief.Doctrine), string(brief.Role), "build the result"} {
 				if strings.Count(all, body) != 1 {
 					t.Fatalf("expected one verbatim copy of %q in launch and message: %q", body, all)
@@ -46,7 +54,7 @@ func TestTasklessStartupReportsMissingAssignment(t *testing.T) {
 		t.Fatalf("taskless system startup: prompt=%q message=%q", prompt, message)
 	}
 	prompt, message = startupMessages("worker", brief, "", false)
-	if prompt != "" || !strings.Contains(message, "contract") || !strings.HasSuffix(message, "No assignment was supplied.") || strings.Contains(message, "Assignment:") {
+	if prompt != "" || message != "No assignment was supplied." {
 		t.Fatalf("taskless message startup: prompt=%q message=%q", prompt, message)
 	}
 }

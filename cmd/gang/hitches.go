@@ -102,10 +102,15 @@ func (cmd command) hitchWithStaleClaim(args []string, supersede bool) (result er
 	purpose := "startup"
 	if assignment != "" {
 		purpose = "assignment"
+	} else {
+		sender = core.Sender{Kind: core.SenderGangline, Name: "startup"}
 	}
 	now := cmd.now()
 	a := core.Agent{ID: core.HitchID(id), Name: core.AgentName(o.Name), Collar: o.Collar, Role: o.Role, Directory: dir, Status: core.Starting, Activity: core.Unknown, CreatedAt: now, ChangedAt: now, BootDeadline: now.Add(bootTimeout)}
 	e := core.Envelope{ID: core.EnvelopeID(eid), Token: token, Recipient: a.ID, To: a.Name, From: sender, Purpose: purpose, Message: core.Message{Text: message}, CreatedAt: now}
+	if c.Options.RolePrompt == nil {
+		e.Startup = startupSections(o.Name, brief)
+	}
 	if _, err := envelopeText(e); err != nil {
 		return err
 	}

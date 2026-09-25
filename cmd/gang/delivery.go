@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"os"
@@ -59,7 +60,48 @@ func envelopeText(e core.Envelope) (string, error) {
 	if token == "" { // An existing envelope may already be painted with its old ID opener.
 		token = string(e.ID)
 	}
+	if e.Startup != nil {
+		return startupEnvelopeText(e.Startup, sender, token, e.Purpose, e.Message.Text)
+	}
 	return renderEnvelope(sender, token, e.Purpose, e.Message.Text)
+}
+
+func startupEnvelopeText(sections *core.StartupSections, sender, token, purpose, message string) (string, error) {
+	if sections.Contract == "" || message == "" || purpose != "assignment" && purpose != "startup" {
+		return "", fmt.Errorf("invalid startup sections")
+	}
+	var parts []string
+	for _, section := range []struct{ name, body string }{
+		{"contract", sections.Contract},
+		{"doctrine", sections.Doctrine},
+		{"role", sections.Role},
+	} {
+		if section.body == "" {
+			continue
+		}
+		part, err := renderEnvelope("gangline:"+section.name, token+"-"+section.name, "startup", section.body)
+		if err != nil {
+			return "", err
+		}
+		parts = append(parts, part)
+	}
+	if purpose == "startup" {
+		sender = "gangline:startup"
+	}
+	part, err := renderEnvelope(sender, token, purpose, message)
+	if err != nil {
+		return "", err
+	}
+	parts = append(parts, part)
+	wire := strings.Join(parts, "\n\n")
+	encoded, err := json.Marshal(wire)
+	if err != nil {
+		return "", err
+	}
+	if len(encoded) > maximumMessageBytes {
+		return "", refuseError("message exceeds the %d-byte encoded envelope budget; put details in a state file and send its path", maximumMessageBytes)
+	}
+	return wire, nil
 }
 
 // available observes the composer even during a running turn. A permission
