@@ -67,6 +67,46 @@ func TestClaudeToolRunScreenIsBusy(t *testing.T) {
 	}
 }
 
+func TestClaudePonderingToolRunScreenIsBusy(t *testing.T) {
+	// The issue records the status label, but not a full screen capture.
+	// This fixture supplies the surrounding tool and composer shape.
+	collar, err := EmbeddedCollar("claude-code")
+	if err != nil {
+		t.Fatal(err)
+	}
+	screen := fixtureScreen(t, "claude-code-2.1.282-tool-run.txt")
+	busy, err := Busy(collar, screen)
+	if err != nil || !busy {
+		t.Fatalf("busy = %v, error = %v", busy, err)
+	}
+	idle, err := Idle(collar, screen)
+	if err != nil || idle {
+		t.Fatalf("idle = %v, error = %v", idle, err)
+	}
+}
+
+func TestClaudeSpinnerVerbAndFrameVariantsAreBusy(t *testing.T) {
+	collar, err := EmbeddedCollar("claude-code")
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, status := range []string{
+		"· Dilly-dallying… (running Bash)", "✻ Boondoggling… (running Bash)", "✢ Pondering… (running Bash)",
+		"✳ Beboppin'… (running Bash)", "✶ Flambéing… (running Bash)", "✽ Sautéing… (running Bash)",
+	} {
+		t.Run(status, func(t *testing.T) {
+			busy, err := Busy(collar, testScreen(testCells(status, false)))
+			if err != nil || !busy {
+				t.Fatalf("busy = %v, error = %v", busy, err)
+			}
+		})
+	}
+	busy, err := Busy(collar, fixtureScreen(t, "claude-background-sessions.txt"))
+	if err != nil || busy {
+		t.Fatalf("background session label busy = %v, error = %v", busy, err)
+	}
+}
+
 func TestClaudeCompletedProseDoesNotLookBusy(t *testing.T) {
 	collar, err := EmbeddedCollar("claude-code")
 	if err != nil {
@@ -75,6 +115,7 @@ func TestClaudeCompletedProseDoesNotLookBusy(t *testing.T) {
 	screen := testScreen(
 		testCells("The completed response mentions running PostToolUse hook in prose.", false),
 		testCells("I also described · Doing… as a status label.", false),
+		testCells("I also described · Pondering… as a status label.", false),
 		testCells("────────────────────────────────────────────────────────────────────────────────", false),
 		testCells("❯", false),
 		testCells("────────────────────────────────────────────────────────────────────────────────", false),
