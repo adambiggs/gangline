@@ -40,6 +40,9 @@ export GANG_SESSION=first-team
 gang up -c claude-code
 ```
 
+If another Gangline team is already running, also give this team its own
+state root and tmux socket as shown in the [configuration example](reference.md#configuration).
+
 `gang up` opens the `lead` window and attaches your terminal to tmux. Type this
 request into the lead's Claude Code prompt:
 
@@ -79,10 +82,12 @@ gang log --agent scout --type input_finished
 gang log --agent lead --type input_finished
 ```
 
-A record with `status` set to `delivered` confirms that a message was
-submitted to that recipient. `accepted` means the native queue owns the
-input; it does not confirm a reply. To read all events for the worker, use
-`gang log --agent scout`.
+A record with `status` set to `delivered` confirms that an input was
+submitted to that recipient. Match the lead's `msg-...` record to the ID
+printed when scout sent its report; `startup-...` records only confirm agent
+launch. The report in the lead's pane should carry a `gang:scout` envelope.
+`accepted` means the native queue owns the input; it does not confirm a
+reply. To read all events for the worker, use `gang log --agent scout`.
 
 ## Check the result and stop
 
