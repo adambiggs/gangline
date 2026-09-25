@@ -1,7 +1,6 @@
 package main
 
 import (
-	"errors"
 	"os"
 	"path/filepath"
 	"strings"
@@ -10,7 +9,7 @@ import (
 	"github.com/adambiggs/gangline/core"
 )
 
-func TestStoppedTeamWithClaimedLeadExplainsRecovery(t *testing.T) {
+func TestAttachStoppedTeamWithClaimedLeadAdvisesUp(t *testing.T) {
 	f := newStateFixture(t)
 	f.env["GANG_TMUX_SOCKET"] = filepath.Join(t.TempDir(), "absent.sock")
 	fakeTmux := f.env["GANG_TMUX"]
@@ -31,20 +30,9 @@ func TestStoppedTeamWithClaimedLeadExplainsRecovery(t *testing.T) {
 	if listed.Status != core.Failed || listed.Pane != a.Pane || !strings.Contains(listed.Evidence, "registered pane is absent from tmux") {
 		t.Fatalf("roster left claim in unexpected state: %+v", listed)
 	}
-	for name, invoke := range map[string]func() error{
-		"attach": func() error { return f.cmd.attach(nil) },
-		"up":     func() error { return f.cmd.up([]string{"-c", "codex"}) },
-	} {
-		t.Run(name, func(t *testing.T) {
-			err := invoke()
-			if err == nil || !strings.Contains(err.Error(), "gang drop lead") || !strings.Contains(err.Error(), "gang up NEW_NAME") {
-				t.Fatalf("error = %v, want both recovery choices", err)
-			}
-			var refusal commandError
-			if !errors.As(err, &refusal) || refusal.status != exitRefused {
-				t.Fatalf("error = %v, want refused status", err)
-			}
-		})
+	err = f.cmd.attach(nil)
+	if err == nil || !strings.Contains(err.Error(), "start it with 'gang up'") {
+		t.Fatalf("attach error = %v, want start advice", err)
 	}
 	retained, err := f.run.resolve("lead")
 	if err != nil || retained.ID != a.ID || retained.Status != core.Failed {

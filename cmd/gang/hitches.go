@@ -14,7 +14,11 @@ import (
 	"github.com/adambiggs/gangline/substrate/tmux"
 )
 
-func (cmd command) hitch(args []string) (result error) {
+func (cmd command) hitch(args []string) error {
+	return cmd.hitchWithStaleClaim(args, false)
+}
+
+func (cmd command) hitchWithStaleClaim(args []string, supersede bool) (result error) {
 	run, err := cmd.runtime()
 	if err != nil {
 		return err
@@ -147,9 +151,12 @@ func (cmd command) hitch(args []string) (result error) {
 		}
 	}
 	l, err := run.team.CreateAgent(a)
+	if errors.Is(err, store.ErrNameTaken) && supersede && !exists {
+		l, err = run.supersedeStoppedClaim(ctx, b, a)
+	}
 	if errors.Is(err, store.ErrNameTaken) {
-		if !exists && o.Name == "lead" {
-			return leadClaimAdvice(run.settings.Session)
+		if !supersede && !exists {
+			return refuseError("agent name %q is already claimed; restart the stopped team with 'gang up %s'", o.Name, o.Name)
 		}
 		return refuseError("agent name %q is already claimed", o.Name)
 	}

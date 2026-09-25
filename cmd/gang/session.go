@@ -2,7 +2,6 @@ package main
 
 import (
 	"context"
-	"errors"
 	"fmt"
 	"os"
 	"os/exec"
@@ -41,18 +40,7 @@ func (cmd command) attach(arguments []string) error {
 }
 
 func (run *runtime) stoppedTeamError() error {
-	_, err := run.team.ResolveName("lead")
-	if err == nil {
-		return leadClaimAdvice(run.settings.Session)
-	}
-	if !errors.Is(err, os.ErrNotExist) {
-		return err
-	}
 	return refuseError("no team %q is running; start it with 'gang up'", run.settings.Session)
-}
-
-func leadClaimAdvice(session string) error {
-	return refuseError("no team %q is running and agent name %q is already claimed; run 'gang drop lead' to release the name, or 'gang up NEW_NAME' to keep the record", session, "lead")
 }
 
 func (cmd command) teams(arguments []string) error {

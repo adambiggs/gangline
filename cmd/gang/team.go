@@ -19,7 +19,7 @@ func (cmd command) up(args []string) error {
 	if len(args) > 0 && !strings.HasPrefix(args[0], "-") {
 		name, args = args[0], args[1:]
 	}
-	if err := cmd.hitch(upHitchArguments(name, args)); err != nil {
+	if err := cmd.hitchWithStaleClaim(upHitchArguments(name, args), true); err != nil {
 		return err
 	}
 	if f, ok := cmd.stdin.(*os.File); ok {
