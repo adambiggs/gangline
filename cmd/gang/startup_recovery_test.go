@@ -167,7 +167,7 @@ func (b submitOnlyFixture) SendKeys(ctx context.Context, pane substrate.PaneID, 
 
 func TestRecoverStartupSubmitsOriginalComposerWithoutRepaste(t *testing.T) {
 	for _, token := range []string{"", "0123456789abcdef"} {
-		for _, screen := range []string{"original", "empty", "prompt", "collapsed"} {
+		for _, screen := range []string{"original", "empty", "prompt"} {
 			t.Run(fmt.Sprintf("token=%s/%s", token, screen), func(t *testing.T) {
 				f := newStateFixture(t)
 				a := f.add(t, "a", "worker", "codex")
@@ -193,9 +193,6 @@ func TestRecoverStartupSubmitsOriginalComposerWithoutRepaste(t *testing.T) {
 				f.input.screen = screenWithText("› " + wire)
 				if screen == "empty" {
 					f.input.screen = screenWithText("READY", "› ")
-				}
-				if screen == "collapsed" {
-					f.input.screen = screenWithText(fmt.Sprintf("› [Pasted Content %d chars]", len(wire)))
 				}
 				if screen == "prompt" {
 					f.input.screen = screenWithText("Hooks need review", "› 1. Review hooks", "Press enter to confirm or esc to go back")

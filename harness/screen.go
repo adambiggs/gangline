@@ -19,7 +19,9 @@ var (
 )
 
 type Composer struct {
-	Text string
+	Text           string
+	CollapsedChars int
+	TailOccupied   bool
 }
 
 type StartupState string
@@ -76,6 +78,9 @@ func ReadComposer(invocation Invocation, screen substrate.Screen) (Composer, err
 	}
 }
 
+var codexCollapsedPastePattern = regexp.MustCompile(`^\[Pasted Content ([1-9][0-9]*) chars\]$`)
+var codexFooterPattern = regexp.MustCompile(`^[^\n]+ · Context [0-9]+% used$`)
+
 func readCodexComposer(screen substrate.Screen) (Composer, error) {
 	lines := screenLines(screen, false)
 	for index := len(lines) - 1; index >= 0; index-- {
@@ -88,7 +93,27 @@ func readCodexComposer(screen substrate.Screen) (Composer, error) {
 		}
 		text := strings.TrimPrefix(line, "›")
 		text = strings.TrimPrefix(text, " ")
-		return Composer{Text: strings.ReplaceAll(text, "\u00a0", "")}, nil
+		text = strings.ReplaceAll(text, "\u00a0", "")
+		composer := Composer{Text: text}
+		blankBeforeFooter := false
+		for _, following := range lines[index+1:] {
+			following = strings.TrimSpace(following)
+			if following == "" {
+				blankBeforeFooter = true
+				continue
+			}
+			if blankBeforeFooter && codexFooterPattern.MatchString(following) {
+				break
+			}
+			composer.TailOccupied = true
+			break
+		}
+		if match := codexCollapsedPastePattern.FindStringSubmatch(text); match != nil {
+			if !composer.TailOccupied {
+				composer.CollapsedChars, _ = strconv.Atoi(match[1])
+			}
+		}
+		return composer, nil
 	}
 	return Composer{}, ErrNoComposer
 }

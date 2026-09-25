@@ -223,6 +223,31 @@ func TestClaudeComposerAgainstLegacyFixtures(t *testing.T) {
 	}
 }
 
+func TestCodexCollapsedComposerRequiresClearRegionBeforeFooter(t *testing.T) {
+	for _, test := range []struct {
+		name string
+		rows []string
+		want int
+		tail bool
+	}{
+		{"known footer", []string{"› [Pasted Content 9526 chars]", "", "  GPT-6-Luna low · Context 0% used"}, 9526, false},
+		{"draft before footer", []string{"› [Pasted Content 9526 chars]", "operator draft", "", "  GPT-6-Luna low · Context 0% used"}, 0, true},
+		{"unknown footer", []string{"› [Pasted Content 9526 chars]", "", "other surface"}, 0, true},
+		{"empty composer", []string{"› ", "", "  GPT-6-Luna low · Context 0% used"}, 0, false},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			rows := make([][]substrate.Cell, len(test.rows))
+			for index, row := range test.rows {
+				rows[index] = testCells(row, false)
+			}
+			composer, err := ReadComposer(Invocation{Name: "codex-composer"}, testScreen(rows...))
+			if err != nil || composer.CollapsedChars != test.want || composer.TailOccupied != test.tail {
+				t.Fatalf("composer = %+v, err = %v", composer, err)
+			}
+		})
+	}
+}
+
 func fixtureScreen(t *testing.T, name string) substrate.Screen {
 	t.Helper()
 	data, err := os.ReadFile("../test/fixtures/" + name)

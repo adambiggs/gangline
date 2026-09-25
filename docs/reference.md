@@ -10,7 +10,7 @@ supply an explicit name when inspecting or controlling a single agent.
 | --- | --- |
 | `gang up [NAME] [HITCH OPTIONS]` | Start the configured team with its lead agent named `NAME` (default `lead`), then attach an interactive terminal. |
 | `gang hitch NAME [OPTIONS]` | Launch an agent and deliver startup instructions and any task. |
-| `gang hitch NAME --recover` | Recover original startup input still identified in the composer. |
+| `gang hitch NAME --recover` | Recover retained startup from its visible draft or a lone collapsed paste. |
 | `gang adopt NAME [-c COLLAR]` | Register the current pane without launching or delivering startup instructions. |
 | `gang rename OLD NEW` | Change a registered name and window title. |
 | `gang drop NAME` | Stop an agent and fail its pending messages. |

@@ -94,10 +94,12 @@ gang status worker --why
 ```
 
 If startup input was pasted but could not be verified, run
-`gang hitch worker --recover`. It submits the original startup envelope only
-when that exact text is still in the composer; otherwise it refuses and
+`gang hitch worker --recover`. It submits the original startup envelope when
+its exact text is visible. For a lone collapsed paste, it clears the composer,
+checks that it is empty, then repastes the retained envelope. Other drafts are
+left untouched. Recovery requires the original submit witness; a refusal
 prints the retained message path. Check `gang status worker --why` and the
-pane for successful startup; keep a refusal's message path for diagnosis.
+pane for successful startup.
 
 ## Keep an unattended team moving
 

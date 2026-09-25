@@ -4,6 +4,7 @@ import (
 	"errors"
 	"fmt"
 	"os"
+	"unicode/utf8"
 
 	"github.com/adambiggs/gangline/core"
 	"github.com/adambiggs/gangline/harness"
@@ -109,9 +110,10 @@ func (run *runtime) recoverStartup(name string) (result error) {
 		return err
 	}
 	composer, err := harness.ReadComposer(c.Primitives.Composer, screen)
-	if err != nil || composer.Text != wire {
+	replaceCollapsed := err == nil && c.Actions.StartupReplace != nil && composer.CollapsedChars == utf8.RuneCountInString(wire)
+	if err != nil || composer.Text != wire && !replaceCollapsed {
 		path, _ := l.Paths.EnvelopePath("failed", e.ID)
-		return commandError{status: exitUnknown, text: fmt.Sprintf("original startup text is not identifiable in the composer; input remains unverified; retained contract and assignment: %s", path)}
+		return commandError{status: exitUnknown, text: fmt.Sprintf("original startup text is not identifiable in the composer; input remains unverified; if the composer is empty, re-hitch with the retained contract and assignment: %s", path)}
 	}
 	if err := requireHarnessForeground(ctx, b, substrate.PaneID(a.Pane), c); err != nil {
 		return err
@@ -125,7 +127,11 @@ func (run *runtime) recoverStartup(name string) (result error) {
 	if err := run.reopenUnverified(l, &a, e); err != nil {
 		return err
 	}
-	err = sendHarnessKeys(ctx, b, substrate.PaneID(a.Pane), c, substrate.Keys{Submit: true})
+	if replaceCollapsed {
+		err = run.replaceCollapsedStartup(ctx, b, substrate.PaneID(a.Pane), c, wire, l.Paths, old.ID)
+	} else {
+		err = sendHarnessKeys(ctx, b, substrate.PaneID(a.Pane), c, substrate.Keys{Submit: true})
+	}
 	var witness store.Witness
 	if err == nil {
 		witness, err = run.cmd.awaitWitness(ctx, l.Paths, old.ID)
@@ -140,6 +146,9 @@ func (run *runtime) recoverStartup(name string) (result error) {
 	outcome, reason := "delivered", ""
 	if err != nil {
 		outcome, reason = "unverified", err.Error()
+		if replaceCollapsed {
+			reason = "startup draft replacement incomplete; if the composer is empty, re-hitch with the retained assignment: " + reason
+		}
 	} else if a.Native.SessionID != "" && witness.SessionID != "" && a.Native.SessionID != witness.SessionID {
 		outcome, reason = "unverified", "submit witness belongs to another native session"
 	} else {

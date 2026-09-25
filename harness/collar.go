@@ -88,6 +88,7 @@ type Actions struct {
 	Interrupt      Action   `json:"interrupt"`
 	Compact        Action   `json:"compact"`
 	CompactRecover []Action `json:"compact_recover"`
+	StartupReplace *Action  `json:"startup_replace,omitempty"`
 }
 
 type Action struct {
@@ -242,6 +243,9 @@ func validateCollar(collar Collar) error {
 	}
 	if len(collar.Actions.CompactRecover) == 0 {
 		return fmt.Errorf("compact recovery declares no actions")
+	}
+	if action := collar.Actions.StartupReplace; action != nil && (len(action.Keys) == 0 || action.Text != "" || action.Submit) {
+		return fmt.Errorf("startup replacement must declare keys without text or submit")
 	}
 	return nil
 }
