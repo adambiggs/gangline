@@ -16,6 +16,7 @@ import (
 
 	"github.com/adambiggs/gangline/core"
 	"github.com/adambiggs/gangline/store"
+	"github.com/pelletier/go-toml/v2"
 )
 
 const liveProviderTimeout = 60 * time.Second
@@ -124,6 +125,11 @@ func testLiveProvider(t *testing.T, collar, cli, cheapest string) {
 	common.Dir = repo
 	if out, err := common.Output(); err == nil {
 		canonical = filepath.Dir(strings.TrimSpace(string(out)))
+	}
+	if cli == "codex" {
+		if err := seedCodexTrust(filepath.Join(stateHome, ".codex"), filepath.Join(scratch, "codex-home"), canonical); err != nil {
+			t.Fatalf("prepare private Codex trust for %s: %v", canonical, err)
+		}
 	}
 	session := "gangline-provider-" + strings.ReplaceAll(collar, "-", "")
 	socket := filepath.Join(root, "tmux.sock")
@@ -383,4 +389,89 @@ func awaitProviderEvents(ctx context.Context, path, secondID, collar string) ([]
 			return nil, err
 		}
 	}
+}
+
+func seedCodexTrust(regularHome, privateHome, cwd string) error {
+	regularConfig, err := os.ReadFile(filepath.Join(regularHome, "config.toml"))
+	if err != nil {
+		return fmt.Errorf("read regular Codex config: %w", err)
+	}
+	var regular map[string]any
+	if err := toml.Unmarshal(regularConfig, &regular); err != nil {
+		return fmt.Errorf("parse regular Codex config: %w", err)
+	}
+	if codexTrustLevel(regular, cwd) != "trusted" {
+		return fmt.Errorf("regular Codex config does not trust %s; trust it interactively before running live acceptance", cwd)
+	}
+
+	configPath := filepath.Join(privateHome, "config.toml")
+	var isolated map[string]any
+	info, err := os.Lstat(configPath)
+	if err == nil {
+		if !info.Mode().IsRegular() {
+			return fmt.Errorf("private Codex config %s is not a regular file", configPath)
+		}
+		content, err := os.ReadFile(configPath)
+		if err != nil {
+			return fmt.Errorf("read private Codex config: %w", err)
+		}
+		if err := toml.Unmarshal(content, &isolated); err != nil {
+			return fmt.Errorf("parse private Codex config: %w", err)
+		}
+	} else if !errors.Is(err, os.ErrNotExist) {
+		return fmt.Errorf("inspect private Codex config: %w", err)
+	}
+	if isolated == nil {
+		isolated = make(map[string]any)
+	}
+	projects, ok := isolated["projects"].(map[string]any)
+	if isolated["projects"] != nil && !ok {
+		return fmt.Errorf("private Codex projects config has unexpected type %T", isolated["projects"])
+	}
+	if !ok {
+		projects = make(map[string]any)
+		isolated["projects"] = projects
+	}
+	project, ok := projects[cwd].(map[string]any)
+	if projects[cwd] != nil && !ok {
+		return fmt.Errorf("private Codex project %s has unexpected type %T", cwd, projects[cwd])
+	}
+	if !ok {
+		project = make(map[string]any)
+		projects[cwd] = project
+	}
+	project["trust_level"] = "trusted"
+	content, err := toml.Marshal(isolated)
+	if err != nil {
+		return fmt.Errorf("encode private Codex config: %w", err)
+	}
+	file, err := os.CreateTemp(privateHome, "config-*.toml")
+	if err != nil {
+		return fmt.Errorf("create private Codex config: %w", err)
+	}
+	defer os.Remove(file.Name())
+	if _, err := file.Write(content); err != nil {
+		_ = file.Close()
+		return fmt.Errorf("write private Codex config: %w", err)
+	}
+	if err := file.Close(); err != nil {
+		return fmt.Errorf("close private Codex config: %w", err)
+	}
+	if err := os.Rename(file.Name(), configPath); err != nil {
+		return fmt.Errorf("replace private Codex config: %w", err)
+	}
+	return nil
+}
+
+func codexTrustLevel(config map[string]any, cwd string) string {
+	projects, ok := config["projects"].(map[string]any)
+	if !ok {
+		return ""
+	}
+	project, ok := projects[cwd].(map[string]any)
+	if !ok {
+		return ""
+	}
+	level, _ := project["trust_level"].(string)
+	return level
 }

@@ -2,7 +2,10 @@ module github.com/adambiggs/gangline
 
 go 1.27.0
 
-require cuelang.org/go v0.17.1
+require (
+	cuelang.org/go v0.17.1
+	github.com/pelletier/go-toml/v2 v2.3.1
+)
 
 tool github.com/alecthomas/go-check-sumtype/cmd/go-check-sumtype
 
@@ -12,7 +15,6 @@ require (
 	github.com/emicklei/proto v1.14.3 // indirect
 	github.com/google/uuid v1.6.0 // indirect
 	github.com/mitchellh/go-wordwrap v1.0.1 // indirect
-	github.com/pelletier/go-toml/v2 v2.3.1 // indirect
 	github.com/protocolbuffers/txtpbfmt v0.0.0-20260420112717-c39628bde8b5 // indirect
 	go.yaml.in/yaml/v3 v3.0.4 // indirect
 	golang.org/x/mod v0.39.0 // indirect
