@@ -1,8 +1,12 @@
 package harness
 
 import (
+	"bytes"
 	"embed"
+	"encoding/json"
+	"errors"
 	"fmt"
+	"io/fs"
 	"path/filepath"
 	"regexp"
 	"sort"
@@ -99,8 +103,9 @@ type Action struct {
 }
 
 type ContextBand struct {
-	Name string  `json:"name"`
-	At   float64 `json:"at"`
+	Name    string  `json:"name"`
+	At      float64 `json:"at"`
+	Message string  `json:"message,omitempty"`
 }
 
 func LoadCollar(filename string, data []byte) (Collar, error) {
@@ -127,6 +132,75 @@ func LoadCollar(filename string, data []byte) (Collar, error) {
 		return Collar{}, fmt.Errorf("validate collar %q: %w", filename, err)
 	}
 	return collar, nil
+}
+
+// LoadCustomCollar overlays a bundled collar, or loads a complete new collar.
+// Struct fields merge recursively; a supplied list replaces the bundled list.
+func LoadCustomCollar(name, filename string, data []byte) (Collar, error) {
+	base, err := embeddedCollars.ReadFile(filepath.Join("collars", name+".cue"))
+	if errors.Is(err, fs.ErrNotExist) {
+		return LoadCollar(filename, data)
+	}
+	if err != nil {
+		return Collar{}, fmt.Errorf("read embedded collar %q: %w", name, err)
+	}
+	ctx := cuecontext.New()
+	var bundled, overlay map[string]any
+	for _, source := range []struct {
+		filename string
+		data     []byte
+		target   *map[string]any
+	}{
+		{name + ".cue", base, &bundled},
+		{filename, data, &overlay},
+	} {
+		value := ctx.CompileBytes(source.data, cue.Filename(source.filename)).LookupPath(cue.MakePath(cue.Str("collar")))
+		if err := value.Err(); err != nil {
+			return Collar{}, fmt.Errorf("load collar %q: %w", source.filename, err)
+		}
+		var bytesPath string
+		value.Walk(func(field cue.Value) bool {
+			if field.Kind() == cue.BytesKind {
+				bytesPath = field.Path().String()
+				return false
+			}
+			return true
+		}, nil)
+		if bytesPath != "" {
+			return Collar{}, fmt.Errorf("collar %q has CUE bytes at %s; expected a JSON value", source.filename, bytesPath)
+		}
+		encoded, err := value.MarshalJSON()
+		if err != nil {
+			return Collar{}, fmt.Errorf("encode collar %q: %w", source.filename, err)
+		}
+		decoder := json.NewDecoder(bytes.NewReader(encoded))
+		decoder.UseNumber()
+		if err := decoder.Decode(source.target); err != nil {
+			return Collar{}, fmt.Errorf("decode collar %q: %w", source.filename, err)
+		}
+	}
+	mergeCollarFields(bundled, overlay)
+	merged, err := json.Marshal(map[string]any{"collar": bundled})
+	if err != nil {
+		return Collar{}, fmt.Errorf("encode collar %q: %w", filename, err)
+	}
+	return LoadCollar(filename, merged)
+}
+
+func mergeCollarFields(base, overlay map[string]any) {
+	for key, value := range overlay {
+		if fields, ok := value.(map[string]any); ok {
+			if existing, ok := base[key].(map[string]any); ok {
+				if name, named := fields["name"].(string); named && existing["name"] != nil && existing["name"] != name {
+					base[key] = value
+					continue
+				}
+				mergeCollarFields(existing, fields)
+				continue
+			}
+		}
+		base[key] = value
+	}
 }
 
 func validateCollar(collar Collar) error {
@@ -226,6 +300,9 @@ func validateCollar(collar Collar) error {
 		seen := make(map[string]bool, len(bands))
 		previous := -1.0
 		for _, band := range bands {
+			if err := validateContextBandMessage(band); err != nil {
+				return err
+			}
 			if seen[band.Name] || band.At <= previous {
 				return fmt.Errorf("context bands for %q must have unique names and increasing thresholds", selector)
 			}
@@ -246,6 +323,34 @@ func validateCollar(collar Collar) error {
 	}
 	if action := collar.Actions.StartupReplace; action != nil && (len(action.Keys) == 0 || action.Text != "" || action.Submit) {
 		return fmt.Errorf("startup replacement must declare keys without text or submit")
+	}
+	return nil
+}
+
+var contextBandMessageTokens = map[string]bool{
+	"band": true, "threshold_percent": true, "used_tokens": true, "limit_tokens": true,
+	"used_percent": true, "model": true, "agent_name": true, "compact_command": true,
+}
+
+func validateContextBandMessage(band ContextBand) error {
+	message := band.Message
+	for len(message) > 0 {
+		if strings.HasPrefix(message, "{{") {
+			end := strings.Index(message[2:], "}}")
+			if end < 0 {
+				return fmt.Errorf("context band %q has malformed message token", band.Name)
+			}
+			token := message[2 : end+2]
+			if !contextBandMessageTokens[token] {
+				return fmt.Errorf("context band %q has unknown message token %q", band.Name, token)
+			}
+			message = message[end+4:]
+			continue
+		}
+		if strings.HasPrefix(message, "}}") {
+			return fmt.Errorf("context band %q has malformed message token", band.Name)
+		}
+		message = message[1:]
 	}
 	return nil
 }

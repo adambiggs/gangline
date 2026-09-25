@@ -118,7 +118,7 @@ override file values. Run `gang config` to see effective values and defaults.
 | --- | --- |
 | `GANG_SESSION` | Team and tmux session name; defaults to `gangline`. |
 | `GANG_COLLAR` | Default collar; defaults to `claude-code`. |
-| `GANG_COLLARS` | Absolute directory of custom `NAME.cue` collars. |
+| `GANG_COLLARS` | Absolute directory of custom `NAME.cue` collars and bundled collar overlays. |
 | `GANG_LAUNCH_ARGS` | JSON object mapping collar names to extra launch argument arrays. |
 | `GANG_CAPACITY_TIMEOUT` | Positive duration budget for provider-error continuations. |
 
@@ -172,6 +172,36 @@ Each uses the installed native CLI and its account settings. Use
 `gang models -c COLLAR` for available
 model and effort identifiers. Gangline leaves native permissions, login, and
 trust decisions to the operator.
+
+In `GANG_COLLARS`, a `NAME.cue` matching a bundled collar overlays its fields;
+other names require a complete collar. Nested fields merge; a changed primitive
+name replaces that primitive and its parameters. Lists replace the bundled
+list. Each `context_bands` selector value replaces its entire band list;
+other selectors remain. For example, `claude-code.cue` can set only:
+
+```cue
+collar: {
+	context_bands: {
+		"*": [{name: "early", at: 0.10}, {name: "late", at: 0.20}]
+	}
+}
+```
+
+Each context band has a `name`, threshold `at` (a fraction from 0 to 1), and
+optional `message`. A nonfinal band without a message advises saving state and
+compacting at the next good stopping point; the last orders compaction now.
+Messages use these tokens; token counts are integers and percents are rounded:
+
+| Token | Value |
+| --- | --- |
+| `{{band}}` | Band name. |
+| `{{threshold_percent}}` | Threshold percent. |
+| `{{used_tokens}}` | Used tokens. |
+| `{{limit_tokens}}` | Context limit in tokens. |
+| `{{used_percent}}` | Reported usage percent. |
+| `{{model}}` | Reported model. |
+| `{{agent_name}}` | Agent name. |
+| `{{compact_command}}` | `gang compact --resume 'Resume from FILE'`. |
 
 Claude Code context readings come from its status line. Codex readings come
 from its native session log. `gang limits -c codex` queries account limits

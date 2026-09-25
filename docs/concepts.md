@@ -64,8 +64,8 @@ lists their override files.
 
 **Context** is the native harness's reported conversation usage. Gangline
 reports missing readings as unknown. A collar can define context bands;
-crossing one upward queues a notice telling the agent to save its work and
-compact at a suitable stopping point.
+crossing one upward queues a notice. Nonfinal bands advise saving state and
+compacting at a suitable stopping point; the last orders compaction now.
 
 Compaction requests wait for a native idle boundary. Gangline holds the resume
 note until it sees native completion, then delivers it before other queued

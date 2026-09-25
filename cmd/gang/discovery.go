@@ -115,7 +115,7 @@ func loadCollar(name string, settings settings) (harness.Collar, error) {
 		filename := filepath.Join(settings.CollarDir, name+".cue")
 		data, err := os.ReadFile(filename)
 		if err == nil {
-			collar, err := harness.LoadCollar(filename, data)
+			collar, err := harness.LoadCustomCollar(name, filename, data)
 			if err != nil {
 				return harness.Collar{}, err
 			}

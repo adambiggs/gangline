@@ -31,6 +31,7 @@ package harness
 #ContextBand: close({
 	name: #Name
 	at: number & >=0 & <=1
+	message?: string & !=""
 })
 
 #Action: close({

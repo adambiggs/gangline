@@ -2,12 +2,38 @@ package main
 
 import (
 	"fmt"
+	"strings"
 
 	"github.com/adambiggs/gangline/core"
 	"github.com/adambiggs/gangline/harness"
 	"github.com/adambiggs/gangline/store"
 	"github.com/adambiggs/gangline/substrate"
 )
+
+const contextBandCompactCommand = "gang compact --resume 'Resume from FILE'"
+
+const contextBandAdvice = "Context band {{band}} crossed (threshold {{threshold_percent}}%): {{used_tokens}}/{{limit_tokens}} ({{used_percent}}%), model {{model}}. Save your working state to a file and compact at the next good stopping point with `{{compact_command}}`."
+const contextBandOrder = "Context band {{band}} crossed (threshold {{threshold_percent}}%): {{used_tokens}}/{{limit_tokens}} ({{used_percent}}%), model {{model}}. Compact now: save your working state to a file, then run `{{compact_command}}`."
+
+func renderContextBandMessage(band harness.ContextBand, last bool, a *core.Agent, r core.Reading) string {
+	message := band.Message
+	if message == "" {
+		message = contextBandAdvice
+		if last {
+			message = contextBandOrder
+		}
+	}
+	return strings.NewReplacer(
+		"{{band}}", band.Name,
+		"{{threshold_percent}}", fmt.Sprintf("%.0f", band.At*100),
+		"{{used_tokens}}", fmt.Sprint(*r.Used),
+		"{{limit_tokens}}", fmt.Sprint(*r.Limit),
+		"{{used_percent}}", fmt.Sprintf("%.0f", *r.Percent),
+		"{{model}}", r.Model,
+		"{{agent_name}}", string(a.Name),
+		"{{compact_command}}", contextBandCompactCommand,
+	).Replace(message)
+}
 
 // Accept each reading separately: a transcript batch can cross several bands,
 // compact, then cross them again. Save these intents with the native cursor.
@@ -48,6 +74,7 @@ func (run *runtime) noteContextBands(a *core.Agent, c harness.Collar) error {
 	case state.Model == "":
 		previous = *r.Percent
 	}
+	last := harness.ActiveContextBand(c, r.Model, harness.ContextReading{Percent: 1})
 	for _, band := range harness.CrossedContextBands(c, r.Model, previous/100, *r.Percent/100) {
 		token, err := randomEnvelopeToken()
 		if err != nil {
@@ -57,7 +84,7 @@ func (run *runtime) noteContextBands(a *core.Agent, c harness.Collar) error {
 		e := core.Envelope{
 			ID: core.EnvelopeID(fmt.Sprintf("context-%d", state.Sequence)), Token: token, Recipient: a.ID, To: a.Name,
 			From: core.Sender{Kind: core.SenderGangline, Name: "context-band"}, CreatedAt: run.cmd.now(),
-			Message: core.Message{Text: fmt.Sprintf("Context band %s crossed (threshold %.0f%%): %s, model %s. At your next checkpoint, save your working state to a file, then run `gang compact --resume 'Resume from FILE'` to compact your own context.", band.Name, band.At*100, contextUsageText(*r.Used, *r.Limit, *r.Percent), r.Model)},
+			Message: core.Message{Text: renderContextBandMessage(band, last != nil && band.Name == last.Name, a, r)},
 		}
 		state.Pending = append(state.Pending, core.ContextBandNote{Band: band.Name, Reading: r, Envelope: e})
 	}

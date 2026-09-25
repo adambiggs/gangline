@@ -28,7 +28,7 @@ func TestContextBandNotesCrossings(t *testing.T) {
 			if collar == "claude-code" {
 				f.input.command = "claude"
 				f.input.screen = screenWithText("────────", "❯ ", "────────")
-				model, low, high = "claude-opus-test", 10, 20
+				model, low, high = "claude-opus-test", 20, 40
 				highName = "late"
 			}
 			p, _ := f.run.team.Agent(a.ID)
@@ -114,6 +114,73 @@ func TestContextBandNotesCrossings(t *testing.T) {
 			}
 			if bands != 5 || delivered != 5 {
 				t.Fatalf("lifecycle band=%d delivered=%d, want 5 each", bands, delivered)
+			}
+		})
+	}
+}
+
+func TestContextBandMessageRendersEveryToken(t *testing.T) {
+	f := newStateFixture(t)
+	a := f.add(t, "a", "worker", "codex")
+	c, err := harness.EmbeddedCollar("codex")
+	if err != nil {
+		t.Fatal(err)
+	}
+	c.ContextBands = map[string][]harness.ContextBand{"*": {{Name: "yellow", At: 0.75, Message: "{{band}}|{{threshold_percent}}|{{used_tokens}}|{{limit_tokens}}|{{used_percent}}|{{model}}|{{agent_name}}|{{compact_command}}"}}}
+	used, limit, percent := int64(760), int64(1000), 76.0
+	a.Native.Context = core.Reading{Kind: "context", Model: "gpt-test", Status: "observed", Used: &used, Limit: &limit, Percent: &percent}
+	if err := f.run.noteContextBands(&a, c); err != nil {
+		t.Fatal(err)
+	}
+	if len(a.ContextBands.Pending) != 1 {
+		t.Fatalf("pending notes = %d", len(a.ContextBands.Pending))
+	}
+	want := "yellow|75|760|1000|76|gpt-test|worker|gang compact --resume 'Resume from FILE'"
+	if got := a.ContextBands.Pending[0].Envelope.Message.Text; got != want {
+		t.Fatalf("rendered note = %q, want %q", got, want)
+	}
+}
+
+func TestContextBandMessageDoesNotReexpandValues(t *testing.T) {
+	used, limit, percent := int64(1), int64(10), 10.0
+	r := core.Reading{Model: "{{band}}", Used: &used, Limit: &limit, Percent: &percent}
+	a := &core.Agent{Name: "worker"}
+	band := harness.ContextBand{Name: "early", At: 0.2, Message: "{{model}}"}
+	if got := renderContextBandMessage(band, false, a, r); got != "{{band}}" {
+		t.Fatalf("replacement expanded a model value: %q", got)
+	}
+}
+
+func TestContextBandDefaultsAdviseThenOrder(t *testing.T) {
+	for _, tc := range []struct {
+		collar, model string
+		thresholds    [2]float64
+	}{
+		{"claude-code", "claude-opus-test", [2]float64{0.20, 0.40}},
+		{"claude-code", "claude-haiku-test", [2]float64{0.45, 0.65}},
+		{"codex", "gpt-test", [2]float64{0.75, 0.90}},
+	} {
+		t.Run(tc.collar+"/"+tc.model, func(t *testing.T) {
+			f := newStateFixture(t)
+			a := f.add(t, "a", "worker", tc.collar)
+			c, err := harness.EmbeddedCollar(tc.collar)
+			if err != nil {
+				t.Fatal(err)
+			}
+			used, limit, percent := int64(950), int64(1000), 95.0
+			a.Native.Context = core.Reading{Kind: "context", Model: tc.model, Status: "observed", Used: &used, Limit: &limit, Percent: &percent}
+			if err := f.run.noteContextBands(&a, c); err != nil {
+				t.Fatal(err)
+			}
+			if len(a.ContextBands.Pending) != 2 {
+				t.Fatalf("pending notes = %d", len(a.ContextBands.Pending))
+			}
+			first, last := a.ContextBands.Pending[0].Envelope.Message.Text, a.ContextBands.Pending[1].Envelope.Message.Text
+			if !strings.Contains(first, fmt.Sprintf("threshold %.0f%%", tc.thresholds[0]*100)) || !strings.Contains(last, fmt.Sprintf("threshold %.0f%%", tc.thresholds[1]*100)) {
+				t.Fatalf("thresholds: %q; %q", first, last)
+			}
+			if !strings.Contains(first, "next good stopping point") || !strings.Contains(last, "Compact now") {
+				t.Fatalf("default advice/order: %q; %q", first, last)
 			}
 		})
 	}
@@ -314,7 +381,7 @@ func TestClaudeEarlyContextBandFromStatusline(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	a.ContextBands.Model, a.ContextBands.Percent = "claude-opus-test", 11
+	a.ContextBands.Model, a.ContextBands.Percent = "claude-opus-test", 21
 	if err := l.Save(a); err != nil {
 		t.Fatal(err)
 	}
@@ -340,16 +407,16 @@ func TestClaudeEarlyContextBandFromStatusline(t *testing.T) {
 		}
 		notices = nil
 	}
-	status(110000)
-	if f.input.submits != 1 || !strings.Contains(f.input.pasted, "early crossed (threshold 10%)") {
+	status(210000)
+	if f.input.submits != 1 || !strings.Contains(f.input.pasted, "early crossed (threshold 20%)") {
 		t.Fatalf("first eligible reading: submits=%d, wire=%q", f.input.submits, f.input.pasted)
 	}
-	status(110000)
+	status(210000)
 	if f.input.submits != 1 {
 		t.Fatalf("same reading repeated note: %d", f.input.submits)
 	}
-	status(200000)
-	if f.input.submits != 2 || !strings.Contains(f.input.pasted, "late crossed (threshold 20%)") {
+	status(400000)
+	if f.input.submits != 2 || !strings.Contains(f.input.pasted, "late crossed (threshold 40%)") {
 		t.Fatalf("late reading: submits=%d, wire=%q", f.input.submits, f.input.pasted)
 	}
 }
