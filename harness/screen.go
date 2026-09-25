@@ -38,6 +38,11 @@ type Startup struct {
 }
 
 func InspectStartup(collar Collar, screen substrate.Screen) (Startup, error) {
+	if blocked, found, err := DetectBlocked(collar.Primitives.Blocked, screen); err != nil {
+		return Startup{}, err
+	} else if found {
+		return Startup{State: StartupTrustRequired, Prompt: blocked.Evidence}, nil
+	}
 	for _, invocation := range collar.Primitives.Startup {
 		switch invocation.Name {
 		case "claude-trust-prompt", "codex-trust-prompt":

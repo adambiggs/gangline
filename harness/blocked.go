@@ -52,5 +52,5 @@ func InputBlocked(collar Collar, screen substrate.Screen) (Blocked, bool, error)
 	if startup.State == StartupTrustRequired {
 		return Blocked{Evidence: startup.Prompt}, true, nil
 	}
-	return DetectBlocked(collar.Primitives.Blocked, screen)
+	return Blocked{}, false, nil
 }

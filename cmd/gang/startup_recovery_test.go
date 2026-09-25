@@ -17,6 +17,22 @@ import (
 )
 
 func TestStartupTrustSurvivesDeadlineAndKeepsContract(t *testing.T) {
+	for _, prompt := range []struct {
+		name    string
+		lines   []string
+		expired bool
+	}{
+		{name: "hook review", lines: []string{"Hooks need review", "› 1. Review hooks", "Press enter to confirm or esc to go back"}},
+		{name: "permission", lines: []string{"Would you like to run this command?", "› 1. Yes, proceed"}},
+		{name: "permission after boot deadline", lines: []string{"Would you like to run this command?", "› 1. Yes, proceed"}, expired: true},
+	} {
+		t.Run(prompt.name, func(t *testing.T) {
+			testStartupPromptSurvivesDeadlineAndKeepsContract(t, prompt.lines, prompt.expired)
+		})
+	}
+}
+
+func testStartupPromptSurvivesDeadlineAndKeepsContract(t *testing.T, prompt []string, expired bool) {
 	f := newStateFixture(t)
 	a := f.add(t, "a", "worker", "codex")
 	p, _ := f.run.team.Agent(a.ID)
@@ -36,7 +52,11 @@ func TestStartupTrustSurvivesDeadlineAndKeepsContract(t *testing.T) {
 		t.Fatal(err)
 	}
 	f.env["GANGLINE_HITCH_ID"] = string(a.ID)
-	f.input.screen = screenWithText("Hooks need review", "› 1. Review hooks", "Press enter to confirm or esc to go back")
+	f.input.screen = screenWithText(prompt...)
+	if expired {
+		start := f.cmd.now()
+		f.run.cmd.clock = func() time.Time { return start.Add(time.Hour) }
+	}
 	if err := f.run.tickAgent(a.ID, hookNotice{}, false); err != nil {
 		t.Fatal(err)
 	}
