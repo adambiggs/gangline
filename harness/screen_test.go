@@ -99,6 +99,26 @@ func TestInspectStartupFindsTrustPrompt(t *testing.T) {
 	}
 }
 
+func TestInspectStartupDistinguishesPermissionFromUnknownMenu(t *testing.T) {
+	collar, err := EmbeddedCollar("codex")
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, test := range []struct {
+		title, choice string
+		state         StartupState
+	}{
+		{"Would you like to run this command?", "› 1. Yes, proceed", StartupTrustRequired},
+		{"Choose a display mode", "› 1. Compact", StartupOccupied},
+	} {
+		screen := testScreen(testCells(test.title, false), testCells(test.choice, false))
+		startup, err := InspectStartup(collar, screen)
+		if err != nil || startup.State != test.state {
+			t.Fatalf("startup for %q = %+v, %v", test.title, startup, err)
+		}
+	}
+}
+
 func TestInspectStartupFindsClaudeExternalImportTrust(t *testing.T) {
 	collar, err := EmbeddedCollar("claude-code")
 	if err != nil {

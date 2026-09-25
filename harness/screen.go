@@ -47,6 +47,15 @@ func InspectStartup(collar Collar, screen substrate.Screen) (Startup, error) {
 			if _, err := ReadComposer(invocation, screen); err == nil {
 				return Startup{State: StartupReady}, nil
 			} else if !errors.Is(err, ErrNoComposer) {
+				if invocation.Name == "codex-composer" && errors.Is(err, ErrComposerOccupied) {
+					blocked, found, detectErr := DetectBlocked(collar.Primitives.Blocked, screen)
+					if detectErr != nil {
+						return Startup{}, detectErr
+					}
+					if found {
+						return Startup{State: StartupTrustRequired, Prompt: blocked.Evidence}, nil
+					}
+				}
 				return Startup{State: StartupOccupied, Prompt: err.Error()}, nil
 			}
 		default:

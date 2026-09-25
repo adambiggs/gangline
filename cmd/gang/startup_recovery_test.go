@@ -77,6 +77,85 @@ func TestStartupTrustSurvivesDeadlineAndKeepsContract(t *testing.T) {
 	}
 }
 
+func TestStartupPermissionMenuSurvivesBootDeadline(t *testing.T) {
+	for _, afterDeadline := range []bool{false, true} {
+		t.Run(fmt.Sprintf("afterDeadline=%t", afterDeadline), func(t *testing.T) {
+			f := newStateFixture(t)
+			a := f.add(t, "a", "worker", "codex")
+			p, _ := f.run.team.Agent(a.ID)
+			a.Status = core.Booting
+			a.Activity = core.Unknown
+			a.BootDeadline = f.cmd.now().Add(time.Second)
+			l, err := p.TryLock()
+			if err != nil {
+				t.Fatal(err)
+			}
+			if err := l.Save(a); err != nil {
+				t.Fatal(err)
+			}
+			l.Close()
+			e := core.Envelope{ID: "original", Recipient: a.ID, To: a.Name, From: core.Sender{Kind: core.SenderAgent, Name: "lead", HitchID: "lead-id"}, Purpose: "assignment", Message: core.Message{Text: "Standing contract and assignment"}, CreatedAt: f.cmd.now()}
+			if err := p.Publish(e); err != nil {
+				t.Fatal(err)
+			}
+			f.env["GANGLINE_HITCH_ID"] = string(a.ID)
+			f.input.screen = screenWithText("Would you like to run this command?", "› 1. Yes, proceed", "  2. No")
+			start := f.cmd.now()
+			if afterDeadline {
+				f.run.cmd.clock = func() time.Time { return start.Add(time.Hour) }
+			}
+			if err := f.run.tickAgent(a.ID, hookNotice{}, false); err != nil {
+				t.Fatal(err)
+			}
+			blocked, err := p.Read()
+			if err != nil {
+				t.Fatal(err)
+			}
+			if blocked.Status != core.Booting || blocked.Activity != core.Blocked || !blocked.BootDeadline.IsZero() || f.input.submits != 0 {
+				t.Fatalf("permission menu state: %+v submits=%d", blocked, f.input.submits)
+			}
+			f.run.cmd.clock = func() time.Time { return start.Add(2 * time.Hour) }
+			if err := f.run.tickAgent(a.ID, hookNotice{}, false); err != nil {
+				t.Fatal(err)
+			}
+			f.input.screen = screenWithText("READY", "› ")
+			if err := f.run.tickAgent(a.ID, hookNotice{}, false); err != nil {
+				t.Fatal(err)
+			}
+			got, err := p.ReadEnvelope("cur", e.ID)
+			if err != nil || got.Message.Text != e.Message.Text || f.input.submits != 1 {
+				t.Fatalf("retained startup: %+v err=%v submits=%d", got, err, f.input.submits)
+			}
+		})
+	}
+}
+
+func TestUnknownCodexMenuDoesNotHoldBootDeadline(t *testing.T) {
+	f := newStateFixture(t)
+	a := f.add(t, "a", "worker", "codex")
+	p, _ := f.run.team.Agent(a.ID)
+	a.Status = core.Booting
+	a.BootDeadline = f.cmd.now().Add(time.Second)
+	l, err := p.TryLock()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := l.Save(a); err != nil {
+		t.Fatal(err)
+	}
+	l.Close()
+	f.input.screen = screenWithText("Choose a display mode", "› 1. Compact")
+	start := f.cmd.now()
+	f.run.cmd.clock = func() time.Time { return start.Add(time.Hour) }
+	if err := f.run.tickAgent(a.ID, hookNotice{}, false); err != nil {
+		t.Fatal(err)
+	}
+	got, err := p.Read()
+	if err != nil || got.Status != core.Failed || f.input.submits != 0 {
+		t.Fatalf("unknown menu state: %+v err=%v submits=%d", got, err, f.input.submits)
+	}
+}
+
 type submitOnlyFixture struct{ *inputFixture }
 
 func (b submitOnlyFixture) SendKeys(ctx context.Context, pane substrate.PaneID, k substrate.Keys) error {
