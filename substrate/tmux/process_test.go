@@ -170,6 +170,44 @@ func TestNativeAncestryRejectsReusedParentPID(t *testing.T) {
 	}
 }
 
+func TestCollectProcessRecordsKeepsPaneLineageAndSkipsInaccessiblePIDs(t *testing.T) {
+	seen := []int{}
+	want := map[int]processRecord{
+		100: {Process: substrate.Process{PID: 100, ParentPID: 1, GroupID: 100, Command: "sh"}, foregroundGroup: 200},
+		200: {Process: substrate.Process{PID: 200, ParentPID: 100, GroupID: 200, Command: "agent"}, foregroundGroup: 200},
+	}
+	records, err := collectProcessRecords(context.Background(), 100, []int{0, 100, 200, 300}, func(pid int) (processRecord, error) {
+		seen = append(seen, pid)
+		if pid == 300 {
+			return processRecord{}, syscall.EPERM
+		}
+		return want[pid], nil
+	})
+	if err != nil || len(records) != 2 || records[100] != want[100] || records[200] != want[200] || !descendsFrom(200, 100, records) {
+		t.Fatalf("native table = %+v, err=%v", records, err)
+	}
+	if len(seen) != 3 || seen[0] != 100 || seen[1] != 200 || seen[2] != 300 {
+		t.Fatalf("observed PIDs = %v", seen)
+	}
+	_, err = collectProcessRecords(context.Background(), 100, []int{100}, func(int) (processRecord, error) {
+		return processRecord{}, syscall.EPERM
+	})
+	if !errors.Is(err, syscall.EPERM) {
+		t.Fatalf("pane process denial = %v", err)
+	}
+}
+
+func TestParseDarwinArgv0KeepsInvokedSymlinkName(t *testing.T) {
+	data := append([]byte{1, 0, 0, 0}, []byte("/resolved/versioned-binary\x00\x00\x00/opt/tools/claude\x00extra")...)
+	got, err := parseDarwinArgv0(data)
+	if err != nil || got != "/opt/tools/claude" {
+		t.Fatalf("argv[0] = %q, %v", got, err)
+	}
+	if _, err := parseDarwinArgv0([]byte{1, 0, 0, 0, 'x'}); err == nil {
+		t.Fatal("unterminated executable path passed")
+	}
+}
+
 func TestPinOwnedProcessesRejectsChangedAncestor(t *testing.T) {
 	root := processRecord{Process: substrate.Process{PID: 100, ParentPID: 1}, started: "101"}
 	child := processRecord{Process: substrate.Process{PID: 200, ParentPID: 100}, started: "201"}

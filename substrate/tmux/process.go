@@ -5,7 +5,6 @@ import (
 	"errors"
 	"fmt"
 	"os"
-	"os/exec"
 	"sort"
 	"strconv"
 	"strings"
@@ -55,7 +54,7 @@ func (backend *Backend) ForegroundProcesses(ctx context.Context, pane substrate.
 	if err != nil {
 		return nil, err
 	}
-	records, err := readProcessTable(ctx)
+	records, err := readProcessTable(ctx, root)
 	if err != nil {
 		return nil, err
 	}
@@ -70,7 +69,9 @@ func (backend *Backend) ForegroundProcesses(ctx context.Context, pane substrate.
 	result := make([]substrate.Process, 0, 1)
 	for pid, record := range records {
 		if record.GroupID == rootRecord.foregroundGroup && descendsFrom(pid, root, records) {
-			result = append(result, record.Process)
+			process := record.Process
+			process.Command = foregroundCommand(process)
+			result = append(result, process)
 		}
 	}
 	if len(result) == 0 {
@@ -96,23 +97,13 @@ func (backend *Backend) paneProcess(ctx context.Context, pane substrate.PaneID) 
 	return root, nil
 }
 
-func readProcessTable(ctx context.Context) (map[int]processRecord, error) {
-	command := exec.CommandContext(ctx, "ps", "-axo", "pid=,ppid=,pgid=,tpgid=,lstart=,comm=")
-	command.Env = append(os.Environ(), "LC_ALL=C")
-	data, err := command.Output()
-	if err != nil {
-		return nil, fmt.Errorf("read process tree: %w", err)
-	}
-	return parseProcessTable(string(data))
-}
-
 func (backend *Backend) ownedProcesses(ctx context.Context, pane substrate.PaneID) (owned []processIdentity, result error) {
 	root, err := backend.paneProcess(ctx, pane)
 	if err != nil {
 		return nil, err
 	}
 	// Capture the root before enumerating the rest. In particular, do not
-	// relabel a coarse ps snapshot with a replacement root's native identity.
+	// relabel a process-table snapshot with a replacement root's native identity.
 	rootObservation, err := observeProcess(root)
 	if processGone(err) {
 		return nil, nil
@@ -130,7 +121,7 @@ func (backend *Backend) ownedProcesses(ctx context.Context, pane substrate.PaneI
 			owned = nil
 		}
 	}()
-	enumerated, err := readProcessTable(ctx)
+	enumerated, err := readProcessTable(ctx, root)
 	if err != nil {
 		return nil, err
 	}
@@ -160,8 +151,32 @@ func processGone(err error) bool {
 	return errors.Is(err, os.ErrNotExist) || errors.Is(err, syscall.ESRCH)
 }
 
+func collectProcessRecords(ctx context.Context, root int, pids []int, read func(int) (processRecord, error)) (map[int]processRecord, error) {
+	records := make(map[int]processRecord, len(pids))
+	for _, pid := range pids {
+		if err := ctx.Err(); err != nil {
+			return nil, err
+		}
+		if pid <= 0 {
+			continue
+		}
+		record, err := read(pid)
+		if err != nil {
+			if pid != root && (processGone(err) || errors.Is(err, syscall.EPERM) || errors.Is(err, syscall.EACCES)) {
+				continue
+			}
+			return nil, fmt.Errorf("read process tree: inspect process %d: %w", pid, err)
+		}
+		if record.PID != pid {
+			return nil, fmt.Errorf("read process tree: process %d returned identity %d", pid, record.PID)
+		}
+		records[pid] = record
+	}
+	return records, nil
+}
+
 func observeProcessCandidates(root int, enumerated map[int]processRecord, observations map[int]processObservation, observe func(int) (processObservation, error)) error {
-	// ps bounds descriptor use to possible descendants. Membership here
+	// The process table bounds descriptor use to possible descendants. Membership here
 	// authorizes only an observation; retained native ancestry and identity
 	// validation below decide which processes can receive signals.
 	for pid := range enumerated {
