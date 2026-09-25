@@ -4,6 +4,12 @@ Gangline puts Claude Code and Codex agents in a tmux team. Each keeps its own
 terminal, tools, permissions, and history. You can give agents separate jobs,
 send messages by name, and watch their work from the terminal.
 
+Gangline is opinionated about coordination mechanics: named agents, hitching
+and collars, attributed message delivery, a startup contract, lifecycle logs,
+and context compaction. Your instructions define the work, who decides what
+gets built, and how review and acceptance run; Gangline does not manage tasks
+or claims.
+
 Use it when you want to hand a result to a lead and let it recruit teammates,
 while you can inspect or steer any agent. Start in your repository:
 

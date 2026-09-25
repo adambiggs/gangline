@@ -1,11 +1,17 @@
 # Concepts
 
+Gangline names, hitches, connects, and observes agents, delivers their messages
+with sender attribution, and coordinates context compaction. Its startup
+contract explains delivery and reporting. Your instructions define units of
+work, decisions, review, and acceptance; Gangline does not track tasks or
+claims.
+
 ## Agents, registrations, and sessions
 
 An **agent** is a Claude Code or Codex process running in a named tmux window.
 A **team** is the collection selected by `GANG_SESSION`. `gang up` starts its
 first agent with the `lead` role and attaches your terminal. The lead's brief
-asks it to assign work to named agents and judge their completion reports.
+asks it to follow operator policy when assigning work to named agents.
 Your instructions decide the work and staffing.
 
 A registration records an agent with a fixed ID and a name you can change with
