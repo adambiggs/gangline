@@ -1,5 +1,23 @@
 # Changelog
 
+## [1.3.0](https://github.com/adambiggs/gangline/compare/gangline-v1.2.1...gangline-v1.3.0) (2026-09-25)
+
+
+### Features
+
+* **send:** accept a positional message body for stable commands ([396eeb7](https://github.com/adambiggs/gangline/commit/396eeb72b4d2bdfc5e9932d8c22964c1106d334b))
+
+
+### Bug Fixes
+
+* attribute startup context separately from assignments ([b074ab7](https://github.com/adambiggs/gangline/commit/b074ab700a028177bd3a90dacafaeb7fe33a0240))
+* **hitch:** preserve Codex startup through permission menus ([a93a331](https://github.com/adambiggs/gangline/commit/a93a331ae179f5235182474277b2a7aa347a3a33))
+* keep spinner progress from reporting idle ([5f684cc](https://github.com/adambiggs/gangline/commit/5f684cc47fc60ff76803166eec8a788868f513df))
+* read macOS process lineage without ps ([01b56eb](https://github.com/adambiggs/gangline/commit/01b56eb2af5eb8fb2ab2a5bc2a40c00ee47b9cd9))
+* recover retained startup after collapsed paste ([109fc95](https://github.com/adambiggs/gangline/commit/109fc9549e2672c96f3cdf44ef0f751628dad492))
+* retain process identity across exec before pinning ([e872561](https://github.com/adambiggs/gangline/commit/e872561a934fed42391f034588bf37a1a49f00ac))
+* supersede stale names when starting a stopped team ([a1999c0](https://github.com/adambiggs/gangline/commit/a1999c0b23a3f76c83ca6846813e1c25e3c67bd7)), closes [#60](https://github.com/adambiggs/gangline/issues/60)
+
 ## [1.2.1](https://github.com/adambiggs/gangline/compare/gangline-v1.2.0...gangline-v1.2.1) (2026-09-24)
 
 
