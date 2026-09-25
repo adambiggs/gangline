@@ -28,9 +28,10 @@ to pick up changes.
 
 - Test against a separately named throwaway session, never the live `gangline`
   session or your own agent. Delete only that session afterward.
-- Inside an agent window `$TMUX` points at the live server, and so do `tmux`
-  and `gang`. Run `unset TMUX TMUX_PANE` and confirm `tmux list-sessions` shows
-  only your session before starting anything.
+- Run `unset TMUX TMUX_PANE`, then select a separate team, state root, and
+  tmux socket using the isolated-team procedure in `docs/reference.md`. Before
+  manual testing, confirm `tmux -S "$GANG_TMUX_SOCKET" list-sessions` shows only
+  your disposable test session.
 - `gang down` ends the whole team and `gang drop` ends one agent. Run
   `gang roster` first.
 - Never run `tmux kill-server` or `tmux kill-session` without an exact target.
