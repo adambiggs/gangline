@@ -140,6 +140,7 @@ Installer variables:
 | `GANGLINE_HOME` | `~/.local/share/gangline`; retained release checkout. |
 | `GANGLINE_BIN` | `~/.local/bin`; installed command directory. |
 | `GANGLINE_REPO` | Public Gangline Git repository; release source. |
+| `GANGLINE_RELEASE_BASE_URL` | GitHub release download root; override for another release host. |
 
 ## Startup instructions
 

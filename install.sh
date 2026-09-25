@@ -8,6 +8,7 @@
 # gangline-v* release tag rather than that branch. Re-running upgrades an
 # existing install. Override any of:
 #   GANGLINE_REPO  source to clone from   (default: the GitHub repo)
+#   GANGLINE_RELEASE_BASE_URL  release assets root (default: GitHub releases)
 #   GANGLINE_HOME  where the tree lives   (default: ~/.local/share/gangline)
 #   GANGLINE_BIN   where `gang` is linked (default: ~/.local/bin)
 set -eu
@@ -80,8 +81,6 @@ semver_relation() {
 }
 
 need git
-need go
-
 latest_release_tag() {
   refs="$(git ls-remote --refs --tags "$REPO" 'refs/tags/gangline-v*')" \
     || die "could not read release tags from $REPO"
@@ -237,9 +236,62 @@ fi
 if [ -e "$BIN_DIR/gang" ] && [ ! -f "$BIN_DIR/gang" ] && [ ! -L "$BIN_DIR/gang" ]; then
   die "$BIN_DIR/gang exists and is not a file or a symlink — move it aside"
 fi
-if [ -f "$candidate/go.mod" ] && [ -d "$candidate/cmd/gang" ]; then
+host_os="$(uname -s)"
+host_arch="$(uname -m)"
+case "$host_os" in Linux) asset_os=linux ;; Darwin) asset_os=darwin ;; *) asset_os="" ;; esac
+case "$host_arch" in
+  x86_64|amd64) asset_arch=amd64 ;;
+  aarch64|arm64) asset_arch=arm64 ;;
+  *) asset_arch="" ;;
+esac
+release_base="${GANGLINE_RELEASE_BASE_URL:-}"
+if [ -z "$release_base" ]; then
+  case "$REPO" in
+    https://github.com/*) release_base="${REPO%.git}/releases/download" ;;
+  esac
+fi
+
+candidate_command="$stage_root/gang"
+asset_available=0
+if [ -n "$asset_os" ] && [ -n "$asset_arch" ] && [ -n "$release_base" ]; then
+  need curl
+  asset="$tag-$asset_os-$asset_arch"
+  asset_url="${release_base%/}/$tag/$asset"
+  http_status="$(curl -L -sS -o "$candidate_command" -w '%{http_code}' "$asset_url")" \
+    || die "could not download $asset_url"
+  case "$http_status" in
+    200)
+      sums="$stage_root/SHA256SUMS"
+      curl -fLsS -o "$sums" "${release_base%/}/$tag/SHA256SUMS" \
+        || die "could not download checksums for $tag"
+      expected="$(awk -v name="$asset" '$2 == name { print $1 }' "$sums")"
+      case "$expected" in
+        *[!0123456789abcdef]*|'') die "invalid checksum for $asset" ;;
+      esac
+      [ "${#expected}" -eq 64 ] || die "invalid checksum for $asset"
+      if command -v sha256sum >/dev/null 2>&1; then
+        actual="$(sha256sum "$candidate_command" | awk '{ print $1 }')"
+      elif command -v shasum >/dev/null 2>&1; then
+        actual="$(shasum -a 256 "$candidate_command" | awk '{ print $1 }')"
+      else
+        die "sha256sum or shasum is required to verify $asset"
+      fi
+      [ "$actual" = "$expected" ] || die "checksum mismatch for $asset"
+      chmod +x "$candidate_command"
+      asset_available=1
+      echo "verified prebuilt $asset"
+      ;;
+    404) rm -f "$candidate_command" ;;
+    *) die "could not download $asset_url (HTTP $http_status)" ;;
+  esac
+fi
+
+if [ "$asset_available" -eq 1 ]; then
   release_kind=compiled
-  candidate_command="$stage_root/gang"
+elif [ -f "$candidate/go.mod" ] && [ -d "$candidate/cmd/gang" ]; then
+  release_kind=compiled
+  echo "no prebuilt asset for $host_os/$host_arch; building $tag from source (Go required)"
+  need go
   CGO_ENABLED=0 go -C "$candidate" build -trimpath \
     -ldflags "-s -w -X main.version=$latest" -o "$candidate_command" ./cmd/gang \
     || die "could not build gang $tag"

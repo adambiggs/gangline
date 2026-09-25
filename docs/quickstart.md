@@ -6,10 +6,12 @@ the team when you're done.
 
 ## Install
 
-Gangline runs on Linux and macOS. You need Git, tmux, and Go compatible with
-the [`go.mod`](../go.mod) file. This walkthrough uses both Claude Code and
-Codex; install their CLIs and run each directly in your repository to complete
-login and trust prompts.
+Gangline runs on Linux and macOS. You need Git, tmux, and curl. The installer
+downloads a verified release binary for Linux and macOS on amd64 or arm64.
+Go compatible with [`go.mod`](../go.mod) is needed only if no binary is
+available for your platform or you build from source. This walkthrough uses
+both Claude Code and Codex; install their CLIs and run each directly in your
+repository to complete login and trust prompts.
 
 Install a stable Gangline release:
 
