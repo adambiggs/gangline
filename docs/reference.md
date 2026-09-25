@@ -40,7 +40,7 @@ a matching native transcript. An unverifiable native session is refused.
 
 | Command | Effect |
 | --- | --- |
-| `gang send NAME [OPTIONS]` | Read a message from stdin and report its receipt. |
+| `gang send NAME [OPTIONS] [BODY]` | Send BODY, or read stdin when absent, and report its receipt. |
 | `gang queue [NAME]` | List pending message IDs, recipients, and senders. |
 | `gang interrupt [NAME] [-m REASON]` | Interrupt the turn; deliver an optional reason after it stops. |
 | `gang compact [NAME] [--resume TEXT]` | Compact at native idle; deliver the continuation after confirmed completion. |

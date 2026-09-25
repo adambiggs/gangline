@@ -58,6 +58,7 @@ func parseHitch(arguments []string, defaultCollar, defaultDirectory string) (hit
 
 type sendOptions struct {
 	Name      string
+	Body      *string
 	From      string
 	LiveOnly  bool
 	Supersede bool
@@ -102,8 +103,18 @@ func parseSend(arguments []string) (sendOptions, error) {
 	if err := flags.Parse(arguments[1:]); err != nil {
 		return sendOptions{}, usageError("send: %v", err)
 	}
-	if flags.NArg() != 0 {
-		return sendOptions{}, usageError("send: unexpected argument %q", flags.Arg(0))
+	if flags.NArg() > 1 {
+		if strings.HasPrefix(flags.Arg(1), "-") {
+			return sendOptions{}, usageError("send: options must precede BODY (unexpected argument %q)", flags.Arg(1))
+		}
+		return sendOptions{}, usageError("send: unexpected argument %q", flags.Arg(1))
+	}
+	if flags.NArg() == 1 {
+		body := flags.Arg(0)
+		options.Body = &body
+	}
+	if options.Body != nil && options.At == "clear" {
+		return sendOptions{}, usageError("send: a message body cannot be used with --at clear")
 	}
 	if err := validateAgentName(options.Name); err != nil {
 		return sendOptions{}, err

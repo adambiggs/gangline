@@ -13,6 +13,7 @@ Find yourself:
   gang roster
 
 Send a message:
+  gang send NAME 'message'
   printf '%s\n' 'message' | gang send NAME
 
 Read your waiting queue:
@@ -76,7 +77,7 @@ var commandUsage = map[string]string{
 	"hitch":      "usage: gang hitch NAME [-c COLLAR] [-d DIR] [-m MODEL] [-e EFFORT] [-t TASK] [-r ROLE] [--resume SESSION] [--stdin]\n       gang hitch NAME --recover\n",
 	"adopt":      "usage: gang adopt NAME [-c COLLAR]\n",
 	"rename":     "usage: gang rename OLD NEW\n",
-	"send":       "usage: gang send NAME [--from SENDER] [--live-only] [--supersede] [--at DURATION|HH:MM|clear]\n",
+	"send":       "usage: gang send NAME [--from SENDER] [--live-only] [--supersede] [--at DURATION|HH:MM|clear] [BODY]\n       Without BODY, read stdin. Use -- before BODY when it begins with -.\n",
 	"queue":      "usage: gang queue [NAME]\n",
 	"interrupt":  "usage: gang interrupt [NAME] [-m REASON]\n",
 	"compact":    "usage: gang compact [NAME] [--resume TEXT]\n       gang compact NAME --recover\n",
@@ -203,7 +204,7 @@ var commandDescription = map[string]string{
 	"hitch":      "Launch a native harness in a new team pane and deliver its contract, role, and assignment.\n",
 	"adopt":      "Register an existing pane without launching a harness or delivering startup prose.\n",
 	"rename":     "Change a registered agent name without restarting its harness.\n",
-	"send":       "Read a message from stdin. An exact native hook proves delivered; a native queue receipt proves accepted (do not resend). Otherwise input stays queued or is unverified.\n",
+	"send":       "Send BODY, or read stdin when BODY is absent. An exact native hook proves delivered; a native queue receipt proves accepted (do not resend). Otherwise input stays queued or is unverified.\n",
 	"queue":      "List pending delivery identifiers, recipients, and senders.\n",
 	"interrupt":  "Send the collar's native interrupt and optionally deliver a reason after the turn stops.\n",
 	"compact":    "Request the collar's native compaction and place a continuation behind it.\n",

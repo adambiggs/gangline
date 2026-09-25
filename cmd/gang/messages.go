@@ -82,7 +82,11 @@ func (cmd command) send(args []string) (result error) {
 	now := cmd.now()
 	var e core.Envelope
 	if o.At != "clear" {
-		body, err := readBody(cmd.stdin)
+		bodyReader := cmd.stdin
+		if o.Body != nil {
+			bodyReader = strings.NewReader(*o.Body)
+		}
+		body, err := readBody(bodyReader)
 		if err != nil {
 			return err
 		}

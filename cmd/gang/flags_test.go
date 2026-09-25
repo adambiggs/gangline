@@ -1,6 +1,9 @@
 package main
 
-import "testing"
+import (
+	"strings"
+	"testing"
+)
 
 func TestParseHitchUsesNameBeforeStdlibFlags(t *testing.T) {
 	got, err := parseHitch([]string{"worker", "-c", "codex", "-d", "/work", "-m", "gpt", "--stdin"}, "claude-code", "/default")
@@ -25,6 +28,28 @@ func TestSendAtAcceptsClear(t *testing.T) {
 	options, err := parseSend([]string{"worker", "--at", "clear"})
 	if err != nil || options.At != "clear" {
 		t.Fatalf("options=%+v err=%v", options, err)
+	}
+}
+
+func TestParseSendAcceptsPositionalBody(t *testing.T) {
+	got, err := parseSend([]string{"worker", "--from", "operator", "two\nlines"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.Body == nil || *got.Body != "two\nlines" {
+		t.Fatalf("body = %v", got.Body)
+	}
+	if got, err := parseSend([]string{"worker", "--", "-dash"}); err != nil || got.Body == nil || *got.Body != "-dash" {
+		t.Fatalf("dash body = %+v, %v", got, err)
+	}
+	if _, err := parseSend([]string{"worker", "first", "second"}); err == nil {
+		t.Fatal("multiple message bodies passed")
+	}
+	if _, err := parseSend([]string{"worker", "--at", "clear", "body"}); err == nil {
+		t.Fatal("body with clear passed")
+	}
+	if _, err := parseSend([]string{"worker", "body", "--from", "operator"}); err == nil || !strings.Contains(err.Error(), "options must precede BODY") {
+		t.Fatalf("late option error = %v", err)
 	}
 }
 

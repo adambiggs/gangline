@@ -10,8 +10,7 @@ Launch a worker with an assignment, then add direction from your shell:
 ```sh
 gang hitch worker -c codex -d "$PWD" -r worker \
   -t 'Inspect the tests and recommend a focused check.'
-printf '%s\n' 'Run the focused check and report the result to lead.' |
-  gang send worker --from operator
+gang send worker --from operator 'Run the focused check and report the result to lead.'
 gang queue worker
 gang capture worker
 ```
@@ -58,8 +57,7 @@ Ask an agent to save working state in a file, then compact at a native idle
 boundary and continue from that file:
 
 ```sh
-printf '%s\n' 'Save your current findings in notes.md, then tell me when ready.' |
-  gang send worker --from operator
+gang send worker --from operator 'Save your current findings in notes.md, then tell me when ready.'
 ```
 
 Wait for the worker's reply and check that the file exists. Then request

@@ -99,6 +99,31 @@ func TestSendReportsNativeQueueAcceptance(t *testing.T) {
 	}
 }
 
+func TestSendUsesPositionalBodyInsteadOfStdin(t *testing.T) {
+	f, _, p := queueSendFixture(t)
+	f.cmd.stdin = strings.NewReader("wrong stdin body")
+	f.input.submit = func(wire string) error {
+		f.input.screen = nativeQueueScreen(wire)
+		return nil
+	}
+	if err := f.cmd.send([]string{"worker", "--from", "operator", "two\nlines"}); err != nil {
+		t.Fatal(err)
+	}
+	id := core.EnvelopeID(strings.Fields(f.out.String())[0])
+	e, err := p.ReadEnvelope("cur", id)
+	if err != nil || e.Message.Text != "two\nlines" {
+		t.Fatalf("receipt = %+v, %v", e, err)
+	}
+}
+
+func TestSendRejectsEmptyPositionalBodyWithoutReadingStdin(t *testing.T) {
+	f, _, _ := queueSendFixture(t)
+	f.cmd.stdin = strings.NewReader("decoy stdin")
+	if err := f.cmd.send([]string{"worker", "--from", "operator", ""}); err == nil || !strings.Contains(err.Error(), "message body is empty") {
+		t.Fatalf("empty positional body error = %v", err)
+	}
+}
+
 func TestSendDoesNotAcceptAmbiguousQueueEvidence(t *testing.T) {
 	for _, kind := range []string{"wrong ID", "wrong sender", "missing header", "not dim", "occupied composer", "clipped ID"} {
 		t.Run(kind, func(t *testing.T) {

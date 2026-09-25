@@ -24,7 +24,7 @@ for tool in gang tmux claude codex vhs ffmpeg; do command -v "$tool"; done
 fc-list ':charset=23f5' family | grep -q . || { echo 'Install a font covering U+23F5, such as Noto Sans Symbols 2, or point FONTCONFIG_FILE at one.' >&2; exit 1; }
 [ ! -e "$repo/greet.py" ] || { echo 'Preserve and remove the previous greet.py before recording.' >&2; exit 1; }
 cat > "$GANG_CONFIG_DIR/roles/demo.md" <<'ROLE'
-You are in a public terminal demonstration. Keep responses short. Do only the assigned task; no commits or extra checks. Messages use gang send NAME with stdin, never --from. When idle, say Ready. A guide delegates to builder and ends its turn. When builder replies, guide replies exactly: Demo complete: Hello, team! The builder writes greet.py, runs it, and reports the observed output to guide.
+You are in a public terminal demonstration. Keep responses short. Do only the assigned task; no commits or extra checks. Send messages with gang send NAME 'TEXT', never --from. When idle, say Ready. A guide delegates to builder and ends its turn. When builder replies, guide replies exactly: Demo complete: Hello, team! The builder writes greet.py, runs it, and reports the observed output to guide.
 ROLE
 cleanup() {
   local rc=$?

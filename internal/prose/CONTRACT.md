@@ -5,7 +5,7 @@ You are one agent in a Gangline team.
 ## Commands
 
 - `gang whoami` and `gang roster`: your identity and the team.
-- `printf '%s\n' 'TEXT' | gang send NAME`: message an agent. `delivered`,
+- `gang send NAME 'TEXT'`: message an agent. `delivered`,
   `accepted`, and `queued` mean Gangline holds the message: do not resend.
   None of them means the recipient has read it.
 - `gang context`: your context use.
