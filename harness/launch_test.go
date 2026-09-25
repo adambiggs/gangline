@@ -29,7 +29,7 @@ func TestRenderLaunchInstallsHooksAndOptions(t *testing.T) {
 	}
 }
 
-func TestCodexBoundaryHooksDoNotBlockNativeSubmission(t *testing.T) {
+func TestCodexCompactionBoundaryConfirmsBeforeContinuation(t *testing.T) {
 	collar, err := EmbeddedCollar("codex")
 	if err != nil {
 		t.Fatal(err)
@@ -38,15 +38,17 @@ func TestCodexBoundaryHooksDoNotBlockNativeSubmission(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	for _, event := range []string{"Stop", "PostCompact"} {
+	for event, wantAsync := range map[string]bool{"Stop": true, "PostCompact": false} {
 		found := false
+		async := false
 		for _, arg := range command.Args {
 			if strings.HasPrefix(arg, "hooks."+event+"=") {
-				found = strings.Contains(arg, "async = true")
+				found = true
+				async = strings.Contains(arg, "async = true")
 			}
 		}
-		if !found {
-			t.Errorf("%s holds the native boundary while awaiting submission", event)
+		if !found || async != wantAsync {
+			t.Errorf("%s: found = %v, async = %v; want async = %v", event, found, async, wantAsync)
 		}
 	}
 }

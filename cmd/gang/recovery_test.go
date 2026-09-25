@@ -180,7 +180,7 @@ func TestWitnessTimeoutUsesTheDeadlineAndNeverRetypes(t *testing.T) {
 	}
 }
 
-func TestCompactionPublicationRecoveryDoesNotDuplicateContinuation(t *testing.T) {
+func TestCompactionPublicationRecoveryCancelsUnsubmittedContinuation(t *testing.T) {
 	f := newStateFixture(t)
 	a := f.add(t, "a", "worker", "codex")
 	p, _ := f.run.team.Agent(a.ID)
@@ -212,8 +212,43 @@ func TestCompactionPublicationRecoveryDoesNotDuplicateContinuation(t *testing.T)
 	if err := f.run.tickAgent(a.ID, hookNotice{}, false); err != nil {
 		t.Fatal(err)
 	}
-	if f.input.submits != 2 {
-		t.Fatalf("continuation duplicated: %d submits", f.input.submits)
+	got, err := p.Read()
+	if err != nil {
+		t.Fatal(err)
+	}
+	resume, err := p.ReadEnvelope("failed", "resume-c")
+	if err != nil || got.Compaction.Status != "failed" || resume.Outcome != "cancelled" || f.input.submits != 1 {
+		t.Fatalf("recovery sent continuation late: %+v, %v; status=%s submits=%d", resume, err, got.Compaction.Status, f.input.submits)
+	}
+}
+
+func TestCompactionPublicationAcknowledgedBeforeInputIsCancelled(t *testing.T) {
+	f := newStateFixture(t)
+	a := f.add(t, "a", "worker", "codex")
+	p, _ := f.run.team.Agent(a.ID)
+	a.Compaction = &core.Compaction{ID: "c", Resume: core.Message{Text: "continue"}, ResumeToken: "aaaaaaaaaaaaaaaa", StartedAt: f.cmd.now(), Deadline: f.cmd.now().Add(time.Minute), CompletedAt: f.cmd.now().Add(time.Second), Status: "completed", Continuation: true}
+	l, err := p.TryLock()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := l.Save(a); err != nil {
+		t.Fatal(err)
+	}
+	e := core.Envelope{ID: "resume-c", Token: a.Compaction.ResumeToken, Recipient: a.ID, To: a.Name, From: core.Sender{Kind: core.SenderGangline, Name: "compact"}, Message: a.Compaction.Resume, Purpose: "resume", CreatedAt: f.cmd.now()}
+	if err := p.Publish(e); err != nil {
+		t.Fatal(err)
+	}
+	l.Close()
+	if err := f.run.tickAgent(a.ID, hookNotice{}, false); err != nil {
+		t.Fatal(err)
+	}
+	got, err := p.Read()
+	if err != nil {
+		t.Fatal(err)
+	}
+	resume, err := p.ReadEnvelope("failed", e.ID)
+	if err != nil || got.Compaction.Status != "failed" || resume.Outcome != "cancelled" || f.input.submits != 0 {
+		t.Fatalf("recovery submitted an unqueued resume: %+v, %v; status=%s submits=%d", resume, err, got.Compaction.Status, f.input.submits)
 	}
 }
 

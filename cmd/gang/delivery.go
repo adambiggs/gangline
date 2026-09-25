@@ -269,24 +269,14 @@ func (run *runtime) deliver(l *store.LockedAgent, a *core.Agent, e core.Envelope
 	return outcome, nil
 }
 
-// completedResume finds a completed compaction's resume note. It goes first:
-// it carries the state the agent needs before reading anything queued behind it.
-func completedResume(a *core.Agent, pending []core.Envelope) *core.Envelope {
-	if c := a.Compaction; c != nil && c.Status == "completed" {
-		for i := range pending {
-			if pending[i].ID == core.EnvelopeID("resume-"+c.ID) {
-				return &pending[i]
-			}
-		}
-	}
-	return nil
-}
-
 // drainLocked returns the queue it could not deliver. The owner uses those
 // identities to distinguish existing blocked work from arrivals during unlock.
 func (run *runtime) drainLocked(l *store.LockedAgent, a *core.Agent, target core.EnvelopeID) (string, []core.Envelope, error) {
 	result := "queued"
 	if err := run.checkDeadlines(l, a); err != nil {
+		return result, nil, err
+	}
+	if err := run.continueCompaction(l, a); err != nil {
 		return result, nil, err
 	}
 	if a.Status != core.Active {
@@ -306,20 +296,18 @@ func (run *runtime) drainLocked(l *store.LockedAgent, a *core.Agent, target core
 		if err != nil {
 			return result, nil, err
 		}
-		next := completedResume(a, pending)
-		for i := 0; next == nil && i < len(pending); i++ {
+		var next *core.Envelope
+		for i := 0; i < len(pending); i++ {
 			if !pending[i].NotBefore.After(run.cmd.now()) {
 				next = &pending[i]
+				break
 			}
 		}
 		if next == nil {
 			return result, pending, nil
 		}
-		if next.From.Name == "compact" && strings.HasPrefix(string(next.ID), "resume-") {
-			c := a.Compaction
-			if c == nil || next.ID != core.EnvelopeID("resume-"+c.ID) || c.Status != "completed" {
-				return result, pending, nil
-			}
+		if next.Purpose == "resume" || next.From.Name == "compact" && strings.HasPrefix(string(next.ID), "resume-") {
+			return result, pending, nil
 		}
 		_, failedStartup, err := retainedStartup(l.Paths, "failed", a.LastFailed)
 		if err != nil {

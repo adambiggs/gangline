@@ -207,7 +207,7 @@ var commandDescription = map[string]string{
 	"send":       "Send BODY, or read stdin when BODY is absent. An exact native hook proves delivered; a native queue receipt proves accepted (do not resend). Otherwise input stays queued or is unverified.\n",
 	"queue":      "List pending delivery identifiers, recipients, and senders.\n",
 	"interrupt":  "Send the collar's native interrupt and optionally deliver a reason after the turn stops.\n",
-	"compact":    "Request the collar's native compaction and place a continuation behind it.\n",
+	"compact":    "Request native compaction and queue its continuation at the start; release it after confirmed completion.\n",
 	"statusline": "Read native status-line JSON on stdin; --install fills an absent native setting.\n",
 	"context":    "Print the collar's native context reading without estimating missing data.\n",
 	"log":        "Print the configured team's durable JSONL event log.\n",

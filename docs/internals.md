@@ -48,10 +48,11 @@ in the composer.
 
 ## Native events and observation
 
-Hooks append an event and exit without acquiring the agent lock. Submit hooks
-publish a witness and schedule detached reconciliation. Turn-end and
-compaction-end hooks also schedule a detached tick. The native callback does
-not wait for that tick.
+Most hooks append an event and exit without acquiring the agent lock. Submit
+hooks publish a witness and schedule detached reconciliation. A submit hook
+blocks an unconfirmed or altered compaction resume; a compaction-end hook
+synchronously confirms completion before returning. Turn-end and
+compaction-end hooks also schedule a detached tick for other work.
 
 Claude Code's native prompt ID ties asynchronous failure or success to the
 submit witness. A late callback cannot change a newer identified turn. Missing
@@ -82,10 +83,17 @@ reset crossings. A lower reading or model change permits later crossings.
 After a notice and completed compaction, the next reading establishes a new
 baseline.
 
-Compaction waits for freshly observed native idle. Gangline withholds the
-resume until a newer completion event for the same native session confirms
-it. Refusal is failure; missing completion is unconfirmed. A confirmed resume
-uses ordinary delivery and precedes other queued messages.
+Compaction waits for freshly observed native idle. Gangline submits the resume
+to the native queue as compaction starts, ahead of later input. A synchronous
+completion hook confirms that compaction finished in the same native session
+before the queued resume may run. Refusal is failure; missing completion is
+unconfirmed, and the submit hook blocks that resume. Uncertain native input is
+never sent a second time automatically. Codex can merge a later Enter steer
+into the same prompt; the exact resume envelope must lead that prompt. The
+submit hook atomically admits that envelope once. If the composer is occupied
+before the resume enters, Gangline fails the operation and withholds its
+continuation rather than submitting it late. Recovery cancels a published
+resume that has no recorded native submission.
 
 ## Watchdog
 

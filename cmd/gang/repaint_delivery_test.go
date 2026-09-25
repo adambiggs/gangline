@@ -81,13 +81,13 @@ func TestRepaintDeliveryAllowsQueuedCompactionAndMessages(t *testing.T) {
 		if err := f.run.tickAgent(a.ID, hookNotice{Kind: "turn-finished", SessionID: "s", At: f.cmd.now()}, false); err != nil {
 			t.Fatal(err)
 		}
-		if len(prompts) != 2 || prompts[1] != "/compact" {
-			t.Fatalf("idle boundary did not submit only compaction: %q", prompts)
+		if len(prompts) != 3 || prompts[1] != "/compact" || !strings.Contains(prompts[2], "resume the work") {
+			t.Fatalf("idle boundary did not queue the continuation after compaction: %q", prompts)
 		}
 		if err := f.run.tickAgent(a.ID, hookNotice{Kind: "compaction-finished", SessionID: "s", At: f.cmd.now().Add(time.Second)}, false); err != nil {
 			t.Fatal(err)
 		}
-		if len(prompts) != 6 || !strings.Contains(prompts[2], "resume the work") {
+		if len(prompts) != 6 {
 			t.Fatalf("resume and queued messages not drained: %q", prompts)
 		}
 		for i := range 3 {

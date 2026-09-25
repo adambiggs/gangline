@@ -74,3 +74,28 @@ func TestSubmittedPromptMatchRejectsChangedContentOrWrapper(t *testing.T) {
 		}
 	}
 }
+
+func TestSubmittedPromptStartsWithPreservesContinuationBoundary(t *testing.T) {
+	sent := "[gang:compact#token resume] state [/gang:compact#token]"
+	for _, tc := range []struct {
+		name, witness string
+		want          bool
+	}{
+		{"codex merged", sent + "\nlater input", true},
+		{"codex reordered", "later input\n" + sent, false},
+		{"codex altered", sent + " altered", false},
+		{"claude merged", "<pasted_content id=\"p\">\n" + sent + "\n</pasted_content id=\"p\">\nlater input", true},
+		{"claude altered", "<pasted_content id=\"p\">\n" + sent + " altered\n</pasted_content id=\"p\">\nlater input", false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			primitive := Invocation{Name: "exact-prompt"}
+			if len(tc.name) >= 6 && tc.name[:6] == "claude" {
+				primitive.Name = "claude-pasted-content"
+			}
+			got, err := SubmittedPromptStartsWith(primitive, sent, tc.witness)
+			if err != nil || got != tc.want {
+				t.Fatalf("got %v, %v; want %v", got, err, tc.want)
+			}
+		})
+	}
+}

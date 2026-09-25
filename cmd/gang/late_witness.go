@@ -44,7 +44,11 @@ func (run *runtime) reconcileDelivery(l *store.LockedAgent, a *core.Agent) error
 		if err != nil {
 			return err
 		}
-		matched, err := harness.SubmittedPromptMatches(c.Primitives.SubmitWitness, wire, w.Prompt)
+		match := harness.SubmittedPromptMatches
+		if e.Purpose == "resume" {
+			match = harness.SubmittedPromptStartsWith
+		}
+		matched, err := match(c.Primitives.SubmitWitness, wire, w.Prompt)
 		if err != nil {
 			return err
 		}

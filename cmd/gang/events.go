@@ -43,7 +43,7 @@ func (cmd command) hook(args []string) error {
 	}
 	return nil
 }
-func (cmd command) handleHook(args []string) error {
+func (cmd command) handleHook(args []string) (result error) {
 	if err := noArguments(args, "hook"); err != nil {
 		return err
 	}
@@ -52,7 +52,25 @@ func (cmd command) handleHook(args []string) error {
 		return err
 	}
 	if len(payload) > maximumHookBytes {
+		if err := json.NewEncoder(cmd.stdout).Encode(map[string]string{"decision": "block", "reason": "hook payload exceeds maximum size"}); err != nil {
+			return err
+		}
 		return fmt.Errorf("hook payload exceeds maximum size")
+	}
+	var submitted struct {
+		Event  string `json:"hook_event_name"`
+		Prompt string `json:"prompt"`
+	}
+	blockedWritten := false
+	resumeAdmitted := false
+	resumeCandidate := json.Unmarshal(payload, &submitted) == nil && submitted.Event == "UserPromptSubmit" && resumePromptPattern.MatchString(submitted.Prompt)
+	if resumeCandidate {
+		defer func() {
+			if result != nil && !blockedWritten && !resumeAdmitted {
+				blockErr := json.NewEncoder(cmd.stdout).Encode(map[string]string{"decision": "block", "reason": "compaction continuation could not be verified"})
+				result = errors.Join(result, blockErr)
+			}
+		}()
 	}
 	run, err := cmd.runtime()
 	if err != nil {
@@ -74,6 +92,31 @@ func (cmd command) handleHook(args []string) error {
 	_, event, err := harness.DetectTurnBoundary(c, payload)
 	if err != nil {
 		return err
+	}
+	if resumeCandidate && event.Kind != "turn-started" {
+		return fmt.Errorf("compaction continuation did not map to a submit boundary")
+	}
+	if event.Kind == "turn-started" {
+		for _, value := range []string{event.Payload["session_id"], event.Payload["turn_id"], event.Payload["transcript_path"], event.NativeEvent} {
+			if len(value) > 4096 {
+				return fmt.Errorf("hook routing metadata exceeds maximum size")
+			}
+		}
+		reason := ""
+		if resumeCandidate {
+			reason, err = run.admitCompactionResume(id, c, event.Payload["prompt"], event.Payload["session_id"])
+			if err != nil {
+				return err
+			}
+			resumeAdmitted = reason == ""
+		}
+		if reason != "" {
+			if err := json.NewEncoder(cmd.stdout).Encode(map[string]string{"decision": "block", "reason": reason}); err != nil {
+				return err
+			}
+			blockedWritten = true
+			return run.record(a, core.Event{Type: "native_hook", NativeEvent: event.NativeEvent, Status: "resume-blocked", Reason: reason})
+		}
 	}
 	receipt, err := randomID("hook")
 	if err != nil {
@@ -104,11 +147,6 @@ func (cmd command) handleHook(args []string) error {
 		// Always reconcile: a concurrent failure tick may have read the old
 		// witness before this write and save its result after our state read.
 		n := hookNotice{Kind: "turn-started", NativeEvent: event.NativeEvent, At: cmd.now(), SessionID: event.Payload["session_id"], TurnID: event.Payload["turn_id"], Transcript: event.Payload["transcript_path"]}
-		for _, value := range []string{n.SessionID, n.TurnID, n.Transcript, n.NativeEvent} {
-			if len(value) > 4096 {
-				return fmt.Errorf("hook routing metadata exceeds maximum size")
-			}
-		}
 		if cmd.detach != nil {
 			return cmd.detach(string(id), n)
 		}
@@ -118,6 +156,11 @@ func (cmd command) handleHook(args []string) error {
 		for _, value := range []string{n.SessionID, n.TurnID, n.Transcript, n.NativeEvent} {
 			if len(value) > 4096 {
 				return fmt.Errorf("hook routing metadata exceeds maximum size")
+			}
+		}
+		if n.Kind == "compaction-finished" && a.Compaction != nil && (a.Compaction.Status == "submitted" || a.Compaction.Status == "unverified") {
+			if err := run.confirmCompactionHook(id, n); err != nil {
+				return err
 			}
 		}
 		if cmd.detach != nil {

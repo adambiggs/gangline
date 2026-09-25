@@ -1,7 +1,8 @@
 package main
 
 import (
-	"context"
+	"bytes"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"strings"
@@ -12,136 +13,285 @@ import (
 	"github.com/adambiggs/gangline/store"
 )
 
-func TestCompactionQueuesContinuationAfterCompletion(t *testing.T) {
+func TestCompactionQueuesResumeBeforeCompletion(t *testing.T) {
 	for _, collar := range []string{"codex", "claude-code"} {
 		t.Run(collar, func(t *testing.T) {
 			f := newStateFixture(t)
 			a := f.add(t, "a", "worker", collar)
 			p, _ := f.run.team.Agent(a.ID)
+			a.Native.SessionID = "s"
+			l, err := p.TryLock()
+			if err != nil {
+				t.Fatal(err)
+			}
+			if err := l.Save(a); err != nil {
+				t.Fatal(err)
+			}
+			l.Close()
 			f.env["TMUX_PANE"] = a.Pane
+			f.env["GANGLINE_HITCH_ID"] = string(a.ID)
 			if collar == "claude-code" {
 				f.input.command = "claude"
 				f.input.screen = screenWithText("────────", "❯ ", "────────")
 			}
-			f.cmd.newWatch = func(path string) (changeWait, error) {
-				if path != p.Witness {
-					t.Fatalf("unexpected watch: %s", path)
-				}
-				return waitFixture{func(context.Context) error {
-					t.Fatal("submission witness was already published")
-					return nil
-				}}, nil
-			}
-			f.run.cmd = f.cmd
 			f.input.submit = func(prompt string) error {
 				if strings.HasPrefix(prompt, "/compact") {
 					return nil
 				}
-				a, err := p.Read()
+				got, err := p.Read()
 				if err != nil {
 					return err
 				}
-				if a.Compaction.Status != "completed" || a.Input == nil || a.Input.ID != "resume-"+a.Compaction.ID || a.Native.Transcript != "" {
-					t.Fatalf("continuation intent: %+v", a)
+				if got.Compaction.Status != "submitted" || got.Input == nil || got.Input.ID != "resume-"+got.Compaction.ID {
+					t.Fatalf("resume was not submitted during compaction: %+v", got)
 				}
-				return p.WriteWitness(store.Witness{ID: "resume-witness", At: f.cmd.now(), Prompt: prompt, SessionID: "s"})
+				if collar == "codex" {
+					f.input.screen = nativeQueueScreen(prompt)
+				}
+				return nil
 			}
 			var ce commandError
 			if err := f.cmd.compact([]string{"worker", "--resume", "continue the work"}); !errors.As(err, &ce) || ce.status != exitUnknown {
 				t.Fatalf("submission: %v", err)
 			}
-			if f.input.submits != 1 {
-				t.Fatalf("resume preceded completion: submits=%d", f.input.submits)
-			}
-			if err := f.run.tickAgent(a.ID, hookNotice{Kind: "compaction-finished", SessionID: "s", At: f.cmd.now().Add(time.Second)}, false); err != nil {
-				t.Fatal(err)
-			}
-			a, err := p.Read()
+			got, err := p.Read()
 			if err != nil {
 				t.Fatal(err)
 			}
-			e, err := p.ReadEnvelope("cur", core.EnvelopeID("resume-"+a.Compaction.ID))
-			if err != nil || e.Outcome != "delivered" || a.Input != nil || f.input.submits != 2 {
-				t.Fatalf("continuation: %+v input=%+v submits=%d err=%v", e, a.Input, f.input.submits, err)
+			if got.Compaction.Status != "submitted" || !got.Compaction.Continuation || f.input.submits != 2 {
+				t.Fatalf("early continuation: %+v submits=%d", got.Compaction, f.input.submits)
 			}
-			if len(e.Token) != 16 || !strings.Contains(f.input.pasted, "#"+e.Token+"]") || strings.Contains(f.input.pasted, string(e.ID)) {
-				t.Fatalf("resume leaked store ID: id=%s token=%q wire=%q", e.ID, e.Token, f.input.pasted)
+			dir, outcome := "cur", "accepted"
+			if collar == "claude-code" {
+				dir, outcome = "failed", "unverified"
+			}
+			e, err := p.ReadEnvelope(dir, core.EnvelopeID("resume-"+got.Compaction.ID))
+			if err != nil || e.Outcome != outcome || e.Purpose != "resume" || len(e.Token) != 16 {
+				t.Fatalf("early receipt: %+v, %v", e, err)
 			}
 			if e.From != (core.Sender{Kind: core.SenderAgent, Name: a.Name, HitchID: a.ID}) {
-				t.Fatalf("custom resume sender: %+v", e.From)
+				t.Fatalf("resume sender: %+v", e.From)
 			}
-			for _, at := range []time.Time{f.cmd.now().Add(-time.Second), f.cmd.now().Add(time.Second), f.cmd.now().Add(time.Second)} {
-				if err := f.run.tickAgent(a.ID, hookNotice{Kind: "compaction-finished", SessionID: "s", At: at}, false); err != nil {
-					t.Fatal(err)
-				}
+			wire, err := envelopeText(e)
+			if err != nil || f.input.pasted != wire {
+				t.Fatalf("native queue text: %q, %v", f.input.pasted, err)
 			}
-			if f.input.submits != 2 {
-				t.Fatalf("completion hooks repeated input: %d", f.input.submits)
+			prompt := wire
+			if collar == "claude-code" {
+				prompt = "<pasted_content id=\"probe\">\n" + wire + "\n</pasted_content id=\"probe\">"
+			} else {
+				prompt += "\nLATER_OPERATOR_INPUT"
+			}
+			payload, err := json.Marshal(map[string]string{"hook_event_name": "UserPromptSubmit", "prompt": prompt, "session_id": "s"})
+			if err != nil {
+				t.Fatal(err)
+			}
+			f.out.Reset()
+			hook := f.cmd
+			hook.stdin = bytes.NewReader(payload)
+			if err := hook.handleHook(nil); err != nil || !strings.Contains(f.out.String(), `"decision":"block"`) {
+				t.Fatalf("unconfirmed compaction hook: %v, %q", err, f.out.String())
+			}
+			if err := f.run.confirmCompactionHook(a.ID, hookNotice{Kind: "compaction-finished", SessionID: "s", At: f.cmd.now().Add(time.Second)}); err != nil {
+				t.Fatal(err)
+			}
+			got, err = p.Read()
+			if err != nil {
+				t.Fatal(err)
+			}
+			f.out.Reset()
+			hook.stdin = bytes.NewReader(payload)
+			if err := hook.handleHook(nil); err != nil || strings.Contains(f.out.String(), `"decision":"block"`) {
+				t.Fatalf("confirmed compaction hook: %v, %q", err, f.out.String())
+			}
+			if err := f.run.tickAgent(a.ID, hookNotice{}, false); err != nil {
+				t.Fatal(err)
+			}
+			e, err = p.ReadEnvelope("cur", e.ID)
+			if err != nil || e.Outcome != "delivered" || f.input.submits != 2 {
+				t.Fatalf("resume delivery: %+v, %v; submits=%d", e, err, f.input.submits)
+			}
+			f.out.Reset()
+			hook.stdin = bytes.NewReader(payload)
+			if err := hook.handleHook(nil); err != nil || !strings.Contains(f.out.String(), `"decision":"block"`) {
+				t.Fatalf("duplicate resume was admitted: %v, %q", err, f.out.String())
+			}
+			if err := f.run.confirmCompactionHook(a.ID, hookNotice{Kind: "compaction-finished", SessionID: "s", At: f.cmd.now().Add(time.Second)}); err != nil || f.input.submits != 2 {
+				t.Fatalf("repeated completion: %v; submits=%d", err, f.input.submits)
 			}
 		})
 	}
 }
 
-func TestCompactionContinuationUsesNormalDelivery(t *testing.T) {
-	for _, outcome := range []string{"queued", "unverified"} {
-		t.Run(outcome, func(t *testing.T) {
-			f := newStateFixture(t)
-			a := f.add(t, "a", "worker", "codex")
-			p, _ := f.run.team.Agent(a.ID)
-			f.input.submit = func(prompt string) error {
-				if strings.HasPrefix(prompt, "/compact") {
-					if outcome == "queued" {
-						f.input.screen = screenWithText("› unfinished draft")
-					}
-					return nil
-				}
-				if outcome == "unverified" {
-					prompt = "different message"
-				}
-				return p.WriteWitness(store.Witness{ID: "resume-witness", At: f.cmd.now(), Prompt: prompt, SessionID: "s"})
-			}
-			err := f.cmd.compact([]string{"worker"})
-			var ce commandError
-			if !errors.As(err, &ce) || ce.status != exitUnknown {
-				t.Fatalf("submission: %v", err)
-			}
-			// The resume below is delivered, so the report must not call it withheld.
-			if !strings.HasSuffix(ce.text, "resume follows confirmed completion") {
-				t.Fatalf("submission report: %q", ce.text)
-			}
-			if f.input.submits != 1 {
-				t.Fatal("resume preceded completion")
-			}
-			if err := f.run.tickAgent(a.ID, hookNotice{Kind: "compaction-finished", SessionID: "s", At: f.cmd.now().Add(time.Second)}, false); err != nil {
-				t.Fatal(err)
-			}
+func TestCompactionResumeHookBlocksWhenStateCannotBeRead(t *testing.T) {
+	f := newStateFixture(t)
+	f.env["GANGLINE_HITCH_ID"] = "missing"
+	f.cmd.stdin = strings.NewReader(`{"hook_event_name":"UserPromptSubmit","prompt":"[gang:self-declared:compact#token resume] state [/gang:self-declared:compact#token]"}`)
+	if err := f.cmd.hook(nil); err != nil || !strings.Contains(f.out.String(), `"decision":"block"`) {
+		t.Fatalf("unverifiable resume was not blocked: %v, %q", err, f.out.String())
+	}
+}
 
-			a, err = p.Read()
-			if err != nil {
-				t.Fatal(err)
-			}
-			id := core.EnvelopeID("resume-" + a.Compaction.ID)
-			if outcome == "queued" {
-				e, err := p.ReadEnvelope("new", id)
-				if err != nil || f.input.submits != 1 || e.From.Kind != core.SenderGangline {
-					t.Fatalf("occupied composer: submits=%d from=%+v err=%v", f.input.submits, e.From, err)
-				}
-			} else {
-				e, err := p.ReadEnvelope("failed", id)
-				if err != nil || e.Outcome != "unverified" || a.Input != nil {
-					t.Fatalf("failed continuation: %+v input=%+v err=%v", e, a.Input, err)
-				}
-			}
-			f.input.screen = screenWithText("› ")
-			for range 2 {
-				if err := f.run.tickAgent(a.ID, hookNotice{}, false); err != nil {
-					t.Fatal(err)
-				}
-			}
-			if f.input.submits != 2 {
-				t.Fatalf("continuation submissions=%d", f.input.submits)
-			}
-		})
+func TestOversizedCompactionResumeHookFailsClosed(t *testing.T) {
+	f := newStateFixture(t)
+	f.cmd.stdin = strings.NewReader(`{"hook_event_name":"UserPromptSubmit","prompt":"[gang:self-declared:compact#token resume] ` + strings.Repeat("x", maximumHookBytes) + `"}`)
+	if err := f.cmd.hook(nil); err != nil || !strings.Contains(f.out.String(), `"decision":"block"`) {
+		t.Fatalf("oversized resume was not blocked: %v, %q", err, f.out.String())
+	}
+}
+
+func TestCompactionResumeAdmissionIsAtomic(t *testing.T) {
+	f, a, p := compactionFixture(t)
+	a.Compaction = &core.Compaction{
+		ID: "c", Resume: core.Message{Text: "continue"}, ResumeToken: "aaaaaaaaaaaaaaaa", Continuation: true,
+		ResumeFrom: core.Sender{Kind: core.SenderSelfDeclared, Name: "compact"},
+		StartedAt:  f.cmd.now().Add(-time.Second), CompletedAt: f.cmd.now(), Status: "completed",
+	}
+	l, err := p.TryLock()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := l.Save(a); err != nil {
+		t.Fatal(err)
+	}
+	l.Close()
+	c, err := loadCollar("codex", f.run.settings)
+	if err != nil {
+		t.Fatal(err)
+	}
+	wire, err := envelopeText(core.Envelope{ID: "resume-c", Token: "aaaaaaaaaaaaaaaa", From: a.Compaction.ResumeFrom, Message: a.Compaction.Resume, Purpose: "resume"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	start := make(chan struct{})
+	results := make(chan struct {
+		reason string
+		err    error
+	}, 2)
+	for range 2 {
+		go func() {
+			<-start
+			reason, err := f.run.admitCompactionResume(a.ID, c, wire, "s")
+			results <- struct {
+				reason string
+				err    error
+			}{reason, err}
+		}()
+	}
+	close(start)
+	admitted := 0
+	for range 2 {
+		result := <-results
+		if result.err != nil {
+			t.Fatal(result.err)
+		}
+		if result.reason == "" {
+			admitted++
+		} else if result.reason != "compaction continuation already admitted" {
+			t.Fatalf("unexpected block: %q", result.reason)
+		}
+	}
+	if admitted != 1 {
+		t.Fatalf("admitted %d continuations; want one", admitted)
+	}
+}
+
+func TestCompactionResumeHookFailurePreservesAdmission(t *testing.T) {
+	f, a, p := compactionFixture(t)
+	f.env["GANGLINE_HITCH_ID"] = string(a.ID)
+	a.Compaction = &core.Compaction{
+		ID: "c", Resume: core.Message{Text: "continue"}, ResumeToken: "aaaaaaaaaaaaaaaa", Continuation: true,
+		ResumeFrom: core.Sender{Kind: core.SenderSelfDeclared, Name: "compact"},
+		StartedAt:  f.cmd.now().Add(-time.Second), CompletedAt: f.cmd.now(), Status: "completed",
+	}
+	l, err := p.TryLock()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := l.Save(a); err != nil {
+		t.Fatal(err)
+	}
+	l.Close()
+	wire, err := envelopeText(core.Envelope{ID: "resume-c", Token: a.Compaction.ResumeToken, From: a.Compaction.ResumeFrom, Message: a.Compaction.Resume, Purpose: "resume"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	hook := func(transcript string) string {
+		t.Helper()
+		payload, err := json.Marshal(map[string]string{"hook_event_name": "UserPromptSubmit", "prompt": wire, "session_id": "s", "transcript_path": transcript})
+		if err != nil {
+			t.Fatal(err)
+		}
+		f.out.Reset()
+		cmd := f.cmd
+		cmd.stdin = bytes.NewReader(payload)
+		if err := cmd.hook(nil); err != nil {
+			t.Fatal(err)
+		}
+		return f.out.String()
+	}
+	if out := hook(strings.Repeat("x", 4097)); !strings.Contains(out, `"decision":"block"`) {
+		t.Fatalf("invalid metadata was admitted: %q", out)
+	}
+	state, err := p.Read()
+	if err != nil || state.Compaction.ResumeAdmitted {
+		t.Fatalf("blocked hook consumed resume: %+v, %v", state.Compaction, err)
+	}
+	cmd := f.cmd
+	cmd.detach = func(string, hookNotice) error { return errors.New("tick could not start") }
+	f.cmd = cmd
+	if out := hook("valid"); strings.Contains(out, `"decision":"block"`) {
+		t.Fatalf("admitted hook was blocked after auxiliary failure: %q", out)
+	}
+	state, err = p.Read()
+	if err != nil || !state.Compaction.ResumeAdmitted {
+		t.Fatalf("admitted hook lost resume: %+v, %v", state.Compaction, err)
+	}
+	if out := hook("valid"); !strings.Contains(out, `"decision":"block"`) {
+		t.Fatalf("duplicate hook was admitted: %q", out)
+	}
+}
+
+func TestCompactionOccupiedComposerFailsWithoutLateResume(t *testing.T) {
+	f := newStateFixture(t)
+	a := f.add(t, "a", "worker", "codex")
+	p, _ := f.run.team.Agent(a.ID)
+	a.Native.SessionID = "s"
+	l, err := p.TryLock()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := l.Save(a); err != nil {
+		t.Fatal(err)
+	}
+	l.Close()
+	f.input.submit = func(prompt string) error {
+		if strings.HasPrefix(prompt, "/compact") {
+			f.input.screen = screenWithText("› unfinished draft")
+			return nil
+		}
+		return p.WriteWitness(store.Witness{ID: "resume-witness", At: f.cmd.now(), Prompt: prompt, SessionID: "s"})
+	}
+	if err := f.cmd.compact([]string{"worker"}); err == nil || !strings.Contains(err.Error(), "composer occupied") {
+		t.Fatalf("occupied composer result: %v", err)
+	}
+	got, err := p.Read()
+	if err != nil {
+		t.Fatal(err)
+	}
+	e, err := p.ReadEnvelope("failed", core.EnvelopeID("resume-"+got.Compaction.ID))
+	if err != nil || got.Compaction.Status != "failed" || f.input.submits != 1 || e.Outcome != "cancelled" {
+		t.Fatalf("failed continuation: %+v, %v; status=%s submits=%d", e, err, got.Compaction.Status, f.input.submits)
+	}
+	f.input.screen = screenWithText("› ")
+	if err := f.run.confirmCompactionHook(a.ID, hookNotice{Kind: "compaction-finished", SessionID: "s", At: f.cmd.now().Add(time.Second)}); err != nil {
+		t.Fatal(err)
+	}
+	if err := f.run.tickAgent(a.ID, hookNotice{}, false); err != nil {
+		t.Fatal(err)
+	}
+	if f.input.submits != 1 {
+		t.Fatalf("continuation ran after ordering failed: %d", f.input.submits)
 	}
 }
 
@@ -234,7 +384,7 @@ func TestAgentCompactsItselfAfterItsTurn(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if f.input.submits != 1 || a.Compaction == nil || a.Compaction.Status != "submitted" || a.Compaction.Resume.Text != "state is in FILE" {
+	if f.input.submits != 2 || a.Compaction == nil || a.Compaction.Status != "submitted" || a.Compaction.Resume.Text != "state is in FILE" {
 		t.Fatalf("compaction after the turn: submits=%d compaction=%+v", f.input.submits, a.Compaction)
 	}
 }

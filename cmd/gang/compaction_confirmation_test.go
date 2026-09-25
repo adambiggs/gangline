@@ -28,10 +28,7 @@ func compactionFixture(t *testing.T) (*stateFixture, core.Agent, store.AgentPath
 	}
 	l.Close()
 	f.input.submit = func(prompt string) error {
-		if strings.HasPrefix(prompt, "/compact") {
-			return nil
-		}
-		return p.WriteWitness(store.Witness{ID: "resume", At: f.cmd.now(), SessionID: "s", Prompt: prompt})
+		return nil
 	}
 	return f, a, p
 }
@@ -57,7 +54,7 @@ func TestCompactionObservesIdleBeforeStarting(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if got.Compaction.Status != "submitted" || f.input.submits != 1 || got.Compaction.Continuation {
+	if got.Compaction.Status != "submitted" || f.input.submits != 2 || !got.Compaction.Continuation {
 		t.Fatalf("idle seam: %+v submits=%d", got.Compaction, f.input.submits)
 	}
 }
@@ -73,7 +70,7 @@ func TestCompactionRequiresFreshSameSessionCompletion(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if f.input.submits != 1 || got.Compaction.Continuation {
+	if f.input.submits != 2 || !got.Compaction.Continuation {
 		t.Fatalf("premature continuation: %+v submits=%d", got.Compaction, f.input.submits)
 	}
 	start := got.Compaction.StartedAt
@@ -81,19 +78,19 @@ func TestCompactionRequiresFreshSameSessionCompletion(t *testing.T) {
 	if err := f.run.tickAgent(a.ID, hookNotice{SessionID: "s", Readings: []core.Reading{{Kind: "compaction-checkpoint", At: &checkpoint}}}, false); err != nil {
 		t.Fatal(err)
 	}
-	if f.input.submits != 1 {
+	if f.input.submits != 2 {
 		t.Fatal("checkpoint resumed without completion")
 	}
 	if err := f.run.tickAgent(a.ID, hookNotice{Kind: "compaction-finished", SessionID: "s", At: start.Add(-time.Second)}, false); err != nil {
 		t.Fatal(err)
 	}
-	if f.input.submits != 1 {
+	if f.input.submits != 2 {
 		t.Fatal("stale completion resumed")
 	}
 	if err := f.run.tickAgent(a.ID, hookNotice{Kind: "compaction-finished", SessionID: "other", At: start.Add(time.Second)}, false); err == nil {
 		t.Fatal("foreign completion accepted")
 	}
-	if f.input.submits != 1 {
+	if f.input.submits != 2 {
 		t.Fatal("foreign completion resumed")
 	}
 	for range 2 {
@@ -130,8 +127,11 @@ func TestCompactionRechecksBusyBeforeSubmit(t *testing.T) {
 	}
 }
 
-func TestCompactionHoldsLegacyResumeUntilConfirmed(t *testing.T) {
+func TestCompactionCancelsLegacyResumeThatWasNotQueuedAtStart(t *testing.T) {
 	f, a, p := compactionFixture(t)
+	f.input.submit = func(prompt string) error {
+		return p.WriteWitness(store.Witness{ID: "resume", At: f.cmd.now(), SessionID: "s", Prompt: prompt})
+	}
 	start := f.cmd.now()
 	a.Compaction = &core.Compaction{ID: "legacy", Status: "submitted", StartedAt: start, Deadline: start.Add(operationTimeout), Continuation: true, Resume: core.Message{Text: "resume"}}
 	l, err := p.TryLock()
@@ -157,8 +157,13 @@ func TestCompactionHoldsLegacyResumeUntilConfirmed(t *testing.T) {
 	if err := f.run.tickAgent(a.ID, hookNotice{Kind: "compaction-finished", SessionID: "s", At: start.Add(time.Second)}, false); err != nil {
 		t.Fatal(err)
 	}
-	if f.input.submits != 1 {
-		t.Fatalf("late confirmation did not release resume: %d", f.input.submits)
+	got, err := p.Read()
+	if err != nil {
+		t.Fatal(err)
+	}
+	e, err = p.ReadEnvelope("failed", e.ID)
+	if err != nil || got.Compaction.Status != "failed" || e.Outcome != "cancelled" || f.input.submits != 0 {
+		t.Fatalf("legacy resume was sent late: %+v, %v; status=%s submits=%d", e, err, got.Compaction.Status, f.input.submits)
 	}
 }
 
@@ -191,7 +196,7 @@ func TestCompactionSurfacesNativeRefusalWithoutResume(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			if got.Compaction.Status != "failed" || got.Compaction.Continuation || len(pending) != 0 || f.input.submits != 1 {
+			if got.Compaction.Status != "failed" || !got.Compaction.Continuation || len(pending) != 0 || f.input.submits != 2 {
 				t.Fatalf("refusal resumed: %+v pending=%d submits=%d", got.Compaction, len(pending), f.input.submits)
 			}
 		})

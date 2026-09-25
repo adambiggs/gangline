@@ -15,7 +15,7 @@ collar: {
 			"-c", "hooks.Stop=[{ hooks = [{ type = \"command\", command = {{hook.command.json}}, async = true, timeout = {{hook.timeout}} }] }]",
 			"-c", "hooks.PermissionRequest=[{ hooks = [{ type = \"command\", command = {{hook.command.json}} }] }]",
 			"-c", "hooks.PreCompact=[{ hooks = [{ type = \"command\", command = {{hook.command.json}} }] }]",
-			"-c", "hooks.PostCompact=[{ hooks = [{ type = \"command\", command = {{hook.command.json}}, async = true, timeout = {{hook.timeout}} }] }]",
+			"-c", "hooks.PostCompact=[{ hooks = [{ type = \"command\", command = {{hook.command.json}}, timeout = 30 }] }]",
 		]
 		events: {
 			userpromptsubmit: {event: "turn-started", payload: {session_id: "session_id", transcript_path: "transcript_path", prompt: "prompt", turn_id: "turn_id"}}

@@ -10,9 +10,11 @@ You are one agent in a Gangline team.
   None of them means the recipient has read it.
 - `gang context`: your context use.
 - `gang compact --resume 'TEXT'`: compact your own context. Save your state
-  to a file and name it in TEXT. Gangline delivers TEXT as a message once
-  it confirms compaction completed; until TEXT arrives, compaction is not
-  confirmed. Do not run it again while you wait.
+  to a file and name it in TEXT. Gangline queues TEXT as the native
+  continuation when compaction starts, ahead of later input. It runs only
+  after compaction is confirmed complete; if compaction or resume submission
+  fails, Gangline reports that instead. Codex may put a later Enter steer in
+  the same turn, after the resume note. Do not run it again while you wait.
 - `gang hitch NAME` and `gang drop NAME`: start and stop an agent you hitch.
 - `gang help COMMAND`: options for any command.
 

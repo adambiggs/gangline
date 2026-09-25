@@ -43,11 +43,19 @@ a matching native transcript. An unverifiable native session is refused.
 | `gang send NAME [OPTIONS] [BODY]` | Send BODY, or read stdin when absent, and report its receipt. |
 | `gang queue [NAME]` | List pending message IDs, recipients, and senders. |
 | `gang interrupt [NAME] [-m REASON]` | Interrupt the turn; deliver an optional reason after it stops. |
-| `gang compact [NAME] [--resume TEXT]` | Compact at native idle; deliver the continuation after confirmed completion. |
+| `gang compact [NAME] [--resume TEXT]` | Compact at native idle; submit the continuation behind compaction, ahead of later input. |
 | `gang compact NAME --recover` | Run the collar's recovery actions for a stuck compaction. |
 | `gang curfew [DURATION\|HH:MM\|clear]` | Show, set, or clear the team deadline. |
 | `gang tick [--agent ID]` | Check deadlines, recover native failures, and drain due messages. |
 | `gang wait NAME [--timeout DURATION]` | Wait for a recorded idle boundary; a zero timeout checks once. |
+
+The resume note enters native input when compaction starts. A synchronous
+completion hook must confirm that compaction finished before the note runs.
+Codex may merge later Enter steers into the same prompt, with the resume note
+first; Tab queues separate follow-up turns. If the note cannot enter ahead of
+an occupied composer, the command fails and withholds the note rather than
+delivering it out of order. Recovery also cancels a continuation that was
+published but never submitted to native input.
 
 Send options:
 

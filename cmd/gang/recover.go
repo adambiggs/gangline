@@ -238,21 +238,47 @@ func (run *runtime) continueCompaction(l *store.LockedAgent, a *core.Agent) erro
 		}
 		c = a.Compaction
 	}
-	if c.Status != "completed" || c.Continuation {
+	if c.Status != "completed" {
 		return nil
 	}
+	id := core.EnvelopeID("resume-" + c.ID)
+	_, err := l.Paths.ReadEnvelope("new", id)
+	if err != nil && !errors.Is(err, os.ErrNotExist) {
+		return err
+	}
+	if c.Continuation && errors.Is(err, os.ErrNotExist) {
+		return nil
+	}
+	reason := "resume was not entered when compaction started; continuation withheld"
+	if err := run.apply(l, a, core.Event{Type: "compaction_failed", ID: c.ID, Reason: reason}); err != nil {
+		return err
+	}
+	return run.cancelPendingCompactionResume(l, a, reason)
+}
+
+func (run *runtime) publishCompactionResume(l *store.LockedAgent, a *core.Agent) (core.Envelope, error) {
+	c := a.Compaction
 	sender := c.ResumeFrom
 	if sender.Kind == "" {
 		sender = core.Sender{Kind: core.SenderGangline, Name: "compact"}
 	}
-	token, err := randomEnvelopeToken()
-	if err != nil {
-		return err
+	if c.ResumeToken == "" {
+		token, err := randomEnvelopeToken()
+		if err != nil {
+			return core.Envelope{}, err
+		}
+		c.ResumeToken = token
+		if err := l.Save(*a); err != nil {
+			return core.Envelope{}, err
+		}
 	}
-	e := core.Envelope{ID: core.EnvelopeID("resume-" + c.ID), Token: token, Recipient: a.ID, To: a.Name, From: sender, Message: c.Resume, CreatedAt: run.cmd.now()}
+	e := core.Envelope{ID: core.EnvelopeID("resume-" + c.ID), Token: c.ResumeToken, Recipient: a.ID, To: a.Name, From: sender, Message: c.Resume, Purpose: "resume", CreatedAt: run.cmd.now()}
 	if err := run.publishOnce(l, a, e); err != nil {
-		return err
+		return core.Envelope{}, err
 	}
 	c.Continuation = true
-	return l.Save(*a)
+	if err := l.Save(*a); err != nil {
+		return core.Envelope{}, err
+	}
+	return e, nil
 }

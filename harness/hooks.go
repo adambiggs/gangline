@@ -104,6 +104,38 @@ func SubmittedPromptMatches(primitive Invocation, sent, witnessed string) (bool,
 	}
 }
 
+// SubmittedPromptStartsWith accepts a continuation followed by native-merged
+// steers. A newline is the boundary Codex inserts between submitted messages.
+func SubmittedPromptStartsWith(primitive Invocation, sent, witnessed string) (bool, error) {
+	matched, err := SubmittedPromptMatches(primitive, sent, witnessed)
+	if err != nil || matched {
+		return matched, err
+	}
+	switch primitive.Name {
+	case "exact-prompt":
+		return strings.HasPrefix(witnessed, sent+"\n"), nil
+	case "claude-pasted-content":
+		framed := witnessed
+		if strings.HasPrefix(framed, "\n\n") {
+			framed = strings.TrimPrefix(framed, "\n\n")
+		} else {
+			framed = strings.TrimPrefix(framed, "\n")
+		}
+		const prefix = "<pasted_content id=\""
+		if !strings.HasPrefix(framed, prefix) {
+			return false, nil
+		}
+		identifier, wrapped, found := strings.Cut(strings.TrimPrefix(framed, prefix), "\">\n")
+		if !found || identifier == "" || strings.ContainsAny(identifier, "\"\r\n<>") {
+			return false, nil
+		}
+		suffix := "\n</pasted_content id=\"" + identifier + "\">"
+		return strings.HasPrefix(wrapped, sent+suffix+"\n"), nil
+	default:
+		return false, fmt.Errorf("unknown submit-witness primitive %q", primitive.Name)
+	}
+}
+
 func normalizeEventName(name string) string {
 	return strings.Map(func(char rune) rune {
 		if char == '-' || char == '_' || char == ' ' {

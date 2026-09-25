@@ -376,11 +376,11 @@ func (cmd command) compact(args []string) (result error) {
 		return err
 	}
 	if a.Compaction.Status == "queued" {
-		_, err := fmt.Fprintf(cmd.stdout, "%s\tqueued; waiting for native idle; resume follows confirmed completion\n", id)
+		_, err := fmt.Fprintf(cmd.stdout, "%s\tqueued; waiting for native idle; resume enters native queue when compaction starts\n", id)
 		return err
 	}
 	if a.Compaction.Status != "completed" {
-		return commandError{status: exitUnknown, text: "compaction submitted; native completion unconfirmed; resume follows confirmed completion"}
+		return commandError{status: exitUnknown, text: "compaction submitted; native completion unconfirmed; resume queued ahead of later input"}
 	}
 	outcome, err := run.drainFrom(l, a, core.EnvelopeID("resume-"+id))
 	if err != nil {
@@ -481,6 +481,16 @@ func (run *runtime) startCompaction(l *store.LockedAgent, a *core.Agent) (result
 	}
 	if err := run.apply(l, a, core.Event{Type: "compaction_submitted", ID: a.Compaction.ID}); err != nil {
 		return err
+	}
+	if err := run.queueCompactionResume(l, a, b, c, action.Text); err != nil {
+		reason := "resume submission failed; continuation withheld: " + err.Error()
+		if failureErr := run.apply(l, a, core.Event{Type: "compaction_failed", ID: a.Compaction.ID, Reason: reason}); failureErr != nil {
+			return errors.Join(err, failureErr)
+		}
+		if failureErr := run.cancelPendingCompactionResume(l, a, reason); failureErr != nil {
+			return errors.Join(err, failureErr)
+		}
+		return fmt.Errorf("%s", reason)
 	}
 	if err := run.refreshNative(l, a, c); err != nil {
 		return err

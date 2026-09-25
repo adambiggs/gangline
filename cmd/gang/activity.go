@@ -35,7 +35,7 @@ func (run *runtime) observeActivity(l *store.LockedAgent, a *core.Agent, c harne
 		}
 	}
 	if a.Compaction != nil && a.Compaction.Status == "submitted" && activity != core.Blocked {
-		activity, evidence = core.Compacting, "native compaction completion unconfirmed; resume follows confirmed completion"
+		activity, evidence = core.Compacting, "native compaction completion unconfirmed; queued resume awaits confirmation"
 	}
 	if a.Native.TurnFailure != "" {
 		activity, evidence = core.Unknown, "native turn failed: "+a.Native.TurnFailure
