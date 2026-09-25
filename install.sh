@@ -287,27 +287,14 @@ if [ -n "$asset_os" ] && [ -n "$asset_arch" ] && [ -n "$release_base" ]; then
   esac
 fi
 
-if [ "$asset_available" -eq 1 ]; then
-  release_kind=compiled
-elif [ -f "$candidate/go.mod" ] && [ -d "$candidate/cmd/gang" ]; then
-  release_kind=compiled
+if [ "$asset_available" -eq 0 ]; then
+  [ -f "$candidate/go.mod" ] && [ -d "$candidate/cmd/gang" ] \
+    || die "$tag has an unsupported release layout"
   echo "no prebuilt asset for $host_os/$host_arch; building $tag from source (Go required)"
   need go
   CGO_ENABLED=0 go -C "$candidate" build -trimpath \
     -ldflags "-s -w -X main.version=$latest" -o "$candidate_command" ./cmd/gang \
     || die "could not build gang $tag"
-elif [ -x "$candidate/bin/gang" ] && [ -r "$candidate/version.txt" ]; then
-  release_kind=retained-tree
-  candidate_command="$candidate/bin/gang"
-  need python3
-  python3 -c 'import json; assert json.loads("{\"ok\": true}")["ok"]' >/dev/null 2>&1 \
-    || die "working python3 with JSON support required by $tag"
-  legacy_version="$(cat "$candidate/version.txt")" \
-    || die "could not read the release version at $candidate/version.txt"
-  [ "$legacy_version" = "$latest" ] \
-    || die "$tag has mismatched version.txt value '$legacy_version'"
-else
-  die "$tag has an unsupported release layout"
 fi
 
 candidate_version="$("$candidate_command" --version)" \
@@ -334,20 +321,7 @@ fi
 
 mkdir -p "$BIN_DIR"
 activation_ok=1
-case "$release_kind" in
-  compiled)
-    mv -f "$candidate_command" "$BIN_DIR/gang" || activation_ok=0
-    ;;
-  retained-tree)
-    if [ "$BIN_DIR/gang" != "$HOME_DIR/bin/gang" ]; then
-      new_link="$BIN_DIR/.gang.new.$$"
-      ln -s "$HOME_DIR/bin/gang" "$new_link" \
-        && mv -f "$new_link" "$BIN_DIR/gang" \
-        || activation_ok=0
-      [ "$activation_ok" -eq 1 ] || rm -f "$new_link"
-    fi
-    ;;
-esac
+mv -f "$candidate_command" "$BIN_DIR/gang" || activation_ok=0
 if [ "$activation_ok" -ne 1 ]; then
   failed_candidate="$stage_root/failed-release"
   if [ "$had_previous" -eq 1 ] \
@@ -363,9 +337,8 @@ installed_version="$("$BIN_DIR/gang" --version)" \
   || die "installed, but '$BIN_DIR/gang --version' failed"
 [ "$installed_version" = "gangline $latest" ] \
   || die "installed version mismatch: expected 'gangline $latest', got '$installed_version'"
-if [ "$release_kind" = compiled ] \
-  && { command -v claude >/dev/null 2>&1 \
-    || [ "${GANGLINE_CLAUDE_STATUSLINE:-0}" = 1 ]; }; then
+if command -v claude >/dev/null 2>&1 \
+    || [ "${GANGLINE_CLAUDE_STATUSLINE:-0}" = 1 ]; then
   "$BIN_DIR/gang" statusline --install \
     || die "installed, but status-line settings installation failed"
 fi
