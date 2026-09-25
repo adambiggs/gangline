@@ -45,7 +45,7 @@ func TestStartupSubmitsCollapsedCodexPaste(t *testing.T) {
 		return harness.AwaitComposerSettle(ctx, b.Capture, pane, c, 0)
 	}
 	f.run.cmd = f.cmd
-	e := core.Envelope{ID: "startup-collapsed", Recipient: a.ID, To: a.Name, From: core.Sender{Kind: core.SenderGangline, Name: "hitch"}, Purpose: "assignment", Message: core.Message{Text: strings.Repeat("contract and assignment\n", 500)}, CreatedAt: f.cmd.now()}
+	e := core.Envelope{ID: "startup-collapsed", Token: "0123456789abcdef", Recipient: a.ID, To: a.Name, From: core.Sender{Kind: core.SenderGangline, Name: "hitch"}, Purpose: "assignment", Message: core.Message{Text: strings.Repeat("contract and assignment\n", 500)}, CreatedAt: f.cmd.now()}
 	if err := p.Publish(e); err != nil {
 		t.Fatal(err)
 	}

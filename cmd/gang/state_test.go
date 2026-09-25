@@ -396,7 +396,7 @@ func TestDrainChecksArrivalsDuringUnlock(t *testing.T) {
 	a := f.add(t, "a", "worker", "codex")
 	p, _ := f.run.team.Agent(a.ID)
 	f.env["GANGLINE_HITCH_ID"] = string(a.ID)
-	e := core.Envelope{ID: "arrived", Recipient: a.ID, To: a.Name, From: core.Sender{Kind: core.SenderSelfDeclared, Name: "operator"}, Message: core.Message{Text: "arrives before recheck"}, CreatedAt: f.cmd.now().Add(-time.Hour)}
+	e := core.Envelope{ID: "arrived", Token: "0123456789abcdef", Recipient: a.ID, To: a.Name, From: core.Sender{Kind: core.SenderSelfDeclared, Name: "operator"}, Message: core.Message{Text: "arrives before recheck"}, CreatedAt: f.cmd.now().Add(-time.Hour)}
 	calls := 0
 	f.run.cmd.afterUnlock = func() {
 		if calls == 0 {

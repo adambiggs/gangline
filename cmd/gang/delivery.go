@@ -50,9 +50,6 @@ func isContextBandNotice(e core.Envelope) bool {
 
 func envelopeText(e core.Envelope) (string, error) {
 	if isContextBandNotice(e) {
-		if e.Token == "" {
-			return renderEnvelopeTag("context-band", e.Purpose, e.Message.Text)
-		}
 		return renderEnvelope("context-band", e.Token, e.Purpose, e.Message.Text)
 	}
 	sender := string(e.From.Name)
@@ -61,14 +58,10 @@ func envelopeText(e core.Envelope) (string, error) {
 	} else if e.From.Kind == core.SenderGangline {
 		sender = "gangline:" + sender
 	}
-	token := e.Token
-	if token == "" { // An existing envelope may already be painted with its old ID opener.
-		token = string(e.ID)
-	}
 	if e.Startup != nil {
-		return startupEnvelopeText(e.Startup, sender, token, e.Purpose, e.Message.Text)
+		return startupEnvelopeText(e.Startup, sender, e.Token, e.Purpose, e.Message.Text)
 	}
-	return renderEnvelope(sender, token, e.Purpose, e.Message.Text)
+	return renderEnvelope(sender, e.Token, e.Purpose, e.Message.Text)
 }
 
 func startupEnvelopeText(sections *core.StartupSections, sender, token, purpose, message string) (string, error) {

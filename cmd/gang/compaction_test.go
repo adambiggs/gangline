@@ -308,7 +308,7 @@ func TestCompactionSubmissionRecovery(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			a.Compaction = &core.Compaction{ID: "c", Resume: core.Message{Text: "continue"}, StartedAt: f.cmd.now().Add(-time.Hour), Deadline: f.cmd.now().Add(-time.Minute), Status: "submitted"}
+			a.Compaction = &core.Compaction{ID: "c", Resume: core.Message{Text: "continue"}, ResumeFrom: core.Sender{Kind: core.SenderGangline, Name: "compact"}, StartedAt: f.cmd.now().Add(-time.Hour), Deadline: f.cmd.now().Add(-time.Minute), Status: "submitted"}
 			if !submitted {
 				a.Compaction.Status = "queued"
 				a.Input = &core.InputIntent{ID: "c", Kind: "compaction", At: a.Compaction.StartedAt}
@@ -353,7 +353,7 @@ func TestCompletedCompactionResumesBeforeQueuedMessages(t *testing.T) {
 		t.Fatalf("submission: %v", err)
 	}
 	// A teammate's message arrives while compaction is running.
-	e := core.Envelope{ID: "teammate", Recipient: a.ID, To: a.Name, From: core.Sender{Kind: core.SenderSelfDeclared, Name: "operator"}, Message: core.Message{Text: "sent during compaction"}, CreatedAt: f.cmd.now().Add(-time.Second)}
+	e := core.Envelope{ID: "teammate", Token: "0123456789abcdef", Recipient: a.ID, To: a.Name, From: core.Sender{Kind: core.SenderSelfDeclared, Name: "operator"}, Message: core.Message{Text: "sent during compaction"}, CreatedAt: f.cmd.now().Add(-time.Second)}
 	if err := p.Publish(e); err != nil {
 		t.Fatal(err)
 	}

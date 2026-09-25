@@ -127,46 +127,6 @@ func TestCompactionRechecksBusyBeforeSubmit(t *testing.T) {
 	}
 }
 
-func TestCompactionCancelsLegacyResumeThatWasNotQueuedAtStart(t *testing.T) {
-	f, a, p := compactionFixture(t)
-	f.input.submit = func(prompt string) error {
-		return p.WriteWitness(store.Witness{ID: "resume", At: f.cmd.now(), SessionID: "s", Prompt: prompt})
-	}
-	start := f.cmd.now()
-	a.Compaction = &core.Compaction{ID: "legacy", Status: "submitted", StartedAt: start, Deadline: start.Add(operationTimeout), Continuation: true, Resume: core.Message{Text: "resume"}}
-	l, err := p.TryLock()
-	if err != nil {
-		t.Fatal(err)
-	}
-	if err := l.Save(a); err != nil {
-		t.Fatal(err)
-	}
-	e := core.Envelope{ID: "resume-legacy", Recipient: a.ID, To: a.Name, From: core.Sender{Kind: core.SenderSelfDeclared, Name: "compact"}, Message: a.Compaction.Resume, CreatedAt: start}
-	if err := f.run.publishOnce(l, &a, e); err != nil {
-		t.Fatal(err)
-	}
-	l.Close()
-	// Expiry releases the normal input gate, but must not release this resume.
-	f.run.cmd.clock = func() time.Time { return start.Add(operationTimeout) }
-	if err := f.run.tickAgent(a.ID, hookNotice{}, false); err != nil {
-		t.Fatal(err)
-	}
-	if f.input.submits != 0 {
-		t.Fatal("legacy continuation bypassed native confirmation")
-	}
-	if err := f.run.tickAgent(a.ID, hookNotice{Kind: "compaction-finished", SessionID: "s", At: start.Add(time.Second)}, false); err != nil {
-		t.Fatal(err)
-	}
-	got, err := p.Read()
-	if err != nil {
-		t.Fatal(err)
-	}
-	e, err = p.ReadEnvelope("failed", e.ID)
-	if err != nil || got.Compaction.Status != "failed" || e.Outcome != "cancelled" || f.input.submits != 0 {
-		t.Fatalf("legacy resume was sent late: %+v, %v; status=%s submits=%d", e, err, got.Compaction.Status, f.input.submits)
-	}
-}
-
 func TestCompactionSurfacesNativeRefusalWithoutResume(t *testing.T) {
 	for _, delayed := range []bool{false, true} {
 		t.Run(map[bool]string{false: "immediate", true: "later tick"}[delayed], func(t *testing.T) {

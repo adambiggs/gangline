@@ -369,58 +369,6 @@ func TestContextBandNotesPublicationRecovery(t *testing.T) {
 	}
 }
 
-// A live reader may already be above the newly configured first threshold,
-// without having published any note under the previous policy.
-func TestClaudeEarlyContextBandFromStatusline(t *testing.T) {
-	f := newStateFixture(t)
-	a := f.add(t, "a", "worker", "claude-code")
-	f.env["GANGLINE_HITCH_ID"] = "a"
-	f.input.command, f.input.screen = "claude", screenWithText("────────", "❯ ", "────────")
-	p, _ := f.run.team.Agent(a.ID)
-	l, err := p.TryLock()
-	if err != nil {
-		t.Fatal(err)
-	}
-	a.ContextBands.Model, a.ContextBands.Percent = "claude-opus-test", 21
-	if err := l.Save(a); err != nil {
-		t.Fatal(err)
-	}
-	if err := l.Close(); err != nil {
-		t.Fatal(err)
-	}
-	var notices []hookNotice
-	f.cmd.detach = func(id string, n hookNotice) error {
-		notices = append(notices, n)
-		return nil
-	}
-	status := func(used int) {
-		t.Helper()
-		cmd := f.cmd
-		cmd.stdin = strings.NewReader(fmt.Sprintf(`{"session_id":"s","model":{"id":"claude-opus-test"},"context_window":{"context_window_size":1000000,"current_usage":{"input_tokens":%d,"cache_creation_input_tokens":0,"cache_read_input_tokens":0}}}`, used))
-		if err := cmd.statusline(nil); err != nil {
-			t.Fatal(err)
-		}
-		for _, n := range notices {
-			if err := f.run.tickAgent(a.ID, n, false); err != nil {
-				t.Fatal(err)
-			}
-		}
-		notices = nil
-	}
-	status(210000)
-	if f.input.submits != 1 || !strings.Contains(f.input.pasted, "early crossed (threshold 20%)") {
-		t.Fatalf("first eligible reading: submits=%d, wire=%q", f.input.submits, f.input.pasted)
-	}
-	status(210000)
-	if f.input.submits != 1 {
-		t.Fatalf("same reading repeated note: %d", f.input.submits)
-	}
-	status(400000)
-	if f.input.submits != 2 || !strings.Contains(f.input.pasted, "late crossed (threshold 40%)") {
-		t.Fatalf("late reading: submits=%d, wire=%q", f.input.submits, f.input.pasted)
-	}
-}
-
 func TestClaudeConfiguredContextBandsFromStatusline(t *testing.T) {
 	for _, tc := range []struct {
 		name     string

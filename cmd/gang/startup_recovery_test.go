@@ -227,61 +227,62 @@ func (b submitOnlyFixture) SendKeys(ctx context.Context, pane substrate.PaneID, 
 }
 
 func TestRecoverStartupSubmitsOriginalComposerWithoutRepaste(t *testing.T) {
-	for _, token := range []string{"", "0123456789abcdef"} {
-		for _, screen := range []string{"original", "empty", "prompt"} {
-			t.Run(fmt.Sprintf("token=%s/%s", token, screen), func(t *testing.T) {
-				f := newStateFixture(t)
-				a := f.add(t, "a", "worker", "codex")
-				p, _ := f.run.team.Agent(a.ID)
-				e := core.Envelope{ID: "original", Token: token, Recipient: a.ID, To: a.Name, From: core.Sender{Kind: core.SenderSelfDeclared, Name: "hitch"}, Purpose: "assignment", Message: core.Message{Text: "Standing contract: report completion. Assignment: fix it."}, CreatedAt: f.cmd.now()}
-				if err := p.Publish(e); err != nil {
-					t.Fatal(err)
+	for _, screen := range []string{"original", "empty", "prompt", "collapsed"} {
+		t.Run(screen, func(t *testing.T) {
+			f := newStateFixture(t)
+			a := f.add(t, "a", "worker", "codex")
+			p, _ := f.run.team.Agent(a.ID)
+			e := core.Envelope{ID: "original", Token: "0123456789abcdef", Recipient: a.ID, To: a.Name, From: core.Sender{Kind: core.SenderSelfDeclared, Name: "hitch"}, Purpose: "assignment", Message: core.Message{Text: "Standing contract: report completion. Assignment: fix it."}, CreatedAt: f.cmd.now()}
+			if err := p.Publish(e); err != nil {
+				t.Fatal(err)
+			}
+			l, err := p.TryLock()
+			if err != nil {
+				t.Fatal(err)
+			}
+			a.Input = &core.InputIntent{ID: string(e.ID), Kind: "envelope", At: f.cmd.now()}
+			if err := f.run.finishInput(l, &a, e, "unverified", "another surface owns input"); err != nil {
+				t.Fatal(err)
+			}
+			l.Close()
+			wire, err := envelopeText(e)
+			if err != nil {
+				t.Fatal(err)
+			}
+			f.input.pasted = wire // Input painted before trust took over. Recovery must not paste it again.
+			f.input.screen = screenWithText("› " + wire)
+			if screen == "empty" {
+				f.input.screen = screenWithText("READY", "› ")
+			}
+			if screen == "collapsed" {
+				f.input.screen = screenWithText(fmt.Sprintf("› [Pasted Content %d chars]", len(wire)))
+			}
+			if screen == "prompt" {
+				f.input.screen = screenWithText("Hooks need review", "› 1. Review hooks", "Press enter to confirm or esc to go back")
+			}
+			f.input.submit = func(prompt string) error {
+				return p.WriteWitness(store.Witness{ID: "recovered", At: f.cmd.now(), Prompt: prompt, SessionID: "s"})
+			}
+			f.cmd.inputBackend = submitOnlyFixture{f.input}
+			err = f.cmd.hitch([]string{"worker", "--recover"})
+			if screen != "original" {
+				var ce commandError
+				if !errors.As(err, &ce) || (ce.status != exitNative && ce.status != exitUnknown) || f.input.submits != 0 {
+					t.Fatalf("unsafe recovery err=%v submits=%d", err, f.input.submits)
 				}
-				l, err := p.TryLock()
-				if err != nil {
-					t.Fatal(err)
-				}
-				a.Input = &core.InputIntent{ID: string(e.ID), Kind: "envelope", At: f.cmd.now()}
-				if err := f.run.finishInput(l, &a, e, "unverified", "another surface owns input"); err != nil {
-					t.Fatal(err)
-				}
-				l.Close()
-				wire, err := envelopeText(e)
-				if err != nil {
-					t.Fatal(err)
-				}
-				f.input.pasted = wire // Input painted before trust took over. Recovery must not paste it again.
-				f.input.screen = screenWithText("› " + wire)
-				if screen == "empty" {
-					f.input.screen = screenWithText("READY", "› ")
-				}
-				if screen == "prompt" {
-					f.input.screen = screenWithText("Hooks need review", "› 1. Review hooks", "Press enter to confirm or esc to go back")
-				}
-				f.input.submit = func(prompt string) error {
-					return p.WriteWitness(store.Witness{ID: "recovered", At: f.cmd.now(), Prompt: prompt, SessionID: "s"})
-				}
-				f.cmd.inputBackend = submitOnlyFixture{f.input}
-				err = f.cmd.hitch([]string{"worker", "--recover"})
-				if screen != "original" {
-					var ce commandError
-					if !errors.As(err, &ce) || (ce.status != exitNative && ce.status != exitUnknown) || f.input.submits != 0 {
-						t.Fatalf("unsafe recovery err=%v submits=%d", err, f.input.submits)
-					}
-					return
-				}
-				if err != nil {
-					t.Fatal(err)
-				}
-				got, err := p.ReadEnvelope("cur", e.ID)
-				if err != nil {
-					t.Fatal(err)
-				}
-				if got.Message.Text != e.Message.Text || f.input.submits != 1 || !strings.Contains(f.out.String(), "delivered") {
-					t.Fatalf("recovery: %+v submits=%d output=%s", got, f.input.submits, f.out)
-				}
-			})
-		}
+				return
+			}
+			if err != nil {
+				t.Fatal(err)
+			}
+			got, err := p.ReadEnvelope("cur", e.ID)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if got.Message.Text != e.Message.Text || f.input.submits != 1 || !strings.Contains(f.out.String(), "delivered") {
+				t.Fatalf("recovery: %+v submits=%d output=%s", got, f.input.submits, f.out)
+			}
+		})
 	}
 }
 

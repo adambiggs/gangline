@@ -72,7 +72,7 @@ func TestRepaintDeliveryAllowsQueuedCompactionAndMessages(t *testing.T) {
 			t.Fatal(err)
 		}
 		for i := range 3 {
-			e := core.Envelope{ID: core.EnvelopeID(fmt.Sprintf("queued-%d", i)), Recipient: a.ID, To: a.Name, From: core.Sender{Kind: core.SenderSelfDeclared, Name: "operator"}, Message: core.Message{Text: fmt.Sprintf("followup %d", i)}, CreatedAt: f.cmd.now().Add(time.Duration(i) * time.Second)}
+			e := core.Envelope{ID: core.EnvelopeID(fmt.Sprintf("queued-%d", i)), Token: fmt.Sprintf("%016x", i+1), Recipient: a.ID, To: a.Name, From: core.Sender{Kind: core.SenderSelfDeclared, Name: "operator"}, Message: core.Message{Text: fmt.Sprintf("followup %d", i)}, CreatedAt: f.cmd.now().Add(time.Duration(i) * time.Second)}
 			if err := p.Publish(e); err != nil {
 				t.Fatal(err)
 			}

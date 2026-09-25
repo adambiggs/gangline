@@ -188,12 +188,12 @@ func TestCompactionPublicationRecoveryCancelsUnsubmittedContinuation(t *testing.
 	if err != nil {
 		t.Fatal(err)
 	}
-	a.Compaction = &core.Compaction{ID: "c", Resume: core.Message{Text: "continue"}, StartedAt: f.cmd.now(), Deadline: f.cmd.now().Add(time.Minute), Status: "completed", CompletedAt: f.cmd.now().Add(time.Second)}
+	a.Compaction = &core.Compaction{ID: "c", Resume: core.Message{Text: "continue"}, ResumeFrom: core.Sender{Kind: core.SenderGangline, Name: "compact"}, StartedAt: f.cmd.now(), Deadline: f.cmd.now().Add(time.Minute), Status: "completed", CompletedAt: f.cmd.now().Add(time.Second)}
 	if err := l.Save(a); err != nil {
 		t.Fatal(err)
 	}
 	// Stop at the publication boundary, before its state acknowledgement.
-	e := core.Envelope{ID: "resume-c", Recipient: a.ID, To: a.Name, From: core.Sender{Kind: core.SenderGangline, Name: "compact"}, Message: a.Compaction.Resume, CreatedAt: f.cmd.now().Add(-time.Second)}
+	e := core.Envelope{ID: "resume-c", Token: "0123456789abcdef", Recipient: a.ID, To: a.Name, From: core.Sender{Kind: core.SenderGangline, Name: "compact"}, Message: a.Compaction.Resume, CreatedAt: f.cmd.now().Add(-time.Second)}
 	if err := p.Publish(e); err != nil {
 		t.Fatal(err)
 	}

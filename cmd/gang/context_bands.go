@@ -64,9 +64,7 @@ func (run *runtime) noteContextBands(a *core.Agent, c harness.Collar) error {
 	}
 	previous := state.Percent
 	switch {
-	// Until the first note, an older policy may have observed this usage
-	// without matching a band. Apply the current bands to that first note.
-	case state.Sequence == 0 || state.Model != "" && state.Model != r.Model:
+	case state.Model == "" && state.CompactedAt.IsZero() || state.Model != "" && state.Model != r.Model:
 		previous = -1
 	// The first reading after compaction is the new baseline. A note asks
 	// the agent to compact, so it never repeats for the context it just

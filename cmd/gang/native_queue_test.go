@@ -237,7 +237,7 @@ func TestContextBandRequiresExactHookDespiteQueuePreview(t *testing.T) {
 	for _, exact := range []bool{false, true} {
 		t.Run(map[bool]string{false: "preview only", true: "exact hook"}[exact], func(t *testing.T) {
 			f, a, p := queueSendFixture(t)
-			e := core.Envelope{ID: "context-2", Recipient: a.ID, To: a.Name, From: core.Sender{Kind: core.SenderGangline, Name: "context-band"}, Message: core.Message{Text: "crossed"}, CreatedAt: f.cmd.now()}
+			e := core.Envelope{ID: "context-2", Token: "0123456789abcdef", Recipient: a.ID, To: a.Name, From: core.Sender{Kind: core.SenderGangline, Name: "context-band"}, Message: core.Message{Text: "crossed"}, CreatedAt: f.cmd.now()}
 			if err := p.Publish(e); err != nil {
 				t.Fatal(err)
 			}

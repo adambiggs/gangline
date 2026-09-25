@@ -268,10 +268,6 @@ func (run *runtime) continueCompaction(l *store.LockedAgent, a *core.Agent) erro
 
 func (run *runtime) publishCompactionResume(l *store.LockedAgent, a *core.Agent) (core.Envelope, error) {
 	c := a.Compaction
-	sender := c.ResumeFrom
-	if sender.Kind == "" {
-		sender = core.Sender{Kind: core.SenderGangline, Name: "compact"}
-	}
 	if c.ResumeToken == "" {
 		token, err := randomEnvelopeToken()
 		if err != nil {
@@ -282,7 +278,7 @@ func (run *runtime) publishCompactionResume(l *store.LockedAgent, a *core.Agent)
 			return core.Envelope{}, err
 		}
 	}
-	e := core.Envelope{ID: core.EnvelopeID("resume-" + c.ID), Token: c.ResumeToken, Recipient: a.ID, To: a.Name, From: sender, Message: c.Resume, Purpose: "resume", CreatedAt: run.cmd.now()}
+	e := core.Envelope{ID: core.EnvelopeID("resume-" + c.ID), Token: c.ResumeToken, Recipient: a.ID, To: a.Name, From: c.ResumeFrom, Message: c.Resume, Purpose: "resume", CreatedAt: run.cmd.now()}
 	if err := run.publishOnce(l, a, e); err != nil {
 		return core.Envelope{}, err
 	}

@@ -18,7 +18,7 @@ func TestLateSubmitWitnessReconcilesWithoutRetyping(t *testing.T) {
 			a := f.add(t, "a", "worker", "codex")
 			p, _ := f.run.team.Agent(a.ID)
 			a.Native.SessionID = "s"
-			e := core.Envelope{ID: "late", Recipient: a.ID, To: a.Name, From: core.Sender{Kind: core.SenderSelfDeclared, Name: "operator"}, Message: core.Message{Text: "queued during native work"}, CreatedAt: f.cmd.now()}
+			e := core.Envelope{ID: "late", Token: "0123456789abcdef", Recipient: a.ID, To: a.Name, From: core.Sender{Kind: core.SenderSelfDeclared, Name: "operator"}, Message: core.Message{Text: "queued during native work"}, CreatedAt: f.cmd.now()}
 			if err := p.Publish(e); err != nil {
 				t.Fatal(err)
 			}
