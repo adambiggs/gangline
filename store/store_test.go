@@ -147,6 +147,36 @@ func TestWatchSeesSameSizeAtomicReplacement(t *testing.T) {
 		t.Fatalf("state after change: %+v %v", got, err)
 	}
 }
+func TestWatchSeesAppendToExistingLog(t *testing.T) {
+	p := testTeam(t)
+	event := core.Event{Type: "tick", Source: "command", At: time.Date(2026, 9, 22, 0, 0, 0, 0, time.UTC)}
+	if err := p.Append(event); err != nil {
+		t.Fatal(err)
+	}
+	watch, err := Watch(p.Log)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer watch.Close()
+	if err := p.Append(event); err != nil {
+		t.Fatal(err)
+	}
+	if err := watch.Wait(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	file, err := os.Open(p.Log)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer file.Close()
+	count := 0
+	if err := ReadLog(file, func(core.Event) error { count++; return nil }); err != nil {
+		t.Fatal(err)
+	}
+	if count != 2 {
+		t.Fatalf("log events = %d, want 2", count)
+	}
+}
 func TestSealedInboxRejectsPublisherAndCannotReappear(t *testing.T) {
 	p := testTeam(t)
 	l, err := p.CreateAgent(testAgent("a", "worker"))

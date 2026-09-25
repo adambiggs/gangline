@@ -3,7 +3,6 @@ package store
 import (
 	"context"
 	"errors"
-	"path/filepath"
 	"syscall"
 )
 
@@ -21,10 +20,11 @@ type ChangeWait struct {
 	close  func() error
 }
 
-// Watch registers the parent directory. Read the target after registration,
-// then wait: an atomic replacement cannot fall between registration and read.
+// Watch registers the parent directory and, when present, the target file.
+// Read the target after registration, then wait: neither an atomic replacement
+// nor an append can fall between registration and read.
 func Watch(path string) (*ChangeWait, error) {
-	events, closeWatch, err := newFileWatch(filepath.Dir(path))
+	events, closeWatch, err := newFileWatch(path)
 	if err != nil {
 		return nil, err
 	}

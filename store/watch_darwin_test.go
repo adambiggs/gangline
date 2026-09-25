@@ -4,6 +4,7 @@ package store
 
 import (
 	"errors"
+	"path/filepath"
 	"syscall"
 	"testing"
 )
@@ -11,7 +12,7 @@ import (
 func TestWatchRetriesInterruptedRegistrationAndWait(t *testing.T) {
 	for _, final := range []error{nil, syscall.EBADF} {
 		registered, waited := 0, 0
-		events, closeWatch, err := newFileWatchKevent(t.TempDir(), func(_ int, changes, events []syscall.Kevent_t, _ *syscall.Timespec) (int, error) {
+		events, closeWatch, err := newFileWatchKevent(filepath.Join(t.TempDir(), "missing-state.json"), func(_ int, changes, events []syscall.Kevent_t, _ *syscall.Timespec) (int, error) {
 			if len(changes) != 0 {
 				registered++
 				if registered <= 2 {

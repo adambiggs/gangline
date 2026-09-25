@@ -3,8 +3,10 @@
 package store
 
 import (
+	"errors"
 	"fmt"
 	"os"
+	"path/filepath"
 	"sync"
 	"syscall"
 )
@@ -15,9 +17,13 @@ func newFileWatch(path string) (<-chan error, func() error, error) {
 		return nil, nil, fmt.Errorf("create state directory watch: %w", err)
 	}
 	file := os.NewFile(uintptr(fd), "state-directory-watch")
-	if _, err := syscall.InotifyAddWatch(fd, path, syscall.IN_MODIFY|syscall.IN_CLOSE_WRITE|syscall.IN_DELETE_SELF|syscall.IN_MOVE_SELF|syscall.IN_MOVED_TO|syscall.IN_CREATE|syscall.IN_DELETE); err != nil {
+	if _, err := syscall.InotifyAddWatch(fd, filepath.Dir(path), syscall.IN_MODIFY|syscall.IN_CLOSE_WRITE|syscall.IN_DELETE_SELF|syscall.IN_MOVE_SELF|syscall.IN_MOVED_TO|syscall.IN_CREATE|syscall.IN_DELETE); err != nil {
 		_ = file.Close()
 		return nil, nil, fmt.Errorf("watch state directory: %w", err)
+	}
+	if _, err := syscall.InotifyAddWatch(fd, path, syscall.IN_MODIFY|syscall.IN_CLOSE_WRITE|syscall.IN_DELETE_SELF|syscall.IN_MOVE_SELF); err != nil && !errors.Is(err, os.ErrNotExist) {
+		_ = file.Close()
+		return nil, nil, fmt.Errorf("watch state file: %w", err)
 	}
 	events := make(chan error, 1)
 	go func() {
