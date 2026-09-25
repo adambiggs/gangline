@@ -48,6 +48,6 @@ A report includes what could change the recipient's next decision, what
 remains unproven, and anything you got wrong. Evidence that only shows you did
 the work belongs in the files named above.
 
-Your first reply confirms you read this contract, the doctrine, and your role
-brief. Name yourself and your role, then begin your assignment or say you are
-waiting for one.
+Your first reply confirms you read this contract and any supplied doctrine
+or role brief. Name yourself and any assigned role, then begin your assignment or say you
+are waiting for one.
