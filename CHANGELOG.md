@@ -1,5 +1,17 @@
 # Changelog
 
+## [1.4.0](https://github.com/adambiggs/gangline/compare/gangline-v1.3.0...gangline-v1.4.0) (2026-09-25)
+
+
+### Features
+
+* **distribution:** install verified release binaries ([acf80c0](https://github.com/adambiggs/gangline/commit/acf80c0b2fbf1b52c8281a27a42fe10d16f622bf))
+
+
+### Bug Fixes
+
+* **compact:** submit resume before completion to preserve input order ([925f47d](https://github.com/adambiggs/gangline/commit/925f47d3505d1c86de7620026c1d6caddc61f049))
+
 ## [1.3.0](https://github.com/adambiggs/gangline/compare/gangline-v1.2.1...gangline-v1.3.0) (2026-09-25)
 
 
