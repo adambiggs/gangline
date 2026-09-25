@@ -63,6 +63,82 @@ func TestPinObservedProcessRejectsReplacementDuringAcquisition(t *testing.T) {
 	}
 }
 
+func TestPinObservedProcessAcceptsExecBeforeAcquisition(t *testing.T) {
+	expected := processRecord{Process: substrate.Process{PID: 200, ParentPID: 100}, uniqueID: 77, parentUniqueID: 55, version: 1, started: "77:1"}
+	current := expected
+	current.version = 2
+	current.started = "77:2"
+	handle := &fakeProcessHandle{}
+	var opened processRecord
+	identity, err := pinObservedProcess(expected, func() (processRecord, error) { return current, nil }, func(record processRecord) (processHandle, error) {
+		opened = record
+		return handle, nil
+	})
+	if err != nil || opened.version != 2 || identity.started != "77:2" || identity.handle != handle {
+		t.Fatalf("exec before pin: opened=%+v identity=%+v err=%v", opened, identity, err)
+	}
+}
+
+func TestPinObservedProcessRejectsReplacedUniqueIDBeforeAcquisition(t *testing.T) {
+	expected := processRecord{Process: substrate.Process{PID: 200, ParentPID: 100}, uniqueID: 77, parentUniqueID: 55, version: 1, started: "77:1"}
+	replacement := expected
+	replacement.uniqueID = 78
+	replacement.version = 2
+	replacement.started = "78:2"
+	opened := false
+	_, err := pinObservedProcess(expected, func() (processRecord, error) { return replacement, nil }, func(processRecord) (processHandle, error) {
+		opened = true
+		return &fakeProcessHandle{}, nil
+	})
+	if err == nil || !strings.Contains(err.Error(), "changed before identity acquisition") || opened {
+		t.Fatalf("replacement before pin: opened=%v err=%v", opened, err)
+	}
+}
+
+func TestPinObservedProcessRejectsChangedLineageBeforeAcquisition(t *testing.T) {
+	expected := processRecord{Process: substrate.Process{PID: 200, ParentPID: 100}, uniqueID: 77, parentUniqueID: 55, version: 1, started: "77:1"}
+	changed := expected
+	changed.parentUniqueID = 56
+	changed.version = 2
+	changed.started = "77:2"
+	opened := false
+	_, err := pinObservedProcess(expected, func() (processRecord, error) { return changed, nil }, func(processRecord) (processHandle, error) {
+		opened = true
+		return &fakeProcessHandle{}, nil
+	})
+	if err == nil || opened {
+		t.Fatalf("changed lineage before pin: opened=%v err=%v", opened, err)
+	}
+}
+
+func TestPinObservedProcessRejectsChangedLinuxStartBeforeAcquisition(t *testing.T) {
+	expected := processRecord{Process: substrate.Process{PID: 200, ParentPID: 100}, started: "101"}
+	changed := expected
+	changed.started = "102"
+	opened := false
+	_, err := pinObservedProcess(expected, func() (processRecord, error) { return changed, nil }, func(processRecord) (processHandle, error) {
+		opened = true
+		return &fakeProcessHandle{}, nil
+	})
+	if err == nil || opened {
+		t.Fatalf("changed Linux start before pin: opened=%v err=%v", opened, err)
+	}
+}
+
+func TestPinObservedProcessRejectsInconsistentVersionBeforeAcquisition(t *testing.T) {
+	expected := processRecord{Process: substrate.Process{PID: 200, ParentPID: 100}, uniqueID: 77, parentUniqueID: 55, version: 1, started: "77:1"}
+	changed := expected
+	changed.started = "77:2"
+	opened := false
+	_, err := pinObservedProcess(expected, func() (processRecord, error) { return changed, nil }, func(processRecord) (processHandle, error) {
+		opened = true
+		return &fakeProcessHandle{}, nil
+	})
+	if err == nil || opened {
+		t.Fatalf("inconsistent version before pin: opened=%v err=%v", opened, err)
+	}
+}
+
 func TestPinObservedProcessKeepsHandleWhenValidationDisappears(t *testing.T) {
 	record := processRecord{Process: substrate.Process{PID: 200, ParentPID: 100}, started: "101"}
 	handle := &fakeProcessHandle{}

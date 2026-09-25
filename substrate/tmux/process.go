@@ -282,7 +282,14 @@ func pinObservedProcess(expected processRecord, read func() (processRecord, erro
 	if err != nil {
 		return processIdentity{}, err
 	}
-	if before.PID != expected.PID || before.ParentPID != expected.ParentPID || before.started == "" || before.started != expected.started || before.parentUniqueID != expected.parentUniqueID {
+	if before.PID != expected.PID || before.ParentPID != expected.ParentPID || before.started == "" || before.uniqueID != expected.uniqueID || before.parentUniqueID != expected.parentUniqueID {
+		return processIdentity{}, fmt.Errorf("process %d changed before identity acquisition", expected.PID)
+	}
+	// Darwin increments pidversion on exec while preserving the process's
+	// unique ID. Pin the current version when the observed process is the same.
+	if before.started != expected.started && (before.uniqueID == 0 || before.version == expected.version ||
+		expected.started != fmt.Sprintf("%d:%d", expected.uniqueID, expected.version) ||
+		before.started != fmt.Sprintf("%d:%d", before.uniqueID, before.version)) {
 		return processIdentity{}, fmt.Errorf("process %d changed before identity acquisition", expected.PID)
 	}
 	handle, err := open(before)
