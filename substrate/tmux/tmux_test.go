@@ -7,6 +7,7 @@ import (
 	"os/exec"
 	"os/signal"
 	"path/filepath"
+	"runtime"
 	"sort"
 	"strconv"
 	"strings"
@@ -228,6 +229,9 @@ func TestNewRequiresSession(t *testing.T) {
 }
 
 func TestProcessTableSelectsOnlyPaneForegroundGroup(t *testing.T) {
+	if runtime.GOOS != "linux" {
+		t.Skip("fake ps fixture applies to the Linux process-table reader")
+	}
 	binary, err := exec.LookPath("tmux")
 	if err != nil {
 		t.Skip("tmux is required")

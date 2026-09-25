@@ -58,6 +58,10 @@ func (backend *Backend) ForegroundProcesses(ctx context.Context, pane substrate.
 	if err != nil {
 		return nil, err
 	}
+	return selectForegroundProcesses(root, records, foregroundCommand)
+}
+
+func selectForegroundProcesses(root int, records map[int]processRecord, command func(substrate.Process) string) ([]substrate.Process, error) {
 	rootRecord, ok := records[root]
 	if !ok {
 		return nil, fmt.Errorf("read process tree: pane process %d was not present", root)
@@ -70,7 +74,7 @@ func (backend *Backend) ForegroundProcesses(ctx context.Context, pane substrate.
 	for pid, record := range records {
 		if record.GroupID == rootRecord.foregroundGroup && descendsFrom(pid, root, records) {
 			process := record.Process
-			process.Command = foregroundCommand(process)
+			process.Command = command(process)
 			result = append(result, process)
 		}
 	}

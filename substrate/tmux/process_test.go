@@ -20,6 +20,20 @@ func TestSignalRecordedProcessRequiresPinnedIdentity(t *testing.T) {
 	}
 }
 
+func TestSelectForegroundProcessesExcludesBackgroundAndUnrelatedGroups(t *testing.T) {
+	records := map[int]processRecord{
+		100: {Process: substrate.Process{PID: 100, ParentPID: 1, GroupID: 100, Command: "pane"}, foregroundGroup: 200},
+		200: {Process: substrate.Process{PID: 200, ParentPID: 100, GroupID: 200, Command: "harness"}},
+		201: {Process: substrate.Process{PID: 201, ParentPID: 200, GroupID: 200, Command: "helper"}},
+		300: {Process: substrate.Process{PID: 300, ParentPID: 200, GroupID: 300, Command: "background"}},
+		400: {Process: substrate.Process{PID: 400, ParentPID: 1, GroupID: 200, Command: "unrelated"}},
+	}
+	got, err := selectForegroundProcesses(100, records, func(process substrate.Process) string { return process.Command })
+	if err != nil || len(got) != 2 || got[0].Command != "harness" || got[1].Command != "helper" {
+		t.Fatalf("foreground selection = %+v, %v", got, err)
+	}
+}
+
 type fakeProcessHandle struct {
 	signals       []syscall.Signal
 	waits, closes int
