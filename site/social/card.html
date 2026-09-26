@@ -41,15 +41,19 @@ h1{margin:0;font:500 132px/1 'Newsreader',serif;letter-spacing:-.015em}
 </div>
 <script>
 if (innerWidth !== 640 || innerHeight !== 320) document.body.style.boxShadow = 'inset 0 0 0 12px red';
-/* Two changes to field.js for the card. It caps its canvas at twice the
-   screen's density, and the card needs all four times. It draws its lines
-   faint enough to sit behind a page of text; the card has little text and
-   is shown small, so it draws them INK times as strong. */
-const INK = 1.8;
+/* Three changes to field.js for the card. Its clock is the wall clock, so
+   the blobs drift between renders; the card holds it at T seconds, chosen
+   for the arrangement it gives and overridable as #t=<seconds> to try
+   others. It caps its canvas at twice the screen's density, and the card
+   needs all four times. It draws its lines faint enough to sit behind a
+   page of text; the card has little text and is shown small, so it draws
+   them INK times as strong. */
+const INK = 1.8, T = Number((location.hash.match(/t=([\d.]+)/) || [])[1] || 32);
 const x = new XMLHttpRequest();
 x.open('GET', '../field.js', false); x.send();
 let src = x.responseText;
 for (const [from, to] of [
+  ['f.t = Date.now() / 1000;', `f.t = ${T};`],
   ['Math.min(2, devicePixelRatio || 1)', '(devicePixelRatio || 1)'],
   ['ctx.globalAlpha = Math.min(0.11, 0.06 + Math.max(0, v - 0.1) * 0.1) * tw', `ctx.globalAlpha = ${INK} * Math.min(0.11, 0.06 + Math.max(0, v - 0.1) * 0.1) * tw`],
 ]) {
