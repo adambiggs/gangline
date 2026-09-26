@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"strings"
 	"time"
 
 	"github.com/adambiggs/gangline/harness"
@@ -96,15 +97,16 @@ func (cmd command) execute(args []string) error {
 		_, err := fmt.Fprintf(cmd.stdout, "gangline %s\n", version)
 		return err
 	}
-	if args[0] == "help" {
-		for _, argument := range args[1:] {
-			if argument == "--help" || argument == "-h" {
-				return cmd.printHelp("help")
-			}
-		}
+	if args[0] == "help" && helpRequested("help", args[1:]) {
+		return cmd.printHelp("help")
 	}
 	if args[0] == "help" || args[0] == "--help" || args[0] == "-h" {
 		if len(args) > 2 {
+			if args[0] == "help" {
+				if _, ok := commandUsage[args[1]]; !ok {
+					return cmd.printHelp(args[1])
+				}
+			}
 			return usageError("help: expected at most one command")
 		}
 		name := ""
@@ -113,10 +115,8 @@ func (cmd command) execute(args []string) error {
 		}
 		return cmd.printHelp(name)
 	}
-	for _, argument := range args[1:] {
-		if argument == "--help" || argument == "-h" {
-			return cmd.printHelp(args[0])
-		}
+	if helpRequested(args[0], args[1:]) {
+		return cmd.printHelp(args[0])
 	}
 
 	name, arguments := args[0], args[1:]
@@ -184,4 +184,27 @@ func (cmd command) execute(args []string) error {
 	default:
 		return usageError("unknown command %q (run 'gang help')", name)
 	}
+}
+
+func helpRequested(name string, arguments []string) bool {
+	for i := 0; i < len(arguments); i++ {
+		argument := arguments[i]
+		if argument == "--" {
+			return false
+		}
+		if argument == "-h" || argument == "--help" {
+			return true
+		}
+		if !strings.HasPrefix(argument, "-") || argument == "-" {
+			return false
+		}
+		optionName, _, hasValue := strings.Cut(strings.TrimLeft(argument, "-"), "=")
+		for _, option := range optionsFor(name) {
+			if option.name == optionName && option.argument != "" && !hasValue {
+				i++
+				break
+			}
+		}
+	}
+	return false
 }

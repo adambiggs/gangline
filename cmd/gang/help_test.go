@@ -165,15 +165,11 @@ func TestMissingOrExtraHelpFlagIsDetected(t *testing.T) {
 	}
 }
 
-func TestHelpAfterOtherArguments(t *testing.T) {
+func TestHelpDoesNotOverrideOperands(t *testing.T) {
 	for name := range commandUsage {
 		for _, helpFlag := range []string{"--help", "-h"} {
-			var stdout, stderr bytes.Buffer
-			arguments := []string{name, "unused", helpFlag}
-			if status := run(arguments, strings.NewReader(""), &stdout, &stderr); status != exitOK {
-				t.Errorf("run(%q) status=%d stderr=%q", arguments, status, stderr.String())
-			} else if !strings.Contains(stdout.String(), "usage: gang "+name) {
-				t.Errorf("run(%q) lacks command help", arguments)
+			if helpRequested(name, []string{"unused", helpFlag}) {
+				t.Errorf("%s treats %s after an operand as help", name, helpFlag)
 			}
 		}
 	}
