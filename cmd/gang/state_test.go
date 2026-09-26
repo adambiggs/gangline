@@ -21,6 +21,7 @@ import (
 type inputFixture struct {
 	screen          substrate.Screen
 	command, pasted string
+	processErr      error
 	submits         int
 	submit          func(string) error
 }
@@ -29,6 +30,9 @@ func (b *inputFixture) Capture(context.Context, substrate.PaneID) (substrate.Scr
 	return b.screen, nil
 }
 func (b *inputFixture) ForegroundProcesses(context.Context, substrate.PaneID) ([]substrate.Process, error) {
+	if b.processErr != nil {
+		return nil, b.processErr
+	}
 	return []substrate.Process{{PID: 7, Command: b.command}}, nil
 }
 func (b *inputFixture) SendKeys(_ context.Context, _ substrate.PaneID, k substrate.Keys) error {
@@ -179,6 +183,35 @@ func TestOneAgentCannotBlockAnotherDelivery(t *testing.T) {
 	}
 	if f.input.submits != 1 || !strings.Contains(f.out.String(), "delivered") {
 		t.Fatalf("submits=%d output=%s errors=%s", f.input.submits, f.out, f.errOut)
+	}
+}
+func TestSendReportsRetainedMessageWhenProcessTreeLookupFails(t *testing.T) {
+	f := newStateFixture(t)
+	a := f.add(t, "a", "worker", "codex")
+	p, err := f.run.team.Agent(a.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	f.input.processErr = errors.New("read process tree: pane process 7 was not present")
+	f.cmd.stdin = strings.NewReader("send once")
+	if err := f.cmd.send([]string{"worker", "--from", "operator"}); err != nil {
+		t.Fatalf("retained message reported as a failed send: %v", err)
+	}
+	pending, err := p.ListNew()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(pending) != 1 || pending[0].Message.Text != "send once" || f.input.submits != 0 {
+		t.Fatalf("message retention: %+v, submits=%d", pending, f.input.submits)
+	}
+	id := string(pending[0].ID)
+	if got := f.out.String(); got != id+"\tqueued\n" {
+		t.Fatalf("missing queued receipt: %q", got)
+	}
+	for _, part := range []string{id, "retained with queued status", "read process tree: pane process 7 was not present", "do not resend"} {
+		if !strings.Contains(f.errOut.String(), part) {
+			t.Fatalf("warning %q missing from %q", part, f.errOut.String())
+		}
 	}
 }
 func TestCommandsDoNotReadAuditLog(t *testing.T) {

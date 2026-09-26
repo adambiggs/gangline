@@ -170,32 +170,39 @@ func (cmd command) send(args []string) (result error) {
 	if err := p.Publish(e); err != nil {
 		return err
 	}
-	if err := run.record(a, core.Event{Type: "send_queued", Envelope: &e}); err != nil {
-		return err
-	}
 	outcome := "queued"
-	if l != nil {
-		outcome, err = run.drainFrom(l, a, e.ID)
-	} else {
-		outcome, err = run.drain(a.ID, e.ID)
-	}
-	if err != nil {
-		return err
+	step := "record queue event"
+	postPublishErr := run.record(a, core.Event{Type: "send_queued", Envelope: &e})
+	if postPublishErr == nil {
+		step = "drain"
+		if l != nil {
+			outcome, postPublishErr = run.drainFrom(l, a, e.ID)
+		} else {
+			outcome, postPublishErr = run.drain(a.ID, e.ID)
+		}
 	}
 	// A hook may promote this receipt after drain releases the input lock.
 	// Read this ID's retained receipt, not another message's latest result.
 	if receipt, readErr := p.ReadEnvelope("cur", e.ID); readErr == nil {
 		outcome = receipt.Outcome
 	} else if !errors.Is(readErr, os.ErrNotExist) {
-		return readErr
+		if postPublishErr == nil {
+			step = "read receipt"
+		}
+		postPublishErr = errors.Join(postPublishErr, fmt.Errorf("read receipt: %w", readErr))
+	}
+	if _, err := fmt.Fprintf(cmd.stdout, "%s\t%s\n", e.ID, outcome); err != nil {
+		return err
 	}
 	if outcome == "accepted" {
 		if _, err := fmt.Fprintln(cmd.stderr, "native queue accepted the message; do not resend"); err != nil {
 			return err
 		}
 	}
-	if _, err := fmt.Fprintf(cmd.stdout, "%s\t%s\n", e.ID, outcome); err != nil {
-		return err
+	if postPublishErr != nil {
+		if _, err := fmt.Fprintf(cmd.stderr, "warning: message %s was retained with %s status; %s failed: %v; do not resend\n", e.ID, outcome, step, postPublishErr); err != nil {
+			return err
+		}
 	}
 	return deliveryResult(outcome)
 }
