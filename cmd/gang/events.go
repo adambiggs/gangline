@@ -212,7 +212,8 @@ func (cmd command) tick(args []string) (result error) {
 	flags := boundFlagSet("tick", map[string]any{
 		"agent": &id, "source": &source, "watchdog": &generation,
 	})
-	if err := flags.Parse(args); err != nil || flags.NArg() != 0 {
+	positionals, err := parseOptions(flags, args)
+	if err != nil || len(positionals) != 0 {
 		return usageError("tick: expected optional --agent ID or --source watchdog --watchdog UNIT")
 	}
 	run, err := cmd.runtime()

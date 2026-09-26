@@ -262,19 +262,16 @@ func nativeIdentity(i core.ProcessIdentity) tmux.Identity {
 	return tmux.Identity{PID: i.PID, Started: i.Started, Version: i.Version, UniqueID: i.UniqueID, BootID: i.BootID}
 }
 func (cmd command) adopt(args []string) (result error) {
-	if len(args) == 0 {
-		return usageError("adopt: name required")
-	}
-	if err := validateAgentName(args[0]); err != nil {
+	name, collar, err := parseAdopt(args)
+	if err != nil {
 		return err
 	}
 	run, err := cmd.runtime()
 	if err != nil {
 		return err
 	}
-	collar, err := parseCollarFlags("adopt", args[1:], run.settings.Collar)
-	if err != nil {
-		return usageError("adopt: %v", err)
+	if collar == "" {
+		collar = run.settings.Collar
 	}
 	if _, err := loadCollar(collar, run.settings); err != nil {
 		return err
@@ -299,7 +296,7 @@ func (cmd command) adopt(args []string) (result error) {
 	if err != nil {
 		return err
 	}
-	a := core.Agent{ID: core.HitchID(id), Name: core.AgentName(args[0]), Collar: collar, Directory: dir, Pane: pane, Status: core.Active, Activity: core.Idle, Process: storedIdentity(identity), CreatedAt: cmd.now(), ChangedAt: cmd.now()}
+	a := core.Agent{ID: core.HitchID(id), Name: core.AgentName(name), Collar: collar, Directory: dir, Pane: pane, Status: core.Active, Activity: core.Idle, Process: storedIdentity(identity), CreatedAt: cmd.now(), ChangedAt: cmd.now()}
 	if err := run.team.Create(); err != nil {
 		return err
 	}
@@ -317,6 +314,28 @@ func (cmd command) adopt(args []string) (result error) {
 		return err
 	}
 	return run.mark(a)
+}
+
+func parseAdopt(args []string) (string, string, error) {
+	collar := ""
+	flags := boundFlagSet("adopt", map[string]any{"c": &collar, "collar": &collar})
+	positionals, err := parseOptions(flags, args)
+	if err != nil {
+		return "", "", usageError("adopt: %v", err)
+	}
+	if len(positionals) == 0 {
+		return "", "", usageError("adopt: name required")
+	}
+	if len(positionals) > 1 {
+		return "", "", usageError("adopt: unexpected argument %q", positionals[1])
+	}
+	if err := validateAgentName(positionals[0]); err != nil {
+		return "", "", err
+	}
+	if collar == "" && (flagWasSet(flags, "c") || flagWasSet(flags, "collar")) {
+		return "", "", usageError("adopt: collar must not be empty")
+	}
+	return positionals[0], collar, nil
 }
 func (cmd command) rename(args []string) (result error) {
 	if err := exactly(args, 2, "rename"); err != nil {

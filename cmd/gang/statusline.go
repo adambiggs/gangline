@@ -15,7 +15,8 @@ import (
 func (cmd command) statusline(args []string) (result error) {
 	install := false
 	flags := boundFlagSet("statusline", map[string]any{"install": &install})
-	if err := flags.Parse(args); err != nil || flags.NArg() != 0 {
+	positionals, err := parseOptions(flags, args)
+	if err != nil || len(positionals) != 0 {
 		return usageError("statusline: invalid arguments")
 	}
 	if install {

@@ -101,6 +101,9 @@ func (cmd command) execute(args []string) error {
 		return cmd.printHelp("help")
 	}
 	if args[0] == "help" || args[0] == "--help" || args[0] == "-h" {
+		if args[0] == "help" && len(args) > 1 && args[1] == "--" {
+			args = append(args[:1:1], args[2:]...)
+		}
 		if len(args) > 2 {
 			if args[0] == "help" {
 				if _, ok := commandUsage[args[1]]; !ok {
@@ -120,6 +123,14 @@ func (cmd command) execute(args []string) error {
 	}
 
 	name, arguments := args[0], args[1:]
+	if len(optionsFor(name)) == 0 {
+		for i, argument := range arguments {
+			if argument == "--" {
+				arguments = append(append([]string{}, arguments[:i]...), arguments[i+1:]...)
+				break
+			}
+		}
+	}
 	switch name {
 	case "up":
 		return cmd.up(arguments)

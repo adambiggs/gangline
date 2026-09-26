@@ -26,16 +26,17 @@ func observationName(args []string, name string) (string, error) {
 func (cmd command) context(args []string) error {
 	widget := ""
 	flags := boundFlagSet("context", map[string]any{"widget": &widget})
-	if err := flags.Parse(args); err != nil {
+	positionals, err := parseOptions(flags, args)
+	if err != nil {
 		return usageError("context: %v", err)
 	}
 	if flagWasSet(flags, "widget") {
-		if flags.NArg() != 0 {
+		if len(positionals) != 0 {
 			return usageError("context --widget: expected NAME or off")
 		}
 		return cmd.contextWidget([]string{widget})
 	}
-	name, err := observationName(flags.Args(), "context")
+	name, err := observationName(positionals, "context")
 	if err != nil {
 		return err
 	}
@@ -93,11 +94,12 @@ func (cmd command) context(args []string) error {
 func (cmd command) limits(args []string) error {
 	collar := ""
 	flags := boundFlagSet("limits", map[string]any{"c": &collar})
-	if err := flags.Parse(args); err != nil {
+	positionals, err := parseOptions(flags, args)
+	if err != nil {
 		return usageError("limits: %v", err)
 	}
 	if flagWasSet(flags, "c") {
-		if flags.NArg() != 0 {
+		if len(positionals) != 0 {
 			return usageError("limits -c: expected one collar and no agent")
 		}
 		s, err := cmd.settings()
@@ -121,7 +123,7 @@ func (cmd command) limits(args []string) error {
 		}
 		return nil
 	}
-	name, err := observationName(flags.Args(), "limits")
+	name, err := observationName(positionals, "limits")
 	if err != nil {
 		return err
 	}
@@ -175,10 +177,11 @@ func (cmd command) limits(args []string) error {
 func (cmd command) capture(args []string) error {
 	composer := false
 	flags := boundFlagSet("capture", map[string]any{"composer": &composer})
-	if err := flags.Parse(args); err != nil {
+	positionals, err := parseOptions(flags, args)
+	if err != nil {
 		return usageError("capture: %v", err)
 	}
-	args = flags.Args()
+	args = positionals
 	if len(args) > 2 {
 		return usageError("capture: too many arguments")
 	}

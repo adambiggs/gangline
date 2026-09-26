@@ -5,7 +5,6 @@ import (
 	"errors"
 	"fmt"
 	"os"
-	"strings"
 	"sync"
 	"time"
 
@@ -15,11 +14,28 @@ import (
 )
 
 func (cmd command) up(args []string) error {
-	name := "lead"
-	if len(args) > 0 && !strings.HasPrefix(args[0], "-") {
-		name, args = args[0], args[1:]
+	options := hitchOptions{}
+	flags := boundFlagSet("up", map[string]any{
+		"c": &options.Collar, "collar": &options.Collar,
+		"d": &options.Directory, "dir": &options.Directory,
+		"m": &options.Model, "model": &options.Model,
+		"e": &options.Effort, "effort": &options.Effort,
+		"t": &options.Task, "task": &options.Task,
+		"r": &options.Role, "role": &options.Role,
+		"resume": &options.Resume, "recover": &options.Recover, "stdin": &options.Stdin,
+	})
+	flagArguments, positionals := partitionOptions(flags, args)
+	if err := flags.Parse(flagArguments); err != nil {
+		return usageError("up: %v", err)
 	}
-	if err := cmd.hitchWithStaleClaim(upHitchArguments(name, args), true); err != nil {
+	name := "lead"
+	if len(positionals) > 1 {
+		return usageError("up: unexpected argument %q", positionals[1])
+	}
+	if len(positionals) == 1 {
+		name = positionals[0]
+	}
+	if err := cmd.hitchWithStaleClaim(upHitchArguments(name, flagArguments), true); err != nil {
 		return err
 	}
 	if f, ok := cmd.stdin.(*os.File); ok {
@@ -209,7 +225,8 @@ func (run *runtime) observeRoster(agents []core.Agent) ([]core.Agent, error) {
 func (cmd command) roster(args []string) error {
 	machine := false
 	flags := boundFlagSet("roster", map[string]any{"porcelain": &machine})
-	if err := flags.Parse(args); err != nil || flags.NArg() != 0 {
+	positionals, err := parseOptions(flags, args)
+	if err != nil || len(positionals) != 0 {
 		return usageError("roster: invalid arguments")
 	}
 	run, err := cmd.runtime()
@@ -237,14 +254,15 @@ func (cmd command) roster(args []string) error {
 	return nil
 }
 func (cmd command) status(args []string) error {
-	name := ""
-	if len(args) > 0 && !strings.HasPrefix(args[0], "-") {
-		name, args = args[0], args[1:]
-	}
 	why := false
 	flags := boundFlagSet("status", map[string]any{"why": &why})
-	if err := flags.Parse(args); err != nil || flags.NArg() != 0 {
+	positionals, err := parseOptions(flags, args)
+	if err != nil || len(positionals) > 1 {
 		return usageError("status: invalid arguments")
+	}
+	name := ""
+	if len(positionals) == 1 {
+		name = positionals[0]
 	}
 	run, err := cmd.runtime()
 	if err != nil {

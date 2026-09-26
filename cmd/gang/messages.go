@@ -245,14 +245,15 @@ func (cmd command) queue(args []string) error {
 	return nil
 }
 func (cmd command) interrupt(args []string) (result error) {
-	name := ""
-	if len(args) > 0 && !strings.HasPrefix(args[0], "-") {
-		name, args = args[0], args[1:]
-	}
 	reason := ""
 	flags := boundFlagSet("interrupt", map[string]any{"m": &reason})
-	if err := flags.Parse(args); err != nil || flags.NArg() != 0 {
+	positionals, err := parseOptions(flags, args)
+	if err != nil || len(positionals) > 1 {
 		return usageError("interrupt: invalid arguments")
+	}
+	name := ""
+	if len(positionals) == 1 {
+		name = positionals[0]
 	}
 	run, err := cmd.runtime()
 	if err != nil {

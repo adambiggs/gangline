@@ -25,10 +25,7 @@ type hitchOptions struct {
 }
 
 func parseHitch(arguments []string, defaultCollar, defaultDirectory string) (hitchOptions, error) {
-	if len(arguments) == 0 || strings.HasPrefix(arguments[0], "-") {
-		return hitchOptions{}, usageError("hitch: agent name required")
-	}
-	options := hitchOptions{Name: arguments[0], Collar: defaultCollar, Directory: defaultDirectory}
+	options := hitchOptions{Collar: defaultCollar, Directory: defaultDirectory}
 	flags := boundFlagSet("hitch", map[string]any{
 		"c": &options.Collar, "collar": &options.Collar,
 		"d": &options.Directory, "dir": &options.Directory,
@@ -38,19 +35,24 @@ func parseHitch(arguments []string, defaultCollar, defaultDirectory string) (hit
 		"r": &options.Role, "role": &options.Role,
 		"resume": &options.Resume, "recover": &options.Recover, "stdin": &options.Stdin,
 	})
-	if err := flags.Parse(arguments[1:]); err != nil {
+	positionals, err := parseOptions(flags, arguments)
+	if err != nil {
 		return hitchOptions{}, usageError("hitch: %v", err)
 	}
-	if flags.NArg() != 0 {
-		return hitchOptions{}, usageError("hitch: unexpected argument %q", flags.Arg(0))
+	if len(positionals) == 0 {
+		return hitchOptions{}, usageError("hitch: agent name required")
 	}
+	if len(positionals) > 1 {
+		return hitchOptions{}, usageError("hitch: unexpected argument %q", positionals[1])
+	}
+	options.Name = positionals[0]
 	if err := validateAgentName(options.Name); err != nil {
 		return hitchOptions{}, err
 	}
 	if options.Collar == "" || options.Directory == "" {
 		return hitchOptions{}, usageError("hitch: collar and directory must not be empty")
 	}
-	if options.Recover && len(arguments) != 2 {
+	if options.Recover && (len(arguments) != 2 || !flagWasSet(flags, "recover")) {
 		return hitchOptions{}, usageError("hitch: --recover takes only NAME")
 	}
 	return options, nil
@@ -71,17 +73,19 @@ type waitOptions struct {
 }
 
 func parseWait(arguments []string) (waitOptions, error) {
-	if len(arguments) == 0 || strings.HasPrefix(arguments[0], "-") {
-		return waitOptions{}, usageError("wait: agent name required")
-	}
-	options := waitOptions{Name: arguments[0], Timeout: operationTimeout}
+	options := waitOptions{Timeout: operationTimeout}
 	flags := boundFlagSet("wait", map[string]any{"timeout": &options.Timeout})
-	if err := flags.Parse(arguments[1:]); err != nil {
+	positionals, err := parseOptions(flags, arguments)
+	if err != nil {
 		return waitOptions{}, usageError("wait: %v", err)
 	}
-	if flags.NArg() != 0 {
-		return waitOptions{}, usageError("wait: unexpected argument %q", flags.Arg(0))
+	if len(positionals) == 0 {
+		return waitOptions{}, usageError("wait: agent name required")
 	}
+	if len(positionals) > 1 {
+		return waitOptions{}, usageError("wait: unexpected argument %q", positionals[1])
+	}
+	options.Name = positionals[0]
 	if err := validateAgentName(options.Name); err != nil {
 		return waitOptions{}, err
 	}
@@ -92,25 +96,24 @@ func parseWait(arguments []string) (waitOptions, error) {
 }
 
 func parseSend(arguments []string) (sendOptions, error) {
-	if len(arguments) == 0 || strings.HasPrefix(arguments[0], "-") {
-		return sendOptions{}, usageError("send: recipient required")
-	}
-	options := sendOptions{Name: arguments[0]}
+	options := sendOptions{}
 	flags := boundFlagSet("send", map[string]any{
 		"from": &options.From, "live-only": &options.LiveOnly,
 		"supersede": &options.Supersede, "at": &options.At,
 	})
-	if err := flags.Parse(arguments[1:]); err != nil {
+	positionals, err := parseOptions(flags, arguments)
+	if err != nil {
 		return sendOptions{}, usageError("send: %v", err)
 	}
-	if flags.NArg() > 1 {
-		if strings.HasPrefix(flags.Arg(1), "-") {
-			return sendOptions{}, usageError("send: options must precede BODY (unexpected argument %q)", flags.Arg(1))
-		}
-		return sendOptions{}, usageError("send: unexpected argument %q", flags.Arg(1))
+	if len(positionals) == 0 {
+		return sendOptions{}, usageError("send: recipient required")
 	}
-	if flags.NArg() == 1 {
-		body := flags.Arg(0)
+	if len(positionals) > 2 {
+		return sendOptions{}, usageError("send: unexpected argument %q", positionals[2])
+	}
+	options.Name = positionals[0]
+	if len(positionals) == 2 {
+		body := positionals[1]
 		options.Body = &body
 	}
 	if options.Body != nil && options.At == "clear" {
@@ -138,18 +141,18 @@ type compactOptions struct {
 
 func parseCompact(arguments []string) (compactOptions, error) {
 	options := compactOptions{}
-	if len(arguments) != 0 && !strings.HasPrefix(arguments[0], "-") {
-		options.Name = arguments[0]
-		arguments = arguments[1:]
-	}
 	flags := boundFlagSet("compact", map[string]any{
 		"resume": &options.Resume, "recover": &options.Recover,
 	})
-	if err := flags.Parse(arguments); err != nil {
+	positionals, err := parseOptions(flags, arguments)
+	if err != nil {
 		return compactOptions{}, usageError("compact: %v", err)
 	}
-	if flags.NArg() != 0 {
-		return compactOptions{}, usageError("compact: unexpected argument %q", flags.Arg(0))
+	if len(positionals) > 1 {
+		return compactOptions{}, usageError("compact: unexpected argument %q", positionals[1])
+	}
+	if len(positionals) == 1 {
+		options.Name = positionals[0]
 	}
 	if options.Name != "" {
 		if err := validateAgentName(options.Name); err != nil {
@@ -166,6 +169,46 @@ func quietFlagSet(name string) *flag.FlagSet {
 	flags := flag.NewFlagSet(name, flag.ContinueOnError)
 	flags.SetOutput(io.Discard)
 	return flags
+}
+
+// parseOptions accepts flags on either side of operands and preserves -- as
+// the point after which every token is an operand.
+func parseOptions(flags *flag.FlagSet, arguments []string) ([]string, error) {
+	flagArguments, positionals := partitionOptions(flags, arguments)
+	if err := flags.Parse(flagArguments); err != nil {
+		return nil, err
+	}
+	return positionals, nil
+}
+
+func partitionOptions(flags *flag.FlagSet, arguments []string) ([]string, []string) {
+	var flagArguments, positionals []string
+	ended := false
+	for i := 0; i < len(arguments); i++ {
+		argument := arguments[i]
+		if !ended && argument == "--" {
+			ended = true
+			continue
+		}
+		if ended || !strings.HasPrefix(argument, "-") || argument == "-" {
+			positionals = append(positionals, argument)
+			continue
+		}
+		flagArguments = append(flagArguments, argument)
+		name, _, assigned := strings.Cut(strings.TrimLeft(argument, "-"), "=")
+		option := flags.Lookup(name)
+		if option == nil || assigned {
+			continue
+		}
+		if boolean, ok := option.Value.(interface{ IsBoolFlag() bool }); ok && boolean.IsBoolFlag() {
+			continue
+		}
+		if i+1 < len(arguments) {
+			i++
+			flagArguments = append(flagArguments, arguments[i])
+		}
+	}
+	return flagArguments, positionals
 }
 
 func boundFlagSet(name string, bindings map[string]any) *flag.FlagSet {
@@ -214,11 +257,12 @@ func flagWasSet(flags *flag.FlagSet, name string) bool {
 func parseCollarFlags(commandName string, arguments []string, defaultCollar string) (string, error) {
 	collar := defaultCollar
 	flags := boundFlagSet(commandName, map[string]any{"c": &collar, "collar": &collar})
-	if err := flags.Parse(arguments); err != nil {
+	positionals, err := parseOptions(flags, arguments)
+	if err != nil {
 		return "", err
 	}
-	if flags.NArg() != 0 {
-		return "", usageError("unexpected argument %q", flags.Arg(0))
+	if len(positionals) != 0 {
+		return "", usageError("unexpected argument %q", positionals[0])
 	}
 	return collar, nil
 }

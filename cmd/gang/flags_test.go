@@ -1,8 +1,8 @@
 package main
 
 import (
-	"strings"
 	"testing"
+	"time"
 )
 
 func TestParseHitchUsesNameBeforeStdlibFlags(t *testing.T) {
@@ -48,8 +48,49 @@ func TestParseSendAcceptsPositionalBody(t *testing.T) {
 	if _, err := parseSend([]string{"worker", "--at", "clear", "body"}); err == nil {
 		t.Fatal("body with clear passed")
 	}
-	if _, err := parseSend([]string{"worker", "body", "--from", "operator"}); err == nil || !strings.Contains(err.Error(), "options must precede BODY") {
-		t.Fatalf("late option error = %v", err)
+	if got, err := parseSend([]string{"worker", "body", "--from", "operator"}); err != nil || got.From != "operator" || got.Body == nil || *got.Body != "body" {
+		t.Fatalf("late option = %+v, %v", got, err)
+	}
+}
+
+func TestOptionsBeforeAndAfterNames(t *testing.T) {
+	for _, args := range [][]string{{"-c", "codex", "worker"}, {"worker", "-c", "codex"}} {
+		got, err := parseHitch(args, "claude-code", "/work")
+		if err != nil || got.Name != "worker" || got.Collar != "codex" {
+			t.Fatalf("hitch(%q) = %+v, %v", args, got, err)
+		}
+	}
+	for _, args := range [][]string{{"--from", "ext", "worker", "hi"}, {"worker", "hi", "--from", "ext"}} {
+		got, err := parseSend(args)
+		if err != nil || got.Name != "worker" || got.From != "ext" || got.Body == nil || *got.Body != "hi" {
+			t.Fatalf("send(%q) = %+v, %v", args, got, err)
+		}
+	}
+	for _, args := range [][]string{{"--timeout", "1s", "worker"}, {"worker", "--timeout", "1s"}} {
+		got, err := parseWait(args)
+		if err != nil || got.Name != "worker" || got.Timeout != time.Second {
+			t.Fatalf("wait(%q) = %+v, %v", args, got, err)
+		}
+	}
+	for _, args := range [][]string{{"-c", "codex", "worker"}, {"worker", "-c", "codex"}} {
+		name, collar, err := parseAdopt(args)
+		if err != nil || name != "worker" || collar != "codex" {
+			t.Fatalf("adopt(%q) = %q, %q, %v", args, name, collar, err)
+		}
+	}
+}
+
+func TestTerminatorPreservesOperands(t *testing.T) {
+	got, err := parseSend([]string{"--from", "ext", "--", "worker", "--help"})
+	if err != nil || got.Name != "worker" || got.Body == nil || *got.Body != "--help" {
+		t.Fatalf("send = %+v, %v", got, err)
+	}
+	filter, files, err := parseLogFilter([]string{"--", "-events.jsonl"}, true)
+	if err != nil || filter != (logFilter{}) || len(files) != 1 || files[0] != "-events.jsonl" {
+		t.Fatalf("log = %+v, %q, %v", filter, files, err)
+	}
+	if _, files, err := parseLogFilter([]string{"--"}, true); err != nil || len(files) != 0 {
+		t.Fatalf("log terminator = %q, %v", files, err)
 	}
 }
 

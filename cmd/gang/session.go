@@ -83,7 +83,8 @@ func (cmd command) teams(arguments []string) error {
 func (cmd command) upgrade(arguments []string) error {
 	check := false
 	flags := boundFlagSet("upgrade", map[string]any{"check": &check})
-	if err := flags.Parse(arguments); err != nil || flags.NArg() != 0 {
+	positionals, err := parseOptions(flags, arguments)
+	if err != nil || len(positionals) != 0 {
 		return usageError("upgrade accepts only --check")
 	}
 	home, err := cmd.userHomeDir()
