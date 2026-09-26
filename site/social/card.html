@@ -1,11 +1,14 @@
 <!doctype html><meta charset="utf-8">
 <!-- The GitHub social preview, site/social/preview.jpg. Render it at 1280 by
      640 with headless Chrome from the repository root:
-     "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome" --headless=new --allow-file-access-from-files --hide-scrollbars --window-size=1280,640 --force-device-scale-factor=2 --virtual-time-budget=8000 --screenshot=card.png site/social/card.html
+     "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome" --headless=new --allow-file-access-from-files --hide-scrollbars --window-size=640,320 --force-device-scale-factor=4 --virtual-time-budget=8000 --screenshot=card.png site/social/card.html
      then convert card.png to site/social/preview.jpg, which must stay under
      GitHub's 1 MB limit, and upload it under the repository's Settings,
      Social preview. It uses the site's dark palette, fonts, field.js and demo
-     poster, so it matches the home page. -->
+     poster, so it matches the home page. The page is 640 by 320 at four
+     times density, with the card zoomed to half inside it, so the field's
+     lines come out at twice their size on the site and still read when
+     the card is shown small. -->
 <meta name="color-scheme" content="dark">
 <style>
 @font-face{font-family:'Newsreader';src:url('../fonts/newsreader-latin.woff2') format('woff2');font-weight:200 800}
@@ -14,7 +17,8 @@
 @font-face{font-family:'JetBrains Mono';src:url('../fonts/jetbrains-mono-latin.woff2') format('woff2');font-weight:400}
 :root{--g1:#071530;--g2:#1f2860;--g3:#3d2444;--ink:#e9eef7;--soft:#b2bed0;--mute:#7f8da0;--acc:#f0a23c;--glyph:233,238,247;--live:240,162,60;--trail:132,170,214;color-scheme:dark}
 html,body{margin:0}
-body{width:1280px;height:640px;overflow:hidden;position:relative;color:var(--ink);font-family:'Instrument Sans',sans-serif;text-shadow:0 1px 2px rgba(0,0,0,.45);-webkit-font-smoothing:antialiased}
+body{width:640px;height:320px;overflow:hidden;position:relative}
+.card{position:absolute;inset:0 auto auto 0;width:1280px;height:640px;zoom:.5;color:var(--ink);font-family:'Instrument Sans',sans-serif;text-shadow:0 1px 2px rgba(0,0,0,.45);-webkit-font-smoothing:antialiased}
 .bgfx{position:absolute;inset:0;background:linear-gradient(135deg,var(--g1) 0%,var(--g2) 50%,var(--g3) 100%)}
 .bgfx canvas{position:absolute;inset:0;width:100%;height:100%}
 .t{position:absolute;left:88px;top:0;bottom:0;display:flex;flex-direction:column;justify-content:center}
@@ -28,6 +32,7 @@ h1{margin:0;font:500 132px/1 'Newsreader',serif;letter-spacing:-.015em}
 .u b{font-weight:500;color:var(--soft)}
 </style>
 <div class="bgfx"><canvas id="field"></canvas></div>
+<div class="card">
 <div class="t">
   <h1 data-blob>gangline</h1>
   <p class="entry"><span>/ˈɡæŋˌlaɪn/</span> <i>noun</i></p>
@@ -35,4 +40,13 @@ h1{margin:0;font:500 132px/1 'Newsreader',serif;letter-spacing:-.015em}
 </div>
 <div class="term"><img src="../demo-poster.jpg" alt=""></div>
 <div class="u"><b>gangline.ai</b> · github.com/adambiggs/gangline</div>
-<script src="../field.js"></script>
+</div>
+<script>
+/* The field caps its canvas at twice the screen's density; the card needs
+   all four times. */
+const x = new XMLHttpRequest();
+x.open('GET', '../field.js', false); x.send();
+const lifted = x.responseText.replace('Math.min(2, devicePixelRatio || 1)', '(devicePixelRatio || 1)');
+if (lifted === x.responseText) throw new Error('field.js density cap not found');
+new Function(lifted)();
+</script>
