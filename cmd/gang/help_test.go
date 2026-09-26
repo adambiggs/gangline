@@ -3,7 +3,6 @@ package main
 import (
 	"bytes"
 	"reflect"
-	"regexp"
 	"strings"
 	"testing"
 )
@@ -59,13 +58,6 @@ func TestHelpGroupsAliases(t *testing.T) {
 	if strings.Count(stdout.String(), "  -h, --help") != 1 {
 		t.Error("top-level help does not group -h and --help once")
 	}
-	for name, labels := range aliases {
-		for _, label := range labels {
-			if !strings.Contains(stdout.String(), "  "+label) {
-				t.Errorf("top-level help misses %s alias row %q", name, label)
-			}
-		}
-	}
 }
 
 func expectedHelpOptions(name string) map[string]bool {
@@ -100,6 +92,16 @@ func TestCommandHelpMatchesAcceptedFlags(t *testing.T) {
 			if help.String() != direct.String() {
 				t.Fatal("help paths differ")
 			}
+			if name == "hitch" {
+				if !strings.Contains(help.String(), "\n\nOptions:\n") || !strings.Contains(help.String(), "\n\nHelp:\n") || !strings.HasSuffix(help.String(), "\n\n"+flagSyntaxHelp) {
+					t.Fatal("hitch help sections are not separated or have the wrong flag syntax")
+				}
+				for _, line := range strings.Split(help.String(), "\n") {
+					if len(line) >= 79 {
+						t.Errorf("hitch help line has %d columns: %q", len(line), line)
+					}
+				}
+			}
 			got := helpOptionNames(help.String())
 			want := expectedHelpOptions(name)
 			if !reflect.DeepEqual(got, want) {
@@ -119,49 +121,27 @@ func TestCommandHelpMatchesAcceptedFlags(t *testing.T) {
 	}
 }
 
-func TestTopLevelHelpShowsEveryCommandFlag(t *testing.T) {
+func TestTopLevelHelpShowsGlobalFlags(t *testing.T) {
 	var stdout, stderr bytes.Buffer
 	if status := run([]string{"--help"}, strings.NewReader(""), &stdout, &stderr); status != exitOK {
 		t.Fatalf("status=%d stderr=%q", status, stderr.String())
 	}
-	for _, name := range []string{"--help", "-h", "--version"} {
-		if !helpOptionNames(stdout.String())[name] {
-			t.Errorf("top-level help misses %s", name)
-		}
+	output := stdout.String()
+	if got, want := helpOptionCounts(output), map[string]int{"-h": 1, "--help": 1, "--version": 1}; !reflect.DeepEqual(got, want) {
+		t.Errorf("top-level flags = %v, want %v", got, want)
 	}
-	for name := range commandUsage {
-		if !strings.Contains(stdout.String(), "gang "+name) && !strings.Contains(stdout.String(), "  "+name+" ") {
-			t.Errorf("top-level help misses %s", name)
-		}
-		if len(optionsFor(name)) == 0 {
-			continue
-		}
-		marker := "  " + name + ":\n"
-		start := strings.Index(stdout.String(), marker)
-		if start < 0 {
-			t.Errorf("top-level help misses %s flag section", name)
-			continue
-		}
-		section := stdout.String()[start+len(marker):]
-		if next := regexp.MustCompile(`(?m)^  [a-z][a-z-]*:$`).FindStringIndex(section); next != nil {
-			section = section[:next[0]]
-		}
-		got := helpOptionNames(section)
-		want := expectedHelpOptions(name)
-		delete(want, "--help")
-		delete(want, "-h")
-		if !reflect.DeepEqual(got, want) {
-			t.Errorf("top-level %s flags = %v, want %v", name, got, want)
-		}
-		for flag, count := range helpOptionCounts(section) {
-			if count != 1 {
-				t.Errorf("top-level %s prints %s %d times", name, flag, count)
-			}
-		}
-		for _, option := range optionsFor(name) {
-			if !helpHasOptionRow(section, option) {
-				t.Errorf("top-level help misses %s flag %s", name, option.name)
-			}
+	if strings.Contains(output, "Command flags") || strings.Contains(output, "Flag syntax:") {
+		t.Error("top-level help contains the old flag sections")
+	}
+	if !strings.HasPrefix(output, "usage: gang <command> [arguments]\n\nStart and end a team:\n") ||
+		!strings.Contains(output, "\n\nInstallation:\n") ||
+		!strings.Contains(output, "\n\nGlobal flags:\n") ||
+		!strings.HasSuffix(output, "  "+flagSyntaxHelp) {
+		t.Error("top-level help sections are not separated or have the wrong flag syntax")
+	}
+	for _, line := range strings.Split(output, "\n") {
+		if len(line) >= 79 {
+			t.Errorf("top-level help line has %d columns: %q", len(line), line)
 		}
 	}
 }

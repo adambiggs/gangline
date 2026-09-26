@@ -61,7 +61,6 @@ Settings and discovery:
   config    show effective configuration
 
 Installation:
-  --version print the release version
   version   print the release version
   upgrade   install or check the latest release
 
@@ -74,7 +73,7 @@ Native integration:
 
 var commandUsage = map[string]string{
 	"up":         "usage: gang up [NAME] [HITCH OPTIONS]\n",
-	"hitch":      "usage: gang hitch NAME [-c COLLAR] [-d DIR] [-m MODEL] [-e EFFORT] [-t TASK] [-r ROLE] [--resume SESSION] [--stdin]\n       gang hitch NAME --recover\n",
+	"hitch":      "usage: gang hitch NAME [-c COLLAR] [-d DIR] [-m MODEL] [-e EFFORT]\n       [-t TASK] [-r ROLE] [--resume SESSION] [--stdin]\n       gang hitch NAME --recover\n",
 	"adopt":      "usage: gang adopt NAME [-c COLLAR]\n",
 	"rename":     "usage: gang rename OLD NEW\n",
 	"send":       "usage: gang send NAME [--from SENDER] [--live-only] [--supersede] [--at DURATION|HH:MM|clear] [BODY]\n       Without BODY, read stdin. Use -- before BODY when it begins with -.\n",
@@ -201,7 +200,7 @@ func optionArgument(option optionSpec) string {
 
 var commandDescription = map[string]string{
 	"up":         "Start a team, hitch its lead, and attach this terminal.\n",
-	"hitch":      "Launch a native harness in a new team pane and deliver its contract, role, and assignment.\n",
+	"hitch":      "Launch a native harness in a new team pane and deliver its contract,\nrole, and assignment.\n",
 	"adopt":      "Register an existing pane without launching a harness or delivering startup prose.\n",
 	"rename":     "Change a registered agent name without restarting its harness.\n",
 	"send":       "Send BODY, or read stdin when BODY is absent. An exact native hook proves delivered; a native queue receipt proves accepted (do not resend). Otherwise input stays queued or is unverified.\n",
@@ -234,16 +233,14 @@ var commandDescription = map[string]string{
 	"version":    "Print the release version.\n",
 }
 
+const flagSyntaxHelp = "Flags accept - or --, VALUE or =VALUE; switches accept =true/=false.\n"
+
 func (cmd command) printHelp(name string) error {
 	if name == "" {
 		var out strings.Builder
 		out.WriteString(commandInventory)
 		out.WriteString("\nGlobal flags:\n  -h, --help             show help\n  --version              print the release version\n")
-		out.WriteString("\nFlag syntax: the options in Command flags below accept one or two leading dashes; values can follow a space or =, and switches accept =true or =false.\n")
-		out.WriteString("\nCommand flags (run 'gang help COMMAND' for details):\n")
-		for _, commandName := range []string{"up", "hitch", "adopt", "send", "interrupt", "compact", "statusline", "context", "log", "limits", "wait", "status", "tick", "capture", "roster", "models", "upgrade"} {
-			fmt.Fprintf(&out, "  %s:\n%s", commandName, optionHelp(commandName))
-		}
+		out.WriteString("  " + flagSyntaxHelp)
 		_, err := io.WriteString(cmd.stdout, out.String())
 		return err
 	}
@@ -262,7 +259,7 @@ func (cmd command) printHelp(name string) error {
 		_, err = io.WriteString(cmd.stdout, "\nHelp:\n  -h, --help             show this help\n")
 	}
 	if err == nil && len(optionsFor(name)) != 0 {
-		_, err = io.WriteString(cmd.stdout, "\nFlag syntax: the Options block above accepts one or two leading dashes; values may use =VALUE, and switches accept =true or =false.\n")
+		_, err = io.WriteString(cmd.stdout, "\n"+flagSyntaxHelp)
 	}
 	return err
 }
