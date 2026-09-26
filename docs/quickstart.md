@@ -34,6 +34,15 @@ You should see a version and the `claude-code` and `codex` collar names. A
 collar is a CUE file that tells Gangline how to launch and communicate with a
 particular harness.
 
+The installer also keeps a release checkout in `~/.local/share/gangline` for
+upgrades. If `claude` is on `PATH`, it adds a `statusLine` command to
+`~/.claude/settings.json` only when that setting is absent; existing settings
+are preserved. For a Codex-only install, it leaves Claude's settings alone.
+Set `GANGLINE_CLAUDE_STATUSLINE=1` when running the installer to add the
+setting without `claude` on `PATH`. `GANGLINE_BIN` and `GANGLINE_HOME` change
+the binary directory and retained checkout path; see the
+[installer variables](reference.md#configuration).
+
 ## Give the lead a task
 
 From a shell outside tmux, in the repository you want to inspect, start a
@@ -62,7 +71,7 @@ approval. Answer these prompts yourself, then run `gang tick` from your shell
 if startup is queued. The [startup guide](guides.md#recover-a-blocked-startup-pane)
 shows how to inspect a blocked pane.
 
-The [recorded demo](../site/demo/README.md) grants Codex full sandbox access
+The [recorded demo](../site/demo.txt) grants Codex full sandbox access
 so Gangline can observe the peer harness process while delivering a reply.
 This walkthrough does not set that permission mode. Native permissions apply;
 the permissions needed for process observation depend on your sandbox and
@@ -126,3 +135,19 @@ unset GANG_SESSION
 and history. `first-team` should be absent from `gang teams`. For manual
 staffing, messaging, and stopping a turn, continue with the
 [coordination guide](guides.md#coordinate-agents).
+
+## Uninstall
+
+Run `gang roster` before stopping each team with `gang down TEAM`. Then remove
+the installed `gang` command from `~/.local/bin/gang` and the retained release
+checkout at `~/.local/share/gangline`. Use the paths selected by `GANGLINE_BIN`
+and `GANGLINE_HOME` if you overrode the defaults. Remove any Gangline config
+at `${XDG_CONFIG_HOME:-~/.config}/gangline` (`GANG_CONFIG_DIR`) and remaining
+team state at `${XDG_STATE_HOME:-~/.local/state}/gangline` (`GANG_STATE_ROOT`)
+that you want to discard. If you selected a separate `GANG_TMUX_SOCKET`,
+remove that socket after stopping its team.
+
+If the installer added Claude Code's status line, remove only the `statusLine`
+entry pointing to `gang statusline` from `~/.claude/settings.json`; keep the
+rest of that file and native Claude Code or Codex account data. `gang down`
+also removes the team's scheduled watchdog.

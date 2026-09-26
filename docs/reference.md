@@ -149,6 +149,7 @@ Installer variables:
 | `GANGLINE_BIN` | `~/.local/bin`; installed command directory. |
 | `GANGLINE_REPO` | Public Gangline Git repository; release source. |
 | `GANGLINE_RELEASE_BASE_URL` | GitHub release download root; override for another release host. |
+| `GANGLINE_CLAUDE_STATUSLINE` | Set to `1` to install Claude Code's status line without `claude` on `PATH`. |
 
 ## Startup instructions
 

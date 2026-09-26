@@ -11,6 +11,7 @@
 #   GANGLINE_RELEASE_BASE_URL  release assets root (default: GitHub releases)
 #   GANGLINE_HOME  where the tree lives   (default: ~/.local/share/gangline)
 #   GANGLINE_BIN   where `gang` is linked (default: ~/.local/bin)
+#   GANGLINE_CLAUDE_STATUSLINE=1  install Claude's status line without `claude` on PATH
 set -eu
 
 REPO="${GANGLINE_REPO:-https://github.com/adambiggs/gangline.git}"
@@ -362,7 +363,9 @@ installed_version="$("$BIN_DIR/gang" --version)" \
   || die "installed, but '$BIN_DIR/gang --version' failed"
 [ "$installed_version" = "gangline $latest" ] \
   || die "installed version mismatch: expected 'gangline $latest', got '$installed_version'"
-if [ "$release_kind" = compiled ]; then
+if [ "$release_kind" = compiled ] \
+  && { command -v claude >/dev/null 2>&1 \
+    || [ "${GANGLINE_CLAUDE_STATUSLINE:-0}" = 1 ]; }; then
   "$BIN_DIR/gang" statusline --install \
     || die "installed, but status-line settings installation failed"
 fi
