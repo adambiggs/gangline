@@ -2,6 +2,7 @@ package main
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -11,6 +12,7 @@ import (
 
 	"github.com/adambiggs/gangline/core"
 	"github.com/adambiggs/gangline/store"
+	"github.com/adambiggs/gangline/substrate"
 )
 
 func TestCompactionQueuesResumeBeforeCompletion(t *testing.T) {
@@ -386,5 +388,61 @@ func TestAgentCompactsItselfAfterItsTurn(t *testing.T) {
 	}
 	if f.input.submits != 2 || a.Compaction == nil || a.Compaction.Status != "submitted" || a.Compaction.Resume.Text != "state is in FILE" {
 		t.Fatalf("compaction after the turn: submits=%d compaction=%+v", f.input.submits, a.Compaction)
+	}
+}
+
+// wrappedCompactInput shows the submitted /compact command wrapped across
+// composer lines for a few captures before the harness consumes it.
+type wrappedCompactInput struct {
+	*inputFixture
+	captures int
+	linger   int
+}
+
+func (b *wrappedCompactInput) Capture(ctx context.Context, pane substrate.PaneID) (substrate.Screen, error) {
+	b.captures++
+	if b.linger > 0 && b.captures > b.linger {
+		b.screen = screenWithText("────────", "❯ ", "────────")
+	}
+	return b.inputFixture.Capture(ctx, pane)
+}
+
+func TestCompactionResumeProceedsWhileWrappedCompactRemains(t *testing.T) {
+	f := newStateFixture(t)
+	a := f.add(t, "a", "worker", "claude-code")
+	p, _ := f.run.team.Agent(a.ID)
+	a.Native.SessionID = "s"
+	l, err := p.TryLock()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := l.Save(a); err != nil {
+		t.Fatal(err)
+	}
+	l.Close()
+	f.env["TMUX_PANE"] = a.Pane
+	f.env["GANGLINE_HITCH_ID"] = string(a.ID)
+	b := &wrappedCompactInput{inputFixture: f.input}
+	b.command = "claude"
+	b.screen = screenWithText("────────", "❯ ", "────────")
+	resume := "Resume from the state file: read it, confirm the team, then wait for input or reports."
+	b.submit = func(prompt string) error {
+		if strings.HasPrefix(prompt, "/compact") {
+			b.screen = screenWithText("────────", "❯ /compact "+resume[:40], "  "+resume[40:], "────────")
+			b.linger = b.captures + 3
+		}
+		return nil
+	}
+	f.cmd.inputBackend = b
+	var ce commandError
+	if err := f.cmd.compact([]string{"worker", "--resume", resume}); !errors.As(err, &ce) || ce.status != exitUnknown {
+		t.Fatalf("submission: %v", err)
+	}
+	got, err := p.Read()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.Compaction.Status != "submitted" || b.submits != 2 {
+		t.Fatalf("wrapped compact text blocked the continuation: status=%s submits=%d reason=%s", got.Compaction.Status, b.submits, got.Compaction.Reason)
 	}
 }

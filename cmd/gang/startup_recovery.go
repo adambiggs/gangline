@@ -111,7 +111,7 @@ func (run *runtime) recoverStartup(name string) (result error) {
 	}
 	composer, err := harness.ReadComposer(c.Primitives.Composer, screen)
 	replaceCollapsed := err == nil && c.Actions.StartupReplace != nil && composer.CollapsedChars == utf8.RuneCountInString(wire)
-	if err != nil || composer.Text != wire && !replaceCollapsed {
+	if err != nil || !harness.SameComposerText(composer.Text, wire) && !replaceCollapsed {
 		path, _ := l.Paths.EnvelopePath("failed", e.ID)
 		return commandError{status: exitUnknown, text: fmt.Sprintf("original startup text is not identifiable in the composer; input remains unverified; if the composer is empty, re-hitch with the retained contract and assignment: %s", path)}
 	}

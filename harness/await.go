@@ -49,7 +49,7 @@ func AwaitComposerText(ctx context.Context, capture captureScreen, pane substrat
 		}
 		composer, readErr := ReadComposer(collar.Primitives.Composer, screen)
 		lastErr = readErr
-		if readErr == nil && composer.Text == want {
+		if readErr == nil && SameComposerText(composer.Text, want) {
 			if stableSince.IsZero() {
 				stableSince = time.Now()
 			}

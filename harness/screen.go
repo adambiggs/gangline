@@ -81,6 +81,14 @@ func ReadComposer(invocation Invocation, screen substrate.Screen) (Composer, err
 var codexCollapsedPastePattern = regexp.MustCompile(`^\[Pasted Content ([1-9][0-9]*) chars\]$`)
 var codexFooterPattern = regexp.MustCompile(`^[^\n]+ · Context [0-9]+% used$`)
 
+// SameComposerText reports whether a composer read-back shows the submitted
+// text. The composer wraps long input at the pane width and the reader joins
+// the visual lines with newlines, so only the non-whitespace content is
+// comparable.
+func SameComposerText(composer, submitted string) bool {
+	return strings.Join(strings.Fields(composer), "") == strings.Join(strings.Fields(submitted), "")
+}
+
 func readCodexComposer(screen substrate.Screen) (Composer, error) {
 	lines := screenLines(screen, false)
 	for index := len(lines) - 1; index >= 0; index-- {

@@ -223,7 +223,7 @@ func awaitCompactionComposer(ctx context.Context, b harnessInput, pane substrate
 		if composer.Text == "" {
 			return screen, nil
 		}
-		if composer.Text != compactText {
+		if !harness.SameComposerText(composer.Text, compactText) {
 			return substrate.Screen{}, fmt.Errorf("native composer occupied before continuation input; resume retained")
 		}
 		select {
