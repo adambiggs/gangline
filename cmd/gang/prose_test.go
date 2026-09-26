@@ -103,4 +103,16 @@ func TestObservedSenderUsesRegisteredAgentIdentity(t *testing.T) {
 	if _, err := f.run.sender(""); err == nil {
 		t.Fatal("ordinary send outside a registered pane needs --from")
 	}
+	f.env["TMUX_PANE"] = ""
+	f.env["GANG_AGENT_ID"] = string(a.ID)
+	if sender, err := f.run.observedSender(); err != nil || sender.Name != a.Name || sender.HitchID != a.ID {
+		t.Fatalf("hitch environment sender: %+v %v", sender, err)
+	}
+	if resolved, err := f.run.resolve(""); err != nil || resolved.ID != a.ID {
+		t.Fatalf("hitch environment identity: %+v %v", resolved, err)
+	}
+	f.env["TMUX_PANE"] = "%other"
+	if _, err := f.run.observedSender(); err == nil {
+		t.Fatal("mismatched pane claimed hitch identity")
+	}
 }

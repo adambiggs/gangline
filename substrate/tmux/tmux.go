@@ -162,6 +162,23 @@ func (backend *Backend) PaneNamed(ctx context.Context, name string) (substrate.P
 	return match, nil
 }
 
+// ForegroundCommand asks the tmux server, which can inspect its pane even when
+// the calling process cannot read the host process table.
+func (backend *Backend) ForegroundCommand(ctx context.Context, pane substrate.PaneID) (string, error) {
+	if err := validPaneID(pane); err != nil {
+		return "", err
+	}
+	output, err := backend.run(ctx, "display-message", "-p", "-t", string(pane), "#{pane_current_command}")
+	if err != nil {
+		return "", tmuxError("read pane foreground command", err, output)
+	}
+	command := strings.TrimSpace(output)
+	if command == "" || strings.ContainsAny(command, "\r\n") {
+		return "", fmt.Errorf("read pane foreground command: tmux returned %q", output)
+	}
+	return command, nil
+}
+
 func (backend *Backend) Rename(ctx context.Context, pane substrate.PaneID, name string) error {
 	if err := validPaneID(pane); err != nil {
 		return err

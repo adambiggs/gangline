@@ -75,14 +75,12 @@ func (run *runtime) apply(l *store.LockedAgent, a *core.Agent, e core.Event) err
 }
 func (run *runtime) resolve(name string) (core.Agent, error) {
 	if name == "" {
-		agents, err := run.team.ListAgents()
+		a, err := run.observedAgent()
 		if err != nil {
 			return core.Agent{}, err
 		}
-		for _, a := range agents {
-			if a.Pane == run.cmd.environment("TMUX_PANE") && a.Pane != "" {
-				return a, nil
-			}
+		if a != nil {
+			return *a, nil
 		}
 		return core.Agent{}, refuseError("current pane is not a registered agent")
 	}

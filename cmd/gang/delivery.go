@@ -17,14 +17,19 @@ import (
 
 type harnessInput interface {
 	Capture(context.Context, substrate.PaneID) (substrate.Screen, error)
+	ForegroundCommand(context.Context, substrate.PaneID) (string, error)
 	ForegroundProcesses(context.Context, substrate.PaneID) ([]substrate.Process, error)
 	SendKeys(context.Context, substrate.PaneID, substrate.Keys) error
 }
 
 func requireHarnessForeground(ctx context.Context, b harnessInput, pane substrate.PaneID, c harness.Collar) error {
+	command, commandErr := b.ForegroundCommand(ctx, pane)
+	if commandErr == nil && filepath.Base(command) == filepath.Base(c.Launch.Command) {
+		return nil
+	}
 	processes, err := b.ForegroundProcesses(ctx, pane)
 	if err != nil {
-		return err
+		return errors.Join(commandErr, err)
 	}
 	for _, p := range processes {
 		if filepath.Base(p.Command) == filepath.Base(c.Launch.Command) {

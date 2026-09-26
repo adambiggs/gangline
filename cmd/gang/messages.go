@@ -32,18 +32,46 @@ func (run *runtime) sender(declared string) (core.Sender, error) {
 }
 
 func (run *runtime) observedSender() (core.Sender, error) {
+	a, err := run.observedAgent()
+	if err != nil || a == nil {
+		return core.Sender{}, err
+	}
+	if a.Status == core.Active {
+		return core.Sender{Kind: core.SenderAgent, Name: a.Name, HitchID: a.ID}, nil
+	}
+	return core.Sender{}, nil
+}
+
+func (run *runtime) observedAgent() (*core.Agent, error) {
+	if id := core.HitchID(run.cmd.environment("GANG_AGENT_ID")); id != "" {
+		p, err := run.team.Agent(id)
+		if err != nil {
+			return nil, refuseError("hitch identity is not registered")
+		}
+		a, err := p.Read()
+		if err != nil {
+			return nil, refuseError("hitch identity is not registered: %v", err)
+		}
+		if a.ID != id || a.Pane == "" || a.Status != core.Active && a.Status != core.Booting {
+			return nil, refuseError("hitch identity is not active")
+		}
+		if pane := run.cmd.environment("TMUX_PANE"); pane != "" && pane != a.Pane {
+			return nil, refuseError("hitch identity does not match the current pane")
+		}
+		return &a, nil
+	}
 	if pane := run.cmd.environment("TMUX_PANE"); pane != "" {
 		agents, err := run.team.ListAgents()
 		if err != nil {
-			return core.Sender{}, err
+			return nil, err
 		}
 		for _, a := range agents {
-			if a.Pane == pane && a.Status == core.Active {
-				return core.Sender{Kind: core.SenderAgent, Name: a.Name, HitchID: a.ID}, nil
+			if a.Pane == pane && (a.Status == core.Active || a.Status == core.Booting) {
+				return &a, nil
 			}
 		}
 	}
-	return core.Sender{}, nil
+	return nil, nil
 }
 func (cmd command) send(args []string) (result error) {
 	o, err := parseSend(args)

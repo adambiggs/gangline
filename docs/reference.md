@@ -133,6 +133,7 @@ These variables are environment-only:
 | `GANG_STATE_ROOT` | `${XDG_STATE_HOME:-~/.local/state}/gangline`; team state root. |
 | `GANG_TMUX_SOCKET` | tmux's default socket; selects a separate server when set. |
 | `GANG_TMUX` | `tmux`; executable used for tmux commands. |
+| `GANG_AGENT_ID` | Set on a hitched pane; `send`, `whoami`, and `context` use it to identify the registered agent after checking the roster and current pane when available. |
 
 For a separate team, keep its selection in the shell environment for every
 command. A separate state root and socket also isolate its files and server:

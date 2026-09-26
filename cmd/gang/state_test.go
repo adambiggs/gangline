@@ -22,9 +22,18 @@ import (
 type inputFixture struct {
 	screen          substrate.Screen
 	command, pasted string
+	tmuxCommand     string
+	foregroundErr   error
 	processErr      error
 	submits         int
 	submit          func(string) error
+}
+
+func (b *inputFixture) ForegroundCommand(context.Context, substrate.PaneID) (string, error) {
+	if b.tmuxCommand != "" {
+		return b.tmuxCommand, b.foregroundErr
+	}
+	return b.command, b.foregroundErr
 }
 
 func (b *inputFixture) Capture(context.Context, substrate.PaneID) (substrate.Screen, error) {
@@ -225,7 +234,7 @@ func TestOneAgentCannotBlockAnotherDelivery(t *testing.T) {
 		t.Fatalf("submits=%d output=%s errors=%s", f.input.submits, f.out, f.errOut)
 	}
 }
-func TestSendReportsRetainedMessageWhenProcessTreeLookupFails(t *testing.T) {
+func TestSendUsesTmuxForegroundWhenProcessTreeIsUnavailable(t *testing.T) {
 	f := newStateFixture(t)
 	a := f.add(t, "a", "worker", "codex")
 	p, err := f.run.team.Agent(a.ID)
@@ -233,25 +242,88 @@ func TestSendReportsRetainedMessageWhenProcessTreeLookupFails(t *testing.T) {
 		t.Fatal(err)
 	}
 	f.input.processErr = errors.New("read process tree: pane process 7 was not present")
+	f.env["GANGLINE_HITCH_ID"] = string(a.ID)
 	f.cmd.stdin = strings.NewReader("send once")
 	if err := f.cmd.send([]string{"worker", "--from", "operator"}); err != nil {
-		t.Fatalf("retained message reported as a failed send: %v", err)
+		t.Fatal(err)
 	}
 	pending, err := p.ListNew()
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(pending) != 1 || pending[0].Message.Text != "send once" || f.input.submits != 0 {
-		t.Fatalf("message retention: %+v, submits=%d", pending, f.input.submits)
+	if len(pending) != 0 || f.input.submits != 1 {
+		t.Fatalf("delivery: %+v, submits=%d", pending, f.input.submits)
 	}
-	id := string(pending[0].ID)
-	if got := f.out.String(); got != id+"\tqueued\n" {
-		t.Fatalf("missing queued receipt: %q", got)
+	if got := f.out.String(); !strings.Contains(got, "\tdelivered\n") {
+		t.Fatalf("missing delivered receipt: %q", got)
 	}
-	for _, part := range []string{id, "retained with queued status", "read process tree: pane process 7 was not present", "do not resend"} {
-		if !strings.Contains(f.errOut.String(), part) {
-			t.Fatalf("warning %q missing from %q", part, f.errOut.String())
-		}
+	if f.errOut.Len() != 0 {
+		t.Fatal(f.errOut.String())
+	}
+}
+
+func TestWrappedHarnessUsesProcessFallback(t *testing.T) {
+	f := newStateFixture(t)
+	f.input.tmuxCommand = "sh"
+	c, err := harness.EmbeddedCollar("codex")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := requireHarnessForeground(context.Background(), f.input, "%1", c); err != nil {
+		t.Fatal(err)
+	}
+	f.input.command = "other"
+	if err := requireHarnessForeground(context.Background(), f.input, "%1", c); err == nil {
+		t.Fatal("foreign foreground process accepted")
+	}
+}
+
+func TestFailedIdentityLookupDoesNotPublish(t *testing.T) {
+	f := newStateFixture(t)
+	a := f.add(t, "a", "worker", "codex")
+	p, err := f.run.team.Agent(a.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	f.env["GANG_AGENT_ID"] = "missing"
+	f.cmd.stdin = strings.NewReader("send once")
+	if err := f.cmd.send([]string{"worker"}); err == nil || !strings.Contains(err.Error(), "hitch identity is not registered") {
+		t.Fatalf("identity error = %v", err)
+	}
+	pending, err := p.ListNew()
+	if err != nil || len(pending) != 0 || f.input.submits != 0 {
+		t.Fatalf("identity failure published: %+v, submits=%d, error=%v", pending, f.input.submits, err)
+	}
+}
+
+func TestSendFromHitchEnvironmentHasVerifiedEnvelope(t *testing.T) {
+	f := newStateFixture(t)
+	sender := f.add(t, "sender-id", "lead", "codex")
+	recipient := f.add(t, "recipient-id", "worker", "codex")
+	f.env["GANG_AGENT_ID"] = string(sender.ID)
+	f.env["GANGLINE_HITCH_ID"] = string(recipient.ID)
+	f.cmd.stdin = strings.NewReader("one report")
+	if err := f.cmd.send([]string{"worker"}); err != nil {
+		t.Fatal(err)
+	}
+	id, _, ok := strings.Cut(f.out.String(), "\t")
+	if !ok || !strings.Contains(f.out.String(), "\tdelivered\n") {
+		t.Fatalf("receipt = %q", f.out.String())
+	}
+	p, err := f.run.team.Agent(recipient.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	e, err := p.ReadEnvelope("cur", core.EnvelopeID(id))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if e.From != (core.Sender{Kind: core.SenderAgent, Name: sender.Name, HitchID: sender.ID}) {
+		t.Fatalf("sender = %+v", e.From)
+	}
+	wire, err := envelopeText(e)
+	if err != nil || !strings.HasPrefix(wire, "[gang:lead#") {
+		t.Fatalf("envelope = %q, error = %v", wire, err)
 	}
 }
 func TestCommandsDoNotReadAuditLog(t *testing.T) {
