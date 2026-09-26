@@ -2,6 +2,7 @@ package main
 
 import (
 	"os"
+	"strings"
 	"testing"
 	"time"
 
@@ -34,6 +35,21 @@ func TestCurfewCommandPersistsAndShowsDeadline(t *testing.T) {
 	}
 	if got := f.out.String(); got != deadline.Format(time.RFC3339)+"\n" {
 		t.Fatalf("visible curfew = %q", got)
+	}
+	visible := strings.TrimSpace(f.out.String())
+	if err := f.cmd.execute([]string{"curfew", visible}); err != nil {
+		t.Fatalf("displayed deadline did not round-trip: %v", err)
+	}
+	team, err = f.run.team.ReadTeam()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := team.Curfew.Format(time.RFC3339); got != visible {
+		t.Fatalf("round-tripped curfew = %q, want %q", got, visible)
+	}
+	deadline, err = time.Parse(time.RFC3339, visible)
+	if err != nil {
+		t.Fatal(err)
 	}
 	if err := f.cmd.execute([]string{"curfew", "invalid"}); err == nil {
 		t.Fatal("invalid curfew accepted")

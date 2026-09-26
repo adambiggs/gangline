@@ -45,7 +45,7 @@ a matching native transcript. An unverifiable native session is refused.
 | `gang interrupt [NAME] [-m REASON]` | Interrupt the turn; deliver an optional reason after it stops. |
 | `gang compact [NAME] [--resume TEXT]` | Compact at native idle; submit the continuation behind compaction, ahead of later input. |
 | `gang compact NAME --recover` | Run the collar's recovery actions for a stuck compaction. |
-| `gang curfew [DURATION\|HH:MM\|clear]` | Show, set, or clear the team deadline. |
+| `gang curfew [DURATION\|HH:MM\|RFC3339\|clear]` | Show, set, or clear the team deadline. |
 | `gang tick [--agent ID]` | Check deadlines, recover native failures, and drain due messages. |
 | `gang wait NAME [--timeout DURATION]` | Wait for a recorded idle boundary; a zero timeout checks once. |
 
@@ -64,8 +64,11 @@ Send options:
 | `--from SENDER` | Required outside registered panes; refused inside them. |
 | `--live-only` | Refuse instead of queuing if the recipient cannot take input now. |
 | `--supersede` | Clear this sender's older scheduled messages for this recipient first. |
-| `--at DURATION\|HH:MM` | Schedule delivery after a duration or at a local time. |
+| `--at DURATION\|HH:MM\|RFC3339` | Schedule delivery after a duration, at a local time, or at an exact deadline. |
 | `--at clear` | Clear this sender's scheduled messages for the recipient. |
+
+`DURATION` uses Go duration syntax (for example, `1h30m` or `500ms`) for
+`--at`, `curfew`, and `--timeout`.
 
 A send prints the message ID and `delivered`, `accepted`, `queued`, or
 `unverified`. See [message receipts](concepts.md#messages-and-envelopes).

@@ -116,3 +116,16 @@ func TestParseWaitAcceptsZeroAndRejectsNegativeTimeout(t *testing.T) {
 		t.Fatal("negative timeout passed")
 	}
 }
+
+func TestWaitTimeoutUsesGoDurationSyntax(t *testing.T) {
+	for _, value := range []string{"500ms", "1.5s", "1h30m"} {
+		got, err := parseWait([]string{"--timeout", value, "worker"})
+		want, parseErr := time.ParseDuration(value)
+		if parseErr != nil {
+			t.Fatal(parseErr)
+		}
+		if err != nil || got.Timeout != want {
+			t.Fatalf("wait timeout %q = %s, %v", value, got.Timeout, err)
+		}
+	}
+}
