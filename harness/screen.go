@@ -182,6 +182,9 @@ func readClaudeComposer(screen substrate.Screen) (Composer, error) {
 func trustPrompt(name string, screen substrate.Screen) (string, bool) {
 	flat := strings.Join(screenLines(screen, true), "\n")
 	if name == "codex-trust-prompt" {
+		if strings.Contains(flat, "Trust this folder?") && regexp.MustCompile(`(?m)^[[:space:]]*[❯›>] [0-9]+\. Trust and continue[[:space:]]*$`).MatchString(flat) {
+			return "Codex folder trust is required", true
+		}
 		title := regexp.MustCompile(`(?im)^[[:space:]]*(?:[0-9]+ )?hooks need review(?: before they can run)?[[:space:]]*$`)
 		choice := regexp.MustCompile(`(?m)^[[:space:]]*[❯›>] (?:[0-9]+\. )?(?:Review hooks|Stop|PostCompact|UserPromptSubmit|PreCompact|PostToolUse|PermissionRequest)(?:[[:space:]]|$)`)
 		if title.MatchString(flat) && choice.MatchString(flat) {

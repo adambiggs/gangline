@@ -35,6 +35,9 @@ supply an explicit name when inspecting or controlling a single agent.
 `adopt` also accepts `--collar`. Resume checks for the bundled collars require
 a matching native transcript. An unverifiable native session is refused.
 `drop` reports an observed native resume session, or says it is unknown.
+When Codex asks to trust a hitch directory, startup stays queued. After
+choosing the native trust option, run `gang tick` to deliver the retained
+contract and assignment.
 
 ## Message and control
 

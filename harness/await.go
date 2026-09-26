@@ -69,8 +69,12 @@ func AwaitComposerText(ctx context.Context, capture captureScreen, pane substrat
 
 // AwaitStartup waits for an observable ready or trust-required startup state.
 func AwaitStartup(ctx context.Context, capture captureScreen, pane substrate.PaneID, collar Collar) (Startup, substrate.Screen, error) {
-	const readySettle = 400 * time.Millisecond
-	deadline := time.NewTimer(5 * time.Second)
+	readySettle := 400 * time.Millisecond
+	if collar.Name == "codex" {
+		// Codex can paint an empty composer before its folder or hook trust menu.
+		readySettle = 3 * time.Second
+	}
+	deadline := time.NewTimer(8 * time.Second)
 	defer deadline.Stop()
 	ticker := time.NewTicker(25 * time.Millisecond)
 	defer ticker.Stop()
@@ -105,7 +109,7 @@ func AwaitStartup(ctx context.Context, capture captureScreen, pane substrate.Pan
 		case <-ctx.Done():
 			return Startup{}, substrate.Screen{}, ctx.Err()
 		case <-deadline.C:
-			return Startup{}, substrate.Screen{}, fmt.Errorf("native startup was not observable within 5s: %w", lastErr)
+			return Startup{}, substrate.Screen{}, fmt.Errorf("native startup was not observable within 8s: %w", lastErr)
 		case <-ticker.C:
 		}
 	}

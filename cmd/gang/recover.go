@@ -56,6 +56,16 @@ func (run *runtime) tickAgent(id core.HitchID, notice hookNotice, wait bool) err
 		if err != nil {
 			return err
 		}
+		if startup.State == harness.StartupReady {
+			if run.cmd.awaitStartup != nil {
+				startup, screen, err = run.cmd.awaitStartup(ctx, substrate.PaneID(a.Pane), c)
+			} else {
+				startup, screen, err = harness.AwaitStartup(ctx, b.Capture, substrate.PaneID(a.Pane), c)
+			}
+			if err != nil {
+				return err
+			}
+		}
 		if startup.State != harness.StartupReady {
 			if startup.State == harness.StartupTrustRequired {
 				if err := run.apply(l, &a, core.Event{Type: "hitch_blocked", Reason: startup.Prompt}); err != nil {

@@ -53,6 +53,7 @@ type command struct {
 	newTimeout   func(context.Context, time.Duration) (context.Context, context.CancelFunc)
 	inputBackend harnessInput
 	settleInput  func(context.Context, harnessInput, substrate.PaneID, harness.Collar, time.Duration) error
+	awaitStartup func(context.Context, substrate.PaneID, harness.Collar) (harness.Startup, substrate.Screen, error)
 	detach       func(string, hookNotice) error
 	afterUnlock  func()
 }

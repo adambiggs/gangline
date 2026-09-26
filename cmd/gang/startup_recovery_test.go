@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/adambiggs/gangline/core"
+	"github.com/adambiggs/gangline/harness"
 	"github.com/adambiggs/gangline/store"
 	"github.com/adambiggs/gangline/substrate"
 )
@@ -74,6 +75,45 @@ func TestStartupTrustSurvivesDeadlineAndKeepsContract(t *testing.T) {
 	}
 	if err := f.run.recoverStartup("worker"); err == nil || !strings.Contains(err.Error(), "no retained") {
 		t.Fatalf("cleaned startup receipt: %v", err)
+	}
+}
+
+func TestBootTickDefersWhenTrustFollowsProvisionalComposer(t *testing.T) {
+	f := newStateFixture(t)
+	a := f.add(t, "a", "worker", "codex")
+	p, err := f.run.team.Agent(a.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	a.Status = core.Booting
+	l, err := p.TryLock()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := l.Save(a); err != nil {
+		t.Fatal(err)
+	}
+	if err := l.Close(); err != nil {
+		t.Fatal(err)
+	}
+	e := core.Envelope{ID: "startup-test", Recipient: a.ID, To: a.Name, From: core.Sender{Kind: core.SenderGangline, Name: "hitch"}, Purpose: "assignment", Message: core.Message{Text: "send once"}, CreatedAt: f.cmd.now()}
+	if err := p.Publish(e); err != nil {
+		t.Fatal(err)
+	}
+	f.cmd.awaitStartup = func(context.Context, substrate.PaneID, harness.Collar) (harness.Startup, substrate.Screen, error) {
+		return harness.Startup{State: harness.StartupTrustRequired, Prompt: "Codex folder trust is required"}, screenWithText("Trust this folder?", "› 1. Trust and continue"), nil
+	}
+	f.run.cmd = f.cmd
+	if err := f.run.tickAgent(a.ID, hookNotice{}, false); err != nil {
+		t.Fatal(err)
+	}
+	got, err := p.Read()
+	if err != nil {
+		t.Fatal(err)
+	}
+	pending, err := p.ListNew()
+	if err != nil || got.Status != core.Booting || got.Activity != core.Blocked || len(pending) != 1 || f.input.submits != 0 {
+		t.Fatalf("premature startup: agent=%+v pending=%+v submits=%d error=%v", got, pending, f.input.submits, err)
 	}
 }
 
