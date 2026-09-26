@@ -10,7 +10,7 @@
 #   GANGLINE_REPO  source to clone from   (default: the GitHub repo)
 #   GANGLINE_RELEASE_BASE_URL  release assets root (default: GitHub releases)
 #   GANGLINE_HOME  where the tree lives   (default: ~/.local/share/gangline)
-#   GANGLINE_BIN   where `gang` is linked (default: ~/.local/bin)
+#   GANGLINE_BIN   where `gang` is installed (default: ~/.local/bin)
 #   GANGLINE_CLAUDE_STATUSLINE=1  install Claude's status line without `claude` on PATH
 set -eu
 
