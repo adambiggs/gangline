@@ -1,14 +1,20 @@
 <!doctype html><meta charset="utf-8">
-<!-- The GitHub social preview, site/social/preview.jpg. Render it at 1280 by
-     640 with headless Chrome from the repository root:
-     "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome" --headless=new --allow-file-access-from-files --hide-scrollbars --window-size=640,320 --force-device-scale-factor=4 --virtual-time-budget=8000 --screenshot=card.png site/social/card.html
-     then convert card.png to site/social/preview.jpg, which must stay under
-     GitHub's 1 MB limit, and upload it under the repository's Settings,
-     Social preview. It uses the site's dark palette, fonts, field.js and demo
-     poster, so it matches the home page. The page is 640 by 320 at four
-     times density, with the card zoomed to half inside it, so the field's
-     lines come out at twice their size on the site and still read when
-     the card is shown small. -->
+<!-- The GitHub social preview, site/social/preview.jpg. Render it with
+     headless Chrome from the repository root:
+     "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome" --headless=new --allow-file-access-from-files --hide-scrollbars --window-size=640,407 --force-device-scale-factor=4 --virtual-time-budget=8000 --screenshot=card.png site/social/card.html
+     then crop card.png to its top 2560 by 1280, convert it to
+     site/social/preview.jpg, which must stay under GitHub's 1 MB limit, and
+     upload it under the repository's Settings, Social preview. Headless
+     Chrome's viewport is shorter than the window it is given, so the window
+     is taller than the card; the page frames itself in red if the viewport
+     is not the card's 640 by 320, since the field sizes itself to the
+     viewport and would be stretched.
+
+     It uses the site's dark palette, fonts, field.js and demo poster, so it
+     matches the home page. The page is 640 by 320 at four times density,
+     with the card zoomed to half inside it, so the field's lines come out at
+     twice their size on the site and still read when the card is shown
+     small. -->
 <meta name="color-scheme" content="dark">
 <style>
 @font-face{font-family:'Newsreader';src:url('../fonts/newsreader-latin.woff2') format('woff2');font-weight:200 800}
@@ -23,22 +29,32 @@ body{width:640px;height:320px;overflow:hidden;position:relative}
 h1{margin:0;font:500 132px/1 'Newsreader',serif;letter-spacing:-.015em}
 .st{margin:44px 0 0;max-width:540px;font:400 50px/1.2 'Newsreader',serif;text-wrap:balance}
 .term{position:absolute;left:676px;top:116px;width:720px;border:1px solid rgba(255,255,255,.11);background:#05090f;box-shadow:0 28px 56px -20px rgba(0,0,0,.7)}
-.term img{display:block;width:100%;height:auto}
+.term{height:405px;background:#05090f url(../demo-poster.jpg) 0 0/100% auto no-repeat}
 </style>
 <div class="bgfx"><canvas id="field"></canvas></div>
 <div class="card">
 <div class="t">
   <h1 data-blob>gangline</h1>
-  <p class="st">Claude Code and Codex, one team in tmux.</p>
+  <p class="st" data-blob>Claude Code and Codex, one team in tmux.</p>
 </div>
-<div class="term"><img src="../demo-poster.jpg" alt=""></div>
+<div class="term"></div>
 </div>
 <script>
-/* The field caps its canvas at twice the screen's density; the card needs
-   all four times. */
+if (innerWidth !== 640 || innerHeight !== 320) document.body.style.boxShadow = 'inset 0 0 0 12px red';
+/* Two changes to field.js for the card. It caps its canvas at twice the
+   screen's density, and the card needs all four times. It draws its lines
+   faint enough to sit behind a page of text; the card has little text and
+   is shown small, so it draws them INK times as strong. */
+const INK = 1.8;
 const x = new XMLHttpRequest();
 x.open('GET', '../field.js', false); x.send();
-const lifted = x.responseText.replace('Math.min(2, devicePixelRatio || 1)', '(devicePixelRatio || 1)');
-if (lifted === x.responseText) throw new Error('field.js density cap not found');
-new Function(lifted)();
+let src = x.responseText;
+for (const [from, to] of [
+  ['Math.min(2, devicePixelRatio || 1)', '(devicePixelRatio || 1)'],
+  ['ctx.globalAlpha = Math.min(0.11, 0.06 + Math.max(0, v - 0.1) * 0.1) * tw', `ctx.globalAlpha = ${INK} * Math.min(0.11, 0.06 + Math.max(0, v - 0.1) * 0.1) * tw`],
+]) {
+  if (!src.includes(from)) throw new Error('field.js has changed: ' + from);
+  src = src.replace(from, to);
+}
+new Function(src)();
 </script>
