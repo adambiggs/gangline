@@ -18,6 +18,7 @@ import (
 func stoppedClaimFixture(t *testing.T, name string) (*stateFixture, core.Agent) {
 	t.Helper()
 	f := newStateFixture(t)
+	fakeCodexOnPath(t)
 	f.env["GANG_TMUX_SOCKET"] = filepath.Join(t.TempDir(), "absent.sock")
 	program := "#!/bin/sh\n# SPDX-License-Identifier: Apache-2.0\n" +
 		"if [ \"$1\" = -S ]; then [ ! -e \"$2\" ] || exit 92; shift 2; fi\n" +
@@ -101,6 +102,7 @@ func TestUpKeepsLockedStoppedClaim(t *testing.T) {
 
 func TestUpKeepsRunningTeamClaim(t *testing.T) {
 	f := newStateFixture(t)
+	fakeCodexOnPath(t)
 	old := f.add(t, "old-hitch", "lead", "codex")
 	err := f.cmd.up([]string{"-c", "codex"})
 	if err == nil || !strings.Contains(err.Error(), "already claimed") {

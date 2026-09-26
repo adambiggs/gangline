@@ -96,6 +96,16 @@ func newStateFixture(t *testing.T) *stateFixture {
 	}
 	return f
 }
+
+func fakeCodexOnPath(t *testing.T) {
+	t.Helper()
+	dir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(dir, "codex"), []byte("#!/bin/sh\n# SPDX-License-Identifier: Apache-2.0\nexit 91\n"), 0700); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("PATH", dir+string(os.PathListSeparator)+os.Getenv("PATH"))
+}
+
 func (f *stateFixture) add(t *testing.T, id, name, collar string) core.Agent {
 	t.Helper()
 	a := core.Agent{ID: core.HitchID(id), Name: core.AgentName(name), Collar: collar, Directory: "/work", Pane: "%1", Status: core.Active, Activity: core.Idle, CreatedAt: f.cmd.now(), ChangedAt: f.cmd.now()}
@@ -364,6 +374,7 @@ func TestHookFailureStillExitsZeroAndRecordsFailure(t *testing.T) {
 
 func TestHitchRefusesUnregisteredPaneBeforeClaim(t *testing.T) {
 	f := newStateFixture(t)
+	fakeCodexOnPath(t)
 	fakeTmux := f.env["GANG_TMUX"]
 	if err := os.WriteFile(fakeTmux, []byte("#!/bin/sh\n# SPDX-License-Identifier: Apache-2.0\ncase \"$1\" in list-panes) printf '%%1\\t?lead?\\n';; has-session) exit 0;; *) exit 91;; esac\n"), 0700); err != nil {
 		t.Fatal(err)
