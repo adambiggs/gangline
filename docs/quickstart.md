@@ -6,12 +6,14 @@ the team when you're done.
 
 ## Install
 
-Gangline runs on Linux and macOS. You need Git, tmux, and curl. The installer
-downloads a verified release binary for Linux and macOS on amd64 or arm64.
+Gangline runs on Linux and macOS. Put Git, tmux, curl, and a checksum tool
+(`sha256sum` or `shasum`) on `PATH` for installation. Put `claude` or `codex`
+on `PATH` for the harness you use; this walkthrough needs both. The GitHub
+CLI (`gh`) is needed only if your task uses it. The installer downloads a
+verified release binary for Linux and macOS on amd64 or arm64.
 Go compatible with [`go.mod`](../go.mod) is needed only if no binary is
-available for your platform or you build from source. This walkthrough uses
-both Claude Code and Codex; install their CLIs and run each directly in your
-repository to complete login and trust prompts.
+available for your platform or you build from source. Run each native CLI you
+plan to use in your repository to complete account login and repository trust.
 
 Install a stable Gangline release:
 
@@ -52,6 +54,19 @@ request into the lead's Claude Code prompt:
 > to inspect the test setup without changing files. Ask it to send you the
 > test command and the file paths that support its answer. Summarize the
 > result for me, and leave scout running until I finish checking.
+
+Claude Code may ask you to trust the repository before the lead starts. Codex
+may show **Hooks need review** when the lead hitches scout; review that native
+prompt in scout's window. Either harness may ask for login or command
+approval. Answer these prompts yourself, then run `gang tick` from your shell
+if startup is queued. The [startup guide](guides.md#recover-a-blocked-startup-pane)
+shows how to inspect a blocked pane.
+
+The [recorded demo](../site/demo/README.md) grants Codex full sandbox access
+so Gangline can observe the peer harness process while delivering a reply.
+This walkthrough does not set that permission mode. Native permissions apply;
+the permissions needed for process observation depend on your sandbox and
+host. Review any native request for access before proceeding.
 
 The lead can now hitch `scout`, send the assignment, and use its reply to
 answer you. This is an instruction to the lead; its exact wording and tool
