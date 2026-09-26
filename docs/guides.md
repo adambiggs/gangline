@@ -69,7 +69,8 @@ gang status worker --why
 ```
 
 A busy agent queues the compaction until it reaches a native idle boundary.
-Gangline sends the resume note only after native completion is confirmed.
+The resume note enters native input when compaction starts; it runs only after
+a synchronous hook confirms native completion.
 `gang status worker --why` shows whether compaction is queued, completed,
 refused, or unconfirmed. If it is stuck, inspect the pane before
 `gang compact worker --recover`. A completed status and the resume note in

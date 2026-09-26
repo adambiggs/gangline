@@ -67,9 +67,10 @@ reports missing readings as unknown. A collar can define context bands;
 crossing one upward queues a notice. Nonfinal bands advise saving state and
 compacting at a suitable stopping point; the last orders compaction now.
 
-Compaction requests wait for a native idle boundary. Gangline holds the resume
-note until it sees native completion, then delivers it before other queued
-messages. Submitting the compact command alone does not establish completion.
+Compaction requests wait for a native idle boundary. The resume note enters
+native input when compaction starts, ahead of later input. It runs only after
+a synchronous hook confirms native completion. Submitting the compact command
+alone does not establish completion.
 
 ## Collars and hooks
 
