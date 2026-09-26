@@ -9,6 +9,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -63,14 +64,43 @@ type stateFixture struct {
 	cmd         command
 	run         *runtime
 	env         map[string]string
-	out, errOut *bytes.Buffer
+	out, errOut *synchronizedBuffer
 	input       *inputFixture
+}
+
+type synchronizedBuffer struct {
+	mu sync.Mutex
+	bytes.Buffer
+}
+
+func (b *synchronizedBuffer) Write(p []byte) (int, error) {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	return b.Buffer.Write(p)
+}
+
+func (b *synchronizedBuffer) String() string {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	return b.Buffer.String()
+}
+
+func (b *synchronizedBuffer) Len() int {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	return b.Buffer.Len()
+}
+
+func (b *synchronizedBuffer) Reset() {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	b.Buffer.Reset()
 }
 
 func newStateFixture(t *testing.T) *stateFixture {
 	t.Helper()
 	root := t.TempDir()
-	out, errOut := &bytes.Buffer{}, &bytes.Buffer{}
+	out, errOut := &synchronizedBuffer{}, &synchronizedBuffer{}
 	env := map[string]string{"GANG_STATE_ROOT": root, "GANG_CONFIG_DIR": filepath.Join(root, "config"), "GANG_SESSION": "unit"}
 	backend := &inputFixture{screen: screenWithText("READY", "› "), command: "codex"}
 	cmd := command{newScheduler: func() watchdogScheduler { return nil }, stdin: strings.NewReader(""), stdout: out, stderr: errOut, getenv: func(k string) string { return env[k] }, getwd: func() (string, error) { return root, nil }, userHomeDir: func() (string, error) { return root, nil }, clock: func() time.Time { return time.Date(2026, 9, 22, 10, 0, 0, 0, time.UTC) }, inputBackend: backend, settleInput: func(context.Context, harnessInput, substrate.PaneID, harness.Collar, time.Duration) error { return nil }, detach: func(string, hookNotice) error { return nil }}
