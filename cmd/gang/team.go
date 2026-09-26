@@ -226,8 +226,11 @@ func (cmd command) roster(args []string) error {
 	machine := false
 	flags := boundFlagSet("roster", map[string]any{"porcelain": &machine})
 	positionals, err := parseOptions(flags, args)
-	if err != nil || len(positionals) != 0 {
-		return usageError("roster: invalid arguments")
+	if err != nil {
+		return usageError("roster: %v", err)
+	}
+	if len(positionals) != 0 {
+		return usageError("roster: unexpected argument %q", positionals[0])
 	}
 	run, err := cmd.runtime()
 	if err != nil {
@@ -257,8 +260,11 @@ func (cmd command) status(args []string) error {
 	why := false
 	flags := boundFlagSet("status", map[string]any{"why": &why})
 	positionals, err := parseOptions(flags, args)
-	if err != nil || len(positionals) > 1 {
-		return usageError("status: invalid arguments")
+	if err != nil {
+		return usageError("status: %v", err)
+	}
+	if len(positionals) > 1 {
+		return usageError("status: unexpected argument %q", positionals[1])
 	}
 	name := ""
 	if len(positionals) == 1 {

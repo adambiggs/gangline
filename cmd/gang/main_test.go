@@ -84,6 +84,26 @@ func TestCommandsRejectIgnoredArguments(t *testing.T) {
 	}
 }
 
+func TestFlagDiagnosticsNameTheBadInput(t *testing.T) {
+	for _, test := range []struct {
+		args []string
+		want string
+	}{
+		{[]string{"roster", "--wat"}, "flag provided but not defined: -wat"},
+		{[]string{"status", "--wat"}, "flag provided but not defined: -wat"},
+		{[]string{"interrupt", "--wat"}, "flag provided but not defined: -wat"},
+		{[]string{"interrupt", "-m"}, "flag needs an argument: -m"},
+		{[]string{"upgrade", "--wat"}, "flag provided but not defined: -wat"},
+		{[]string{"roster", "extra"}, "unexpected argument \"extra\""},
+	} {
+		var stdout, stderr bytes.Buffer
+		status := run(test.args, strings.NewReader(""), &stdout, &stderr)
+		if status != exitUsage || !strings.Contains(stderr.String(), test.want) {
+			t.Errorf("run(%q) status=%d stderr=%q; want %q", test.args, status, stderr.String(), test.want)
+		}
+	}
+}
+
 func TestSettingsUseXDGStateRoot(t *testing.T) {
 	cmd := command{
 		getenv: func(name string) string {

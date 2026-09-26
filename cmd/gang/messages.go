@@ -248,8 +248,11 @@ func (cmd command) interrupt(args []string) (result error) {
 	reason := ""
 	flags := boundFlagSet("interrupt", map[string]any{"m": &reason})
 	positionals, err := parseOptions(flags, args)
-	if err != nil || len(positionals) > 1 {
-		return usageError("interrupt: invalid arguments")
+	if err != nil {
+		return usageError("interrupt: %v", err)
+	}
+	if len(positionals) > 1 {
+		return usageError("interrupt: unexpected argument %q", positionals[1])
 	}
 	name := ""
 	if len(positionals) == 1 {

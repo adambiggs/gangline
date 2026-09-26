@@ -84,8 +84,11 @@ func (cmd command) upgrade(arguments []string) error {
 	check := false
 	flags := boundFlagSet("upgrade", map[string]any{"check": &check})
 	positionals, err := parseOptions(flags, arguments)
-	if err != nil || len(positionals) != 0 {
-		return usageError("upgrade accepts only --check")
+	if err != nil {
+		return usageError("upgrade: %v", err)
+	}
+	if len(positionals) != 0 {
+		return usageError("upgrade: unexpected argument %q", positionals[0])
 	}
 	home, err := cmd.userHomeDir()
 	if err != nil {
