@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"os"
+	"os/exec"
 	"path/filepath"
 
 	"github.com/adambiggs/gangline/core"
@@ -123,6 +124,12 @@ func (cmd command) hitchWithStaleClaim(args []string, supersede bool) (result er
 		return err
 	}
 	launch = applyLaunchPolicy(launch, o.Collar, run.settings)
+	if _, err := exec.LookPath(launch.Name); err != nil {
+		if errors.Is(err, exec.ErrNotFound) {
+			return refuseError("%s: not found in PATH", launch.Name)
+		}
+		return fmt.Errorf("find %s: %w", launch.Name, err)
+	}
 	if err := run.team.Create(); err != nil {
 		return err
 	}
