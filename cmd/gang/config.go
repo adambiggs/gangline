@@ -35,7 +35,8 @@ func (cmd command) settings() (settings, error) {
 	if configRoot == "" {
 		configRoot = filepath.Join(home, ".config")
 	}
-	configDir := cmd.environment("GANG_CONFIG_DIR")
+	configDirEnv := cmd.environment("GANG_CONFIG_DIR")
+	configDir := configDirEnv
 	if configDir == "" {
 		configDir = filepath.Join(configRoot, "gangline")
 	}
@@ -51,18 +52,29 @@ func (cmd command) settings() (settings, error) {
 		stateRoot = filepath.Join(home, ".local", "state")
 	}
 	stateRoot = filepath.Join(stateRoot, "gangline")
-	if explicit := cmd.environment("GANG_STATE_ROOT"); explicit != "" {
-		stateRoot = explicit
+	stateRootEnv := cmd.environment("GANG_STATE_ROOT")
+	if stateRootEnv != "" {
+		stateRoot = stateRootEnv
 	}
+	socketEnv := cmd.environment("GANG_TMUX_SOCKET")
 
 	result := settings{
 		Session:    "gangline",
 		StateRoot:  stateRoot,
 		Collar:     "claude-code",
 		LaunchArgs: make(map[string][]string),
-		Socket:     cmd.environment("GANG_TMUX_SOCKET"),
+		Socket:     socketEnv,
 		ConfigDir:  configDir,
 		Origins:    make(map[string]string),
+	}
+	for name, value := range map[string]string{
+		"GANG_CONFIG_DIR":  configDirEnv,
+		"GANG_STATE_ROOT":  stateRootEnv,
+		"GANG_TMUX_SOCKET": socketEnv,
+	} {
+		if value != "" {
+			result.Origins[name] = "env"
+		}
 	}
 	capacityTimeout := "5m"
 	values := map[string]*string{
@@ -82,7 +94,7 @@ func (cmd command) settings() (settings, error) {
 				return settings{}, fmt.Errorf("%s must not be blank", name)
 			}
 			*destination = value
-			result.Origins[name] = "environment"
+			result.Origins[name] = "env"
 		}
 	}
 	for label, value := range map[string]string{

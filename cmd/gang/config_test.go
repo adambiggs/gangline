@@ -3,6 +3,7 @@ package main
 import (
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 )
 
@@ -30,8 +31,36 @@ func TestSettingsEnvironmentOverridesConfiguration(t *testing.T) {
 	if got.Session != "environment-team" || got.Collar != "codex" {
 		t.Fatalf("settings = %#v", got)
 	}
-	if got.Origins["GANG_SESSION"] != "environment" || got.Origins["GANG_COLLAR"] != "config" {
+	if got.Origins["GANG_SESSION"] != "env" || got.Origins["GANG_COLLAR"] != "config" {
 		t.Fatalf("origins = %#v", got.Origins)
+	}
+}
+
+func TestConfigShowsEnvironmentOnlyOrigins(t *testing.T) {
+	directory := t.TempDir()
+	values := map[string]string{
+		"GANG_CONFIG_DIR":  directory,
+		"GANG_STATE_ROOT":  filepath.Join(directory, "state"),
+		"GANG_TMUX_SOCKET": filepath.Join(directory, "tmux.sock"),
+	}
+	var output strings.Builder
+	cmd := command{
+		stdout: &output,
+		getenv: func(name string) string { return values[name] },
+		lookupEnv: func(name string) (string, bool) {
+			value, ok := values[name]
+			return value, ok
+		},
+		userHomeDir: func() (string, error) { return directory, nil },
+	}
+	if err := cmd.config(nil); err != nil {
+		t.Fatal(err)
+	}
+	for name, value := range values {
+		want := name + "=" + value + "\tenv\n"
+		if !strings.Contains(output.String(), want) {
+			t.Errorf("config output lacks %q: %q", want, output.String())
+		}
 	}
 }
 
