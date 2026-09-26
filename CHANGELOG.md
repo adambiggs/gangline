@@ -1,5 +1,26 @@
 # Changelog
 
+## [1.5.0](https://github.com/adambiggs/gangline/compare/gangline-v1.4.0...gangline-v1.5.0) (2026-09-26)
+
+
+### Features
+
+* **collars:** support partial overlays and configurable context notices ([5e24a72](https://github.com/adambiggs/gangline/commit/5e24a72bdbe5ef638b5c92f7ebc35bf4edfc8036))
+
+
+### Bug Fixes
+
+* **cli:** parse options before validating command operands ([23916b0](https://github.com/adambiggs/gangline/commit/23916b07ce1f03a2db762858e1f3948bc309b000))
+* **cli:** retain specific flag errors in command diagnostics ([3bfeed7](https://github.com/adambiggs/gangline/commit/3bfeed7ba7618bbec056888add7098138936058d))
+* **cli:** stop help interception after operands and terminators ([f09d323](https://github.com/adambiggs/gangline/commit/f09d3234e4d654a4e576055e123eb728bd77140b))
+* **compact:** accept wrapped composer read-back as the submitted text ([db202c8](https://github.com/adambiggs/gangline/commit/db202c81f9d4dacb393c5b70df195688c241d340))
+* **config:** show environment sources for environment-only settings ([c782462](https://github.com/adambiggs/gangline/commit/c7824621b471163473655fc9036217037d900cf4))
+* **help:** keep the command inventory concise and show flag syntax once ([ea96ecb](https://github.com/adambiggs/gangline/commit/ea96ecbb846de5fd06338687be57382f13f17cf9))
+* **hitch:** report missing harness before creating a pane ([5135e8a](https://github.com/adambiggs/gangline/commit/5135e8a5ef8916433491d0ac3cb029802a99333d))
+* **install:** skip Claude settings without its CLI ([59eb60f](https://github.com/adambiggs/gangline/commit/59eb60febd1603db363dc9aa9ece7e719e6a2a38))
+* **schedule:** accept exact deadlines and Go durations ([73155d6](https://github.com/adambiggs/gangline/commit/73155d6d4b6edbdb9f6b1b638708776d63470a71))
+* **send:** report retained message when draining fails ([e31b81b](https://github.com/adambiggs/gangline/commit/e31b81b702a77b564f466142302320b471b031fb))
+
 ## [1.4.0](https://github.com/adambiggs/gangline/compare/gangline-v1.3.0...gangline-v1.4.0) (2026-09-25)
 
 
