@@ -7,7 +7,8 @@ repo=$(cd -- "$(dirname -- "$0")/../.." && pwd)
 case "$DEMO_STATE" in "$HOME/.local/state/"*) ;; *) echo 'DEMO_STATE must be under ~/.local/state' >&2; exit 1 ;; esac
 mkdir "$DEMO_STATE"
 export DEMO_STATE
-unset TMUX TMUX_PANE GANG_TMUX GANG_COLLARS
+unset TMUX TMUX_PANE GANG_TMUX GANG_COLLARS NO_COLOR
+export COLORTERM=truecolor
 export GANG_SESSION=gangline-demo-vhs
 export GANG_TMUX_SOCKET="$DEMO_STATE/tmux.sock"
 export GANG_STATE_ROOT="$DEMO_STATE/state"

@@ -29,6 +29,9 @@ observe the peer harness process when delivering its reply. Run it only in
 the trusted demo worktree. A permission prompt needs the operator; a failed
 take is not a recording.
 
+The recorder clears `NO_COLOR` and sets `COLORTERM=truecolor` before starting
+the private team so both harnesses render their native colours.
+
 The tape starts after both harnesses are idle. Codex's view is cleared first;
 Claude Code keeps its startup message on screen because clearing its
 conversation starts a new native session, and Gangline then cannot verify
