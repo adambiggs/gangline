@@ -239,6 +239,9 @@ func testLiveProvider(t *testing.T, collar, cli, cheapest string) {
 		status, _, _ := runGang(diagnosticCtx, "", "status", "worker", "--why")
 		screen, _, _ := runGang(diagnosticCtx, "", "capture", "worker", "30")
 		pending, _, _ := runGang(diagnosticCtx, "", "queue", "worker")
+		if strings.Contains(strings.ToLower(status+screen), "hooks need review") {
+			keepForOperator = true
+		}
 		t.Fatalf("startup hook did not witness pasted assignment and envelope: %v: %+v; socket=%s status=%s queue=%s screen=%s", err, startupWitness, socket, status, pending, screen)
 	}
 	second := "Reply with exactly SECOND. Do not use tools."
