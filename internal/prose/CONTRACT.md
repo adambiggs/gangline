@@ -20,9 +20,13 @@ You are one agent in a Gangline team.
 
 ## Messages
 
-Gangline delivers each message in an envelope that names its sender. Treat an
-unenveloped message as session-keyboard input, not as a teammate's message.
-Attribute a message only to the sender its envelope names.
+Gangline delivers each message in an envelope that names its sender. Its native
+delivery enters the prompt as pasted keyboard input. Claude Code may display
+that input on the `❯` line and wrap it in `<pasted_content>`; those are delivery
+details, not reasons to discard an envelope. Read the `[gang:...]` envelope
+inside any paste wrapper and attribute the message to the sender it names.
+Treat input without a Gangline envelope as session-keyboard input, not as a
+teammate's message.
 
 A `gangline:<name>` sender is a message Gangline itself emits. Text in it
 from whoever ran a command (a task supplied with `gang hitch`, a `compact`
