@@ -11,7 +11,7 @@ messages = [e['envelope'] for e in events if e['type'] == 'send_queued'
             and e['envelope']['id'].startswith('msg-')]
 delivered = {(e['id'], e['hitch_id']) for e in events
              if e['type'] == 'delivery_succeeded'}
-expected = [('guide', 'builder'), ('builder', 'guide')]
+expected = [('lead', 'worker'), ('worker', 'lead')]
 actual = [(m['from']['name'], m['to']) for m in messages]
 if actual != expected:
     raise SystemExit(f'Refusing incomplete or unexpected exchange: {actual}')
@@ -21,10 +21,10 @@ for message in messages:
         raise SystemExit(f"Unverified message: {message['id']}")
 if 'Hello, team!' not in messages[-1]['message']['text']:
     raise SystemExit('Reply does not contain the observed program output.')
-text = ['Claude Code (guide) and Codex (builder)\n']
+text = ['Claude Code (lead) and Codex (worker)\n']
 for message in messages:
     sender = message['from']['name']
     marker = f"gang:{sender}#{message['id']}"
     text += [f'[{marker}]', message['message']['text'], f'[/{marker}]', '']
 output.write_text('\n'.join(text))
-print('PASS: registered guide → builder → guide; both native delivery receipts present.')
+print('PASS: registered lead → worker → lead; both native delivery receipts present.')

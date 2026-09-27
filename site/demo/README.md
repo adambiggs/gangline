@@ -1,12 +1,13 @@
 # Recording the demo
 
 `record.sh` starts a disposable Claude Code and Codex team on its own tmux
-socket. `demo.tape` records
-the native panes while the guide delegates a Python task, the builder writes
-and runs it, and the reply arrives. The terminal remains visible throughout
-that exchange. The tape sets the canvas, font, frame rate, typing speed and
-playback speed. The two panes sit side by side on a 1280x720 canvas, wide
-enough that neither harness truncates its status line. Phones scale the video
+socket. It stages `greet.py` from `site/demo/greet-template.py`. `demo.tape`
+records the native panes while the lead asks the worker to finish the greeting's
+palette, the worker edits and runs it, and the reply arrives. The completed
+animation then plays in a separate terminal window. The recorder saves the
+worker's result as `site/demo/greet.py`. The tape sets the canvas, font, frame
+rate, typing speed and playback speed. The two panes sit side by side on a
+1280x720 canvas, wide enough that neither harness truncates its status line. Phones scale the video
 down and can open it full screen.
 
 Run from a trusted linked worktree with `gang`, `tmux`, both authenticated
@@ -36,8 +37,10 @@ operator input. All teammate envelopes come from `gang send` in registered
 agent panes; never add a sender name with `--from`.
 
 Review the captured event log and scrollback before publishing. Confirm both
-message deliveries and the program output. `verify.py` requires both registered senders and native delivery receipts
-before the script installs the assets and writes `site/demo.txt` from the
+message deliveries and the animation's final text. The recorder requires the
+worker's source to match the checked-in result exactly. `verify.py` requires
+both registered senders and native delivery receipts before the script
+installs the assets and writes `site/demo.txt` from the
 recorded messages. Inspect the entire video for private material, cropped text,
 permission prompts and missing work. The native terminal appearance is kept
 in both site themes. GitHub Pages publishes the generated video, GIF and poster

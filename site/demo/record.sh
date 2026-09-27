@@ -23,8 +23,9 @@ for tool in gang tmux claude codex vhs ffmpeg; do command -v "$tool"; done
 # Claude Code's permission-mode footer uses U+23F5, which DejaVu Sans Mono lacks.
 fc-list ':charset=23f5' family | grep -q . || { echo 'Install a font covering U+23F5, such as Noto Sans Symbols 2, or point FONTCONFIG_FILE at one.' >&2; exit 1; }
 [ ! -e "$repo/greet.py" ] || { echo 'Preserve and remove the previous greet.py before recording.' >&2; exit 1; }
+cp "$repo/site/demo/greet-template.py" "$repo/greet.py"
 cat > "$GANG_CONFIG_DIR/roles/demo.md" <<'ROLE'
-You are in a public terminal demonstration. Keep responses short. Do only the assigned task; no commits or extra checks. Send messages with gang send NAME 'TEXT', never --from. When idle, say Ready. A guide delegates to builder and ends its turn. When builder replies, guide replies exactly: Demo complete: Hello, team! The builder writes greet.py, runs it, and reports the observed output to guide.
+You are in a public terminal demonstration. Keep responses short. Do only the assigned task; no commits or extra checks. Send messages with gang send NAME 'TEXT', never --from. When idle, say Ready. A lead delegates to worker and ends its turn. The worker edits the staged greet.py in the repository root, changing its large banner from white to amber and its small caption from amber to white, then runs python3 greet.py directly without redirecting output or creating scratch files and reports the final text to lead. Do not edit site/demo/greet-template.py or site/demo/greet.py. Never write to /tmp. The final frame stays visible. When worker replies, lead replies exactly: Demo complete: Hello, team! The recording then plays the finished greet.py in a new terminal window.
 ROLE
 cleanup() {
   local rc=$?
@@ -38,10 +39,13 @@ cleanup() {
   # Preserve diagnostics, but never let a failed capture prevent teardown.
   if [ -d "$GANG_STATE_ROOT/teams/$GANG_SESSION" ]; then
     if gang roster; then
-      for name in guide builder; do
-        if [ -e "$GANG_STATE_ROOT/teams/$GANG_SESSION/names/$name" ]; then
+      for name in lead worker; do
+        if [ -L "$GANG_STATE_ROOT/teams/$GANG_SESSION/names/$name" ]; then
           if ! gang capture "$name" 2000 > "$DEMO_STATE/$name.txt"; then
             echo "Failed to capture $name; ending the private demo team." >&2
+            rc=1
+          elif [ ! -s "$DEMO_STATE/$name.txt" ]; then
+            echo "Empty capture for $name; ending the private demo team." >&2
             rc=1
           fi
         fi
@@ -66,34 +70,45 @@ cleanup() {
 tmux -S "$GANG_TMUX_SOCKET" -f /dev/null new-session -d -s "$GANG_SESSION" -n recorder -x 123 -y 36 -c "$repo"
 trap cleanup EXIT
 tmux -S "$GANG_TMUX_SOCKET" set-option -g default-size 123x36
+tmux -S "$GANG_TMUX_SOCKET" set-option -as terminal-features ',*:RGB'
 tmux -S "$GANG_TMUX_SOCKET" set-option -g status off
 [ "$(tmux -S "$GANG_TMUX_SOCKET" list-sessions -F '#S')" = "$GANG_SESSION" ]
 tmux -S "$GANG_TMUX_SOCKET" list-sessions
-gang hitch builder -c codex -r demo -d "$repo" -t 'Wait for guide. Say Ready and end this turn.'
-gang wait builder --timeout 120s
-gang hitch guide -c claude-code -r demo -d "$repo" -t 'Wait for a keyboard request. Say Ready and end this turn.'
-gang wait guide --timeout 120s
+gang hitch worker -c codex -r demo -d "$repo" -t 'Wait for lead. Say Ready and end this turn.'
+gang wait worker --timeout 120s
+gang hitch lead -c claude-code -r demo -d "$repo" -t 'Wait for a keyboard request. Say Ready and end this turn.'
+gang wait lead --timeout 120s
 # Joining existing panes preserves their registered sender identities.
-guide=$(tmux -S "$GANG_TMUX_SOCKET" list-panes -a -F '#{pane_id} #{window_name}' | awk '$2 ~ /guide/ {print $1}')
-builder=$(tmux -S "$GANG_TMUX_SOCKET" list-panes -a -F '#{pane_id} #{window_name}' | awk '$2 ~ /builder/ {print $1}')
-[ -n "$guide" ] && [ -n "$builder" ]
-tmux -S "$GANG_TMUX_SOCKET" join-pane -h -s "$builder" -t "$guide"
-tmux -S "$GANG_TMUX_SOCKET" select-layout -t "$guide" even-horizontal
+lead=$(tmux -S "$GANG_TMUX_SOCKET" list-panes -a -F '#{pane_id} #{window_name}' | awk '$2 ~ /lead/ {print $1}')
+worker=$(tmux -S "$GANG_TMUX_SOCKET" list-panes -a -F '#{pane_id} #{window_name}' | awk '$2 ~ /worker/ {print $1}')
+[ -n "$lead" ] && [ -n "$worker" ]
+tmux -S "$GANG_TMUX_SOCKET" join-pane -h -s "$worker" -t "$lead"
+tmux -S "$GANG_TMUX_SOCKET" select-layout -t "$lead" even-horizontal
 tmux -S "$GANG_TMUX_SOCKET" set-option -g pane-border-status top
-tmux -S "$GANG_TMUX_SOCKET" set-option -g pane-border-format " #{?#{==:#{pane_id},$guide},Claude Code / guide,Codex / builder} "
+tmux -S "$GANG_TMUX_SOCKET" set-option -g pane-border-format " #{?#{==:#{pane_id},$lead},Claude Code / lead,#{?#{==:#{pane_id},$worker},Codex / worker,Finished result}} "
 tmux -S "$GANG_TMUX_SOCKET" set-option -g pane-border-style 'fg=#7f8da0'
 tmux -S "$GANG_TMUX_SOCKET" set-option -g pane-active-border-style 'fg=#84aad6'
-tmux -S "$GANG_TMUX_SOCKET" select-pane -t "$guide" -T 'Claude Code / guide'
-tmux -S "$GANG_TMUX_SOCKET" select-pane -t "$builder" -T 'Codex / builder'
-tmux -S "$GANG_TMUX_SOCKET" select-pane -t "$guide"
-tmux -S "$GANG_TMUX_SOCKET" select-window -t "$guide"
+tmux -S "$GANG_TMUX_SOCKET" select-pane -t "$lead" -T 'Claude Code / lead'
+tmux -S "$GANG_TMUX_SOCKET" select-pane -t "$worker" -T 'Codex / worker'
+tmux -S "$GANG_TMUX_SOCKET" select-pane -t "$lead"
+tmux -S "$GANG_TMUX_SOCKET" select-window -t "$lead"
+tmux -S "$GANG_TMUX_SOCKET" set-option -g default-command 'sleep 0.5; python3 greet.py; tput civis; read -r'
 # Codex binds Ctrl+L to clear its terminal view, so the recording opens on
 # the idle composer rather than the tail of the startup message.
-tmux -S "$GANG_TMUX_SOCKET" send-keys -t "$builder" C-l
+tmux -S "$GANG_TMUX_SOCKET" send-keys -t "$worker" C-l
 cd "$repo"
 vhs site/demo/demo.tape
+if cmp -s site/demo/greet-template.py greet.py; then
+  echo 'Worker did not change the staged greeting.' >&2
+  exit 1
+fi
+if ! cmp -s site/demo/greet.py greet.py; then
+  echo 'Worker result differs from the checked-in greeting.' >&2
+  exit 1
+fi
 python3 site/demo/verify.py "$GANG_STATE_ROOT/teams/$GANG_SESSION/log.jsonl" "$DEMO_STATE/transcript.txt"
 cp "$DEMO_STATE/transcript.txt" site/demo.txt
+mv greet.py site/demo/greet.py
 mv site/demo/.demo-render.mp4 "$DEMO_STATE/demo.mp4"
 mv site/demo/.demo-render.gif "$DEMO_STATE/demo.gif"
 [ -s "$DEMO_STATE/demo.mp4" ] && [ -s "$DEMO_STATE/demo.gif" ]

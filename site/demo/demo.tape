@@ -20,8 +20,16 @@ Wait+Screen /Ready/
 Sleep 3s
 Show
 Sleep 1s
-Type "Ask builder to write greet.py: print Hello, team! Run it and report back."
+Type "Ask worker to edit the staged greet.py: make the large ASCII Hello, team! banner amber #f0a23c and the small caption white #e9eef7. Keep the blue/amber starburst and four-second animation. Run python3 greet.py without scratch files, then report the final text."
 Sleep 500ms
 Enter
 Wait+Screen@180s /● Demo complete:/
-Sleep 6s
+Sleep 2s
+Hide
+Ctrl+B
+Type "c"
+Sleep 750ms
+Show
+Sleep 5s
+Wait+Screen@5s /Hello, team!/
+Sleep 2s

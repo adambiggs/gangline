@@ -37,11 +37,12 @@ their assignments and staffing.
 <picture>
   <source media="(prefers-color-scheme: dark)" srcset="site/demo.gif">
   <source media="(prefers-color-scheme: light)" srcset="site/demo-light.gif">
-  <img alt="Claude Code hands a task to Codex, which runs it and replies" src="site/demo.gif">
+  <img alt="A Claude Code lead asks a Codex worker for an animated greeting; the finished result plays after the reply" src="site/demo.gif">
 </picture>
 
-Claude Code hands Codex a task; Codex writes and runs the code, then sends the
-result back. [Read the demonstration transcript](site/demo.txt).
+The Claude Code lead asks a Codex worker to finish an animated greeting. The
+worker edits and runs it, reports back, and the finished animation plays.
+[Read the demonstration transcript](site/demo.txt).
 
 Start with [your first team](docs/quickstart.md). Then use the
 [guides](docs/guides.md) for daily tasks, [concepts](docs/concepts.md) for the
