@@ -161,11 +161,11 @@
     }
     @media (prefers-reduced-motion:reduce){*{transition:none!important}html{scroll-behavior:auto}}
   </style>
-  <script src="living-field.iife.js" defer></script>
-  <script src="field.js" defer></script>
+  <script src="blorbo.iife.js" defer></script>
+  <script src="blorbo.js" defer></script>
 </head>
 <body>
-<div class="bgfx" aria-hidden="true"><canvas id="field"></canvas></div>
+<div class="bgfx" aria-hidden="true"><canvas id="blorbo"></canvas></div>
 <button class="theme" type="button" aria-label="Theme: follows system" title="Theme: follows system">◐</button>
 <script>
 (() => {
@@ -189,7 +189,7 @@
 <button class="motion" type="button" aria-label="Let the background follow the phone's tilt" title="Let the background follow the phone's tilt" hidden>∿</button>
 <script>
 (() => {
-  /* The field listens for deviceorientation on its own; this only asks the
+  /* Blorbo listens for deviceorientation on its own; this only asks the
      browser for it where that is needed (iOS), on a tap, and keeps the
      answer so a later visit asks again quietly instead of showing the glyph. */
   const b = document.querySelector('.motion'); if (!b) return;

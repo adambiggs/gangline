@@ -28,13 +28,13 @@ jobs:
         run: |
           set -euo pipefail
           mkdir -p _site
-          cp site/index.html site/living-field.iife.js site/field.js site/demo.js site/demo.txt _site/
+          cp site/index.html site/blorbo.iife.js site/blorbo.js site/demo.js site/demo.txt _site/
           # Pages caches everything for ten minutes and browsers hold scripts
           # longer, so both script URLs change when either field file changes.
-          v=$(sha256sum site/living-field.iife.js site/field.js | sha256sum | cut -c1-12)
-          sed -i "s|src=\"living-field.iife.js\"|src=\"living-field.iife.js?v=$v\"|; s|src=\"field.js\"|src=\"field.js?v=$v\"|" _site/index.html
-          grep -q "living-field.iife.js?v=$v" _site/index.html
-          grep -q "field.js?v=$v" _site/index.html
+          v=$(sha256sum site/blorbo.iife.js site/blorbo.js | sha256sum | cut -c1-12)
+          sed -i "s|src=\"blorbo.iife.js\"|src=\"blorbo.iife.js?v=$v\"|; s|src=\"blorbo.js\"|src=\"blorbo.js?v=$v\"|" _site/index.html
+          grep -q "blorbo.iife.js?v=$v" _site/index.html
+          grep -q "blorbo.js?v=$v" _site/index.html
           cp site/demo.gif site/demo-light.gif \
             site/demo.mp4 site/demo-light.mp4 \
             site/demo-poster.jpg site/demo-poster-light.jpg _site/
