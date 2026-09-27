@@ -1,5 +1,31 @@
 # Changelog
 
+## [1.6.0](https://github.com/adambiggs/gangline/compare/gangline-v1.5.0...gangline-v1.6.0) (2026-09-27)
+
+
+### Features
+
+* **site:** add the GitHub social preview card ([2bbb131](https://github.com/adambiggs/gangline/commit/2bbb131587d738b12936ed05c52d4f22162217dd))
+* **site:** draw the social card's field at twice site scale ([d8c65d4](https://github.com/adambiggs/gangline/commit/d8c65d4604d9bf49151eb478f621e8ac8e94623f))
+* **site:** hold the social card's field at a chosen moment ([9174715](https://github.com/adambiggs/gangline/commit/917471559ddcd21cd5507c87c6eb9ffb31edd81e))
+* **site:** load the shared living field bundle ([a183fff](https://github.com/adambiggs/gangline/commit/a183fff8d62284397d08a2e2dfa7bec4667d84bd))
+* **site:** pare the social card to wordmark, tagline and demo ([fed16f6](https://github.com/adambiggs/gangline/commit/fed16f6a32098ad083382e77443aaf2b25c628e9))
+
+
+### Bug Fixes
+
+* **demo:** preserve native harness colours in the recording ([ebb6036](https://github.com/adambiggs/gangline/commit/ebb6036ce5f5909d48882ce36b552a8d8aae294a))
+* **help:** distinguish agent names from team sessions ([5ca18c6](https://github.com/adambiggs/gangline/commit/5ca18c6549a188988fdbf518e7d8b3c94e57f6c7))
+* **hitch:** defer startup through folder trust prompts ([b8be646](https://github.com/adambiggs/gangline/commit/b8be6463024f4c0801c8608d89d86bf75a3ed36a))
+* **hitch:** preserve startup stabilization past boot deadline ([93893e2](https://github.com/adambiggs/gangline/commit/93893e27c2f48b56d34bcb1036d26b0bff4a74ad))
+* **hitch:** recognize permission choices during startup ([2cb6acc](https://github.com/adambiggs/gangline/commit/2cb6acc7dce0f26ff6908e150aefec8c88702f17))
+* **send:** use registered pane identity and tmux foreground ([bfbbf98](https://github.com/adambiggs/gangline/commit/bfbbf9819b4fb7b0c27ee3e97a6ef13c6579de00))
+* **site:** render the social card from a still field frame ([9226bbf](https://github.com/adambiggs/gangline/commit/9226bbf8bda368f8f565f887bdb3084edbd92553))
+* **site:** render the social card's field at the card's true size ([c2ae4bb](https://github.com/adambiggs/gangline/commit/c2ae4bbc9807b0f5a39871b5c4407e2ac4cf1bae))
+* **store:** wake file watchers when audit logs append ([d5a2585](https://github.com/adambiggs/gangline/commit/d5a2585062a0de9de31cb604a3fe9249fd24ebb5))
+* update the vendored field with fixed glyph spacing ([76c3ea8](https://github.com/adambiggs/gangline/commit/76c3ea84e14cd7e6ff21135af582a6a5ba7a2959))
+* update vendored field for continuous quality changes ([aae8b7e](https://github.com/adambiggs/gangline/commit/aae8b7e6d90d0192fc67240bbabab9113d6ccbd6))
+
 ## [1.5.0](https://github.com/adambiggs/gangline/compare/gangline-v1.4.0...gangline-v1.5.0) (2026-09-26)
 
 
