@@ -65,7 +65,7 @@ func newCollapsedRecoveryFixture(t *testing.T) (*stateFixture, store.AgentPaths,
 	f := newStateFixture(t)
 	a := f.add(t, "a", "worker", "codex")
 	p, _ := f.run.team.Agent(a.ID)
-	e := core.Envelope{ID: "original", Recipient: a.ID, To: a.Name, From: core.Sender{Kind: core.SenderSelfDeclared, Name: "hitch"}, Purpose: "assignment", Message: core.Message{Text: "Standing contract. Assignment: résumé."}, CreatedAt: f.cmd.now()}
+	e := core.Envelope{ID: "original", Token: "0123456789abcdef", Recipient: a.ID, To: a.Name, From: core.Sender{Kind: core.SenderSelfDeclared, Name: "hitch"}, Purpose: "assignment", Message: core.Message{Text: "Standing contract. Assignment: résumé."}, CreatedAt: f.cmd.now()}
 	if err := p.Publish(e); err != nil {
 		t.Fatal(err)
 	}

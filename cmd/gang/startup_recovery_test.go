@@ -47,7 +47,7 @@ func testStartupPromptSurvivesDeadlineAndKeepsContract(t *testing.T, prompt []st
 		t.Fatal(err)
 	}
 	l.Close()
-	e := core.Envelope{ID: "original", Recipient: a.ID, To: a.Name, From: core.Sender{Kind: core.SenderAgent, Name: "lead", HitchID: "lead-id"}, Purpose: "assignment", Message: core.Message{Text: "Standing contract: report completion.\nAssignment: fix it."}, CreatedAt: f.cmd.now()}
+	e := core.Envelope{ID: "original", Token: "0123456789abcdef", Recipient: a.ID, To: a.Name, From: core.Sender{Kind: core.SenderAgent, Name: "lead", HitchID: "lead-id"}, Purpose: "assignment", Message: core.Message{Text: "Standing contract: report completion.\nAssignment: fix it."}, CreatedAt: f.cmd.now()}
 	if err := p.Publish(e); err != nil {
 		t.Fatal(err)
 	}
@@ -155,7 +155,7 @@ func TestStartupPermissionMenuSurvivesBootDeadline(t *testing.T) {
 				t.Fatal(err)
 			}
 			l.Close()
-			e := core.Envelope{ID: "original", Recipient: a.ID, To: a.Name, From: core.Sender{Kind: core.SenderAgent, Name: "lead", HitchID: "lead-id"}, Purpose: "assignment", Message: core.Message{Text: "Standing contract and assignment"}, CreatedAt: f.cmd.now()}
+			e := core.Envelope{ID: "original", Token: "0123456789abcdef", Recipient: a.ID, To: a.Name, From: core.Sender{Kind: core.SenderAgent, Name: "lead", HitchID: "lead-id"}, Purpose: "assignment", Message: core.Message{Text: "Standing contract and assignment"}, CreatedAt: f.cmd.now()}
 			if err := p.Publish(e); err != nil {
 				t.Fatal(err)
 			}
