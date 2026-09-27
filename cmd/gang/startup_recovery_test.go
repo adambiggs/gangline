@@ -106,6 +106,7 @@ func TestBootTickDefersWhenTrustFollowsProvisionalComposer(t *testing.T) {
 		t.Fatal(err)
 	}
 	a.Status = core.Booting
+	a.BootDeadline = f.cmd.now().Add(-time.Second)
 	l, err := p.TryLock()
 	if err != nil {
 		t.Fatal(err)

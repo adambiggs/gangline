@@ -201,7 +201,9 @@ func (run *runtime) checkDeadlines(l *store.LockedAgent, a *core.Agent) error {
 			return run.apply(l, a, core.Event{Type: "hitch_blocked", Reason: startup.Prompt})
 		}
 		if startup.State == harness.StartupReady {
-			return run.apply(l, a, core.Event{Type: "hitch_ready"})
+			// A composer can precede Codex trust. Leave readiness to the
+			// stabilized startup observation in hitch or tick.
+			return nil
 		}
 	}
 	next, _ := core.Step(*a, core.Event{Type: "deadline_checked", At: run.cmd.now(), HitchID: a.ID})
