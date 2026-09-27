@@ -420,3 +420,69 @@ func TestClaudeEarlyContextBandFromStatusline(t *testing.T) {
 		t.Fatalf("late reading: submits=%d, wire=%q", f.input.submits, f.input.pasted)
 	}
 }
+
+func TestClaudeConfiguredContextBandsFromStatusline(t *testing.T) {
+	for _, tc := range []struct {
+		name     string
+		readings []int
+		want     []string
+	}{
+		{name: "separate crossings", readings: []int{50000, 120000, 250000}, want: []string{"early", "late"}},
+		{name: "skipped thresholds", readings: []int{50000, 250000}, want: []string{"early", "late"}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			f := newStateFixture(t)
+			dir := filepath.Join(f.env["GANG_STATE_ROOT"], "collars")
+			if err := os.MkdirAll(dir, 0700); err != nil {
+				t.Fatal(err)
+			}
+			overlay := []byte(`package collars
+collar: {context_bands: {"*": [{name: "early", at: 0.10}, {name: "late", at: 0.20}]}}
+`)
+			if err := os.WriteFile(filepath.Join(dir, "claude-code.cue"), overlay, 0600); err != nil {
+				t.Fatal(err)
+			}
+			f.env["GANG_COLLARS"] = dir
+			f.run.settings.CollarDir = dir
+			a := f.add(t, "a", "worker", "claude-code")
+			f.env["GANGLINE_HITCH_ID"] = "a"
+			f.input.command, f.input.screen = "claude", screenWithText("────────", "❯ ", "────────")
+			for _, used := range tc.readings {
+				cmd := f.cmd
+				cmd.stdin = strings.NewReader(fmt.Sprintf(`{"session_id":"s","model":{"id":"claude-fable-5-1"},"context_window":{"context_window_size":1000000,"current_usage":{"input_tokens":%d,"cache_creation_input_tokens":0,"cache_read_input_tokens":0}}}`, used))
+				if err := cmd.statusline(nil); err != nil {
+					t.Fatal(err)
+				}
+				if err := f.run.tickAgent(a.ID, hookNotice{}, false); err != nil {
+					t.Fatal(err)
+				}
+			}
+			if f.input.submits != len(tc.want) {
+				t.Fatalf("submitted %d notes, want %d", f.input.submits, len(tc.want))
+			}
+			f.out.Reset()
+			if err := f.cmd.log(nil); err != nil {
+				t.Fatal(err)
+			}
+			var got []string
+			if err := store.ReadLog(strings.NewReader(f.out.String()), func(e core.Event) error {
+				if e.Type != "context_band_crossed" || e.HitchID != a.ID {
+					return nil
+				}
+				if len(e.Readings) != 1 || e.Readings[0].Percent == nil || e.Readings[0].Used == nil {
+					t.Fatalf("crossing lacks deciding reading: %+v", e)
+				}
+				if want := float64(*e.Readings[0].Used) / 10000; *e.Readings[0].Percent != want {
+					t.Fatalf("crossing percent = %v, want %v", *e.Readings[0].Percent, want)
+				}
+				got = append(got, e.Status)
+				return nil
+			}); err != nil {
+				t.Fatal(err)
+			}
+			if fmt.Sprint(got) != fmt.Sprint(tc.want) {
+				t.Fatalf("crossed bands = %v, want %v", got, tc.want)
+			}
+		})
+	}
+}
