@@ -28,11 +28,7 @@ func (run *runtime) resumePromptBlock(a core.Agent, c harness.Collar, prompt, se
 	if pending.ResumeAdmitted {
 		return "compaction continuation already admitted"
 	}
-	sender := pending.ResumeFrom
-	if sender.Kind == "" {
-		sender = core.Sender{Kind: core.SenderGangline, Name: "compact"}
-	}
-	e := core.Envelope{ID: core.EnvelopeID("resume-" + pending.ID), Token: pending.ResumeToken, From: sender, Message: pending.Resume, Purpose: "resume"}
+	e := core.Envelope{ID: core.EnvelopeID("resume-" + pending.ID), Token: pending.ResumeToken, From: pending.ResumeFrom, Message: pending.Resume, Purpose: "resume"}
 	wire, err := envelopeText(e)
 	if err != nil {
 		return "compaction continuation could not be verified"
