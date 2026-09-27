@@ -50,11 +50,9 @@ test/gate.sh
 CI runs the Go checks on Linux and macOS. Test rules are in
 [AGENTS.md](AGENTS.md).
 
-The site renders the repository's Markdown with `tools/docsite`. Its page
-inventory controls navigation. After changing docs or navigation, assemble
-the site and render it using the steps in
-[the Pages workflow](.github/workflows/pages.yml); the renderer checks local
-links and heading anchors.
+The Astro site in `site/` renders the repository's Markdown directly. After
+changing docs or navigation, run `npm ci --prefix site` and
+`npm run build --prefix site`. The build checks local links and heading anchors.
 
 ## Commit
 

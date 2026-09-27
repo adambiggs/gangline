@@ -1,0 +1,20 @@
+---
+import { getCollection, render } from 'astro:content';
+import DocLayout from '../../layouts/DocLayout.astro';
+import { sources } from '../../lib/docs.mjs';
+
+export async function getStaticPaths() {
+  return (await getCollection('docs')).map((entry) => ({
+    params: { slug: entry.id === 'readme' ? 'index' : entry.id },
+    props: { entry },
+  }));
+}
+
+const { entry } = Astro.props;
+const { Content, headings } = await render(entry);
+const title = headings.find((heading) => heading.depth === 1)?.text || entry.id;
+const sourceUrl = `https://github.com/adambiggs/gangline/blob/main/${sources[entry.id] || `docs/${entry.id}.md`}`;
+---
+<DocLayout id={entry.id} title={title} sourceUrl={sourceUrl} headings={headings.filter((heading) => heading.depth === 2)}>
+  <Content />
+</DocLayout>

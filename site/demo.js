@@ -1,4 +1,8 @@
 // SPDX-License-Identifier: Apache-2.0
+import darkVideo from './demo.mp4?url';
+import lightVideo from './demo-light.mp4?url';
+import darkPoster from './demo-poster.jpg?url';
+import lightPoster from './demo-poster-light.jpg?url';
 (() => {
   const video = document.querySelector('#demo-video');
   const source = document.querySelector('#demo-source');
@@ -41,20 +45,18 @@
   }
   update();
   const media = matchMedia('(prefers-color-scheme: dark)');
-  const version = new URL(source.src).search;
   let initialized = false;
   const apply = () => {
     const first = !initialized;
     initialized = true;
     const dark = document.documentElement.dataset.theme === 'dark' ||
       (!document.documentElement.dataset.theme && media.matches);
-    const suffix = dark ? '' : '-light';
-    const src = `demo${suffix}.mp4${version}`;
+    const src = dark ? darkVideo : lightVideo;
     if (source.getAttribute('src') === src) return;
     const time = video.currentTime;
     const playing = !video.paused || (first && video.autoplay);
     source.src = src;
-    video.poster = `demo-poster${suffix}.jpg${version}`;
+    video.poster = dark ? darkPoster : lightPoster;
     video.onloadedmetadata = () => {
       video.currentTime = Math.min(time, video.duration);
       if (playing) video.play().catch(() => {});

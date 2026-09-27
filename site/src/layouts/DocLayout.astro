@@ -1,22 +1,24 @@
+---
+import { groups, href } from '../lib/docs.mjs';
+const { id, title, sourceUrl, headings } = Astro.props;
+---
 <!doctype html>
 <html lang="en">
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width,initial-scale=1">
-  <title>{{title}} — Gangline docs</title>
+  <title>{title} — Gangline docs</title>
   <meta name="color-scheme" content="light dark">
-  <script>try{const t=localStorage.getItem('theme');if(t==='light'||t==='dark')document.documentElement.dataset.theme=t}catch{}</script>
+  <script is:inline>try{const t=localStorage.getItem('theme');if(t==='light'||t==='dark')document.documentElement.dataset.theme=t}catch{}</script>
   <meta name="theme-color" content="#b9d2ee" media="(prefers-color-scheme: light)">
   <meta name="theme-color" content="#071530" media="(prefers-color-scheme: dark)">
-  <link rel="preload" href="{{root}}fonts/instrument-sans-latin.woff2" as="font" type="font/woff2" crossorigin>
-  <script src="{{root}}blorbo.iife.js" defer></script>
-  <script src="{{root}}blorbo.js" defer></script>
-  <style>
-    @font-face{font-family:'Newsreader';src:url('{{root}}fonts/newsreader-latin.woff2') format('woff2');font-weight:200 800;font-style:normal;font-display:swap}
-    @font-face{font-family:'Newsreader';src:url('{{root}}fonts/newsreader-italic-latin.woff2') format('woff2');font-weight:200 800;font-style:italic;font-display:swap}
-    @font-face{font-family:'Instrument Sans';src:url('{{root}}fonts/instrument-sans-latin.woff2') format('woff2');font-weight:400 700;font-style:normal;font-display:swap}
-    @font-face{font-family:'Instrument Sans';src:url('{{root}}fonts/instrument-sans-italic-latin.woff2') format('woff2');font-weight:400 700;font-style:italic;font-display:swap}
-    @font-face{font-family:'JetBrains Mono';src:url('{{root}}fonts/jetbrains-mono-latin.woff2') format('woff2');font-weight:400;font-style:normal;font-display:swap}
+  <link rel="preload" href="/fonts/instrument-sans-latin.woff2" as="font" type="font/woff2" crossorigin>
+  <style is:global>
+    @font-face{font-family:'Newsreader';src:url('/fonts/newsreader-latin.woff2') format('woff2');font-weight:200 800;font-style:normal;font-display:swap}
+    @font-face{font-family:'Newsreader';src:url('/fonts/newsreader-italic-latin.woff2') format('woff2');font-weight:200 800;font-style:italic;font-display:swap}
+    @font-face{font-family:'Instrument Sans';src:url('/fonts/instrument-sans-latin.woff2') format('woff2');font-weight:400 700;font-style:normal;font-display:swap}
+    @font-face{font-family:'Instrument Sans';src:url('/fonts/instrument-sans-italic-latin.woff2') format('woff2');font-weight:400 700;font-style:italic;font-display:swap}
+    @font-face{font-family:'JetBrains Mono';src:url('/fonts/jetbrains-mono-latin.woff2') format('woff2');font-weight:400;font-style:normal;font-display:swap}
 
     /* The landing page's palette, token for token (site/index.html). */
     :root{
@@ -100,7 +102,7 @@
     @media (hover:none){.copy{opacity:.7}}
 
     .tblwrap{overflow-x:auto;border-top:1px solid var(--rule)}
-    table{border-collapse:collapse;width:100%;font-size:.9375rem;line-height:1.5}
+    table{display:block;max-width:100%;overflow-x:auto;border-collapse:collapse;width:100%;font-size:.9375rem;line-height:1.5}
     th,td{text-align:left;vertical-align:top;padding:.55rem .9rem .55rem 0;border-bottom:1px solid var(--rule)}
     th{font-size:.75rem;letter-spacing:.1em;text-transform:uppercase;font-weight:600;color:var(--mute)}
     td code{white-space:nowrap}
@@ -134,28 +136,37 @@
 <button class="theme" type="button" aria-label="Theme: follows system" title="Theme: follows system">◐</button>
 <div class="shell">
   <aside class="side">
-    <a class="brand" href="{{root}}" data-blob>gangline</a>
+    <a class="brand" href="/" data-blob>gangline</a>
     <p class="sub">Documentation</p>
     <button class="navtoggle" type="button" aria-expanded="false">Contents</button>
-    <nav aria-label="Documentation">{{nav}}
+    <nav aria-label="Documentation">{groups.map(([group, entries]) => <>
+        <p class="grp">{group}</p><ul>
+          {entries.map(([entryId, label]) => <li class={entryId === id ? 'on' : undefined}>
+            <a href={href(entryId)} aria-current={entryId === id ? 'page' : undefined}>{label}</a>
+            {entryId === id && headings.length > 0 && <ul class="toc">
+              {headings.map((heading) => <li><a href={`#${heading.slug}`}>{heading.text}</a></li>)}
+            </ul>}
+          </li>)}
+        </ul>
+      </>)}
       <div class="out">
-        <a href="{{source}}">This page on GitHub</a>
+        <a href={sourceUrl}>This page on GitHub</a>
         <a href="https://github.com/adambiggs/gangline">Source repository</a>
       </div>
     </nav>
   </aside>
   <main>
     <article>
-{{body}}
+<slot />
     </article>
     <footer class="ftr">
-      <a href="{{source}}">View source</a>
+      <a href={sourceUrl}>View source</a>
       <a href="https://github.com/adambiggs/gangline">GitHub</a>
       <a href="https://github.com/adambiggs/gangline/blob/main/LICENSE">Apache-2.0</a>
     </footer>
   </main>
 </div>
-<script>
+<script is:inline>
 (() => {
   const b = document.querySelector('.theme');
   const order = ['auto', 'light', 'dark'];
@@ -185,6 +196,15 @@
     box.append(c);
   }
 })();
+</script>
+<script>
+import { createBlorbo, presets, content, viewport, clock, scroll, pointer, click, orientation, midi, visibility, reducedMotion, theme } from 'blorbo';
+const canvas = document.getElementById('blorbo');
+if (canvas) createBlorbo(canvas, {
+  preset: presets.gangline,
+  persist: 'session',
+  inputs: [viewport(), clock(), scroll(), pointer(), click(), orientation(), midi(), content({ pin: '[data-blob]' }), visibility(), reducedMotion(), theme()],
+});
 </script>
 </body>
 </html>
