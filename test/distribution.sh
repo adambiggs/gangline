@@ -189,12 +189,12 @@ printf 'distribution: unknown release layout refusal passed\n'
 
 case "$(uname -s)" in Linux) asset_os=linux ;; Darwin) asset_os=darwin ;; esac
 case "$(uname -m)" in x86_64|amd64) asset_arch=amd64 ;; aarch64|arm64) asset_arch=arm64 ;; esac
-asset_name="gangline-v1.0.0-$asset_os-$asset_arch"
+asset_name="gangline-v1.0.1-$asset_os-$asset_arch"
 asset_root="$scratch/assets"
-asset_dir="$asset_root/gangline-v1.0.0"
+asset_dir="$asset_root/gangline-v1.0.1"
 mkdir -p "$asset_dir"
 CGO_ENABLED=0 go -C "$go_repo" build -trimpath \
-  -ldflags '-s -w -X main.version=1.0.0' -o "$asset_dir/$asset_name" ./cmd/gang
+  -ldflags '-s -w -X main.version=1.0.1' -o "$asset_dir/$asset_name" ./cmd/gang
 (
   cd "$asset_dir"
   if command -v sha256sum >/dev/null 2>&1; then
@@ -225,7 +225,7 @@ asset_url="http://127.0.0.1:$asset_port"
 http_fallback_home="$scratch/http-fallback-home"
 GANGLINE_RELEASE_BASE_URL="$asset_url/missing" \
   run_install "$go_repo" "$http_fallback_home" "$scratch/http-fallback.out"
-grep -F 'building gangline-v1.0.0 from source (Go required)' \
+grep -F 'building gangline-v1.0.1 from source (Go required)' \
   "$scratch/http-fallback.out" >/dev/null
 
 printf '%064d  %s\n' 0 "$asset_name" >"$asset_dir/SHA256SUMS"
@@ -255,7 +255,7 @@ http_binary_home="$scratch/http-binary-home"
 GANGLINE_RELEASE_BASE_URL="$asset_url" \
   run_install "$go_repo" "$http_binary_home" "$scratch/http-binary.out"
 grep -F "verified prebuilt $asset_name" "$scratch/http-binary.out" >/dev/null
-[ "$("$http_binary_home/.local/bin/gang" --version)" = 'gangline 1.0.0' ]
+[ "$("$http_binary_home/.local/bin/gang" --version)" = 'gangline 1.0.1' ]
 printf 'distribution: HTTP release asset install passed without Go\n'
 
 title="$scratch/title"
