@@ -2,6 +2,7 @@
 import demoVideo from '../../demo.mp4?url';
 import demoPoster from '../../demo-poster.jpg?url';
 import SocialMeta from '../components/SocialMeta.astro';
+import Analytics from '../components/Analytics.astro';
 const title = 'Gangline: CLI agents connected in tmux';
 const description = 'Give a lead a task, let it recruit Claude Code and Codex teammates, and watch their work in tmux.';
 ---
@@ -19,6 +20,7 @@ const description = 'Give a lead a task, let it recruit Claude Code and Codex te
   <meta name="theme-color" content="#071530" media="(prefers-color-scheme: dark)">
   <link rel="preload" href="fonts/newsreader-latin.woff2" as="font" type="font/woff2" crossorigin>
   <link rel="preload" href="fonts/instrument-sans-latin.woff2" as="font" type="font/woff2" crossorigin>
+  <Analytics />
   <style is:global>
     @font-face{font-family:'Newsreader';src:url('/fonts/newsreader-latin.woff2') format('woff2');font-weight:200 800;font-style:normal;font-display:swap}
     @font-face{font-family:'Newsreader';src:url('/fonts/newsreader-italic-latin.woff2') format('woff2');font-weight:200 800;font-style:italic;font-display:swap}
@@ -231,10 +233,10 @@ const description = 'Give a lead a task, let it recruit Claude Code and Codex te
         </nav>
       </div>
       <div class="links">
-        <a href="https://github.com/adambiggs/gangline">GitHub</a>
-        <a href="docs/">Docs</a>
-        <a href="docs/reference.html">Reference</a>
-        <a href="docs/quickstart.html">Your first team</a>
+        <a href="https://github.com/adambiggs/gangline" data-track="github_click">GitHub</a>
+        <a href="docs/" data-track="docs_click">Docs</a>
+        <a href="docs/reference.html" data-track="reference_click">Reference</a>
+        <a href="docs/quickstart.html" data-track="quickstart_click">Your first team</a>
       </div>
     </header>
 
@@ -261,7 +263,7 @@ const description = 'Give a lead a task, let it recruit Claude Code and Codex te
             <button id="demo-fullscreen" type="button" hidden>Full screen</button>
           </div>
         </div>
-        <p class="cap">A Claude Code lead asks a Codex worker to finish an animated greeting. The worker edits and runs it, reports back, and the finished animation plays. <a href="demo.txt">Read the transcript</a>.</p>
+        <p class="cap">A Claude Code lead asks a Codex worker to finish an animated greeting. The worker edits and runs it, reports back, and the finished animation plays. <a href="demo.txt" data-track="demo_transcript_click">Read the transcript</a>.</p>
       </section>
 
       <section id="start" class="sec">

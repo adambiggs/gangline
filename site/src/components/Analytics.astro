@@ -1,0 +1,45 @@
+<script>
+  import posthog from 'posthog-js';
+
+  const params = new URLSearchParams(location.search);
+  const optOutKey = 'gangline.analytics.optout';
+  const notrack = params.has('notrack');
+  const track = !notrack && params.has('track');
+  let optedOut = notrack;
+
+  try {
+    if (notrack) localStorage.setItem(optOutKey, '1');
+    else if (track) localStorage.removeItem(optOutKey);
+    else optedOut = localStorage.getItem(optOutKey) === '1';
+  } catch {
+    // The URL switches still work when storage is unavailable.
+  }
+
+  if (!optedOut) {
+    posthog.init('phc_wzXwjVT6vvMvLHLC4Bfo63UTCQmFMirSTahbjZJmy6HX', {
+      api_host: 'https://us.i.posthog.com',
+      ui_host: 'https://us.posthog.com',
+      cookieless_mode: 'always',
+      person_profiles: 'never',
+      autocapture: false,
+      capture_pageview: true,
+      capture_pageleave: true,
+      capture_performance: { web_vitals: true, network_timing: false },
+      capture_exceptions: true,
+      disable_session_recording: true,
+      disable_surveys: true,
+      advanced_disable_flags: true,
+    });
+
+    document.addEventListener('click', (event) => {
+      const target = event.target;
+      if (!(target instanceof Element)) return;
+      const element = target.closest('[data-track]');
+      if (!element) return;
+      posthog.capture(element.getAttribute('data-track'), {
+        href: element.getAttribute('href'),
+        path: location.pathname,
+      }, { send_instantly: true });
+    });
+  }
+</script>
