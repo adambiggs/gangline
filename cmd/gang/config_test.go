@@ -83,7 +83,7 @@ func TestReadConfigurationRejectsUnknownAndRepeatedKeys(t *testing.T) {
 
 func TestSettingsLoadsOperatorLaunchArgumentsByCollar(t *testing.T) {
 	directory := t.TempDir()
-	content := "GANG_LAUNCH_ARGS={\"codex\":[\"--dangerously-bypass-approvals-and-sandbox\"]}\n"
+	content := "GANG_LAUNCH_ARGS={\"codex\":[\"--sandbox\",\"workspace-write\"]}\nGANG_CODEX_PERMISSION_PROFILE=gangline\n"
 	if err := os.WriteFile(filepath.Join(directory, "config"), []byte(content), 0o600); err != nil {
 		t.Fatal(err)
 	}
@@ -101,7 +101,10 @@ func TestSettingsLoadsOperatorLaunchArgumentsByCollar(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(got.LaunchArgs["codex"]) != 1 || got.LaunchArgs["codex"][0] != "--dangerously-bypass-approvals-and-sandbox" {
+	if len(got.LaunchArgs["codex"]) != 2 || got.LaunchArgs["codex"][0] != "--sandbox" || got.LaunchArgs["codex"][1] != "workspace-write" {
 		t.Fatalf("launch args = %#v", got.LaunchArgs)
+	}
+	if got.CodexPermissionProfile != "gangline" {
+		t.Fatalf("profile = %q", got.CodexPermissionProfile)
 	}
 }

@@ -8,22 +8,24 @@ import (
 	"path/filepath"
 	"strings"
 	"time"
+	"unicode/utf8"
 
 	"github.com/adambiggs/gangline/harness"
 	"github.com/adambiggs/gangline/substrate/tmux"
 )
 
 type settings struct {
-	CapacityTimeout time.Duration
-	Session         string
-	StateRoot       string
-	Collar          string
-	Socket          string
-	ConfigDir       string
-	CollarDir       string
-	LaunchArgs      map[string][]string
-	LaunchArgsJSON  string
-	Origins         map[string]string
+	CapacityTimeout        time.Duration
+	Session                string
+	StateRoot              string
+	Collar                 string
+	Socket                 string
+	ConfigDir              string
+	CollarDir              string
+	LaunchArgs             map[string][]string
+	LaunchArgsJSON         string
+	CodexPermissionProfile string
+	Origins                map[string]string
 }
 
 func (cmd command) settings() (settings, error) {
@@ -78,11 +80,12 @@ func (cmd command) settings() (settings, error) {
 	}
 	capacityTimeout := "5m"
 	values := map[string]*string{
-		"GANG_CAPACITY_TIMEOUT": &capacityTimeout,
-		"GANG_SESSION":          &result.Session,
-		"GANG_COLLAR":           &result.Collar,
-		"GANG_COLLARS":          &result.CollarDir,
-		"GANG_LAUNCH_ARGS":      &result.LaunchArgsJSON,
+		"GANG_CAPACITY_TIMEOUT":         &capacityTimeout,
+		"GANG_SESSION":                  &result.Session,
+		"GANG_COLLAR":                   &result.Collar,
+		"GANG_COLLARS":                  &result.CollarDir,
+		"GANG_LAUNCH_ARGS":              &result.LaunchArgsJSON,
+		"GANG_CODEX_PERMISSION_PROFILE": &result.CodexPermissionProfile,
 	}
 	for name, destination := range values {
 		if value, ok := configured[name]; ok {
@@ -128,15 +131,19 @@ func (cmd command) settings() (settings, error) {
 			}
 		}
 	}
+	if result.CodexPermissionProfile != "" && !codexProfileName(result.CodexPermissionProfile) {
+		return settings{}, fmt.Errorf("GANG_CODEX_PERMISSION_PROFILE must contain only letters, digits, hyphens, or underscores")
+	}
 	return result, nil
 }
 
 var configurationKeys = map[string]bool{
-	"GANG_CAPACITY_TIMEOUT": true,
-	"GANG_COLLAR":           true,
-	"GANG_SESSION":          true,
-	"GANG_COLLARS":          true,
-	"GANG_LAUNCH_ARGS":      true,
+	"GANG_CAPACITY_TIMEOUT":         true,
+	"GANG_COLLAR":                   true,
+	"GANG_SESSION":                  true,
+	"GANG_COLLARS":                  true,
+	"GANG_LAUNCH_ARGS":              true,
+	"GANG_CODEX_PERMISSION_PROFILE": true,
 }
 
 func readConfiguration(filename string) (map[string]string, error) {
@@ -204,6 +211,138 @@ func applyLaunchPolicy(command harness.Command, collar string, settings settings
 	result := command
 	result.Args = append(append([]string(nil), command.Args...), settings.LaunchArgs[collar]...)
 	return result
+}
+
+func linkedWorktreeGitdir(dir string) string {
+	for {
+		file := filepath.Join(dir, ".git")
+		info, err := os.Lstat(file)
+		if os.IsNotExist(err) {
+			parent := filepath.Dir(dir)
+			if parent == dir {
+				return ""
+			}
+			dir = parent
+			continue
+		}
+		if err != nil || !info.Mode().IsRegular() {
+			return "" // A primary checkout keeps .git as a directory.
+		}
+		data, err := os.ReadFile(file)
+		if err != nil {
+			return ""
+		}
+		value, ok := strings.CutPrefix(strings.TrimSpace(string(data)), "gitdir: ")
+		if !ok || strings.ContainsAny(value, "\r\n") {
+			return ""
+		}
+		if !filepath.IsAbs(value) {
+			value = filepath.Join(dir, value)
+		}
+		return linkedGitdirFromPointer(value, file)
+	}
+}
+
+func linkedGitdirFromPointer(path, file string) string {
+	gitdir, err := filepath.EvalSymlinks(path)
+	if err != nil {
+		return ""
+	}
+	data, err := os.ReadFile(filepath.Join(gitdir, "gitdir"))
+	if err != nil {
+		return ""
+	}
+	backlink := strings.TrimSpace(string(data))
+	if backlink == "" || strings.ContainsAny(backlink, "\r\n") {
+		return ""
+	}
+	if !filepath.IsAbs(backlink) {
+		backlink = filepath.Join(gitdir, backlink)
+	}
+	backlink, err = filepath.EvalSymlinks(backlink)
+	if err != nil {
+		return ""
+	}
+	file, err = filepath.EvalSymlinks(file)
+	if err != nil {
+		return ""
+	}
+	if backlink != file {
+		return ""
+	}
+	data, err = os.ReadFile(filepath.Join(gitdir, "commondir"))
+	if err != nil {
+		return ""
+	}
+	commonPath := strings.TrimSpace(string(data))
+	if commonPath == "" || strings.ContainsAny(commonPath, "\r\n") {
+		return ""
+	}
+	if !filepath.IsAbs(commonPath) {
+		commonPath = filepath.Join(gitdir, commonPath)
+	}
+	common, err := filepath.EvalSymlinks(commonPath)
+	if err != nil {
+		return ""
+	}
+	name, err := filepath.Rel(filepath.Join(common, "worktrees"), gitdir)
+	if err != nil || name == "." || name == ".." || strings.ContainsRune(name, filepath.Separator) {
+		return ""
+	}
+	return gitdir
+}
+
+func codexProfileName(profile string) bool {
+	return profile != "" && strings.IndexFunc(profile, func(r rune) bool {
+		return r != '-' && r != '_' && (r < '0' || r > '9') && (r < 'A' || r > 'Z') && (r < 'a' || r > 'z')
+	}) < 0
+}
+
+func codexProfileLaunch(args []string, profile, gitdir string) ([]string, error) {
+	if profile == "" {
+		return args, nil
+	}
+	if !codexProfileName(profile) {
+		return nil, fmt.Errorf("invalid Codex permission profile name %q", profile)
+	}
+	for index, arg := range args {
+		switch {
+		case strings.HasPrefix(arg, "-s") && arg != "-", strings.HasPrefix(arg, "-p") && arg != "-", arg == "--sandbox", strings.HasPrefix(arg, "--sandbox="), arg == "--profile", strings.HasPrefix(arg, "--profile="), arg == "--dangerously-bypass-approvals-and-sandbox":
+			return nil, fmt.Errorf("GANG_CODEX_PERMISSION_PROFILE conflicts with Codex argument %q", arg)
+		case arg == "-c" || arg == "--config":
+			if index+1 == len(args) {
+				return nil, fmt.Errorf("Codex argument %q has no value", arg)
+			}
+			key, _, _ := strings.Cut(args[index+1], "=")
+			key = strings.TrimSpace(key)
+			if key == "default_permissions" || key == "sandbox_mode" {
+				return nil, fmt.Errorf("GANG_CODEX_PERMISSION_PROFILE conflicts with Codex setting %q", key)
+			}
+		case strings.HasPrefix(arg, "--config=") || strings.HasPrefix(arg, "-c"):
+			value := strings.TrimPrefix(arg, "--config=")
+			value = strings.TrimPrefix(value, "-c")
+			value = strings.TrimPrefix(value, "=")
+			key, _, _ := strings.Cut(value, "=")
+			key = strings.TrimSpace(key)
+			if key == "default_permissions" || key == "sandbox_mode" {
+				return nil, fmt.Errorf("GANG_CODEX_PERMISSION_PROFILE conflicts with Codex setting %q", key)
+			}
+		}
+	}
+	quoted, _ := json.Marshal(profile)
+	result := append(append([]string(nil), args...), "-c", "default_permissions="+string(quoted))
+	if grant := codexGitdirGrant(profile, gitdir); grant != "" {
+		result = append(result, "-c", grant)
+	}
+	return result, nil
+}
+
+func codexGitdirGrant(profile, gitdir string) string {
+	if profile == "" || gitdir == "" || !utf8.ValidString(gitdir) {
+		return ""
+	}
+	path, _ := json.Marshal(gitdir)
+	return "permissions." + profile + ".filesystem={" + string(path) + `="write"}`
 }
 
 func (cmd command) tmux(settings settings) (*tmux.Backend, error) {

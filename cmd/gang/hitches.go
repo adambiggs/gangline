@@ -125,6 +125,12 @@ func (cmd command) hitchWithStaleClaim(args []string, supersede bool) (result er
 		return err
 	}
 	launch = applyLaunchPolicy(launch, o.Collar, run.settings)
+	if filepath.Base(launch.Name) == "codex" {
+		launch.Args, err = codexProfileLaunch(launch.Args, run.settings.CodexPermissionProfile, linkedWorktreeGitdir(dir))
+		if err != nil {
+			return refuseError("%v", err)
+		}
+	}
 	if _, err := exec.LookPath(launch.Name); err != nil {
 		if errors.Is(err, exec.ErrNotFound) {
 			return refuseError("%s: not found in PATH", launch.Name)

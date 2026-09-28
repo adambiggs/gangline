@@ -126,7 +126,22 @@ override file values. Run `gang config` to see effective values and defaults.
 | `GANG_COLLAR` | Default collar; defaults to `claude-code`. |
 | `GANG_COLLARS` | Absolute directory of custom `NAME.cue` collars and bundled collar overlays. |
 | `GANG_LAUNCH_ARGS` | JSON object mapping collar names to extra launch argument arrays. |
+| `GANG_CODEX_PERMISSION_PROFILE` | Codex permission profile name for hitched agents; unset by default. |
 | `GANG_CAPACITY_TIMEOUT` | Positive duration budget for provider-error continuations. |
+
+Set `GANG_CODEX_PERMISSION_PROFILE=gangline` in the config file or environment
+to select that profile for Codex hitches. The named profile must exist in
+Codex's own config. When the hitch directory is a linked Git worktree, Gangline
+also grants its exact worktree gitdir writable access in that profile. An unset
+value adds no Codex permission arguments. Conflicting sandbox or profile
+arguments supplied through Gangline are refused. Codex may load other config
+layers that override the selected permission mode.
+
+Granting a worktree gitdir lets the agent edit Git metadata, including files
+that can make later host Git commands execute code. Commits also need write
+access to the common Git directory, which carries the same trust cost. Enable
+this only for agents trusted with that access. The grant has not yet been
+verified by a native commit in a sandboxed linked worktree.
 
 These variables are environment-only:
 
