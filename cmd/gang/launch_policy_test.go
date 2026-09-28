@@ -125,6 +125,8 @@ func TestCodexProfileLaunch(t *testing.T) {
 		{"attached permission override equals", []string{`-c=default_permissions="team"`}},
 		{"spaced sandbox override", []string{"-c", `sandbox_mode = "workspace-write"`}},
 		{"bypass", []string{"--dangerously-bypass-approvals-and-sandbox"}},
+		{"bypass alias", []string{"--yolo"}},
+		{"config profile override", []string{"-c", `profile="other"`}},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			if _, err := codexProfileLaunch(tc.args, "gangline", gitdir); err == nil {

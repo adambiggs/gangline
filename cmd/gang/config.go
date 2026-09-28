@@ -307,7 +307,7 @@ func codexProfileLaunch(args []string, profile, gitdir string) ([]string, error)
 	}
 	for index, arg := range args {
 		switch {
-		case strings.HasPrefix(arg, "-s") && arg != "-", strings.HasPrefix(arg, "-p") && arg != "-", arg == "--sandbox", strings.HasPrefix(arg, "--sandbox="), arg == "--profile", strings.HasPrefix(arg, "--profile="), arg == "--dangerously-bypass-approvals-and-sandbox":
+		case strings.HasPrefix(arg, "-s") && arg != "-", strings.HasPrefix(arg, "-p") && arg != "-", arg == "--sandbox", strings.HasPrefix(arg, "--sandbox="), arg == "--profile", strings.HasPrefix(arg, "--profile="), arg == "--dangerously-bypass-approvals-and-sandbox", arg == "--yolo":
 			return nil, fmt.Errorf("GANG_CODEX_PERMISSION_PROFILE conflicts with Codex argument %q", arg)
 		case arg == "-c" || arg == "--config":
 			if index+1 == len(args) {
@@ -315,7 +315,7 @@ func codexProfileLaunch(args []string, profile, gitdir string) ([]string, error)
 			}
 			key, _, _ := strings.Cut(args[index+1], "=")
 			key = strings.TrimSpace(key)
-			if key == "default_permissions" || key == "sandbox_mode" {
+			if key == "default_permissions" || key == "sandbox_mode" || key == "profile" {
 				return nil, fmt.Errorf("GANG_CODEX_PERMISSION_PROFILE conflicts with Codex setting %q", key)
 			}
 		case strings.HasPrefix(arg, "--config=") || strings.HasPrefix(arg, "-c"):
@@ -324,7 +324,7 @@ func codexProfileLaunch(args []string, profile, gitdir string) ([]string, error)
 			value = strings.TrimPrefix(value, "=")
 			key, _, _ := strings.Cut(value, "=")
 			key = strings.TrimSpace(key)
-			if key == "default_permissions" || key == "sandbox_mode" {
+			if key == "default_permissions" || key == "sandbox_mode" || key == "profile" {
 				return nil, fmt.Errorf("GANG_CODEX_PERMISSION_PROFILE conflicts with Codex setting %q", key)
 			}
 		}
