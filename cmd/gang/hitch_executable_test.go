@@ -11,6 +11,7 @@ func TestHitchReportsMissingHarnessBeforeCreatingPane(t *testing.T) {
 	for _, test := range []struct{ collar, executable string }{
 		{"codex", "codex"},
 		{"claude-code", "claude"},
+		{"claude", "claude"},
 	} {
 		err := f.cmd.hitch([]string{"worker", "-c", test.collar})
 		want := test.executable + ": not found in PATH"

@@ -176,6 +176,7 @@ when the agent is hitched.
 
 A collar is a CUE file that tells Gangline how to launch and communicate with
 a particular harness. The bundled collars are `claude-code` and `codex`.
+`claude` is an alias for `claude-code` unless `GANG_COLLARS/claude.cue` exists.
 Each uses the installed native CLI and its account settings. Use
 `gang models -c COLLAR` for available
 model and effort identifiers. Gangline leaves native permissions, login, and

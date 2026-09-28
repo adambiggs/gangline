@@ -33,6 +33,39 @@ collar: {
 	}
 }
 
+func TestClaudeAliasUsesBundledCollar(t *testing.T) {
+	c, err := loadCollar("claude", settings{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if c.Name != "claude-code" || c.Launch.Command != "claude" {
+		t.Fatalf("claude alias loaded %+v", c)
+	}
+}
+
+func TestCustomClaudeCollarTakesPrecedenceOverAlias(t *testing.T) {
+	dir := t.TempDir()
+	base, err := harness.EmbeddedCollar("claude-code")
+	if err != nil {
+		t.Fatal(err)
+	}
+	base.Name = "claude"
+	data, err := json.Marshal(map[string]any{"collar": base})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, "claude.cue"), data, 0600); err != nil {
+		t.Fatal(err)
+	}
+	c, err := loadCollar("claude", settings{CollarDir: dir})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if c.Name != "claude" {
+		t.Fatalf("custom claude collar name = %q", c.Name)
+	}
+}
+
 func TestOverlayPrimitiveNameReplacesParameters(t *testing.T) {
 	dir := t.TempDir()
 	data := []byte(`collar: {models: {catalog: {name: "claude-help-models", params: {command: "claude"}}}}`)

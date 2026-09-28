@@ -128,6 +128,9 @@ func loadCollar(name string, settings settings) (harness.Collar, error) {
 			return harness.Collar{}, fmt.Errorf("read collar %q: %w", name, err)
 		}
 	}
+	if name == "claude" {
+		return loadCollar("claude-code", settings)
+	}
 	return harness.EmbeddedCollar(name)
 }
 

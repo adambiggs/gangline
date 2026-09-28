@@ -47,6 +47,7 @@ func (cmd command) hitchWithStaleClaim(args []string, supersede bool) (result er
 	if err != nil {
 		return err
 	}
+	o.Collar = c.Name
 	if o.Resume != "" {
 		if err := harness.ValidateResume(c, o.Resume); err != nil {
 			return refuseError("%s", err)
@@ -280,9 +281,11 @@ func (cmd command) adopt(args []string) (result error) {
 	if collar == "" {
 		collar = run.settings.Collar
 	}
-	if _, err := loadCollar(collar, run.settings); err != nil {
+	c, err := loadCollar(collar, run.settings)
+	if err != nil {
 		return err
 	}
+	collar = c.Name
 	pane := cmd.environment("TMUX_PANE")
 	if pane == "" {
 		return refuseError("adopt requires the current tmux pane")
