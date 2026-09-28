@@ -7,18 +7,17 @@ repo=$(cd -- "$(dirname -- "$0")/../.." && pwd)
 case "$DEMO_STATE" in "$HOME/.local/state/"*) ;; *) echo 'DEMO_STATE must be under ~/.local/state' >&2; exit 1 ;; esac
 mkdir "$DEMO_STATE"
 export DEMO_STATE
-unset TMUX TMUX_PANE GANG_TMUX GANG_COLLARS NO_COLOR
+unset TMUX TMUX_PANE GANG_TMUX GANG_COLLARS GANG_AGENT_ID GANGLINE_HITCH_ID GANGLINE_BOUNDARY GANG_COLLAR NO_COLOR
 export COLORTERM=truecolor
 export GANG_SESSION=gangline-demo-vhs
 export GANG_TMUX_SOCKET="$DEMO_STATE/tmux.sock"
 export GANG_STATE_ROOT="$DEMO_STATE/state"
 export GANG_CONFIG_DIR="$DEMO_STATE/config"
 export CLAUDE_CODE_ENABLE_PROMPT_SUGGESTION=false
-# The throwaway demo agents need access to the peer harness process.
-# Gang needs to observe the peer harness process when delivering the reply.
-metadata=$(git -C "$repo" rev-parse --path-format=absolute --git-common-dir)
+export GANG_CODEX_PERMISSION_PROFILE=gangline
+# Keep the recorder independent of host launch and approval settings.
 export GANG_LAUNCH_ARGS
-GANG_LAUNCH_ARGS=$(python3 -c 'import json,sys; print(json.dumps({"codex":["--sandbox","danger-full-access","--add-dir",sys.argv[1],"--add-dir",sys.argv[2]]}))' "$DEMO_STATE" "$metadata")
+GANG_LAUNCH_ARGS=$(python3 -c 'import json,sys; print(json.dumps({"codex":["-c","approval_policy=\"on-request\"","--add-dir",sys.argv[1]]}))' "$GANG_STATE_ROOT")
 mkdir -p "$GANG_CONFIG_DIR/roles"
 for tool in gang tmux claude codex vhs ffmpeg; do command -v "$tool"; done
 # Claude Code's permission-mode footer uses U+23F5, which DejaVu Sans Mono lacks.

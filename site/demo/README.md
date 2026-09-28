@@ -23,11 +23,12 @@ DEMO_STATE="$HOME/.local/state/gangline-demo-$(date +%s)" site/demo/record.sh
 The state path must be new. Preserve and remove a previous `greet.py` before
 recording again. The script keeps the event log and native pane scrollback in
 the state directory and drops only its own team. It does not replace the
-installed Gangline binary or change saved harness settings. The demo launches
-Codex with full sandbox access so Gangline can
-observe the peer harness process when delivering its reply. Run it only in
-the trusted demo worktree. A permission prompt needs the operator; a failed
-take is not a recording.
+installed Gangline binary or change saved harness settings. The recorder
+explicitly selects the sandboxed `gangline` permission profile through
+`GANG_CODEX_PERMISSION_PROFILE` and uses on-request approvals. That
+profile enables network access, including local sockets for team messages.
+The recorder grants its private state root as an additional writable directory.
+A permission prompt needs the operator; a failed take is not a recording.
 
 The recorder clears `NO_COLOR` and sets `COLORTERM=truecolor` before starting
 the private team so both harnesses render their native colours.

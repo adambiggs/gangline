@@ -71,11 +71,9 @@ approval. Answer these prompts yourself, then run `gang tick` from your shell
 if startup is queued. The [startup guide](guides.md#recover-a-blocked-startup-pane)
 shows how to inspect a blocked pane.
 
-The [recorded demo](../site/demo.txt) grants Codex full sandbox access
-so Gangline can observe the peer harness process while delivering a reply.
-This walkthrough does not set that permission mode. Native permissions apply;
-the permissions needed for process observation depend on your sandbox and
-host. Review any native request for access before proceeding.
+The [recorded demo](../site/demo.txt) shows a lead and worker exchanging the
+greeting task. This walkthrough leaves native permissions at their configured
+defaults. Review any native request for access before proceeding.
 
 The lead can now hitch `scout`, send the assignment, and use its reply to
 answer you. This is an instruction to the lead; its exact wording and tool
