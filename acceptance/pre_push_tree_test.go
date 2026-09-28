@@ -40,7 +40,7 @@ func TestPrePushChecksCommittedTree(t *testing.T) {
 		t.Fatal(err)
 	}
 	gate := filepath.Join(root, "test", "go.sh")
-	if err := os.WriteFile(gate, []byte("#!/bin/sh\n# SPDX-License-Identifier: Apache-2.0\necho committed-gate-failed\nexit 37\n"), 0700); err != nil {
+	if err := os.WriteFile(gate, []byte("#!/bin/sh\n# SPDX-License-Identifier: Apache-2.0\n[ \"${1:-}\" = --push ] || exit 0\necho committed-gate-failed\nexit 37\n"), 0700); err != nil {
 		t.Fatal(err)
 	}
 	git("add", "test/go.sh")

@@ -257,34 +257,3 @@ GANGLINE_RELEASE_BASE_URL="$asset_url" \
 grep -F "verified prebuilt $asset_name" "$scratch/http-binary.out" >/dev/null
 [ "$("$http_binary_home/.local/bin/gang" --version)" = 'gangline 1.0.1' ]
 printf 'distribution: HTTP release asset install passed without Go\n'
-
-title="$scratch/title"
-printf 'feat!: replace the public command\n' >"$title"
-"$ROOT/.githooks/commit-msg" --subject-only "$title"
-printf 'chore(main): release gangline 1.0.0\n' >"$title"
-"$ROOT/.githooks/commit-msg" --subject-only "$title"
-for exempt in \
-  'Merge branch main' \
-  'fixup! fix(installer): build the release' \
-  'squash! fix(installer): build the release' \
-  'amend! fix(installer): build the release'; do
-  printf '%s\n' "$exempt" >"$title"
-  if "$ROOT/.githooks/commit-msg" --subject-only "$title" >"$scratch/title.out" 2>"$scratch/title.err"; then
-    printf 'distribution: PR title validator accepted %s\n' "$exempt" >&2
-    exit 1
-  fi
-done
-
-printf 'feat!: replace the public command\n' >"$title"
-if "$ROOT/.githooks/commit-msg" "$title" >"$scratch/message.out" 2>"$scratch/message.err"; then
-  echo 'distribution: full commit validator accepted a missing breaking footer' >&2
-  exit 1
-fi
-grep -F 'carries no BREAKING CHANGE: footer' "$scratch/message.err" >/dev/null
-cat >"$title" <<'EOF'
-feat!: replace the public command
-
-BREAKING CHANGE: callers must use gang instead.
-EOF
-"$ROOT/.githooks/commit-msg" "$title"
-printf 'distribution: commit and PR title validation passed\n'

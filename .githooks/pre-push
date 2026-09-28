@@ -48,7 +48,7 @@ fi
 
 unset GIT_DIR GIT_WORK_TREE GIT_INDEX_FILE GIT_OBJECT_DIRECTORY GIT_COMMON_DIR GIT_PREFIX
 
-echo "pre-push: Go checks and private-tmux acceptance scenarios run here; CI repeats them on Linux and macOS." >&2
+echo "pre-push: checking pushed Go trees; run test/gate.sh for distribution and acceptance scenarios." >&2
 
 while read -r local_ref local_sha _remote_ref _remote_sha \
       || [ -n "${local_sha:-}" ]; do
@@ -68,7 +68,7 @@ while read -r local_ref local_sha _remote_ref _remote_sha \
   if [ -x "$work/test/go.sh" ]; then
     echo "pre-push: running pushed-tree Go checks for $local_ref." >&2
     ( unset GIT_DIR GIT_WORK_TREE GIT_INDEX_FILE GIT_OBJECT_DIRECTORY GIT_COMMON_DIR GIT_PREFIX
-      cd "$work" && ./test/go.sh ) || fail=1
+      cd "$work" && ./test/go.sh --push ) || fail=1
   else
     echo "pre-push: $local_sha does not carry the executable Go gate" >&2
     fail=1

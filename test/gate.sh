@@ -27,7 +27,7 @@ if [ -z "${_GANGLINE_GATE_LOCKED:-}" ]; then
 fi
 
 # THE LAST LINE CARRIES THE VERDICT, because `test/gate.sh 2>&1 | tail` loses
-# the exit status. A run that ends before both steps report is UNKNOWN, not
+# the exit status. A run that ends before the checks report is UNKNOWN, not
 # REFUSED: it produced no verdict on the tree.
 decided=0
 verdict() {
@@ -35,7 +35,7 @@ verdict() {
   if [ "$decided" -ne 1 ]; then
     printf 'gate: VERDICT UNKNOWN (status %s)\n' "$rc"
   elif [ "$rc" -eq 0 ]; then
-    printf 'gate: VERDICT PASS (status 0); this gate ran the Go checks and private-tmux acceptance scenarios.\n'
+    printf 'gate: VERDICT PASS (status 0); test/go.sh completed; see acceptance result above.\n'
   else
     printf 'gate: VERDICT REFUSED (status %s)\n' "$rc"
   fi

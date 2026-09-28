@@ -24,16 +24,19 @@ test/gate.sh
 ```
 
 The pre-push hook runs your global pre-push hook first, if you have one, then
-the repository's checks.
+checks the pushed Go trees with `test/go.sh --push`. This runs formatting, vet,
+sum-type, package-boundary, and unit checks. The full `test/gate.sh` also runs
+distribution and private-tmux acceptance scenarios. On Linux, it reports a
+skip for bus-dependent acceptance if the systemd user bus is unreachable.
 
 A successful baseline ends with:
 
 ```text
-gate: VERDICT PASS (status 0); this gate ran the Go checks and private-tmux acceptance scenarios.
+gate: VERDICT PASS (status 0); test/go.sh completed; see acceptance result above.
 ```
 
-The gate runs formatting, vet, unit tests, and tmux acceptance tests on the
-working tree. Gate runs are serialized on the host. It ends with `PASS`,
+The gate runs formatting, vet, unit tests, and available tmux acceptance tests
+on the working tree. Gate runs are serialized on the host. It ends with `PASS`,
 `REFUSED`, or `UNKNOWN`; no verdict line means it didn't pass.
 
 New shell and Python build-support files need an SPDX license identifier. Do
