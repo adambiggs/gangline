@@ -27,6 +27,7 @@ installed Gangline binary or change saved harness settings. The recorder
 explicitly selects the sandboxed `gangline` permission profile through
 `GANG_CODEX_PERMISSION_PROFILE` and uses on-request approvals. That
 profile enables network access, including local sockets for team messages.
+Create that profile in Codex's user config before recording.
 The recorder grants its private state root as an additional writable directory.
 A permission prompt needs the operator; a failed take is not a recording.
 
