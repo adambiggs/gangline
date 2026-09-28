@@ -1,14 +1,18 @@
 ---
 import demoVideo from '../../demo.mp4?url';
 import demoPoster from '../../demo-poster.jpg?url';
+import SocialMeta from '../components/SocialMeta.astro';
+const title = 'Gangline: CLI agents connected in tmux';
+const description = 'Give a lead a task, let it recruit Claude Code and Codex teammates, and watch their work in tmux.';
 ---
 <!doctype html>
 <html lang="en">
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width,initial-scale=1">
-  <title>Gangline: CLI agents connected in tmux</title>
-  <meta name="description" content="Give a lead a task, let it recruit Claude Code and Codex teammates, and watch their work in tmux.">
+  <title>{title}</title>
+  <meta name="description" content={description}>
+  <SocialMeta title={title} description={description} />
   <meta name="color-scheme" content="light dark">
   <script is:inline>try{const t=localStorage.getItem('theme');if(t==='light'||t==='dark')document.documentElement.dataset.theme=t}catch{}</script>
   <meta name="theme-color" content="#b9d2ee" media="(prefers-color-scheme: light)">

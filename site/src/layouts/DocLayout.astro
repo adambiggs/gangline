@@ -1,13 +1,18 @@
 ---
 import { groups, href } from '../lib/docs.mjs';
+import SocialMeta from '../components/SocialMeta.astro';
 const { id, title, sourceUrl, headings } = Astro.props;
+const pageTitle = `${title} — Gangline docs`;
+const description = `Read ${title} in the Gangline documentation. Gangline connects CLI agents in tmux.`;
 ---
 <!doctype html>
 <html lang="en">
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width,initial-scale=1">
-  <title>{title} — Gangline docs</title>
+  <title>{pageTitle}</title>
+  <meta name="description" content={description}>
+  <SocialMeta title={pageTitle} description={description} />
   <meta name="color-scheme" content="light dark">
   <script is:inline>try{const t=localStorage.getItem('theme');if(t==='light'||t==='dark')document.documentElement.dataset.theme=t}catch{}</script>
   <meta name="theme-color" content="#b9d2ee" media="(prefers-color-scheme: light)">

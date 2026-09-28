@@ -10,5 +10,3 @@ for (const file of [
   'demo.mp4', 'demo-light.mp4', 'demo-poster.jpg', 'demo-poster-light.jpg',
 ]) copyFileSync(resolve(site, file), resolve(publicDir, file));
 cpSync(resolve(site, 'fonts'), resolve(publicDir, 'fonts'), { recursive: true, force: true });
-mkdirSync(resolve(publicDir, 'social'), { recursive: true });
-copyFileSync(resolve(site, 'social/preview.jpg'), resolve(publicDir, 'social/preview.jpg'));
