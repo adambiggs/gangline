@@ -165,7 +165,7 @@ func (cmd command) hitchWithStaleClaim(args []string, supersede bool) (result er
 		}
 		for _, window := range windows {
 			if !registered[string(window.Pane.ID)] && gangWindowTitle(window.Name) {
-				return refuseError("unregistered pane %s (%s) in team %q; inspect it, adopt it with 'gang adopt NAME -c COLLAR', or close that exact pane before hitching", window.Pane.ID, window.Name, run.settings.Session)
+				return refuseError("unregistered pane %s (%s) in team %q; inspect it, run 'gang adopt NAME -c COLLAR' inside that pane, or close that exact pane before hitching", window.Pane.ID, window.Name, run.settings.Session)
 			}
 		}
 	}
@@ -322,6 +322,15 @@ func (cmd command) adopt(args []string) (result error) {
 	pane := cmd.environment("TMUX_PANE")
 	if pane == "" {
 		return refuseError("adopt requires the current tmux pane")
+	}
+	agents, err := run.team.ListAgents()
+	if err != nil {
+		return err
+	}
+	for _, a := range agents {
+		if a.Pane == pane {
+			return refuseError("current pane is already registered as %s", a.Name)
+		}
 	}
 	dir, err := cmd.getwd()
 	if err != nil {
