@@ -213,13 +213,20 @@ const description = 'Run Claude Code and Codex as a team. Give agents separate j
   <main class="flow" data-quiet>
       <section class="sec lede">
         <p>Gangline is a command-line tool for running Claude Code and Codex
-        together as a team of coding agents. Give agents separate jobs, or ask
-        a lead to recruit workers and bring their results back. You can watch
-        each agent’s terminal, send new direction, or interrupt its work.</p>
-        <p>Gangline handles the handoffs: agents send assignments and replies
-        by name, so you don’t have to copy them between terminals. Each runs in
-        its own tmux window with its usual tools and permissions. You decide
-        how the team works.</p>
+        together as a team of coding agents. Give agents separate jobs, or ask a
+        lead to recruit workers and bring their results back. You can watch each
+        agent’s terminal, send new direction, or interrupt its work.</p>
+        <p>Agents send assignments and replies by name, so you don’t have to copy
+        them between terminals. Receipts tell senders when Gangline has queued a
+        message or confirmed its submission to the other agent. Each agent keeps
+        its own tools and permissions in a tmux window.</p>
+        <p>As an agent’s context fills, Gangline warns it to save its work and
+        compact its conversation. The agent can do this itself and continue from
+        a resume note after compaction finishes.</p>
+        <p>You can check context usage, provider quotas, and reset times when the
+        coding tool exposes them. If Codex reports that a model is at capacity,
+        Gangline can retry the work within a time limit. You decide how the team
+        works.</p>
       </section>
 
       <section id="demo" class="sec">
