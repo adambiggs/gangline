@@ -183,8 +183,6 @@ func (cmd command) hitchWithStaleClaim(args []string, supersede bool) (result er
 		return err
 	}
 	defer func() { result = errors.Join(result, run.release(l)) }()
-	_, schedulerErr := run.updateWatchdog("", false, false)
-	defer func() { result = errors.Join(result, schedulerErr) }()
 	if err := run.record(a, core.Event{Type: "hitch_claimed"}); err != nil {
 		return err
 	}
@@ -194,7 +192,12 @@ func (cmd command) hitchWithStaleClaim(args []string, supersede bool) (result er
 	if err := run.record(a, core.Event{Type: "send_queued", Envelope: &e}); err != nil {
 		return err
 	}
+	agentToken, err := randomID("pane")
+	if err != nil {
+		return err
+	}
 	spec := launch.SpawnSpec(windowTitle(a), dir)
+	spec.Env["GANG_AGENT_NONCE"] = agentToken
 	for k, v := range map[string]string{"GANG_SESSION": run.settings.Session, "GANG_STATE_ROOT": run.settings.StateRoot, "GANG_COLLAR": o.Collar, "GANG_CONFIG_DIR": run.settings.ConfigDir, "GANG_AGENT_ID": id, "GANGLINE_HITCH_ID": id} {
 		spec.Env[k] = v
 	}
@@ -214,14 +217,38 @@ func (cmd command) hitchWithStaleClaim(args []string, supersede bool) (result er
 		_ = run.apply(l, &a, core.Event{Type: "hitch_failed", Reason: err.Error()})
 		return err
 	}
-	identity, err := b.Identity(ctx, pane.ID)
+	registration, err := b.RegisterPane(ctx, pane.ID)
+	if err != nil {
+		cleanupErr := b.KillUnregisteredPane(context.Background(), pane.ID)
+		return errors.Join(err, cleanupErr, run.apply(l, &a, core.Event{Type: "hitch_failed", Reason: err.Error()}))
+	}
+	a.Registration = core.PaneRegistration{Generation: registration.Generation, Session: registration.Session, TokenHash: tokenHash(agentToken)}
+	registered := false
+	defer func() {
+		if !registered {
+			result = errors.Join(result, b.RemoveRegisteredPane(context.Background(), registration))
+		}
+	}()
+	visible, err := b.ProcessVisibility(ctx, pane.ID)
 	if err != nil {
 		return err
 	}
-	a.Process = storedIdentity(identity)
+	if visible {
+		identity, err := b.Identity(ctx, pane.ID)
+		if err != nil {
+			return err
+		}
+		a.Process = storedIdentity(identity)
+	} else if err := run.noteProcessUnavailable(a); err != nil {
+		return err
+	}
+
 	if err := run.apply(l, &a, core.Event{Type: "hitch_spawned", Pane: string(pane.ID)}); err != nil {
 		return err
 	}
+	registered = true
+	_, schedulerErr := run.updateWatchdog("", false, false)
+	defer func() { result = errors.Join(result, schedulerErr) }()
 	if err := run.mark(a); err != nil {
 		return err
 	}
@@ -270,10 +297,10 @@ func gangWindowTitle(name string) bool {
 	return false
 }
 func storedIdentity(i tmux.Identity) core.ProcessIdentity {
-	return core.ProcessIdentity{PID: i.PID, Started: i.Started, Version: i.Version, UniqueID: i.UniqueID, BootID: i.BootID}
+	return core.ProcessIdentity{PID: i.PID, Started: i.Started, Version: i.Version, UniqueID: i.UniqueID, BootID: i.BootID, Namespace: i.Namespace}
 }
 func nativeIdentity(i core.ProcessIdentity) tmux.Identity {
-	return tmux.Identity{PID: i.PID, Started: i.Started, Version: i.Version, UniqueID: i.UniqueID, BootID: i.BootID}
+	return tmux.Identity{PID: i.PID, Started: i.Started, Version: i.Version, UniqueID: i.UniqueID, BootID: i.BootID, Namespace: i.Namespace}
 }
 func (cmd command) adopt(args []string) (result error) {
 	name, collar, err := parseAdopt(args)
@@ -308,11 +335,32 @@ func (cmd command) adopt(args []string) (result error) {
 	if err != nil {
 		return err
 	}
+	visible, err := b.ProcessVisibility(context.Background(), substrate.PaneID(pane))
+	if err != nil {
+		return err
+	}
+	if !visible {
+		return refuseError("adopt requires visible native ancestry; hitch a new agent for sandbox identity")
+	}
+	if err := b.VerifyCaller(context.Background(), substrate.PaneID(pane)); err != nil {
+		return err
+	}
 	identity, err := b.Identity(context.Background(), substrate.PaneID(pane))
 	if err != nil {
 		return err
 	}
+	registration, err := b.RegisterPane(context.Background(), substrate.PaneID(pane))
+	if err != nil {
+		return err
+	}
 	a := core.Agent{ID: core.HitchID(id), Name: core.AgentName(name), Collar: collar, Directory: dir, Pane: pane, Status: core.Active, Activity: core.Idle, Process: storedIdentity(identity), CreatedAt: cmd.now(), ChangedAt: cmd.now()}
+	a.Registration = core.PaneRegistration{Generation: registration.Generation, Session: registration.Session}
+	if err := run.verifyNativeIdentity(a); err != nil {
+		return err
+	}
+	if err := b.VerifyCaller(context.Background(), substrate.PaneID(pane)); err != nil {
+		return err
+	}
 	if err := run.team.Create(); err != nil {
 		return err
 	}
@@ -461,7 +509,91 @@ func (run *runtime) dropAgent(id core.HitchID, wait bool) error {
 	if err != nil {
 		return err
 	}
-	if a.Process.PID != 0 {
+	registry, err := run.registry()
+	if err != nil {
+		return err
+	}
+	visible := false
+	replaced := false
+	if a.Pane != "" {
+		if a.Registration.Generation != "" {
+			present, checkErr := registry.CheckPane(context.Background(), paneIdentity(a))
+			if errors.Is(checkErr, tmux.ErrPaneReplaced) {
+				replaced = true
+				present = false
+			} else if checkErr != nil {
+				return checkErr
+			}
+			if present {
+				visible, err = registry.ProcessVisibility(context.Background(), substrate.PaneID(a.Pane))
+			}
+		} else {
+			windows, listErr := b.Windows(context.Background())
+			if listErr != nil {
+				exists, checkErr := b.SessionExists(context.Background())
+				if checkErr != nil {
+					return checkErr
+				}
+				if exists {
+					return listErr
+				}
+			}
+			present := false
+			for _, w := range windows {
+				if string(w.Pane.ID) == a.Pane {
+					present = true
+				}
+			}
+			if present {
+				visible, err = registry.ProcessVisibility(context.Background(), substrate.PaneID(a.Pane))
+				if err != nil {
+					return err
+				}
+				if !visible {
+					return refuseError("legacy pane cannot be safely dropped from this process namespace; drop it from its native host before re-hitching")
+				}
+				if err := run.verifyNativeIdentity(a); err != nil {
+					return err
+				}
+			}
+		}
+		if err != nil {
+			return err
+		}
+	}
+	if !visible && !tmux.CanReadIdentity(nativeIdentity(a.Process)) {
+		if err := run.noteProcessUnavailable(a); err != nil {
+			return err
+		}
+		if _, err := fmt.Fprintln(run.cmd.stderr, "warning: host process visibility unavailable; detached-descendant cleanup skipped"); err != nil {
+			return err
+		}
+	}
+	if visible && a.Process.PID == 0 && a.Registration.Generation != "" {
+		identity, err := registry.Identity(context.Background(), substrate.PaneID(a.Pane))
+		if err != nil {
+			return err
+		}
+		a.Process = storedIdentity(identity)
+	}
+	if visible && a.Process.PID != 0 && a.Process.Namespace == "" {
+		actual, err := registry.Identity(context.Background(), substrate.PaneID(a.Pane))
+		if err != nil {
+			return err
+		}
+		if actual.PID != a.Process.PID || actual.Started != a.Process.Started || actual.BootID != a.Process.BootID {
+			return refuseError("pane process differs from its registered identity")
+		}
+		a.Process.Namespace = actual.Namespace
+		for i := range a.Teardown {
+			a.Teardown[i].Namespace = actual.Namespace
+		}
+		if err := l.Save(a); err != nil {
+			return err
+		}
+	}
+	nativeVisible := visible || tmux.CanReadIdentity(nativeIdentity(a.Process))
+	if nativeVisible && a.Process.PID != 0 {
 		var owned *tmux.Owned
 		if len(a.Teardown) > 0 {
 			ids := make([]tmux.Identity, len(a.Teardown))
@@ -469,8 +601,10 @@ func (run *runtime) dropAgent(id core.HitchID, wait bool) error {
 				ids[i] = nativeIdentity(p)
 			}
 			owned, err = tmux.AcquireRecorded(ids)
+		} else if !visible {
+			owned, err = tmux.AcquireRecorded([]tmux.Identity{nativeIdentity(a.Process)})
 		} else {
-			owned, err = b.AcquireTree(context.Background(), substrate.PaneID(a.Pane), nativeIdentity(a.Process))
+			owned, err = registry.AcquireTree(context.Background(), substrate.PaneID(a.Pane), nativeIdentity(a.Process))
 			if err == nil {
 				for _, p := range owned.Identities() {
 					a.Teardown = append(a.Teardown, storedIdentity(p))
@@ -491,7 +625,19 @@ func (run *runtime) dropAgent(id core.HitchID, wait bool) error {
 		if err := owned.Stop(ctx); err != nil {
 			return err
 		}
-		if err := b.RemovePane(ctx, substrate.PaneID(a.Pane), nativeIdentity(a.Process)); err != nil {
+		if a.Registration.Generation == "" {
+			if err := registry.RemovePane(ctx, substrate.PaneID(a.Pane), nativeIdentity(a.Process)); err != nil {
+				return err
+			}
+		}
+	}
+	if a.Registration.Generation != "" && !replaced {
+		if nativeVisible && a.Process.PID != 0 {
+			err = registry.RemoveRegisteredNativePane(context.Background(), paneIdentity(a), nativeIdentity(a.Process))
+		} else {
+			err = registry.RemoveRegisteredPane(context.Background(), paneIdentity(a))
+		}
+		if err != nil {
 			return err
 		}
 	}

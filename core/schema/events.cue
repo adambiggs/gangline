@@ -31,7 +31,7 @@ import "time"
   "compaction_requested" | "compaction_submitted" | "compaction_completed" | "compaction_failed" | "compaction_unverified" |
   "interrupt_requested" | "interrupt_completed" | "deadline_checked" |
   "drop_started" | "drop_finished" | "curfew_set" | "curfew_cleared" |
-  "capacity_detected" | "capacity_submitted" | "capacity_cleared" | "snooze_cap_rejected" | "snooze_rearmed" | "tick" | "watchdog_unavailable" | "watchdog_failed"
+  "capacity_detected" | "capacity_submitted" | "capacity_cleared" | "snooze_cap_rejected" | "snooze_rearmed" | "tick" | "watchdog_unavailable" | "watchdog_failed" | "process_verification_unavailable"
  at: #Time
  source?: "hook" | "command" | "watchdog"
  hitch_id?: #ID, name?: #ID, pane?: #ID, id?: #ID, reason?: string, status?: string
@@ -46,6 +46,6 @@ import "time"
  {type: "snooze_cap_rejected", id: #ID, hitch_id: #ID, reason: #ID} |
  {type: "snooze_rearmed", id: #ID, hitch_id: #ID, deadline: #Time, reason: #ID} |
  {type: "input_started" | "input_finished", id: #ID, status: #ID, hitch_id: #ID} |
- {type: "hook_failed" | "watchdog_unavailable" | "watchdog_failed", reason: #ID} |
+ {type: "hook_failed" | "watchdog_unavailable" | "watchdog_failed" | "process_verification_unavailable", reason: #ID} |
  {type: "tick", source: "hook" | "command" | "watchdog"} |
  {type: "compaction_requested", compaction: #Compaction})

@@ -27,14 +27,8 @@ func requireHarnessForeground(ctx context.Context, b harnessInput, pane substrat
 	if commandErr == nil && filepath.Base(command) == filepath.Base(c.Launch.Command) {
 		return nil
 	}
-	processes, err := b.ForegroundProcesses(ctx, pane)
-	if err != nil {
-		return errors.Join(commandErr, err)
-	}
-	for _, p := range processes {
-		if filepath.Base(p.Command) == filepath.Base(c.Launch.Command) {
-			return nil
-		}
+	if commandErr != nil {
+		return commandErr
 	}
 	return fmt.Errorf("refuse input: harness %q is not in the pane foreground", c.Launch.Command)
 }
@@ -105,6 +99,9 @@ func startupEnvelopeText(sections *core.StartupSections, sender, token, purpose,
 // available observes the composer even during a running turn. A permission
 // prompt or foreign foreground process never qualifies as a free composer.
 func (run *runtime) available(l *store.LockedAgent, a *core.Agent, b harnessInput, c harness.Collar) (bool, string, error) {
+	if err := run.checkRecipient(*a); err != nil {
+		return false, "", err
+	}
 	if a.Status != core.Active || a.Activity == core.Interrupting || a.Compaction != nil && a.Compaction.Status == "submitted" {
 		return false, "", nil
 	}
@@ -143,6 +140,10 @@ func (run *runtime) available(l *store.LockedAgent, a *core.Agent, b harnessInpu
 	return true, "", nil
 }
 func (run *runtime) deliver(l *store.LockedAgent, a *core.Agent, e core.Envelope, b harnessInput, c harness.Collar) (string, error) {
+	if err := run.checkRecipient(*a); err != nil {
+		return "", err
+	}
+	b = run.registeredInput(*a, b)
 	wire, err := envelopeText(e)
 	if err != nil {
 		return "", err

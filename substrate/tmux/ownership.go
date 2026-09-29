@@ -15,11 +15,12 @@ import (
 // Identity is the native process identity recorded when a pane is registered.
 // It is checked against a pinned kernel handle before any signal is sent.
 type Identity struct {
-	PID      int
-	Started  string
-	Version  uint32
-	UniqueID uint64
-	BootID   string
+	PID       int
+	Started   string
+	Version   uint32
+	UniqueID  uint64
+	BootID    string
+	Namespace string
 }
 
 func (b *Backend) Identity(ctx context.Context, pane substrate.PaneID) (Identity, error) {
@@ -37,7 +38,18 @@ func (b *Backend) Identity(ctx context.Context, pane substrate.PaneID) (Identity
 	if err != nil {
 		return Identity{}, err
 	}
-	return Identity{r.PID, r.started, r.version, r.uniqueID, boot}, nil
+	namespace, err := nativeProcessNamespace()
+	if err != nil {
+		return Identity{}, err
+	}
+	return Identity{PID: r.PID, Started: r.started, Version: r.version, UniqueID: r.uniqueID, BootID: boot, Namespace: namespace}, nil
+}
+
+// CanReadIdentity requires a saved witness that the numeric PID belongs to the
+// caller's process namespace. Older identities without a witness are unknown.
+func CanReadIdentity(expected Identity) bool {
+	namespace, err := nativeProcessNamespace()
+	return err == nil && expected.Namespace != "" && expected.Namespace == namespace
 }
 
 type Owned struct {
@@ -57,6 +69,9 @@ func (b *Backend) AcquireTree(ctx context.Context, pane substrate.PaneID, expect
 	if expected.BootID != boot {
 		return &Owned{}, nil
 	}
+	if !CanReadIdentity(expected) {
+		return nil, fmt.Errorf("registered process namespace is not visible")
+	}
 	r, err := readCurrentProcess(expected.PID)
 	if errors.Is(err, os.ErrNotExist) || errors.Is(err, syscall.ESRCH) {
 		return &Owned{}, nil
@@ -66,6 +81,13 @@ func (b *Backend) AcquireTree(ctx context.Context, pane substrate.PaneID, expect
 	}
 	if !sameIdentity(expected, r) {
 		return &Owned{}, nil
+	}
+	if _, exists, err := b.registeredPane(ctx, string(pane)); err != nil {
+		return nil, err
+	} else if !exists {
+		// The recorded root is still identifiable without tmux. Descendants
+		// never captured before pane loss cannot be safely reconstructed here.
+		return AcquireRecorded([]Identity{expected})
 	}
 	owned, err := b.ownedProcesses(ctx, pane)
 	if err != nil {
@@ -94,6 +116,10 @@ func (b *Backend) AcquireTree(ctx context.Context, pane substrate.PaneID, expect
 }
 
 func currentOwnedIdentities(owned []processIdentity, boot string, read func(int) (processRecord, error)) ([]Identity, error) {
+	namespace, err := nativeProcessNamespace()
+	if err != nil {
+		return nil, err
+	}
 	var identities []Identity
 	for _, p := range owned {
 		r, err := read(p.pid)
@@ -106,7 +132,7 @@ func currentOwnedIdentities(owned []processIdentity, boot string, read func(int)
 		if r.started != p.started {
 			return nil, fmt.Errorf("process changed during teardown preparation")
 		}
-		identities = append(identities, Identity{p.pid, p.started, r.version, r.uniqueID, boot})
+		identities = append(identities, Identity{PID: p.pid, Started: p.started, Version: r.version, UniqueID: r.uniqueID, BootID: boot, Namespace: namespace})
 	}
 	return identities, nil
 }
@@ -129,6 +155,10 @@ func AcquireRecorded(ids []Identity) (*Owned, error) {
 	for _, id := range ids {
 		if id.BootID != boot {
 			continue
+		}
+		if !CanReadIdentity(id) {
+			_ = out.Close()
+			return nil, fmt.Errorf("recorded process namespace is not visible")
 		}
 		observation, err := observeProcess(id.PID)
 		if errors.Is(err, os.ErrNotExist) || errors.Is(err, syscall.ESRCH) {

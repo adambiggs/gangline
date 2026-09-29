@@ -55,6 +55,7 @@ type Agent struct {
 	Capacity          Capacity          `json:"capacity,omitzero"`
 	Native            NativeState       `json:"native,omitzero"`
 	ContextBands      ContextBandState  `json:"context_bands,omitzero"`
+	Registration      PaneRegistration  `json:"registration,omitzero"`
 	Process           ProcessIdentity   `json:"process,omitzero"`
 	Teardown          []ProcessIdentity `json:"teardown,omitempty"`
 	RenameFrom        AgentName         `json:"rename_from,omitempty"`
@@ -82,11 +83,12 @@ type ContextBandNote struct {
 }
 
 type ProcessIdentity struct {
-	PID      int    `json:"pid"`
-	Started  string `json:"started"`
-	Version  uint32 `json:"version,omitempty"`
-	UniqueID uint64 `json:"unique_id,omitempty"`
-	BootID   string `json:"boot_id"`
+	Namespace string `json:"namespace,omitempty"`
+	PID       int    `json:"pid"`
+	Started   string `json:"started"`
+	Version   uint32 `json:"version,omitempty"`
+	UniqueID  uint64 `json:"unique_id,omitempty"`
+	BootID    string `json:"boot_id"`
 }
 
 type InputIntent struct {
@@ -212,4 +214,11 @@ func RetryDelay(attempt int) time.Duration {
 		attempt--
 	}
 	return delay
+}
+
+// PaneRegistration binds a hitch to one lifetime of a tmux pane.
+type PaneRegistration struct {
+	Generation string `json:"generation"`
+	Session    string `json:"session"`
+	TokenHash  string `json:"token_hash,omitempty"`
 }

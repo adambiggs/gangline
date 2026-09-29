@@ -10,6 +10,7 @@ import (
 	"sort"
 	"strconv"
 	"strings"
+	"sync"
 	"unicode"
 
 	"github.com/adambiggs/gangline/substrate"
@@ -28,7 +29,9 @@ type Config struct {
 
 // Backend is a tmux implementation of substrate.Substrate.
 type Backend struct {
-	config Config
+	config  Config
+	birthMu sync.Mutex
+	birth   map[substrate.PaneID]PaneIdentity
 }
 
 type Window struct {
@@ -56,7 +59,7 @@ func (backend *Backend) CreateSession(ctx context.Context, spec substrate.SpawnS
 }
 
 func (backend *Backend) SessionExists(ctx context.Context) (bool, error) {
-	output, err := backend.run(ctx, "has-session", "-t", backend.config.Session)
+	output, err := backend.run(ctx, "has-session", "-t", "="+backend.config.Session)
 	if err == nil {
 		return true, nil
 	}
@@ -71,7 +74,7 @@ func (backend *Backend) Spawn(ctx context.Context, spec substrate.SpawnSpec) (su
 	if err != nil {
 		return substrate.Pane{}, err
 	}
-	arguments = append(arguments[:len(arguments)-1], "-t", backend.config.Session, arguments[len(arguments)-1])
+	arguments = append(arguments[:len(arguments)-1], "-t", "="+backend.config.Session+":", arguments[len(arguments)-1])
 	return backend.launch(ctx, "spawn pane", arguments)
 }
 
@@ -107,19 +110,51 @@ func (backend *Backend) launchArguments(command string, spec substrate.SpawnSpec
 }
 
 func (backend *Backend) launch(ctx context.Context, action string, arguments []string) (substrate.Pane, error) {
+	generation, err := randomGeneration()
+	if err != nil {
+		return substrate.Pane{}, err
+	}
+	creatingSession := arguments[0] == "new-session"
+	arguments = append(arguments, ";", "set-option", "-soq", generationOption, generation)
+	if creatingSession {
+		// new-session -e populates session environment. The initial pane already
+		// inherited its capability; later ordinary panes must not inherit it.
+		for _, key := range []string{"GANG_AGENT_ID", "GANG_AGENT_NONCE", "GANG_AGENT_TOKEN", "GANGLINE_HITCH_ID"} {
+			arguments = append(arguments, ";", "set-environment", "-r", "-t", "="+backend.config.Session, key)
+		}
+	}
+	arguments = append(arguments, ";", "list-panes", "-s", "-t", "="+backend.config.Session+":", "-F", "#{"+generationOption+"}\t#{session_id}\t#{pane_id}")
 	output, err := backend.run(ctx, arguments...)
 	if err != nil {
 		return substrate.Pane{}, tmuxError(action, err, output)
 	}
-	identifier := strings.TrimSpace(output)
-	if identifier == "" || strings.ContainsAny(identifier, "\r\n") {
+	identifier, records, found := strings.Cut(output, "\n")
+	if !found || !numericTmuxID(identifier, '%') {
 		return substrate.Pane{}, fmt.Errorf("%s: tmux returned invalid pane id %q", action, output)
 	}
-	return substrate.Pane{ID: substrate.PaneID(identifier)}, nil
+	pane := substrate.PaneID(identifier)
+	for _, line := range strings.Split(strings.TrimSuffix(records, "\n"), "\n") {
+		fields := strings.Split(line, "\t")
+		if len(fields) != 3 || fields[2] != identifier {
+			continue
+		}
+		id := PaneIdentity{Generation: fields[0], Session: fields[1], Pane: fields[2]}
+		if err := validPaneIdentity(id); err != nil {
+			return substrate.Pane{}, fmt.Errorf("%s: %w", action, err)
+		}
+		backend.birthMu.Lock()
+		if backend.birth == nil {
+			backend.birth = make(map[substrate.PaneID]PaneIdentity)
+		}
+		backend.birth[pane] = id
+		backend.birthMu.Unlock()
+		return substrate.Pane{ID: pane}, nil
+	}
+	return substrate.Pane{}, fmt.Errorf("%s: tmux did not return the created pane's identity", action)
 }
 
 func (backend *Backend) Windows(ctx context.Context) ([]Window, error) {
-	output, err := backend.run(ctx, "list-panes", "-s", "-t", backend.config.Session, "-F", "#{pane_id}\t#{window_name}")
+	output, err := backend.run(ctx, "list-panes", "-s", "-t", "="+backend.config.Session+":", "-F", "#{pane_id}\t#{window_name}")
 	if err != nil {
 		return nil, tmuxError("list panes", err, output)
 	}

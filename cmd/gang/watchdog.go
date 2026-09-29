@@ -14,12 +14,13 @@ import (
 	"time"
 
 	"github.com/adambiggs/gangline/core"
+	"github.com/adambiggs/gangline/substrate"
 )
 
 const watchdogTimeout = time.Minute
 
 var watchdogEnvironmentKeys = []string{"GANG_SESSION", "GANG_STATE_ROOT", "GANG_CONFIG_DIR", "GANG_TMUX_SOCKET", "GANG_COLLARS", "GANG_TMUX", "GANG_CAPACITY_TIMEOUT", "PATH"}
-var watchdogUnsetEnvironment = []string{"TMUX", "TMUX_PANE", "TMUX_TMPDIR", "GANGLINE_BOUNDARY", "GANGLINE_HITCH_ID", "GANG_AGENT_ID", "GANG_COLLAR", "GANG_LAUNCH_ARGS"}
+var watchdogUnsetEnvironment = []string{"TMUX", "TMUX_PANE", "TMUX_TMPDIR", "GANGLINE_BOUNDARY", "GANGLINE_HITCH_ID", "GANG_AGENT_ID", "GANG_AGENT_NONCE", "GANG_AGENT_TOKEN", "GANG_COLLAR", "GANG_LAUNCH_ARGS"}
 
 type watchdogScheduler interface {
 	Arm(string, string, map[string]string) error
@@ -27,6 +28,11 @@ type watchdogScheduler interface {
 }
 
 type systemdWatchdog struct{}
+
+func (systemdWatchdog) Available() error {
+	_, err := watchdogCommand("systemctl", "--user", "show-environment")
+	return err
+}
 
 func (systemdWatchdog) Arm(unit, executable string, environment map[string]string) error {
 	args := []string{"--user", "--collect", "--unit=" + unit, "--on-active=" + watchdogTimeout.String(), "--timer-property=AccuracySec=1s", "--timer-property=RemainAfterElapse=no", "--property=KillMode=process", "--working-directory=/"}
@@ -147,13 +153,61 @@ func (run *runtime) updateWatchdog(generation string, cleanup, reset bool) (proc
 		return false, err
 	}
 	scheduler := run.cmd.watchdogScheduler(run.team.Directory)
+	unavailableReason := "no user watchdog scheduler available; ticks continue without a timer"
+	if scheduler != nil {
+		b, err := run.registry()
+		if err != nil {
+			return false, err
+		}
+		backend, err := run.cmd.tmux(run.settings)
+		if err != nil {
+			return false, err
+		}
+		windows, err := backend.Windows(context.Background())
+		if err != nil {
+			exists, checkErr := backend.SessionExists(context.Background())
+			if checkErr != nil {
+				return false, checkErr
+			}
+			if exists {
+				return false, err
+			}
+		}
+		present := map[string]bool{}
+		for _, w := range windows {
+			present[string(w.Pane.ID)] = true
+		}
+		for _, a := range agents {
+			if a.Pane == "" || !present[a.Pane] {
+				continue
+			}
+			visible, err := b.ProcessVisibility(context.Background(), substrate.PaneID(a.Pane))
+			if err != nil {
+				return false, err
+			}
+			if !visible {
+				scheduler = nil
+				unavailableReason = "host process visibility unavailable; process watchdog skipped; ticks continue without a timer"
+				if err := run.noteProcessUnavailable(a); err != nil {
+					return false, err
+				}
+			}
+			break
+		}
+	}
+	if probe, ok := scheduler.(interface{ Available() error }); ok {
+		if err := probe.Available(); err != nil {
+			scheduler = nil
+			unavailableReason = "user watchdog scheduler unavailable; ticks continue without a timer: " + err.Error()
+		}
+	}
 	if scheduler == nil {
-		if len(agents) == 0 || cleanup {
+		if len(agents) == 0 && old == "" {
 			return false, nil
 		}
 		marker := filepath.Join(run.team.Directory, "watchdog-unavailable")
 		if _, err := os.Stat(marker); errors.Is(err, os.ErrNotExist) {
-			if err := run.team.Append(core.Event{Type: "watchdog_unavailable", At: run.cmd.now(), Reason: "no user watchdog scheduler available; ticks continue without a timer"}); err != nil {
+			if err := run.team.Append(core.Event{Type: "watchdog_unavailable", At: run.cmd.now(), Reason: unavailableReason}); err != nil {
 				return false, err
 			}
 			if err := os.WriteFile(marker, nil, 0600); err != nil {
@@ -162,7 +216,12 @@ func (run *runtime) updateWatchdog(generation string, cleanup, reset bool) (proc
 		} else if err != nil {
 			return false, err
 		}
-		return true, nil
+		if old != "" && cleanup {
+			if _, err := fmt.Fprintln(run.cmd.stderr, "warning: watchdog unavailable; existing timer cancellation deferred"); err != nil {
+				return false, err
+			}
+		}
+		return len(agents) != 0 && !cleanup, nil
 	}
 	if cleanup && len(agents) != 0 {
 		return true, nil

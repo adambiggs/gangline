@@ -45,6 +45,7 @@ func TestRepaintDeliveryAllowsQueuedCompactionAndMessages(t *testing.T) {
 		f.env["GANGLINE_HITCH_ID"] = string(a.ID)
 		f.input.screen = screenWithText("Working (esc to interrupt)", "› ")
 		f.cmd.inputBackend = &repaintInput{inputFixture: f.input}
+		f.input.registeredSender = f.cmd.inputBackend
 		f.cmd.settleInput = nil // Exercise the production settle loop under fake time.
 		f.cmd.newWatch = func(string) (changeWait, error) {
 			return waitFixture{func(context.Context) error { return fmt.Errorf("missing synchronous witness") }}, nil

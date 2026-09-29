@@ -30,6 +30,7 @@ func TestStartupSubmitsCollapsedCodexPaste(t *testing.T) {
 	p, _ := f.run.team.Agent(a.ID)
 	f.env["GANGLINE_HITCH_ID"] = string(a.ID)
 	f.cmd.inputBackend = collapsedCodexInput{f.input}
+	f.input.registeredSender = f.cmd.inputBackend
 	f.cmd.settleInput = func(ctx context.Context, b harnessInput, pane substrate.PaneID, c harness.Collar, _ time.Duration) error {
 		screen, err := b.Capture(ctx, pane)
 		if err != nil {

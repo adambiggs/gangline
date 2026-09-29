@@ -94,6 +94,7 @@ func (run *runtime) recoverStartup(name string) (result error) {
 	if err != nil {
 		return err
 	}
+	b = run.registeredInput(a, b)
 	ctx, cancel := run.cmd.timeout(operationTimeout)
 	defer cancel()
 	screen, err := b.Capture(ctx, substrate.PaneID(a.Pane))

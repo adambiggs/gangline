@@ -58,6 +58,9 @@ func (run *runtime) observedAgent() (*core.Agent, error) {
 		if pane := run.cmd.environment("TMUX_PANE"); pane != "" && pane != a.Pane {
 			return nil, refuseError("hitch identity does not match the current pane")
 		}
+		if err := run.verifyCaller(a); err != nil {
+			return nil, err
+		}
 		return &a, nil
 	}
 	if pane := run.cmd.environment("TMUX_PANE"); pane != "" {
@@ -67,6 +70,9 @@ func (run *runtime) observedAgent() (*core.Agent, error) {
 		}
 		for _, a := range agents {
 			if a.Pane == pane && (a.Status == core.Active || a.Status == core.Booting) {
+				if err := run.verifyCaller(a); err != nil {
+					return nil, err
+				}
 				return &a, nil
 			}
 		}
@@ -195,6 +201,20 @@ func (cmd command) send(args []string) (result error) {
 			}
 		}
 	}
+	if err := run.checkRecipient(a); err != nil {
+		return err
+	}
+	c, err := loadCollar(a.Collar, run.settings)
+	if err != nil {
+		return err
+	}
+	b, err := run.input()
+	if err != nil {
+		return err
+	}
+	if err := requireHarnessForeground(context.Background(), b, substrate.PaneID(a.Pane), c); err != nil {
+		return err
+	}
 	if err := p.Publish(e); err != nil {
 		return err
 	}
@@ -310,6 +330,7 @@ func (cmd command) interrupt(args []string) (result error) {
 	if err != nil {
 		return err
 	}
+	b = run.registeredInput(a, b)
 	if err := run.apply(l, &a, core.Event{Type: "interrupt_requested", Deadline: cmd.now().Add(operationTimeout)}); err != nil {
 		return err
 	}
@@ -368,6 +389,7 @@ func (cmd command) compact(args []string) (result error) {
 	if err != nil {
 		return err
 	}
+	b = run.registeredInput(a, b)
 	if o.Recover {
 		if a.Compaction == nil {
 			return refuseError("no compaction to recover")
@@ -443,6 +465,7 @@ func (run *runtime) startCompaction(l *store.LockedAgent, a *core.Agent) (result
 	if err != nil {
 		return err
 	}
+	b = run.registeredInput(*a, b)
 	ctx, cancel := run.cmd.timeout(operationTimeout)
 	defer cancel()
 	pane := substrate.PaneID(a.Pane)

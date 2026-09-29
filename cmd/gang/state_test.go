@@ -17,18 +17,45 @@ import (
 	"github.com/adambiggs/gangline/harness"
 	"github.com/adambiggs/gangline/store"
 	"github.com/adambiggs/gangline/substrate"
+	"github.com/adambiggs/gangline/substrate/tmux"
 )
 
 type inputFixture struct {
-	screen          substrate.Screen
-	command, pasted string
-	tmuxCommand     string
-	foregroundErr   error
-	processErr      error
-	submits         int
-	submit          func(string) error
+	screen           substrate.Screen
+	command, pasted  string
+	tmuxCommand      string
+	foregroundErr    error
+	processErr       error
+	submits          int
+	submit           func(string) error
+	registeredSender harnessInput
 }
 
+func (b *inputFixture) RegisterPane(_ context.Context, p substrate.PaneID) (tmux.PaneIdentity, error) {
+	return tmux.PaneIdentity{Generation: strings.Repeat("a", 64), Session: "$1", Pane: string(p)}, nil
+}
+func (b *inputFixture) Identity(context.Context, substrate.PaneID) (tmux.Identity, error) {
+	return tmux.Identity{PID: 7, Started: "fixture", BootID: "fixture", Namespace: "fixture"}, nil
+}
+func (b *inputFixture) AcquireTree(context.Context, substrate.PaneID, tmux.Identity) (*tmux.Owned, error) {
+	return &tmux.Owned{}, nil
+}
+func (b *inputFixture) RemovePane(context.Context, substrate.PaneID, tmux.Identity) error { return nil }
+func (b *inputFixture) RemoveRegisteredNativePane(context.Context, tmux.PaneIdentity, tmux.Identity) error {
+	return nil
+}
+func (b *inputFixture) RemoveRegisteredPane(context.Context, tmux.PaneIdentity) error { return nil }
+func (b *inputFixture) CheckPane(context.Context, tmux.PaneIdentity) (bool, error)    { return true, nil }
+func (b *inputFixture) ProcessVisibility(context.Context, substrate.PaneID) (bool, error) {
+	return true, nil
+}
+func (b *inputFixture) VerifyCaller(context.Context, substrate.PaneID) error { return nil }
+func (b *inputFixture) SendRegisteredKeys(ctx context.Context, id tmux.PaneIdentity, _ string, k substrate.Keys) error {
+	if b.registeredSender != nil {
+		return b.registeredSender.SendKeys(ctx, substrate.PaneID(id.Pane), k)
+	}
+	return b.SendKeys(ctx, substrate.PaneID(id.Pane), k)
+}
 func (b *inputFixture) ForegroundCommand(context.Context, substrate.PaneID) (string, error) {
 	if b.tmuxCommand != "" {
 		return b.tmuxCommand, b.foregroundErr
@@ -112,7 +139,7 @@ func newStateFixture(t *testing.T) *stateFixture {
 	out, errOut := &synchronizedBuffer{}, &synchronizedBuffer{}
 	env := map[string]string{"GANG_STATE_ROOT": root, "GANG_CONFIG_DIR": filepath.Join(root, "config"), "GANG_SESSION": "unit"}
 	backend := &inputFixture{screen: screenWithText("READY", "› "), command: "codex"}
-	cmd := command{newScheduler: func() watchdogScheduler { return nil }, stdin: strings.NewReader(""), stdout: out, stderr: errOut, getenv: func(k string) string { return env[k] }, getwd: func() (string, error) { return root, nil }, userHomeDir: func() (string, error) { return root, nil }, clock: func() time.Time { return time.Date(2026, 9, 22, 10, 0, 0, 0, time.UTC) }, inputBackend: backend, settleInput: func(context.Context, harnessInput, substrate.PaneID, harness.Collar, time.Duration) error { return nil }, detach: func(string, hookNotice) error { return nil }}
+	cmd := command{newScheduler: func() watchdogScheduler { return nil }, stdin: strings.NewReader(""), stdout: out, stderr: errOut, getenv: func(k string) string { return env[k] }, getwd: func() (string, error) { return root, nil }, userHomeDir: func() (string, error) { return root, nil }, clock: func() time.Time { return time.Date(2026, 9, 22, 10, 0, 0, 0, time.UTC) }, paneBackend: backend, inputBackend: backend, settleInput: func(context.Context, harnessInput, substrate.PaneID, harness.Collar, time.Duration) error { return nil }, detach: func(string, hookNotice) error { return nil }}
 	cmd.awaitStartup = func(_ context.Context, _ substrate.PaneID, c harness.Collar) (harness.Startup, substrate.Screen, error) {
 		startup, err := harness.InspectStartup(c, backend.screen)
 		return startup, backend.screen, err
@@ -151,7 +178,7 @@ func fakeCodexOnPath(t *testing.T) {
 
 func (f *stateFixture) add(t *testing.T, id, name, collar string) core.Agent {
 	t.Helper()
-	a := core.Agent{ID: core.HitchID(id), Name: core.AgentName(name), Collar: collar, Directory: "/work", Pane: "%1", Status: core.Active, Activity: core.Idle, CreatedAt: f.cmd.now(), ChangedAt: f.cmd.now()}
+	a := core.Agent{ID: core.HitchID(id), Name: core.AgentName(name), Collar: collar, Directory: "/work", Pane: "%1", Process: core.ProcessIdentity{PID: 7, Started: "fixture", BootID: "fixture", Namespace: "fixture"}, Status: core.Active, Activity: core.Idle, CreatedAt: f.cmd.now(), ChangedAt: f.cmd.now()}
 	l, err := f.run.team.CreateAgent(a)
 	if err != nil {
 		t.Fatal(err)
@@ -266,15 +293,16 @@ func TestSendUsesTmuxForegroundWhenProcessTreeIsUnavailable(t *testing.T) {
 	}
 }
 
-func TestWrappedHarnessUsesProcessFallback(t *testing.T) {
+func TestForeignTmuxForegroundRejectsMatchingProcessFallback(t *testing.T) {
 	f := newStateFixture(t)
 	f.input.tmuxCommand = "sh"
 	c, err := harness.EmbeddedCollar("codex")
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := requireHarnessForeground(context.Background(), f.input, "%1", c); err != nil {
-		t.Fatal(err)
+	// A matching process-table entry cannot override tmux's foreground command.
+	if err := requireHarnessForeground(context.Background(), f.input, "%1", c); err == nil {
+		t.Fatal("foreign tmux command accepted")
 	}
 	f.input.command = "other"
 	if err := requireHarnessForeground(context.Background(), f.input, "%1", c); err == nil {

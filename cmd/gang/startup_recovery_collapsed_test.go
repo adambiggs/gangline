@@ -91,6 +91,7 @@ func newCollapsedRecoveryFixture(t *testing.T) (*stateFixture, store.AgentPaths,
 		return p.WriteWitness(store.Witness{ID: "recovered", At: f.cmd.now(), Prompt: prompt, SessionID: "s"})
 	}
 	f.cmd.inputBackend = b
+	f.input.registeredSender = f.cmd.inputBackend
 	return f, p, e, b, wire
 }
 

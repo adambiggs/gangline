@@ -51,6 +51,7 @@ type command struct {
 	clock        func() time.Time
 	newWatch     func(string) (changeWait, error)
 	newTimeout   func(context.Context, time.Duration) (context.Context, context.CancelFunc)
+	paneBackend  paneRegistry
 	inputBackend harnessInput
 	settleInput  func(context.Context, harnessInput, substrate.PaneID, harness.Collar, time.Duration) error
 	awaitStartup func(context.Context, substrate.PaneID, harness.Collar) (harness.Startup, substrate.Screen, error)

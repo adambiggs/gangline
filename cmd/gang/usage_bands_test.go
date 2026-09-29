@@ -596,6 +596,7 @@ func TestNonCapFailureDoesNotRearmWake(t *testing.T) {
 
 func TestGenericRateLimitWaitsForNativeCapEvidence(t *testing.T) {
 	f := newStateFixture(t)
+	f.input.command = "claude"
 	a := f.add(t, "caller-id", "worker", "claude-code")
 	a.Native.FailedTurn = "wake-turn"
 	at := f.cmd.now()
@@ -834,6 +835,7 @@ func TestCodexNativeErrorDoesNotCompleteWake(t *testing.T) {
 
 func TestCapRejectedWakeWaitsForKnownNativeReset(t *testing.T) {
 	f := newStateFixture(t)
+	f.input.command = "claude"
 	a := f.add(t, "caller-id", "worker", "claude-code")
 	a.Native.FailedTurn = "wake-turn"
 	at := f.cmd.now()

@@ -153,7 +153,24 @@ These variables are environment-only:
 | `GANG_STATE_ROOT` | `${XDG_STATE_HOME:-~/.local/state}/gangline`; team state root. |
 | `GANG_TMUX_SOCKET` | tmux's default socket; selects a separate server when set. |
 | `GANG_TMUX` | `tmux`; executable used for tmux commands. |
-| `GANG_AGENT_ID` | Set on a hitched pane; `send`, `whoami`, and `context` use it to identify the registered agent after checking the roster and current pane when available. |
+| `GANG_AGENT_NONCE` | Per-hitch identity capability, inherited by the harness; only its digest is stored in the registration. |
+| `GANG_AGENT_ID` | Set on a hitched pane; identifies its registration together with `GANG_AGENT_NONCE` and the tmux server generation, session and pane. |
+
+Identity and delivery use tmux's pane registration and foreground command,
+so they work when the caller cannot see host PIDs. Native ancestry checks and
+detached-descendant cleanup remain enabled when the host process namespace is
+visible. Otherwise `process_verification_unavailable` records the skipped
+checks, and `roster` retains `[process-unavailable]` to show that a caller skipped
+process checks for this registration. The process watchdog is
+also skipped visibly with `watchdog_unavailable` and `[watchdog-unavailable]`;
+ordinary hooks and commands still tick the team. A pane-only drop cannot
+prove that detached descendants exited. Older registrations without a generation require a matching native process
+identity for caller attribution and input. A live legacy pane cannot be dropped
+from a namespace that cannot verify it; drop it from its native host and re-hitch
+for sandbox support. Newly adopted panes have generation guards but still need
+native ancestry for caller attribution because adoption cannot change a running
+harness's environment. Fresh hitches inherit a capability usable by their sandboxed
+commands. Later ordinary windows do not inherit that per-hitch capability.
 
 For a separate team, keep its selection in the shell environment for every
 command. A separate state root and socket also isolate its files and server:

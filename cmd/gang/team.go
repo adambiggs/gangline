@@ -5,6 +5,8 @@ import (
 	"errors"
 	"fmt"
 	"os"
+	"path/filepath"
+	"strings"
 	"sync"
 	"time"
 
@@ -251,11 +253,31 @@ func (cmd command) roster(args []string) error {
 	if err != nil {
 		return err
 	}
+	watchdogLimited := false
+	if _, err := os.Stat(filepath.Join(run.team.Directory, "watchdog-unavailable")); err == nil {
+		watchdogLimited = true
+	} else if !errors.Is(err, os.ErrNotExist) {
+		return err
+	}
 	for _, a := range agents {
+		limited, err := run.processLimited(a)
+		if err != nil {
+			return err
+		}
+		marker := ""
+		if limited {
+			marker = " [process-unavailable]"
+		}
+		if watchdogLimited {
+			marker += " [watchdog-unavailable]"
+		}
 		if machine {
-			_, err = fmt.Fprintf(cmd.stdout, "%s\t%s\t%s\t%s\t%s\n", a.Name, a.Status, a.Activity, a.Collar, a.Pane)
+			if marker != "" {
+				marker = "\t" + strings.TrimSpace(marker)
+			}
+			_, err = fmt.Fprintf(cmd.stdout, "%s\t%s\t%s\t%s\t%s%s\n", a.Name, a.Status, a.Activity, a.Collar, a.Pane, marker)
 		} else {
-			_, err = fmt.Fprintf(cmd.stdout, "%-16s %-10s %-14s %s\n", a.Name, a.Status, a.Activity, a.Collar)
+			_, err = fmt.Fprintf(cmd.stdout, "%-16s %-10s %-14s %s%s\n", a.Name, a.Status, a.Activity, a.Collar, marker)
 		}
 		if err != nil {
 			return err
