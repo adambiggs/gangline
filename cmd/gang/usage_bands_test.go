@@ -627,6 +627,35 @@ func TestGenericRateLimitWaitsForNativeCapEvidence(t *testing.T) {
 	}
 }
 
+func TestOldRateLimitCandidateCannotUseLaterCapReading(t *testing.T) {
+	f := newStateFixture(t)
+	a := f.add(t, "caller-id", "worker", "claude-code")
+	a.Native.FailedTurn = "wake-turn"
+	at := f.cmd.now()
+	a.Native.Limits = core.Reading{Kind: "provider-limits", Status: "observed", At: &at, Limits: []core.LimitWindow{{Label: "five_hour", UsedPercent: 40, ResetAt: at.Add(5 * time.Hour).Unix()}}}
+	if err := f.run.withUsageState(func(state *usageState) error {
+		state.Recent[string(a.ID)] = usageSnooze{ID: "wake", CallerID: a.ID, RecipientID: a.ID, TurnID: "wake-turn", SubmittedAt: at.Add(-time.Second)}
+		return nil
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if err := f.run.observeSnoozeTurn(a, hookNotice{Kind: "turn-failed", TurnID: "wake-turn", Failure: "rate_limit"}, false); err != nil {
+		t.Fatal(err)
+	}
+	later := at.Add(3 * 24 * time.Hour)
+	f.run.cmd.clock = func() time.Time { return later }
+	a.Native.Limits.At = &later
+	a.Native.Limits.Limits[0].UsedPercent = 100
+	a.Native.Limits.Limits[0].ResetAt = later.Add(5 * time.Hour).Unix()
+	if err := f.run.observeSnoozeTurn(a, hookNotice{}, false); err != nil {
+		t.Fatal(err)
+	}
+	state := usageSnapshot(t, f.run)
+	if len(state.Snoozes) != 0 || !state.Recent[string(a.ID)].TurnFailed || state.Recent[string(a.ID)].CapCandidate {
+		t.Fatalf("later unrelated cap rearmed old rate-limit failure: %+v", state)
+	}
+}
+
 func TestLeadCanInspectAndClearUncertainUsageIntents(t *testing.T) {
 	f := newStateFixture(t)
 	lead := f.add(t, "lead-id", "lead", "codex")
@@ -656,10 +685,10 @@ func TestLeadCanInspectAndClearUncertainUsageIntents(t *testing.T) {
 	}
 }
 
-func TestBootingRecipientDoesNotRerouteUncertainNativeInput(t *testing.T) {
+func TestFailedRecipientReroutesUncertainNativeInput(t *testing.T) {
 	f := newStateFixture(t)
-	lead := f.add(t, "lead-id", "lead", "codex")
-	p, err := f.run.team.Agent(lead.ID)
+	caller := f.add(t, "old-worker", "worker", "codex")
+	p, err := f.run.team.Agent(caller.ID)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -667,17 +696,17 @@ func TestBootingRecipientDoesNotRerouteUncertainNativeInput(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	lead.Status = core.Booting
-	if err := l.Save(lead); err != nil {
+	if err := f.run.apply(l, &caller, core.Event{Type: "hitch_failed", Reason: "registered pane is absent from tmux"}); err != nil {
 		t.Fatal(err)
 	}
 	if err := l.Close(); err != nil {
 		t.Fatal(err)
 	}
+	lead := f.add(t, "new-lead", "lead", "codex")
+	f.env["GANGLINE_HITCH_ID"] = string(lead.ID)
 	if err := f.run.withUsageState(func(state *usageState) error {
-		state.Notices = []usageNotice{{ID: "notice", RecipientID: lead.ID, Submission: "unverified"}}
-		state.Snoozes["gone-caller"] = usageSnooze{ID: "fallback", CallerID: "gone-caller", RecipientID: lead.ID, At: f.cmd.now(), Submission: "accepted"}
-		state.Recent["other-caller"] = usageSnooze{ID: "recent", CallerID: "other-caller", RecipientID: lead.ID, TurnID: "turn"}
+		state.Notices = []usageNotice{{ID: "notice", Token: "0123456789abcdef", RecipientID: caller.ID, RecipientName: caller.Name, Submission: "unverified", Text: "Cap warning"}}
+		state.Recent[string(caller.ID)] = usageSnooze{ID: "recent", Token: "abcdef0123456789", CallerID: caller.ID, CallerName: caller.Name, RecipientID: caller.ID, RecipientName: caller.Name, At: f.cmd.now().Add(-time.Hour), TurnID: "old-turn", Note: "Resume saved work", CapCandidate: true}
 		return nil
 	}); err != nil {
 		t.Fatal(err)
@@ -686,8 +715,8 @@ func TestBootingRecipientDoesNotRerouteUncertainNativeInput(t *testing.T) {
 		t.Fatal(err)
 	}
 	state := usageSnapshot(t, f.run)
-	if state.Notices[0].ID != "notice" || state.Snoozes["gone-caller"].ID != "fallback" || state.Recent["other-caller"].ID != "recent" || f.input.submits != 0 {
-		t.Fatalf("uncertain input was rerouted while recipient still exists: %+v", state)
+	if f.input.submits != 2 || len(state.Notices) != 0 || state.Recent[string(caller.ID)].RecipientID != lead.ID || state.Recent[string(caller.ID)].CapCandidate {
+		t.Fatalf("failed recipient stranded uncertain input instead of rerouting to lead: submits=%d state=%+v", f.input.submits, state)
 	}
 }
 

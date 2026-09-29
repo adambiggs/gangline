@@ -55,6 +55,7 @@ type usageSnooze struct {
 	SubmittedAt   time.Time       `json:"submitted_at,omitzero"`
 	CapRejected   bool            `json:"cap_rejected,omitempty"`
 	CapCandidate  bool            `json:"cap_candidate,omitempty"`
+	CapFailedAt   time.Time       `json:"cap_failed_at,omitzero"`
 	TurnFailed    bool            `json:"turn_failed,omitempty"`
 	Rearms        int             `json:"rearms,omitempty"`
 }
@@ -277,12 +278,19 @@ func (run *runtime) observeSnoozeTurn(a core.Agent, notice hookNotice, providerB
 				}
 				if generic && !observedCap {
 					s.CapCandidate = true
+					s.CapFailedAt = now
 					state.Recent[key] = s
 					continue
 				}
 				confirmed = true
 			}
-			if s.CapCandidate && observedCap {
+			if s.CapCandidate && (s.CapFailedAt.IsZero() || now.Sub(s.CapFailedAt) > 5*time.Minute) {
+				s.CapCandidate = false
+				s.TurnFailed = true
+				state.Recent[key] = s
+				continue
+			}
+			if s.CapCandidate && observedCap && a.Native.Limits.At != nil && !a.Native.Limits.At.Before(s.CapFailedAt) {
 				s.CapCandidate = false
 				confirmed = true
 			}
@@ -320,6 +328,7 @@ func (run *runtime) observeSnoozeTurn(a core.Agent, notice hookNotice, providerB
 			next.ID, next.Token, next.At = core.EnvelopeID(id), token, reset
 			next.RecipientID, next.RecipientName, next.TurnID, next.CapRejected, next.TurnFailed = "", "", "", false, false
 			next.CapCandidate = false
+			next.CapFailedAt = time.Time{}
 			next.SubmittedAt = time.Time{}
 			next.Submission = ""
 			next.Rearms++
@@ -493,9 +502,7 @@ func (run *runtime) flushUsageWork() error {
 	}
 	lead, haveLead := currentLead(agents)
 	active := make(map[core.HitchID]core.Agent, len(agents))
-	present := make(map[core.HitchID]bool, len(agents))
 	for _, a := range agents {
-		present[a.ID] = true
 		if a.Status == core.Active {
 			active[a.ID] = a
 		}
@@ -505,7 +512,7 @@ func (run *runtime) flushUsageWork() error {
 	now := run.cmd.now()
 	if err := run.withUsageState(func(state *usageState) error {
 		for key, pending := range state.Recent {
-			if present[pending.RecipientID] {
+			if _, exists := active[pending.RecipientID]; exists {
 				continue
 			}
 			if state.Snoozes[key].ID == "" {
@@ -519,7 +526,8 @@ func (run *runtime) flushUsageWork() error {
 				}
 				pending.ID, pending.Token = core.EnvelopeID(id), token
 				pending.RecipientID, pending.RecipientName, pending.TurnID = "", "", ""
-				pending.CapRejected, pending.TurnFailed = false, false
+				pending.CapRejected, pending.CapCandidate, pending.TurnFailed = false, false, false
+				pending.CapFailedAt = time.Time{}
 				pending.Submission = ""
 				pending.SubmittedAt = time.Time{}
 				state.Snoozes[key] = pending
@@ -528,9 +536,6 @@ func (run *runtime) flushUsageWork() error {
 		}
 		for i := range state.Notices {
 			n := &state.Notices[i]
-			if n.Submission != "" && present[n.RecipientID] {
-				continue
-			}
 			if _, exists := active[n.RecipientID]; !exists {
 				if n.RecipientID != "" && n.Submission != "" {
 					id, err := randomID("usage-band")
@@ -561,9 +566,6 @@ func (run *runtime) flushUsageWork() error {
 		for _, key := range keys {
 			s := state.Snoozes[key]
 			if s.At.After(now) {
-				continue
-			}
-			if s.Submission != "" && present[s.RecipientID] {
 				continue
 			}
 			if _, exists := active[s.RecipientID]; !exists {

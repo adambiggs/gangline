@@ -33,8 +33,9 @@ schedules one replacement wake at that reset.
 A later refusal from that replacement is logged for the lead to handle.
 Failed turns and unknown completion stay visible in `gang snooze --status`
 until the agent clears or replaces the wake.
-An unconfirmed generic rate-limit error remains visible for inspection until
-a fresh native reading confirms a capped window or the agent clears the wake.
+An unconfirmed generic rate-limit error remains visible for inspection. A
+fresh capped-window reading can confirm it shortly after the failure;
+otherwise the wake remains failed for the agent to inspect or clear.
 
 The schedule lives in the team state root, so it survives Gangline process
 restarts, compaction, and host reboot. Gangline does not start a team after a

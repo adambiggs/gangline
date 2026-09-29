@@ -234,7 +234,7 @@ func (cmd command) snooze(args []string) error {
 			return refuseError("previous wake is already due or submitted; inspect its delivery before replacing it")
 		}
 		if recent := state.Recent[key]; recent.ID != "" && !recent.CapRejected && !recent.TurnFailed {
-			return refuseError("previous wake awaits a successful native turn; inspect it with --status or clear it")
+			return refuseError("previous wake has an unresolved native outcome; inspect it with --status or clear it")
 		}
 		delete(state.Recent, key)
 		state.Snoozes[key] = s
