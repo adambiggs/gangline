@@ -3,8 +3,8 @@ import demoVideo from '../../demo.mp4?url';
 import demoPoster from '../../demo-poster.jpg?url';
 import SocialMeta from '../components/SocialMeta.astro';
 import Analytics from '../components/Analytics.astro';
-const title = 'Gangline: CLI agents connected in tmux';
-const description = 'Give a lead a task, let it recruit Claude Code and Codex teammates, and watch their work in tmux.';
+const title = 'Gangline: a team of coding agents in your terminal';
+const description = 'Run Claude Code and Codex as a team. Give agents separate jobs, let them exchange assignments and results, and follow their work from your terminal.';
 ---
 <!doctype html>
 <html lang="en">
@@ -83,22 +83,18 @@ const description = 'Give a lead a task, let it recruit Claude Code and Codex te
       background:linear-gradient(90deg,var(--g1) 0%,var(--g2) 50%,var(--g3) 100%)}
     .bgfx::before{bottom:100%;left:0}
     .bgfx::after{top:100%;left:-100vh;left:-100cqh}
-    .wrap{position:relative;z-index:1;max-width:76rem;margin:0 auto;padding:0 clamp(1.5rem,5vw,4rem)}
+    .wrap{position:relative;z-index:1;max-width:46rem;margin:0 auto;padding:0 clamp(1.5rem,5vw,4rem)}
 
-    .split{display:grid;grid-template-columns:minmax(0,5fr) minmax(0,7fr);gap:clamp(2rem,6vw,6rem)}
-    .sticky{position:sticky;top:0;height:100vh;display:flex;flex-direction:column;justify-content:space-between;padding:clamp(3rem,10vh,6rem) 0}
+    .intro{padding-top:clamp(3rem,10vh,6rem)}
     .name{font-size:clamp(2.5rem,5vw,3.25rem);font-weight:500;line-height:1.05;letter-spacing:-.01em}
     .entry{margin-top:.5rem;color:var(--mute);font-size:.9375rem}
     .entry .ipa{font-family:var(--mono);font-size:.875rem}
-    .statement{margin-top:2.5rem;font-size:clamp(1.5rem,2.2vw,1.875rem);line-height:1.3;max-width:26rem;text-wrap:pretty}
-    .sidenav{display:flex;flex-direction:column;align-items:flex-start;gap:.75rem;margin-top:3.5rem;font-size:.8125rem;letter-spacing:.12em;text-transform:uppercase;font-weight:600}
-    .sidenav a{color:var(--mute)}
-    .sidenav a:hover{color:var(--ink)}
+    .statement{margin-top:2.5rem;font-size:clamp(1.5rem,2.2vw,1.875rem);line-height:1.3;max-width:36rem;text-wrap:pretty}
     .links{display:flex;flex-wrap:wrap;gap:.5rem 1.5rem;font-size:.9375rem}
     .links a{color:var(--mute)}
     .links a:hover{color:var(--ink)}
 
-    .flow{padding:clamp(3rem,10vh,6rem) 0 4rem}
+    .flow{padding:1.5rem 0 4rem}
     .sec{max-width:38rem;scroll-margin-top:3rem}
     .sec+.sec{margin-top:clamp(5rem,12vh,8rem)}
     .h2{font-family:var(--serif);font-size:clamp(2rem,3vw,2.5rem);font-weight:500;line-height:1.1;letter-spacing:-.01em}
@@ -134,13 +130,6 @@ const description = 'Give a lead a task, let it recruit Claude Code and Codex te
     @media(max-width:480px){.term{margin-left:-.75rem;margin-right:-.75rem}}
     .cap{margin-top:.75rem;color:var(--mute);font-size:.9375rem;text-wrap:pretty}
 
-    /* Capability list, on the ruled-row pattern the rest of the site uses. */
-    .items{margin:2rem 0 0;padding:0;list-style:none;border-top:1px solid var(--rule)}
-    .items li{margin:0;padding:1.75rem 0;border-bottom:1px solid var(--rule)}
-    .items h3{font-size:1.25rem;font-weight:600}
-    .items p{margin-top:.5rem;color:var(--soft);text-wrap:pretty}
-    .items+p{margin-top:2rem}
-
     .ftr{margin-top:clamp(5rem,12vh,8rem);color:var(--mute);font-size:.9375rem}
     .ftr .by{margin-top:.75rem}
     .ftr .by a{color:var(--mute)}
@@ -160,12 +149,8 @@ const description = 'Give a lead a task, let it recruit Claude Code and Codex te
     .ftr p{text-wrap:pretty}
 
     @media (max-width:900px){
-      .split{display:block}
-      .sticky{position:static;height:auto;padding:clamp(2.5rem,8vh,4rem) 0 0}
+      .intro{padding-top:clamp(2.5rem,8vh,4rem)}
       .statement{margin-top:1.5rem}
-      .sidenav{flex-direction:row;flex-wrap:wrap;gap:.75rem 1.5rem;margin-top:2rem}
-      .sticky .links{margin-top:2rem}
-      .flow{padding-top:clamp(3rem,8vh,4rem)}
       .sec{max-width:none}
     }
     @media (prefers-reduced-motion:reduce){*{transition:none!important}html{scroll-behavior:auto}}
@@ -219,37 +204,26 @@ const description = 'Give a lead a task, let it recruit Claude Code and Codex te
 })();
 </script>
 <div class="wrap">
-  <div class="split">
-    <header class="sticky">
-      <div>
-        <h1 class="serif name" data-blob>gangline</h1>
-        <p class="entry"><span class="ipa">/ˈɡæŋˌlaɪn/</span> <i>noun</i></p>
-        <p class="serif statement"><i>Mushing<a class="egg" href="https://www.gutenberg.org/cache/epub/215/pg215-images.html#chap04" target="_blank" rel="noopener">.</a></i> The line that joins several harnesses into one team, and keeps it pulling together.</p>
-        <nav class="sidenav" aria-label="Sections">
-          <a href="#demo">Demo</a>
-          <a href="#start">Start</a>
-          <a href="#surface">One team</a>
-          <a href="#long">Long-running work</a>
-        </nav>
-      </div>
-      <div class="links">
-        <a href="https://github.com/adambiggs/gangline" data-track="github_click">GitHub</a>
-        <a href="docs/" data-track="docs_click">Docs</a>
-        <a href="docs/reference.html" data-track="reference_click">Reference</a>
-        <a href="docs/quickstart.html" data-track="quickstart_click">Your first team</a>
-      </div>
-    </header>
+  <header class="intro">
+    <h1 class="serif name" data-blob>gangline</h1>
+    <p class="entry"><span class="ipa">/ˈɡæŋˌlaɪn/</span> <i>noun</i></p>
+    <p class="serif statement"><i>Mushing<a class="egg" href="https://www.gutenberg.org/cache/epub/215/pg215-images.html#chap04" target="_blank" rel="noopener">.</a></i> The line that joins several harnesses into one team, and keeps it pulling together.</p>
+  </header>
 
-    <main class="flow" data-quiet>
+  <main class="flow" data-quiet>
       <section class="sec lede">
-        <p>Give a lead a task and let it recruit Claude Code and Codex teammates.
-        Watch them work, send direction, and get a result back. Gangline keeps
-        each agent in its own tmux window with its native tools and permissions.</p>
-        <pre><code>curl -fsSL https://raw.githubusercontent.com/adambiggs/gangline/main/install.sh | sh</code></pre>
+        <p>Gangline is a command-line tool for running Claude Code and Codex
+        together as a team of coding agents. Give agents separate jobs, or ask
+        a lead to recruit workers and bring their results back. You can watch
+        each agent’s terminal, send new direction, or interrupt its work.</p>
+        <p>Gangline handles the handoffs: agents send assignments and replies
+        by name, so you don’t have to copy them between terminals. Each runs in
+        its own tmux window with its usual tools and permissions. You decide
+        how the team works.</p>
       </section>
 
       <section id="demo" class="sec">
-        <h2 class="h2">Meet the gang</h2>
+        <h2 class="h2">See a team at work</h2>
         <div class="term">
           <video id="demo-video" autoplay loop muted playsinline controls preload="metadata"
                  poster={demoPoster}
@@ -268,63 +242,36 @@ const description = 'Give a lead a task, let it recruit Claude Code and Codex te
 
       <section id="start" class="sec">
         <h2 class="h2">Start your first team</h2>
-        <p class="soft">On Linux or macOS, install Gangline and run your chosen
-        harness once to complete login and repository trust prompts. Then start
-        a team from the repository where it should work. The{' '}
-        <a href="docs/quickstart.html">first-team tutorial</a> walks through
-        setup, an assignment, the result, and shutdown.</p>
+        <p class="soft">Use Gangline on Linux or macOS with tmux and Claude
+        Code or Codex. The <a href="docs/quickstart.html#install">setup guide</a>
+        covers prerequisites and login. To try the mixed team below, set up
+        both coding tools.</p>
+
+        <pre><code>curl -fsSL https://raw.githubusercontent.com/adambiggs/gangline/main/install.sh | sh</code></pre>
+
+        <p class="soft">From your repository, start a team with a Claude Code lead:</p>
 
         <pre><code>gang up -c claude-code</code></pre>
 
-        <p class="soft"><code>gang up</code> starts a team and attaches you to its{' '}
-        <code>lead</code> window. Tell the lead what result you want in plain
-        language. Ask it to recruit a worker, give the worker a job, and bring
-        you the result.</p>
+        <p class="soft">Tell the lead what you want:</p>
 
         <blockquote>Ask a Codex worker to find how this repository runs its
         tests. Have it send you the command and supporting file paths, then
         summarize the answer for me.</blockquote>
 
-        <p class="soft">When you want to work with one agent directly, ask the
-        lead to hitch and brief it, then switch to that tmux window. If you
-        detached, <code>gang attach</code> returns you to the team.</p>
+        <p class="soft">Switch between the agents’ tmux windows to follow
+        their work. Answer any login, trust, or permission prompts in the
+        agent’s window. The <a href="docs/quickstart.html">first-team tutorial</a>
+        walks through the assignment, checking the answer, and shutting down.</p>
       </section>
 
-      <section id="surface" class="sec">
-        <h2 class="h2">One team</h2>
-        <ul class="items">
-          <li>
-            <h3>One team in tmux</h3>
-            <p>Give agents separate jobs and switch between their windows to
-            follow the work. Each keeps its own terminal, tools, and permissions.</p>
-          </li>
-          <li>
-            <h3>Message by name</h3>
-            <p>Agents send each other work and replies. You can inspect the queue
-            and delivery receipts when a message needs attention.</p>
-          </li>
-          <li>
-            <h3>Stay in control</h3>
-            <p>Talk to the lead, send a worker new direction, or interrupt a turn.
-            Native permission and trust prompts remain yours to answer.</p>
-          </li>
-        </ul>
-
-        <p class="soft">Your instructions decide assignments and staffing.
-        Use the <a href="docs/guides.html">guides</a> for daily work and the{' '}
-        <a href="docs/reference.html">reference</a> for commands and settings.</p>
-      </section>
-
-      <section id="long" class="sec">
-        <h2 class="h2">Long-running work</h2>
-        <p class="soft">Check context use and provider limits, save working
-        state before compaction, and resume from a note when compaction finishes.</p>
-
-        <p class="soft"><code>gang roster</code>, <code>gang capture</code>, and{' '}
-        <code>gang status</code> show the evidence needed to decide whether to
-        resume or remove an agent. The{' '}
-        <a href="docs/troubleshooting.html">troubleshooting guide</a> starts
-        from what you can see.</p>
+      <section class="sec">
+        <h2 class="h2">Working with your team</h2>
+        <p class="soft">Use the <a href="docs/guides.html">guides</a> to direct
+        agents, inspect their activity, and continue after context compaction.
+        Read <a href="docs/concepts.html">how a team works</a> for messaging and
+        roles, or <a href="docs/troubleshooting.html">troubleshooting</a> when
+        an agent needs attention.</p>
       </section>
 
       <footer class="ftr">
@@ -337,8 +284,7 @@ const description = 'Give a lead a task, let it recruit Claude Code and Codex te
         </div>
         <p class="by">Made by <a href="https://adambig.gs" rel="author">Adam Biggs</a>.</p>
       </footer>
-    </main>
-  </div>
+  </main>
 </div>
 <script is:inline>
 (() => {
