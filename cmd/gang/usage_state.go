@@ -54,6 +54,7 @@ type usageSnooze struct {
 	TurnID        string          `json:"turn_id,omitempty"`
 	SubmittedAt   time.Time       `json:"submitted_at,omitzero"`
 	CapRejected   bool            `json:"cap_rejected,omitempty"`
+	CapCandidate  bool            `json:"cap_candidate,omitempty"`
 	TurnFailed    bool            `json:"turn_failed,omitempty"`
 	Rearms        int             `json:"rearms,omitempty"`
 }
@@ -83,18 +84,22 @@ func (run *runtime) withUsageState(change func(*usageState) error) (result error
 	return l.Save(state)
 }
 
-func (run *runtime) acknowledgeUsageDelivery(l *store.LockedAgent, a core.Agent, e core.Envelope, outcome string) error {
+func (run *runtime) acknowledgeUsageDelivery(l *store.LockedAgent, a core.Agent, e core.Envelope, outcome string, witnessedAt ...time.Time) error {
 	if e.From.Kind != core.SenderGangline ||
 		e.From.Name != "snooze" && e.From.Name != "usage-band" {
 		return nil
 	}
 	var submittedAt time.Time
 	if outcome == "delivered" && e.From.Name == "snooze" {
-		w, err := l.Paths.ReadWitness()
-		if err == nil && w.TurnID == a.Native.TurnID {
-			submittedAt = w.At
-		} else if err != nil && !errors.Is(err, os.ErrNotExist) {
-			return err
+		if len(witnessedAt) > 0 {
+			submittedAt = witnessedAt[0]
+		} else {
+			w, err := l.Paths.ReadWitness()
+			if err == nil && w.TurnID == a.Native.TurnID {
+				submittedAt = w.At
+			} else if err != nil && !errors.Is(err, os.ErrNotExist) {
+				return err
+			}
 		}
 	}
 	return run.withUsageState(func(state *usageState) error {
@@ -213,14 +218,32 @@ func (run *runtime) reconcileUsageSubmission(l *store.LockedAgent, a *core.Agent
 	return nil
 }
 
-func usageCapFailure(reason string) bool {
+func usageCapFailure(reason string) (explicit, generic bool) {
 	reason = strings.ToLower(reason)
-	for _, phrase := range []string{"usage limit", "usage_limit", "rate limit", "rate_limit", "quota", "five-hour limit", "5-hour limit", "weekly limit", "hit your limit", "reached your limit"} {
+	for _, phrase := range []string{"usage limit", "usage_limit", "five-hour limit", "5-hour limit", "weekly limit", "hit your limit", "reached your limit"} {
 		if strings.Contains(reason, phrase) {
-			return true
+			return true, false
 		}
 	}
-	return false
+	return false, strings.Contains(reason, "rate limit") || strings.Contains(reason, "rate_limit") || strings.Contains(reason, "quota")
+}
+
+func observedCappedReset(r core.Reading, submittedAt, now time.Time) (time.Time, bool) {
+	if r.Status != "observed" || r.At == nil || submittedAt.IsZero() || !r.At.After(submittedAt) ||
+		r.At.After(now) || now.Sub(*r.At) > 5*time.Minute {
+		return time.Time{}, false
+	}
+	reset, err := snoozeReset(r.Limits, now)
+	if err != nil {
+		return time.Time{}, false
+	}
+	for _, window := range r.Limits {
+		if harness.UsageWindowKind(window.Label, window.WindowMinutes) != "" &&
+			window.UsedPercent >= 99 && window.ResetAt > now.Unix() {
+			return reset, true
+		}
+	}
+	return time.Time{}, false
 }
 
 // A wake completes only on a matching successful native turn. An attributable
@@ -233,6 +256,7 @@ func (run *runtime) observeSnoozeTurn(a core.Agent, notice hookNotice, providerB
 			if s.RecipientID != a.ID || s.TurnID == "" {
 				continue
 			}
+			reset, observedCap := observedCappedReset(a.Native.Limits, s.SubmittedAt, now)
 			if notice.TurnID == s.TurnID && notice.Kind == "turn-finished" {
 				nativeError := !s.SubmittedAt.IsZero() && !a.Native.LastErrorAt.Before(s.SubmittedAt)
 				if !providerBlocked && !nativeError && a.Native.TurnFailure == "" {
@@ -243,47 +267,45 @@ func (run *runtime) observeSnoozeTurn(a core.Agent, notice hookNotice, providerB
 				}
 				continue
 			}
+			confirmed := false
 			if notice.TurnID == s.TurnID && notice.Kind == "turn-failed" && a.Native.FailedTurn == s.TurnID {
-				if !usageCapFailure(notice.Failure) {
+				explicit, generic := usageCapFailure(notice.Failure)
+				if !explicit && !generic {
 					s.TurnFailed = true
 					state.Recent[key] = s
 					continue
 				}
-				if !s.CapRejected {
-					s.CapRejected = true
+				if generic && !observedCap {
+					s.CapCandidate = true
 					state.Recent[key] = s
-					reason := notice.Failure
-					if s.Rearms > 0 {
-						reason += "; no further wake scheduled"
-					}
-					events = append(events, core.Event{Type: "snooze_cap_rejected", At: now, HitchID: a.ID, Name: a.Name, ID: string(s.ID), Reason: reason})
+					continue
 				}
+				confirmed = true
+			}
+			if s.CapCandidate && observedCap {
+				s.CapCandidate = false
+				confirmed = true
+			}
+			if confirmed && !s.CapRejected {
+				s.CapRejected = true
+				state.Recent[key] = s
+				reason := notice.Failure
+				if reason == "" {
+					reason = "native rate limit confirmed by fresh capped-window reading"
+				}
+				if s.Rearms > 0 {
+					reason += "; no further wake scheduled"
+				}
+				events = append(events, core.Event{Type: "snooze_cap_rejected", At: now, HitchID: a.ID, Name: a.Name, ID: string(s.ID), Reason: reason})
 			}
 			if s.CapRejected && s.Rearms > 0 {
 				continue
 			}
-			if !s.CapRejected || a.Native.Limits.Status != "observed" || a.Native.Limits.At == nil ||
-				s.SubmittedAt.IsZero() || !a.Native.Limits.At.After(s.SubmittedAt) ||
-				a.Native.Limits.At.After(now) || now.Sub(*a.Native.Limits.At) > 5*time.Minute {
+			if !s.CapRejected || !observedCap {
 				continue
 			}
 			if current := state.Snoozes[key]; current.ID != "" {
 				delete(state.Recent, key)
-				continue
-			}
-			reset, err := snoozeReset(a.Native.Limits.Limits, now)
-			if err != nil {
-				continue
-			}
-			atCap := false
-			for _, window := range a.Native.Limits.Limits {
-				if harness.UsageWindowKind(window.Label, window.WindowMinutes) != "" &&
-					window.UsedPercent >= 99 && window.ResetAt > now.Unix() {
-					atCap = true
-					break
-				}
-			}
-			if !atCap {
 				continue
 			}
 			id, err := randomID("snooze")
@@ -297,6 +319,7 @@ func (run *runtime) observeSnoozeTurn(a core.Agent, notice hookNotice, providerB
 			next := s
 			next.ID, next.Token, next.At = core.EnvelopeID(id), token, reset
 			next.RecipientID, next.RecipientName, next.TurnID, next.CapRejected, next.TurnFailed = "", "", "", false, false
+			next.CapCandidate = false
 			next.SubmittedAt = time.Time{}
 			next.Submission = ""
 			next.Rearms++
@@ -470,7 +493,9 @@ func (run *runtime) flushUsageWork() error {
 	}
 	lead, haveLead := currentLead(agents)
 	active := make(map[core.HitchID]core.Agent, len(agents))
+	present := make(map[core.HitchID]bool, len(agents))
 	for _, a := range agents {
+		present[a.ID] = true
 		if a.Status == core.Active {
 			active[a.ID] = a
 		}
@@ -480,7 +505,7 @@ func (run *runtime) flushUsageWork() error {
 	now := run.cmd.now()
 	if err := run.withUsageState(func(state *usageState) error {
 		for key, pending := range state.Recent {
-			if _, exists := active[pending.RecipientID]; exists {
+			if present[pending.RecipientID] {
 				continue
 			}
 			if state.Snoozes[key].ID == "" {
@@ -503,6 +528,9 @@ func (run *runtime) flushUsageWork() error {
 		}
 		for i := range state.Notices {
 			n := &state.Notices[i]
+			if n.Submission != "" && present[n.RecipientID] {
+				continue
+			}
 			if _, exists := active[n.RecipientID]; !exists {
 				if n.RecipientID != "" && n.Submission != "" {
 					id, err := randomID("usage-band")
@@ -533,6 +561,9 @@ func (run *runtime) flushUsageWork() error {
 		for _, key := range keys {
 			s := state.Snoozes[key]
 			if s.At.After(now) {
+				continue
+			}
+			if s.Submission != "" && present[s.RecipientID] {
 				continue
 			}
 			if _, exists := active[s.RecipientID]; !exists {

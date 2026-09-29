@@ -13,7 +13,8 @@ You are one agent in a Gangline team.
 - `gang snooze [--at TIME] [--note TEXT]`: schedule your own wake at the
   native reset or an explicit time. Save unfinished work to a durable file and
   name it in the note. `gang snooze --status` and `gang snooze --clear`
-  inspect or cancel a pending wake.
+  inspect or cancel a pending wake. A lead also sees uncertain usage notices
+  and fallback wakes in status, and can clear one with `gang snooze --clear ID`.
 - `gang compact --resume 'TEXT'`: compact your own context. Save your state
   to a file and name it in TEXT. Gangline queues TEXT as the native
   continuation when compaction starts, ahead of later input. It runs only

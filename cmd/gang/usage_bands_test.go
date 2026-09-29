@@ -594,6 +594,152 @@ func TestNonCapFailureDoesNotRearmWake(t *testing.T) {
 	}
 }
 
+func TestGenericRateLimitWaitsForNativeCapEvidence(t *testing.T) {
+	f := newStateFixture(t)
+	a := f.add(t, "caller-id", "worker", "claude-code")
+	a.Native.FailedTurn = "wake-turn"
+	at := f.cmd.now()
+	a.Native.Limits = core.Reading{Kind: "provider-limits", Status: "observed", At: &at, Limits: []core.LimitWindow{{Label: "five_hour", UsedPercent: 40, ResetAt: at.Add(5 * time.Hour).Unix()}}}
+	if err := f.run.withUsageState(func(state *usageState) error {
+		state.Recent[string(a.ID)] = usageSnooze{ID: "wake", CallerID: a.ID, CallerName: a.Name, RecipientID: a.ID, TurnID: "wake-turn", SubmittedAt: at.Add(-time.Second)}
+		return nil
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if err := f.run.observeSnoozeTurn(a, hookNotice{Kind: "turn-failed", TurnID: "wake-turn", Failure: "rate_limit"}, false); err != nil {
+		t.Fatal(err)
+	}
+	state := usageSnapshot(t, f.run)
+	if len(state.Snoozes) != 0 || !state.Recent[string(a.ID)].CapCandidate || state.Recent[string(a.ID)].CapRejected {
+		t.Fatalf("generic throttle was treated as an attributable cap: %+v", state)
+	}
+	f.env["GANG_AGENT_ID"] = string(a.ID)
+	f.env["TMUX_PANE"] = a.Pane
+	if err := f.cmd.snooze([]string{"--status"}); err != nil || !strings.Contains(f.out.String(), "rate limit unconfirmed") {
+		t.Fatalf("uncertain throttle status: %q, %v", f.out.String(), err)
+	}
+	a.Native.Limits.Limits[0].UsedPercent = 100
+	if err := f.run.observeSnoozeTurn(a, hookNotice{}, false); err != nil {
+		t.Fatal(err)
+	}
+	if next := usageSnapshot(t, f.run).Snoozes[string(a.ID)]; next.ID == "" || next.Rearms != 1 {
+		t.Fatalf("fresh capped reading did not rearm candidate: %+v", next)
+	}
+}
+
+func TestLeadCanInspectAndClearUncertainUsageIntents(t *testing.T) {
+	f := newStateFixture(t)
+	lead := f.add(t, "lead-id", "lead", "codex")
+	f.env["GANG_AGENT_ID"] = string(lead.ID)
+	f.env["TMUX_PANE"] = lead.Pane
+	if err := f.run.withUsageState(func(state *usageState) error {
+		state.Notices = []usageNotice{{ID: "notice", RecipientID: lead.ID, Submission: "unverified", Collar: "codex", Window: "weekly", Band: "red"}}
+		state.Snoozes["gone-caller"] = usageSnooze{ID: "fallback", CallerID: "gone-caller", CallerName: "worker", RecipientID: lead.ID, Submission: "accepted"}
+		return nil
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if err := f.cmd.snooze([]string{"--status"}); err != nil {
+		t.Fatal(err)
+	}
+	if output := f.out.String(); !strings.Contains(output, "notice\t") || !strings.Contains(output, "fallback\t") {
+		t.Fatalf("lead cannot inspect uncertain intents: %q", output)
+	}
+	for _, id := range []string{"notice", "fallback"} {
+		if err := f.cmd.snooze([]string{"--clear", id}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	state := usageSnapshot(t, f.run)
+	if len(state.Notices) != 0 || len(state.Snoozes) != 0 {
+		t.Fatalf("lead could not clear uncertain intents: %+v", state)
+	}
+}
+
+func TestBootingRecipientDoesNotRerouteUncertainNativeInput(t *testing.T) {
+	f := newStateFixture(t)
+	lead := f.add(t, "lead-id", "lead", "codex")
+	p, err := f.run.team.Agent(lead.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	l, err := p.TryLock()
+	if err != nil {
+		t.Fatal(err)
+	}
+	lead.Status = core.Booting
+	if err := l.Save(lead); err != nil {
+		t.Fatal(err)
+	}
+	if err := l.Close(); err != nil {
+		t.Fatal(err)
+	}
+	if err := f.run.withUsageState(func(state *usageState) error {
+		state.Notices = []usageNotice{{ID: "notice", RecipientID: lead.ID, Submission: "unverified"}}
+		state.Snoozes["gone-caller"] = usageSnooze{ID: "fallback", CallerID: "gone-caller", RecipientID: lead.ID, At: f.cmd.now(), Submission: "accepted"}
+		state.Recent["other-caller"] = usageSnooze{ID: "recent", CallerID: "other-caller", RecipientID: lead.ID, TurnID: "turn"}
+		return nil
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if err := f.run.flushUsageWork(); err != nil {
+		t.Fatal(err)
+	}
+	state := usageSnapshot(t, f.run)
+	if state.Notices[0].ID != "notice" || state.Snoozes["gone-caller"].ID != "fallback" || state.Recent["other-caller"].ID != "recent" || f.input.submits != 0 {
+		t.Fatalf("uncertain input was rerouted while recipient still exists: %+v", state)
+	}
+}
+
+func TestDeliveredWakeKeepsOriginalWitnessTime(t *testing.T) {
+	f := newStateFixture(t)
+	a := f.add(t, "caller-id", "worker", "codex")
+	at := f.cmd.now()
+	witnessAt := at.Add(-time.Second)
+	s := usageSnooze{ID: "wake", Token: "0123456789abcdef", CallerID: a.ID, RecipientID: a.ID, At: at}
+	if err := f.run.withUsageState(func(state *usageState) error {
+		state.Snoozes[string(a.ID)] = s
+		return nil
+	}); err != nil {
+		t.Fatal(err)
+	}
+	p, err := f.run.team.Agent(a.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	e := core.Envelope{ID: s.ID, Token: s.Token, Recipient: a.ID, To: a.Name, From: core.Sender{Kind: core.SenderGangline, Name: "snooze"}}
+	if err := p.Publish(e); err != nil {
+		t.Fatal(err)
+	}
+	if err := p.WriteWitness(store.Witness{ID: "other", At: at, TurnID: "other-turn"}); err != nil {
+		t.Fatal(err)
+	}
+	l, err := p.TryLock()
+	if err != nil {
+		t.Fatal(err)
+	}
+	a.Native.TurnID = "wake-turn"
+	if err := f.run.apply(l, &a, core.Event{Type: "input_started", ID: string(e.ID), Status: "envelope"}); err != nil {
+		t.Fatal(err)
+	}
+	if err := f.run.finishInput(l, &a, e, "delivered", "", witnessAt); err != nil {
+		t.Fatal(err)
+	}
+	if err := l.Close(); err != nil {
+		t.Fatal(err)
+	}
+	if got := usageSnapshot(t, f.run).Recent[string(a.ID)].SubmittedAt; !got.Equal(witnessAt) {
+		t.Fatalf("original submit time %s was replaced by later witness time %s", witnessAt, got)
+	}
+	a.Native.LastErrorAt = witnessAt.Add(500 * time.Millisecond)
+	if err := f.run.observeSnoozeTurn(a, hookNotice{Kind: "turn-finished", TurnID: "wake-turn"}, false); err != nil {
+		t.Fatal(err)
+	}
+	if len(usageSnapshot(t, f.run).Recent) != 1 {
+		t.Fatal("native error after the original submit was treated as turn success")
+	}
+}
+
 func TestSnoozeRequiresMatchingSuccessfulNativeTurn(t *testing.T) {
 	for _, collar := range []string{"claude-code", "codex"} {
 		t.Run(collar, func(t *testing.T) {

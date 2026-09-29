@@ -250,7 +250,7 @@ func (run *runtime) deliver(l *store.LockedAgent, a *core.Agent, e core.Envelope
 			a.Native.Transcript = witness.Transcript
 		}
 	}
-	if err := run.finishInput(l, a, e, outcome, reason); err != nil {
+	if err := run.finishInput(l, a, e, outcome, reason, witness.At); err != nil {
 		return outcome, err
 	}
 	if outcome == "unverified" {

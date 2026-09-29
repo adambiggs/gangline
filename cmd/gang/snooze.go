@@ -2,6 +2,7 @@ package main
 
 import (
 	"fmt"
+	"sort"
 	"strings"
 	"time"
 
@@ -40,13 +41,36 @@ func snoozeReset(limits []core.LimitWindow, now time.Time) (time.Time, error) {
 	return time.Unix(selected.ResetAt, 0), nil
 }
 
+func snoozeStatusText(s usageSnooze, submitted bool) string {
+	if submitted {
+		if s.Submission == "accepted" {
+			return "accepted in native queue; awaiting turn success"
+		}
+		return "native submission unverified; inspect recipient"
+	}
+	switch {
+	case s.CapCandidate:
+		return "rate limit unconfirmed by native usage; inspect or clear"
+	case s.CapRejected && s.Rearms > 0:
+		return "usage cap rejected the replacement; manual action needed"
+	case s.CapRejected:
+		return "waiting for native reset after cap rejection"
+	case s.TurnFailed:
+		return "native turn failed; manual action needed"
+	case s.TurnID == "":
+		return "native turn identity unavailable; manual action needed"
+	default:
+		return "awaiting successful native turn"
+	}
+}
+
 func (cmd command) snooze(args []string) error {
 	var at, note string
 	var clear, status bool
 	flags := boundFlagSet("snooze", map[string]any{"at": &at, "note": &note, "clear": &clear, "status": &status})
 	positionals, err := parseOptions(flags, args)
-	if err != nil || len(positionals) != 0 {
-		return usageError("snooze: expected --at TIME, --note TEXT, --clear, or --status")
+	if err != nil || len(positionals) > 1 || len(positionals) == 1 && !clear {
+		return usageError("snooze: expected --at TIME, --note TEXT, --clear [ID], or --status")
 	}
 	if (clear || status) && (at != "" || note != "") || clear && status {
 		return usageError("snooze: --clear and --status take no other options")
@@ -63,47 +87,91 @@ func (cmd command) snooze(args []string) error {
 		return refuseError("snooze is available only to a registered active agent")
 	}
 	key := string(a.ID)
+	isLead := a.Role == "lead" || a.Name == "lead"
 	if status {
-		var current usageSnooze
-		var awaiting string
+		var rows []string
 		if err := run.withUsageState(func(state *usageState) error {
-			current = state.Snoozes[key]
-			if current.ID != "" && current.Submission != "" {
-				if current.Submission == "accepted" {
-					awaiting = "accepted in native queue; awaiting turn success"
+			if current := state.Snoozes[key]; current.ID != "" {
+				if current.Submission != "" {
+					rows = append(rows, fmt.Sprintf("%s\t%s", current.ID, snoozeStatusText(current, true)))
 				} else {
-					awaiting = "native submission unverified; inspect recipient"
+					rows = append(rows, fmt.Sprintf("%s\t%s", current.ID, current.At.UTC().Format(time.RFC3339)))
 				}
-			} else if current.ID == "" {
-				current = state.Recent[key]
-				switch {
-				case current.ID == "":
-				case current.CapRejected && current.Rearms > 0:
-					awaiting = "usage cap rejected the replacement; manual action needed"
-				case current.CapRejected:
-					awaiting = "waiting for native reset after cap rejection"
-				case current.TurnFailed:
-					awaiting = "native turn failed; manual action needed"
-				case current.TurnID == "":
-					awaiting = "native turn identity unavailable; manual action needed"
-				default:
-					awaiting = "awaiting successful native turn"
+			} else if current := state.Recent[key]; current.ID != "" {
+				rows = append(rows, fmt.Sprintf("%s\t%s", current.ID, snoozeStatusText(current, false)))
+			}
+			if isLead {
+				for _, n := range state.Notices {
+					if n.RecipientID == a.ID && n.Submission != "" {
+						rows = append(rows, fmt.Sprintf("%s\t%s %s %s notice; native %s; inspect or clear by ID", n.ID, n.Collar, n.Window, n.Band, n.Submission))
+					}
+				}
+				for caller, s := range state.Snoozes {
+					if caller != key && s.RecipientID == a.ID && s.Submission != "" {
+						rows = append(rows, fmt.Sprintf("%s\twake for %s; %s", s.ID, s.CallerName, snoozeStatusText(s, true)))
+					}
+				}
+				for caller, s := range state.Recent {
+					if caller != key && s.RecipientID == a.ID {
+						rows = append(rows, fmt.Sprintf("%s\twake for %s; %s", s.ID, s.CallerName, snoozeStatusText(s, false)))
+					}
 				}
 			}
 			return nil
 		}); err != nil {
 			return err
 		}
-		if current.ID == "" {
-			_, err = fmt.Fprintln(cmd.stdout, "no wake scheduled")
-		} else if awaiting != "" {
-			_, err = fmt.Fprintf(cmd.stdout, "%s\t%s\n", current.ID, awaiting)
-		} else {
-			_, err = fmt.Fprintf(cmd.stdout, "%s\t%s\n", current.ID, current.At.UTC().Format(time.RFC3339))
+		if len(rows) == 0 {
+			if isLead {
+				_, err = fmt.Fprintln(cmd.stdout, "no wake scheduled or uncertain usage notice")
+			} else {
+				_, err = fmt.Fprintln(cmd.stdout, "no wake scheduled")
+			}
+			return err
 		}
+		sort.Strings(rows)
+		_, err = fmt.Fprintln(cmd.stdout, strings.Join(rows, "\n"))
 		return err
 	}
 	if clear {
+		if len(positionals) == 1 {
+			if !isLead {
+				return refuseError("only the lead can clear another usage intent by ID")
+			}
+			id := core.EnvelopeID(positionals[0])
+			found := false
+			if err := run.withUsageState(func(state *usageState) error {
+				for i, n := range state.Notices {
+					if n.ID == id && n.RecipientID == a.ID && n.Submission != "" {
+						state.Notices = append(state.Notices[:i], state.Notices[i+1:]...)
+						found = true
+						return nil
+					}
+				}
+				for caller, s := range state.Snoozes {
+					if s.ID == id && s.RecipientID == a.ID && s.Submission != "" {
+						delete(state.Snoozes, caller)
+						found = true
+						return nil
+					}
+				}
+				for caller, s := range state.Recent {
+					if s.ID == id && s.RecipientID == a.ID {
+						delete(state.Recent, caller)
+						found = true
+						return nil
+					}
+				}
+				return nil
+			}); err != nil {
+				return err
+			}
+			if !found {
+				return refuseError("usage intent %s is not awaiting review for this lead", id)
+			}
+			_, err = fmt.Fprintf(cmd.stdout, "%s\tcleared\n", id)
+			return err
+		}
 		if err := run.withUsageState(func(state *usageState) error {
 			if current := state.Snoozes[key]; current.RecipientID != "" && current.Submission == "" {
 				return refuseError("wake is already due or submitted; inspect its delivery before clearing")

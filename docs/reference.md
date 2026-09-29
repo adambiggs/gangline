@@ -92,7 +92,7 @@ file and send its path. `tick --agent` takes a hitch ID, not an agent name.
 | `gang limits [NAME]` | Show observed provider limits. |
 | `gang limits -c COLLAR` | Query native account limits without a live agent, if supported. |
 | `gang snooze [--at TIME] [--note TEXT]` | Schedule a wake for the calling agent at its observed native reset, or at an explicit future time. |
-| `gang snooze --status` / `gang snooze --clear` | Inspect or cancel the caller's pending wake. |
+| `gang snooze --status` / `gang snooze --clear [ID]` | Inspect or cancel a pending wake. The lead sees uncertain notices and fallback wakes, and can clear one by ID. |
 | `gang log [--agent NAME\|HITCH_ID] [--type TYPE\|KIND] [LOG.jsonl]` | Print JSONL events from a team or saved log, with optional filters. |
 | `gang whoami` | Print the calling pane's registered identity. |
 
@@ -260,8 +260,10 @@ most-used window. `--at` accepts a duration, local `HH:MM`, or RFC3339
 timestamp. `--note` is delivered with the wake. A pending wake is durable;
 repeating the command replaces it until delivery starts. The due wake is sent
 to the caller, or the active lead if the caller is gone. `--status` shows
-scheduled, submitted, or failed wakes. `--clear` cancels a scheduled or
-unconfirmed wake, but cannot retract input already queued for delivery. See
+scheduled, submitted, or failed wakes. For the lead it also lists uncertain
+usage notices and fallback wakes; `--clear ID` removes one of those intents.
+An agent can clear its own wake with `--clear`. Clearing cannot retract input
+already queued for delivery. See
 [operations](operations.md).
 
 Linux uses systemd user timers for the watchdog; macOS uses transient launchd

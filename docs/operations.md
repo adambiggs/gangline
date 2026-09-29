@@ -22,14 +22,19 @@ remains pending until the matching native turn finishes successfully. If
 input is blocked before submission, ordinary ticks keep trying the queued
 wake. A submitted prompt remains pending until its matching turn finishes
 successfully. When native input is accepted or its outcome cannot be verified,
-Gangline records the submission and does not type it again. The status
-command shows the uncertainty so the agent can inspect and clear the wake.
+Gangline records the submission and does not type it again. The caller can
+inspect an uncertain wake with `gang snooze --status` and clear it after
+checking the native turn. The lead sees uncertain notices and wakes routed
+from absent callers in the same status output, and can clear one with
+`gang snooze --clear ID`. Clearing cannot retract native input.
 If Claude Code reports an attributable usage-cap refusal and a fresh native
 reading confirms a capped window with a future reset, Gangline records it and
 schedules one replacement wake at that reset.
 A later refusal from that replacement is logged for the lead to handle.
 Failed turns and unknown completion stay visible in `gang snooze --status`
 until the agent clears or replaces the wake.
+An unconfirmed generic rate-limit error remains visible for inspection until
+a fresh native reading confirms a capped window or the agent clears the wake.
 
 The schedule lives in the team state root, so it survives Gangline process
 restarts, compaction, and host reboot. Gangline does not start a team after a

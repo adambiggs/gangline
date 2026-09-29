@@ -14,4 +14,6 @@ the caller is gone.
 The wake remains pending until its native turn finishes successfully. An
 attributable Claude Code usage-cap failure causes Gangline to re-arm it at
 the next observed native reset. Inspect `gang snooze --status` from that
-agent if completion or reset is uncertain.
+agent if completion or reset is uncertain. Your own `gang snooze --status`
+also lists uncertain usage notices and fallback wakes sent to you; inspect
+native input before clearing one with `gang snooze --clear ID`.

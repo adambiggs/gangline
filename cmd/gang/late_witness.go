@@ -59,7 +59,7 @@ func (run *runtime) reconcileDelivery(l *store.LockedAgent, a *core.Agent) error
 			return err
 		}
 		a.Native.SessionID, a.Native.TurnID, a.Native.Transcript = w.SessionID, w.TurnID, w.Transcript
-		return run.finishInput(l, a, e, "delivered", "")
+		return run.finishInput(l, a, e, "delivered", "", w.At)
 	}
 	return nil
 }
