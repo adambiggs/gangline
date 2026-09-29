@@ -53,6 +53,10 @@ func (cmd command) statusline(args []string) (result error) {
 		}
 		readings[0].At = at
 	}
+	if len(readings) > 1 && readings[1].Status == "observed" {
+		at := cmd.now()
+		readings[1].At = &at
+	}
 	r := coreReading(readings[0])
 	if id := core.HitchID(cmd.environment("GANGLINE_HITCH_ID")); id != "" {
 		run, err := cmd.runtime()

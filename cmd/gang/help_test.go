@@ -188,6 +188,7 @@ func TestEveryCommandFlagParserConstructs(t *testing.T) {
 		"context":    func() error { return cmd.context(bad) },
 		"log":        func() error { _, _, err := parseLogFilter(bad, true); return err },
 		"limits":     func() error { return cmd.limits(bad) },
+		"snooze":     func() error { return cmd.snooze(bad) },
 		"wait":       func() error { _, err := parseWait([]string{"worker", "--unlisted"}); return err },
 		"status":     func() error { return cmd.status(bad) },
 		"tick":       func() error { return cmd.tick(bad) },

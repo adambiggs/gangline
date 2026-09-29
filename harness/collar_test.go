@@ -2,6 +2,34 @@ package harness
 
 import "testing"
 
+func TestUsageBandOverlayReplacesOnlySelectedWindow(t *testing.T) {
+	collar, err := LoadCustomCollar("codex", "codex.cue", []byte(`collar: {
+		usage_bands: {
+			five_hour: [{name: "early", at: 0.8, message: "{{collar}} {{reset_at}}"}]
+		}
+	}`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := collar.UsageBands["five_hour"]; len(got) != 1 || got[0].Name != "early" {
+		t.Fatalf("five-hour overlay = %+v", got)
+	}
+	if got := collar.UsageBands["weekly"]; len(got) == 0 || got[0].Name != "yellow" {
+		t.Fatalf("weekly defaults were lost: %+v", got)
+	}
+}
+
+func TestUsageBandRejectsInvalidMessageToken(t *testing.T) {
+	_, err := LoadCustomCollar("codex", "codex.cue", []byte(`collar: {
+		usage_bands: {
+			weekly: [{name: "warn", at: 0.8, message: "{{secret}}"}]
+		}
+	}`))
+	if err == nil {
+		t.Fatal("unknown usage-band message token passed validation")
+	}
+}
+
 func TestEmbeddedCollarsValidate(t *testing.T) {
 	want := []string{"claude-code", "codex"}
 	names, err := EmbeddedCollarNames()

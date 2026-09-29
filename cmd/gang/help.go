@@ -49,6 +49,7 @@ Observe and control:
   statusline render or install the native context footer
   log       read the event log
   limits    read current provider limits
+  snooze    schedule a provider-reset or explicit wake
   whoami    read this pane's identity
   attach    join the team in tmux
   teams     list known teams
@@ -85,6 +86,7 @@ var commandUsage = map[string]string{
 	"context":    "usage: gang context [NAME]\n       gang context --widget NAME|off\n",
 	"log":        "usage: gang log [--agent NAME|HITCH_ID] [--type TYPE|KIND] [LOG.jsonl]\n",
 	"limits":     "usage: gang limits [NAME] | -c COLLAR\n",
+	"snooze":     "usage: gang snooze [--at DURATION|HH:MM|RFC3339] [--note TEXT] [--clear | --status]\n",
 	"wait":       "usage: gang wait NAME [--timeout DURATION]\n",
 	"curfew":     "usage: gang curfew [DURATION | HH:MM | RFC3339 | clear]\n",
 	"status":     "usage: gang status [NAME] [--why]\n",
@@ -144,6 +146,12 @@ var commandOptions = map[string][]optionSpec{
 		{"type", "TYPE|KIND", "show events or readings of this type"},
 	},
 	"limits": {{"c", "COLLAR", "query a collar without an agent"}},
+	"snooze": {
+		{"at", "DURATION|HH:MM|RFC3339", "wake time instead of native reset"},
+		{"note", "TEXT", "continuation to carry into the wake"},
+		{"clear", "", "clear a wake before it becomes due"},
+		{"status", "", "show the pending wake"},
+	},
 	"wait":   {{"timeout", "DURATION", "maximum wait; zero checks once"}},
 	"status": {{"why", "", "include recorded wedge evidence"}},
 	"tick": {
@@ -212,6 +220,7 @@ var commandDescription = map[string]string{
 	"context":    "NAME is a registered agent; omit it for the current pane's agent.\nPrint its native context reading. --widget NAME selects an agent to show.\n",
 	"log":        "Print the configured team's durable JSONL event log.\nThe agent filter accepts a registered NAME or a hitch ID.\n",
 	"limits":     "NAME is a registered agent; omit it for the current pane's agent.\nRead its provider limits, or use -c to query a collar without an agent.\n",
+	"snooze":     "Schedule a wake for the calling agent. Without --at, use the most-used future native five-hour or weekly reset. The wake is retained until its message is delivered; --clear only works before it becomes due.\n",
 	"wait":       "NAME is the registered agent to watch for a recorded idle boundary.\nA zero timeout checks once.\n",
 	"curfew":     "Declare, inspect, or clear one team deadline.\n",
 	"status":     "NAME is a registered agent; omit it for the current pane's agent.\nShow its status and activity; --why adds recorded wedge evidence.\n",

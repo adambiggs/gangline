@@ -13,7 +13,7 @@ import (
 func coreReading(r harness.Reading) core.Reading {
 	out := core.Reading{Kind: r.Kind, Source: r.Source, NativeEvent: r.NativeEvent, At: r.At, Status: r.Status, Reason: r.Reason, Model: r.Model, Used: r.Used, Limit: r.Limit, Percent: r.Percent}
 	for _, w := range r.Limits {
-		out.Limits = append(out.Limits, core.LimitWindow{Label: w.Label, UsedPercent: w.UsedPercent, ResetAt: w.ResetAt})
+		out.Limits = append(out.Limits, core.LimitWindow{Label: w.Label, UsedPercent: w.UsedPercent, ResetAt: w.ResetAt, WindowMinutes: w.WindowMinutes})
 	}
 	return out
 }
@@ -41,7 +41,14 @@ func acceptReadings(n *core.NativeState, readings []core.Reading) {
 			}
 			n.Context = r
 		case "provider-limits":
+			if n.Limits.At != nil && (r.At == nil || r.At.Before(*n.Limits.At)) {
+				continue
+			}
 			n.Limits = r
+		case "error":
+			if r.At != nil && r.At.After(n.LastErrorAt) {
+				n.LastErrorAt = *r.At
+			}
 		}
 	}
 }

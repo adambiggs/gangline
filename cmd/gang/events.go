@@ -249,13 +249,13 @@ func (cmd command) tick(args []string) (result error) {
 		return err
 	}
 	if id != "" {
-		return run.tickAgent(core.HitchID(id), notice, true)
+		return errors.Join(run.tickAgent(core.HitchID(id), notice, true), run.flushUsageWork())
 	}
 	agents, err := run.team.ListAgents()
 	if err != nil {
 		return err
 	}
-	return eachAgent(agents, func(a core.Agent) error { return run.tickAgent(a.ID, hookNotice{}, false) })
+	return errors.Join(eachAgent(agents, func(a core.Agent) error { return run.tickAgent(a.ID, hookNotice{}, false) }), run.flushUsageWork())
 }
 func (cmd command) log(args []string) error {
 	filter, files, err := parseLogFilter(args, true)

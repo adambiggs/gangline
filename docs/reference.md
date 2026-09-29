@@ -91,6 +91,8 @@ file and send its path. `tick --agent` takes a hitch ID, not an agent name.
 | `gang context --widget NAME\|off` | Select a context widget for the tmux status line, or turn it off. |
 | `gang limits [NAME]` | Show observed provider limits. |
 | `gang limits -c COLLAR` | Query native account limits without a live agent, if supported. |
+| `gang snooze [--at TIME] [--note TEXT]` | Schedule a wake for the calling agent at its observed native reset, or at an explicit future time. |
+| `gang snooze --status` / `gang snooze --clear` | Inspect or cancel the caller's pending wake. |
 | `gang log [--agent NAME\|HITCH_ID] [--type TYPE\|KIND] [LOG.jsonl]` | Print JSONL events from a team or saved log, with optional filters. |
 | `gang whoami` | Print the calling pane's registered identity. |
 
@@ -201,7 +203,8 @@ In `GANG_COLLARS`, a `NAME.cue` matching a bundled collar overlays its fields;
 other names require a complete collar. Nested fields merge; a changed primitive
 name replaces that primitive and its parameters. Lists replace the bundled
 list. Each `context_bands` selector value replaces its entire band list;
-other selectors remain. For example, `claude-code.cue` can set only:
+other selectors remain. Each `usage_bands` window replaces its band list.
+For example, `claude-code.cue` can set only:
 
 ```cue
 collar: {
@@ -215,6 +218,24 @@ Each context band has a `name`, threshold `at` (a fraction from 0 to 1), and
 optional `message`. A nonfinal band without a message advises saving state and
 compacting at the next good stopping point; the last orders compaction now.
 Messages use these tokens; token counts are integers and percents are rounded:
+
+Usage bands use the same named fraction thresholds under `usage_bands.five_hour`
+and `usage_bands.weekly`. They read native provider usage for the collar's
+account and notify the active lead once per band and reset window. A collar
+overlay can replace either window independently:
+
+```cue
+collar: {
+	usage_bands: {
+		five_hour: [{name: "early", at: 0.80}, {name: "full", at: 0.95}]
+	}
+}
+```
+
+An optional usage-band message accepts `{{band}}`, `{{collar}}`,
+`{{window}}`, `{{threshold_percent}}`, `{{used_percent}}`,
+`{{reset_at}}` (UTC RFC3339), and `{{snooze_command}}`. Unknown native
+window durations are ignored; Gangline does not estimate provider usage.
 
 | Token | Value |
 | --- | --- |
@@ -232,6 +253,16 @@ from its native session log. `gang limits -c codex` queries account limits
 through a private native app server without creating a conversation or turn.
 The Claude Code collar has no standalone limits query; use `gang limits NAME`
 for readings observed from an agent.
+
+`gang snooze` belongs to an active agent. With no `--at`, it uses a recent
+native five-hour or weekly reset from that agent's collar, selecting the
+most-used window. `--at` accepts a duration, local `HH:MM`, or RFC3339
+timestamp. `--note` is delivered with the wake. A pending wake is durable;
+repeating the command replaces it until delivery starts. The due wake is sent
+to the caller, or the active lead if the caller is gone. `--status` shows
+scheduled, submitted, or failed wakes. `--clear` cancels a scheduled or
+unconfirmed wake, but cannot retract input already queued for delivery. See
+[operations](operations.md).
 
 Linux uses systemd user timers for the watchdog; macOS uses transient launchd
 user agents. On a host without a supported user scheduler, ordinary commands

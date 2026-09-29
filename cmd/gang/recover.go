@@ -99,6 +99,9 @@ func (run *runtime) tickAgent(id core.HitchID, notice hookNotice, wait bool) err
 	if err := run.observeContextBands(l, &a, c, screen); err != nil {
 		return err
 	}
+	if err := run.observeUsageBands(a, c); err != nil {
+		return err
+	}
 	if err := run.observeCompaction(l, &a, c, screen); err != nil {
 		return err
 	}
@@ -118,6 +121,9 @@ func (run *runtime) tickAgent(id core.HitchID, notice hookNotice, wait bool) err
 	}
 	capacity, found, err := harness.DetectCapacity(c, screen)
 	if err != nil {
+		return err
+	}
+	if err := run.observeSnoozeTurn(a, notice, found); err != nil {
 		return err
 	}
 	if found {

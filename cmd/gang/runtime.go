@@ -133,6 +133,9 @@ func (run *runtime) acquire(id core.HitchID, wait bool) (*store.LockedAgent, cor
 		err = run.reconcileDelivery(l, &a)
 	}
 	if err == nil {
+		err = run.reconcileUsageSubmission(l, &a)
+	}
+	if err == nil {
 		err = run.publishContextNotes(l, &a)
 	}
 	if err == nil {
@@ -262,6 +265,9 @@ func (run *runtime) recoverInput(l *store.LockedAgent, a *core.Agent) error {
 	return run.finishInput(l, a, e, "unverified", "input owner exited before recording the outcome")
 }
 func (run *runtime) finishInput(l *store.LockedAgent, a *core.Agent, e core.Envelope, outcome, reason string) error {
+	if err := run.acknowledgeUsageDelivery(l, *a, e, outcome); err != nil {
+		return err
+	}
 	if err := l.Settle(a, e, outcome, reason); err != nil {
 		return err
 	}

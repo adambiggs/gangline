@@ -38,6 +38,13 @@ func (cmd command) up(args []string) error {
 	if err := cmd.hitchWithStaleClaim(upHitchArguments(name, flagArguments), true); err != nil {
 		return err
 	}
+	run, err := cmd.runtime()
+	if err != nil {
+		return err
+	}
+	if err := run.flushUsageWork(); err != nil {
+		return err
+	}
 	if f, ok := cmd.stdin.(*os.File); ok {
 		if info, err := f.Stat(); err == nil && info.Mode()&os.ModeCharDevice != 0 {
 			return cmd.attach(nil)

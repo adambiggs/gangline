@@ -114,8 +114,9 @@ func limitsRPCResult(decoder *json.Decoder, want int) (json.RawMessage, error) {
 }
 
 type accountLimitWindow struct {
-	Used  *float64 `json:"usedPercent"`
-	Reset *int64   `json:"resetsAt"`
+	Used          *float64 `json:"usedPercent"`
+	Reset         *int64   `json:"resetsAt"`
+	WindowMinutes *int     `json:"windowDurationMins"`
 }
 
 type accountLimitBucket struct {
@@ -155,10 +156,14 @@ func parseAccountLimits(payload []byte) ([]LimitWindow, error) {
 			if key != "" {
 				label = key + "/" + label
 			}
-			if window.Used == nil || window.Reset == nil || *window.Used < 0 || *window.Reset <= 0 {
+			if window.Used == nil || window.Reset == nil || *window.Used < 0 || *window.Reset <= 0 || (window.WindowMinutes != nil && *window.WindowMinutes <= 0) {
 				return nil, fmt.Errorf("native account limits carry an incomplete or invalid %s window", label)
 			}
-			limits = append(limits, LimitWindow{Label: label, UsedPercent: *window.Used, ResetAt: *window.Reset})
+			minutes := 0
+			if window.WindowMinutes != nil {
+				minutes = *window.WindowMinutes
+			}
+			limits = append(limits, LimitWindow{Label: label, UsedPercent: *window.Used, ResetAt: *window.Reset, WindowMinutes: minutes})
 		}
 	}
 	if len(limits) == 0 {

@@ -21,7 +21,7 @@ import "time"
 #Reading: close({
  kind: string, source: string, native_event?: string, at?: #Time, status: string, reason?: string, model?: string
  used?: int & >=0, limit?: int & >0, percent?: number & >=0
- limits?: [...close({label: #ID, used_percent: number & >=0, reset_at: int & >0})]
+ limits?: [...close({label: #ID, used_percent: number & >=0, reset_at: int & >0, window_minutes?: int & >0})]
 })
 #Fields: close({
  type: "hitch_claimed" | "hitch_spawned" | "hitch_ready" | "hitch_blocked" | "hitch_failed" |
@@ -31,7 +31,7 @@ import "time"
   "compaction_requested" | "compaction_submitted" | "compaction_completed" | "compaction_failed" | "compaction_unverified" |
   "interrupt_requested" | "interrupt_completed" | "deadline_checked" |
   "drop_started" | "drop_finished" | "curfew_set" | "curfew_cleared" |
-  "capacity_detected" | "capacity_submitted" | "capacity_cleared" | "tick" | "watchdog_unavailable" | "watchdog_failed"
+  "capacity_detected" | "capacity_submitted" | "capacity_cleared" | "snooze_cap_rejected" | "snooze_rearmed" | "tick" | "watchdog_unavailable" | "watchdog_failed"
  at: #Time
  source?: "hook" | "command" | "watchdog"
  hitch_id?: #ID, name?: #ID, pane?: #ID, id?: #ID, reason?: string, status?: string
@@ -43,6 +43,8 @@ import "time"
  {type: "hitch_claimed" | "hitch_spawned" | "hitch_ready" | "hitch_blocked" | "hitch_failed" | "adopted" | "renamed" | "send_cancelled" | "delivery_accepted" | "delivery_succeeded" | "delivery_failed" | "delivery_unverified" | "activity_observed" | "observation" | "native_hook" | "compaction_submitted" | "compaction_completed" | "compaction_failed" | "compaction_unverified" | "interrupt_requested" | "interrupt_completed" | "deadline_checked" | "drop_started" | "drop_finished" | "curfew_set" | "curfew_cleared" | "capacity_detected" | "capacity_submitted" | "capacity_cleared"} |
  {type: "send_queued", envelope: #Envelope} |
  {type: "context_band_crossed", id: #ID, hitch_id: #ID, status: #ID, envelope: #Envelope, readings: [#Reading]} |
+ {type: "snooze_cap_rejected", id: #ID, hitch_id: #ID, reason: #ID} |
+ {type: "snooze_rearmed", id: #ID, hitch_id: #ID, deadline: #Time, reason: #ID} |
  {type: "input_started" | "input_finished", id: #ID, status: #ID, hitch_id: #ID} |
  {type: "hook_failed" | "watchdog_unavailable" | "watchdog_failed", reason: #ID} |
  {type: "tick", source: "hook" | "command" | "watchdog"} |

@@ -157,6 +157,8 @@ func (cmd command) execute(args []string) error {
 		return cmd.log(arguments)
 	case "limits":
 		return cmd.limits(arguments)
+	case "snooze":
+		return cmd.snooze(arguments)
 	case "wait":
 		return cmd.wait(arguments)
 	case "curfew":

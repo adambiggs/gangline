@@ -1,0 +1,718 @@
+package main
+
+import (
+	"bytes"
+	"errors"
+	"os"
+	"strings"
+	"sync"
+	"testing"
+	"time"
+
+	"github.com/adambiggs/gangline/core"
+	"github.com/adambiggs/gangline/harness"
+	"github.com/adambiggs/gangline/store"
+)
+
+func usageSnapshot(t *testing.T, run *runtime) usageState {
+	t.Helper()
+	var state usageState
+	if err := run.withUsageState(func(current *usageState) error {
+		state = *current
+		return nil
+	}); err != nil {
+		t.Fatal(err)
+	}
+	return state
+}
+
+func TestUsageBandsAreAccountWideAndLeadOnly(t *testing.T) {
+	f := newStateFixture(t)
+	lead := f.add(t, "lead-id", "ser5", "codex")
+	p, _ := f.run.team.Agent(lead.ID)
+	l, err := p.TryLock()
+	if err != nil {
+		t.Fatal(err)
+	}
+	lead.Role = "lead"
+	if err := l.Save(lead); err != nil {
+		t.Fatal(err)
+	}
+	_ = l.Close()
+	first := f.add(t, "first", "first", "codex")
+	second := f.add(t, "second", "second", "codex")
+	c, err := loadCollar("codex", f.run.settings)
+	if err != nil {
+		t.Fatal(err)
+	}
+	reset := f.cmd.now().Add(5 * time.Hour).Unix()
+	observe := func(a core.Agent, percent float64, at time.Time, status string) {
+		t.Helper()
+		f.run.cmd.clock = func() time.Time { return at }
+		a.Native.Limits = core.Reading{Kind: "provider-limits", Status: status, At: &at, Limits: []core.LimitWindow{{Label: "codex/primary", WindowMinutes: 300, UsedPercent: percent, ResetAt: reset}}}
+		if err := f.run.observeUsageBands(a, c); err != nil {
+			t.Fatal(err)
+		}
+	}
+	at := f.cmd.now()
+	observe(first, 80, at, "observed")
+	observe(second, 95, at, "observed")                  // the same native timestamp can carry a newer account percentage
+	observe(first, 99, at.Add(-time.Second), "observed") // an older agent reading cannot roll the state back
+	observe(second, 100, at.Add(2*time.Second), "unknown")
+	state := usageSnapshot(t, f.run)
+	if len(state.Notices) != 2 || len(state.Windows["codex/five_hour"].Fired) != 2 {
+		t.Fatalf("account crossing state: %+v", state)
+	}
+	f.env["GANGLINE_HITCH_ID"] = string(lead.ID)
+	if err := f.run.flushUsageWork(); err != nil {
+		t.Fatal(err)
+	}
+	if f.input.submits != 2 || !strings.Contains(f.input.pasted, "[gang:gangline:usage-band#") {
+		t.Fatalf("lead received %d notices; last = %q", f.input.submits, f.input.pasted)
+	}
+	if len(usageSnapshot(t, f.run).Notices) != 0 {
+		t.Fatal("delivered notices remain pending")
+	}
+	observe(second, 100, at.Add(3*time.Second), "observed")
+	if len(usageSnapshot(t, f.run).Notices) != 0 {
+		t.Fatal("same reset repeated a band")
+	}
+	reset = f.cmd.now().Add(10 * time.Hour).Unix()
+	observe(first, 95, at.Add(2*time.Second), "observed")
+	if len(usageSnapshot(t, f.run).Notices) != 0 {
+		t.Fatal("older observation with a later reset repeated bands")
+	}
+	observe(second, 80, at.Add(4*time.Second), "observed")
+	if len(usageSnapshot(t, f.run).Notices) != 1 {
+		t.Fatal("new native reset did not create a new crossing")
+	}
+}
+
+func TestUsageBandWaitsForLead(t *testing.T) {
+	f := newStateFixture(t)
+	worker := f.add(t, "worker-id", "worker", "claude-code")
+	c, err := loadCollar("claude-code", f.run.settings)
+	if err != nil {
+		t.Fatal(err)
+	}
+	at := f.cmd.now()
+	worker.Native.Limits = core.Reading{Kind: "provider-limits", Status: "observed", At: &at, Limits: []core.LimitWindow{{Label: "seven_day", UsedPercent: 95, ResetAt: at.Add(7 * 24 * time.Hour).Unix()}}}
+	if err := f.run.observeUsageBands(worker, c); err != nil {
+		t.Fatal(err)
+	}
+	if err := f.run.flushUsageWork(); err != nil {
+		t.Fatal(err)
+	}
+	if f.input.submits != 0 || len(usageSnapshot(t, f.run).Notices) != 2 {
+		t.Fatal("missing lead consumed or misrouted notices")
+	}
+}
+
+func TestUsageNoticeReceiptSurvivesLaterDeliveryUntilAcknowledged(t *testing.T) {
+	f := newStateFixture(t)
+	lead := f.add(t, "lead-id", "lead", "codex")
+	worker := f.add(t, "worker-id", "worker", "codex")
+	c, err := loadCollar("codex", f.run.settings)
+	if err != nil {
+		t.Fatal(err)
+	}
+	at := f.cmd.now()
+	worker.Native.Limits = core.Reading{Kind: "provider-limits", Status: "observed", At: &at, Limits: []core.LimitWindow{{Label: "primary", WindowMinutes: 300, UsedPercent: 80, ResetAt: at.Add(5 * time.Hour).Unix()}}}
+	if err := f.run.observeUsageBands(worker, c); err != nil {
+		t.Fatal(err)
+	}
+	n := usageSnapshot(t, f.run).Notices[0]
+	if err := f.run.withUsageState(func(state *usageState) error {
+		state.Notices[0].RecipientID, state.Notices[0].RecipientName = lead.ID, lead.Name
+		return nil
+	}); err != nil {
+		t.Fatal(err)
+	}
+	e := core.Envelope{ID: n.ID, Token: n.Token, Recipient: lead.ID, To: lead.Name, From: core.Sender{Kind: core.SenderGangline, Name: "usage-band"}, Message: core.Message{Text: n.Text}, CreatedAt: n.CreatedAt}
+	f.env["GANGLINE_HITCH_ID"] = string(lead.ID)
+	if delivered, err := f.run.publishUsageEnvelope(e); err != nil || !delivered {
+		t.Fatalf("first notice delivery: %v, %t", err, delivered)
+	}
+	if len(usageSnapshot(t, f.run).Notices) != 0 {
+		t.Fatal("exact submit did not durably acknowledge the notice")
+	}
+	p, err := f.run.team.Agent(lead.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	other := core.Envelope{ID: "other-delivery", Token: "0123456789abcdef", Recipient: lead.ID, To: lead.Name, From: core.Sender{Kind: core.SenderGangline, Name: "other"}, Message: core.Message{Text: "another message"}, CreatedAt: at}
+	if err := p.Publish(other); err != nil {
+		t.Fatal(err)
+	}
+	l, err := p.TryLock()
+	if err != nil {
+		t.Fatal(err)
+	}
+	agent, err := p.Read()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := l.Settle(&agent, other, "delivered", ""); err != nil {
+		t.Fatal(err)
+	}
+	if err := l.Close(); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := p.ReadEnvelope("cur", n.ID); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("later delivery did not evict old inbox receipt: %v", err)
+	}
+	before := f.input.submits
+	if delivered, err := f.run.publishUsageEnvelope(e); err != nil || delivered {
+		t.Fatalf("stale flusher republished acknowledged notice: %t, %v", delivered, err)
+	}
+	if err := f.run.flushUsageWork(); err != nil {
+		t.Fatal(err)
+	}
+	if f.input.submits != before || len(usageSnapshot(t, f.run).Notices) != 0 {
+		t.Fatalf("notice was duplicated or not acknowledged: submits=%d", f.input.submits)
+	}
+}
+
+func TestUnconfirmedUsageInputIsNotResubmittedAfterReceiptEviction(t *testing.T) {
+	for _, tc := range []struct{ kind, outcome, dir string }{
+		{"notice", "accepted", "cur"},
+		{"notice", "unverified", "failed"},
+		{"wake", "accepted", "cur"},
+		{"wake", "unverified", "failed"},
+	} {
+		t.Run(tc.kind+"-"+tc.outcome, func(t *testing.T) {
+			f := newStateFixture(t)
+			a := f.add(t, "lead-id", "lead", "codex")
+			f.env["GANGLINE_HITCH_ID"] = string(a.ID)
+			at := f.cmd.now()
+			from := "usage-band"
+			id := core.EnvelopeID("pending-notice")
+			if tc.kind == "wake" {
+				from, id = "snooze", "pending-wake"
+			}
+			e := core.Envelope{ID: id, Token: "0123456789abcdef", Recipient: a.ID, To: a.Name, From: core.Sender{Kind: core.SenderGangline, Name: core.AgentName(from)}, Message: core.Message{Text: "resume"}, CreatedAt: at}
+			if err := f.run.withUsageState(func(state *usageState) error {
+				if tc.kind == "notice" {
+					state.Notices = append(state.Notices, usageNotice{ID: id, Token: e.Token, Collar: "codex", Window: "five_hour", Band: "yellow", Text: e.Message.Text, CreatedAt: at, RecipientID: a.ID, RecipientName: a.Name})
+				} else {
+					state.Snoozes[string(a.ID)] = usageSnooze{ID: id, Token: e.Token, CallerID: a.ID, CallerName: a.Name, At: at, Note: e.Message.Text, RecipientID: a.ID, RecipientName: a.Name}
+				}
+				return nil
+			}); err != nil {
+				t.Fatal(err)
+			}
+			p, err := f.run.team.Agent(a.ID)
+			if err != nil {
+				t.Fatal(err)
+			}
+			for _, envelope := range []core.Envelope{e, {ID: "other-input", Token: "abcdef0123456789", Recipient: a.ID, To: a.Name, From: core.Sender{Kind: core.SenderGangline, Name: "other"}, Message: core.Message{Text: "other"}, CreatedAt: at}} {
+				if err := p.Publish(envelope); err != nil {
+					t.Fatal(err)
+				}
+				l, err := p.TryLock()
+				if err != nil {
+					t.Fatal(err)
+				}
+				if err := f.run.apply(l, &a, core.Event{Type: "input_started", ID: string(envelope.ID), Status: "envelope"}); err != nil {
+					t.Fatal(err)
+				}
+				if err := f.run.finishInput(l, &a, envelope, tc.outcome, "native input not yet confirmed"); err != nil {
+					t.Fatal(err)
+				}
+				if err := l.Close(); err != nil {
+					t.Fatal(err)
+				}
+			}
+			if _, err := p.ReadEnvelope(tc.dir, id); !errors.Is(err, os.ErrNotExist) {
+				t.Fatalf("prior receipt was not evicted: %v", err)
+			}
+			if err := f.run.flushUsageWork(); err != nil {
+				t.Fatal(err)
+			}
+			if f.input.submits != 0 {
+				t.Fatalf("unconfirmed %s input was resubmitted", tc.kind)
+			}
+			state := usageSnapshot(t, f.run)
+			if tc.kind == "notice" {
+				if len(state.Notices) != 1 || state.Notices[0].Submission != tc.outcome {
+					t.Fatalf("notice uncertainty lost: %+v", state)
+				}
+				wire, err := envelopeText(e)
+				if err != nil {
+					t.Fatal(err)
+				}
+				if err := p.WriteWitness(store.Witness{ID: "late-notice", At: at.Add(time.Second), TurnID: "notice-turn", Prompt: wire}); err != nil {
+					t.Fatal(err)
+				}
+				l, _, err := f.run.acquire(a.ID, false)
+				if err != nil {
+					t.Fatal(err)
+				}
+				if err := l.Close(); err != nil {
+					t.Fatal(err)
+				}
+				if notices := usageSnapshot(t, f.run).Notices; len(notices) != 0 {
+					t.Fatalf("late witness did not clear submitted notice: %+v", notices)
+				}
+			} else {
+				if state.Snoozes[string(a.ID)].Submission != tc.outcome {
+					t.Fatalf("wake uncertainty lost: %+v", state)
+				}
+				wire, err := envelopeText(e)
+				if err != nil {
+					t.Fatal(err)
+				}
+				if err := p.WriteWitness(store.Witness{ID: "late-wake", At: at.Add(time.Second), TurnID: "wake-turn", Prompt: wire}); err != nil {
+					t.Fatal(err)
+				}
+				l, a, err := f.run.acquire(a.ID, false)
+				if err != nil {
+					t.Fatal(err)
+				}
+				if err := l.Close(); err != nil {
+					t.Fatal(err)
+				}
+				state = usageSnapshot(t, f.run)
+				if state.Snoozes[string(a.ID)].ID != "" || state.Recent[string(a.ID)].TurnID != "wake-turn" {
+					t.Fatalf("late witness did not link wake turn: %+v", state)
+				}
+				if err := f.run.observeSnoozeTurn(a, hookNotice{Kind: "turn-finished", TurnID: "wake-turn"}, false); err != nil {
+					t.Fatal(err)
+				}
+				if len(usageSnapshot(t, f.run).Recent) != 0 {
+					t.Fatal("matching successful turn left queued wake pending")
+				}
+			}
+		})
+	}
+}
+
+func TestConcurrentUsageBandSamplesCreateOneAccountNotice(t *testing.T) {
+	f := newStateFixture(t)
+	c, err := loadCollar("codex", f.run.settings)
+	if err != nil {
+		t.Fatal(err)
+	}
+	at := f.cmd.now()
+	start := make(chan struct{})
+	errors := make(chan error, 2)
+	var group sync.WaitGroup
+	for _, id := range []core.HitchID{"a", "b"} {
+		group.Add(1)
+		go func(id core.HitchID) {
+			defer group.Done()
+			<-start
+			a := core.Agent{ID: id, Collar: "codex", Status: core.Active, Native: core.NativeState{Limits: core.Reading{Kind: "provider-limits", Status: "observed", At: &at, Limits: []core.LimitWindow{{Label: "codex/primary", WindowMinutes: 300, UsedPercent: 80, ResetAt: at.Add(5 * time.Hour).Unix()}}}}}
+			errors <- f.run.observeUsageBands(a, c)
+		}(id)
+	}
+	close(start)
+	group.Wait()
+	close(errors)
+	for err := range errors {
+		if err != nil {
+			t.Fatal(err)
+		}
+	}
+	if got := len(usageSnapshot(t, f.run).Notices); got != 1 {
+		t.Fatalf("concurrent samples created %d notices, want one", got)
+	}
+}
+
+func TestSnoozeDurableDueAndCallerFallback(t *testing.T) {
+	f := newStateFixture(t)
+	caller := f.add(t, "caller-id", "worker", "codex")
+	f.env["GANG_AGENT_ID"] = string(caller.ID)
+	f.env["TMUX_PANE"] = caller.Pane
+	if err := f.cmd.snooze([]string{"--at", "2h", "--note", "Continue the saved task"}); err != nil {
+		t.Fatal(err)
+	}
+	s := usageSnapshot(t, f.run).Snoozes[string(caller.ID)]
+	if s.ID == "" || !s.At.Equal(f.cmd.now().Add(2*time.Hour)) {
+		t.Fatalf("snooze was not retained: %+v", s)
+	}
+	restarted, err := f.cmd.runtime()
+	if err != nil {
+		t.Fatal(err)
+	}
+	f.run = restarted
+	if got := usageSnapshot(t, f.run).Snoozes[string(caller.ID)].ID; got != s.ID {
+		t.Fatalf("restarted runtime lost wake %q: got %q", s.ID, got)
+	}
+	if err := f.run.flushUsageWork(); err != nil || f.input.submits != 0 {
+		t.Fatalf("wake delivered early: %v, %d submits", err, f.input.submits)
+	}
+	// A restarted team supersedes the old hitch claim. The retained wake goes to
+	// the newly active lead, with the missed deadline stated in its message.
+	if err := f.run.team.RemoveName(caller.Name, caller.ID); err != nil {
+		t.Fatal(err)
+	}
+	lead := f.add(t, "new-lead", "lead", "codex")
+	f.env["GANGLINE_HITCH_ID"] = string(lead.ID)
+	now := f.cmd.now().Add(3 * time.Hour)
+	f.run.cmd.clock = func() time.Time { return now }
+	if err := f.run.flushUsageWork(); err != nil {
+		t.Fatal(err)
+	}
+	if f.input.submits != 1 || !strings.Contains(f.input.pasted, "overdue by 1h0m0s") || !strings.Contains(f.input.pasted, "worker is no longer active") || !strings.Contains(f.input.pasted, "Continue the saved task") {
+		t.Fatalf("fallback wake: submits=%d text=%q", f.input.submits, f.input.pasted)
+	}
+	if state := usageSnapshot(t, f.run); len(state.Snoozes) != 0 || len(state.Recent) != 1 {
+		t.Fatal("submitted wake was not retained pending turn success")
+	}
+}
+
+func TestUnconfirmedWakeRoutesToLeadAfterRecipientDisappears(t *testing.T) {
+	f := newStateFixture(t)
+	caller := f.add(t, "caller-id", "worker", "codex")
+	at := f.cmd.now().Add(-time.Hour)
+	if err := f.run.withUsageState(func(state *usageState) error {
+		state.Recent[string(caller.ID)] = usageSnooze{ID: "submitted-wake", Token: "0123456789abcdef", CallerID: caller.ID, CallerName: caller.Name, RecipientID: caller.ID, RecipientName: caller.Name, TurnID: "old-turn", At: at, Note: "Resume saved work"}
+		return nil
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if err := f.run.team.RemoveName(caller.Name, caller.ID); err != nil {
+		t.Fatal(err)
+	}
+	lead := f.add(t, "new-lead", "lead", "codex")
+	f.env["GANGLINE_HITCH_ID"] = string(lead.ID)
+	if err := f.run.flushUsageWork(); err != nil {
+		t.Fatal(err)
+	}
+	if f.input.submits != 1 || !strings.Contains(f.input.pasted, "overdue") || !strings.Contains(f.input.pasted, "worker is no longer active") {
+		t.Fatalf("unconfirmed wake was not routed to lead: %q", f.input.pasted)
+	}
+	if state := usageSnapshot(t, f.run); len(state.Snoozes) != 0 || state.Recent[string(caller.ID)].RecipientID != lead.ID {
+		t.Fatalf("recovered wake lost pending completion: %+v", state)
+	}
+}
+
+func TestSnoozeDefaultsToNativeResetAndCanBeCleared(t *testing.T) {
+	f := newStateFixture(t)
+	a := f.add(t, "caller-id", "worker", "codex")
+	f.env["GANG_AGENT_ID"] = string(a.ID)
+	f.env["TMUX_PANE"] = a.Pane
+	p, _ := f.run.team.Agent(a.ID)
+	l, err := p.TryLock()
+	if err != nil {
+		t.Fatal(err)
+	}
+	at := f.cmd.now()
+	a.Native.Limits = core.Reading{Kind: "provider-limits", Status: "observed", At: &at, Limits: []core.LimitWindow{
+		{Label: "codex/primary", WindowMinutes: 300, UsedPercent: 85, ResetAt: at.Add(5 * time.Hour).Unix()},
+		{Label: "codex/secondary", WindowMinutes: 10080, UsedPercent: 90, ResetAt: at.Add(7 * 24 * time.Hour).Unix()},
+	}}
+	if err := l.Save(a); err != nil {
+		t.Fatal(err)
+	}
+	_ = l.Close()
+	if err := f.cmd.snooze(nil); err != nil {
+		t.Fatal(err)
+	}
+	s := usageSnapshot(t, f.run).Snoozes[string(a.ID)]
+	if !s.At.Equal(at.Add(7 * 24 * time.Hour)) {
+		t.Fatalf("default reset = %s", s.At)
+	}
+	if err := f.cmd.snooze([]string{"--clear"}); err != nil {
+		t.Fatal(err)
+	}
+	if len(usageSnapshot(t, f.run).Snoozes) != 0 {
+		t.Fatal("clear retained the wake")
+	}
+}
+
+func TestSnoozeRejectsUnknownNativeReset(t *testing.T) {
+	f := newStateFixture(t)
+	a := f.add(t, "caller-id", "worker", "codex")
+	f.env["GANG_AGENT_ID"] = string(a.ID)
+	if err := f.cmd.snooze(nil); err == nil || !strings.Contains(err.Error(), "unavailable or stale") {
+		t.Fatalf("unknown limit accepted: %v", err)
+	}
+}
+
+func TestSnoozeRejectsNoteThatWouldOverflowOverdueFallback(t *testing.T) {
+	f := newStateFixture(t)
+	a := f.add(t, "caller-id", "worker", "codex")
+	f.env["GANG_AGENT_ID"] = string(a.ID)
+	f.env["TMUX_PANE"] = a.Pane
+	note := strings.Repeat("x", maximumMessageBytes-180)
+	if err := f.cmd.snooze([]string{"--at", "1h", "--note", note}); err == nil || !strings.Contains(err.Error(), "message exceeds") {
+		t.Fatalf("oversize fallback accepted: %v", err)
+	}
+	if len(usageSnapshot(t, f.run).Snoozes) != 0 {
+		t.Fatal("invalid wake was persisted")
+	}
+}
+
+func TestSnoozeWaitsForNativeInputAndRetriesQueuedWake(t *testing.T) {
+	f := newStateFixture(t)
+	a := f.add(t, "caller-id", "worker", "codex")
+	f.env["GANG_AGENT_ID"] = string(a.ID)
+	f.env["TMUX_PANE"] = a.Pane
+	if err := f.cmd.snooze([]string{"--at", "1m"}); err != nil {
+		t.Fatal(err)
+	}
+	f.input.screen = screenWithText("Would you like to run this command?", "› 1. Yes, proceed", "  2. No")
+	due := f.cmd.now().Add(time.Minute)
+	f.run.cmd.clock = func() time.Time { return due }
+	if err := f.run.flushUsageWork(); err != nil {
+		t.Fatal(err)
+	}
+	if f.input.submits != 0 || len(usageSnapshot(t, f.run).Snoozes) != 1 {
+		t.Fatal("blocked input consumed a queued wake")
+	}
+	f.input.screen = screenWithText("READY", "› ")
+	f.env["GANGLINE_HITCH_ID"] = string(a.ID)
+	if err := f.run.flushUsageWork(); err != nil {
+		t.Fatal(err)
+	}
+	if state := usageSnapshot(t, f.run); f.input.submits != 1 || len(state.Snoozes) != 0 || len(state.Recent) != 1 {
+		t.Fatalf("retry did not confirm the wake: submits=%d", f.input.submits)
+	}
+}
+
+func TestAttributableUsageCapFailureRearmsOneWakeAtNativeReset(t *testing.T) {
+	f := newStateFixture(t)
+	a := f.add(t, "caller-id", "worker", "claude-code")
+	at := f.cmd.now()
+	reset := at.Add(5 * time.Hour)
+	a.Native.Limits = core.Reading{Kind: "provider-limits", Status: "observed", At: &at, Limits: []core.LimitWindow{{Label: "five_hour", UsedPercent: 100, ResetAt: reset.Unix()}}}
+	old := usageSnooze{ID: "old-wake", Token: "0123456789abcdef", CallerID: a.ID, CallerName: a.Name, RecipientID: a.ID, RecipientName: a.Name, At: at, Note: "Resume from saved state"}
+	if err := f.run.withUsageState(func(state *usageState) error {
+		state.Snoozes[string(a.ID)] = old
+		return nil
+	}); err != nil {
+		t.Fatal(err)
+	}
+	e := core.Envelope{ID: old.ID, Token: old.Token, Recipient: a.ID, To: a.Name, From: core.Sender{Kind: core.SenderGangline, Name: "snooze"}, Message: core.Message{Text: old.Note}, CreatedAt: at}
+	p, err := f.run.team.Agent(a.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := p.Publish(e); err != nil {
+		t.Fatal(err)
+	}
+	if err := p.WriteWitness(store.Witness{ID: "wake-start", At: at.Add(-time.Second), TurnID: "wake-turn"}); err != nil {
+		t.Fatal(err)
+	}
+	l, err := p.TryLock()
+	if err != nil {
+		t.Fatal(err)
+	}
+	a.Native.TurnID = "wake-turn"
+	if err := f.run.apply(l, &a, core.Event{Type: "input_started", ID: string(e.ID), Status: "envelope"}); err != nil {
+		t.Fatal(err)
+	}
+	if err := f.run.finishInput(l, &a, e, "delivered", ""); err != nil {
+		t.Fatal(err)
+	}
+	if err := l.Close(); err != nil {
+		t.Fatal(err)
+	}
+	if state := usageSnapshot(t, f.run); len(state.Snoozes) != 0 || state.Recent[string(a.ID)].TurnID != "wake-turn" {
+		t.Fatalf("confirmed Claude wake did not retain turn identity: %+v", state)
+	}
+	a.Native.FailedTurn = "wake-turn"
+	failure := hookNotice{Kind: "turn-failed", TurnID: "wake-turn", Failure: "You have hit your usage limit"}
+	if err := f.run.observeSnoozeTurn(a, failure, false); err != nil {
+		t.Fatal(err)
+	}
+	state := usageSnapshot(t, f.run)
+	rearmed := state.Snoozes[string(a.ID)]
+	if rearmed.ID == "" || rearmed.ID == old.ID || !rearmed.At.Equal(reset) || rearmed.Note != old.Note || len(state.Recent) != 0 {
+		t.Fatalf("native reset rearm: %+v", state)
+	}
+	if err := f.run.observeSnoozeTurn(a, failure, false); err != nil {
+		t.Fatal(err)
+	}
+	if got := usageSnapshot(t, f.run).Snoozes[string(a.ID)].ID; got != rearmed.ID {
+		t.Fatalf("duplicate failure rearmed another wake: %q", got)
+	}
+	if err := f.run.withUsageState(func(state *usageState) error {
+		next := state.Snoozes[string(a.ID)]
+		next.RecipientID, next.RecipientName = a.ID, a.Name
+		state.Snoozes[string(a.ID)] = next
+		return nil
+	}); err != nil {
+		t.Fatal(err)
+	}
+	f.run.cmd.clock = func() time.Time { return reset }
+	second := core.Envelope{ID: rearmed.ID, Token: rearmed.Token, Recipient: a.ID, To: a.Name, From: core.Sender{Kind: core.SenderGangline, Name: "snooze"}, Message: core.Message{Text: rearmed.Note}, CreatedAt: reset}
+	if err := p.Publish(second); err != nil {
+		t.Fatal(err)
+	}
+	if err := p.WriteWitness(store.Witness{ID: "second-start", At: reset.Add(-time.Second), TurnID: "second-turn"}); err != nil {
+		t.Fatal(err)
+	}
+	l, err = p.TryLock()
+	if err != nil {
+		t.Fatal(err)
+	}
+	a.Native.TurnID = "second-turn"
+	if err := f.run.apply(l, &a, core.Event{Type: "input_started", ID: string(second.ID), Status: "envelope"}); err != nil {
+		t.Fatal(err)
+	}
+	if err := f.run.finishInput(l, &a, second, "delivered", ""); err != nil {
+		t.Fatal(err)
+	}
+	if err := l.Close(); err != nil {
+		t.Fatal(err)
+	}
+	a.Native.FailedTurn = "second-turn"
+	if err := f.run.observeSnoozeTurn(a, hookNotice{Kind: "turn-failed", TurnID: "second-turn", Failure: "Usage limit reached again"}, false); err != nil {
+		t.Fatal(err)
+	}
+	if state := usageSnapshot(t, f.run); len(state.Snoozes) != 0 || len(state.Recent) != 1 || !state.Recent[string(a.ID)].CapRejected {
+		t.Fatalf("second rejection lost unresolved wake or exceeded retry budget: %+v", state)
+	}
+	log, err := os.ReadFile(f.run.team.Log)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if bytes.Count(log, []byte(`"type":"snooze_rearmed"`)) != 1 {
+		t.Fatalf("rearm was not logged once: %s", log)
+	}
+}
+
+func TestNonCapFailureDoesNotRearmWake(t *testing.T) {
+	f := newStateFixture(t)
+	a := f.add(t, "caller-id", "worker", "claude-code")
+	a.Native.FailedTurn = "wake-turn"
+	if err := f.run.withUsageState(func(state *usageState) error {
+		state.Recent[string(a.ID)] = usageSnooze{ID: "old-wake", CallerID: a.ID, RecipientID: a.ID, TurnID: "wake-turn"}
+		return nil
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if err := f.run.observeSnoozeTurn(a, hookNotice{Kind: "turn-failed", TurnID: "wake-turn", Failure: "Login expired"}, false); err != nil {
+		t.Fatal(err)
+	}
+	state := usageSnapshot(t, f.run)
+	if len(state.Recent) != 1 || !state.Recent[string(a.ID)].TurnFailed || len(state.Snoozes) != 0 {
+		t.Fatalf("non-cap failure lost unresolved wake or rearmed: %+v", state)
+	}
+}
+
+func TestSnoozeRequiresMatchingSuccessfulNativeTurn(t *testing.T) {
+	for _, collar := range []string{"claude-code", "codex"} {
+		t.Run(collar, func(t *testing.T) {
+			f := newStateFixture(t)
+			a := f.add(t, "caller-id", "worker", collar)
+			if err := f.run.withUsageState(func(state *usageState) error {
+				state.Recent[string(a.ID)] = usageSnooze{ID: "wake", CallerID: a.ID, RecipientID: a.ID, TurnID: "wake-turn"}
+				return nil
+			}); err != nil {
+				t.Fatal(err)
+			}
+			if err := f.run.observeSnoozeTurn(a, hookNotice{Kind: "turn-finished", TurnID: "other-turn"}, false); err != nil {
+				t.Fatal(err)
+			}
+			if len(usageSnapshot(t, f.run).Recent) != 1 {
+				t.Fatal("another native turn completed the wake")
+			}
+			if err := f.run.observeSnoozeTurn(a, hookNotice{Kind: "turn-finished", TurnID: "wake-turn"}, false); err != nil {
+				t.Fatal(err)
+			}
+			if len(usageSnapshot(t, f.run).Recent) != 0 {
+				t.Fatal("matching successful native turn left wake pending")
+			}
+		})
+	}
+}
+
+func TestCodexCapacityScreenDoesNotCompleteWake(t *testing.T) {
+	f := newStateFixture(t)
+	a := f.add(t, "caller-id", "worker", "codex")
+	if err := f.run.withUsageState(func(state *usageState) error {
+		state.Recent[string(a.ID)] = usageSnooze{ID: "wake", CallerID: a.ID, RecipientID: a.ID, TurnID: "wake-turn"}
+		return nil
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if err := f.run.observeSnoozeTurn(a, hookNotice{Kind: "turn-finished", TurnID: "wake-turn"}, true); err != nil {
+		t.Fatal(err)
+	}
+	if s := usageSnapshot(t, f.run).Recent[string(a.ID)]; !s.TurnFailed {
+		t.Fatal("terminal capacity error completed a wake")
+	}
+}
+
+func TestCodexNativeErrorDoesNotCompleteWake(t *testing.T) {
+	f := newStateFixture(t)
+	a := f.add(t, "caller-id", "worker", "codex")
+	at := f.cmd.now()
+	a.Native.LastErrorAt = at
+	if err := f.run.withUsageState(func(state *usageState) error {
+		state.Recent[string(a.ID)] = usageSnooze{ID: "wake", CallerID: a.ID, RecipientID: a.ID, TurnID: "wake-turn", SubmittedAt: at.Add(-time.Second)}
+		return nil
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if err := f.run.observeSnoozeTurn(a, hookNotice{Kind: "turn-finished", TurnID: "wake-turn"}, false); err != nil {
+		t.Fatal(err)
+	}
+	if s := usageSnapshot(t, f.run).Recent[string(a.ID)]; !s.TurnFailed {
+		t.Fatal("native error after wake submit was treated as success")
+	}
+}
+
+func TestCapRejectedWakeWaitsForKnownNativeReset(t *testing.T) {
+	f := newStateFixture(t)
+	a := f.add(t, "caller-id", "worker", "claude-code")
+	a.Native.FailedTurn = "wake-turn"
+	at := f.cmd.now()
+	if err := f.run.withUsageState(func(state *usageState) error {
+		state.Recent[string(a.ID)] = usageSnooze{ID: "old-wake", CallerID: a.ID, CallerName: a.Name, RecipientID: a.ID, TurnID: "wake-turn", SubmittedAt: at.Add(-time.Second), Note: "Resume saved work"}
+		return nil
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if err := f.run.observeSnoozeTurn(a, hookNotice{Kind: "turn-failed", TurnID: "wake-turn", Failure: "Usage limit reached"}, false); err != nil {
+		t.Fatal(err)
+	}
+	state := usageSnapshot(t, f.run)
+	if len(state.Snoozes) != 0 || !state.Recent[string(a.ID)].CapRejected {
+		t.Fatalf("missing reset discarded rejected wake: %+v", state)
+	}
+	f.env["GANG_AGENT_ID"] = string(a.ID)
+	f.env["TMUX_PANE"] = a.Pane
+	if err := f.cmd.snooze([]string{"--status"}); err != nil || !strings.Contains(f.out.String(), "waiting for native reset") {
+		t.Fatalf("pending reset status: %q, %v", f.out.String(), err)
+	}
+	stale := at.Add(-2 * time.Second)
+	a.Native.Limits = core.Reading{Kind: "provider-limits", Status: "observed", At: &stale, Limits: []core.LimitWindow{{Label: "five_hour", UsedPercent: 100, ResetAt: at.Add(5 * time.Hour).Unix()}}}
+	if err := f.run.observeSnoozeTurn(a, hookNotice{}, false); err != nil {
+		t.Fatal(err)
+	}
+	if got := usageSnapshot(t, f.run).Snoozes[string(a.ID)].ID; got != "" {
+		t.Fatal("pre-submission native limit reading rearmed rejected wake")
+	}
+	a.Native.Limits.At = &at
+	if err := f.run.observeSnoozeTurn(a, hookNotice{}, false); err != nil {
+		t.Fatal(err)
+	}
+	if got := usageSnapshot(t, f.run).Snoozes[string(a.ID)].ID; got == "" {
+		t.Fatal("new native reset did not rearm rejected wake")
+	}
+}
+
+func TestUsageWindowKindNeedsNativeIdentification(t *testing.T) {
+	for _, tc := range []struct {
+		label   string
+		minutes int
+		want    string
+	}{
+		{"five_hour", 0, "five_hour"},
+		{"seven_day", 0, "weekly"},
+		{"codex/primary", 300, "five_hour"},
+		{"codex/secondary", 10080, "weekly"},
+		{"codex/primary", 0, ""},
+		{"spend_limit", 0, ""},
+		{"seven_day", 90, ""},
+	} {
+		if got := harness.UsageWindowKind(tc.label, tc.minutes); got != tc.want {
+			t.Errorf("kind(%q, %d) = %q, want %q", tc.label, tc.minutes, got, tc.want)
+		}
+	}
+}

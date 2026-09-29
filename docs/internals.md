@@ -147,6 +147,7 @@ match `collar.name`. Unknown fields or primitive names fail before launch.
 | `primitives` | Built-in native behaviors, readings, queue witnesses, and optional limits queries. |
 | `actions` | Interrupt, compact, and recovery key sequences; optional refusal patterns. |
 | `context_bands` | Named context thresholds by model. |
+| `usage_bands` | Named native provider-usage thresholds by window. |
 
 A `role_prompt` option places standing instructions in the native system
 prompt and leaves the assignment in the first message. Other collars receive

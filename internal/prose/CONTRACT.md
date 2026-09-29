@@ -9,6 +9,11 @@ You are one agent in a Gangline team.
   `accepted`, and `queued` mean Gangline holds the message: do not resend.
   None of them means the recipient has read it.
 - `gang context`: your context use.
+- `gang limits`: provider usage observed by your collar.
+- `gang snooze [--at TIME] [--note TEXT]`: schedule your own wake at the
+  native reset or an explicit time. Save unfinished work to a durable file and
+  name it in the note. `gang snooze --status` and `gang snooze --clear`
+  inspect or cancel a pending wake.
 - `gang compact --resume 'TEXT'`: compact your own context. Save your state
   to a file and name it in TEXT. Gangline queues TEXT as the native
   continuation when compaction starts, ahead of later input. It runs only

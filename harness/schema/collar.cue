@@ -34,6 +34,12 @@ package harness
 	message?: string & !=""
 })
 
+#UsageBand: close({
+	name: #Name
+	at: number & >=0 & <=1
+	message?: string & !=""
+})
+
 #Action: close({
  refusal?: string
 	text?: string
@@ -79,4 +85,8 @@ package harness
 		startup_replace?: #Action
 	})
 	context_bands: [string & !=""]: [...#ContextBand]
+	usage_bands?: {
+		five_hour?: [...#UsageBand]
+		weekly?: [...#UsageBand]
+	}
 })

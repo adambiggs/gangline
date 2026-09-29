@@ -57,6 +57,19 @@ func TestStatuslineUnknownIsNotZero(t *testing.T) {
 	}
 }
 
+func TestTranscriptPreservesNativeLimitDuration(t *testing.T) {
+	input := `{"type":"session_meta","payload":{"id":"s"}}
+{"timestamp":"2026-09-22T10:00:00Z","type":"event_msg","payload":{"type":"token_count","rate_limits":{"limit_id":"codex","primary":{"used_percent":81,"resets_at":1800000000,"window_minutes":300},"secondary":{"used_percent":60,"resets_at":1800000001,"window_minutes":10080}}}}
+`
+	got, err := ReadTranscript(Invocation{Name: "codex-session-log"}, strings.NewReader(input), "s", 0, time.Time{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(got.Readings) != 1 || len(got.Readings[0].Limits) != 2 || got.Readings[0].Limits[0].WindowMinutes != 300 || got.Readings[0].Limits[1].WindowMinutes != 10080 {
+		t.Fatalf("native limit durations = %#v", got.Readings)
+	}
+}
+
 func TestInstallStatuslinePreservesCustomSettings(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "settings.json")
 	data := []byte(`{"permissions":{"defaultMode":"default"},"statusLine":{"type":"command","command":"my-footer"}}`)

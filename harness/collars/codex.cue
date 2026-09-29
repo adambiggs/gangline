@@ -68,4 +68,8 @@ collar: {
 			{name: "red", at: 0.90},
 		]
 	}
+	usage_bands: {
+		five_hour: [{name: "yellow", at: 0.75}, {name: "red", at: 0.90}]
+		weekly: [{name: "yellow", at: 0.75}, {name: "red", at: 0.90}]
+	}
 }

@@ -26,9 +26,10 @@ type Reading struct {
 }
 
 type LimitWindow struct {
-	Label       string  `json:"label"`
-	UsedPercent float64 `json:"used_percent"`
-	ResetAt     int64   `json:"reset_at"`
+	Label         string  `json:"label"`
+	UsedPercent   float64 `json:"used_percent"`
+	ResetAt       int64   `json:"reset_at"`
+	WindowMinutes int     `json:"window_minutes,omitempty"`
 }
 
 func UnknownReading(kind, source, reason string) Reading {
@@ -221,7 +222,7 @@ func ReadTranscript(invocation Invocation, input io.ReadSeeker, session string, 
 					if w == nil {
 						continue
 					}
-					if w.Used == nil || w.Reset == nil || *w.Used < 0 || *w.Reset <= 0 {
+					if w.Used == nil || w.Reset == nil || *w.Used < 0 || *w.Reset <= 0 || (w.WindowMinutes != nil && *w.WindowMinutes <= 0) {
 						return Transcript{}, fmt.Errorf("token_count has invalid provider limit")
 					}
 					label := "primary"
@@ -231,7 +232,11 @@ func ReadTranscript(invocation Invocation, input io.ReadSeeker, session string, 
 					if p.RateLimits.ID != "" {
 						label = p.RateLimits.ID + "/" + label
 					}
-					base.Limits = append(base.Limits, LimitWindow{Label: label, UsedPercent: *w.Used, ResetAt: *w.Reset})
+					minutes := 0
+					if w.WindowMinutes != nil {
+						minutes = *w.WindowMinutes
+					}
+					base.Limits = append(base.Limits, LimitWindow{Label: label, UsedPercent: *w.Used, ResetAt: *w.Reset, WindowMinutes: minutes})
 				}
 				if len(base.Limits) > 0 {
 					result.Readings = append(result.Readings, base)
@@ -265,8 +270,9 @@ func ReadTranscript(invocation Invocation, input io.ReadSeeker, session string, 
 }
 
 type nativeLimit struct {
-	Used  *float64 `json:"used_percent"`
-	Reset *int64   `json:"resets_at"`
+	Used          *float64 `json:"used_percent"`
+	Reset         *int64   `json:"resets_at"`
+	WindowMinutes *int     `json:"window_minutes"`
 }
 
 // StatuslineMeasurementTime corroborates an unversioned status-line reading

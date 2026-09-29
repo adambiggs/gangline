@@ -14,14 +14,14 @@ import (
 func TestLimitsQueryProtocolCreatesNoThreadOrTurn(t *testing.T) {
 	input := `{"id":1,"result":{}}
 {"method":"account/rateLimits/updated","params":{"rateLimits":{"primary":{"usedPercent":99,"resetsAt":1}}}}
-{"id":2,"result":{"rateLimits":{"limitId":"codex","primary":{"usedPercent":23,"resetsAt":1800000000}}}}
+{"id":2,"result":{"rateLimits":{"limitId":"codex","primary":{"usedPercent":23,"resetsAt":1800000000,"windowDurationMins":300}}}}
 `
 	var output bytes.Buffer
 	limits, err := queryCodexLimits(strings.NewReader(input), &output)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(limits) != 1 || limits[0].UsedPercent != 23 || limits[0].Label != "codex/primary" {
+	if len(limits) != 1 || limits[0].UsedPercent != 23 || limits[0].Label != "codex/primary" || limits[0].WindowMinutes != 300 {
 		t.Fatalf("limits = %#v", limits)
 	}
 	var methods []string

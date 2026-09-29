@@ -31,6 +31,7 @@ type Collar struct {
 	Primitives   Primitives               `json:"primitives"`
 	Actions      Actions                  `json:"actions"`
 	ContextBands map[string][]ContextBand `json:"context_bands"`
+	UsageBands   map[string][]UsageBand   `json:"usage_bands,omitempty"`
 }
 
 type Launch struct {
@@ -103,6 +104,12 @@ type Action struct {
 }
 
 type ContextBand struct {
+	Name    string  `json:"name"`
+	At      float64 `json:"at"`
+	Message string  `json:"message,omitempty"`
+}
+
+type UsageBand struct {
 	Name    string  `json:"name"`
 	At      float64 `json:"at"`
 	Message string  `json:"message,omitempty"`
@@ -310,6 +317,23 @@ func validateCollar(collar Collar) error {
 			previous = band.At
 		}
 	}
+	for window, bands := range collar.UsageBands {
+		if window != "five_hour" && window != "weekly" {
+			return fmt.Errorf("unknown usage window %q", window)
+		}
+		seen := make(map[string]bool, len(bands))
+		previous := -1.0
+		for _, band := range bands {
+			if err := validateUsageBandMessage(band); err != nil {
+				return err
+			}
+			if seen[band.Name] || band.At <= previous {
+				return fmt.Errorf("usage bands for %q must have unique names and increasing thresholds", window)
+			}
+			seen[band.Name] = true
+			previous = band.At
+		}
+	}
 	for name, action := range map[string]Action{
 		"interrupt": collar.Actions.Interrupt,
 		"compact":   collar.Actions.Compact,
@@ -349,6 +373,34 @@ func validateContextBandMessage(band ContextBand) error {
 		}
 		if strings.HasPrefix(message, "}}") {
 			return fmt.Errorf("context band %q has malformed message token", band.Name)
+		}
+		message = message[1:]
+	}
+	return nil
+}
+
+var usageBandMessageTokens = map[string]bool{
+	"band": true, "collar": true, "window": true, "threshold_percent": true,
+	"used_percent": true, "reset_at": true, "snooze_command": true,
+}
+
+func validateUsageBandMessage(band UsageBand) error {
+	message := band.Message
+	for len(message) > 0 {
+		if strings.HasPrefix(message, "{{") {
+			end := strings.Index(message[2:], "}}")
+			if end < 0 {
+				return fmt.Errorf("usage band %q has malformed message token", band.Name)
+			}
+			token := message[2 : end+2]
+			if !usageBandMessageTokens[token] {
+				return fmt.Errorf("usage band %q has unknown message token %q", band.Name, token)
+			}
+			message = message[end+4:]
+			continue
+		}
+		if strings.HasPrefix(message, "}}") {
+			return fmt.Errorf("usage band %q has malformed message token", band.Name)
 		}
 		message = message[1:]
 	}

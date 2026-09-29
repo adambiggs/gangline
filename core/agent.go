@@ -176,6 +176,7 @@ type NativeState struct {
 	Transcript  string    `json:"transcript,omitempty"`
 	TurnFailure string    `json:"turn_failure,omitempty"`
 	FailedTurn  string    `json:"failed_turn,omitempty"`
+	LastErrorAt time.Time `json:"last_error_at,omitzero"`
 	Offset      int64     `json:"offset,omitempty"`
 	SubmittedAt time.Time `json:"submitted_at,omitzero"`
 	CompactedAt time.Time `json:"compacted_at,omitzero"`
@@ -198,9 +199,10 @@ type Reading struct {
 	Limits      []LimitWindow `json:"limits,omitempty"`
 }
 type LimitWindow struct {
-	Label       string  `json:"label"`
-	UsedPercent float64 `json:"used_percent"`
-	ResetAt     int64   `json:"reset_at"`
+	Label         string  `json:"label"`
+	UsedPercent   float64 `json:"used_percent"`
+	ResetAt       int64   `json:"reset_at"`
+	WindowMinutes int     `json:"window_minutes,omitempty"`
 }
 
 func RetryDelay(attempt int) time.Duration {
