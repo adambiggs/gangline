@@ -33,10 +33,24 @@ func TestPaneRegistrationPrivateServer(t *testing.T) {
 	}
 	ctx := context.Background()
 	outputFile := filepath.Join(root, "typed")
-	script := `IFS= read -r text; printf '%s' "$text" > "$1"; "$2" -S "$3" wait-for -S typed; exec cat`
-	pane, err := b.Spawn(ctx, substrate.SpawnSpec{Name: "registered", Directory: root, Command: "sh", Args: []string{"-c", script, "sh", outputFile, binary, socket}})
+	ready := filepath.Join(root, "ready")
+	if result, err := exec.Command("mkfifo", ready).CombinedOutput(); err != nil {
+		t.Fatalf("create ready pipe: %v\n%s", err, result)
+	}
+	script := `printf x > "$4"; IFS= read -r text; printf '%s' "$text" > "$1"; "$2" -S "$3" wait-for -S typed; exec cat`
+	pane, err := b.Spawn(ctx, substrate.SpawnSpec{Name: "registered", Directory: root, Command: "sh", Args: []string{"-c", script, "sh", outputFile, binary, socket, ready}})
 	if err != nil {
 		t.Fatal(err)
+	}
+	pipe, err := os.Open(ready)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var one [1]byte
+	_, readErr := pipe.Read(one[:])
+	closeErr := pipe.Close()
+	if readErr != nil || closeErr != nil || one[0] != 'x' {
+		t.Fatalf("shell ready pipe: byte=%q read=%v close=%v", one, readErr, closeErr)
 	}
 	id, err := b.RegisterPane(ctx, pane.ID)
 	if err != nil {
@@ -69,7 +83,11 @@ func TestPaneRegistrationPrivateServer(t *testing.T) {
 		}
 	}
 	want := `literal 'quote' "double" $HOME; #{pane_id} \\ trailing`
-	if err := b.SendRegisteredKeys(ctx, id, "sh", substrate.Keys{Text: want, Submit: true}); err != nil {
+	command, err := b.ForegroundCommand(ctx, pane.ID)
+	if err != nil || command != "sh" && command != "bash" && command != "dash" {
+		t.Fatalf("shell foreground command = %q: %v", command, err)
+	}
+	if err := b.SendRegisteredKeys(ctx, id, command, substrate.Keys{Text: want, Submit: true}); err != nil {
 		t.Fatal(err)
 	}
 	runTmux(t, binary, socket, "wait-for", "typed")
