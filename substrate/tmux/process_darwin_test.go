@@ -82,6 +82,18 @@ func TestDarwinNativeProcessTable(t *testing.T) {
 	}
 }
 
+func TestDarwinCallerAncestry(t *testing.T) {
+	caller := os.Getpid()
+	parent := os.Getppid()
+	record, err := readCallerProcess(caller)
+	if err != nil || record.ParentPID != parent {
+		t.Fatalf("caller parent = %d, want %d: %v", record.ParentPID, parent, err)
+	}
+	if err := verifyCallerAncestry(caller, parent, readCallerProcess); err != nil {
+		t.Fatal(err)
+	}
+}
+
 func TestDarwinNativeProcessIdentity(t *testing.T) {
 	var info darwinProcessInfo
 	if unsafe.Sizeof(info) != 56 || unsafe.Offsetof(info.UniqueID) != 16 || unsafe.Offsetof(info.Version) != 32 {

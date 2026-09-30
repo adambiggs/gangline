@@ -7,6 +7,8 @@ import (
 	"path/filepath"
 	"syscall"
 	"testing"
+
+	"github.com/adambiggs/gangline/substrate"
 )
 
 func TestProcessVisibilityReadErrors(t *testing.T) {
@@ -68,5 +70,44 @@ func TestAcquireTreeRetainsRecordedRootAfterPaneLoss(t *testing.T) {
 	defer owned.Close()
 	if ids := owned.Identities(); len(ids) != 1 || ids[0] != id {
 		t.Fatalf("retained process identities = %v, want %v", ids, id)
+	}
+}
+
+func TestCallerAncestryJoinsDarwinParentAndUniqueIdentities(t *testing.T) {
+	native := map[int]processRecord{
+		3: {Process: substrate.Process{PID: 3}, uniqueID: 30, parentUniqueID: 20, version: 1},
+		2: {Process: substrate.Process{PID: 2}, uniqueID: 20, parentUniqueID: 10, version: 1},
+		1: {Process: substrate.Process{PID: 1}, uniqueID: 10, version: 1},
+	}
+	parents := map[int]int{3: 2, 2: 1}
+	readNative := func(pid int) (processRecord, error) { return native[pid], nil }
+	readBSD := func(pid int) (processRecord, error) {
+		return processRecord{Process: substrate.Process{PID: pid, ParentPID: parents[pid]}}, nil
+	}
+	if err := verifyCallerAncestry(3, 1, readNative); err == nil {
+		t.Fatal("native identity record unexpectedly contained parent links")
+	}
+	readJoined := func(pid int) (processRecord, error) {
+		return callerProcessWithParent(pid, readNative, readBSD)
+	}
+	if err := verifyCallerAncestry(3, 1, readJoined); err != nil {
+		t.Fatal(err)
+	}
+	native[2] = processRecord{Process: substrate.Process{PID: 2}, uniqueID: 99, parentUniqueID: 10, version: 1}
+	if err := verifyCallerAncestry(3, 1, readJoined); err == nil {
+		t.Fatal("reused parent PID joined the caller lineage")
+	}
+	native[2] = processRecord{Process: substrate.Process{PID: 2}, uniqueID: 20, parentUniqueID: 10, version: 1}
+	reads := 0
+	changedNative := func(pid int) (processRecord, error) {
+		reads++
+		record := native[pid]
+		if reads == 2 {
+			record.version++
+		}
+		return record, nil
+	}
+	if _, err := callerProcessWithParent(3, changedNative, readBSD); err == nil {
+		t.Fatal("process changed between native and parent observations")
 	}
 }

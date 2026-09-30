@@ -74,21 +74,50 @@ func (b *Backend) VerifyCaller(ctx context.Context, pane substrate.PaneID) error
 	if err != nil {
 		return err
 	}
-	return verifyCallerAncestry(os.Getpid(), root, readCurrentProcess)
+	return verifyCallerAncestry(os.Getpid(), root, readCallerProcess)
 }
 
 func verifyCallerAncestry(caller, root int, read func(int) (processRecord, error)) error {
 	seen := map[int]bool{}
+	var parentUniqueID uint64
 	for pid := caller; pid > 0 && !seen[pid]; {
-		if pid == root {
-			return nil
-		}
 		seen[pid] = true
 		record, err := read(pid)
 		if err != nil {
 			return fmt.Errorf("read caller ancestry: %w", err)
 		}
+		if record.PID != pid || parentUniqueID != 0 && record.uniqueID != parentUniqueID {
+			return fmt.Errorf("caller ancestry process identity changed")
+		}
+		if pid == root {
+			return nil
+		}
+		if record.uniqueID != 0 && record.parentUniqueID == 0 {
+			return fmt.Errorf("caller ancestry parent identity is unavailable")
+		}
+		parentUniqueID = record.parentUniqueID
 		pid = record.ParentPID
 	}
 	return fmt.Errorf("caller is outside registered pane process ancestry")
+}
+
+func callerProcessWithParent(pid int, native, bsd func(int) (processRecord, error)) (processRecord, error) {
+	before, err := native(pid)
+	if err != nil {
+		return processRecord{}, err
+	}
+	parent, err := bsd(pid)
+	if err != nil {
+		return processRecord{}, err
+	}
+	after, err := native(pid)
+	if err != nil {
+		return processRecord{}, err
+	}
+	if before.PID != pid || parent.PID != pid || after.PID != pid || before.uniqueID == 0 ||
+		before.uniqueID != after.uniqueID || before.version != after.version || before.parentUniqueID != after.parentUniqueID {
+		return processRecord{}, fmt.Errorf("caller process identity changed during ancestry read")
+	}
+	after.ParentPID = parent.ParentPID
+	return after, nil
 }

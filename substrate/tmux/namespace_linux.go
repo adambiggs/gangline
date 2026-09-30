@@ -14,6 +14,8 @@ func nativeProcessNamespace() (string, error) {
 	return os.Readlink("/proc/self/ns/pid")
 }
 
+func readCallerProcess(pid int) (processRecord, error) { return readCurrentProcess(pid) }
+
 func serverProcessVisible(ctx context.Context, socket string, pid int) (bool, error) {
 	var dialer net.Dialer
 	connection, err := dialer.DialContext(ctx, "unix", socket)
