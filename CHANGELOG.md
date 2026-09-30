@@ -1,5 +1,34 @@
 # Changelog
 
+## [1.7.0](https://github.com/adambiggs/gangline/compare/gangline-v1.6.0...gangline-v1.7.0) (2026-09-30)
+
+
+### Features
+
+* **site:** add sharing cards to home and docs ([c258019](https://github.com/adambiggs/gangline/commit/c258019ccf48e228b37f5898fae7f2ecfde82516))
+* **site:** measure visits and named links without tracking cookies ([bcd2304](https://github.com/adambiggs/gangline/commit/bcd2304852c92422801acb762aa2df21e2b1a0dc))
+* warn leads at native usage limits and schedule agent wakes ([89631b2](https://github.com/adambiggs/gangline/commit/89631b269bce7a1b60c707edf4ee8e110b1b619b))
+
+
+### Bug Fixes
+
+* accept claude as an alias for the Claude Code collar ([c41262d](https://github.com/adambiggs/gangline/commit/c41262d990a69b98614c59a98570d72236fed640))
+* bind sandbox commands to registered panes ([584e69a](https://github.com/adambiggs/gangline/commit/584e69ade5cce64ed56b9f8ba60a50f973282560))
+* grant linked worktree gitdir to opted-in Codex profile ([16eab9a](https://github.com/adambiggs/gangline/commit/16eab9a5557649b04eb304655bc026d15b0082ee))
+* keep uncertain usage input inspectable until confirmed ([6ba327f](https://github.com/adambiggs/gangline/commit/6ba327f7c65c2c9d7d244e7d9014584f9f59f8b9))
+* record demo with sandboxed permission profile ([6113e31](https://github.com/adambiggs/gangline/commit/6113e317cdbb107e6b356f0780f7683529587d0a))
+* recover unresolved usage wakes after failure ([ac8a17d](https://github.com/adambiggs/gangline/commit/ac8a17d970a68b3f5662abe0735f44182bfc715e))
+* refuse adoption of an already registered pane ([be9aa9d](https://github.com/adambiggs/gangline/commit/be9aa9df4d0ee9416023494989ab8aa16aa43c28))
+* refuse Codex bypass alias with permission profile ([1a4fbf6](https://github.com/adambiggs/gangline/commit/1a4fbf642cdd5a72c33a8dee05c10a9d67c02b4f))
+* **site:** preserve spaces after setup links ([07c9149](https://github.com/adambiggs/gangline/commit/07c91496cf3e4449f1536075370174d433ff86ee))
+* **tmux:** preserve multiline text in guarded sends ([a4ae55a](https://github.com/adambiggs/gangline/commit/a4ae55aaeb30557915a1287c62f0684a875b8d76))
+* **tmux:** verify Darwin caller ancestry with native parent identity ([b6f1ccf](https://github.com/adambiggs/gangline/commit/b6f1ccfc807fe5a345368b5400eb5f2f869c0b28))
+
+
+### Performance Improvements
+
+* **hooks:** keep release and acceptance checks in the full gate ([e24afaf](https://github.com/adambiggs/gangline/commit/e24afaf58fc16679d66b400f02c096a51340f507))
+
 ## [1.6.0](https://github.com/adambiggs/gangline/compare/gangline-v1.5.0...gangline-v1.6.0) (2026-09-27)
 
 
