@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.8.1](https://github.com/adambiggs/gangline/compare/gangline-v1.8.0...gangline-v1.8.1) (2026-09-30)
+
+
+### Bug Fixes
+
+* **collars:** name bundled Claude collar after its executable ([40acc33](https://github.com/adambiggs/gangline/commit/40acc330c3fa866232a39e1ccfdd9850693fafc2)), closes [#72](https://github.com/adambiggs/gangline/issues/72)
+
 ## [1.8.0](https://github.com/adambiggs/gangline/compare/gangline-v1.7.0...gangline-v1.8.0) (2026-09-30)
 
 
