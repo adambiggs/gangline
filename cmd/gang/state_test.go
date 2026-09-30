@@ -189,7 +189,7 @@ func (f *stateFixture) add(t *testing.T, id, name, collar string) core.Agent {
 	return a
 }
 func TestHooksCompleteWithAllAgentLocksHeld(t *testing.T) {
-	for _, name := range []string{"codex", "claude-code"} {
+	for _, name := range []string{"codex", "claude"} {
 		t.Run(name, func(t *testing.T) {
 			f := newStateFixture(t)
 			a := f.add(t, "a", "worker", name)

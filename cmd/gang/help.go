@@ -98,7 +98,7 @@ var commandUsage = map[string]string{
 	"teams":      "usage: gang teams\n",
 	"drop":       "usage: gang drop NAME\n",
 	"down":       "usage: gang down [-y|--yes]\n",
-	"collars":    "usage: gang collars\n       gang collar check NAME\n",
+	"collars":    "usage: gang collars\n       gang collar check NAME\n       Bundled names are claude and codex; claude-code is an alias for claude.\n",
 	"collar":     "usage: gang collar check NAME\n",
 	"models":     "usage: gang models [-c COLLAR]\n",
 	"roles":      "usage: gang roles\n",

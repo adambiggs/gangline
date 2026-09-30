@@ -144,6 +144,7 @@ func LoadCollar(filename string, data []byte) (Collar, error) {
 // LoadCustomCollar overlays a bundled collar, or loads a complete new collar.
 // Struct fields merge recursively; a supplied list replaces the bundled list.
 func LoadCustomCollar(name, filename string, data []byte) (Collar, error) {
+	name = CanonicalCollarName(name)
 	base, err := embeddedCollars.ReadFile(filepath.Join("collars", name+".cue"))
 	if errors.Is(err, fs.ErrNotExist) {
 		return LoadCollar(filename, data)
@@ -191,7 +192,12 @@ func LoadCustomCollar(name, filename string, data []byte) (Collar, error) {
 	if err != nil {
 		return Collar{}, fmt.Errorf("encode collar %q: %w", filename, err)
 	}
-	return LoadCollar(filename, merged)
+	collar, err := LoadCollar(filename, merged)
+	if err != nil {
+		return Collar{}, err
+	}
+	collar.Name = CanonicalCollarName(collar.Name)
+	return collar, nil
 }
 
 func mergeCollarFields(base, overlay map[string]any) {
@@ -417,11 +423,19 @@ func argsContain(args []string, text string) bool {
 }
 
 func EmbeddedCollar(name string) (Collar, error) {
+	name = CanonicalCollarName(name)
 	data, err := embeddedCollars.ReadFile(filepath.Join("collars", name+".cue"))
 	if err != nil {
 		return Collar{}, fmt.Errorf("read embedded collar %q: %w", name, err)
 	}
 	return LoadCollar(name+".cue", data)
+}
+
+func CanonicalCollarName(name string) string {
+	if name == "claude-code" {
+		return "claude"
+	}
+	return name
 }
 
 func EmbeddedCollarNames() ([]string, error) {

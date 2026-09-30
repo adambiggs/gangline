@@ -103,7 +103,7 @@ func (cmd command) snooze(args []string) error {
 			if isLead {
 				for _, n := range state.Notices {
 					if n.RecipientID == a.ID && n.Submission != "" {
-						rows = append(rows, fmt.Sprintf("%s\t%s %s %s notice; native %s; inspect or clear by ID", n.ID, n.Collar, n.Window, n.Band, n.Submission))
+						rows = append(rows, fmt.Sprintf("%s\t%s %s %s notice; native %s; inspect or clear by ID", n.ID, harness.CanonicalCollarName(n.Collar), n.Window, n.Band, n.Submission))
 					}
 				}
 				for caller, s := range state.Snoozes {

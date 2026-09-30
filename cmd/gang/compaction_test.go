@@ -16,7 +16,7 @@ import (
 )
 
 func TestCompactionQueuesResumeBeforeCompletion(t *testing.T) {
-	for _, collar := range []string{"codex", "claude-code"} {
+	for _, collar := range []string{"codex", "claude"} {
 		t.Run(collar, func(t *testing.T) {
 			f := newStateFixture(t)
 			a := f.add(t, "a", "worker", collar)
@@ -32,7 +32,7 @@ func TestCompactionQueuesResumeBeforeCompletion(t *testing.T) {
 			l.Close()
 			f.env["TMUX_PANE"] = a.Pane
 			f.env["GANGLINE_HITCH_ID"] = string(a.ID)
-			if collar == "claude-code" {
+			if collar == "claude" {
 				f.input.command = "claude"
 				f.input.screen = screenWithText("────────", "❯ ", "────────")
 			}
@@ -64,7 +64,7 @@ func TestCompactionQueuesResumeBeforeCompletion(t *testing.T) {
 				t.Fatalf("early continuation: %+v submits=%d", got.Compaction, f.input.submits)
 			}
 			dir, outcome := "cur", "accepted"
-			if collar == "claude-code" {
+			if collar == "claude" {
 				dir, outcome = "failed", "unverified"
 			}
 			e, err := p.ReadEnvelope(dir, core.EnvelopeID("resume-"+got.Compaction.ID))
@@ -79,7 +79,7 @@ func TestCompactionQueuesResumeBeforeCompletion(t *testing.T) {
 				t.Fatalf("native queue text: %q, %v", f.input.pasted, err)
 			}
 			prompt := wire
-			if collar == "claude-code" {
+			if collar == "claude" {
 				prompt = "<pasted_content id=\"probe\">\n" + wire + "\n</pasted_content id=\"probe\">"
 			} else {
 				prompt += "\nLATER_OPERATOR_INPUT"
@@ -409,7 +409,7 @@ func (b *wrappedCompactInput) Capture(ctx context.Context, pane substrate.PaneID
 
 func TestCompactionResumeProceedsWhileWrappedCompactRemains(t *testing.T) {
 	f := newStateFixture(t)
-	a := f.add(t, "a", "worker", "claude-code")
+	a := f.add(t, "a", "worker", "claude")
 	p, _ := f.run.team.Agent(a.ID)
 	a.Native.SessionID = "s"
 	l, err := p.TryLock()

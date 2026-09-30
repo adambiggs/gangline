@@ -166,7 +166,7 @@ func TestInspectStartupDistinguishesPermissionFromUnknownMenu(t *testing.T) {
 }
 
 func TestInspectStartupFindsClaudeExternalImportTrust(t *testing.T) {
-	collar, err := EmbeddedCollar("claude-code")
+	collar, err := EmbeddedCollar("claude")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -193,9 +193,9 @@ func TestStartupAgainstInstalledHarnessCaptures(t *testing.T) {
 		{name: "codex directory trust", collar: "codex", file: "codex-0.151.0-directory-trust.txt", state: StartupTrustRequired},
 		{name: "codex hook trust", collar: "codex", file: "codex-0.151.0-hook-trust.txt", state: StartupTrustRequired},
 		{name: "codex composer", collar: "codex", file: "codex-0.151.0-composer.txt", state: StartupReady},
-		{name: "claude directory trust", collar: "claude-code", file: "claude-code-2.1.278-directory-trust.txt", state: StartupTrustRequired},
-		{name: "claude external import", collar: "claude-code", file: "claude-code-2.1.278-external-import.txt", state: StartupTrustRequired},
-		{name: "claude composer", collar: "claude-code", file: "claude-code-2.1.278-composer.txt", state: StartupReady},
+		{name: "claude directory trust", collar: "claude", file: "claude-code-2.1.278-directory-trust.txt", state: StartupTrustRequired},
+		{name: "claude external import", collar: "claude", file: "claude-code-2.1.278-external-import.txt", state: StartupTrustRequired},
+		{name: "claude composer", collar: "claude", file: "claude-code-2.1.278-composer.txt", state: StartupReady},
 	}
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {

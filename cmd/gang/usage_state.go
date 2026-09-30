@@ -79,6 +79,41 @@ func (run *runtime) withUsageState(change func(*usageState) error) (result error
 	if state.Recent == nil {
 		state.Recent = make(map[string]usageSnooze)
 	}
+	for key, legacy := range state.Windows {
+		kind, ok := strings.CutPrefix(key, "claude-code/")
+		if !ok {
+			continue
+		}
+		canonicalKey := "claude/" + kind
+		if current, exists := state.Windows[canonicalKey]; exists {
+			if current.ResetAt == legacy.ResetAt {
+				fired := make(map[string]bool, len(current.Fired))
+				for _, band := range current.Fired {
+					fired[band] = true
+				}
+				for _, band := range legacy.Fired {
+					if !fired[band] {
+						current.Fired = append(current.Fired, band)
+						fired[band] = true
+					}
+				}
+				if legacy.ObservedAt.After(current.ObservedAt) {
+					current.ObservedAt, current.Percent = legacy.ObservedAt, legacy.Percent
+				}
+				state.Windows[canonicalKey] = current
+			} else if legacy.ObservedAt.After(current.ObservedAt) {
+				state.Windows[canonicalKey] = legacy
+			}
+		} else {
+			state.Windows[canonicalKey] = legacy
+		}
+		delete(state.Windows, key)
+	}
+	for i := range state.Notices {
+		if state.Notices[i].Collar == "claude-code" {
+			state.Notices[i].Collar = "claude"
+		}
+	}
 	if err := change(&state); err != nil {
 		return err
 	}

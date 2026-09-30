@@ -6,7 +6,7 @@ import (
 )
 
 func TestParseHitchUsesNameBeforeStdlibFlags(t *testing.T) {
-	got, err := parseHitch([]string{"worker", "-c", "codex", "-d", "/work", "-m", "gpt", "--stdin"}, "claude-code", "/default")
+	got, err := parseHitch([]string{"worker", "-c", "codex", "-d", "/work", "-m", "gpt", "--stdin"}, "claude", "/default")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -55,7 +55,7 @@ func TestParseSendAcceptsPositionalBody(t *testing.T) {
 
 func TestOptionsBeforeAndAfterNames(t *testing.T) {
 	for _, args := range [][]string{{"-c", "codex", "worker"}, {"worker", "-c", "codex"}} {
-		got, err := parseHitch(args, "claude-code", "/work")
+		got, err := parseHitch(args, "claude", "/work")
 		if err != nil || got.Name != "worker" || got.Collar != "codex" {
 			t.Fatalf("hitch(%q) = %+v, %v", args, got, err)
 		}

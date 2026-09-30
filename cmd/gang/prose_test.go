@@ -12,7 +12,7 @@ import (
 
 func TestStartupDeliversStandingProseOnce(t *testing.T) {
 	brief := startupProse{Contract: []byte("unique contract"), Doctrine: []byte("Whoever\ncreated this.\n\n    literal code\n"), Role: []byte("unique role")}
-	for _, name := range []string{"claude-code", "codex"} {
+	for _, name := range []string{"claude", "codex"} {
 		t.Run(name, func(t *testing.T) {
 			collar, err := harness.EmbeddedCollar(name)
 			if err != nil {

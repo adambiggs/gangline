@@ -30,7 +30,7 @@ gang --version
 gang collars
 ```
 
-You should see a version and the `claude-code` and `codex` collar names. A
+You should see a version and the `claude` and `codex` collar names. A
 collar is a CUE file that tells Gangline how to launch and communicate with a
 particular harness.
 
@@ -50,7 +50,7 @@ named team:
 
 ```sh
 export GANG_SESSION=first-team
-gang up -c claude-code
+gang up -c claude
 ```
 
 If another Gangline team is already running, also give this team its own

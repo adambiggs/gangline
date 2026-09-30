@@ -76,7 +76,7 @@ tmux -S "$GANG_TMUX_SOCKET" set-option -g status off
 tmux -S "$GANG_TMUX_SOCKET" list-sessions
 gang hitch worker -c codex -r demo -d "$repo" -t 'Wait for lead. Say Ready and end this turn.'
 gang wait worker --timeout 120s
-gang hitch lead -c claude-code -r demo -d "$repo" -t 'Wait for a keyboard request. Say Ready and end this turn.'
+gang hitch lead -c claude -r demo -d "$repo" -t 'Wait for a keyboard request. Say Ready and end this turn.'
 gang wait lead --timeout 120s
 # Joining existing panes preserves their registered sender identities.
 lead=$(tmux -S "$GANG_TMUX_SOCKET" list-panes -a -F '#{pane_id} #{window_name}' | awk '$2 ~ /lead/ {print $1}')

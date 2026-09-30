@@ -96,7 +96,7 @@ func TestInstallStatuslinePreservesCustomSettings(t *testing.T) {
 }
 
 func TestClaudeLaunchInstallsManagedStatusline(t *testing.T) {
-	collar, err := EmbeddedCollar("claude-code")
+	collar, err := EmbeddedCollar("claude")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -114,7 +114,7 @@ func TestClaudeLaunchInstallsManagedStatusline(t *testing.T) {
 }
 
 func TestTerminalFailureIsANativeTurnBoundary(t *testing.T) {
-	collar, err := EmbeddedCollar("claude-code")
+	collar, err := EmbeddedCollar("claude")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -154,7 +154,7 @@ func TestStatuslineUsesLatestMatchingNativeMeasurement(t *testing.T) {
 }
 
 func TestTerminalFailureHookReleasesNativeDispatcher(t *testing.T) {
-	collar, err := EmbeddedCollar("claude-code")
+	collar, err := EmbeddedCollar("claude")
 	if err != nil {
 		t.Fatal(err)
 	}

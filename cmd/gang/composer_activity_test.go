@@ -15,7 +15,7 @@ func TestOccupiedComposerIsNotNativeWork(t *testing.T) {
 		want         core.Activity
 	}{
 		{"finished Codex turn", "codex", []string{"Worked for 18m · done", "› unsubmitted message", "  continuation"}, core.Blocked},
-		{"finished Claude turn", "claude-code", []string{"────────", "❯ unsubmitted message", "────────"}, core.Blocked},
+		{"finished Claude turn", "claude", []string{"────────", "❯ unsubmitted message", "────────"}, core.Blocked},
 		{"working with draft", "codex", []string{"Working (esc to interrupt)", "› draft for later"}, core.Busy},
 	} {
 		t.Run(tc.name, func(t *testing.T) {

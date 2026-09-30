@@ -52,7 +52,7 @@ func TestComposerSettlesWhileNativeWorkAnimates(t *testing.T) {
 }
 
 func TestClaudeToolRunScreenIsBusy(t *testing.T) {
-	collar, err := EmbeddedCollar("claude-code")
+	collar, err := EmbeddedCollar("claude")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -70,7 +70,7 @@ func TestClaudeToolRunScreenIsBusy(t *testing.T) {
 func TestClaudePonderingToolRunScreenIsBusy(t *testing.T) {
 	// The issue records the status label, but not a full screen capture.
 	// This fixture supplies the surrounding tool and composer shape.
-	collar, err := EmbeddedCollar("claude-code")
+	collar, err := EmbeddedCollar("claude")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -86,7 +86,7 @@ func TestClaudePonderingToolRunScreenIsBusy(t *testing.T) {
 }
 
 func TestClaudeSpinnerVerbAndFrameVariantsAreBusy(t *testing.T) {
-	collar, err := EmbeddedCollar("claude-code")
+	collar, err := EmbeddedCollar("claude")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -108,7 +108,7 @@ func TestClaudeSpinnerVerbAndFrameVariantsAreBusy(t *testing.T) {
 }
 
 func TestClaudeCompletedProseDoesNotLookBusy(t *testing.T) {
-	collar, err := EmbeddedCollar("claude-code")
+	collar, err := EmbeddedCollar("claude")
 	if err != nil {
 		t.Fatal(err)
 	}

@@ -18,10 +18,10 @@ func TestValidateResumeUsesSelectedNativeStoreAndIdentity(t *testing.T) {
 		collar, session string
 		valid           bool
 	}{
-		{"codex", "codex-id", true}, {"claude-code", "claude-id", true},
-		{"claude-code", "codex-id", false}, {"codex", "claude-id", false},
-		{"codex", "missing-id", false}, {"claude-code", "missing-id", false},
-		{"codex", "../codex-id", false}, {"claude-code", "*", false},
+		{"codex", "codex-id", true}, {"claude", "claude-id", true},
+		{"claude", "codex-id", false}, {"codex", "claude-id", false},
+		{"codex", "missing-id", false}, {"claude", "missing-id", false},
+		{"codex", "../codex-id", false}, {"claude", "*", false},
 	} {
 		t.Run(test.collar+"/"+test.session, func(t *testing.T) {
 			c, err := EmbeddedCollar(test.collar)
@@ -42,7 +42,7 @@ func TestValidateResumeUsesSelectedNativeStoreAndIdentity(t *testing.T) {
 func TestValidateResumeHonorsNativeHomeAndRejectsMismatchedEvidence(t *testing.T) {
 	for _, test := range []struct{ collar, key, path, good, bad string }{
 		{"codex", "CODEX_HOME", "sessions/2026/09/24/rollout-date-native-id.jsonl", "{\"type\":\"session_meta\",\"payload\":{\"id\":\"native-id\"}}\n", "{\"type\":\"session_meta\",\"payload\":{\"id\":\"wrong-id\"}}\n"},
-		{"claude-code", "CLAUDE_CONFIG_DIR", "projects/project/native-id.jsonl", "{\"sessionId\":\"native-id\"}\n", "{\"sessionId\":\"wrong-id\"}\n"},
+		{"claude", "CLAUDE_CONFIG_DIR", "projects/project/native-id.jsonl", "{\"sessionId\":\"native-id\"}\n", "{\"sessionId\":\"wrong-id\"}\n"},
 	} {
 		t.Run(test.collar, func(t *testing.T) {
 			root := filepath.Join(t.TempDir(), "native[store]")

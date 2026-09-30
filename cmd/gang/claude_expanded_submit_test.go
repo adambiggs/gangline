@@ -32,7 +32,7 @@ func (b *expandedClaudeInput) SendKeys(ctx context.Context, pane substrate.PaneI
 
 func TestClaudeExpandedMessageReachesSubmit(t *testing.T) {
 	f := newStateFixture(t)
-	a := f.add(t, "a", "worker", "claude-code")
+	a := f.add(t, "a", "worker", "claude")
 	f.env["GANGLINE_HITCH_ID"] = string(a.ID)
 	f.input.command = "claude"
 	f.input.screen = screenWithText("────────────────", "❯ ", "────────────────")

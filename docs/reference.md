@@ -125,7 +125,7 @@ override file values. Run `gang config` to see effective values and defaults.
 | Setting | Controls |
 | --- | --- |
 | `GANG_SESSION` | Team and tmux session name; defaults to `gangline`. |
-| `GANG_COLLAR` | Default collar; defaults to `claude-code`. |
+| `GANG_COLLAR` | Default collar; defaults to `claude`. |
 | `GANG_COLLARS` | Absolute directory of custom `NAME.cue` collars and bundled collar overlays. |
 | `GANG_LAUNCH_ARGS` | JSON object mapping collar names to extra launch argument arrays. |
 | `GANG_CODEX_PERMISSION_PROFILE` | Codex permission profile name for hitched agents; unset by default. |
@@ -209,19 +209,21 @@ when the agent is hitched.
 ## Harnesses and platforms
 
 A collar is a CUE file that tells Gangline how to launch and communicate with
-a particular harness. The bundled collars are `claude-code` and `codex`.
-`claude` is an alias for `claude-code` unless `GANG_COLLARS/claude.cue` exists.
+a particular harness. A collar's canonical name is the harness binary it
+launches: `claude` or `codex`. `claude-code` remains an alias for `claude`.
 Each uses the installed native CLI and its account settings. Use
 `gang models -c COLLAR` for available
 model and effort identifiers. Gangline leaves native permissions, login, and
 trust decisions to the operator.
 
 In `GANG_COLLARS`, a `NAME.cue` matching a bundled collar overlays its fields;
-other names require a complete collar. Nested fields merge; a changed primitive
+other names require a complete collar. An existing `claude-code.cue` still
+overlays `claude`, while `claude.cue` takes precedence when both exist.
+Nested fields merge; a changed primitive
 name replaces that primitive and its parameters. Lists replace the bundled
 list. Each `context_bands` selector value replaces its entire band list;
 other selectors remain. Each `usage_bands` window replaces its band list.
-For example, `claude-code.cue` can set only:
+For example, `claude.cue` can set only:
 
 ```cue
 collar: {

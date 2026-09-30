@@ -9,6 +9,17 @@ import (
 	"github.com/adambiggs/gangline/core"
 )
 
+func TestRosterDisplaysCanonicalNameForLegacyRegistration(t *testing.T) {
+	f := newStateFixture(t)
+	f.add(t, "a", "worker", "claude-code")
+	if err := f.cmd.roster([]string{"--porcelain"}); err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(f.out.String(), "\tclaude\t") || strings.Contains(f.out.String(), "claude-code") {
+		t.Fatalf("roster = %q", f.out.String())
+	}
+}
+
 func TestAttachStoppedTeamWithClaimedLeadAdvisesUp(t *testing.T) {
 	f := newStateFixture(t)
 	f.env["GANG_TMUX_SOCKET"] = filepath.Join(t.TempDir(), "absent.sock")

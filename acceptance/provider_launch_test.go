@@ -21,7 +21,7 @@ import (
 
 const liveProviderTimeout = 60 * time.Second
 
-func TestLiveClaudeCode(t *testing.T) { testLiveProvider(t, "claude-code", "claude", "sonnet") }
+func TestLiveClaudeCode(t *testing.T) { testLiveProvider(t, "claude", "claude", "sonnet") }
 func TestLiveCodex(t *testing.T)      { testLiveProvider(t, "codex", "codex", "gpt-6-luna") }
 
 func testLiveProvider(t *testing.T, collar, cli, cheapest string) {
@@ -368,7 +368,7 @@ func awaitProviderEvents(ctx context.Context, path, secondID, collar string) ([]
 			}
 		}
 		requiredStops := 1
-		if collar == "claude-code" {
+		if collar == "claude" {
 			requiredStops = 2
 		}
 		if starts >= 2 && stops >= requiredStops && secondDelivered >= 0 && (collar != "codex" || secondAccepted >= 0) {

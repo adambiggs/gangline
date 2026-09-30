@@ -54,7 +54,7 @@ func TestCodexCompactionBoundaryConfirmsBeforeContinuation(t *testing.T) {
 }
 
 func TestRenderLaunchResume(t *testing.T) {
-	collar, err := EmbeddedCollar("claude-code")
+	collar, err := EmbeddedCollar("claude")
 	if err != nil {
 		t.Fatal(err)
 	}

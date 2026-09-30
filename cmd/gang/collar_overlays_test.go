@@ -33,19 +33,36 @@ collar: {
 	}
 }
 
-func TestClaudeAliasUsesBundledCollar(t *testing.T) {
-	c, err := loadCollar("claude", settings{})
+func TestClaudeCodeAliasUsesBundledCollar(t *testing.T) {
+	c, err := loadCollar("claude-code", settings{})
 	if err != nil {
 		t.Fatal(err)
 	}
-	if c.Name != "claude-code" || c.Launch.Command != "claude" {
-		t.Fatalf("claude alias loaded %+v", c)
+	if c.Name != "claude" || c.Launch.Command != "claude" {
+		t.Fatalf("claude-code alias loaded %+v", c)
 	}
 }
 
-func TestCustomClaudeCollarTakesPrecedenceOverAlias(t *testing.T) {
+func TestLegacyClaudeOverlayAndListedName(t *testing.T) {
 	dir := t.TempDir()
-	base, err := harness.EmbeddedCollar("claude-code")
+	if err := os.WriteFile(filepath.Join(dir, "claude-code.cue"), []byte(`collar: {launch: {args: ["--legacy"]}}`), 0600); err != nil {
+		t.Fatal(err)
+	}
+	for _, name := range []string{"claude", "claude-code"} {
+		collar, err := loadCollar(name, settings{CollarDir: dir})
+		if err != nil || collar.Name != "claude" || len(collar.Launch.Args) != 1 || collar.Launch.Args[0] != "--legacy" {
+			t.Fatalf("load %s: %+v, %v", name, collar, err)
+		}
+	}
+	names, err := collarNames(settings{CollarDir: dir})
+	if err != nil || len(names) != 2 || names[0] != "claude" || names[1] != "codex" {
+		t.Fatalf("collars = %q, %v", names, err)
+	}
+}
+
+func TestCanonicalClaudeOverlayTakesPrecedenceOverLegacyOverlay(t *testing.T) {
+	dir := t.TempDir()
+	base, err := harness.EmbeddedCollar("claude")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -57,12 +74,15 @@ func TestCustomClaudeCollarTakesPrecedenceOverAlias(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(dir, "claude.cue"), data, 0600); err != nil {
 		t.Fatal(err)
 	}
-	c, err := loadCollar("claude", settings{CollarDir: dir})
+	if err := os.WriteFile(filepath.Join(dir, "claude-code.cue"), []byte(`collar: {launch: {command: "wrong"}}`), 0600); err != nil {
+		t.Fatal(err)
+	}
+	c, err := loadCollar("claude-code", settings{CollarDir: dir})
 	if err != nil {
 		t.Fatal(err)
 	}
-	if c.Name != "claude" {
-		t.Fatalf("custom claude collar name = %q", c.Name)
+	if c.Name != "claude" || c.Launch.Command != "claude" {
+		t.Fatalf("custom claude collar = %+v", c)
 	}
 }
 

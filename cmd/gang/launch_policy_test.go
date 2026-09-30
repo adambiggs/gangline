@@ -29,6 +29,20 @@ func TestApplyLaunchPolicyKeepsOperatorArgumentsOutOfCollar(t *testing.T) {
 	}
 }
 
+func TestApplyLaunchPolicyAcceptsLegacyClaudeKey(t *testing.T) {
+	command := harness.Command{Name: "claude", Args: []string{"--model", "sonnet"}}
+	settings := settings{LaunchArgs: map[string][]string{"claude": {"--legacy"}}}
+	got := applyLaunchPolicy(command, "claude", settings)
+	if len(got.Args) != 3 || got.Args[2] != "--legacy" {
+		t.Fatalf("legacy arguments = %q", got.Args)
+	}
+	settings.LaunchArgs["claude"] = []string{"--canonical"}
+	got = applyLaunchPolicy(command, "claude", settings)
+	if len(got.Args) != 3 || got.Args[2] != "--canonical" {
+		t.Fatalf("canonical arguments = %q", got.Args)
+	}
+}
+
 func TestLinkedWorktreeGitdirGrant(t *testing.T) {
 	root := t.TempDir()
 	repo := filepath.Join(root, "repo")

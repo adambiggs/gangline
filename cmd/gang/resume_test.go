@@ -33,7 +33,7 @@ func TestHitchRejectsForeignResumeBeforeReadingAssignmentOrClaimingAgent(t *test
 		"GANG_SESSION":    "resume-preflight-test",
 		"GANG_TMUX":       filepath.Join(directory, "must-not-run-tmux"),
 	}
-	for _, collar := range []string{"claude-code", "codex"} {
+	for _, collar := range []string{"claude", "codex"} {
 		reader := &resumeAssignmentReader{}
 		cmd := command{
 			stdin: reader, stdout: io.Discard, stderr: io.Discard,
@@ -43,9 +43,9 @@ func TestHitchRejectsForeignResumeBeforeReadingAssignmentOrClaimingAgent(t *test
 			userHomeDir: func() (string, error) { return directory, nil },
 		}
 		err := cmd.hitch([]string{"worker", "-c", collar, "--resume", "codex-id", "--stdin"})
-		if collar == "claude-code" {
+		if collar == "claude" {
 			var refused commandError
-			if !errors.As(err, &refused) || refused.status != exitRefused || !strings.Contains(err.Error(), `cannot verify resume session "codex-id" for collar "claude-code"`) {
+			if !errors.As(err, &refused) || refused.status != exitRefused || !strings.Contains(err.Error(), `cannot verify resume session "codex-id" for collar "claude"`) {
 				t.Errorf("foreign resume error = %v", err)
 			}
 			if reader.read {

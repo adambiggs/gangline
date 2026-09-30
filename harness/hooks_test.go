@@ -22,7 +22,7 @@ func TestDecodeHookMapsNativeBoundaryAndPayload(t *testing.T) {
 }
 
 func TestDecodeHookRefusesUnknownNativeEvent(t *testing.T) {
-	collar, err := EmbeddedCollar("claude-code")
+	collar, err := EmbeddedCollar("claude")
 	if err != nil {
 		t.Fatal(err)
 	}

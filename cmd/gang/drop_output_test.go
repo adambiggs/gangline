@@ -8,7 +8,7 @@ import (
 
 func TestDropReportsMissingNativeState(t *testing.T) {
 	f := newStateFixture(t)
-	a := f.add(t, "a", "worker", "claude-code")
+	a := f.add(t, "a", "worker", "claude")
 	p, _ := f.run.team.Agent(a.ID)
 	if err := os.RemoveAll(p.Directory); err != nil {
 		t.Fatal(err)

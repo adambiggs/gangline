@@ -26,6 +26,32 @@ func usageSnapshot(t *testing.T, run *runtime) usageState {
 	return state
 }
 
+func TestLegacyClaudeUsageStateKeepsFiredBands(t *testing.T) {
+	f := newStateFixture(t)
+	a := f.add(t, "a", "worker", "claude-code")
+	c, err := loadCollar(a.Collar, f.run.settings)
+	if err != nil {
+		t.Fatal(err)
+	}
+	at := f.cmd.now()
+	reset := at.Add(5 * time.Hour).Unix()
+	if err := f.run.withUsageState(func(state *usageState) error {
+		state.Windows["claude-code/five_hour"] = usageWindowState{ResetAt: reset, ObservedAt: at, Percent: 80, Fired: []string{"yellow"}}
+		state.Notices = append(state.Notices, usageNotice{Collar: "claude-code", Text: "Provider claude-code five-hour usage reached yellow"})
+		return nil
+	}); err != nil {
+		t.Fatal(err)
+	}
+	a.Native.Limits = core.Reading{Kind: "provider-limits", Status: "observed", At: &at, Limits: []core.LimitWindow{{Label: "five_hour", WindowMinutes: 300, UsedPercent: 80, ResetAt: reset}}}
+	if err := f.run.observeUsageBands(a, c); err != nil {
+		t.Fatal(err)
+	}
+	state := usageSnapshot(t, f.run)
+	if _, old := state.Windows["claude-code/five_hour"]; old || len(state.Windows["claude/five_hour"].Fired) != 1 || len(state.Notices) != 1 || state.Notices[0].Collar != "claude" || state.Notices[0].Text != "Provider claude-code five-hour usage reached yellow" {
+		t.Fatalf("migrated usage state = %+v", state)
+	}
+}
+
 func TestUsageBandsAreAccountWideAndLeadOnly(t *testing.T) {
 	f := newStateFixture(t)
 	lead := f.add(t, "lead-id", "ser5", "codex")
@@ -90,8 +116,8 @@ func TestUsageBandsAreAccountWideAndLeadOnly(t *testing.T) {
 
 func TestUsageBandWaitsForLead(t *testing.T) {
 	f := newStateFixture(t)
-	worker := f.add(t, "worker-id", "worker", "claude-code")
-	c, err := loadCollar("claude-code", f.run.settings)
+	worker := f.add(t, "worker-id", "worker", "claude")
+	c, err := loadCollar("claude", f.run.settings)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -474,7 +500,7 @@ func TestSnoozeWaitsForNativeInputAndRetriesQueuedWake(t *testing.T) {
 
 func TestAttributableUsageCapFailureRearmsOneWakeAtNativeReset(t *testing.T) {
 	f := newStateFixture(t)
-	a := f.add(t, "caller-id", "worker", "claude-code")
+	a := f.add(t, "caller-id", "worker", "claude")
 	at := f.cmd.now()
 	reset := at.Add(5 * time.Hour)
 	a.Native.Limits = core.Reading{Kind: "provider-limits", Status: "observed", At: &at, Limits: []core.LimitWindow{{Label: "five_hour", UsedPercent: 100, ResetAt: reset.Unix()}}}
@@ -577,7 +603,7 @@ func TestAttributableUsageCapFailureRearmsOneWakeAtNativeReset(t *testing.T) {
 
 func TestNonCapFailureDoesNotRearmWake(t *testing.T) {
 	f := newStateFixture(t)
-	a := f.add(t, "caller-id", "worker", "claude-code")
+	a := f.add(t, "caller-id", "worker", "claude")
 	a.Native.FailedTurn = "wake-turn"
 	if err := f.run.withUsageState(func(state *usageState) error {
 		state.Recent[string(a.ID)] = usageSnooze{ID: "old-wake", CallerID: a.ID, RecipientID: a.ID, TurnID: "wake-turn"}
@@ -597,7 +623,7 @@ func TestNonCapFailureDoesNotRearmWake(t *testing.T) {
 func TestGenericRateLimitWaitsForNativeCapEvidence(t *testing.T) {
 	f := newStateFixture(t)
 	f.input.command = "claude"
-	a := f.add(t, "caller-id", "worker", "claude-code")
+	a := f.add(t, "caller-id", "worker", "claude")
 	a.Native.FailedTurn = "wake-turn"
 	at := f.cmd.now()
 	a.Native.Limits = core.Reading{Kind: "provider-limits", Status: "observed", At: &at, Limits: []core.LimitWindow{{Label: "five_hour", UsedPercent: 40, ResetAt: at.Add(5 * time.Hour).Unix()}}}
@@ -630,7 +656,7 @@ func TestGenericRateLimitWaitsForNativeCapEvidence(t *testing.T) {
 
 func TestOldRateLimitCandidateCannotUseLaterCapReading(t *testing.T) {
 	f := newStateFixture(t)
-	a := f.add(t, "caller-id", "worker", "claude-code")
+	a := f.add(t, "caller-id", "worker", "claude")
 	a.Native.FailedTurn = "wake-turn"
 	at := f.cmd.now()
 	a.Native.Limits = core.Reading{Kind: "provider-limits", Status: "observed", At: &at, Limits: []core.LimitWindow{{Label: "five_hour", UsedPercent: 40, ResetAt: at.Add(5 * time.Hour).Unix()}}}
@@ -771,7 +797,7 @@ func TestDeliveredWakeKeepsOriginalWitnessTime(t *testing.T) {
 }
 
 func TestSnoozeRequiresMatchingSuccessfulNativeTurn(t *testing.T) {
-	for _, collar := range []string{"claude-code", "codex"} {
+	for _, collar := range []string{"claude", "codex"} {
 		t.Run(collar, func(t *testing.T) {
 			f := newStateFixture(t)
 			a := f.add(t, "caller-id", "worker", collar)
@@ -836,7 +862,7 @@ func TestCodexNativeErrorDoesNotCompleteWake(t *testing.T) {
 func TestCapRejectedWakeWaitsForKnownNativeReset(t *testing.T) {
 	f := newStateFixture(t)
 	f.input.command = "claude"
-	a := f.add(t, "caller-id", "worker", "claude-code")
+	a := f.add(t, "caller-id", "worker", "claude")
 	a.Native.FailedTurn = "wake-turn"
 	at := f.cmd.now()
 	if err := f.run.withUsageState(func(state *usageState) error {

@@ -13,7 +13,7 @@ import (
 
 func TestLimitsCollarWithoutLiveAgent(t *testing.T) {
 	f := newLimitsFixture(t)
-	err := f.cmd.limits([]string{"-c", "claude-code"})
+	err := f.cmd.limits([]string{"-c", "claude"})
 	var ce commandError
 	if !errors.As(err, &ce) || ce.status != exitUnknown {
 		t.Fatalf("limits without agent = %v, want explicit unknown for unsupported query", err)

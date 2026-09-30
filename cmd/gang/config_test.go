@@ -64,6 +64,24 @@ func TestConfigShowsEnvironmentOnlyOrigins(t *testing.T) {
 	}
 }
 
+func TestLegacyClaudeDefaultDisplaysCanonicalName(t *testing.T) {
+	directory := t.TempDir()
+	values := map[string]string{"GANG_CONFIG_DIR": directory, "GANG_COLLAR": "claude-code"}
+	var output strings.Builder
+	cmd := command{
+		stdout:      &output,
+		getenv:      func(name string) string { return values[name] },
+		lookupEnv:   func(name string) (string, bool) { value, ok := values[name]; return value, ok },
+		userHomeDir: func() (string, error) { return directory, nil },
+	}
+	if err := cmd.config(nil); err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(output.String(), "GANG_COLLAR=claude\tenv\n") {
+		t.Fatalf("config output = %q", output.String())
+	}
+}
+
 func TestReadConfigurationRejectsUnknownAndRepeatedKeys(t *testing.T) {
 	for _, content := range []string{
 		"UNKNOWN=value\n",

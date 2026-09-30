@@ -16,7 +16,7 @@ import (
 func nativeFailureFixture(t *testing.T) (*stateFixture, core.Agent, func(map[string]string) hookNotice) {
 	t.Helper()
 	f := newStateFixture(t)
-	a := f.add(t, "a", "worker", "claude-code")
+	a := f.add(t, "a", "worker", "claude")
 	f.env["GANGLINE_HITCH_ID"] = string(a.ID)
 	f.input.screen = screenWithText("────────────────────────────────────────────────────────────────────────────────", "❯", "────────────────────────────────────────────────────────────────────────────────")
 	now := f.cmd.now()

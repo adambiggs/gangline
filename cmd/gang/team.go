@@ -13,6 +13,7 @@ import (
 	"time"
 
 	"github.com/adambiggs/gangline/core"
+	"github.com/adambiggs/gangline/harness"
 	"github.com/adambiggs/gangline/store"
 	"github.com/adambiggs/gangline/substrate"
 	"golang.org/x/term"
@@ -313,9 +314,9 @@ func (cmd command) roster(args []string) error {
 			if marker != "" {
 				marker = "\t" + strings.TrimSpace(marker)
 			}
-			_, err = fmt.Fprintf(cmd.stdout, "%s\t%s\t%s\t%s\t%s%s\n", a.Name, a.Status, a.Activity, a.Collar, a.Pane, marker)
+			_, err = fmt.Fprintf(cmd.stdout, "%s\t%s\t%s\t%s\t%s%s\n", a.Name, a.Status, a.Activity, harness.CanonicalCollarName(a.Collar), a.Pane, marker)
 		} else {
-			_, err = fmt.Fprintf(cmd.stdout, "%-16s %-10s %-14s %s%s\n", a.Name, a.Status, a.Activity, a.Collar, marker)
+			_, err = fmt.Fprintf(cmd.stdout, "%-16s %-10s %-14s %s%s\n", a.Name, a.Status, a.Activity, harness.CanonicalCollarName(a.Collar), marker)
 		}
 		if err != nil {
 			return err

@@ -22,7 +22,7 @@ curl -fsSL https://raw.githubusercontent.com/adambiggs/gangline/main/install.sh 
 Then start in your repository:
 
 ```sh
-gang up -c claude-code
+gang up -c claude
 ```
 
 Then tell the lead what you want:

@@ -17,7 +17,7 @@ import (
 // Exercise the real tick, inbox, envelope and native submit-witness path.
 // No native harness, tmux server, sleep or deadline is involved.
 func TestContextBandNotesCrossings(t *testing.T) {
-	for _, collar := range []string{"codex", "claude-code"} {
+	for _, collar := range []string{"codex", "claude"} {
 		t.Run(collar, func(t *testing.T) {
 			f := newStateFixture(t)
 			a := f.add(t, "a", "worker", collar)
@@ -25,7 +25,7 @@ func TestContextBandNotesCrossings(t *testing.T) {
 			model := "gpt-test"
 			low, high := 75.0, 90.0
 			highName := "red"
-			if collar == "claude-code" {
+			if collar == "claude" {
 				f.input.command = "claude"
 				f.input.screen = screenWithText("────────", "❯ ", "────────")
 				model, low, high = "claude-opus-test", 20, 40
@@ -156,8 +156,8 @@ func TestContextBandDefaultsAdviseThenOrder(t *testing.T) {
 		collar, model string
 		thresholds    [2]float64
 	}{
-		{"claude-code", "claude-opus-test", [2]float64{0.20, 0.40}},
-		{"claude-code", "claude-haiku-test", [2]float64{0.45, 0.65}},
+		{"claude", "claude-opus-test", [2]float64{0.20, 0.40}},
+		{"claude", "claude-haiku-test", [2]float64{0.45, 0.65}},
 		{"codex", "gpt-test", [2]float64{0.75, 0.90}},
 	} {
 		t.Run(tc.collar+"/"+tc.model, func(t *testing.T) {
@@ -223,7 +223,7 @@ func TestContextBandNotesTranscriptBatch(t *testing.T) {
 
 func TestContextBandNotesStatuslineWhileLocked(t *testing.T) {
 	f := newStateFixture(t)
-	a := f.add(t, "a", "worker", "claude-code")
+	a := f.add(t, "a", "worker", "claude")
 	f.env["GANGLINE_HITCH_ID"] = "a"
 	f.input.command, f.input.screen = "claude", screenWithText("────────", "❯ ", "────────")
 	p, _ := f.run.team.Agent(a.ID)
@@ -392,7 +392,7 @@ collar: {context_bands: {"*": [{name: "early", at: 0.10}, {name: "late", at: 0.2
 			}
 			f.env["GANG_COLLARS"] = dir
 			f.run.settings.CollarDir = dir
-			a := f.add(t, "a", "worker", "claude-code")
+			a := f.add(t, "a", "worker", "claude")
 			f.env["GANGLINE_HITCH_ID"] = "a"
 			f.input.command, f.input.screen = "claude", screenWithText("────────", "❯ ", "────────")
 			for _, used := range tc.readings {

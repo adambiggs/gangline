@@ -1,7 +1,7 @@
 package collars
 
 collar: {
-	name: "claude-code"
+	name: "claude"
 	launch: {
 		command: "claude"
 		args: []
