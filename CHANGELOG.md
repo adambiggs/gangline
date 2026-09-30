@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.8.0](https://github.com/adambiggs/gangline/compare/gangline-v1.7.0...gangline-v1.8.0) (2026-09-30)
+
+
+### Features
+
+* confirm whole-team teardown interactively ([deccf5b](https://github.com/adambiggs/gangline/commit/deccf5bc9eda7067b31048cbb4a240e46daf56c0))
+
 ## [1.7.0](https://github.com/adambiggs/gangline/compare/gangline-v1.6.0...gangline-v1.7.0) (2026-09-30)
 
 
