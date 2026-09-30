@@ -3,6 +3,7 @@ package acceptance
 import (
 	"bufio"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"os"
@@ -253,6 +254,37 @@ func runCommandHarness() int {
 			if strings.HasSuffix(input.String(), "]") && strings.Contains(input.String(), "[/gang:") {
 				renderCommandComposer(input.String())
 			}
+			continue
+		}
+		if input.String() == "__GANG_HITCH_SECOND__" {
+			command := exec.Command(os.Getenv("GANGLINE_ACCEPTANCE_GANG"), "hitch", "second")
+			output, err := command.CombinedOutput()
+			status := 0
+			if err != nil {
+				var exit *exec.ExitError
+				if errors.As(err, &exit) {
+					status = exit.ExitCode()
+				} else {
+					status = -1
+				}
+			}
+			if err := os.WriteFile(os.Getenv("GANGLINE_ACCEPTANCE_HITCH_RESULT"), []byte(fmt.Sprintf("status=%d\n%s", status, output)), 0o600); err != nil {
+				fmt.Fprintln(os.Stderr, err)
+				return 1
+			}
+			ready, err := os.OpenFile(os.Getenv("GANGLINE_ACCEPTANCE_HITCH_READY"), os.O_WRONLY, 0)
+			if err != nil {
+				fmt.Fprintln(os.Stderr, err)
+				return 1
+			}
+			_, writeErr := ready.Write([]byte("x"))
+			closeErr := ready.Close()
+			if writeErr != nil || closeErr != nil {
+				fmt.Fprintln(os.Stderr, writeErr, closeErr)
+				return 1
+			}
+			input.Reset()
+			renderCommandComposer("")
 			continue
 		}
 		file, err := os.OpenFile(os.Getenv("GANGLINE_ACCEPTANCE_LEDGER"), os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0o600)

@@ -43,9 +43,13 @@ func TestCommandLifecycleOnPrivateTmux(t *testing.T) {
 	}
 	const session = "gangline-rebuild-acceptance"
 	socket := filepath.Join(root, "tmux.sock")
-	environment := append(withoutEnvironment(os.Environ(), "TMUX", "TMUX_PANE", "GANG_CONFIG_DIR", "GANG_SESSION", "GANG_STATE_ROOT", "GANG_TMUX_SOCKET", "GANG_COLLARS", "GANG_COLLAR", "GANGLINE_HITCH_ID"),
+	hitchReady := filepath.Join(root, "hitch-ready")
+	if output, err := exec.Command("mkfifo", hitchReady).CombinedOutput(); err != nil {
+		t.Fatalf("create hitch ready pipe: %v\n%s", err, output)
+	}
+	environment := append(withoutEnvironment(os.Environ(), "TMUX", "TMUX_PANE", "GANG_CONFIG_DIR", "GANG_SESSION", "GANG_STATE_ROOT", "GANG_TMUX_SOCKET", "GANG_COLLARS", "GANG_COLLAR", "GANGLINE_HITCH_ID", "GANG_AGENT_ID", "GANG_AGENT_NONCE", "GANG_AGENT_TOKEN"),
 		"GANG_SESSION="+session, "GANG_CONFIG_DIR="+filepath.Join(root, "config"), "GANG_STATE_ROOT="+filepath.Join(root, "state"), "GANG_TMUX_SOCKET="+socket, "GANG_COLLARS="+collars, "GANG_COLLAR=acceptance",
-		"GANGLINE_ACCEPTANCE_CMD_HARNESS=1", "GANGLINE_ACCEPTANCE_TMUX=tmux", "GANGLINE_ACCEPTANCE_TMUX_SOCKET="+socket, "GANGLINE_ACCEPTANCE_LEDGER="+filepath.Join(root, "received"), "GANGLINE_ACCEPTANCE_ARGV_LEDGER="+filepath.Join(root, "argv"))
+		"GANGLINE_ACCEPTANCE_CMD_HARNESS=1", "GANGLINE_ACCEPTANCE_TMUX=tmux", "GANGLINE_ACCEPTANCE_TMUX_SOCKET="+socket, "GANGLINE_ACCEPTANCE_LEDGER="+filepath.Join(root, "received"), "GANGLINE_ACCEPTANCE_ARGV_LEDGER="+filepath.Join(root, "argv"), "GANGLINE_ACCEPTANCE_GANG="+binary, "GANGLINE_ACCEPTANCE_HITCH_RESULT="+filepath.Join(root, "hitch-result"), "GANGLINE_ACCEPTANCE_HITCH_READY="+hitchReady)
 	runner := tmuxRunner{binary: "tmux", socket: socket, env: environment}
 	if out, err := runner.run("new-session", "-d", "-s", session, "-n", "control"); err != nil {
 		t.Fatalf("private session: %v %s", err, out)
@@ -132,11 +136,19 @@ func TestCommandLifecycleOnPrivateTmux(t *testing.T) {
 	if !regexp.MustCompile(`^\[gang:gangline:hitch#[0-9a-f]{16} assignment\]`).Match(received) || !strings.Contains(string(received), "Assignment:\n\nacceptance assignment") {
 		t.Fatalf("startup lacks Gangline attribution or assignment: %q", received)
 	}
-	// Launch from the registered worker pane to observe the assignment's author.
-	outsideEnvironment := environment
-	environment = append(environment, "TMUX_PANE="+worker.Pane)
-	check("", "hitch", "second")
-	environment = outsideEnvironment
+	if output, err := runner.run("send-keys", "-t", worker.Pane, "-l", "__GANG_HITCH_SECOND__"); err != nil {
+		t.Fatalf("enter worker command: %v\n%s", err, output)
+	}
+	if output, err := runner.run("send-keys", "-t", worker.Pane, "Enter"); err != nil {
+		t.Fatalf("submit worker command: %v\n%s", err, output)
+	}
+	if got, err := os.ReadFile(hitchReady); err != nil || string(got) != "x" {
+		t.Fatalf("worker ready pipe=%q: %v", got, err)
+	}
+	hitchResult, err := os.ReadFile(filepath.Join(root, "hitch-result"))
+	if err != nil || !strings.HasPrefix(string(hitchResult), "status=0\n") {
+		t.Fatalf("worker hitch result=%q: %v", hitchResult, err)
+	}
 	sid, err := team.ResolveName("second")
 	if err != nil {
 		t.Fatal(err)

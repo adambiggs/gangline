@@ -31,7 +31,7 @@ func TestAdoptOwnsExistingPrivatePane(t *testing.T) {
 	}
 	const session = "adopt-acceptance"
 	socket := filepath.Join(root, "tmux.sock")
-	environment := append(withoutEnvironment(os.Environ(), "TMUX", "TMUX_PANE", "GANG_SESSION", "GANG_STATE_ROOT", "GANG_CONFIG_DIR", "GANG_TMUX_SOCKET", "GANG_COLLAR"),
+	environment := append(withoutEnvironment(os.Environ(), "TMUX", "TMUX_PANE", "GANG_SESSION", "GANG_STATE_ROOT", "GANG_CONFIG_DIR", "GANG_TMUX_SOCKET", "GANG_COLLAR", "GANG_AGENT_ID", "GANG_AGENT_NONCE", "GANG_AGENT_TOKEN", "GANGLINE_HITCH_ID"),
 		"GANG_SESSION="+session, "GANG_STATE_ROOT="+filepath.Join(root, "state"), "GANG_CONFIG_DIR="+filepath.Join(root, "config"), "GANG_TMUX_SOCKET="+socket, "GANG_COLLAR=codex")
 	runner := tmuxRunner{binary: "tmux", socket: socket, env: environment}
 	if output, err := runner.run("new-session", "-d", "-s", session, "-n", "control"); err != nil {
@@ -45,7 +45,7 @@ func TestAdoptOwnsExistingPrivatePane(t *testing.T) {
 	if listed, err := runner.run("list-sessions", "-F", "#{session_name}"); err != nil || strings.TrimSpace(listed) != session {
 		t.Fatalf("private server sessions = %q: %v", listed, err)
 	}
-	if output, err := runner.run("new-window", "-d", "-t", session, "-n", "candidate", "cat"); err != nil {
+	if output, err := runner.run("new-window", "-d", "-t", session, "-n", "candidate", "sh"); err != nil {
 		t.Fatalf("create candidate pane: %v\n%s", err, output)
 	}
 	pane := strings.TrimSpace(mustTmux(t, runner, "list-panes", "-t", session+":candidate", "-F", "#{pane_id}"))
@@ -79,8 +79,24 @@ func TestAdoptOwnsExistingPrivatePane(t *testing.T) {
 			t.Errorf("remove private team status=%d: %s", status, output)
 		}
 	})
-	if output, status := runGang(append(environment, "TMUX_PANE="+pane), "adopt", "adopted", "-c", "codex"); status != 0 {
-		t.Fatalf("adopt status=%d: %s", status, output)
+	resultFile := filepath.Join(root, "adopt-result")
+	ready := filepath.Join(root, "adopt-ready")
+	if output, err := exec.Command("mkfifo", ready).CombinedOutput(); err != nil {
+		t.Fatalf("create adopt ready pipe: %v\n%s", err, output)
+	}
+	command := shellQuote(binary) + " adopt adopted -c codex > " + shellQuote(resultFile) + " 2>&1; result=$?; printf '\nstatus=%s\n' \"$result\" >> " + shellQuote(resultFile) + "; printf x > " + shellQuote(ready)
+	if output, err := runner.run("send-keys", "-t", pane, "-l", command); err != nil {
+		t.Fatalf("enter adopt command: %v\n%s", err, output)
+	}
+	if output, err := runner.run("send-keys", "-t", pane, "Enter"); err != nil {
+		t.Fatalf("submit adopt command: %v\n%s", err, output)
+	}
+	if got, err := os.ReadFile(ready); err != nil || string(got) != "x" {
+		t.Fatalf("adopt ready pipe=%q: %v", got, err)
+	}
+	result, err := os.ReadFile(resultFile)
+	if err != nil || !strings.HasSuffix(string(result), "\nstatus=0\n") {
+		t.Fatalf("adopt result=%q: %v", result, err)
 	}
 	team, err := (store.Paths{Root: filepath.Join(root, "state")}).Team(session)
 	if err != nil {
