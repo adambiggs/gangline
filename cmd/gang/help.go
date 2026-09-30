@@ -97,7 +97,7 @@ var commandUsage = map[string]string{
 	"attach":     "usage: gang attach\n",
 	"teams":      "usage: gang teams\n",
 	"drop":       "usage: gang drop NAME\n",
-	"down":       "usage: gang down SESSION\n",
+	"down":       "usage: gang down [-y|--yes]\n",
 	"collars":    "usage: gang collars\n       gang collar check NAME\n",
 	"collar":     "usage: gang collar check NAME\n",
 	"models":     "usage: gang models [-c COLLAR]\n",
@@ -165,6 +165,7 @@ var commandOptions = map[string][]optionSpec{
 		{"c", "COLLAR", "harness collar"},
 		{"collar", "COLLAR", "harness collar"},
 	},
+	"down":    {{"y", "", "skip confirmation"}, {"yes", "", "skip confirmation"}},
 	"upgrade": {{"check", "", "check for a release without installing"}},
 }
 
@@ -231,7 +232,7 @@ var commandDescription = map[string]string{
 	"attach":     "Attach this terminal to the configured team session.\n",
 	"teams":      "List teams found in the teams directory.\n",
 	"drop":       "NAME is the registered agent to stop, not the team session.\nCancel its pending work; report an observed native resume ID or unknown.\n",
-	"down":       "SESSION must equal GANG_SESSION, the configured team and tmux\nsession name (default gangline). Drop its agents and remove its state.\n",
+	"down":       "Stop the configured GANG_SESSION team and remove its state. On a terminal,\nconfirm the session and agent count; use the yes option for scripts and\nnonterminal calls.\n",
 	"collars":    "List embedded and operator-provided CUE collars. In 'collar check\nNAME', NAME identifies a collar, not an agent or team.\n",
 	"collar":     "NAME is an installed harness collar, not an agent or team.\nProbe it in a throwaway private tmux session.\n",
 	"models":     "Discover model and reasoning-effort identifiers through a collar's native catalog.\n",

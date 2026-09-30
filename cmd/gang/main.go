@@ -40,23 +40,24 @@ func refuseError(format string, arguments ...any) error {
 }
 
 type command struct {
-	newScheduler func() watchdogScheduler
-	stdin        io.Reader
-	stdout       io.Writer
-	stderr       io.Writer
-	getenv       func(string) string
-	lookupEnv    func(string) (string, bool)
-	getwd        func() (string, error)
-	userHomeDir  func() (string, error)
-	clock        func() time.Time
-	newWatch     func(string) (changeWait, error)
-	newTimeout   func(context.Context, time.Duration) (context.Context, context.CancelFunc)
-	paneBackend  paneRegistry
-	inputBackend harnessInput
-	settleInput  func(context.Context, harnessInput, substrate.PaneID, harness.Collar, time.Duration) error
-	awaitStartup func(context.Context, substrate.PaneID, harness.Collar) (harness.Startup, substrate.Screen, error)
-	detach       func(string, hookNotice) error
-	afterUnlock  func()
+	newScheduler  func() watchdogScheduler
+	stdin         io.Reader
+	terminalInput func() bool
+	stdout        io.Writer
+	stderr        io.Writer
+	getenv        func(string) string
+	lookupEnv     func(string) (string, bool)
+	getwd         func() (string, error)
+	userHomeDir   func() (string, error)
+	clock         func() time.Time
+	newWatch      func(string) (changeWait, error)
+	newTimeout    func(context.Context, time.Duration) (context.Context, context.CancelFunc)
+	paneBackend   paneRegistry
+	inputBackend  harnessInput
+	settleInput   func(context.Context, harnessInput, substrate.PaneID, harness.Collar, time.Duration) error
+	awaitStartup  func(context.Context, substrate.PaneID, harness.Collar) (harness.Startup, substrate.Screen, error)
+	detach        func(string, hookNotice) error
+	afterUnlock   func()
 }
 
 func main() {

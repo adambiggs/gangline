@@ -74,7 +74,7 @@ login lingering. Repair the reported scheduler problem and run `gang tick`.
 Gangline refuses teardown when it cannot safely identify the registered
 processes. Keep the reported evidence and inspect the pane. Do not kill an
 unrelated process to clear a lock. If timer cleanup reports contention,
-retry `gang down SESSION` after the other operation finishes.
+retry `gang down` after the other operation finishes.
 
 ## An upgrade refuses
 

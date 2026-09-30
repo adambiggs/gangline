@@ -14,7 +14,7 @@ supply an explicit name when inspecting or controlling a single agent.
 | `gang adopt NAME [-c COLLAR]` | Register the current pane without launching or delivering startup instructions. |
 | `gang rename OLD NEW` | Change a registered name and window title. |
 | `gang drop NAME` | Stop an agent and fail its pending messages. |
-| `gang down SESSION` | Drop the team's agents and delete its runtime state and history. |
+| `gang down [-y, --yes]` | Confirm on a terminal, then drop the configured team's agents and delete its runtime state and history. Use `--yes` without a terminal. |
 | `gang attach` | Attach to the configured team's tmux session. |
 | `gang teams` | List teams in the configured state root. |
 

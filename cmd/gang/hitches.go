@@ -137,6 +137,11 @@ func (cmd command) hitchWithStaleClaim(args []string, supersede bool) (result er
 		}
 		return fmt.Errorf("find %s: %w", launch.Name, err)
 	}
+	lock, err := run.lockTeam()
+	if err != nil {
+		return err
+	}
+	defer lock.Close()
 	if err := run.team.Create(); err != nil {
 		return err
 	}
@@ -311,6 +316,11 @@ func (cmd command) adopt(args []string) (result error) {
 	if err != nil {
 		return err
 	}
+	lock, err := run.lockTeam()
+	if err != nil {
+		return err
+	}
+	defer lock.Close()
 	if collar == "" {
 		collar = run.settings.Collar
 	}
@@ -461,6 +471,11 @@ func (cmd command) drop(args []string) error {
 	if err != nil {
 		return err
 	}
+	lock, err := run.lockTeam()
+	if err != nil {
+		return err
+	}
+	defer lock.Close()
 	id, err := run.team.ResolveName(name)
 	if err != nil {
 		return err

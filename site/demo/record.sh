@@ -54,7 +54,7 @@ cleanup() {
       echo 'Demo roster failed; ending the private demo team.' >&2
       rc=1
     fi
-    if ! gang down "$GANG_SESSION"; then
+    if ! gang down --yes; then
       echo 'Demo teardown failed; inspect the retained event log.' >&2
       rc=1
     fi

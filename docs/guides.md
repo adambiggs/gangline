@@ -129,11 +129,12 @@ Keep a copy of the audit log, inspect the roster, and end the configured team:
 ```sh
 gang log > team-log.jsonl
 gang roster
-gang down SESSION
+gang down
 gang teams
 ```
 
-Replace `SESSION` with the name shown by `gang config`. `down` stops registered
-agents and deletes the team's state and history. The team should disappear
+`down` confirms the configured team and agent count on a terminal. Use
+`gang down --yes` in scripts or without a terminal. It stops registered agents
+and deletes the team's state and history. The team should disappear
 from `gang teams`. To stop just one agent, use `gang drop NAME`, then verify
 that it is absent from `gang roster`.

@@ -78,7 +78,7 @@ func TestCommandLifecycleOnPrivateTmux(t *testing.T) {
 		return result{fmt.Sprintf("%v: %s", err, out), -1}
 	}
 	t.Cleanup(func() {
-		r := runGang("", "down", session)
+		r := runGang("", "down", "--yes")
 		if r.status != 0 {
 			t.Errorf("private team cleanup: %s", r.out)
 		}
@@ -243,7 +243,7 @@ func TestCommandLifecycleOnPrivateTmux(t *testing.T) {
 	}
 	check("", "rename", "second", "renamed")
 	check("", "roster")
-	check("", "down", session)
+	check("", "down", "--yes")
 	if _, err := os.Stat(team.Directory); !errors.Is(err, os.ErrNotExist) {
 		t.Fatalf("team state remains: %v", err)
 	}

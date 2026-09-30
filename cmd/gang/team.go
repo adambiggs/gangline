@@ -1,9 +1,11 @@
 package main
 
 import (
+	"bufio"
 	"context"
 	"errors"
 	"fmt"
+	"io"
 	"os"
 	"path/filepath"
 	"strings"
@@ -13,6 +15,7 @@ import (
 	"github.com/adambiggs/gangline/core"
 	"github.com/adambiggs/gangline/store"
 	"github.com/adambiggs/gangline/substrate"
+	"golang.org/x/term"
 )
 
 func (cmd command) up(args []string) error {
@@ -63,19 +66,35 @@ func upHitchArguments(name string, args []string) []string {
 	return append([]string{name, "--role", "lead"}, args...)
 }
 func (cmd command) down(args []string) error {
-	if err := exactly(args, 1, "down"); err != nil {
-		return err
+	var yes bool
+	flags := boundFlagSet("down", map[string]any{"y": &yes, "yes": &yes})
+	positionals, err := parseOptions(flags, args)
+	if err != nil {
+		return usageError("down: %v", err)
+	}
+	if len(positionals) != 0 {
+		return usageError("down: unexpected argument %q", positionals[0])
 	}
 	run, err := cmd.runtime()
 	if err != nil {
 		return err
 	}
-	if args[0] != run.settings.Session {
-		return refuseError("down requires configured session %q", run.settings.Session)
+	lock, err := run.lockTeam()
+	if err != nil {
+		return err
 	}
+	defer lock.Close()
 	agents, err := run.team.ListAgents()
 	if err != nil {
 		return err
+	}
+	if !yes {
+		if !cmd.stdinIsTerminal() {
+			return refuseError("down requires a terminal for confirmation; use --yes to stop team %q non-interactively", run.settings.Session)
+		}
+		if err := confirmDown(cmd.stdin, cmd.stderr, run.settings.Session, len(agents)); err != nil {
+			return err
+		}
 	}
 	if err := eachAgent(agents, func(a core.Agent) error { return run.dropAgent(a.ID, true) }); err != nil {
 		return err
@@ -84,6 +103,25 @@ func (cmd command) down(args []string) error {
 		return err
 	}
 	return os.RemoveAll(run.team.Directory)
+}
+
+func (cmd command) stdinIsTerminal() bool {
+	if cmd.terminalInput != nil {
+		return cmd.terminalInput()
+	}
+	stdin, ok := cmd.stdin.(*os.File)
+	return ok && term.IsTerminal(int(stdin.Fd()))
+}
+
+func confirmDown(input io.Reader, output io.Writer, session string, agentCount int) error {
+	if _, err := fmt.Fprintf(output, "Stop team %q and its %d agents? Type yes to confirm: ", session, agentCount); err != nil {
+		return err
+	}
+	response, err := bufio.NewReader(io.LimitReader(input, 64)).ReadString('\n')
+	if err != nil || strings.TrimSpace(response) != "yes" {
+		return refuseError("down cancelled; team %q was not stopped", session)
+	}
+	return nil
 }
 func eachAgent(agents []core.Agent, action func(core.Agent) error) error {
 	results := make([]error, len(agents))

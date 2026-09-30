@@ -24,7 +24,9 @@ their latest outcome, while the audit log retains history.
 
 Commands work over requested agents and pending work, independently of settled
 history. Each agent has its own lock. `gang drop` removes the registration and
-its files; `gang down` removes the team directory.
+its files; `gang down` removes the team directory. Registration, drop, and
+whole-team teardown share a nonblocking lock under `STATE_ROOT/team-locks/`
+so the agent list cannot change while the confirmation prompt is open.
 
 ## Message path
 

@@ -182,7 +182,7 @@ func TestWatchdogLastDropAndDownDisarm(t *testing.T) {
 					t.Fatal(err)
 				}
 			case "down":
-				if err := f.cmd.down([]string{"unit"}); err != nil {
+				if err := f.cmd.down([]string{"--yes"}); err != nil {
 					t.Fatal(err)
 				}
 			case "missing-state":
@@ -287,7 +287,7 @@ func TestWatchdogDownDisarmsOnceAfterParallelDrops(t *testing.T) {
 	if err := f.cmd.tick(nil); err != nil {
 		t.Fatal(err)
 	}
-	if err := f.cmd.down([]string{"unit"}); err != nil {
+	if err := f.cmd.down([]string{"--yes"}); err != nil {
 		t.Fatal(err)
 	}
 	if s.stops != 1 || s.armed != "" {

@@ -75,7 +75,7 @@ func TestAdoptOwnsExistingPrivatePane(t *testing.T) {
 			t.Errorf("inspect private team for cleanup: %v", err)
 			return
 		}
-		if output, status := runGang(environment, "down", session); status != 0 {
+		if output, status := runGang(environment, "down", "--yes"); status != 0 {
 			t.Errorf("remove private team status=%d: %s", status, output)
 		}
 	})

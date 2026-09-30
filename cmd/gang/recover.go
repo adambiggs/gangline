@@ -18,6 +18,24 @@ func (run *runtime) tickAgent(id core.HitchID, notice hookNotice, wait bool) err
 		return err
 	}
 	if !team.Curfew.IsZero() && !run.cmd.now().Before(team.Curfew) {
+		lock, err := (store.Paths{Root: run.settings.StateRoot}).LockTeam(run.settings.Session)
+		if errors.Is(err, store.ErrLocked) {
+			return nil
+		}
+		if err != nil {
+			return err
+		}
+		defer lock.Close()
+		team, err = run.team.ReadTeam()
+		if errors.Is(err, os.ErrNotExist) {
+			return nil
+		}
+		if err != nil {
+			return err
+		}
+		if team.Curfew.IsZero() || run.cmd.now().Before(team.Curfew) {
+			return nil
+		}
 		return run.dropWithLock(id, wait)
 	}
 	l, a, err := run.acquire(id, wait)

@@ -37,6 +37,13 @@ func (cmd command) runtime() (*runtime, error) {
 	}
 	return &runtime{cmd: cmd, settings: s, team: p}, nil
 }
+func (run *runtime) lockTeam() (*os.File, error) {
+	lock, err := (store.Paths{Root: run.settings.StateRoot}).LockTeam(run.settings.Session)
+	if errors.Is(err, store.ErrLocked) {
+		return nil, refuseError("team %q is changing; retry after the current operation finishes", run.settings.Session)
+	}
+	return lock, err
+}
 func (cmd command) now() time.Time {
 	if cmd.clock != nil {
 		return cmd.clock()

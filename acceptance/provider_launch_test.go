@@ -173,7 +173,7 @@ func testLiveProvider(t *testing.T, collar, cli, cheapest string) {
 		if out, diagnostic, err := runGang(cleanCtx, "", "roster"); err != nil {
 			t.Errorf("private roster before cleanup: %v: %s %s", err, out, diagnostic)
 		}
-		if out, diagnostic, err := runGang(cleanCtx, "", "down", session); err != nil {
+		if out, diagnostic, err := runGang(cleanCtx, "", "down", "--yes"); err != nil {
 			keepForOperator = true
 			t.Errorf("remove private team: %v: %s %s; socket retained at %s", err, out, diagnostic, socket)
 			return
