@@ -49,7 +49,10 @@ func TestLinkedWorktreeGitdirGrant(t *testing.T) {
 		}
 	}
 	got := linkedWorktreeGitdir(worktree)
-	want := filepath.Join(repo, ".git", "worktrees", "worktree")
+	want, err := filepath.EvalSymlinks(filepath.Join(repo, ".git", "worktrees", "worktree"))
+	if err != nil {
+		t.Fatal(err)
+	}
 	if got != want {
 		t.Fatalf("gitdir = %q, want %q", got, want)
 	}
