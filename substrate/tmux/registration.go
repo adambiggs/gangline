@@ -164,20 +164,47 @@ func (b *Backend) SendRegisteredKeys(ctx context.Context, id PaneIdentity, comma
 	}
 	var commands []string
 	if keys.Text != "" {
-		commands = append(commands, strings.TrimPrefix(shellCommand("send-keys", []string{"-t", id.Pane, "-l", "--", keys.Text}), "exec "))
+		commands = append(commands, tmuxCommand("send-keys", "-t", id.Pane, "-l", "--", keys.Text))
 	}
 	names := append([]string(nil), keys.Names...)
 	if keys.Submit {
 		names = append(names, "Enter")
 	}
 	if len(names) != 0 {
-		commands = append(commands, strings.TrimPrefix(shellCommand("send-keys", append([]string{"-t", id.Pane, "--"}, names...)), "exec "))
+		commands = append(commands, tmuxCommand("send-keys", append([]string{"-t", id.Pane, "--"}, names...)...))
 	}
 	if len(commands) == 0 {
 		_, err := b.CheckPane(ctx, id)
 		return err
 	}
 	return b.mutateRegisteredPane(ctx, id, strings.Join(commands, " ; "), command, 0, false)
+}
+
+// tmux parses if-shell branches as command strings, not shell scripts. Literal
+// newlines in shell-quoted arguments lose indentation and join escaped lines.
+// Encode controls so the parser sees one line and reconstructs the exact bytes.
+func tmuxCommand(command string, arguments ...string) string {
+	var out strings.Builder
+	for i, word := range append([]string{command}, arguments...) {
+		if i != 0 {
+			out.WriteByte(' ')
+		}
+		out.WriteByte('"')
+		for j := 0; j < len(word); j++ {
+			c := word[j]
+			switch {
+			case c < ' ' || c == 127:
+				fmt.Fprintf(&out, "\\%03o", c)
+			case c == '\\' || c == '"' || c == '$' || c == '~':
+				out.WriteByte('\\')
+				out.WriteByte(c)
+			default:
+				out.WriteByte(c)
+			}
+		}
+		out.WriteByte('"')
+	}
+	return out.String()
 }
 
 func (b *Backend) mutateRegisteredPane(ctx context.Context, id PaneIdentity, command, foreground string, nativePID int, absentOK bool) error {
