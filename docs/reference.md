@@ -28,11 +28,13 @@ supply an explicit name when inspecting or controlling a single agent.
 | `-t`, `--task TASK` | Startup assignment. |
 | `-r`, `--role ROLE` | Role brief; `up` defaults to `lead`. |
 | `--stdin` | Read the assignment from stdin. |
-| `--resume SESSION` | Resume a native conversation. |
+| `--resume SESSION` | Resume a native conversation by its native session ID. |
 | `--recover` | Recover an agent's retained startup input. |
 
-Resume checks for the bundled collars require
-a matching native transcript. An unverifiable native session is refused.
+For collars whose transcripts Gangline reads, a resume is refused when the
+native transcript stored under that session ID names a different session, or
+when the ID contains path or glob characters. A session Gangline cannot check
+is left to the native CLI, and `hitch` says why on stderr.
 `drop` reports an observed native resume session, or says it is unknown.
 When Codex asks to trust a hitch directory, startup stays queued. After
 choosing the native trust option, run `gang tick` to deliver the retained

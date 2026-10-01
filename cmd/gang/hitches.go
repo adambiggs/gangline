@@ -50,8 +50,14 @@ func (cmd command) hitchWithStaleClaim(args []string, supersede bool) (result er
 	}
 	o.Collar = c.Name
 	if o.Resume != "" {
-		if err := harness.ValidateResume(c, o.Resume); err != nil {
+		unverified, err := harness.ValidateResume(c, o.Resume)
+		if err != nil {
 			return refuseError("%s", err)
+		}
+		if unverified != "" {
+			if _, err := fmt.Fprintf(cmd.stderr, "warning: hitch: resume session %q left to the native CLI: %s\n", o.Resume, unverified); err != nil {
+				return err
+			}
 		}
 	}
 	if o.Effort != "" && o.Model == "" {

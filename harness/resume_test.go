@@ -15,31 +15,37 @@ func TestValidateResumeUsesSelectedNativeStoreAndIdentity(t *testing.T) {
 	writeResumeFixture(t, filepath.Join(home, ".codex", "sessions", "2026", "09", "24", "rollout-date-codex-id.jsonl"), `{"type":"session_meta","payload":{"id":"codex-id"}}`+"\n")
 	writeResumeFixture(t, filepath.Join(home, ".claude", "projects", "project", "claude-id.jsonl"), "{\"type\":\"file-history-snapshot\"}\n{\"sessionId\":\"claude-id\"}\n")
 	for _, test := range []struct {
-		collar, session string
-		valid           bool
+		collar, session  string
+		valid, unchecked bool
 	}{
-		{"codex", "codex-id", true}, {"claude", "claude-id", true},
-		{"claude", "codex-id", false}, {"codex", "claude-id", false},
-		{"codex", "missing-id", false}, {"claude", "missing-id", false},
-		{"codex", "../codex-id", false}, {"claude", "*", false},
+		{"codex", "codex-id", true, false}, {"claude", "claude-id", true, false},
+		// Without a transcript to read, the native CLI decides.
+		{"claude", "codex-id", true, true}, {"codex", "claude-id", true, true},
+		{"codex", "missing-id", true, true}, {"claude", "missing-id", true, true},
+		{"codex", "../codex-id", false, false}, {"claude", "*", false, false},
 	} {
 		t.Run(test.collar+"/"+test.session, func(t *testing.T) {
 			c, err := EmbeddedCollar(test.collar)
 			if err != nil {
 				t.Fatal(err)
 			}
-			err = ValidateResume(c, test.session)
-			if (err == nil) != test.valid {
-				t.Fatalf("ValidateResume = %v; valid = %v", err, test.valid)
-			}
-			if err != nil && !strings.Contains(err.Error(), "cannot verify resume session") {
-				t.Fatal(err)
+			unverified, err := ValidateResume(c, test.session)
+			if (err == nil) != test.valid || (unverified != "") != test.unchecked {
+				t.Fatalf("ValidateResume = %q, %v; valid = %v, unchecked = %v", unverified, err, test.valid, test.unchecked)
 			}
 		})
 	}
+	t.Setenv("HOME", "")
+	c, err := EmbeddedCollar("codex")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if unverified, err := ValidateResume(c, "codex-id"); err != nil || unverified == "" {
+		t.Fatalf("unknown native store = %q, %v", unverified, err)
+	}
 }
 
-func TestValidateResumeHonorsNativeHomeAndRejectsMismatchedEvidence(t *testing.T) {
+func TestValidateResumeHonorsNativeHomeAndRejectsOnlyAForeignIdentity(t *testing.T) {
 	for _, test := range []struct{ collar, key, path, good, bad string }{
 		{"codex", "CODEX_HOME", "sessions/2026/09/24/rollout-date-native-id.jsonl", "{\"type\":\"session_meta\",\"payload\":{\"id\":\"native-id\"}}\n", "{\"type\":\"session_meta\",\"payload\":{\"id\":\"wrong-id\"}}\n"},
 		{"claude", "CLAUDE_CONFIG_DIR", "projects/project/native-id.jsonl", "{\"sessionId\":\"native-id\"}\n", "{\"sessionId\":\"wrong-id\"}\n"},
@@ -53,19 +59,41 @@ func TestValidateResumeHonorsNativeHomeAndRejectsMismatchedEvidence(t *testing.T
 			}
 			path := filepath.Join(root, test.path)
 			writeResumeFixture(t, path, test.good)
-			if err := ValidateResume(c, "native-id"); err != nil {
-				t.Fatal(err)
+			if unverified, err := ValidateResume(c, "native-id"); err != nil || unverified != "" {
+				t.Fatalf("own transcript = %q, %v", unverified, err)
 			}
-			for _, content := range []string{test.bad, "", "broken json\n"} {
+			writeResumeFixture(t, path, test.bad)
+			if _, err := ValidateResume(c, "native-id"); err == nil || !strings.Contains(err.Error(), `"wrong-id"`) {
+				t.Fatalf("foreign transcript = %v", err)
+			}
+			for _, content := range []string{"", "broken json\n"} {
 				writeResumeFixture(t, path, content)
-				if err := ValidateResume(c, "native-id"); err == nil {
-					t.Fatalf("accepted transcript %q", content)
+				if unverified, err := ValidateResume(c, "native-id"); err != nil || unverified == "" {
+					t.Fatalf("unreadable transcript %q = %q, %v", content, unverified, err)
 				}
+			}
+			// A second transcript under the same ID: one readable match
+			// settles it, one unreadable leaves it unknown.
+			other := strings.Replace(path, "/project/", "/other/", 1)
+			if test.collar == "codex" {
+				other = strings.Replace(path, "/24/", "/25/", 1)
+			}
+			writeResumeFixture(t, path, test.bad)
+			writeResumeFixture(t, other, test.good)
+			if unverified, err := ValidateResume(c, "native-id"); err != nil || unverified != "" {
+				t.Fatalf("one matching transcript = %q, %v", unverified, err)
+			}
+			writeResumeFixture(t, other, "broken json\n")
+			if unverified, err := ValidateResume(c, "native-id"); err != nil || unverified == "" {
+				t.Fatalf("foreign beside unreadable transcript = %q, %v", unverified, err)
+			}
+			if err := os.Remove(other); err != nil {
+				t.Fatal(err)
 			}
 			writeResumeFixture(t, path, test.good)
 			t.Setenv(test.key, t.TempDir())
 			c.Launch.Env = map[string]string{test.key: root}
-			if err := ValidateResume(c, "native-id"); err != nil {
+			if _, err := ValidateResume(c, "native-id"); err != nil {
 				t.Fatal(err)
 			}
 		})
@@ -79,7 +107,7 @@ func TestValidateResumeKeepsCustomCollarWithoutTelemetry(t *testing.T) {
 	}
 	c.Primitives.Telemetry = nil
 	// ResumeArgs are sufficient for a custom collar; telemetry is optional.
-	if err := ValidateResume(c, "native-id"); err != nil {
+	if _, err := ValidateResume(c, "native-id"); err != nil {
 		t.Fatalf("ValidateResume = %v", err)
 	}
 }

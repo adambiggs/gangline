@@ -154,8 +154,8 @@ match `collar.name`. Unknown fields or primitive names fail before launch.
 
 A `role_prompt` option places standing instructions in the native system
 prompt and leaves the assignment in the first message. Other collars receive
-both together. Custom collars without supported transcript discovery rely on
-their native CLI to validate resume identities.
+both together. Custom collars without supported transcript discovery leave
+resume identities to their native CLI.
 
 ## Design principles
 

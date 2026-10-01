@@ -10,21 +10,22 @@ import (
 	"strings"
 )
 
-// ValidateResume verifies supported native transcript identities before spawning.
-// Collars without transcript discovery retain their native CLI resume behavior.
-// A missing transcript is unknown: it cannot prove ownership by another collar.
-func ValidateResume(collar Collar, session string) error {
-	unknown := func(reason string) error {
-		return fmt.Errorf("cannot verify resume session %q for collar %q: %s", session, collar.Name, reason)
+// ValidateResume refuses a resume only when a native transcript stored under
+// the session ID names a different session. Every state it cannot judge (no
+// native store, no transcript, an unreadable header) is left to the native CLI
+// and returned as unverified.
+func ValidateResume(collar Collar, session string) (unverified string, err error) {
+	refuse := func(reason string) error {
+		return fmt.Errorf("refuse resume session %q for collar %q: %s", session, collar.Name, reason)
 	}
 	if collar.Primitives.Telemetry == nil {
-		return nil
+		return "", nil
 	}
 	if session == "" || strings.ContainsAny(session, `/\\*?[]`) || session == "." || session == ".." {
-		return unknown("expected a native session ID")
+		return "", refuse("expected a native session ID")
 	}
 	if len(collar.Launch.ResumeArgs) == 0 {
-		return unknown("collar has no supported native resume discovery")
+		return "", refuse("collar declares no native resume arguments")
 	}
 	env := func(key string) string {
 		if value, ok := collar.Launch.Env[key]; ok {
@@ -34,6 +35,7 @@ func ValidateResume(collar Collar, session string) error {
 	}
 	home := env("HOME")
 	var root, pattern string
+	var identity func(io.ReadSeeker) (string, error)
 	switch collar.Primitives.Telemetry.Name {
 	case "codex-session-log":
 		root = env("CODEX_HOME")
@@ -41,52 +43,59 @@ func ValidateResume(collar Collar, session string) error {
 			root = filepath.Join(home, ".codex")
 		}
 		pattern = filepath.Join("sessions", "*", "*", "*", "rollout-*-"+session+".jsonl")
+		identity = func(input io.ReadSeeker) (string, error) {
+			id, _, err := codexTranscriptIdentity(input)
+			return id, err
+		}
 	case "claude-status-line":
 		root = env("CLAUDE_CONFIG_DIR")
 		if root == "" && home != "" {
 			root = filepath.Join(home, ".claude")
 		}
 		pattern = filepath.Join("projects", "*", session+".jsonl")
+		identity = func(input io.ReadSeeker) (string, error) { return claudeTranscriptIdentity(input) }
 	default:
-		return nil
+		return "", nil
 	}
 	if root == "" {
-		return unknown("native configuration directory is unknown")
+		return "native configuration directory is unknown", nil
 	}
 	// Escape the literal root; only the native directory layout is a glob.
 	root = strings.NewReplacer("\\", "\\\\", "[", "\\[", "*", "\\*", "?", "\\?").Replace(root)
 	paths, err := filepath.Glob(filepath.Join(root, pattern))
 	if err != nil {
-		return unknown(err.Error())
+		return err.Error(), nil
 	}
 	if len(paths) == 0 {
-		return unknown("no matching native transcript found")
+		return "no native transcript found", nil
 	}
-	var evidenceErr error
+	foreign, unknown := "", ""
 	for _, path := range paths {
 		file, err := os.Open(path)
 		if err != nil {
-			evidenceErr = err
+			unknown = err.Error()
 			continue
 		}
-		if collar.Primitives.Telemetry.Name == "codex-session-log" {
-			_, err = transcriptHeader(file, session)
-		} else {
-			err = claudeResumeIdentity(file, session)
+		id, err := identity(file)
+		file.Close()
+		switch {
+		case err != nil:
+			unknown = fmt.Sprintf("%s: %v", path, err)
+		case id == session:
+			return "", nil
+		default:
+			foreign = id
 		}
-		closeErr := file.Close()
-		if err == nil {
-			err = closeErr
-		}
-		if err == nil {
-			return nil
-		}
-		evidenceErr = err
 	}
-	return unknown(evidenceErr.Error())
+	if unknown != "" {
+		return unknown, nil
+	}
+	return "", refuse(fmt.Sprintf("its native transcript belongs to session %q", foreign))
 }
 
-func claudeResumeIdentity(input io.Reader, session string) error {
+// claudeTranscriptIdentity reads the native session named by the first record
+// of a claude transcript that carries one.
+func claudeTranscriptIdentity(input io.Reader) (string, error) {
 	scanner := bufio.NewScanner(io.LimitReader(input, transcriptWindow))
 	scanner.Buffer(make([]byte, 4096), transcriptWindow)
 	for scanner.Scan() {
@@ -94,17 +103,14 @@ func claudeResumeIdentity(input io.Reader, session string) error {
 			SessionID string `json:"sessionId"`
 		}
 		if err := json.Unmarshal(scanner.Bytes(), &record); err != nil {
-			return fmt.Errorf("decode native transcript identity: %w", err)
+			return "", fmt.Errorf("decode native transcript identity: %w", err)
 		}
 		if record.SessionID != "" {
-			if record.SessionID != session {
-				return fmt.Errorf("native transcript belongs to another session")
-			}
-			return nil
+			return record.SessionID, nil
 		}
 	}
 	if err := scanner.Err(); err != nil {
-		return err
+		return "", err
 	}
-	return fmt.Errorf("native transcript carries no session identity in its header")
+	return "", fmt.Errorf("native transcript carries no session identity in its header")
 }

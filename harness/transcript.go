@@ -10,12 +10,25 @@ import (
 const transcriptWindow = 4 << 20
 
 func transcriptHeader(input io.ReadSeeker, session string) (int64, error) {
-	if _, err := input.Seek(0, io.SeekStart); err != nil {
+	id, headerEnd, err := codexTranscriptIdentity(input)
+	if err != nil {
 		return 0, err
+	}
+	if id != session {
+		return 0, fmt.Errorf("session log metadata does not match native session %q", session)
+	}
+	return headerEnd, nil
+}
+
+// codexTranscriptIdentity reads the native session a codex session log names
+// in its session_meta header, and where that header ends.
+func codexTranscriptIdentity(input io.ReadSeeker) (string, int64, error) {
+	if _, err := input.Seek(0, io.SeekStart); err != nil {
+		return "", 0, err
 	}
 	first, err := bufio.NewReader(io.LimitReader(input, transcriptWindow)).ReadBytes('\n')
 	if err != nil {
-		return 0, fmt.Errorf("read session metadata: %w", err)
+		return "", 0, fmt.Errorf("read session metadata: %w", err)
 	}
 	var meta struct {
 		Type    string `json:"type"`
@@ -24,12 +37,12 @@ func transcriptHeader(input io.ReadSeeker, session string) (int64, error) {
 		} `json:"payload"`
 	}
 	if err := json.Unmarshal(first, &meta); err != nil {
-		return 0, err
+		return "", 0, err
 	}
-	if meta.Type != "session_meta" || meta.Payload.ID != session {
-		return 0, fmt.Errorf("session log metadata does not match native session %q", session)
+	if meta.Type != "session_meta" || meta.Payload.ID == "" {
+		return "", 0, fmt.Errorf("session log carries no session_meta identity")
 	}
-	return int64(len(first)), nil
+	return meta.Payload.ID, int64(len(first)), nil
 }
 
 // Native observations use a bounded tail. Missing evidence stays unknown;
