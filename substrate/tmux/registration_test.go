@@ -123,19 +123,31 @@ func TestPaneRegistrationPrivateServer(t *testing.T) {
 	// Change the generation only after the ordinary read-side identity check.
 	// The final tmux guard must reject both typing and removal.
 	wrapper := filepath.Join(root, "replace-before-mutation")
-	fixture := "#!/bin/sh\nif [ \"$3\" = if-shell ]; then\n" +
+	fixture := "#!/bin/sh\nif [ \"$3\" = if-shell ] || [ \"$3\" = source-file ]; then\n" +
 		strings.TrimPrefix(shellCommand(binary, []string{"-S", socket, "set-option", "-s", generationOption, strings.Repeat("b", 64)}), "exec ") +
 		"\nfi\nexec " + "'" + strings.ReplaceAll(binary, "'", "'\\''") + "' \"$@\"\n"
 	if err := os.WriteFile(wrapper, []byte(fixture), 0o700); err != nil {
 		t.Fatal(err)
 	}
 	replacement, _ := New(Config{Binary: wrapper, Socket: socket, Session: session})
+	currentForeground, err := b.ForegroundCommand(ctx, pane.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
 	for _, mutate := range []func() error{
 		func() error { return replacement.RemoveRegisteredPane(ctx, id) },
-		func() error { return replacement.SendRegisteredKeys(ctx, id, "sh", substrate.Keys{Text: "wrong"}) },
+		func() error {
+			return replacement.SendRegisteredKeys(ctx, id, currentForeground, substrate.Keys{Text: "wrong"})
+		},
+		func() error {
+			return replacement.SendRegisteredKeys(ctx, id, currentForeground, substrate.Keys{Text: strings.Repeat("wrong", 2000), Submit: true})
+		},
 	} {
 		if err := mutate(); err == nil || !strings.Contains(err.Error(), "identity changed") {
 			t.Fatalf("generation replacement guard: %v", err)
+		}
+		if buffers := strings.TrimSpace(runTmux(t, binary, socket, "list-buffers", "-F", "#{buffer_name}")); buffers != "" {
+			t.Fatalf("guard refusal retained a text buffer: %q", buffers)
 		}
 		runTmux(t, binary, socket, "set-option", "-s", generationOption, id.Generation)
 		if ok, err := b.CheckPane(ctx, id); !ok || err != nil {

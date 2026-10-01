@@ -12,6 +12,42 @@ import (
 )
 
 func TestRegisteredMultilineTextPreservesWhitespace(t *testing.T) {
+	want := "\x1b[200~contract\n [/gang:gangline:contract#0123456789abcdef-contract]\n\n  indented\n\ttabbed\n'quote' \"; display-message -p injected; #\" $HOME ${HOME} #{pane_id} `uname` \\\n  after backslash\n~ ~/dir ~root é猫\r\x01\x7f trailing  \n\x1b[201~\n"
+	testRegisteredText(t, want)
+}
+
+func TestRegisteredLongTextPreservesExactBytes(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		size int
+	}{
+		{"failed-brief-size", 4300},
+		{"well-above-brief-size", 65536},
+		{"maximum-envelope-size", 1 << 20},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			var want string
+			if tc.size == 4300 {
+				// Newlines expand fourfold in tmux's command argument.
+				want = strings.Repeat("\n", tc.size)
+				if len(tmuxCommand("send-keys", "-t", "%1", "-l", "--", want)) <= 16*1024 {
+					t.Fatal("fixture does not exceed tmux's IPC command limit")
+				}
+			} else if tc.size == 65536 {
+				line := "  spaced 'quote' \"double\" $HOME #{pane_id} \\ é猫\t\r\x1b[200~\x01\x7f\n"
+				want = strings.Repeat(line, tc.size/len(line)+1)[:tc.size]
+				want = want[:strings.LastIndexByte(want, '\n')+1]
+			} else {
+				line := strings.Repeat("a", 1000) + "\n"
+				want = strings.Repeat(line, tc.size/len(line))
+			}
+			testRegisteredText(t, want)
+		})
+	}
+}
+
+func testRegisteredText(t *testing.T, want string) {
+	t.Helper()
 	t.Setenv("TMUX", "")
 	t.Setenv("TMUX_PANE", "")
 	binary, err := exec.LookPath("tmux")
@@ -58,13 +94,19 @@ func TestRegisteredMultilineTextPreservesWhitespace(t *testing.T) {
 	if err != nil || command != "sh" && command != "bash" && command != "dash" {
 		t.Fatalf("shell foreground command = %q: %v", command, err)
 	}
-	want := "\x1b[200~contract\n [/gang:gangline:contract#0123456789abcdef-contract]\n\n  indented\n\ttabbed\n'quote' \"; display-message -p injected; #\" $HOME ${HOME} #{pane_id} `uname` \\\n  after backslash\n~ ~/dir ~root é猫\r\x01\x7f trailing  \n\x1b[201~\n"
+	runTmux(t, binary, socket, "set-buffer", "-b", "existing", "keep")
 	if err := b.SendRegisteredKeys(context.Background(), id, command, substrate.Keys{Text: want + "END", Names: []string{"C-j"}}); err != nil {
 		t.Fatal(err)
 	}
 	runTmux(t, binary, socket, "wait-for", "typed")
 	got, err := os.ReadFile(output)
-	if err != nil || string(got) != want {
-		t.Fatalf("typed = %q, %v; want %q", got, err, want)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(got) != want {
+		t.Fatalf("typed %d bytes; want %d exact bytes", len(got), len(want))
+	}
+	if got := runTmux(t, binary, socket, "save-buffer", "-"); got != "keep" {
+		t.Fatalf("default tmux buffer changed: %q", got)
 	}
 }

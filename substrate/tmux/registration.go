@@ -15,6 +15,10 @@ import (
 
 const generationOption = "@gangline_generation"
 
+// tmux packs all command arguments into a 16 KiB IPC message. Leave room for
+// the if-shell guard and stream longer commands through source-file.
+const maxInlineRegisteredCommandBytes = 8 * 1024
+
 // ErrPaneReplaced means a saved pane identity no longer owns the live target.
 var ErrPaneReplaced = errors.New("registered pane was replaced")
 
@@ -225,8 +229,14 @@ func (b *Backend) mutateRegisteredPane(ctx context.Context, id PaneIdentity, com
 	if foreground != "" {
 		condition = fmt.Sprintf("#{&&:%s,#{==:#{pane_current_command},%s}}", condition, foreground)
 	}
-	out, err := b.run(ctx, "if-shell", "-F", "-t", id.Pane, condition,
-		command, "display-message -p 'registered pane identity changed'")
+	fallback := "display-message -p 'registered pane identity changed'"
+	var out string
+	if len(command) > maxInlineRegisteredCommandBytes {
+		script := tmuxCommand("if-shell", "-F", "-t", id.Pane, condition, command, fallback) + "\n"
+		out, err = b.runWithInput(ctx, strings.NewReader(script), "source-file", "-")
+	} else {
+		out, err = b.run(ctx, "if-shell", "-F", "-t", id.Pane, condition, command, fallback)
+	}
 	if err != nil {
 		if exists, checkErr := b.CheckPane(ctx, id); absentOK && checkErr == nil && !exists {
 			return nil

@@ -5,6 +5,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"io"
 	"os"
 	"os/exec"
 	"sort"
@@ -349,10 +350,15 @@ func (backend *Backend) cursor(ctx context.Context, pane substrate.PaneID) (subs
 }
 
 func (backend *Backend) run(ctx context.Context, arguments ...string) (string, error) {
+	return backend.runWithInput(ctx, nil, arguments...)
+}
+
+func (backend *Backend) runWithInput(ctx context.Context, input io.Reader, arguments ...string) (string, error) {
 	if backend.config.Socket != "" {
 		arguments = append([]string{"-S", backend.config.Socket}, arguments...)
 	}
 	command := exec.CommandContext(ctx, backend.config.Binary, arguments...)
+	command.Stdin = input
 	output, err := command.CombinedOutput()
 	return string(output), err
 }
