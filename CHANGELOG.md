@@ -1,5 +1,16 @@
 # Changelog
 
+## [1.9.1](https://github.com/adambiggs/gangline/compare/gangline-v1.9.0...gangline-v1.9.1) (2026-10-01)
+
+
+### Bug Fixes
+
+* **compaction:** reconcile completion before draining notices ([058ce97](https://github.com/adambiggs/gangline/commit/058ce97db7d32cace2a1645e570dc4722effa196)), closes [#68](https://github.com/adambiggs/gangline/issues/68) [#65](https://github.com/adambiggs/gangline/issues/65)
+* **context:** cancel stale band notices after compaction ([f156d10](https://github.com/adambiggs/gangline/commit/f156d105441ca6d37e6d53c1c3de716709014888))
+* **messages:** shorten Gangline system sender tags ([85d6071](https://github.com/adambiggs/gangline/commit/85d60713e3c81d8d70d0006964637f0f6ba09fe7))
+* **startup:** retain proof for safe recovery before submission ([d26c096](https://github.com/adambiggs/gangline/commit/d26c09633fd9b9d85e1b7bc2c64d94f22c916e28)), closes [#66](https://github.com/adambiggs/gangline/issues/66)
+* **tmux:** leave copy mode before guarded input ([6aed2d9](https://github.com/adambiggs/gangline/commit/6aed2d9349a0ad713e7061381802637c3511e8a3))
+
 ## [1.9.0](https://github.com/adambiggs/gangline/compare/gangline-v1.8.1...gangline-v1.9.0) (2026-10-01)
 
 
