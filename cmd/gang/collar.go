@@ -2,7 +2,9 @@ package main
 
 import (
 	"context"
+	"errors"
 	"fmt"
+	"io/fs"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -15,7 +17,7 @@ import (
 	"github.com/adambiggs/gangline/substrate/tmux"
 )
 
-func (cmd command) collar(arguments []string) error {
+func (cmd command) collar(arguments []string) (result error) {
 	if len(arguments) != 2 || arguments[0] != "check" {
 		return usageError("collar: expected 'check NAME'")
 	}
@@ -31,18 +33,31 @@ func (cmd command) collar(arguments []string) error {
 	if err != nil {
 		return err
 	}
-	defer os.RemoveAll(directory)
-	defer os.Remove(sockets[0])
-	defer os.Remove(sockets[1])
+	var cleanup []error
+	var keepSocket [2]bool
+	defer func() {
+		cleanup = append(cleanup, removeCollarCheckFiles(directory, sockets, keepSocket))
+		result = withCleanupError(result, errors.Join(cleanup...))
+	}()
+	// A session that could not be stopped keeps its socket, so the leaked
+	// server stays reachable at the path the error names.
+	stop := func(index int, backend *tmux.Backend, session string) {
+		if err := stopProbeSession(backend); err != nil {
+			keepSocket[index] = true
+			cleanup = append(cleanup, fmt.Errorf("stop tmux session %s on %s: %w", session, sockets[index], err))
+		}
+	}
 
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
 	results := unknownProbeResults()
-	trustBackend, err := tmux.New(cmd.tmuxConfig(sockets[0], "gang-check-trust-"+id))
+	trustSession := "gang-check-trust-" + id
+	trustBackend, err := tmux.New(cmd.tmuxConfig(sockets[0], trustSession))
 	if err != nil {
 		return err
 	}
 	trustResults, err := probeTrust(ctx, trustBackend, collar, directory)
+	stop(0, trustBackend, trustSession)
 	if err != nil {
 		return err
 	}
@@ -50,7 +65,8 @@ func (cmd command) collar(arguments []string) error {
 		results[name] = result
 	}
 
-	activeBackend, err := tmux.New(cmd.tmuxConfig(sockets[1], "gang-check-active-"+id))
+	activeSession := "gang-check-active-" + id
+	activeBackend, err := tmux.New(cmd.tmuxConfig(sockets[1], activeSession))
 	if err != nil {
 		return err
 	}
@@ -59,6 +75,7 @@ func (cmd command) collar(arguments []string) error {
 		return err
 	}
 	activeResults, err := cmd.probeActive(ctx, activeBackend, collar, settings, directory, workdir)
+	stop(1, activeBackend, activeSession)
 	if err != nil {
 		return err
 	}
@@ -75,7 +92,52 @@ func (cmd command) collar(arguments []string) error {
 	return cmd.printCheckReport(report)
 }
 
-func (cmd command) prepareCollarCheck(root string) (string, string, [2]string, error) {
+// stopProbeSession ends a probe's private tmux session. A kill that fails
+// because no session exists, including one that ended on its own, is not a
+// failure.
+func stopProbeSession(backend *tmux.Backend) error {
+	err := backend.KillSession(context.Background())
+	if err == nil {
+		return nil
+	}
+	if exists, existsErr := backend.SessionExists(context.Background()); existsErr == nil && !exists {
+		return nil
+	}
+	return err
+}
+
+func removeCollarCheckFiles(directory string, sockets [2]string, keep [2]bool) error {
+	errs := []error{os.RemoveAll(directory)}
+	for index, socket := range sockets {
+		if keep[index] {
+			continue
+		}
+		if err := os.Remove(socket); err != nil && !errors.Is(err, fs.ErrNotExist) {
+			errs = append(errs, err)
+		}
+	}
+	return errors.Join(errs...)
+}
+
+// withCleanupError reports a cleanup failure without hiding the check's own
+// outcome or exit status.
+func withCleanupError(result, cleanup error) error {
+	if cleanup == nil {
+		return result
+	}
+	text := "collar check cleanup failed: " + strings.ReplaceAll(cleanup.Error(), "\n", "; ")
+	var ce commandError
+	switch {
+	case result == nil:
+		return commandError{status: exitError, text: text}
+	case errors.As(result, &ce):
+		return commandError{status: ce.status, text: ce.text + "; " + text}
+	default:
+		return fmt.Errorf("%w; %s", result, text)
+	}
+}
+
+func (cmd command) prepareCollarCheck(root string) (_ string, _ string, _ [2]string, err error) {
 	if err := os.MkdirAll(root, 0o700); err != nil {
 		return "", "", [2]string{}, err
 	}
@@ -90,7 +152,7 @@ func (cmd command) prepareCollarCheck(root string) (string, string, [2]string, e
 	ready := false
 	defer func() {
 		if !ready {
-			_ = os.RemoveAll(directory)
+			err = errors.Join(err, os.RemoveAll(directory))
 		}
 	}()
 	if output, err := exec.Command("git", "-C", directory, "init", "--quiet").CombinedOutput(); err != nil {
@@ -118,7 +180,6 @@ func (cmd command) prepareCollarCheck(root string) (string, string, [2]string, e
 
 func probeTrust(ctx context.Context, backend *tmux.Backend, collar harness.Collar, directory string) (map[string]harness.ProbeResult, error) {
 	results := make(map[string]harness.ProbeResult)
-	defer backend.KillSession(context.Background())
 	trustCollar := collar
 	trustCollar.Hooks = nil
 	launch, err := harness.RenderLaunch(trustCollar, harness.LaunchOptions{})
@@ -127,26 +188,25 @@ func probeTrust(ctx context.Context, backend *tmux.Backend, collar harness.Colla
 	}
 	pane, err := backend.CreateSession(ctx, launch.SpawnSpec("probe", directory))
 	if err != nil {
-		results[harness.ProbeLaunch] = harness.ProbeResult{Name: harness.ProbeLaunch, Detail: err.Error()}
+		results[harness.ProbeLaunch] = unknownProbe(harness.ProbeLaunch, "tmux did not start the probe: "+err.Error())
 		return results, nil
 	}
-	results[harness.ProbeLaunch] = harness.ProbeResult{Name: harness.ProbeLaunch, Passed: true, Detail: "native process launched in a private tmux server"}
+	results[harness.ProbeLaunch] = passedProbe(harness.ProbeLaunch, "native process launched in a private tmux server")
 	startup, _, err := harness.AwaitStartup(ctx, backend.Capture, pane.ID, collar)
 	if err != nil {
-		results[harness.ProbeTrustPrompt] = harness.ProbeResult{Name: harness.ProbeTrustPrompt, Detail: err.Error()}
+		results[harness.ProbeTrustPrompt] = probeErrorResult(ctx, harness.ProbeTrustPrompt, err, backend.SessionExists)
 		return results, nil
 	}
 	detail := "persisted native trust admitted the disposable project"
 	if startup.State == harness.StartupTrustRequired {
 		detail = startup.Prompt
 	}
-	results[harness.ProbeTrustPrompt] = harness.ProbeResult{Name: harness.ProbeTrustPrompt, Passed: true, Detail: detail}
+	results[harness.ProbeTrustPrompt] = passedProbe(harness.ProbeTrustPrompt, detail)
 	return results, nil
 }
 
 func (cmd command) probeActive(ctx context.Context, backend *tmux.Backend, collar harness.Collar, settings settings, directory, workdir string) (map[string]harness.ProbeResult, error) {
 	results := make(map[string]harness.ProbeResult)
-	defer backend.KillSession(context.Background())
 	fifo := filepath.Join(directory, "hook.fifo")
 	if err := syscall.Mkfifo(fifo, 0o600); err != nil {
 		return nil, err
@@ -159,30 +219,33 @@ func (cmd command) probeActive(ctx context.Context, backend *tmux.Backend, colla
 	launch = applyLaunchPolicy(launch, collar.Name, settings)
 	pane, err := backend.CreateSession(ctx, launch.SpawnSpec("probe", workdir))
 	if err != nil {
-		results[harness.ProbeComposer] = harness.ProbeResult{Name: harness.ProbeComposer, Detail: err.Error()}
+		results[harness.ProbeComposer] = unknownProbe(harness.ProbeComposer, "tmux did not start the hooked probe: "+err.Error())
 		return results, nil
 	}
 	startup, screen, err := harness.AwaitStartup(ctx, backend.Capture, pane.ID, collar)
 	if err != nil {
-		results[harness.ProbeComposer] = harness.ProbeResult{Name: harness.ProbeComposer, Detail: err.Error()}
+		results[harness.ProbeComposer] = probeErrorResult(ctx, harness.ProbeComposer, err, backend.SessionExists)
 		return results, nil
 	}
 	if startup.State == harness.StartupTrustRequired {
-		results[harness.ProbeTrustPrompt] = harness.ProbeResult{Name: harness.ProbeTrustPrompt, Passed: true, Detail: startup.Prompt}
+		results[harness.ProbeTrustPrompt] = passedProbe(harness.ProbeTrustPrompt, startup.Prompt)
+		results[harness.ProbeComposer] = unknownProbe(harness.ProbeComposer, fmt.Sprintf("native trust prompt in %s awaits the operator: %s", workdir, startup.Prompt))
+		return results, nil
 	}
 	if startup.State != harness.StartupReady {
+		results[harness.ProbeComposer] = unknownProbe(harness.ProbeComposer, fmt.Sprintf("native startup is %s: %s", startup.State, startup.Prompt))
 		return results, nil
 	}
 	composer, err := harness.ReadComposer(collar.Primitives.Composer, screen)
 	if err != nil {
-		results[harness.ProbeComposer] = harness.ProbeResult{Name: harness.ProbeComposer, Detail: err.Error()}
+		results[harness.ProbeComposer] = failedProbe(harness.ProbeComposer, err.Error())
 		return results, nil
 	}
 	if composer.Text != "" {
-		results[harness.ProbeComposer] = harness.ProbeResult{Name: harness.ProbeComposer, Detail: "native composer was not empty"}
+		results[harness.ProbeComposer] = failedProbe(harness.ProbeComposer, "native composer was not empty")
 		return results, nil
 	}
-	results[harness.ProbeComposer] = harness.ProbeResult{Name: harness.ProbeComposer, Passed: true, Detail: "native empty composer detected"}
+	results[harness.ProbeComposer] = passedProbe(harness.ProbeComposer, "native empty composer detected")
 	action, _ := harness.Submit(collar.Primitives.Submit, "Reply with exactly READY.")
 	settle, _ := harness.SubmitSettle(collar.Primitives.Submit)
 	input, _ := harness.SubmitInput(collar.Primitives.Submit, action.Text)
@@ -196,20 +259,20 @@ func (cmd command) probeActive(ctx context.Context, backend *tmux.Backend, colla
 		return sendHarnessKeys(ctx, backend, pane.ID, collar, substrate.Keys{Names: action.Keys, Submit: action.Submit})
 	})
 	if err != nil {
-		results[harness.ProbeSubmit] = harness.ProbeResult{Name: harness.ProbeSubmit, Detail: err.Error()}
+		results[harness.ProbeSubmit] = probeErrorResult(ctx, harness.ProbeSubmit, err, backend.SessionExists)
 		return results, nil
 	}
-	results[harness.ProbeSubmit] = harness.ProbeResult{Name: harness.ProbeSubmit, Passed: true, Detail: "native submit produced a hook witness"}
+	results[harness.ProbeSubmit] = passedProbe(harness.ProbeSubmit, "native submit produced a hook witness")
 	boundary, _, err := harness.DetectTurnBoundary(collar, payload)
 	if err != nil {
-		results[harness.ProbeHook] = harness.ProbeResult{Name: harness.ProbeHook, Detail: err.Error()}
+		results[harness.ProbeHook] = failedProbe(harness.ProbeHook, err.Error())
 		return results, nil
 	}
-	results[harness.ProbeHook] = harness.ProbeResult{Name: harness.ProbeHook, Passed: true, Detail: "native hook payload decoded"}
+	results[harness.ProbeHook] = passedProbe(harness.ProbeHook, "native hook payload decoded")
 	if boundary == harness.TurnStarted {
-		results[harness.ProbeTurnBoundary] = harness.ProbeResult{Name: harness.ProbeTurnBoundary, Passed: true, Detail: "native turn-start boundary decoded"}
+		results[harness.ProbeTurnBoundary] = passedProbe(harness.ProbeTurnBoundary, "native turn-start boundary decoded")
 	} else {
-		results[harness.ProbeTurnBoundary] = harness.ProbeResult{Name: harness.ProbeTurnBoundary, Detail: fmt.Sprintf("first native hook decoded as %q", boundary)}
+		results[harness.ProbeTurnBoundary] = failedProbe(harness.ProbeTurnBoundary, fmt.Sprintf("first native hook decoded as %q", boundary))
 	}
 	return results, nil
 }
@@ -217,26 +280,59 @@ func (cmd command) probeActive(ctx context.Context, backend *tmux.Backend, colla
 func unknownProbeResults() map[string]harness.ProbeResult {
 	results := make(map[string]harness.ProbeResult)
 	for _, name := range harness.RequiredProbes() {
-		results[name] = harness.ProbeResult{Name: name, Detail: "unknown: probe did not run"}
+		results[name] = unknownProbe(name, "probe did not run")
 	}
 	return results
 }
 
+func unknownProbe(name, detail string) harness.ProbeResult {
+	return harness.ProbeResult{Name: name, Outcome: harness.ProbeUnknown, Detail: detail}
+}
+
+func failedProbe(name, detail string) harness.ProbeResult {
+	return harness.ProbeResult{Name: name, Outcome: harness.ProbeFailed, Detail: detail}
+}
+
+func passedProbe(name, detail string) harness.ProbeResult {
+	return harness.ProbeResult{Name: name, Outcome: harness.ProbePassed, Detail: detail}
+}
+
+// probeErrorResult classifies an error from a probe that had started. An
+// error from the probe's own tmux or helper commands observed nothing about
+// the harness unless the probe session is gone: the native process ends that
+// session when it exits. Any other error, including a deadline the harness
+// did not meet, is an observed failure.
+func probeErrorResult(ctx context.Context, name string, err error, sessionExists func(context.Context) (bool, error)) harness.ProbeResult {
+	var exitErr *exec.ExitError
+	var execErr *exec.Error
+	if ctx.Err() != nil || (!errors.As(err, &exitErr) && !errors.As(err, &execErr)) {
+		return failedProbe(name, err.Error())
+	}
+	if exists, existsErr := sessionExists(context.Background()); existsErr == nil && !exists {
+		return failedProbe(name, "native process exited: "+err.Error())
+	}
+	return unknownProbe(name, err.Error())
+}
+
 func (cmd command) printCheckReport(report harness.CheckReport) error {
 	for _, result := range report.Results {
-		mark := "FAIL"
-		if result.Passed {
-			mark = "PASS"
-		}
-		if _, err := fmt.Fprintf(cmd.stdout, "%s\t%s\t%s\n", mark, result.Name, result.Detail); err != nil {
+		if _, err := fmt.Fprintf(cmd.stdout, "%s\t%s\t%s\n", result.Outcome, result.Name, result.Detail); err != nil {
 			return err
 		}
 	}
 	if report.Passed() {
 		return nil
 	}
+	failed, unknown := report.Probes(harness.ProbeFailed), report.Probes(harness.ProbeUnknown)
+	if len(failed) == 0 {
+		return commandError{status: exitUnknown, text: "collar check incomplete; unknown: " + strings.Join(unknown, ", ")}
+	}
 	fmt.Fprintln(cmd.stdout)
 	fmt.Fprint(cmd.stdout, report.IssueBody())
 	fmt.Fprintln(cmd.stdout, report.IssueCommand("adambiggs/gangline"))
-	return commandError{status: exitNative, text: "collar check incomplete; native prompts are never auto-answered"}
+	text := "collar check failed: " + strings.Join(failed, ", ")
+	if len(unknown) > 0 {
+		text += "; unknown: " + strings.Join(unknown, ", ")
+	}
+	return commandError{status: exitNative, text: text}
 }
