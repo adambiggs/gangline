@@ -114,7 +114,7 @@ func (run *runtime) publishContextNotes(l *store.LockedAgent, a *core.Agent) err
 				continue
 			}
 			const reason = "context band was queued before compaction completed"
-			if err := l.Settle(a, e, "cancelled", reason); err != nil {
+			if err := l.Withdraw(e.ID); err != nil {
 				return err
 			}
 			if err := run.record(*a, core.Event{Type: "send_cancelled", ID: string(e.ID), Reason: reason}); err != nil {

@@ -627,3 +627,44 @@ func TestCompactionWitnessCancelsNoticeAfterLockRelease(t *testing.T) {
 		t.Fatalf("locked hook notice survived next access: %+v, %v", queued, err)
 	}
 }
+
+// Discarding stale context notes must leave an existing retained receipt in
+// place: it is what holds later delivery behind unconfirmed input.
+func TestCompactionDiscardKeepsRetainedReceipt(t *testing.T) {
+	f, a, p := compactionFixture(t)
+	at := f.cmd.now()
+	retained := core.Envelope{ID: "retained", Token: "00112233445566ff", From: core.Sender{Kind: core.SenderGangline, Name: "other"}, Recipient: a.ID, To: a.Name, Message: core.Message{Text: "unconfirmed"}, CreatedAt: at}
+	if err := p.Publish(retained); err != nil {
+		t.Fatal(err)
+	}
+	l, err := p.TryLock()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := l.Settle(&a, retained, "unverified", "native input not yet confirmed"); err != nil {
+		t.Fatal(err)
+	}
+	a.Compaction = &core.Compaction{ID: "compact", StartedAt: at.Add(-time.Minute), Status: "submitted", Continuation: true}
+	if err := l.Save(a); err != nil {
+		t.Fatal(err)
+	}
+	e := core.Envelope{ID: "context-1", Token: "0123456789abcdef", From: core.Sender{Kind: core.SenderGangline, Name: "context-band"}, Recipient: a.ID, To: a.Name, Message: core.Message{Text: "spooled"}, CreatedAt: at}
+	if err := f.run.publishOnce(l, &a, e); err != nil {
+		t.Fatal(err)
+	}
+	if err := l.Close(); err != nil {
+		t.Fatal(err)
+	}
+	if err := f.run.confirmCompactionHook(a.ID, hookNotice{Kind: "compaction-finished", SessionID: "s", At: at.Add(time.Second)}); err != nil {
+		t.Fatal(err)
+	}
+	if queued, err := p.ListNew(); err != nil || len(queued) != 0 {
+		t.Fatalf("stale context note remains: %+v, %v", queued, err)
+	}
+	if got, err := p.Read(); err != nil || got.LastFailed != retained.ID {
+		t.Fatalf("discard replaced the retained receipt: %q, %v", got.LastFailed, err)
+	}
+	if _, err := p.ReadEnvelope("failed", retained.ID); err != nil {
+		t.Fatalf("discard removed the retained receipt: %v", err)
+	}
+}
