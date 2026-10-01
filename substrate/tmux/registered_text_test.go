@@ -94,7 +94,7 @@ func testRegisteredText(t *testing.T, want string) {
 	if err != nil || command != "sh" && command != "bash" && command != "dash" {
 		t.Fatalf("shell foreground command = %q: %v", command, err)
 	}
-	runTmux(t, binary, socket, "set-buffer", "-b", "existing", "keep")
+	runTmux(t, binary, socket, "set-buffer", "keep")
 	if err := b.SendRegisteredKeys(context.Background(), id, command, substrate.Keys{Text: want + "END", Names: []string{"C-j"}}); err != nil {
 		t.Fatal(err)
 	}
