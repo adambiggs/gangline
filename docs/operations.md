@@ -26,13 +26,15 @@ At the due time, Gangline sends the note to the caller to resume work. If that c
 gone, the active lead receives an overdue wake naming the caller. A wake
 remains pending until the matching native turn finishes successfully. If
 input is blocked before submission, ordinary ticks keep trying the queued
-wake. A submitted prompt remains pending until its matching turn finishes
-successfully. When native input is accepted or its outcome cannot be verified,
-Gangline records the submission and does not type it again. The caller can
+wake; `gang snooze --status` shows it as queued, and `gang snooze --clear` or a
+new `gang snooze --at` withdraws it from the recipient's inbox. A submitted
+prompt remains pending until its matching turn finishes successfully. When
+native input is accepted or its outcome cannot be verified, Gangline records
+the submission and does not type it again. The caller can
 inspect an uncertain wake with `gang snooze --status` and clear it after
 checking the native turn. The lead sees uncertain notices and wakes routed
-from absent callers in the same status output, and can clear one with
-`gang snooze --clear ID`. Clearing cannot retract native input.
+from absent callers in the same status output, and can clear or withdraw one
+with `gang snooze --clear ID`. Clearing cannot retract native input.
 If an automatic wake is rejected by another attributable cap, Gangline
 schedules another wake at the next observed reset. A manually scheduled wake
 is re-armed once when a fresh reading confirms the capped window.

@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"errors"
 	"os"
+	"path/filepath"
 	"strings"
 	"sync"
 	"testing"
@@ -1245,4 +1246,212 @@ func TestQueuedUsageNoticeIsCancelledAtReset(t *testing.T) {
 	if n := usageSnapshot(t, f.run).Notices; len(n) != 0 || f.input.submits != 0 {
 		t.Fatalf("withdrawn notice was kept or republished: %+v submits=%d", n, f.input.submits)
 	}
+}
+
+func TestQueuedWakeCanBeClearedOrReplaced(t *testing.T) {
+	queued := func(t *testing.T) (*stateFixture, core.Agent, core.Agent, usageSnooze) {
+		t.Helper()
+		f := newStateFixture(t)
+		caller := f.add(t, "caller-id", "worker", "codex")
+		f.env["GANG_AGENT_ID"], f.env["TMUX_PANE"] = string(caller.ID), caller.Pane
+		if err := f.cmd.snooze([]string{"--at", "1h"}); err != nil {
+			t.Fatal(err)
+		}
+		due := f.cmd.now().Add(2 * time.Hour)
+		f.cmd.clock = func() time.Time { return due }
+		f.run.cmd = f.cmd
+		lead := f.add(t, "lead-id", "lead", "codex")
+		f.input.screen = screenWithText("› an unsent operator draft")
+		if err := f.run.flushUsageWork(); err != nil {
+			t.Fatal(err)
+		}
+		s := usageSnapshot(t, f.run).Snoozes[string(caller.ID)]
+		if s.RecipientID != caller.ID || s.Submission != "" || f.input.submits != 0 || len(inboxNew(t, f, caller)) != 1 {
+			t.Fatalf("wake is not queued behind the draft: %+v", s)
+		}
+		return f, caller, lead, s
+	}
+	// Once the draft is gone, a withdrawn wake must not reach native input.
+	assertWithdrawn := func(t *testing.T, f *stateFixture, recipient core.Agent, id core.EnvelopeID) {
+		t.Helper()
+		if q := inboxNew(t, f, recipient); len(q) != 0 {
+			t.Fatalf("withdrawn wake still queued: %+v", q)
+		}
+		f.input.screen = screenWithText("READY", "› ")
+		f.env["GANGLINE_HITCH_ID"] = string(recipient.ID)
+		if err := f.run.flushUsageWork(); err != nil {
+			t.Fatal(err)
+		}
+		if _, err := f.run.drain(recipient.ID, ""); err != nil {
+			t.Fatal(err)
+		}
+		if f.input.submits != 0 {
+			t.Fatalf("withdrawn wake was submitted: %q", f.input.pasted)
+		}
+	}
+	t.Run("own clear", func(t *testing.T) {
+		f, caller, _, s := queued(t)
+		f.out.Reset()
+		if err := f.cmd.snooze([]string{"--status"}); err != nil {
+			t.Fatal(err)
+		}
+		if got := f.out.String(); !strings.Contains(got, string(s.ID)+"\tqueued for worker") {
+			t.Fatalf("status does not show the queued wake: %q", got)
+		}
+		if err := f.cmd.snooze([]string{"--clear"}); err != nil {
+			t.Fatal(err)
+		}
+		if state := usageSnapshot(t, f.run); len(state.Snoozes)+len(state.Recent) != 0 {
+			t.Fatalf("clear retained the wake: %+v", state)
+		}
+		assertWithdrawn(t, f, caller, s.ID)
+	})
+	t.Run("busy recipient", func(t *testing.T) {
+		f, caller, _, s := queued(t)
+		p, _ := f.run.team.Agent(caller.ID)
+		l, err := p.TryLock()
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer l.Close()
+		for _, args := range [][]string{{"--clear"}, {"--at", "3h"}} {
+			if err := f.cmd.snooze(args); err == nil || !strings.Contains(err.Error(), "busy") {
+				t.Fatalf("%v withdrew a wake under a held recipient lock: %v", args, err)
+			}
+		}
+		if got := usageSnapshot(t, f.run).Snoozes[string(caller.ID)]; got.ID != s.ID || len(inboxNew(t, f, caller)) != 1 {
+			t.Fatalf("refused withdrawal changed the wake: %+v", got)
+		}
+	})
+	t.Run("recipient reconcile error", func(t *testing.T) {
+		f, caller, _, s := queued(t)
+		p, _ := f.run.team.Agent(caller.ID)
+		l, err := p.TryLock()
+		if err != nil {
+			t.Fatal(err)
+		}
+		a, _ := p.Read()
+		a.LastFailed = "missing-receipt"
+		if err := l.Save(a); err != nil {
+			t.Fatal(err)
+		}
+		l.Close()
+		if err := p.WriteWitness(store.Witness{ID: "w", At: f.cmd.now(), Prompt: "x"}); err != nil {
+			t.Fatal(err)
+		}
+		if err := f.cmd.snooze([]string{"--clear"}); err == nil {
+			t.Fatal("clear succeeded although the recipient could not be locked")
+		}
+		if got := usageSnapshot(t, f.run).Snoozes[string(caller.ID)]; got.ID != s.ID || len(inboxNew(t, f, caller)) != 1 {
+			t.Fatalf("failed withdrawal changed the wake: %+v", got)
+		}
+	})
+	t.Run("unverified startup receipt", func(t *testing.T) {
+		f := newStateFixture(t)
+		caller := f.add(t, "caller-id", "worker", "codex")
+		f.env["GANG_AGENT_ID"], f.env["TMUX_PANE"] = string(caller.ID), caller.Pane
+		p, _ := f.run.team.Agent(caller.ID)
+		caller.LastFailed = "original"
+		if err := p.Publish(core.Envelope{ID: caller.LastFailed, Recipient: caller.ID, To: caller.Name, From: core.Sender{Kind: core.SenderGangline, Name: "hitch"}, Purpose: "assignment", Message: core.Message{Text: "original"}, CreatedAt: f.cmd.now()}); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.Rename(filepath.Join(p.Inbox, "new", "original.json"), filepath.Join(p.Inbox, "failed", "original.json")); err != nil {
+			t.Fatal(err)
+		}
+		l, err := p.TryLock()
+		if err != nil {
+			t.Fatal(err)
+		}
+		if err := l.Save(caller); err != nil {
+			t.Fatal(err)
+		}
+		l.Close()
+		if err := f.cmd.snooze([]string{"--at", "1h"}); err != nil {
+			t.Fatal(err)
+		}
+		due := f.cmd.now().Add(2 * time.Hour)
+		f.cmd.clock = func() time.Time { return due }
+		f.run.cmd = f.cmd
+		f.input.screen = screenWithText("READY", "› ")
+		if err := f.run.flushUsageWork(); err != nil {
+			t.Fatal(err)
+		}
+		if len(inboxNew(t, f, caller)) != 1 || f.input.submits != 0 {
+			t.Fatalf("wake is not queued behind the unverified startup receipt: submits=%d", f.input.submits)
+		}
+		if err := f.cmd.snooze([]string{"--clear"}); err != nil {
+			t.Fatal(err)
+		}
+		if a, err := p.Read(); err != nil || a.LastFailed != "original" {
+			t.Fatalf("withdrawal displaced the startup receipt: %+v %v", a, err)
+		}
+		delete(f.env, "GANG_AGENT_ID")
+		delete(f.env, "TMUX_PANE")
+		f.cmd.stdin = strings.NewReader("replacement assignment without contract")
+		if err := f.cmd.send([]string{"worker", "--from", "operator"}); err == nil || !strings.Contains(err.Error(), "--recover") || f.input.submits != 0 {
+			t.Fatalf("plain send after withdrawal err=%v submits=%d", err, f.input.submits)
+		}
+	})
+	t.Run("replace", func(t *testing.T) {
+		f, caller, _, s := queued(t)
+		if err := f.cmd.snooze([]string{"--at", "3h"}); err != nil {
+			t.Fatal(err)
+		}
+		next := usageSnapshot(t, f.run).Snoozes[string(caller.ID)]
+		if next.ID == s.ID || next.RecipientID != "" || !next.At.Equal(f.cmd.now().Add(3*time.Hour)) {
+			t.Fatalf("wake was not replaced: %+v", next)
+		}
+		assertWithdrawn(t, f, caller, s.ID)
+	})
+	t.Run("lead clear by ID", func(t *testing.T) {
+		f := newStateFixture(t)
+		caller := f.add(t, "caller-id", "worker", "codex")
+		f.env["GANG_AGENT_ID"], f.env["TMUX_PANE"] = string(caller.ID), caller.Pane
+		if err := f.cmd.snooze([]string{"--at", "1h"}); err != nil {
+			t.Fatal(err)
+		}
+		if err := f.run.team.RemoveName(caller.Name, caller.ID); err != nil {
+			t.Fatal(err)
+		}
+		lead := f.add(t, "lead-id", "lead", "codex")
+		f.env["GANG_AGENT_ID"], f.env["TMUX_PANE"] = string(lead.ID), lead.Pane
+		due := f.cmd.now().Add(2 * time.Hour)
+		f.cmd.clock = func() time.Time { return due }
+		f.run.cmd = f.cmd
+		f.input.screen = screenWithText("› an unsent operator draft")
+		if err := f.run.flushUsageWork(); err != nil {
+			t.Fatal(err)
+		}
+		s := usageSnapshot(t, f.run).Snoozes[string(caller.ID)]
+		if s.RecipientID != lead.ID || s.Submission != "" || len(inboxNew(t, f, lead)) != 1 {
+			t.Fatalf("fallback wake is not queued for the lead: %+v", s)
+		}
+		f.out.Reset()
+		if err := f.cmd.snooze([]string{"--status"}); err != nil {
+			t.Fatal(err)
+		}
+		if got := f.out.String(); !strings.Contains(got, string(s.ID)+"\twake for worker; queued for lead") {
+			t.Fatalf("lead status does not show the queued wake: %q", got)
+		}
+		if err := f.cmd.snooze([]string{"--clear", string(s.ID)}); err != nil {
+			t.Fatal(err)
+		}
+		if state := usageSnapshot(t, f.run); len(state.Snoozes)+len(state.Recent) != 0 {
+			t.Fatalf("clear retained the wake: %+v", state)
+		}
+		assertWithdrawn(t, f, lead, s.ID)
+	})
+}
+
+func inboxNew(t *testing.T, f *stateFixture, a core.Agent) []core.Envelope {
+	t.Helper()
+	p, err := f.run.team.Agent(a.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	q, err := p.ListNew()
+	if err != nil {
+		t.Fatal(err)
+	}
+	return q
 }

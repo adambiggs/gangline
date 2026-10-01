@@ -1,13 +1,16 @@
 package main
 
 import (
+	"errors"
 	"fmt"
+	"os"
 	"sort"
 	"strings"
 	"time"
 
 	"github.com/adambiggs/gangline/core"
 	"github.com/adambiggs/gangline/harness"
+	"github.com/adambiggs/gangline/store"
 )
 
 const defaultSnoozeNote = "Re-read your assignment and durable state, then continue only if work remains."
@@ -69,6 +72,80 @@ func snoozeStatusText(s usageSnooze, submitted bool) string {
 	}
 }
 
+func snoozeQueuedText(s usageSnooze) string {
+	return fmt.Sprintf("queued for %s, not yet submitted; due %s", s.RecipientName, s.At.UTC().Format(time.RFC3339))
+}
+
+func queuedWakeRecipient(s usageSnooze) core.HitchID {
+	if s.Submission != "" {
+		return ""
+	}
+	return s.RecipientID
+}
+
+// withQueuedWake changes usage state while holding the agent lock of the
+// recipient that recipient names. A queued wake is published only after its
+// intent is re-read under that lock, so withdraw can remove the inbox envelope
+// and the intent together without racing a publish or a drain. Withdrawal
+// leaves the agent's retained failure receipt, which may be an unverified
+// startup contract, in place.
+func (run *runtime) withQueuedWake(recipient func(*usageState) core.HitchID, change func(state *usageState, withdraw func(usageSnooze) error) error) (result error) {
+	var id core.HitchID
+	if err := run.withUsageState(func(state *usageState) error {
+		id = recipient(state)
+		return nil
+	}); err != nil {
+		return err
+	}
+	var l *store.LockedAgent
+	var a core.Agent
+	if id != "" {
+		p, err := run.team.Agent(id)
+		if err != nil {
+			return err
+		}
+		if _, err := os.Stat(p.State); err != nil && !errors.Is(err, os.ErrNotExist) {
+			return err
+		} else if err == nil {
+			l, a, err = run.acquire(id, false)
+			if errors.Is(err, store.ErrLocked) {
+				return refuseError("wake recipient is busy with an input operation; retry")
+			}
+			if err != nil {
+				return err
+			}
+			defer func() { result = errors.Join(result, run.release(l)) }()
+		}
+	}
+	var cancelled []core.EnvelopeID
+	const reason = "wake withdrawn before native submission"
+	if err := run.withUsageState(func(state *usageState) error {
+		if recipient(state) != id {
+			return refuseError("wake delivery changed while it was being withdrawn; retry")
+		}
+		return change(state, func(s usageSnooze) error {
+			if l == nil || queuedWakeRecipient(s) != a.ID {
+				return nil
+			}
+			if err := l.Withdraw(s.ID); errors.Is(err, os.ErrNotExist) {
+				return nil
+			} else if err != nil {
+				return err
+			}
+			cancelled = append(cancelled, s.ID)
+			return nil
+		})
+	}); err != nil {
+		return err
+	}
+	for _, e := range cancelled {
+		if err := run.record(a, core.Event{Type: "send_cancelled", ID: string(e), Reason: reason}); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
 func (cmd command) snooze(args []string) error {
 	var at, note string
 	var clear, status bool
@@ -99,6 +176,8 @@ func (cmd command) snooze(args []string) error {
 			if current := state.Snoozes[key]; current.ID != "" {
 				if current.Submission != "" {
 					rows = append(rows, fmt.Sprintf("%s\t%s", current.ID, snoozeStatusText(current, true)))
+				} else if current.RecipientID != "" {
+					rows = append(rows, fmt.Sprintf("%s\t%s; --clear withdraws it, --at replaces it", current.ID, snoozeQueuedText(current)))
 				} else if current.At.IsZero() {
 					rows = append(rows, fmt.Sprintf("%s\t%s", current.ID, snoozeStatusText(current, false)))
 				} else {
@@ -118,6 +197,8 @@ func (cmd command) snooze(args []string) error {
 				for caller, s := range state.Snoozes {
 					if caller != key && s.RecipientID == a.ID && s.Submission != "" {
 						rows = append(rows, fmt.Sprintf("%s\twake for %s; %s", s.ID, s.CallerName, snoozeStatusText(s, true)))
+					} else if caller != key && s.RecipientID == a.ID {
+						rows = append(rows, fmt.Sprintf("%s\twake for %s; %s; --clear ID withdraws it", s.ID, s.CallerName, snoozeQueuedText(s)))
 					}
 				}
 				for caller, s := range state.Recent {
@@ -149,7 +230,14 @@ func (cmd command) snooze(args []string) error {
 			}
 			id := core.EnvelopeID(positionals[0])
 			found := false
-			if err := run.withUsageState(func(state *usageState) error {
+			if err := run.withQueuedWake(func(state *usageState) core.HitchID {
+				for _, s := range state.Snoozes {
+					if s.ID == id && s.RecipientID == a.ID {
+						return queuedWakeRecipient(s)
+					}
+				}
+				return ""
+			}, func(state *usageState, withdraw func(usageSnooze) error) error {
 				for i, n := range state.Notices {
 					if n.ID == id && n.RecipientID == a.ID && n.Submission != "" {
 						state.Notices = append(state.Notices[:i], state.Notices[i+1:]...)
@@ -158,7 +246,10 @@ func (cmd command) snooze(args []string) error {
 					}
 				}
 				for caller, s := range state.Snoozes {
-					if s.ID == id && s.RecipientID == a.ID && s.Submission != "" {
+					if s.ID == id && s.RecipientID == a.ID {
+						if err := withdraw(s); err != nil {
+							return err
+						}
 						delete(state.Snoozes, caller)
 						found = true
 						return nil
@@ -181,9 +272,11 @@ func (cmd command) snooze(args []string) error {
 			_, err = fmt.Fprintf(cmd.stdout, "%s\tcleared\n", id)
 			return err
 		}
-		if err := run.withUsageState(func(state *usageState) error {
-			if current := state.Snoozes[key]; current.RecipientID != "" && current.Submission == "" {
-				return refuseError("wake is already due or submitted; inspect its delivery before clearing")
+		if err := run.withQueuedWake(func(state *usageState) core.HitchID {
+			return queuedWakeRecipient(state.Snoozes[key])
+		}, func(state *usageState, withdraw func(usageSnooze) error) error {
+			if err := withdraw(state.Snoozes[key]); err != nil {
+				return err
 			}
 			delete(state.Snoozes, key)
 			delete(state.Recent, key)
@@ -239,12 +332,18 @@ func (cmd command) snooze(args []string) error {
 		return usageError("snooze: %v", err)
 	}
 	s.RecipientID = ""
-	if err := run.withUsageState(func(state *usageState) error {
-		if current := state.Snoozes[key]; current.RecipientID != "" {
-			return refuseError("previous wake is already due or submitted; inspect its delivery before replacing it")
+	if err := run.withQueuedWake(func(state *usageState) core.HitchID {
+		return queuedWakeRecipient(state.Snoozes[key])
+	}, func(state *usageState, withdraw func(usageSnooze) error) error {
+		current := state.Snoozes[key]
+		if current.RecipientID != "" && current.Submission != "" {
+			return refuseError("previous wake is already submitted; inspect it with --status or clear it")
 		}
 		if recent := state.Recent[key]; recent.ID != "" && !recent.CapRejected && !recent.TurnFailed {
 			return refuseError("previous wake has an unresolved native outcome; inspect it with --status or clear it")
+		}
+		if err := withdraw(current); err != nil {
+			return err
 		}
 		delete(state.Recent, key)
 		state.Snoozes[key] = s
