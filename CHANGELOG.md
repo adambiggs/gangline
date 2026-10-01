@@ -1,5 +1,17 @@
 # Changelog
 
+## [1.9.0](https://github.com/adambiggs/gangline/compare/gangline-v1.8.1...gangline-v1.9.0) (2026-10-01)
+
+
+### Features
+
+* auto-park agents on provider caps and keep usage notices factual ([a124fca](https://github.com/adambiggs/gangline/commit/a124fca90823222f8a225750581129ffdf945cfa))
+
+
+### Bug Fixes
+
+* **tmux:** stream long guarded sends through source-file ([1c1d760](https://github.com/adambiggs/gangline/commit/1c1d76059fd634cb77a578dc1f4cbc2f177688a1))
+
 ## [1.8.1](https://github.com/adambiggs/gangline/compare/gangline-v1.8.0...gangline-v1.8.1) (2026-09-30)
 
 
