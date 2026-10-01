@@ -110,10 +110,9 @@ func TestCollarCheckTrustPromptLeavesHookedProbesUnknown(t *testing.T) {
 	f := fakeCollarCheckTmux(t, `new-session) prev= prev2= generation=
 	for argument; do [ "$prev2" = -soq ] && generation=$argument; prev2=$prev; prev=$argument; done
 	printf '%%1\n%s\t$1\t%%1\n' "$generation";;
-capture-pane) printf 'Trust this folder?\n\342\200\272 1. Trust and continue\n';;
-display-message) printf '0,1,1\n';;
 has-session) exit 1;;
 `)
+	f.input.screen = screenWithText("Trust this folder?", "› 1. Trust and continue")
 	err := f.cmd.collar([]string{"check", "codex"})
 	collarCheckExit(t, err, exitUnknown)
 	out := f.out.String()
@@ -196,5 +195,54 @@ func TestCollarCheckOffersAnIssueOnlyForObservedFailures(t *testing.T) {
 		if !strings.Contains(out, row) {
 			t.Fatalf("output lacks %q:\n%s", row, out)
 		}
+	}
+}
+
+// The probe types into the native composer through the guarded input that
+// real delivery uses, so an output viewer over the pane is dismissed first.
+func TestCollarCheckTypesThroughGuardedInput(t *testing.T) {
+	f := fakeCollarCheckTmux(t, `new-session) prev= prev2= generation=
+	for argument; do [ "$prev2" = -soq ] && generation=$argument; prev2=$prev; prev=$argument; done
+	printf '%s' "$generation" > "$socket.generation"
+	printf '%%1\n%s\t$1\t%%1\n' "$generation";;
+list-panes) printf '%s\t$1\t%%1\n' "$(cat "$socket.generation")";;
+display-message) for format; do :; done; [ "$format" = '#{session_id}' ] && printf '$1\n' || printf 'codex\n';;
+has-session) exit 0;;
+kill-session) exit 0;;
+if-shell|send-keys) printf '%s\n' "$@" > "$socket.input"; echo "stub accepts no input" >&2; exit 1;;
+`)
+	err := f.cmd.collar([]string{"check", "codex"})
+	collarCheckExit(t, err, exitUnknown)
+	inputs, _ := filepath.Glob(filepath.Join(f.env["GANG_STATE_ROOT"], ".local", "state", "gl-*-a.sock.input"))
+	if len(inputs) != 1 {
+		t.Fatalf("hooked probe input = %v, want one attempt\n%s", inputs, f.out.String())
+	}
+	data, readErr := os.ReadFile(inputs[0])
+	if readErr != nil {
+		t.Fatal(readErr)
+	}
+	sent := strings.Split(string(data), "\n")
+	guarded := len(sent) > 5 && sent[0] == "if-shell" && strings.Contains(sent[4], "#{==:#{pane_current_command},codex}") && strings.HasPrefix(sent[5], `"if-shell" "-F" "-t" "%1" "#{||:#{==:#{pane_mode},copy-mode},#{==:#{pane_mode},view-mode}}" "\"send-keys\" \"-t\" \"%1\" \"-X\" \"cancel\"" ; "send-keys" "-t" "%1" "-l" "--" "`) && strings.Contains(sent[5], "Reply with exactly READY.")
+	if !guarded {
+		t.Fatalf("probe input bypassed guarded input:\n%s", data)
+	}
+	if out := f.out.String(); !strings.Contains(out, "UNKNOWN\tsubmit\t") || !strings.Contains(out, "stub accepts no input") {
+		t.Fatalf("refused input not reported as unknown submit:\n%s", out)
+	}
+}
+
+// A native process that exits before its pane is registered for input is an
+// observed failure, not an unknown.
+func TestCollarCheckReportsAnExitBeforeRegistrationAsFailure(t *testing.T) {
+	f := fakeCollarCheckTmux(t, `new-session) prev= prev2= generation=
+	for argument; do [ "$prev2" = -soq ] && generation=$argument; prev2=$prev; prev=$argument; done
+	printf '%%1\n%s\t$1\t%%1\n' "$generation";;
+list-panes) printf 'no server running on %s\n' "$socket" >&2; exit 1;;
+has-session) printf 'no server running on %s\n' "$socket" >&2; exit 1;;
+`)
+	err := f.cmd.collar([]string{"check", "codex"})
+	collarCheckExit(t, err, exitNative)
+	if out := f.out.String(); !strings.Contains(out, "FAIL\tsubmit\tnative process exited: created pane %1 is absent") {
+		t.Errorf("exit before registration not reported as a failed submit:\n%s", out)
 	}
 }

@@ -56,7 +56,7 @@ func (cmd command) collar(arguments []string) (result error) {
 	if err != nil {
 		return err
 	}
-	trustResults, err := probeTrust(ctx, trustBackend, collar, directory)
+	trustResults, err := cmd.probeTrust(ctx, trustBackend, collar, directory)
 	stop(0, trustBackend, trustSession)
 	if err != nil {
 		return err
@@ -178,7 +178,7 @@ func (cmd command) prepareCollarCheck(root string) (_ string, _ string, _ [2]str
 	return id, directory, sockets, nil
 }
 
-func probeTrust(ctx context.Context, backend *tmux.Backend, collar harness.Collar, directory string) (map[string]harness.ProbeResult, error) {
+func (cmd command) probeTrust(ctx context.Context, backend *tmux.Backend, collar harness.Collar, directory string) (map[string]harness.ProbeResult, error) {
 	results := make(map[string]harness.ProbeResult)
 	trustCollar := collar
 	trustCollar.Hooks = nil
@@ -192,7 +192,7 @@ func probeTrust(ctx context.Context, backend *tmux.Backend, collar harness.Colla
 		return results, nil
 	}
 	results[harness.ProbeLaunch] = passedProbe(harness.ProbeLaunch, "native process launched in a private tmux server")
-	startup, _, err := harness.AwaitStartup(ctx, backend.Capture, pane.ID, collar)
+	startup, _, err := cmd.probeStartup(ctx, backend, pane.ID, collar)
 	if err != nil {
 		results[harness.ProbeTrustPrompt] = probeErrorResult(ctx, harness.ProbeTrustPrompt, err, backend.SessionExists)
 		return results, nil
@@ -222,7 +222,7 @@ func (cmd command) probeActive(ctx context.Context, backend *tmux.Backend, colla
 		results[harness.ProbeComposer] = unknownProbe(harness.ProbeComposer, "tmux did not start the hooked probe: "+err.Error())
 		return results, nil
 	}
-	startup, screen, err := harness.AwaitStartup(ctx, backend.Capture, pane.ID, collar)
+	startup, screen, err := cmd.probeStartup(ctx, backend, pane.ID, collar)
 	if err != nil {
 		results[harness.ProbeComposer] = probeErrorResult(ctx, harness.ProbeComposer, err, backend.SessionExists)
 		return results, nil
@@ -246,17 +246,29 @@ func (cmd command) probeActive(ctx context.Context, backend *tmux.Backend, colla
 		return results, nil
 	}
 	results[harness.ProbeComposer] = passedProbe(harness.ProbeComposer, "native empty composer detected")
+	registration, err := backend.RegisterPane(ctx, pane.ID)
+	if err != nil {
+		if exists, existsErr := backend.SessionExists(ctx); existsErr == nil && !exists {
+			results[harness.ProbeSubmit] = failedProbe(harness.ProbeSubmit, "native process exited: "+err.Error())
+		} else {
+			results[harness.ProbeSubmit] = unknownProbe(harness.ProbeSubmit, "tmux did not register the hooked probe: "+err.Error())
+		}
+		return results, nil
+	}
+	// Type through the guarded input real delivery uses, which also dismisses
+	// an output viewer that tmux opens over the pane.
+	typing := paneInput{harnessInput: backend, registry: backend, identity: registration, command: filepath.Base(collar.Launch.Command)}
 	action, _ := harness.Submit(collar.Primitives.Submit, "Reply with exactly READY.")
 	settle, _ := harness.SubmitSettle(collar.Primitives.Submit)
 	input, _ := harness.SubmitInput(collar.Primitives.Submit, action.Text)
 	payload, err := awaitNativeHook(ctx, fifo, func() error {
-		if err := sendHarnessKeys(ctx, backend, pane.ID, collar, input); err != nil {
+		if err := sendHarnessKeys(ctx, typing, pane.ID, collar, input); err != nil {
 			return err
 		}
 		if err := harness.AwaitComposerText(ctx, backend.Capture, pane.ID, collar, action.Text, settle); err != nil {
 			return err
 		}
-		return sendHarnessKeys(ctx, backend, pane.ID, collar, substrate.Keys{Names: action.Keys, Submit: action.Submit})
+		return sendHarnessKeys(ctx, typing, pane.ID, collar, substrate.Keys{Names: action.Keys, Submit: action.Submit})
 	})
 	if err != nil {
 		results[harness.ProbeSubmit] = probeErrorResult(ctx, harness.ProbeSubmit, err, backend.SessionExists)
@@ -295,6 +307,13 @@ func failedProbe(name, detail string) harness.ProbeResult {
 
 func passedProbe(name, detail string) harness.ProbeResult {
 	return harness.ProbeResult{Name: name, Outcome: harness.ProbePassed, Detail: detail}
+}
+
+func (cmd command) probeStartup(ctx context.Context, backend *tmux.Backend, pane substrate.PaneID, collar harness.Collar) (harness.Startup, substrate.Screen, error) {
+	if cmd.awaitStartup != nil {
+		return cmd.awaitStartup(ctx, pane, collar)
+	}
+	return harness.AwaitStartup(ctx, backend.Capture, pane, collar)
 }
 
 // probeErrorResult classifies an error from a probe that had started. An
