@@ -63,6 +63,13 @@ until completion is confirmed. For a stuck request, run
 `gang compact NAME --recover` after inspection. Do not treat missing resume
 text as proof that compaction finished.
 
+## A hook or tick failed
+
+Native hooks start ticks that run detached from any terminal, so their errors
+appear only in the team log. Run `gang log --type tick_failed` and
+`gang log --type hook_failed`; each record carries the error and names the
+agent where one applies. Repair the reported cause and run `gang tick`.
+
 ## The watchdog is not running
 
 Check `gang log --type watchdog_unavailable` and

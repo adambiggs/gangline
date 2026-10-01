@@ -201,7 +201,8 @@ func (cmd command) detachTick(id string, n hookNotice, s settings) error {
 	if s.CollarDir != "" {
 		child.Env = append(child.Env, "GANG_COLLARS="+s.CollarDir)
 	}
-	// Nil standard streams connect to the null device, not the harness pipes.
+	// Nil standard streams connect to the null device, not the harness pipes;
+	// the tick records its own failures in the team log.
 	if err := child.Start(); err != nil {
 		return err
 	}
@@ -223,7 +224,7 @@ func (cmd command) tick(args []string) (result error) {
 	var notice hookNotice
 	if id != "" && cmd.environment("GANGLINE_BOUNDARY") != "" {
 		if err := json.Unmarshal([]byte(cmd.environment("GANGLINE_BOUNDARY")), &notice); err != nil {
-			return err
+			return run.tickFailed("hook", core.HitchID(id), fmt.Errorf("read hook notice: %w", err))
 		}
 	}
 	if source == "" {
@@ -246,16 +247,35 @@ func (cmd command) tick(args []string) (result error) {
 		return nil
 	}
 	if err := run.team.Append(core.Event{Type: "tick", At: cmd.now(), Source: source}); err != nil {
-		return err
+		return run.tickFailed(source, core.HitchID(id), err)
 	}
 	if id != "" {
-		return errors.Join(run.tickAgent(core.HitchID(id), notice, true), run.flushUsageWork())
+		return errors.Join(run.tickFailed(source, core.HitchID(id), run.tickAgent(core.HitchID(id), notice, true)), run.tickFailed(source, "", run.flushUsageWork()))
 	}
 	agents, err := run.team.ListAgents()
 	if err != nil {
-		return err
+		return run.tickFailed(source, "", err)
 	}
-	return errors.Join(eachAgent(agents, func(a core.Agent) error { return run.tickAgent(a.ID, hookNotice{}, false) }), run.flushUsageWork())
+	return errors.Join(eachAgent(agents, func(a core.Agent) error {
+		return run.tickFailed(source, a.ID, run.tickAgent(a.ID, hookNotice{}, false))
+	}), run.tickFailed(source, "", run.flushUsageWork()))
+}
+
+// tickFailed records a tick error in the team log. A hook-triggered tick runs
+// detached with no standard streams, so this record is its only diagnostic.
+func (run *runtime) tickFailed(source string, id core.HitchID, err error) error {
+	if err == nil {
+		return nil
+	}
+	e := core.Event{Type: "tick_failed", At: run.cmd.now(), Source: source, HitchID: id, Reason: boundedFailureReason(err.Error())}
+	if id != "" {
+		if p, pathErr := run.team.Agent(id); pathErr == nil {
+			if a, readErr := p.Read(); readErr == nil {
+				e.Name = a.Name
+			}
+		}
+	}
+	return errors.Join(err, run.team.Append(e))
 }
 func (cmd command) log(args []string) error {
 	filter, files, err := parseLogFilter(args, true)
