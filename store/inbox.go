@@ -192,3 +192,18 @@ func (p AgentPaths) ReadWitness() (Witness, error) {
 	err := readJSON(p.Witness, &w)
 	return w, err
 }
+
+type CompactionWitness struct {
+	At        time.Time `json:"at"`
+	SessionID string    `json:"session_id"`
+}
+
+func (p AgentPaths) WriteCompactionWitness(w CompactionWitness) error {
+	return atomicJSON(p.CompactionWitness, w)
+}
+
+func (p AgentPaths) ReadCompactionWitness() (CompactionWitness, error) {
+	var w CompactionWitness
+	err := readJSON(p.CompactionWitness, &w)
+	return w, err
+}

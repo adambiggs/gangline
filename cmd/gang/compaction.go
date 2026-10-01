@@ -37,7 +37,8 @@ func (run *runtime) resumePromptBlock(a core.Agent, c harness.Collar, prompt, se
 	if err != nil || !matched {
 		return "stale or altered compaction continuation"
 	}
-	if pending.Status != "completed" || !pending.CompletedAt.After(pending.StartedAt) {
+	if (pending.Status != "completed" || !pending.CompletedAt.After(pending.StartedAt)) &&
+		((pending.Status != "submitted" && pending.Status != "unverified") || !pending.Continuation) {
 		return "compaction completion is unconfirmed; continuation withheld"
 	}
 	if session == "" || a.Native.SessionID != "" && session != a.Native.SessionID {
@@ -56,30 +57,62 @@ func (run *runtime) admitCompactionResume(id core.HitchID, c harness.Collar, pro
 		return reason, nil
 	}
 	a.Compaction.ResumeAdmitted = true
+	if a.Compaction.Status == "submitted" && !a.Compaction.CompletedAt.After(a.Compaction.StartedAt) {
+		a.Compaction.Status = "unverified"
+		a.Compaction.Reason = "native compaction completion unconfirmed; queued continuation admitted"
+	}
 	return "", l.Save(a)
 }
 
 func (run *runtime) confirmCompactionHook(id core.HitchID, notice hookNotice) error {
-	l, a, err := run.acquire(id, true)
+	p, err := run.team.Agent(id)
 	if err != nil {
 		return err
 	}
-	defer l.Close()
-	pending := a.Compaction
-	if pending == nil || pending.Status != "submitted" && pending.Status != "unverified" {
-		return nil
-	}
-	if notice.SessionID == "" || a.Native.SessionID == "" || notice.SessionID != a.Native.SessionID {
-		return fmt.Errorf("compaction completion belongs to another native session")
-	}
-	if !notice.At.After(pending.StartedAt) {
-		return fmt.Errorf("compaction completion predates native submission")
-	}
-	pending.CompletedAt = notice.At
-	if err := l.Save(a); err != nil {
+	a, err := p.Read()
+	if err != nil {
 		return err
 	}
-	return run.continueCompaction(l, &a)
+	if notice.SessionID == "" || a.Native.SessionID != "" && notice.SessionID != a.Native.SessionID {
+		return fmt.Errorf("compaction completion belongs to another native session")
+	}
+	if err := p.WriteCompactionWitness(store.CompactionWitness{At: notice.At, SessionID: notice.SessionID}); err != nil {
+		return err
+	}
+	l, _, err := run.acquire(id, false)
+	if errors.Is(err, store.ErrLocked) {
+		return nil
+	}
+	if err != nil {
+		return err
+	}
+	return l.Close()
+}
+
+func (run *runtime) reconcileCompactionWitness(l *store.LockedAgent, a *core.Agent) error {
+	w, err := l.Paths.ReadCompactionWitness()
+	if errors.Is(err, os.ErrNotExist) {
+		return nil
+	}
+	if err != nil {
+		return err
+	}
+	if w.SessionID == "" || a.Native.SessionID != "" && w.SessionID != a.Native.SessionID || !w.At.After(a.Native.ConfirmedCompactedAt) {
+		return nil
+	}
+	if pending := a.Compaction; pending != nil && (pending.Status == "submitted" || pending.Status == "unverified") && w.At.After(pending.StartedAt) {
+		pending.CompletedAt = w.At
+		if err := l.Save(*a); err != nil {
+			return err
+		}
+	}
+	if err := run.acceptContextReadings(a, harness.Collar{}, []core.Reading{{Kind: "compaction-finished", Source: "native-hook", At: &w.At}}); err != nil {
+		return err
+	}
+	if err := run.publishContextNotes(l, a); err != nil {
+		return err
+	}
+	return run.continueCompaction(l, a)
 }
 
 func (run *runtime) cancelPendingCompactionResume(l *store.LockedAgent, a *core.Agent, reason string) error {
@@ -132,8 +165,8 @@ func (run *runtime) cancelPendingCompactionResume(l *store.LockedAgent, a *core.
 }
 
 // queueCompactionResume submits the continuation while native compaction is
-// running, so later native input follows it. The submit hook remains the final
-// proof that the prompt ran after a confirmed completion.
+// running, so later native input follows it. The submit hook admits that exact
+// queued prompt once, even if completion evidence has not arrived yet.
 func (run *runtime) queueCompactionResume(l *store.LockedAgent, a *core.Agent, b harnessInput, c harness.Collar, compactText string) error {
 	e, err := run.publishCompactionResume(l, a)
 	if err != nil {

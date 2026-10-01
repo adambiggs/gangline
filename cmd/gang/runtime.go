@@ -143,6 +143,9 @@ func (run *runtime) acquire(id core.HitchID, wait bool) (*store.LockedAgent, cor
 		err = run.reconcileUsageSubmission(l, &a)
 	}
 	if err == nil {
+		err = run.reconcileCompactionWitness(l, &a)
+	}
+	if err == nil {
 		err = run.publishContextNotes(l, &a)
 	}
 	if err == nil {

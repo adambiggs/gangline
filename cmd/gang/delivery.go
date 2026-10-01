@@ -42,23 +42,6 @@ func isContextBandNotice(e core.Envelope) bool {
 	return e.From.Kind == core.SenderGangline && e.From.Name == "context-band"
 }
 
-func obsoleteContextBandNotice(a core.Agent, e core.Envelope) bool {
-	if !isContextBandNotice(e) {
-		return false
-	}
-	measured := e.CreatedAt
-	if e.MeasuredAt != nil {
-		measured = *e.MeasuredAt
-	}
-	if measured.IsZero() {
-		return false
-	}
-	if !a.Native.ConfirmedCompactedAt.IsZero() && measured.Before(a.Native.ConfirmedCompactedAt) {
-		return true
-	}
-	return a.Compaction != nil && a.Compaction.CompletedAt.After(a.Compaction.StartedAt) && measured.Before(a.Compaction.CompletedAt)
-}
-
 func envelopeText(e core.Envelope) (string, error) {
 	sender := string(e.From.Name)
 	if e.From.Kind == core.SenderSelfDeclared {
@@ -319,16 +302,6 @@ func (run *runtime) drainLocked(l *store.LockedAgent, a *core.Agent, target core
 		}
 		if next.Purpose == "resume" || next.From.Name == "compact" && strings.HasPrefix(string(next.ID), "resume-") {
 			return result, pending, nil
-		}
-		if obsoleteContextBandNotice(*a, *next) {
-			const reason = "context band was measured before completed compaction"
-			if err := l.Settle(a, *next, "cancelled", reason); err != nil {
-				return result, pending, err
-			}
-			if err := run.record(*a, core.Event{Type: "send_cancelled", ID: string(next.ID), Reason: reason}); err != nil {
-				return result, pending, err
-			}
-			continue
 		}
 		_, failedStartup, err := retainedStartup(l.Paths, "failed", a.LastFailed)
 		if err != nil {

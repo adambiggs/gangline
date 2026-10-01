@@ -158,7 +158,7 @@ func (cmd command) handleHook(args []string) (result error) {
 				return fmt.Errorf("hook routing metadata exceeds maximum size")
 			}
 		}
-		if n.Kind == "compaction-finished" && a.Compaction != nil && (a.Compaction.Status == "submitted" || a.Compaction.Status == "unverified") {
+		if n.Kind == "compaction-finished" {
 			if err := run.confirmCompactionHook(id, n); err != nil {
 				return err
 			}

@@ -15,7 +15,7 @@ import (
 
 type Paths struct{ Root string }
 type TeamPaths struct{ Directory, State, Log, Names, Agents string }
-type AgentPaths struct{ Directory, State, Lock, Witness, Inbox string }
+type AgentPaths struct{ Directory, State, Lock, Witness, CompactionWitness, Inbox string }
 
 func segment(value string) error {
 	if value == "" || value == "." || value == ".." || filepath.Base(value) != value || strings.ContainsAny(value, "\\\x00") {
@@ -38,7 +38,7 @@ func (p TeamPaths) Agent(id core.HitchID) (AgentPaths, error) {
 		return AgentPaths{}, err
 	}
 	d := filepath.Join(p.Agents, string(id))
-	return AgentPaths{d, filepath.Join(d, "agent.json"), filepath.Join(d, "lock"), filepath.Join(d, "witness"), filepath.Join(d, "inbox")}, nil
+	return AgentPaths{d, filepath.Join(d, "agent.json"), filepath.Join(d, "lock"), filepath.Join(d, "witness"), filepath.Join(d, "compaction-witness"), filepath.Join(d, "inbox")}, nil
 }
 func (p TeamPaths) Create() error {
 	for _, d := range []string{p.Names, p.Agents} {

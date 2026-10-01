@@ -70,3 +70,19 @@ func TestEventValidationBeforeAppend(t *testing.T) {
 		}
 	}
 }
+
+func TestDecodeStoredContextBandMeasurement(t *testing.T) {
+	now := time.Date(2026, 9, 22, 0, 0, 0, 0, time.UTC)
+	e := Event{Type: "send_queued", At: now, Envelope: &Envelope{
+		ID: "context-1", Token: "0123456789abcdef", From: Sender{Kind: SenderGangline, Name: "context-band"},
+		To: "worker", Recipient: "a", Message: Message{Text: "warning"}, CreatedAt: now, MeasuredAt: &now,
+	}}
+	data, err := EncodeEvent(e)
+	if err != nil {
+		t.Fatal(err)
+	}
+	decoded, err := DecodeEvent(data)
+	if err != nil || decoded.Envelope.MeasuredAt == nil || !decoded.Envelope.MeasuredAt.Equal(now) {
+		t.Fatalf("stored context band event: %+v, %v", decoded, err)
+	}
+}

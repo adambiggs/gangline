@@ -100,7 +100,7 @@ func Step(agent Agent, event Event) (Agent, []Effect) {
 			agent.Activity, agent.Evidence = Wedged, "interrupt deadline elapsed"
 		}
 		if c := agent.Compaction; c != nil && c.Status == "submitted" && !event.At.Before(c.Deadline) {
-			c.Status, c.Reason = "unverified", "native compaction completion unconfirmed; resume follows confirmed completion"
+			c.Status, c.Reason = "unverified", "native compaction completion unconfirmed; queued continuation may run"
 			agent.Activity, agent.Evidence = Unknown, c.Reason
 		}
 		if !agent.Capacity.Deadline.IsZero() && !event.At.Before(agent.Capacity.Deadline) {

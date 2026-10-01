@@ -69,11 +69,12 @@ type Agent struct {
 // ContextBandState keeps the last known reading and publication intents under
 // the agent lock. Unknown readings never reset a crossing.
 type ContextBandState struct {
-	Model       string            `json:"model,omitempty"`
-	Percent     float64           `json:"percent,omitempty"`
-	CompactedAt time.Time         `json:"compacted_at,omitzero"`
-	Sequence    uint64            `json:"sequence,omitempty"`
-	Pending     []ContextBandNote `json:"pending,omitempty"`
+	Model         string            `json:"model,omitempty"`
+	Percent       float64           `json:"percent,omitempty"`
+	CompactedAt   time.Time         `json:"compacted_at,omitzero"`
+	Sequence      uint64            `json:"sequence,omitempty"`
+	DiscardQueued bool              `json:"discard_queued,omitempty"`
+	Pending       []ContextBandNote `json:"pending,omitempty"`
 }
 
 type ContextBandNote struct {

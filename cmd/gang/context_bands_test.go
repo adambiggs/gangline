@@ -435,64 +435,6 @@ collar: {context_bands: {"*": [{name: "early", at: 0.10}, {name: "late", at: 0.2
 	}
 }
 
-func TestQueuedContextBandFromBeforeCompactionIsCancelled(t *testing.T) {
-	f := newStateFixture(t)
-	a := f.add(t, "a", "worker", "codex")
-	p, err := f.run.team.Agent(a.ID)
-	if err != nil {
-		t.Fatal(err)
-	}
-	l, err := p.TryLock()
-	if err != nil {
-		t.Fatal(err)
-	}
-	legacy := core.Envelope{
-		ID: "context-1", Token: "0123456789abcdef", From: core.Sender{Kind: core.SenderGangline, Name: "context-band"},
-		Recipient: a.ID, To: a.Name, Message: core.Message{Text: "legacy crossing"}, CreatedAt: f.cmd.now().Add(-2 * time.Hour),
-	}
-	old := legacy
-	old.ID, old.Token, old.Message.Text, old.CreatedAt = "context-2", "1234567890abcdef", "old crossing", f.cmd.now().Add(-30*time.Minute)
-	measured := f.cmd.now().Add(-2 * time.Hour)
-	old.MeasuredAt = &measured
-	newer := legacy
-	newer.ID, newer.Token, newer.Message.Text, newer.CreatedAt = "context-3", "fedcba9876543210", "new crossing", f.cmd.now()
-	for _, e := range []core.Envelope{legacy, old, newer} {
-		if err := f.run.publishOnce(l, &a, e); err != nil {
-			t.Fatal(err)
-		}
-	}
-	a.Native.CompactedAt = f.cmd.now().Add(-time.Hour)
-	a.Native.ConfirmedCompactedAt = a.Native.CompactedAt
-	if err := l.Save(a); err != nil {
-		t.Fatal(err)
-	}
-	if err := l.Close(); err != nil {
-		t.Fatal(err)
-	}
-	if _, err := f.run.drain(a.ID, ""); err != nil {
-		t.Fatal(err)
-	}
-	if f.input.submits != 1 || !strings.Contains(f.input.pasted, "new crossing") {
-		t.Fatalf("submitted %d messages; last = %q", f.input.submits, f.input.pasted)
-	}
-	f.out.Reset()
-	if err := f.cmd.log(nil); err != nil {
-		t.Fatal(err)
-	}
-	cancelled := map[string]bool{}
-	if err := store.ReadLog(strings.NewReader(f.out.String()), func(e core.Event) error {
-		if e.Type == "send_cancelled" {
-			cancelled[e.ID] = true
-		}
-		return nil
-	}); err != nil {
-		t.Fatal(err)
-	}
-	if !cancelled[string(legacy.ID)] || !cancelled[string(old.ID)] || cancelled[string(newer.ID)] {
-		t.Fatalf("cancelled notices = %v", cancelled)
-	}
-}
-
 func TestQueuedContextBandSurvivesUnconfirmedCheckpoint(t *testing.T) {
 	f := newStateFixture(t)
 	a := f.add(t, "a", "worker", "codex")
@@ -512,8 +454,17 @@ func TestQueuedContextBandSurvivesUnconfirmedCheckpoint(t *testing.T) {
 		t.Fatal(err)
 	}
 	checkpoint := f.cmd.now().Add(-time.Hour)
-	acceptReadings(&a.Native, []core.Reading{{Kind: "compaction-checkpoint", At: &checkpoint, Source: "session-log"}})
+	c, err := harness.EmbeddedCollar("codex")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := f.run.acceptContextReadings(&a, c, []core.Reading{{Kind: "compaction-checkpoint", At: &checkpoint, Source: "session-log"}}); err != nil {
+		t.Fatal(err)
+	}
 	if err := l.Save(a); err != nil {
+		t.Fatal(err)
+	}
+	if err := f.run.publishContextNotes(l, &a); err != nil {
 		t.Fatal(err)
 	}
 	if err := l.Close(); err != nil {
@@ -528,5 +479,151 @@ func TestQueuedContextBandSurvivesUnconfirmedCheckpoint(t *testing.T) {
 	}
 	if _, err := p.ReadEnvelope("new", e.ID); err != nil {
 		t.Fatalf("notice was cancelled before compaction completed: %v", err)
+	}
+}
+
+func TestCompletedCompactionClearsEverySpooledContextBand(t *testing.T) {
+	f := newStateFixture(t)
+	a := f.add(t, "a", "worker", "codex")
+	p, err := f.run.team.Agent(a.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	l, err := p.TryLock()
+	if err != nil {
+		t.Fatal(err)
+	}
+	at := f.cmd.now()
+	for _, e := range []core.Envelope{
+		{ID: "context-1", Token: "0123456789abcdef", From: core.Sender{Kind: core.SenderGangline, Name: "context-band"}, Recipient: a.ID, To: a.Name, Message: core.Message{Text: "before"}, CreatedAt: at.Add(-time.Hour)},
+		{ID: "context-2", Token: "fedcba9876543210", From: core.Sender{Kind: core.SenderGangline, Name: "context-band"}, Recipient: a.ID, To: a.Name, Message: core.Message{Text: "already spooled"}, CreatedAt: at.Add(time.Hour)},
+		{ID: "ordinary", Token: "1111111111111111", From: core.Sender{Kind: core.SenderAgent, Name: "lead", HitchID: "lead"}, Recipient: a.ID, To: a.Name, Message: core.Message{Text: "keep"}, CreatedAt: at},
+	} {
+		if err := f.run.publishOnce(l, &a, e); err != nil {
+			t.Fatal(err)
+		}
+	}
+	a.ContextBands.Pending = []core.ContextBandNote{{Band: "yellow", Envelope: core.Envelope{
+		ID: "context-3", Token: "3333333333333333", From: core.Sender{Kind: core.SenderGangline, Name: "context-band"},
+		Recipient: a.ID, To: a.Name, Message: core.Message{Text: "unpublished crossing"}, CreatedAt: at,
+	}}}
+	c, err := harness.EmbeddedCollar("codex")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := f.run.acceptContextReadings(&a, c, []core.Reading{{Kind: "compaction-finished", At: &at, Source: "native-hook"}}); err != nil {
+		t.Fatal(err)
+	}
+	if err := l.Save(a); err != nil {
+		t.Fatal(err)
+	}
+	if err := f.run.publishContextNotes(l, &a); err != nil {
+		t.Fatal(err)
+	}
+	if len(a.ContextBands.Pending) != 0 {
+		t.Fatalf("stale publication intents remain: %+v", a.ContextBands.Pending)
+	}
+	queued, err := p.ListNew()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(queued) != 1 || queued[0].ID != "ordinary" {
+		t.Fatalf("spool after compaction = %+v", queued)
+	}
+	if err := l.Close(); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestCompactionHookClearsBandNoticesBeforeDetachedTick(t *testing.T) {
+	f, a, p := compactionFixture(t)
+	at := f.cmd.now()
+	l, err := p.TryLock()
+	if err != nil {
+		t.Fatal(err)
+	}
+	a.Compaction = &core.Compaction{ID: "compact", StartedAt: at.Add(-time.Minute), Status: "submitted", Continuation: true}
+	a.ContextBands.Pending = []core.ContextBandNote{{Band: "yellow", Envelope: core.Envelope{
+		ID: "context-2", Token: "fedcba9876543210", From: core.Sender{Kind: core.SenderGangline, Name: "context-band"},
+		Recipient: a.ID, To: a.Name, Message: core.Message{Text: "pending"}, CreatedAt: at,
+	}}}
+	if err := l.Save(a); err != nil {
+		t.Fatal(err)
+	}
+	e := core.Envelope{ID: "context-1", Token: "0123456789abcdef", From: core.Sender{Kind: core.SenderGangline, Name: "context-band"}, Recipient: a.ID, To: a.Name, Message: core.Message{Text: "spooled"}, CreatedAt: at}
+	if err := f.run.publishOnce(l, &a, e); err != nil {
+		t.Fatal(err)
+	}
+	if err := l.Close(); err != nil {
+		t.Fatal(err)
+	}
+	if err := f.run.confirmCompactionHook(a.ID, hookNotice{Kind: "compaction-finished", SessionID: "s", At: at.Add(time.Second)}); err != nil {
+		t.Fatal(err)
+	}
+	queued, err := p.ListNew()
+	if err != nil || len(queued) != 0 {
+		t.Fatalf("stale notices remain between hook and tick: %+v, %v", queued, err)
+	}
+	got, err := p.Read()
+	if err != nil || len(got.ContextBands.Pending) != 0 || got.ContextBands.DiscardQueued {
+		t.Fatalf("stale publication intent remains: %+v, %v", got.ContextBands, err)
+	}
+}
+
+func TestAutoCompactionHookClearsBandNoticeBeforeDetachedTick(t *testing.T) {
+	f, a, p := compactionFixture(t)
+	f.env["GANGLINE_HITCH_ID"] = string(a.ID)
+	e := core.Envelope{ID: "context-1", Token: "0123456789abcdef", From: core.Sender{Kind: core.SenderGangline, Name: "context-band"},
+		Recipient: a.ID, To: a.Name, Message: core.Message{Text: "stale"}, CreatedAt: f.cmd.now()}
+	if err := p.Publish(e); err != nil {
+		t.Fatal(err)
+	}
+	payload, err := json.Marshal(map[string]string{"hook_event_name": "PostCompact", "session_id": "s"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	f.cmd.stdin = strings.NewReader(string(payload))
+	if err := f.cmd.handleHook(nil); err != nil {
+		t.Fatal(err)
+	}
+	queued, err := p.ListNew()
+	if err != nil || len(queued) != 0 {
+		t.Fatalf("auto-compaction left a stale notice before detached tick: %+v, %v", queued, err)
+	}
+}
+
+func TestCompactionWitnessCancelsNoticeAfterLockRelease(t *testing.T) {
+	f, a, p := compactionFixture(t)
+	f.env["GANGLINE_HITCH_ID"] = string(a.ID)
+	e := core.Envelope{ID: "context-1", Token: "0123456789abcdef", From: core.Sender{Kind: core.SenderGangline, Name: "context-band"},
+		Recipient: a.ID, To: a.Name, Message: core.Message{Text: "stale"}, CreatedAt: f.cmd.now()}
+	if err := p.Publish(e); err != nil {
+		t.Fatal(err)
+	}
+	l, err := p.TryLock()
+	if err != nil {
+		t.Fatal(err)
+	}
+	payload, err := json.Marshal(map[string]string{"hook_event_name": "PostCompact", "session_id": "s"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	f.cmd.stdin = strings.NewReader(string(payload))
+	if err := f.cmd.handleHook(nil); err != nil {
+		t.Fatal(err)
+	}
+	if err := l.Close(); err != nil {
+		t.Fatal(err)
+	}
+	access, _, err := f.run.acquire(a.ID, false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := access.Close(); err != nil {
+		t.Fatal(err)
+	}
+	queued, err := p.ListNew()
+	if err != nil || len(queued) != 0 {
+		t.Fatalf("locked hook notice survived next access: %+v, %v", queued, err)
 	}
 }

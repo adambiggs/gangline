@@ -52,8 +52,9 @@ in the composer.
 
 Most hooks append an event and exit without acquiring the agent lock. Submit
 hooks publish a witness and schedule detached reconciliation. A submit hook
-blocks an unconfirmed or altered compaction resume; a compaction-end hook
-synchronously confirms completion before returning. Turn-end and
+blocks an altered compaction resume and admits the exact queued continuation
+once; a compaction-end hook records completion durably. The next agent access
+cancels stale context-band notices before delivery. Turn-end and
 compaction-end hooks also schedule a detached tick for other work.
 
 Claude Code's native prompt ID ties asynchronous failure or success to the
@@ -86,10 +87,11 @@ After a notice and completed compaction, the next reading establishes a new
 baseline.
 
 Compaction waits for freshly observed native idle. Gangline submits the resume
-to the native queue as compaction starts, ahead of later input. A synchronous
-completion hook confirms that compaction finished in the same native session
-before the queued resume may run. Refusal is failure; missing completion is
-unconfirmed, and the submit hook blocks that resume. Uncertain native input is
+to the native queue as compaction starts, ahead of later input. A native
+completion hook records that compaction finished in the same native session.
+The submit hook admits the exact queued resume even if that evidence is still
+missing, so the continuation cannot be stranded. Missing completion remains
+unconfirmed. Refusal is failure. Uncertain native input is
 never sent a second time automatically. Codex can merge a later Enter steer
 into the same prompt; the exact resume envelope must lead that prompt. The
 submit hook atomically admits that envelope once. If the composer is occupied

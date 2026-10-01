@@ -42,7 +42,15 @@ func (run *runtime) acceptContextReadings(a *core.Agent, c harness.Collar, readi
 		if pending := a.Compaction; pending != nil && (pending.Status == "submitted" || pending.Status == "unverified") && r.Kind == "compaction-finished" && r.At != nil && r.At.After(pending.StartedAt) {
 			pending.CompletedAt = *r.At
 		}
+		finished := r.Kind == "compaction-finished" && r.At != nil && r.At.After(a.Native.ConfirmedCompactedAt)
+		if finished {
+			a.ContextBands.Pending = nil
+			a.ContextBands.DiscardQueued = true
+		}
 		acceptReadings(&a.Native, []core.Reading{r})
+		if r.Kind == "compaction-finished" {
+			continue
+		}
 		if err := run.noteContextBands(a, c); err != nil {
 			return err
 		}
@@ -82,8 +90,7 @@ func (run *runtime) noteContextBands(a *core.Agent, c harness.Collar) error {
 		e := core.Envelope{
 			ID: core.EnvelopeID(fmt.Sprintf("context-%d", state.Sequence)), Token: token, Recipient: a.ID, To: a.Name,
 			From: core.Sender{Kind: core.SenderGangline, Name: "context-band"}, CreatedAt: run.cmd.now(),
-			MeasuredAt: r.At,
-			Message:    core.Message{Text: renderContextBandMessage(band, last != nil && band.Name == last.Name, a, r)},
+			Message: core.Message{Text: renderContextBandMessage(band, last != nil && band.Name == last.Name, a, r)},
 		}
 		state.Pending = append(state.Pending, core.ContextBandNote{Band: band.Name, Reading: r, Envelope: e})
 	}
@@ -94,6 +101,31 @@ func (run *runtime) noteContextBands(a *core.Agent, c harness.Collar) error {
 // Pending intents are saved before publication, and cleared before delivery.
 // Recovery therefore reuses the same inbox identity and never types twice.
 func (run *runtime) publishContextNotes(l *store.LockedAgent, a *core.Agent) error {
+	if a.ContextBands.DiscardQueued {
+		if err := l.Save(*a); err != nil {
+			return err
+		}
+		queued, err := l.Paths.ListNew()
+		if err != nil {
+			return err
+		}
+		for _, e := range queued {
+			if !isContextBandNotice(e) {
+				continue
+			}
+			const reason = "context band was queued before compaction completed"
+			if err := l.Settle(a, e, "cancelled", reason); err != nil {
+				return err
+			}
+			if err := run.record(*a, core.Event{Type: "send_cancelled", ID: string(e.ID), Reason: reason}); err != nil {
+				return err
+			}
+		}
+		a.ContextBands.DiscardQueued = false
+		if err := l.Save(*a); err != nil {
+			return err
+		}
+	}
 	for len(a.ContextBands.Pending) > 0 {
 		note := a.ContextBands.Pending[0]
 		if err := run.publishOnce(l, a, note.Envelope); err != nil {
