@@ -36,8 +36,8 @@ particular harness.
 
 The installer also keeps a release checkout in `~/.local/share/gangline` for
 upgrades. If `claude` is on `PATH`, it adds a `statusLine` command to
-`~/.claude/settings.json` only when that setting is absent; existing settings
-are preserved. For a Codex-only install, it leaves Claude's settings alone.
+`settings.json` under `CLAUDE_CONFIG_DIR` (default `~/.claude`) only when that
+setting is absent, preserves existing settings, and prints the path it used. For a Codex-only install, it leaves Claude's settings alone.
 Set `GANGLINE_CLAUDE_STATUSLINE=1` when running the installer to add the
 setting without `claude` on `PATH`. `GANGLINE_BIN` and `GANGLINE_HOME` change
 the binary directory and retained checkout path; see the
@@ -147,6 +147,7 @@ that you want to discard. If you selected a separate `GANG_TMUX_SOCKET`,
 remove that socket after stopping its team.
 
 If the installer added Claude Code's status line, remove only the `statusLine`
-entry pointing to `gang statusline` from `~/.claude/settings.json`; keep the
+entry pointing to `gang statusline` from the `settings.json` path the
+installer printed, under `CLAUDE_CONFIG_DIR` (default `~/.claude`); keep the
 rest of that file and native Claude Code or Codex account data. `gang down`
 also removes the team's scheduled watchdog.

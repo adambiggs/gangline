@@ -108,7 +108,7 @@ Use a hitch ID in log filters to follow a registration across renames.
 | `gang models [-c COLLAR]` | List native models and efforts; also accepts `--collar`. |
 | `gang roles` | List role briefs. |
 | `gang config` | Print effective settings and their sources. |
-| `gang statusline [--install]` | Render native status-line JSON; `--install` fills an absent Claude Code setting. |
+| `gang statusline [--install]` | Render native status-line JSON; `--install` fills an absent `statusLine` in `settings.json` under `CLAUDE_CONFIG_DIR` (default `~/.claude`) and names that file. |
 | `gang --version` or `gang version` | Print the version. |
 | `gang upgrade [--check]` | Install or check a stable release in an installer-managed checkout. |
 | `gang help [COMMAND]` | Show command help. |

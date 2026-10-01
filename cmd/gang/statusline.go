@@ -20,19 +20,29 @@ func (cmd command) statusline(args []string) (result error) {
 		return usageError("statusline: invalid arguments")
 	}
 	if install {
-		home, err := cmd.userHomeDir()
-		if err != nil {
-			return err
+		// Claude Code reads its settings from CLAUDE_CONFIG_DIR when set.
+		dir := cmd.environment("CLAUDE_CONFIG_DIR")
+		if dir == "" {
+			home, err := cmd.userHomeDir()
+			if err != nil {
+				return err
+			}
+			dir = filepath.Join(home, ".claude")
 		}
+		path := filepath.Join(dir, "settings.json")
 		exe, err := os.Executable()
 		if err != nil {
 			return err
 		}
-		changed, err := harness.InstallStatusline(filepath.Join(home, ".claude", "settings.json"), exe)
+		installed, err := harness.InstallStatusline(path, exe)
 		if err != nil {
 			return err
 		}
-		_, err = fmt.Fprintf(cmd.stdout, "status-line settings updated: %t\n", changed)
+		if installed {
+			_, err = fmt.Fprintf(cmd.stdout, "Installed status line in %s\n", path)
+		} else {
+			_, err = fmt.Fprintf(cmd.stdout, "Kept existing statusLine setting in %s\n", path)
+		}
 		return err
 	}
 	data, err := io.ReadAll(io.LimitReader(cmd.stdin, maximumHookBytes+1))
