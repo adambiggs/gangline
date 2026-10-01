@@ -17,13 +17,26 @@ cd "$root"
 fail=0
 n_ref=0
 tmp="$(mktemp -d "${TMPDIR:-/tmp}/gangline-pre-push.XXXXXX")"
+# A worktree git refuses to remove is reported once, with git's reason, and
+# its files go with the temporary directory; rm reports anything it cannot
+# delete. Cleanup never changes the checks' verdict, and never fails silently.
+unremoved='|'
+remove_tree() {
+  local err
+  if ! err="$( unset GIT_DIR GIT_WORK_TREE GIT_INDEX_FILE GIT_OBJECT_DIRECTORY GIT_COMMON_DIR GIT_PREFIX
+               git worktree remove --force "$1" 2>&1 )"; then
+    printf 'pre-push: cannot remove worktree %s:\n%s\n' "$1" "$err" >&2
+    printf 'pre-push: deleting its files on exit; inspect what git still records with: git worktree list\n' >&2
+    unremoved="$unremoved$1|"
+  fi
+}
 cleanup() {
-  ( unset GIT_DIR GIT_WORK_TREE GIT_INDEX_FILE GIT_OBJECT_DIRECTORY GIT_COMMON_DIR GIT_PREFIX
-    local w
-    for w in "$tmp"/tree-*; do
-      [ -d "$w" ] && git worktree remove --force "$w" 2>/dev/null
-    done ) || true
-  rm -rf -- "$tmp"
+  local w
+  for w in "$tmp"/tree-*; do
+    case "$unremoved" in *"|$w|"*) continue ;; esac
+    [ ! -d "$w" ] || remove_tree "$w"
+  done
+  rm -rf -- "$tmp" || :
 }
 trap cleanup EXIT HUP INT TERM
 cat > "$tmp/stdin"
@@ -73,8 +86,7 @@ while read -r local_ref local_sha _remote_ref _remote_sha \
     echo "pre-push: $local_sha does not carry the executable Go gate" >&2
     fail=1
   fi
-  ( unset GIT_DIR GIT_WORK_TREE GIT_INDEX_FILE GIT_OBJECT_DIRECTORY GIT_COMMON_DIR GIT_PREFIX
-    git worktree remove --force "$work" ) 2>/dev/null || true
+  remove_tree "$work"
 done < "$tmp/stdin"
 
 if [ "$fail" -ne 0 ]; then
