@@ -306,3 +306,24 @@ func TestElapsedTimerTickThatFailsReportsOutage(t *testing.T) {
 		t.Fatalf("not rearmed after the failed tick: %v armed=%q", err, s.armed)
 	}
 }
+
+func TestSnoozeWhoseArmFailsReportsOutage(t *testing.T) {
+	f, s := watchdogFixture(t)
+	f.env["GANG_AGENT_ID"] = "a"
+	f.env["TMUX_PANE"] = "%1"
+	s.failure = errors.New("scheduler timed out")
+	if err := f.cmd.snooze([]string{"--at", "2h"}); !errors.Is(err, s.failure) {
+		t.Fatalf("lost arm error: %v", err)
+	}
+	if !strings.Contains(f.errOut.String(), "warning: watchdog unavailable") {
+		t.Errorf("failed arm did not say wakes wait: %q", f.errOut)
+	}
+	if _, err := os.Stat(filepath.Join(f.run.team.Directory, "watchdog-unavailable")); err != nil {
+		t.Errorf("failed arm left no outage marker: %v", err)
+	}
+	s.failure = nil
+	f.errOut.Reset()
+	if err := f.cmd.snooze([]string{"--at", "3h"}); err != nil || s.armed == "" {
+		t.Fatalf("intent of the failed arm kept the next snooze from arming: %v armed=%q stderr=%q", err, s.armed, f.errOut)
+	}
+}

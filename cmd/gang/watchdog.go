@@ -99,12 +99,15 @@ func (cmd command) watchdogScheduler(directory string) watchdogScheduler {
 func (run *runtime) updateWatchdog(generation string, cleanup, reset bool) (proceed bool, result error) {
 	path := filepath.Join(run.team.Directory, "watchdog")
 	marker := filepath.Join(run.team.Directory, "watchdog-unavailable")
+	// replacing is set once this call starts replacing the recorded timer.
+	replacing := false
 	defer func() {
 		if result != nil {
-			// Only an elapsed timer's own tick re-arms it, so its failure leaves
-			// the team without a timer until a caller that can arm replaces it.
-			if generation != "" {
-				result = errors.Join(result, run.noteWatchdogOutage(marker, "watchdog timer not re-armed: "+result.Error()))
+			// Only an elapsed timer's own tick re-arms it, and a replacement that
+			// fails leaves an intent no timer backs, so either failure leaves the
+			// team without a timer until a caller that can arm replaces it.
+			if generation != "" || replacing {
+				result = errors.Join(result, run.noteWatchdogOutage(marker, "watchdog scheduler failed: "+result.Error()))
 			}
 			result = errors.Join(result, run.team.Append(core.Event{Type: "watchdog_failed", At: run.cmd.now(), Reason: result.Error()}))
 		}
@@ -254,6 +257,7 @@ func (run *runtime) updateWatchdog(generation string, cleanup, reset bool) (proc
 	if old != "" && !reset && !cleanup && !outage && len(agents) != 0 {
 		return true, nil
 	}
+	replacing = true
 	if old != "" {
 		if err := scheduler.Disarm(old); err != nil {
 			return false, err
@@ -334,14 +338,12 @@ func watchdogOutage(marker string) (bool, error) {
 // ensureWatchdog arms a timer when the team records none, for a command that queues work only a
 // later tick can deliver, and says so when no timer can be armed.
 func (run *runtime) ensureWatchdog() error {
-	if _, err := run.updateWatchdog("", false, false); err != nil {
-		return err
+	_, err := run.updateWatchdog("", false, false)
+	if outage, statErr := watchdogOutage(filepath.Join(run.team.Directory, "watchdog-unavailable")); statErr != nil || !outage {
+		return errors.Join(err, statErr)
 	}
-	if outage, err := watchdogOutage(filepath.Join(run.team.Directory, "watchdog-unavailable")); err != nil || !outage {
-		return err
-	}
-	_, err := fmt.Fprintln(run.cmd.stderr, "warning: watchdog unavailable; wakes and queued work wait for the next hook or gang tick (see gang log)")
-	return err
+	_, warnErr := fmt.Fprintln(run.cmd.stderr, "warning: watchdog unavailable; wakes and queued work wait for the next hook or gang tick (see gang log)")
+	return errors.Join(err, warnErr)
 }
 
 func (run *runtime) disarmEmptyWatchdog() error {
