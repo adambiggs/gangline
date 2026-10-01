@@ -53,8 +53,9 @@ contract and assignment.
 | `gang tick [--agent ID]` | Check deadlines, recover native failures, and drain due messages. |
 | `gang wait NAME [--timeout DURATION]` | Wait for a recorded idle boundary; a zero timeout checks once. |
 
-The resume note enters native input when compaction starts. A synchronous
-completion hook must confirm that compaction finished before the note runs.
+The resume note enters native input when compaction starts and runs when the
+harness takes it. Gangline admits that exact note once; until a completion hook
+confirms that compaction finished, the compaction stays unconfirmed.
 Codex may merge later Enter steers into the same prompt, with the resume note
 first; Tab queues separate follow-up turns. If the note cannot enter ahead of
 an occupied composer, the command fails and withholds the note rather than

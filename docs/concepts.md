@@ -68,9 +68,9 @@ crossing one upward queues a notice. Nonfinal bands advise saving state and
 compacting at a suitable stopping point; the last orders compaction now.
 
 Compaction requests wait for a native idle boundary. The resume note enters
-native input when compaction starts, ahead of later input. It runs only after
-a synchronous hook confirms native completion. Submitting the compact command
-alone does not establish completion.
+native input when compaction starts, ahead of later input, and runs when the
+harness takes it. Only a completion hook confirms that compaction finished;
+submitting the compact command or admitting the resume note does not.
 
 ## Collars and hooks
 

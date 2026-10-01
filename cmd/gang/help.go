@@ -212,7 +212,7 @@ var commandDescription = map[string]string{
 	"send":       "NAME is the recipient agent's registered name, not a team session.\nSend BODY or read stdin. An exact native hook proves delivery; a native\nqueue receipt proves acceptance. Otherwise input stays queued or unverified.\n",
 	"queue":      "NAME filters pending work to one registered agent. Omit it to list\npending work for every agent in the configured team.\n",
 	"interrupt":  "NAME is a registered agent; omit it for the current pane's agent.\nInterrupt its native turn and optionally deliver a reason afterward.\n",
-	"compact":    "NAME is a registered agent; omit it for the current pane's agent.\nQueue the continuation as compaction starts; release it after confirmation.\n",
+	"compact":    "NAME is a registered agent; omit it for the current pane's agent.\nQueue the continuation as compaction starts; admit it once when the harness submits it.\n",
 	"statusline": "Read native status-line JSON on stdin; --install fills an absent native setting.\n",
 	"context":    "NAME is a registered agent; omit it for the current pane's agent.\nPrint its native context reading. --widget NAME selects an agent to show.\n",
 	"log":        "Print the configured team's durable JSONL event log.\nThe agent filter accepts a registered NAME or a hitch ID.\n",
