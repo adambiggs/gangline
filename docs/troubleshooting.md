@@ -58,10 +58,15 @@ configured `GANG_CAPACITY_TIMEOUT` budget. Check `gang config` and
 ## Compaction has not resumed the work
 
 Run `gang status NAME --why` and inspect the pane. A request can be waiting for
-idle, refused by the harness, or unconfirmed. The resume note is withheld
-until completion is confirmed. For a stuck request, run
-`gang compact NAME --recover` after inspection. Do not treat missing resume
-text as proof that compaction finished.
+idle, refused by the harness, or unconfirmed. An admitted resume note does not
+confirm completion. When the pane still shows the compaction running, run
+`gang compact NAME --recover` after inspection. It interrupts only a busy pane
+with an empty composer and refuses an approval, a draft, an idle composer, or
+an unrecognized screen without sending a key. It runs once per compaction and
+refuses once the harness has taken the resume note, since a busy pane is then
+later work; use `gang interrupt NAME` for that. Interrupting can leave the
+resume note in the composer; clear it if the compaction did not finish. Do not
+treat missing resume text as proof that compaction finished.
 
 ## A hook or tick failed
 

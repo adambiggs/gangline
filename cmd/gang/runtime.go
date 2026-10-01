@@ -233,6 +233,9 @@ func (run *runtime) recoverInput(l *store.LockedAgent, a *core.Agent) error {
 	if kind == "compaction" {
 		return run.apply(l, a, core.Event{Type: "compaction_unverified", ID: id, Reason: "input owner exited before recording the outcome"})
 	}
+	if kind == "compaction-recovery" {
+		return run.apply(l, a, core.Event{Type: "compaction_unverified", ID: id, Status: "recovery", Reason: "recovery owner exited before recording the outcome"})
+	}
 	if kind != "envelope" {
 		a.Input = nil
 		a.Activity = core.Unknown

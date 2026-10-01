@@ -48,7 +48,7 @@ contract and assignment.
 | `gang queue [NAME]` | List pending message IDs, recipients, and senders. |
 | `gang interrupt [NAME] [-m REASON]` | Interrupt the turn; deliver an optional reason after it stops. |
 | `gang compact [NAME] [--resume TEXT]` | Compact at native idle; submit the continuation behind compaction, ahead of later input. |
-| `gang compact NAME --recover` | Run the collar's recovery actions for a stuck compaction. |
+| `gang compact NAME --recover` | Interrupt a submitted or unconfirmed compaction with the collar's recovery keys while the pane shows it running. Refuses without sending on an approval, trust, draft, idle, or unrecognized screen; when the resume note was never queued or the harness has taken it; and after an earlier recovery of the same compaction. Records the compaction as unconfirmed and reports the screen it left. |
 | `gang curfew [DURATION\|HH:MM\|RFC3339\|clear]` | Show, set, or clear the team deadline. |
 | `gang tick [--agent ID]` | Check deadlines, recover native failures, and drain due messages. |
 | `gang wait NAME [--timeout DURATION]` | Wait for a recorded idle boundary; a zero timeout checks once. |

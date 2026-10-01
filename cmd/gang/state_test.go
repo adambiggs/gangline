@@ -28,7 +28,11 @@ type inputFixture struct {
 	processErr       error
 	submits          int
 	registrations    int
+	captures         int
+	captureErr       error
+	keys             []string
 	submit           func(string) error
+	onKeys           func(substrate.Keys) error
 	registeredSender harnessInput
 }
 
@@ -65,7 +69,8 @@ func (b *inputFixture) ForegroundCommand(context.Context, substrate.PaneID) (str
 }
 
 func (b *inputFixture) Capture(context.Context, substrate.PaneID) (substrate.Screen, error) {
-	return b.screen, nil
+	b.captures++
+	return b.screen, b.captureErr
 }
 func (b *inputFixture) ForegroundProcesses(context.Context, substrate.PaneID) ([]substrate.Process, error) {
 	if b.processErr != nil {
@@ -74,6 +79,12 @@ func (b *inputFixture) ForegroundProcesses(context.Context, substrate.PaneID) ([
 	return []substrate.Process{{PID: 7, Command: b.command}}, nil
 }
 func (b *inputFixture) SendKeys(_ context.Context, _ substrate.PaneID, k substrate.Keys) error {
+	b.keys = append(b.keys, k.Names...)
+	if b.onKeys != nil {
+		if err := b.onKeys(k); err != nil {
+			return err
+		}
+	}
 	if k.Text != "" {
 		b.pasted = strings.TrimSuffix(strings.TrimPrefix(k.Text, "\x1b[200~"), "\x1b[201~")
 	}

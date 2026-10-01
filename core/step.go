@@ -69,6 +69,9 @@ func Step(agent Agent, event Event) (Agent, []Effect) {
 			return agent, nil
 		}
 		agent.Compaction.Status, agent.Compaction.Reason, agent.Activity, agent.Evidence, agent.Input = "unverified", event.Reason, Unknown, event.Reason, nil
+		if event.Status == "recovery" {
+			agent.Compaction.Recovered = true
+		}
 	case "interrupt_requested":
 		agent.Activity, agent.InterruptDeadline = Interrupting, event.Deadline
 	case "interrupt_completed":

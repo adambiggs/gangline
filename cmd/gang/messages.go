@@ -388,18 +388,7 @@ func (cmd command) compact(args []string) (result error) {
 	}
 	b = run.registeredInput(a, b)
 	if o.Recover {
-		if a.Compaction == nil {
-			return refuseError("no compaction to recover")
-		}
-		if err := run.apply(l, &a, core.Event{Type: "input_started", ID: a.Compaction.ID, Status: "compaction"}); err != nil {
-			return err
-		}
-		for _, action := range c.Actions.CompactRecover {
-			if err := sendHarnessKeys(context.Background(), b, substrate.PaneID(a.Pane), c, action.Input()); err != nil {
-				return err
-			}
-		}
-		return run.apply(l, &a, core.Event{Type: "compaction_unverified", ID: a.Compaction.ID, Reason: "operator requested recovery; inspect the harness before retrying"})
+		return run.recoverCompaction(l, &a, b, c)
 	}
 	if a.Status != core.Active {
 		return refuseError("recipient is not active")

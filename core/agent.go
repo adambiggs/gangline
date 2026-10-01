@@ -170,6 +170,7 @@ type Compaction struct {
 	CompletedAt    time.Time `json:"completed_at,omitzero"`
 	RefusalBefore  int       `json:"refusal_before,omitempty"`
 	Reason         string    `json:"reason,omitempty"`
+	Recovered      bool      `json:"recovered,omitempty"`
 }
 
 type Capacity struct {

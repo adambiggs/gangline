@@ -134,7 +134,7 @@ var commandOptions = map[string][]optionSpec{
 	"interrupt": {{"m", "REASON", "reason to deliver after interrupt"}},
 	"compact": {
 		{"resume", "TEXT", "continuation after compaction"},
-		{"recover", "", "recover a stuck compaction"},
+		{"recover", "", "interrupt an unconfirmed compaction while the pane is busy"},
 	},
 	"statusline": {{"install", "", "install the native status line"}},
 	"context":    {{"widget", "NAME|off", "show an agent's context or clear the widget"}},
