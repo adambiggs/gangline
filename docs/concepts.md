@@ -29,7 +29,7 @@ that identifies the sender and delivery attempt. A registered pane supplies
 an observed agent name. A sender supplied with `--from` is marked
 `self-declared:` because Gangline did not observe that identity.
 
-A `gangline:` sender identifies a message emitted by Gangline. Text supplied
+A system sender such as `usage-band` identifies a message emitted by Gangline. Text supplied
 by the caller, such as an interrupt reason, still has an unverified author.
 Text typed directly into a window is operator input without a teammate's
 envelope.

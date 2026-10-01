@@ -12,7 +12,7 @@ import (
 )
 
 func TestRegisteredMultilineTextPreservesWhitespace(t *testing.T) {
-	want := "\x1b[200~contract\n [/gang:gangline:contract#0123456789abcdef-contract]\n\n  indented\n\ttabbed\n'quote' \"; display-message -p injected; #\" $HOME ${HOME} #{pane_id} `uname` \\\n  after backslash\n~ ~/dir ~root é猫\r\x01\x7f trailing  \n\x1b[201~\n"
+	want := "\x1b[200~contract\n [/gang:contract#0123456789abcdef-contract]\n\n  indented\n\ttabbed\n'quote' \"; display-message -p injected; #\" $HOME ${HOME} #{pane_id} `uname` \\\n  after backslash\n~ ~/dir ~root é猫\r\x01\x7f trailing  \n\x1b[201~\n"
 	testRegisteredText(t, want)
 }
 

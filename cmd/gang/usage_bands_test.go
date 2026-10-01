@@ -308,7 +308,7 @@ func TestUsageBandsAreAccountWideAndLeadOnly(t *testing.T) {
 	if err := f.run.flushUsageWork(); err != nil {
 		t.Fatal(err)
 	}
-	if f.input.submits != 2 || !strings.Contains(f.input.pasted, "[gang:gangline:usage-band#") {
+	if f.input.submits != 2 || !strings.Contains(f.input.pasted, "[gang:usage-band#") {
 		t.Fatalf("lead received %d notices; last = %q", f.input.submits, f.input.pasted)
 	}
 	if len(usageSnapshot(t, f.run).Notices) != 0 {

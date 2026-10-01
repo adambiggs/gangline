@@ -60,14 +60,9 @@ func obsoleteContextBandNotice(a core.Agent, e core.Envelope) bool {
 }
 
 func envelopeText(e core.Envelope) (string, error) {
-	if isContextBandNotice(e) {
-		return renderEnvelope("context-band", e.Token, e.Purpose, e.Message.Text)
-	}
 	sender := string(e.From.Name)
 	if e.From.Kind == core.SenderSelfDeclared {
 		sender = "self-declared:" + sender
-	} else if e.From.Kind == core.SenderGangline {
-		sender = "gangline:" + sender
 	}
 	if e.Startup != nil {
 		return startupEnvelopeText(e.Startup, sender, e.Token, e.Purpose, e.Message.Text)
@@ -88,14 +83,14 @@ func startupEnvelopeText(sections *core.StartupSections, sender, token, purpose,
 		if section.body == "" {
 			continue
 		}
-		part, err := renderEnvelope("gangline:"+section.name, token+"-"+section.name, "startup", section.body)
+		part, err := renderEnvelope(section.name, token+"-"+section.name, "startup", section.body)
 		if err != nil {
 			return "", err
 		}
 		parts = append(parts, part)
 	}
 	if purpose == "startup" {
-		sender = "gangline:startup"
+		sender = "startup"
 	}
 	part, err := renderEnvelope(sender, token, purpose, message)
 	if err != nil {
