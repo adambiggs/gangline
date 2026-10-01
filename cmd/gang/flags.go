@@ -193,36 +193,92 @@ func partitionOptions(flags *flag.FlagSet, arguments []string) ([]string, []stri
 // whose text before = looks like a flag name (-name=VALUE) stays whole so a
 // mistyped long flag is reported.
 func splitOptions(flags *flag.FlagSet, arguments []string) (flagArguments, positionals []string, help bool) {
+	for _, word := range scanOptions(flags, arguments) {
+		switch {
+		case word.terminator:
+		case word.option == "":
+			positionals = append(positionals, word.tokens...)
+		default:
+			help = help || word.option == "h" || word.option == "help"
+			flagArguments = append(flagArguments, word.tokens...)
+		}
+	}
+	return flagArguments, positionals, help
+}
+
+// optionWord is one flag with its value tokens, one operand, or the --
+// terminator. An operand has no option name.
+type optionWord struct {
+	tokens     []string
+	option     string
+	terminator bool
+}
+
+func scanOptions(flags *flag.FlagSet, arguments []string) []optionWord {
+	var words []optionWord
 	ended := false
 	for i := 0; i < len(arguments); i++ {
 		argument := arguments[i]
 		if !ended && argument == "--" {
 			ended = true
+			words = append(words, optionWord{tokens: []string{argument}, terminator: true})
 			continue
 		}
 		if ended || !strings.HasPrefix(argument, "-") || argument == "-" {
-			positionals = append(positionals, argument)
+			words = append(words, optionWord{tokens: []string{argument}})
 			continue
 		}
 		name, _, assigned := strings.Cut(strings.TrimLeft(argument, "-"), "=")
-		help = help || name == "h" || name == "help"
 		option := flags.Lookup(name)
 		if option == nil && !strings.HasPrefix(argument, "--") && len(argument) > 2 && (!assigned || len(name) == 1 || !flagNamePattern.MatchString(name)) {
 			if short := flags.Lookup(argument[1:2]); short != nil && !isBoolFlag(short) {
-				flagArguments = append(flagArguments, argument[:2], argument[2:])
+				words = append(words, optionWord{tokens: []string{argument[:2], argument[2:]}, option: short.Name})
 				continue
 			}
 		}
-		flagArguments = append(flagArguments, argument)
-		if option == nil || assigned || isBoolFlag(option) {
+		word := optionWord{tokens: []string{argument}, option: name}
+		if option != nil && !assigned && !isBoolFlag(option) && i+1 < len(arguments) {
+			i++
+			word.tokens = append(word.tokens, arguments[i])
+		}
+		words = append(words, word)
+	}
+	return words
+}
+
+// teamOption is the selector shared by every command in teamCommands. It is
+// taken from the arguments before the command parses its own options.
+var teamOption = optionSpec{"team", "TEAM", "team to act on (default GANG_SESSION)"}
+
+// takeTeam removes --team and its value from a team command's arguments,
+// classifying tokens with that command's own options so an option value or an
+// operand after -- is never taken as the selector, and ---team is left for the
+// command to refuse like any other three-dash option. The last --team wins.
+func takeTeam(name string, arguments []string) (team string, rest []string, err error) {
+	if !teamCommands[name] {
+		return "", arguments, nil
+	}
+	selected := false
+	for _, word := range scanOptions(specFlagSet(name), arguments) {
+		if word.option != teamOption.name || strings.HasPrefix(word.tokens[0], "---") {
+			rest = append(rest, word.tokens...)
 			continue
 		}
-		if i+1 < len(arguments) {
-			i++
-			flagArguments = append(flagArguments, arguments[i])
+		value, assigned := "", false
+		if _, after, ok := strings.Cut(word.tokens[0], "="); ok {
+			value, assigned = after, true
+		} else if len(word.tokens) == 2 {
+			value, assigned = word.tokens[1], true
 		}
+		if !assigned {
+			return "", nil, usageError("%s: flag needs an argument: --team", name)
+		}
+		team, selected = value, true
 	}
-	return flagArguments, positionals, help
+	if selected && strings.TrimSpace(team) == "" {
+		return "", nil, usageError("%s: --team must not be blank", name)
+	}
+	return team, rest, nil
 }
 
 var flagNamePattern = regexp.MustCompile(`^[a-z][a-z-]*$`)
@@ -236,7 +292,7 @@ func isBoolFlag(option *flag.Flag) bool {
 // be classified without running the command.
 func specFlagSet(name string) *flag.FlagSet {
 	flags := quietFlagSet(name)
-	for _, option := range optionsFor(name) {
+	for _, option := range helpOptions(name) {
 		if option.argument == "" {
 			flags.Bool(option.name, false, option.meaning)
 		} else {

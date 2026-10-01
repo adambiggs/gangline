@@ -136,8 +136,8 @@ staffing, messaging, and stopping a turn, continue with the
 
 ## Uninstall
 
-Select each team with `GANG_SESSION` and run `gang roster` before stopping it
-with `gang down`. Then remove
+For each team, run `gang roster --team TEAM` before stopping it with
+`gang down --team TEAM`. Then remove
 the installed `gang` command from `~/.local/bin/gang` and the retained release
 checkout at `~/.local/share/gangline`. Use the paths selected by `GANGLINE_BIN`
 and `GANGLINE_HOME` if you overrode the defaults. Remove any Gangline config

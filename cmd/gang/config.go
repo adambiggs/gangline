@@ -100,6 +100,14 @@ func (cmd command) settings() (settings, error) {
 			result.Origins[name] = "env"
 		}
 	}
+	if cmd.team != "" {
+		// A hitched pane inherits its team; the flag cannot move it elsewhere.
+		if cmd.environment("GANG_AGENT_ID") != "" && cmd.team != result.Session {
+			return settings{}, refuseError("in a hitched pane --team must name the selected team %q, not %q; set GANG_SESSION to act on another team", result.Session, cmd.team)
+		}
+		result.Session = cmd.team
+		result.Origins["GANG_SESSION"] = "flag"
+	}
 	for label, value := range map[string]string{
 		"GANG_SESSION":    result.Session,
 		"GANG_STATE_ROOT": result.StateRoot,

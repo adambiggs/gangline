@@ -64,6 +64,9 @@ func expectedHelpOptions(name string) map[string]bool {
 	for _, option := range optionsFor(name) {
 		want[optionSpelling(option.name)] = true
 	}
+	if _, ok := teamSelectorCommands[name]; ok {
+		want["--team"] = true
+	}
 	return want
 }
 
@@ -111,7 +114,7 @@ func TestCommandHelpMatchesAcceptedFlags(t *testing.T) {
 					t.Errorf("help prints %s %d times", flag, count)
 				}
 			}
-			for _, option := range optionsFor(name) {
+			for _, option := range helpOptions(name) {
 				if !helpHasOptionRow(help.String(), option) {
 					t.Fatalf("missing flag shape or meaning for %s", optionSpelling(option.name))
 				}
@@ -173,7 +176,7 @@ func TestHelpFollowsOperandsButNotTerminatorOrValues(t *testing.T) {
 			if helpRequested(name, []string{"unused", "--", helpFlag}) {
 				t.Errorf("%s treats %s after -- as help", name, helpFlag)
 			}
-			for _, option := range optionsFor(name) {
+			for _, option := range helpOptions(name) {
 				if option.argument != "" && helpRequested(name, []string{optionSpelling(option.name), helpFlag}) {
 					t.Errorf("%s treats %s as help in the value of %s", name, helpFlag, optionSpelling(option.name))
 				}

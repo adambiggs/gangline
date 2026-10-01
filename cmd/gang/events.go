@@ -315,6 +315,9 @@ func (cmd command) log(args []string) error {
 		return err
 	}
 	path := ""
+	if len(files) > 0 && cmd.team != "" {
+		return usageError("log: --team does not apply to LOG.jsonl")
+	}
 	if len(files) > 0 {
 		path = files[0]
 	} else {

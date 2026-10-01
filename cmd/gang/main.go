@@ -45,6 +45,7 @@ type command struct {
 	terminalInput func() bool
 	stdout        io.Writer
 	stderr        io.Writer
+	team          string
 	getenv        func(string) string
 	lookupEnv     func(string) (string, bool)
 	getwd         func() (string, error)
@@ -131,6 +132,11 @@ func (cmd command) execute(args []string) error {
 	}
 
 	name, arguments := args[0], args[1:]
+	team, arguments, err := takeTeam(name, arguments)
+	if err != nil {
+		return err
+	}
+	cmd.team = team
 	if len(optionsFor(name)) == 0 {
 		for i, argument := range arguments {
 			if argument == "--" {

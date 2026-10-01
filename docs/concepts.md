@@ -9,7 +9,8 @@ claims.
 ## Agents, registrations, and sessions
 
 An **agent** is a Claude Code or Codex process running in a named tmux window.
-A **team** is the collection selected by `GANG_SESSION`. `gang up` starts its
+A **team** is the collection selected by `--team`, or by `GANG_SESSION` when
+the flag is absent. `gang up` starts its
 first agent with the `lead` role and attaches your terminal. The lead's brief
 asks it to follow operator policy when assigning work to named agents.
 Your instructions decide the work and staffing.

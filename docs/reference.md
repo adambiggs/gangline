@@ -8,17 +8,26 @@ Flags accept `-` or `--`, `VALUE` or `=VALUE`, and one-letter flags also
 `-cVALUE`; switches accept `=true` or `=false`. Flags may follow operands, and
 `--` ends flags. `--help` anywhere before `--` prints help and exits 0.
 
+Every command that acts on a team accepts `--team TEAM`. Without it,
+`GANG_SESSION` selects the team. Agent operands such as `NAME` always name
+agents in the selected team. In a hitched pane, `--team` may name only the
+team `GANG_SESSION` selects; any other team is refused with exit status 3,
+and setting `GANG_SESSION` is the deliberate way to act on another team
+there. `log` refuses `--team` together with a `LOG.jsonl` operand. `teams`, `collars`,
+`collar`, `models`, `roles`, `config`, `statusline`, `upgrade`, `help`,
+`version`, and `hook` do not act on one team and do not accept `--team`.
+
 ## Start and stop
 
 | Command | Effect |
 | --- | --- |
-| `gang up [NAME] [AGENT OPTIONS]` | Start the configured team with its lead agent named `NAME` (default `lead`), then attach when stdin is a terminal. |
+| `gang up [NAME] [AGENT OPTIONS]` | Start the selected team with its lead agent named `NAME` (default `lead`), then attach when stdin is a terminal. |
 | `gang hitch NAME [OPTIONS]` | Launch an agent and deliver startup instructions and any task. |
 | `gang hitch NAME --recover` | Recover retained startup from its visible draft or a lone collapsed paste. |
 | `gang rename OLD NEW` | Change a registered name and window title. |
 | `gang drop NAME` | Stop an agent and fail its pending messages. |
-| `gang down [-y, --yes]` | Confirm on a terminal (`[y/N]`, default no), then drop the configured team's agents and delete its runtime state and history. Use `--yes` without a terminal. |
-| `gang attach` | Attach to the configured team's tmux session. |
+| `gang down [-y, --yes]` | Confirm on a terminal (`[y/N]`, default no), then drop the selected team's agents and delete its runtime state and history. Use `--yes` without a terminal. |
+| `gang attach` | Attach to the selected team's tmux session. |
 | `gang teams` | List teams in the configured state root. |
 
 `up` and `hitch` accept:
@@ -137,7 +146,7 @@ override file values. Run `gang config` to see effective values and defaults.
 
 | Setting | Controls |
 | --- | --- |
-| `GANG_SESSION` | Team and tmux session name; defaults to `gangline`. |
+| `GANG_SESSION` | Team and tmux session name when `--team` is absent; defaults to `gangline`. |
 | `GANG_COLLAR` | Default collar; defaults to `claude`. |
 | `GANG_COLLARS` | Absolute directory of custom `NAME.cue` collars and bundled collar overlays. |
 | `GANG_LAUNCH_ARGS` | JSON object mapping collar names to extra launch argument arrays. |
@@ -184,8 +193,10 @@ generation, session, pane ID, and inherited capability. Missing registration or
 capability is refused; launch a fresh hitch to establish them. Later ordinary
 windows do not inherit that per-hitch capability.
 
-For a separate team, keep its selection in the shell environment for every
-command. A separate state root and socket also isolate its files and server:
+`--team TEAM` selects another team in the same state root and tmux server for
+one command. For a separate team, keep its selection in the shell environment
+for every command. A separate state root and socket also isolate its files and
+server:
 
 ```sh
 export GANG_SESSION=review

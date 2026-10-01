@@ -15,7 +15,9 @@ Find yourself:
 Send a message:
   gang send NAME 'message'
   printf '%s\n' 'message' | gang send NAME
-  NAME is a registered agent, not the team session.
+  NAME is a registered agent. Commands act on the GANG_SESSION team
+  unless --team TEAM selects another; in a hitched pane, --team may
+  name only the GANG_SESSION team.
 
 Read your waiting queue:
   gang queue
@@ -70,32 +72,34 @@ Help:
 
 Native integration:
   hook      read native hook JSON from stdin
+
+Commands that act on a team take --team TEAM (default GANG_SESSION).
 `
 
 var commandUsage = map[string]string{
-	"up":         "usage: gang up [NAME] [HITCH OPTIONS]\n",
-	"hitch":      "usage: gang hitch NAME [-c COLLAR] [-d DIR] [-m MODEL] [-e EFFORT]\n       [-t TASK] [-r ROLE] [--resume SESSION] [--stdin]\n       gang hitch NAME --recover\n",
-	"rename":     "usage: gang rename OLD NEW\n",
-	"send":       "usage: gang send NAME [--from SENDER] [--live-only] [--supersede] [--at DURATION|HH:MM|RFC3339] [BODY]\n       gang send NAME --clear\n       Without BODY, read stdin. Use -- before BODY when it begins with -.\n",
-	"queue":      "usage: gang queue [NAME] [--json]\n",
-	"interrupt":  "usage: gang interrupt [NAME] [-m|--message REASON]\n",
-	"compact":    "usage: gang compact [NAME] [--resume TEXT]\n       gang compact [NAME] --recover\n",
+	"up":         "usage: gang up [NAME] [HITCH OPTIONS] [--team TEAM]\n",
+	"hitch":      "usage: gang hitch NAME [-c COLLAR] [-d DIR] [-m MODEL] [-e EFFORT]\n       [-t TASK] [-r ROLE] [--resume SESSION] [--stdin] [--team TEAM]\n       gang hitch NAME --recover [--team TEAM]\n",
+	"rename":     "usage: gang rename OLD NEW [--team TEAM]\n",
+	"send":       "usage: gang send NAME [--from SENDER] [--live-only] [--supersede]\n       [--at DURATION|HH:MM|RFC3339] [--team TEAM] [BODY]\n       gang send NAME --clear [--team TEAM]\n       Without BODY, read stdin. Use -- before BODY when it begins with -.\n",
+	"queue":      "usage: gang queue [NAME] [--json] [--team TEAM]\n",
+	"interrupt":  "usage: gang interrupt [NAME] [-m|--message REASON] [--team TEAM]\n",
+	"compact":    "usage: gang compact [NAME] [--resume TEXT] [--team TEAM]\n       gang compact [NAME] --recover [--team TEAM]\n",
 	"statusline": "usage: gang statusline [--install]\n",
-	"context":    "usage: gang context [NAME] [--json]\n       gang context --widget NAME | --clear\n",
-	"log":        "usage: gang log [--agent NAME|HITCH_ID] [--type TYPE|KIND] [LOG.jsonl]\n",
-	"limits":     "usage: gang limits [NAME] | -c|--collar COLLAR\n",
-	"snooze":     "usage: gang snooze [--at DURATION|HH:MM|RFC3339] [--note TEXT] [--clear [ID] | --status]\n",
-	"wait":       "usage: gang wait NAME [--timeout DURATION]\n",
-	"curfew":     "usage: gang curfew [DURATION | HH:MM | RFC3339 | clear]\n",
-	"status":     "usage: gang status [NAME] [--why] [--json]\n",
-	"tick":       "usage: gang tick [--agent NAME|HITCH_ID]\n       gang tick --source watchdog --watchdog UNIT\n",
-	"capture":    "usage: gang capture [NAME] [-n|--lines LINES]\n       gang capture --composer [NAME]\n",
-	"whoami":     "usage: gang whoami\n",
-	"roster":     "usage: gang roster [--json]\n",
-	"attach":     "usage: gang attach\n",
+	"context":    "usage: gang context [NAME] [--json] [--team TEAM]\n       gang context --widget NAME | --clear [--team TEAM]\n",
+	"log":        "usage: gang log [--agent NAME|HITCH_ID] [--type TYPE|KIND] [--team TEAM]\n       [LOG.jsonl]\n",
+	"limits":     "usage: gang limits [NAME | -c|--collar COLLAR] [--team TEAM]\n",
+	"snooze":     "usage: gang snooze [--at DURATION|HH:MM|RFC3339] [--note TEXT] [--clear [ID] | --status]\n       [--team TEAM]\n",
+	"wait":       "usage: gang wait NAME [--timeout DURATION] [--team TEAM]\n",
+	"curfew":     "usage: gang curfew [DURATION | HH:MM | RFC3339 | clear] [--team TEAM]\n",
+	"status":     "usage: gang status [NAME] [--why] [--json] [--team TEAM]\n",
+	"tick":       "usage: gang tick [--agent NAME|HITCH_ID] [--team TEAM]\n       gang tick --source watchdog --watchdog UNIT [--team TEAM]\n",
+	"capture":    "usage: gang capture [NAME] [-n|--lines LINES] [--team TEAM]\n       gang capture --composer [NAME] [--team TEAM]\n",
+	"whoami":     "usage: gang whoami [--team TEAM]\n",
+	"roster":     "usage: gang roster [--json] [--team TEAM]\n",
+	"attach":     "usage: gang attach [--team TEAM]\n",
 	"teams":      "usage: gang teams\n",
-	"drop":       "usage: gang drop NAME\n",
-	"down":       "usage: gang down [-y|--yes]\n",
+	"drop":       "usage: gang drop NAME [--team TEAM]\n",
+	"down":       "usage: gang down [-y|--yes] [--team TEAM]\n",
 	"collars":    "usage: gang collars\n       gang collar check NAME\n       Bundled names are claude and codex.\n",
 	"collar":     "usage: gang collar check NAME\n",
 	"models":     "usage: gang models [-c COLLAR]\n",
@@ -189,6 +193,25 @@ func optionsFor(name string) []optionSpec {
 	return commandOptions[name]
 }
 
+// teamCommands act on one team and accept teamOption. GANG_SESSION selects
+// the team when the option is absent.
+var teamCommands = map[string]bool{
+	"up": true, "hitch": true, "rename": true, "send": true, "queue": true,
+	"interrupt": true, "compact": true, "context": true, "log": true,
+	"limits": true, "snooze": true, "wait": true, "curfew": true,
+	"status": true, "tick": true, "capture": true, "whoami": true,
+	"roster": true, "attach": true, "drop": true, "down": true,
+}
+
+// helpOptions is a command's own options plus the team selector it accepts.
+func helpOptions(name string) []optionSpec {
+	options := append([]optionSpec{}, optionsFor(name)...)
+	if teamCommands[name] {
+		options = append(options, teamOption)
+	}
+	return options
+}
+
 func optionSpelling(name string) string {
 	if len(name) == 1 {
 		return "-" + name
@@ -198,7 +221,7 @@ func optionSpelling(name string) string {
 
 func optionHelp(name string) string {
 	var out strings.Builder
-	options := optionsFor(name)
+	options := helpOptions(name)
 	for i := 0; i < len(options); i++ {
 		option := options[i]
 		label := optionSpelling(option.name)
@@ -222,16 +245,16 @@ func optionArgument(option optionSpec) string {
 }
 
 var commandDescription = map[string]string{
-	"up":         "NAME names the lead agent (default lead) in the GANG_SESSION team\n(default gangline), not the team itself. Start and attach, or use --recover\nto recover that existing agent's startup.\n",
-	"hitch":      "NAME is an agent's registered name in the configured team.\nLaunch a new agent and deliver its startup, or use --recover to recover\nretained startup input for an existing agent.\n",
-	"rename":     "OLD and NEW are registered agent names in the configured team.\nRename the agent without restarting its harness.\n",
-	"send":       "NAME is the recipient agent's registered name, not a team session.\nSend BODY or read stdin. An exact native hook proves delivery; a native\nqueue receipt proves acceptance. Otherwise input stays queued or unverified.\n",
-	"queue":      "NAME filters pending work to one registered agent. Omit it to list\npending work for every agent in the configured team. Each message shows\nwhether it is ready, scheduled, blocked, or unknown, with its due time or\nthe reason it waits.\n",
+	"up":         "NAME names the lead agent (default lead). Start the selected team and attach,\nor use --recover to recover that existing agent's startup.\n",
+	"hitch":      "NAME is an agent's registered name in the selected team.\nLaunch a new agent and deliver its startup, or use --recover to recover\nretained startup input for an existing agent.\n",
+	"rename":     "OLD and NEW are registered agent names in the selected team.\nRename the agent without restarting its harness.\n",
+	"send":       "NAME is the recipient agent's registered name in the selected team.\nSend BODY or read stdin. An exact native hook proves delivery; a native\nqueue receipt proves acceptance. Otherwise input stays queued or unverified.\n",
+	"queue":      "NAME filters pending work to one registered agent. Omit it to list\npending work for every agent in the selected team. Each message shows\nwhether it is ready, scheduled, blocked, or unknown, with its due time or\nthe reason it waits.\n",
 	"interrupt":  "NAME is a registered agent; omit it for the current pane's agent.\nInterrupt its native turn and optionally deliver a reason afterward.\n",
 	"compact":    "NAME is a registered agent; omit it for the current pane's agent.\nQueue the continuation as compaction starts; admit it once when the harness submits it.\n",
 	"statusline": "Read native status-line JSON on stdin; --install fills an absent native setting.\n",
 	"context":    "NAME is a registered agent; omit it for the current pane's agent.\nPrint its native context reading. --widget NAME selects an agent for the\ntmux widget; --clear empties it.\n",
-	"log":        "Print the configured team's durable JSONL event log.\nThe agent filter accepts a registered NAME or a hitch ID.\n",
+	"log":        "Print the selected team's durable JSONL event log.\nThe agent filter accepts a registered NAME or a hitch ID.\nWith LOG.jsonl, read that file instead; --team does not apply to it.\n",
 	"limits":     "NAME is a registered agent; omit it for the current pane's agent.\nRead its provider limits, or use --collar to query a collar without an agent.\n",
 	"snooze":     "Schedule a wake for the calling agent. Without --at, use the most-used future native five-hour or weekly reset. A wake completes after its matching native turn succeeds. --status shows queued and uncertain wakes. --clear or a new --at withdraws a wake still queued for input; the lead can clear a notice or fallback wake by ID. Clearing cannot retract native input.\n",
 	"wait":       "NAME is the registered agent to watch for a recorded idle boundary.\nA zero timeout checks once.\n",
@@ -241,10 +264,10 @@ var commandDescription = map[string]string{
 	"capture":    "NAME is a registered agent whose pane to capture. Without NAME,\ncapture the current tmux pane, even if unregistered. With --composer,\nomitting NAME selects the current pane's registered agent.\n",
 	"whoami":     "Print the registered identity of the calling Gangline pane.\n",
 	"roster":     "List the team's registered agents and conservative current states.\n",
-	"attach":     "Attach this terminal to the configured team session.\n",
+	"attach":     "Attach this terminal to the selected team's tmux session.\n",
 	"teams":      "List teams found in the teams directory.\n",
-	"drop":       "NAME is the registered agent to stop, not the team session.\nCancel its pending work; report an observed native resume ID or unknown.\n",
-	"down":       "Stop the configured GANG_SESSION team and remove its state. On a terminal,\nconfirm the session and agent count; use the yes option for scripts and\nnonterminal calls.\n",
+	"drop":       "NAME is the registered agent to stop in the selected team.\nCancel its pending work; report an observed native resume ID or unknown.\n",
+	"down":       "Stop the selected team and remove its state. On a terminal, confirm the\nteam and agent count; use the yes option for scripts and nonterminal calls.\n",
 	"collars":    "List embedded and operator-provided CUE collars. In 'collar check\nNAME', NAME identifies a collar, not an agent or team.\n",
 	"collar":     "NAME is an installed harness collar, not an agent or team.\nProbe it in a throwaway private tmux session.\n",
 	"models":     "Discover model and reasoning-effort identifiers through a collar's native catalog.\n",
@@ -286,7 +309,7 @@ func (cmd command) printHelp(name string) error {
 	if err == nil {
 		_, err = io.WriteString(cmd.stdout, "\nHelp:\n  -h, --help             show this help\n")
 	}
-	if err == nil && len(optionsFor(name)) != 0 {
+	if err == nil && len(helpOptions(name)) != 0 {
 		_, err = io.WriteString(cmd.stdout, "\n"+flagSyntaxHelp)
 	}
 	return err
