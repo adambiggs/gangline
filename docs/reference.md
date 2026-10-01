@@ -89,11 +89,11 @@ file and send its path.
 
 | Command | Effect |
 | --- | --- |
-| `gang roster [--porcelain]` | Show registered agents and current states; `--porcelain` gives machine-readable rows. |
-| `gang status [NAME] [--why]` | Show state; `--why` includes activity and compaction evidence. |
+| `gang roster [--json]` | Show registered agents and current states. |
+| `gang status [NAME] [--why] [--json]` | Show state; `--why` includes activity and compaction evidence. |
 | `gang capture [NAME] [-n\|--lines LINES]` | Print the native pane, or only its last LINES lines. |
 | `gang capture --composer [NAME]` | Print draft input from the composer. |
-| `gang context [NAME]` | Show native context usage or an unknown reading. |
+| `gang context [NAME] [--json]` | Show native context usage or an unknown reading. |
 | `gang context --widget NAME` / `gang context --clear` | Select a context widget for the tmux status line, or clear it. |
 | `gang limits [NAME]` | Show observed provider limits. |
 | `gang limits -c\|--collar COLLAR` | Query native account limits without a live agent, if supported. |
@@ -102,8 +102,12 @@ file and send its path.
 | `gang log [--agent NAME\|HITCH_ID] [--type TYPE\|KIND] [LOG.jsonl]` | Print JSONL events from a team or saved log, with optional filters. |
 | `gang whoami` | Print the calling pane's registered identity. |
 
-`gang queue --json` prints one JSON object for scripts with exact
-timestamps; the human form abbreviates and may change layout.
+`--json` on `queue`, `roster`, `status`, and `context` prints one JSON object
+for scripts. It carries exact values the human forms abbreviate: queue
+timestamps and context token counts. Availability conditions such as
+`process_available` and `watchdog_available` are fields. An unobserved context
+reading prints `status` `unknown` with its `reason` and null counts, and the
+command still exits unknown. The human forms may change layout.
 
 Window titles use `?name?` for changing or unknown state, `~name~` for idle,
 `-name-` for work, and `!name!` for blocked, wedged, or failed agents.

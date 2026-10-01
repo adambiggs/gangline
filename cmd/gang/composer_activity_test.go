@@ -32,11 +32,13 @@ func TestOccupiedComposerIsNotNativeWork(t *testing.T) {
 				t.Fatalf("missing composer reason: %q", f.out)
 			}
 			f.out.Reset()
-			if err := f.cmd.roster([]string{"--porcelain"}); err != nil {
+			if err := f.cmd.roster([]string{"--json"}); err != nil {
 				t.Fatal(err)
 			}
-			if !strings.Contains(f.out.String(), "\t"+string(tc.want)+"\t") {
-				t.Fatalf("wrong roster: %q", f.out)
+			var roster rosterJSON
+			decodeOutput(t, f, &roster)
+			if len(roster.Agents) != 1 || roster.Agents[0].Activity != tc.want {
+				t.Fatalf("wrong roster: %+v", roster)
 			}
 			p, _ := f.run.team.Agent(a.ID)
 			got, err := p.Read()

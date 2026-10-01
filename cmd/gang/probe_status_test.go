@@ -49,7 +49,7 @@ func TestProbeTimeoutIsUnknownInsteadOfWedged(t *testing.T) {
 			case "status":
 				err = f.cmd.status([]string{"worker", "--why"})
 			case "roster":
-				err = f.cmd.roster([]string{"--porcelain"})
+				err = f.cmd.roster([]string{"--json"})
 			case "tick":
 				err = f.run.tickAgent(a.ID, hookNotice{}, false)
 			}

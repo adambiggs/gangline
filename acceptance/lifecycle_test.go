@@ -206,7 +206,7 @@ func TestCommandLifecycleOnPrivateTmux(t *testing.T) {
 	if _, err := os.ReadFile(team.Log); err == nil {
 		t.Fatal("audit log must be unreadable for this test")
 	}
-	check("", "roster", "--porcelain")
+	check("", "roster", "--json")
 	check("", "status", "second")
 	finishDelivery(check("audit independent delivery", "send", "second", "--from", "operator"), "audit independent delivery")
 	check("", "tick")

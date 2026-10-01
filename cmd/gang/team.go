@@ -277,7 +277,7 @@ func (run *runtime) observeRoster(agents []core.Agent) ([]core.Agent, error) {
 }
 func (cmd command) roster(args []string) error {
 	machine := false
-	flags := boundFlagSet("roster", map[string]any{"porcelain": &machine})
+	flags := boundFlagSet("roster", map[string]any{"json": &machine})
 	positionals, err := parseOptions(flags, args)
 	if err != nil {
 		return usageError("roster: %v", err)
@@ -303,35 +303,47 @@ func (cmd command) roster(args []string) error {
 	} else if !errors.Is(err, os.ErrNotExist) {
 		return err
 	}
+	out := rosterJSON{WatchdogAvailable: !watchdogLimited, Agents: []agentJSON{}}
 	for _, a := range agents {
-		limited, err := run.processLimited(a)
+		row, err := run.agentRow(a)
 		if err != nil {
 			return err
 		}
+		if machine {
+			out.Agents = append(out.Agents, row)
+			continue
+		}
 		marker := ""
-		if limited {
+		if !row.ProcessAvailable {
 			marker = " [process-unavailable]"
 		}
 		if watchdogLimited {
 			marker += " [watchdog-unavailable]"
 		}
-		if machine {
-			if marker != "" {
-				marker = "\t" + strings.TrimSpace(marker)
-			}
-			_, err = fmt.Fprintf(cmd.stdout, "%s\t%s\t%s\t%s\t%s%s\n", a.Name, a.Status, a.Activity, a.Collar, a.Pane, marker)
-		} else {
-			_, err = fmt.Fprintf(cmd.stdout, "%-16s %-10s %-14s %s%s\n", a.Name, a.Status, a.Activity, a.Collar, marker)
-		}
-		if err != nil {
+		if _, err := fmt.Fprintf(cmd.stdout, "%-16s %-10s %-14s %s%s\n", a.Name, a.Status, a.Activity, a.Collar, marker); err != nil {
 			return err
 		}
 	}
+	if machine {
+		return writeJSON(cmd.stdout, out)
+	}
 	return nil
 }
+
+func (run *runtime) agentRow(a core.Agent) (agentJSON, error) {
+	limited, err := run.processLimited(a)
+	if err != nil {
+		return agentJSON{}, err
+	}
+	row := agentJSON{Name: a.Name, HitchID: a.ID, Status: a.Status, Activity: a.Activity, Collar: a.Collar, Pane: a.Pane, ProcessAvailable: !limited, Evidence: a.Evidence}
+	if a.Compaction != nil {
+		row.Compaction = &compactionJSON{ID: a.Compaction.ID, Status: a.Compaction.Status, Reason: a.Compaction.Reason}
+	}
+	return row, nil
+}
 func (cmd command) status(args []string) error {
-	why := false
-	flags := boundFlagSet("status", map[string]any{"why": &why})
+	why, machine := false, false
+	flags := boundFlagSet("status", map[string]any{"why": &why, "json": &machine})
 	positionals, err := parseOptions(flags, args)
 	if err != nil {
 		return usageError("status: %v", err)
@@ -356,6 +368,13 @@ func (cmd command) status(args []string) error {
 		return err
 	}
 	a = agents[0]
+	if machine {
+		row, err := run.agentRow(a)
+		if err != nil {
+			return err
+		}
+		return writeJSON(cmd.stdout, row)
+	}
 	if _, err := fmt.Fprintf(cmd.stdout, "%s\t%s\t%s\n", a.Name, a.Status, a.Activity); err != nil {
 		return err
 	}

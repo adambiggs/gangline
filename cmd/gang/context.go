@@ -24,11 +24,14 @@ func observationName(args []string, name string) (string, error) {
 	return args[0], nil
 }
 func (cmd command) context(args []string) error {
-	widget, clear := "", false
-	flags := boundFlagSet("context", map[string]any{"widget": &widget, "clear": &clear})
+	widget, clear, machine := "", false, false
+	flags := boundFlagSet("context", map[string]any{"widget": &widget, "clear": &clear, "json": &machine})
 	positionals, err := parseOptions(flags, args)
 	if err != nil {
 		return usageError("context: %v", err)
+	}
+	if machine && (clear || flagWasSet(flags, "widget")) {
+		return usageError("context --json: does not combine with --widget or --clear")
 	}
 	if clear {
 		if len(positionals) != 0 || flagWasSet(flags, "widget") {
@@ -68,14 +71,10 @@ func (cmd command) context(args []string) error {
 	if c.Primitives.Telemetry != nil {
 		r := a.Native.Context
 		if r.Status != "observed" || r.Used == nil || r.Limit == nil || r.Percent == nil {
-			return commandError{status: exitUnknown, text: valueOr(r.Reason, "native context has not been observed")}
+			return cmd.unknownContext(machine, contextJSON{Name: a.Name, Model: r.Model, Source: "telemetry", Reason: valueOr(r.Reason, "native context has not been observed")})
 		}
-		bandName := "none"
-		if band := harness.ActiveContextBand(c, r.Model, harness.ContextReading{Used: *r.Used, Limit: *r.Limit, Percent: *r.Percent / 100}); band != nil {
-			bandName = band.Name
-		}
-		_, err = fmt.Fprintf(cmd.stdout, "%s\t%s/%s\t%.0f%%\t%s\n", a.Name, compactTokenCount(*r.Used), compactTokenCount(*r.Limit), *r.Percent, bandName)
-		return err
+		band := harness.ActiveContextBand(c, r.Model, harness.ContextReading{Used: *r.Used, Limit: *r.Limit, Percent: *r.Percent / 100})
+		return cmd.writeContext(machine, contextJSON{Name: a.Name, Model: r.Model, Used: r.Used, Limit: r.Limit, Percent: r.Percent, Band: bandName(band), Source: "telemetry"})
 	}
 	b, err := run.input()
 	if err != nil {
@@ -87,18 +86,48 @@ func (cmd command) context(args []string) error {
 	}
 	r, err := harness.ReadContext(c.Primitives.Context, screen)
 	if err != nil {
-		return commandError{status: exitUnknown, text: err.Error()}
+		return cmd.unknownContext(machine, contextJSON{Name: a.Name, Source: "screen", Reason: err.Error()})
 	}
 	model := ""
 	if c.Models.Selected != nil {
 		model, _ = harness.ReadSelectedModel(*c.Models.Selected, screen)
 	}
-	bandName := "none"
-	if band := harness.ActiveContextBand(c, model, r); band != nil {
-		bandName = band.Name
+	band := harness.ActiveContextBand(c, model, r)
+	percent := r.Percent * 100
+	return cmd.writeContext(machine, contextJSON{Name: a.Name, Model: model, Used: &r.Used, Limit: &r.Limit, Percent: &percent, Band: bandName(band), Source: "screen"})
+}
+
+func bandName(band *harness.ContextBand) *string {
+	if band == nil {
+		return nil
 	}
-	_, err = fmt.Fprintf(cmd.stdout, "%s\t%s/%s\t%.0f%%\t%s\n", a.Name, compactTokenCount(r.Used), compactTokenCount(r.Limit), r.Percent*100, bandName)
+	return &band.Name
+}
+
+// writeContext prints an observed reading. Percent is 0-100 in both forms.
+func (cmd command) writeContext(machine bool, r contextJSON) error {
+	r.Status = "observed"
+	if machine {
+		return writeJSON(cmd.stdout, r)
+	}
+	band := "none"
+	if r.Band != nil {
+		band = *r.Band
+	}
+	_, err := fmt.Fprintf(cmd.stdout, "%s\t%s/%s\t%.0f%%\t%s\n", r.Name, compactTokenCount(*r.Used), compactTokenCount(*r.Limit), *r.Percent, band)
 	return err
+}
+
+// unknownContext reports a reading that could not be observed. The JSON form
+// still prints, and the command exits unknown either way.
+func (cmd command) unknownContext(machine bool, r contextJSON) error {
+	if machine {
+		r.Status = "unknown"
+		if err := writeJSON(cmd.stdout, r); err != nil {
+			return err
+		}
+	}
+	return commandError{status: exitUnknown, text: r.Reason}
 }
 func (cmd command) limits(args []string) error {
 	collar := ""

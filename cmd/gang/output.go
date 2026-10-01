@@ -29,6 +29,43 @@ type queueRow struct {
 	Excerpt   string          `json:"excerpt"`
 }
 
+type rosterJSON struct {
+	WatchdogAvailable bool        `json:"watchdog_available"`
+	Agents            []agentJSON `json:"agents"`
+}
+
+type agentJSON struct {
+	Name             core.AgentName  `json:"name"`
+	HitchID          core.HitchID    `json:"hitch_id"`
+	Status           core.Status     `json:"status"`
+	Activity         core.Activity   `json:"activity"`
+	Collar           string          `json:"collar"`
+	Pane             string          `json:"pane"`
+	ProcessAvailable bool            `json:"process_available"`
+	Evidence         string          `json:"evidence"`
+	Compaction       *compactionJSON `json:"compaction,omitempty"`
+}
+
+type compactionJSON struct {
+	ID     string `json:"id"`
+	Status string `json:"status"`
+	Reason string `json:"reason"`
+}
+
+// contextJSON is an observed reading, or an unknown one with its reason and
+// null counts.
+type contextJSON struct {
+	Name    core.AgentName `json:"name"`
+	Status  string         `json:"status"`
+	Reason  string         `json:"reason,omitempty"`
+	Model   string         `json:"model"`
+	Used    *int64         `json:"used"`
+	Limit   *int64         `json:"limit"`
+	Percent *float64       `json:"percent"`
+	Band    *string        `json:"band"`
+	Source  string         `json:"source"`
+}
+
 func writeJSON(w io.Writer, value any) error {
 	return json.NewEncoder(w).Encode(value)
 }

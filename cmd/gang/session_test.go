@@ -12,11 +12,13 @@ import (
 func TestRosterDisplaysRegisteredCollarName(t *testing.T) {
 	f := newStateFixture(t)
 	f.add(t, "a", "worker", "claude")
-	if err := f.cmd.roster([]string{"--porcelain"}); err != nil {
+	if err := f.cmd.roster([]string{"--json"}); err != nil {
 		t.Fatal(err)
 	}
-	if !strings.Contains(f.out.String(), "\tclaude\t") {
-		t.Fatalf("roster = %q", f.out.String())
+	var got rosterJSON
+	decodeOutput(t, f, &got)
+	if len(got.Agents) != 1 || got.Agents[0].Collar != "claude" {
+		t.Fatalf("roster = %+v", got)
 	}
 }
 
