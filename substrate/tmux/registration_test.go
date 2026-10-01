@@ -120,6 +120,21 @@ func TestPaneRegistrationPrivateServer(t *testing.T) {
 	if err := b.SendRegisteredKeys(ctx, id, "sh},1}", substrate.Keys{Text: "wrong"}); err == nil {
 		t.Fatal("tmux format syntax accepted in foreground command")
 	}
+	runTmux(t, binary, socket, "choose-tree", "-t", id.Pane)
+	if mode := strings.TrimSpace(runTmux(t, binary, socket, "display-message", "-p", "-t", id.Pane, "#{pane_mode}")); mode != "tree-mode" {
+		t.Fatalf("fixture mode = %q", mode)
+	}
+	foreground, err := b.ForegroundCommand(ctx, pane.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := b.SendRegisteredKeys(ctx, id, foreground, substrate.Keys{Text: "q"}); err == nil {
+		t.Fatal("input to an unsupported pane mode was accepted")
+	}
+	if mode := strings.TrimSpace(runTmux(t, binary, socket, "display-message", "-p", "-t", id.Pane, "#{pane_mode}")); mode != "tree-mode" {
+		t.Fatalf("unsupported mode changed: %q", mode)
+	}
+	runTmux(t, binary, socket, "send-keys", "-t", id.Pane, "q")
 	// Change the generation only after the ordinary read-side identity check.
 	// The final tmux guard must reject both typing and removal.
 	wrapper := filepath.Join(root, "replace-before-mutation")

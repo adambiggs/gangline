@@ -181,6 +181,10 @@ func (b *Backend) SendRegisteredKeys(ctx context.Context, id PaneIdentity, comma
 		_, err := b.CheckPane(ctx, id)
 		return err
 	}
+	// Capture reads the application screen even while tmux is in copy mode.
+	// Leave that viewing mode before typing so text cannot execute its bindings.
+	cancelCopy := tmuxCommand("if-shell", "-F", "-t", id.Pane, "#{==:#{pane_mode},copy-mode}", tmuxCommand("send-keys", "-t", id.Pane, "-X", "cancel"))
+	commands = append([]string{cancelCopy}, commands...)
 	return b.mutateRegisteredPane(ctx, id, strings.Join(commands, " ; "), command, 0, false)
 }
 
@@ -228,8 +232,9 @@ func (b *Backend) mutateRegisteredPane(ctx context.Context, id PaneIdentity, com
 	}
 	if foreground != "" {
 		condition = fmt.Sprintf("#{&&:%s,#{==:#{pane_current_command},%s}}", condition, foreground)
+		condition = fmt.Sprintf("#{&&:%s,#{||:#{==:#{pane_in_mode},0},#{==:#{pane_mode},copy-mode}}}", condition)
 	}
-	fallback := "display-message -p 'registered pane identity changed'"
+	fallback := "display-message -p 'registered pane identity changed or input mode is unsupported'"
 	var out string
 	if len(command) > maxInlineRegisteredCommandBytes {
 		script := tmuxCommand("if-shell", "-F", "-t", id.Pane, condition, command, fallback) + "\n"

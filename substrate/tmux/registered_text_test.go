@@ -46,7 +46,15 @@ func TestRegisteredLongTextPreservesExactBytes(t *testing.T) {
 	}
 }
 
+func TestRegisteredTextInCopyMode(t *testing.T) {
+	testRegisteredTextMode(t, "\x1b[200~[gang:gangline:startup#b480bb271b092c51 startup] No assignment was supplied. [/gang:gangline:startup#b480bb271b092c51]\x1b[201~\n", true)
+}
+
 func testRegisteredText(t *testing.T, want string) {
+	testRegisteredTextMode(t, want, false)
+}
+
+func testRegisteredTextMode(t *testing.T, want string, copyMode bool) {
 	t.Helper()
 	t.Setenv("TMUX", "")
 	t.Setenv("TMUX_PANE", "")
@@ -95,6 +103,9 @@ func testRegisteredText(t *testing.T, want string) {
 		t.Fatalf("shell foreground command = %q: %v", command, err)
 	}
 	runTmux(t, binary, socket, "set-buffer", "keep")
+	if copyMode {
+		runTmux(t, binary, socket, "copy-mode", "-t", id.Pane)
+	}
 	if err := b.SendRegisteredKeys(context.Background(), id, command, substrate.Keys{Text: want + "END", Names: []string{"C-j"}}); err != nil {
 		t.Fatal(err)
 	}
