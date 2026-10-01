@@ -201,6 +201,7 @@ func TestEveryCommandFlagParserConstructs(t *testing.T) {
 		"capture":    func() error { return cmd.capture(bad) },
 		"down":       func() error { return cmd.down(bad) },
 		"roster":     func() error { return cmd.roster(bad) },
+		"queue":      func() error { return cmd.queue(bad) },
 		"models":     func() error { _, err := parseCollarFlags("models", bad, "codex"); return err },
 		"upgrade":    func() error { return cmd.upgrade(bad) },
 	}

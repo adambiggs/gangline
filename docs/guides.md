@@ -19,7 +19,7 @@ Inside an agent window, omit `--from`: Gangline reads the sender from the
 registered pane. Outside one, supply `--from`; the envelope marks that name
 as self-declared. `gang send` prints a message ID and `delivered`, `accepted`,
 or `queued`. An `accepted` message belongs to the harness's input queue: do
-not send it again. `gang queue` lists messages still pending in Gangline.
+not send it again. `gang queue` lists messages still pending in Gangline and why each waits.
 The receipt tells you where the input is; the pane shows what the worker does.
 
 To stop a current turn and follow it with direction:

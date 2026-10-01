@@ -35,10 +35,15 @@ retained message path. Keep that file for diagnosis. An ordinary
 
 ## A message stays queued
 
-Run `gang queue NAME` and `gang capture --composer NAME`. The recipient may
-be at a prompt, have unsubmitted draft input, or be waiting for a scheduled
-delivery time. Resolve native prompts yourself, then run `gang tick`.
-Observation does not submit or discard a draft.
+Run `gang queue NAME`. Each message is `ready`, `scheduled` with the time it
+becomes due, `blocked` with the reason, or `unknown` when Gangline cannot read
+the recipient. A blocked message names what holds it, such as the recipient's
+status, a native prompt, a draft in its composer, a mid-turn harness that
+takes input only when idle, an unverified startup, a compaction resume ahead
+of it, or expiry. A ready message behind another names the first message in
+line. Check a draft with `gang capture --composer NAME`, resolve native prompts
+yourself, then run `gang tick`. Observation does not submit or discard a
+draft.
 
 `accepted` means the native queue already owns the input. Do not resend it.
 If the result is `unverified`, inspect the recipient before deciding how to

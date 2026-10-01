@@ -46,11 +46,21 @@ func isContextBandNotice(e core.Envelope) bool {
 	return e.From.Kind == core.SenderGangline && e.From.Name == "context-band"
 }
 
-func envelopeText(e core.Envelope) (string, error) {
-	sender := string(e.From.Name)
-	if e.From.Kind == core.SenderSelfDeclared {
-		sender = "self-declared:" + sender
+// isResumeEnvelope reports a compaction resume, which is delivered only when
+// its compaction starts and holds every later message behind it.
+func isResumeEnvelope(e core.Envelope) bool {
+	return e.Purpose == "resume" || e.From.Name == "compact" && strings.HasPrefix(string(e.ID), "resume-")
+}
+
+func senderLabel(s core.Sender) string {
+	if s.Kind == core.SenderSelfDeclared {
+		return "self-declared:" + string(s.Name)
 	}
+	return string(s.Name)
+}
+
+func envelopeText(e core.Envelope) (string, error) {
+	sender := senderLabel(e.From)
 	if e.Startup != nil {
 		return startupEnvelopeText(e.Startup, sender, e.Token, e.Purpose, e.Message.Text)
 	}
@@ -95,48 +105,68 @@ func startupEnvelopeText(sections *core.StartupSections, sender, token, purpose,
 	return wire, nil
 }
 
-// available observes the composer even during a running turn. A permission
+// inputVerdict says whether the recipient's composer can take input now and,
+// when it cannot, why. Blocker carries a native blocker's evidence only.
+type inputVerdict struct {
+	Free            bool
+	Blocker, Reason string
+}
+
+// inputState observes the composer even during a running turn. A permission
 // prompt or foreign foreground process never qualifies as a free composer.
-func (run *runtime) available(l *store.LockedAgent, a *core.Agent, b harnessInput, c harness.Collar) (bool, string, error) {
+func (run *runtime) inputState(l *store.LockedAgent, a *core.Agent, b harnessInput, c harness.Collar) (inputVerdict, error) {
 	if err := run.checkRecipient(*a); err != nil {
-		return false, "", err
+		return inputVerdict{}, err
 	}
-	if a.Status != core.Active || a.Activity == core.Interrupting || a.Compaction != nil && a.Compaction.Status == "submitted" {
-		return false, "", nil
+	switch {
+	case a.Status != core.Active:
+		return inputVerdict{Reason: "recipient is " + string(a.Status)}, nil
+	case a.Activity == core.Interrupting:
+		return inputVerdict{Reason: "recipient is being interrupted"}, nil
+	case a.Compaction != nil && a.Compaction.Status == "submitted":
+		return inputVerdict{Reason: "compaction request awaits the harness"}, nil
 	}
 	screen, err := b.Capture(context.Background(), substrate.PaneID(a.Pane))
 	if err != nil {
-		return false, "", err
+		return inputVerdict{}, err
 	}
 	blocker, blocked, err := harness.InputBlocked(c, screen)
 	if err != nil {
-		return false, "", err
+		return inputVerdict{}, err
 	}
 	if blocked {
 		if a.Activity != core.Blocked || a.Evidence != blocker.Evidence {
 			if err := run.apply(l, a, core.Event{Type: "activity_observed", Activity: core.Blocked, Reason: blocker.Evidence}); err != nil {
-				return false, "", err
+				return inputVerdict{}, err
 			}
 		}
-		return false, blocker.Evidence, nil
+		return inputVerdict{Blocker: blocker.Evidence, Reason: blocker.Evidence}, nil
 	}
 	composer, err := harness.ReadComposer(c.Primitives.Composer, screen)
 	if err != nil {
-		return false, "", err
+		return inputVerdict{}, err
 	}
 	if composer.Text != "" {
-		return false, "", nil
+		return inputVerdict{Reason: "composer holds unsent input"}, nil
 	}
 	if !c.Primitives.MidTurn {
 		idle, err := harness.Idle(c, screen)
-		if err != nil || !idle {
-			return false, "", err
+		if err != nil {
+			return inputVerdict{}, err
+		}
+		if !idle {
+			return inputVerdict{Reason: "recipient is mid-turn and its harness takes input only when idle"}, nil
 		}
 	}
 	if err := requireHarnessForeground(context.Background(), b, substrate.PaneID(a.Pane), c); err != nil {
-		return false, "", err
+		return inputVerdict{}, err
 	}
-	return true, "", nil
+	return inputVerdict{Free: true}, nil
+}
+
+func (run *runtime) available(l *store.LockedAgent, a *core.Agent, b harnessInput, c harness.Collar) (bool, string, error) {
+	v, err := run.inputState(l, a, b, c)
+	return v.Free, v.Blocker, err
 }
 func (run *runtime) deliver(l *store.LockedAgent, a *core.Agent, e core.Envelope, b harnessInput, c harness.Collar) (string, error) {
 	if err := run.checkRecipient(*a); err != nil {
@@ -323,7 +353,7 @@ func (run *runtime) drainLocked(l *store.LockedAgent, a *core.Agent, target core
 		if next == nil {
 			return result, pending, nil
 		}
-		if next.Purpose == "resume" || next.From.Name == "compact" && strings.HasPrefix(string(next.ID), "resume-") {
+		if isResumeEnvelope(*next) {
 			return result, pending, nil
 		}
 		_, failedStartup, err := retainedStartup(l.Paths, "failed", a.LastFailed)

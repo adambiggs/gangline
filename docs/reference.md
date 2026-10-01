@@ -49,7 +49,7 @@ contract and assignment.
 | Command | Effect |
 | --- | --- |
 | `gang send NAME [OPTIONS] [BODY]` | Send BODY, or read stdin when absent, and report its receipt. |
-| `gang queue [NAME]` | List pending message IDs, recipients, and senders. |
+| `gang queue [NAME] [--json]` | List pending messages with ID, recipient, sender, kind, a text excerpt, and state: `ready`, `scheduled` with its due time, `blocked` with the reason, or `unknown` with the reason. |
 | `gang interrupt [NAME] [-m\|--message REASON]` | Interrupt the turn; deliver an optional reason after it stops. |
 | `gang compact [NAME] [--resume TEXT]` | Compact at native idle; submit the continuation behind compaction, ahead of later input. Refuses while startup input is unverified; a queued compaction waits until startup input is verified (`gang hitch NAME --recover`). |
 | `gang compact NAME --recover` | Interrupt a submitted or unconfirmed compaction with the collar's recovery keys while the pane shows it running. Refuses without sending on an approval, trust, draft, idle, or unrecognized screen; when the resume note was never queued or the harness has taken it; and after an earlier recovery of the same compaction. Records the compaction as unconfirmed and reports the screen it left. |
@@ -101,6 +101,9 @@ file and send its path.
 | `gang snooze --status` / `gang snooze --clear [ID]` | Inspect or cancel a pending wake. The lead sees uncertain notices and fallback wakes, and can clear one by ID. |
 | `gang log [--agent NAME\|HITCH_ID] [--type TYPE\|KIND] [LOG.jsonl]` | Print JSONL events from a team or saved log, with optional filters. |
 | `gang whoami` | Print the calling pane's registered identity. |
+
+`gang queue --json` prints one JSON object for scripts with exact
+timestamps; the human form abbreviates and may change layout.
 
 Window titles use `?name?` for changing or unknown state, `~name~` for idle,
 `-name-` for work, and `!name!` for blocked, wedged, or failed agents.

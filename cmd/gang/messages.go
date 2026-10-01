@@ -6,7 +6,9 @@ import (
 	"fmt"
 	"os"
 	"strings"
+	"text/tabwriter"
 	"time"
+	"unicode"
 
 	"github.com/adambiggs/gangline/core"
 	"github.com/adambiggs/gangline/harness"
@@ -252,7 +254,13 @@ func (cmd command) send(args []string) (result error) {
 	return deliveryResult(outcome)
 }
 func (cmd command) queue(args []string) error {
-	if len(args) > 1 {
+	machine := false
+	flags := boundFlagSet("queue", map[string]any{"json": &machine})
+	positionals, err := parseOptions(flags, args)
+	if err != nil {
+		return usageError("queue: %v", err)
+	}
+	if len(positionals) > 1 {
 		return usageError("queue: expected at most one agent")
 	}
 	run, err := cmd.runtime()
@@ -260,8 +268,8 @@ func (cmd command) queue(args []string) error {
 		return err
 	}
 	var agents []core.Agent
-	if len(args) == 1 {
-		a, err := run.resolve(args[0])
+	if len(positionals) == 1 {
+		a, err := run.resolve(positionals[0])
 		if err != nil {
 			return err
 		}
@@ -272,22 +280,155 @@ func (cmd command) queue(args []string) error {
 			return err
 		}
 	}
+	rows := []queueRow{}
 	for _, a := range agents {
+		pending, err := run.pendingRows(a)
+		if err != nil {
+			return err
+		}
+		rows = append(rows, pending...)
+	}
+	if machine {
+		return writeJSON(cmd.stdout, queueJSON{Messages: rows})
+	}
+	if len(rows) == 0 {
+		return nil
+	}
+	w := tabwriter.NewWriter(cmd.stdout, 0, 0, 2, ' ', 0)
+	fmt.Fprintln(w, "ID\tTO\tFROM\tKIND\tSTATE\tDETAIL\tTEXT")
+	for _, row := range rows {
+		detail := valueOr(row.Reason, "-")
+		if row.DueAt != nil {
+			detail = "due " + row.DueAt.Format(time.RFC3339)
+		}
+		fmt.Fprintf(w, "%s\t%s\t%s\t%s\t%s\t%s\t%s\n", row.ID, row.To, senderLabel(row.From), row.Kind, row.State, detail, row.Excerpt)
+	}
+	return w.Flush()
+}
+
+// Queue states. A ready message's recipient takes input at its next drain;
+// unknown means the recipient could not be observed.
+const (
+	queueReady     = "ready"
+	queueScheduled = "scheduled"
+	queueBlocked   = "blocked"
+	queueUnknown   = "unknown"
+)
+
+// pendingRows classifies a's pending messages with the rules drainLocked
+// applies, observing the recipient without delivering or withdrawing anything.
+// Releasing the lock starts a tick for due input, as other state readers do.
+func (run *runtime) pendingRows(a core.Agent) (rows []queueRow, result error) {
+	l, current, err := run.acquire(a.ID, false)
+	locked := errors.Is(err, store.ErrLocked)
+	if err != nil && !locked {
+		return nil, err
+	}
+	var pending []core.Envelope
+	if locked {
 		p, err := run.team.Agent(a.ID)
 		if err != nil {
-			return err
+			return nil, err
 		}
-		messages, err := p.ListNew()
-		if err != nil {
-			return err
+		if pending, err = p.ListNew(); err != nil {
+			return nil, err
 		}
-		for _, e := range messages {
-			if _, err := fmt.Fprintf(cmd.stdout, "%s\t%s\t%s\n", e.ID, a.Name, e.From.Name); err != nil {
-				return err
-			}
+	} else {
+		defer func() { result = errors.Join(result, run.release(l)) }()
+		if err := run.checkDeadlines(l, &current); err != nil {
+			return nil, err
+		}
+		if pending, err = l.Paths.ListNew(); err != nil {
+			return nil, err
 		}
 	}
-	return nil
+	now := run.cmd.now()
+	rows = make([]queueRow, 0, len(pending))
+	var head, resume *core.Envelope
+	var verdict *queueRow
+	for i, e := range pending {
+		row := queueRow{ID: e.ID, To: a.Name, HitchID: a.ID, From: e.From, Kind: valueOr(e.Purpose, "message"), CreatedAt: e.CreatedAt, Excerpt: messageExcerpt(e.Message.Text)}
+		expired := !e.NotAfter.IsZero() && !e.NotAfter.After(now)
+		switch {
+		case !expired && e.NotBefore.After(now):
+			due := e.NotBefore
+			row.State, row.DueAt = queueScheduled, &due
+		case locked:
+			row.State, row.Reason = queueUnknown, "agent state is locked by another gang operation"
+		case current.Status != core.Active:
+			row.State, row.Reason = queueBlocked, "recipient is "+string(current.Status)
+		case expired:
+			row.State, row.Reason = queueBlocked, "expired; the next delivery withdraws it"
+		case resume != nil:
+			row.State, row.Reason = queueBlocked, "behind compaction resume "+string(resume.ID)
+		case isResumeEnvelope(e):
+			row.State, row.Reason = queueBlocked, "waits for its compaction to start"
+			resume = &pending[i]
+		default:
+			if verdict == nil {
+				v, err := run.queueVerdict(l, &current)
+				if err != nil {
+					return nil, err
+				}
+				verdict = &v
+			}
+			row.State, row.Reason = verdict.State, verdict.Reason
+			if head != nil && row.State == queueReady {
+				row.Reason = "after " + string(head.ID)
+			}
+		}
+		if head == nil && !expired && row.DueAt == nil {
+			head = &pending[i]
+		}
+		rows = append(rows, row)
+	}
+	return rows, nil
+}
+
+// queueVerdict says whether the next due message would be delivered now.
+func (run *runtime) queueVerdict(l *store.LockedAgent, a *core.Agent) (queueRow, error) {
+	_, failedStartup, err := retainedStartup(l.Paths, "failed", a.LastFailed)
+	if err != nil {
+		return queueRow{}, err
+	}
+	if failedStartup {
+		return queueRow{State: queueBlocked, Reason: fmt.Sprintf("startup input is unverified; run gang hitch %s --recover", a.Name)}, nil
+	}
+	c, err := loadCollar(a.Collar, run.settings)
+	if err != nil {
+		return queueRow{State: queueUnknown, Reason: err.Error()}, nil
+	}
+	b, err := run.input()
+	if err != nil {
+		return queueRow{State: queueUnknown, Reason: err.Error()}, nil
+	}
+	v, err := run.inputState(l, a, b, c)
+	var refusal commandError
+	switch {
+	case errors.As(err, &refusal) && refusal.status == exitRefused:
+		return queueRow{State: queueBlocked, Reason: err.Error()}, nil
+	case err != nil:
+		return queueRow{State: queueUnknown, Reason: err.Error()}, nil
+	case v.Free:
+		return queueRow{State: queueReady}, nil
+	}
+	return queueRow{State: queueBlocked, Reason: v.Reason}, nil
+}
+
+const excerptRunes = 60
+
+// messageExcerpt flattens text to one line and bounds it for display.
+func messageExcerpt(text string) string {
+	text = strings.Join(strings.Fields(strings.Map(func(r rune) rune {
+		if !unicode.IsPrint(r) {
+			return ' '
+		}
+		return r
+	}, text)), " ")
+	if runes := []rune(text); len(runes) > excerptRunes {
+		return string(runes[:excerptRunes]) + "…"
+	}
+	return text
 }
 func (cmd command) interrupt(args []string) (result error) {
 	reason := ""
