@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.9.2](https://github.com/adambiggs/gangline/compare/gangline-v1.9.1...gangline-v1.9.2) (2026-10-01)
+
+
+### Bug Fixes
+
+* **tmux:** dismiss output viewers before guarded input ([a3e7be8](https://github.com/adambiggs/gangline/commit/a3e7be8f40a92154492dd595a414f765675981b3))
+
 ## [1.9.1](https://github.com/adambiggs/gangline/compare/gangline-v1.9.0...gangline-v1.9.1) (2026-10-01)
 
 
