@@ -629,18 +629,24 @@ func (run *runtime) flushUsageWork() error {
 	}); err != nil {
 		return err
 	}
-	for _, n := range notices {
-		e := core.Envelope{ID: n.ID, Token: n.Token, Recipient: n.RecipientID, To: n.RecipientName, From: core.Sender{Kind: core.SenderGangline, Name: "usage-band"}, Message: core.Message{Text: n.Text}, CreatedAt: n.CreatedAt}
-		if _, err := run.publishUsageEnvelope(e); err != nil {
-			return err
+	// Recipients are independent: a publication error stops only that
+	// recipient's later envelopes, so none of them overtakes the failed one.
+	failed := map[core.HitchID]bool{}
+	var errs []error
+	publish := func(kind string, e core.Envelope) {
+		if failed[e.Recipient] {
+			return
 		}
+		if _, err := run.publishUsageEnvelope(e); err != nil {
+			failed[e.Recipient] = true
+			errs = append(errs, fmt.Errorf("%s for %s: %w", kind, e.To, err))
+		}
+	}
+	for _, n := range notices {
+		publish("usage notice", core.Envelope{ID: n.ID, Token: n.Token, Recipient: n.RecipientID, To: n.RecipientName, From: core.Sender{Kind: core.SenderGangline, Name: "usage-band"}, Message: core.Message{Text: n.Text}, CreatedAt: n.CreatedAt})
 	}
 	for _, s := range wakes {
-		text := snoozeWakeText(s, now)
-		e := core.Envelope{ID: s.ID, Token: s.Token, Recipient: s.RecipientID, To: s.RecipientName, From: core.Sender{Kind: core.SenderGangline, Name: "snooze"}, Message: core.Message{Text: text}, CreatedAt: now}
-		if _, err := run.publishUsageEnvelope(e); err != nil {
-			return err
-		}
+		publish("wake", core.Envelope{ID: s.ID, Token: s.Token, Recipient: s.RecipientID, To: s.RecipientName, From: core.Sender{Kind: core.SenderGangline, Name: "snooze"}, Message: core.Message{Text: snoozeWakeText(s, now)}, CreatedAt: now})
 	}
-	return nil
+	return errors.Join(errs...)
 }

@@ -1108,3 +1108,31 @@ func TestUsageWindowKindNeedsNativeIdentification(t *testing.T) {
 		}
 	}
 }
+
+func TestFailedNoticeRecipientDoesNotBlockOtherWakes(t *testing.T) {
+	f := newStateFixture(t)
+	lead := f.add(t, "lead-id", "lead", "claude")
+	worker := f.add(t, "caller-id", "worker", "codex")
+	f.env["GANGLINE_HITCH_ID"] = string(worker.ID)
+	if err := f.run.withUsageState(func(state *usageState) error {
+		state.Notices = []usageNotice{{ID: "usage-band-notice", Token: "0123456789abcdef", Text: "usage warning", CreatedAt: f.cmd.now(), RecipientID: lead.ID, RecipientName: lead.Name}}
+		state.Snoozes[string(worker.ID)] = usageSnooze{ID: "snooze-wake", Token: "fedcba9876543210", CallerID: worker.ID, CallerName: worker.Name, At: f.cmd.now().Add(-time.Hour), Note: "Resume work"}
+		state.Snoozes[string(lead.ID)] = usageSnooze{ID: "snooze-lead", Token: "00112233445566ff", CallerID: lead.ID, CallerName: lead.Name, At: f.cmd.now().Add(-time.Hour), Note: "Lead work"}
+		return nil
+	}); err != nil {
+		t.Fatal(err)
+	}
+	// The screen is a Codex composer, which the lead's Claude collar cannot parse.
+	err := f.run.flushUsageWork()
+	state := usageSnapshot(t, f.run)
+	if f.input.submits != 1 || !strings.Contains(f.input.pasted, "Resume work") || len(state.Snoozes) != 1 || state.Snoozes[string(lead.ID)].Submission != "" || len(state.Recent) != 1 {
+		t.Fatalf("worker wake was not delivered past the lead failure: submits=%d text=%q err=%v", f.input.submits, f.input.pasted, err)
+	}
+	// The lead's wake waits behind its failed notice rather than overtaking it.
+	if err == nil || !strings.Contains(err.Error(), "usage notice for lead: ") || strings.Count(err.Error(), "for lead") != 1 {
+		t.Fatalf("lead input failure was not reported once with its recipient: %v", err)
+	}
+	if len(state.Notices) != 1 || state.Notices[0].Submission != "" {
+		t.Fatalf("failed lead notice was not kept pending: %+v", state.Notices)
+	}
+}
