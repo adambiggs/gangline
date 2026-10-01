@@ -118,7 +118,9 @@ work. Generation tokens reject superseded timers. Last drop and team removal
 disarm the timer. Contention or scheduler errors fail visibly; uncertain
 launchd cleanup preserves the plist for a later attempt. Unsupported hosts
 log `watchdog_unavailable` once per outage and retain ordinary ticks; the next
-armed timer logs `watchdog_available`.
+armed timer logs `watchdog_available`. An elapsed timer's tick that cannot
+re-arm it, because another tick holds the scheduler lock or the transaction
+fails, also marks the outage so the next caller that can arm replaces it.
 
 Replacement costs bounded scheduler stop/start work and, on macOS, plist
 write/removal. Whole-team observation visits registered agents. Scoped ticks

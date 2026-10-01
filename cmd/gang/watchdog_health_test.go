@@ -6,6 +6,7 @@ import (
 	"path/filepath"
 	goruntime "runtime"
 	"strings"
+	"syscall"
 	"testing"
 
 	"github.com/adambiggs/gangline/core"
@@ -238,5 +239,70 @@ func TestElapsedTimerTickWithoutVisibilityReportsOutage(t *testing.T) {
 	}
 	if _, err := os.Stat(filepath.Join(f.run.team.Directory, "watchdog-unavailable")); err != nil {
 		t.Fatalf("elapsed timer left unreplaced without an outage marker: %v", err)
+	}
+}
+
+func TestElapsedTimerTickThatLosesTheLockReportsOutage(t *testing.T) {
+	f, s := watchdogFixture(t)
+	if err := f.cmd.tick(nil); err != nil {
+		t.Fatal(err)
+	}
+	elapsed := s.armed
+	// The transient timer unloads once it fires; its intent file stays.
+	s.armed = ""
+	marker := filepath.Join(f.run.team.Directory, "watchdog-unavailable")
+	held, err := os.OpenFile(filepath.Join(f.run.team.Directory, "watchdog.lock"), os.O_RDWR, 0600)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer held.Close()
+	if err := syscall.Flock(int(held.Fd()), syscall.LOCK_EX|syscall.LOCK_NB); err != nil {
+		t.Fatal(err)
+	}
+	if err := f.cmd.tick([]string{"--source", "watchdog", "--watchdog", "superseded"}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := os.Stat(marker); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("superseded timer reported an outage: %v", err)
+	}
+	if err := f.cmd.tick([]string{"--source", "watchdog", "--watchdog", elapsed}); err != nil {
+		t.Fatal(err)
+	}
+	if err := syscall.Flock(int(held.Fd()), syscall.LOCK_UN); err != nil {
+		t.Fatal(err)
+	}
+	// The sweep that held the lock cannot see processes, so it keeps the intent.
+	f.cmd.paneBackend = identityFixture{f.input, true, false, nil, nil}
+	if err := f.cmd.tick(nil); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := os.Stat(marker); err != nil {
+		t.Fatalf("elapsed timer left unreplaced without an outage marker: %v", err)
+	}
+	f.cmd.paneBackend = identityFixture{f.input, true, true, nil, nil}
+	f.env["GANG_AGENT_ID"] = "a"
+	f.env["TMUX_PANE"] = "%1"
+	if err := f.cmd.snooze([]string{"--at", "2h"}); err != nil || s.armed == "" {
+		t.Fatalf("not rearmed after the lost tick: %v armed=%q", err, s.armed)
+	}
+}
+
+func TestElapsedTimerTickThatFailsReportsOutage(t *testing.T) {
+	f, s := watchdogFixture(t)
+	if err := f.cmd.tick(nil); err != nil {
+		t.Fatal(err)
+	}
+	elapsed := s.armed
+	s.armed = ""
+	s.failure = errors.New("scheduler timed out")
+	if err := f.cmd.tick([]string{"--source", "watchdog", "--watchdog", elapsed}); !errors.Is(err, s.failure) {
+		t.Fatalf("lost arm error: %v", err)
+	}
+	if _, err := os.Stat(filepath.Join(f.run.team.Directory, "watchdog-unavailable")); err != nil {
+		t.Fatalf("failed rearm left no outage marker: %v", err)
+	}
+	s.failure = nil
+	if err := f.cmd.tick([]string{"--agent", "a"}); err != nil || s.armed == "" {
+		t.Fatalf("not rearmed after the failed tick: %v armed=%q", err, s.armed)
 	}
 }

@@ -94,15 +94,21 @@ func (cmd command) watchdogScheduler(directory string) watchdogScheduler {
 }
 
 // updateWatchdog holds only the scheduler transaction, never agent work. A tick
-// that loses this nonblocking lock leaves replacement to the current owner.
+// that loses this nonblocking lock leaves replacement to the current owner,
+// unless it is the recorded timer's own elapsed tick, which marks an outage.
 func (run *runtime) updateWatchdog(generation string, cleanup, reset bool) (proceed bool, result error) {
+	path := filepath.Join(run.team.Directory, "watchdog")
+	marker := filepath.Join(run.team.Directory, "watchdog-unavailable")
 	defer func() {
 		if result != nil {
+			// Only an elapsed timer's own tick re-arms it, so its failure leaves
+			// the team without a timer until a caller that can arm replaces it.
+			if generation != "" {
+				result = errors.Join(result, run.noteWatchdogOutage(marker, "watchdog timer not re-armed: "+result.Error()))
+			}
 			result = errors.Join(result, run.team.Append(core.Event{Type: "watchdog_failed", At: run.cmd.now(), Reason: result.Error()}))
 		}
 	}()
-	path := filepath.Join(run.team.Directory, "watchdog")
-	marker := filepath.Join(run.team.Directory, "watchdog-unavailable")
 	// A timer that elapsed during an outage leaves its intent behind, so an
 	// outage marker means the recorded timer may no longer exist.
 	outage, err := watchdogOutage(marker)
@@ -128,7 +134,18 @@ func (run *runtime) updateWatchdog(generation string, cleanup, reset bool) (proc
 	defer lock.Close()
 	if err := syscall.Flock(int(lock.Fd()), syscall.LOCK_EX|syscall.LOCK_NB); err != nil {
 		if errors.Is(err, syscall.EWOULDBLOCK) && !cleanup {
-			return generation == "", nil
+			if generation == "" {
+				return true, nil
+			}
+			// The holder may be a tick that cannot re-arm this elapsed timer.
+			intent, err := os.ReadFile(path)
+			if err != nil && !errors.Is(err, os.ErrNotExist) {
+				return false, err
+			}
+			if string(intent) != generation {
+				return false, nil
+			}
+			return false, run.noteWatchdogOutage(marker, "watchdog timer elapsed while another tick held the scheduler lock")
 		}
 		return false, fmt.Errorf("watchdog scheduler busy: %w", err)
 	}
@@ -221,13 +238,8 @@ func (run *runtime) updateWatchdog(generation string, cleanup, reset bool) (proc
 		if len(agents) == 0 && old == "" {
 			return false, nil
 		}
-		if !outage {
-			if err := run.team.Append(core.Event{Type: "watchdog_unavailable", At: run.cmd.now(), Reason: unavailableReason}); err != nil {
-				return false, err
-			}
-			if err := os.WriteFile(marker, nil, 0600); err != nil {
-				return false, err
-			}
+		if err := run.noteWatchdogOutage(marker, unavailableReason); err != nil {
+			return false, err
 		}
 		if old != "" && cleanup {
 			if _, err := fmt.Fprintln(run.cmd.stderr, "warning: watchdog unavailable; existing timer cancellation deferred"); err != nil {
@@ -293,6 +305,22 @@ func (run *runtime) updateWatchdog(generation string, cleanup, reset bool) (proc
 		return false, err
 	}
 	return true, nil
+}
+
+// noteWatchdogOutage logs an outage once and leaves the marker that makes the
+// next caller able to arm replace the recorded timer.
+func (run *runtime) noteWatchdogOutage(marker, reason string) error {
+	file, err := os.OpenFile(marker, os.O_CREATE|os.O_EXCL|os.O_WRONLY, 0600)
+	if errors.Is(err, os.ErrExist) {
+		return nil
+	}
+	if err != nil {
+		return err
+	}
+	if err := file.Close(); err != nil {
+		return err
+	}
+	return run.team.Append(core.Event{Type: "watchdog_unavailable", At: run.cmd.now(), Reason: reason})
 }
 
 func watchdogOutage(marker string) (bool, error) {
