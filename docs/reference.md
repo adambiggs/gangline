@@ -235,6 +235,10 @@ collar: {
 }
 ```
 
+What a collar renders into the launch command (`launch`, `models.option`,
+`options`, and hook `install_args`) takes effect when an agent is hitched. Gangline reads the collar again for each later operation, so edits to
+its other fields apply to agents already running.
+
 Each context band has a `name`, threshold `at` (a fraction from 0 to 1), and
 optional `message`. A nonfinal band without a message advises saving state and
 compacting at the next good stopping point; the last orders compaction now.

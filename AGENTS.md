@@ -10,9 +10,12 @@ Read [`docs/design.md`](docs/design.md) before changing anything and
 binary is installed, and never replace the binary a live team is using as part
 of a test.
 
-Collars, role briefs, the contract, and the model are all read when an agent
-is hitched. A running agent keeps what it started with; drop and re-hitch it
-to pick up changes.
+The contract, doctrine, role briefs, model, and effort take effect when an
+agent is hitched, as do the arguments a collar renders into its launch command:
+`launch`, `models.option`, `options`, and hook `install_args`. A running agent
+keeps them until it is dropped and re-hitched. Gangline reads the collar again
+for every later operation, so its other fields reach running agents at gang's
+next operation for them.
 
 ## Tests
 
