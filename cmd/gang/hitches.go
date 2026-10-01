@@ -211,6 +211,9 @@ func (cmd command) hitchWithStaleClaim(args []string, supersede bool) (result er
 	}
 	spec := launch.SpawnSpec(windowTitle(a), dir)
 	spec.Env["GANG_AGENT_NONCE"] = agentToken
+	// Hold the pane open until startup is observed, so a native CLI that
+	// exits at boot leaves its status and final output for the hitch error.
+	spec.KeepExited = true
 	for k, v := range map[string]string{"GANG_SESSION": run.settings.Session, "GANG_STATE_ROOT": run.settings.StateRoot, "GANG_COLLAR": o.Collar, "GANG_CONFIG_DIR": run.settings.ConfigDir, "GANG_AGENT_ID": id, "GANGLINE_HITCH_ID": id} {
 		spec.Env[k] = v
 	}
@@ -242,14 +245,34 @@ func (cmd command) hitchWithStaleClaim(args []string, supersede bool) (result er
 			result = errors.Join(result, b.RemoveRegisteredPane(context.Background(), registration))
 		}
 	}()
+	// A native exit fails the hitch with the native output as its reason and
+	// removes the held pane.
+	nativeExit := func(err error) error {
+		var exited *substrate.ExitedError
+		if !errors.As(err, &exited) {
+			return err
+		}
+		registered = false
+		return errors.Join(err, run.apply(l, &a, core.Event{Type: "hitch_failed", Reason: exited.Error()}))
+	}
+	// Hitch releases the hold on every path that keeps the pane, so a later
+	// exit closes it. The release outlives an expired boot context, and an exit
+	// it finds still fails the hitch.
+	defer func() {
+		if registered {
+			release, cancel := context.WithTimeout(context.Background(), operationTimeout)
+			defer cancel()
+			result = errors.Join(result, nativeExit(b.ReleaseExit(release, pane.ID)))
+		}
+	}()
 	visible, err := b.ProcessVisibility(ctx, pane.ID)
 	if err != nil {
-		return err
+		return nativeExit(err)
 	}
 	if visible {
 		identity, err := b.Identity(ctx, pane.ID)
 		if err != nil {
-			return err
+			return nativeExit(err)
 		}
 		a.Process = storedIdentity(identity)
 	} else if err := run.noteProcessUnavailable(a); err != nil {
@@ -267,7 +290,7 @@ func (cmd command) hitchWithStaleClaim(args []string, supersede bool) (result er
 	}
 	startup, _, err := harness.AwaitStartup(ctx, b.Capture, pane.ID, c)
 	if err != nil {
-		return err
+		return nativeExit(err)
 	}
 	if startup.State != harness.StartupReady {
 		if err := run.apply(l, &a, core.Event{Type: "hitch_blocked", Reason: startup.Prompt}); err != nil {

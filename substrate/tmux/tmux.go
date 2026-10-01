@@ -12,7 +12,9 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"time"
 	"unicode"
+	"unicode/utf8"
 
 	"github.com/adambiggs/gangline/substrate"
 )
@@ -56,6 +58,12 @@ func (backend *Backend) CreateSession(ctx context.Context, spec substrate.SpawnS
 		return substrate.Pane{}, err
 	}
 	arguments = append(arguments[:len(arguments)-1], "-s", backend.config.Session, arguments[len(arguments)-1])
+	if spec.KeepExited {
+		// This assumes the new session's only pane is the one the target
+		// resolves to; a user after-new-session hook that splits the window
+		// would make it the active pane instead.
+		arguments = append(arguments, ";", "set-option", "-p", "-t", "="+backend.config.Session+":", "remain-on-exit", "on")
+	}
 	return backend.launch(ctx, "create session", arguments)
 }
 
@@ -76,7 +84,95 @@ func (backend *Backend) Spawn(ctx context.Context, spec substrate.SpawnSpec) (su
 		return substrate.Pane{}, err
 	}
 	arguments = append(arguments[:len(arguments)-1], "-t", "="+backend.config.Session+":", arguments[len(arguments)-1])
-	return backend.launch(ctx, "spawn pane", arguments)
+	if !spec.KeepExited {
+		return backend.launch(ctx, "spawn pane", arguments)
+	}
+	// A detached window is not current, so a command after new-window would
+	// reach another pane. The hook runs with the new pane as its target. It
+	// takes its own global index so hooks already set still run, and it only
+	// exists inside this command list.
+	arguments = append([]string{"set-hook", "-g", keepExitedHook, "set-option -p remain-on-exit on", ";"}, arguments...)
+	arguments = append(arguments, ";", "set-hook", "-gu", keepExitedHook)
+	pane, err := backend.launch(ctx, "spawn pane", arguments)
+	if err != nil {
+		// Best effort: a list that stopped early may have left the hook set.
+		// The launch may have failed on ctx's deadline, so the cleanup gets
+		// its own.
+		cleanup, cancel := context.WithTimeout(context.WithoutCancel(ctx), keepExitedCleanup)
+		defer cancel()
+		_, _ = backend.run(cleanup, "set-hook", "-gu", keepExitedHook)
+	}
+	return pane, err
+}
+
+// keepExitedHook is a global hook slot reserved for one spawn's command list.
+const keepExitedHook = "after-new-window[7193]"
+
+// keepExitedCleanup bounds the removal of a hook a failed spawn left set.
+const keepExitedCleanup = 5 * time.Second
+
+// ReleaseExit restores the default close-on-exit behaviour for a pane spawned
+// with KeepExited. A pane whose process already exited is left open and
+// reported as an ExitedError carrying its final output.
+func (backend *Backend) ReleaseExit(ctx context.Context, pane substrate.PaneID) error {
+	if err := validPaneID(pane); err != nil {
+		return err
+	}
+	// One command list: the process cannot exit between the check and the release.
+	output, err := backend.run(ctx,
+		"display-message", "-p", "-t", string(pane), "#{pane_dead},#{pane_dead_status}", ";",
+		"capture-pane", "-p", "-J", "-S", "-", "-t", string(pane), ";",
+		"set-option", "-p", "-u", "-t", string(pane), "remain-on-exit")
+	if err != nil {
+		return tmuxError("release exited pane", err, output)
+	}
+	state, history, _ := strings.Cut(output, "\n")
+	dead, status, ok := strings.Cut(state, ",")
+	if !ok {
+		return fmt.Errorf("release exited pane: tmux returned %q", state)
+	}
+	if dead != "1" {
+		return nil
+	}
+	return exited(status, history)
+}
+
+func (backend *Backend) exitedPane(ctx context.Context, pane substrate.PaneID, status string) error {
+	history, err := backend.run(ctx, "capture-pane", "-p", "-J", "-S", "-", "-t", string(pane))
+	if err != nil {
+		return tmuxError("capture exited pane", err, history)
+	}
+	return exited(status, history)
+}
+
+// exitedOutputLines and exitedOutputBytes bound how much of an exited pane's
+// history an error carries; one joined line can be long.
+const (
+	exitedOutputLines = 10
+	exitedOutputBytes = 2048
+)
+
+func exited(status, history string) *substrate.ExitedError {
+	var kept []string
+	for _, line := range lines(history) {
+		line = strings.TrimRightFunc(line, unicode.IsSpace)
+		// tmux writes this notice into the pane when its process exits.
+		if line == "" || strings.HasPrefix(line, "Pane is dead") {
+			continue
+		}
+		kept = append(kept, line)
+	}
+	if len(kept) > exitedOutputLines {
+		kept = kept[len(kept)-exitedOutputLines:]
+	}
+	output := strings.Join(kept, "\n")
+	if len(output) > exitedOutputBytes {
+		output = output[len(output)-exitedOutputBytes:]
+		for output != "" && !utf8.RuneStart(output[0]) {
+			output = output[1:]
+		}
+	}
+	return &substrate.ExitedError{Status: status, Output: output}
 }
 
 func (backend *Backend) launchArguments(command string, spec substrate.SpawnSpec) ([]string, error) {
@@ -262,9 +358,12 @@ func (backend *Backend) Capture(ctx context.Context, pane substrate.PaneID) (sub
 	if err != nil {
 		return substrate.Screen{}, tmuxError("capture pane", err, raw)
 	}
-	cursor, err := backend.cursor(ctx, pane)
+	cursor, dead, err := backend.cursor(ctx, pane)
 	if err != nil {
 		return substrate.Screen{}, err
+	}
+	if dead != nil {
+		return substrate.Screen{}, backend.exitedPane(ctx, pane, *dead)
 	}
 	screen, err := parseScreen(raw, cursor)
 	if err != nil {
@@ -325,28 +424,33 @@ func (backend *Backend) Attach(ctx context.Context, pane substrate.PaneID) error
 	return nil
 }
 
-func (backend *Backend) cursor(ctx context.Context, pane substrate.PaneID) (substrate.Cursor, error) {
-	output, err := backend.run(ctx, "display-message", "-p", "-t", string(pane), "#{cursor_x},#{cursor_y},#{cursor_flag}")
+// cursor also reports whether the pane's process exited; a non-nil status
+// means it did, and holds the exit status, empty until tmux collects one.
+func (backend *Backend) cursor(ctx context.Context, pane substrate.PaneID) (substrate.Cursor, *string, error) {
+	output, err := backend.run(ctx, "display-message", "-p", "-t", string(pane), "#{cursor_x},#{cursor_y},#{cursor_flag},#{pane_dead},#{pane_dead_status}")
 	if err != nil {
-		return substrate.Cursor{}, tmuxError("read cursor", err, output)
+		return substrate.Cursor{}, nil, tmuxError("read cursor", err, output)
 	}
 	parts := strings.Split(strings.TrimSpace(output), ",")
-	if len(parts) != 3 {
-		return substrate.Cursor{}, fmt.Errorf("read cursor: tmux returned %q", output)
+	if len(parts) != 5 {
+		return substrate.Cursor{}, nil, fmt.Errorf("read cursor: tmux returned %q", output)
+	}
+	if parts[3] == "1" {
+		return substrate.Cursor{}, &parts[4], nil
 	}
 	column, err := nonNegative(parts[0])
 	if err != nil {
-		return substrate.Cursor{}, fmt.Errorf("read cursor column: %w", err)
+		return substrate.Cursor{}, nil, fmt.Errorf("read cursor column: %w", err)
 	}
 	row, err := nonNegative(parts[1])
 	if err != nil {
-		return substrate.Cursor{}, fmt.Errorf("read cursor row: %w", err)
+		return substrate.Cursor{}, nil, fmt.Errorf("read cursor row: %w", err)
 	}
 	visible, err := parseFlag(parts[2])
 	if err != nil {
-		return substrate.Cursor{}, fmt.Errorf("read cursor visibility: %w", err)
+		return substrate.Cursor{}, nil, fmt.Errorf("read cursor visibility: %w", err)
 	}
-	return substrate.Cursor{Row: row, Column: column, Visible: visible}, nil
+	return substrate.Cursor{Row: row, Column: column, Visible: visible}, nil, nil
 }
 
 func (backend *Backend) run(ctx context.Context, arguments ...string) (string, error) {

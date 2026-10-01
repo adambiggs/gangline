@@ -1,6 +1,9 @@
 package substrate
 
-import "context"
+import (
+	"context"
+	"strings"
+)
 
 // Substrate is the process and terminal surface required to drive a harness.
 // Implementations translate their native terminal representation into Screen.
@@ -33,6 +36,28 @@ type SpawnSpec struct {
 	Command   string
 	Args      []string
 	Env       map[string]string
+	// KeepExited holds the pane open after its process exits, so the exit
+	// status and final output stay readable until the pane is released.
+	KeepExited bool
+}
+
+// ExitedError reports a pane whose process has exited. Status is empty when
+// the substrate has not collected one: the process ended on a signal, or the
+// pane closed before its exit was reaped. Output holds the pane's last lines.
+type ExitedError struct {
+	Status string
+	Output string
+}
+
+func (e *ExitedError) Error() string {
+	text := "native process exited"
+	if e.Status != "" {
+		text += " with status " + e.Status
+	}
+	if e.Output != "" {
+		text += ": " + strings.ReplaceAll(e.Output, "\n", " | ")
+	}
+	return text
 }
 
 type Keys struct {

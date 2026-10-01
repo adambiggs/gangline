@@ -48,6 +48,9 @@ For collars whose transcripts Gangline reads, a resume is refused when the
 native transcript stored under that session ID names a different session, or
 when the ID contains path or glob characters. A session Gangline cannot check
 is left to the native CLI, and `hitch` says why on stderr.
+If the native CLI exits before `hitch` returns, `hitch` fails
+with the pane's last lines and, when tmux collected one, the exit status. It
+records them as the agent's failure reason and closes the pane.
 `drop` reports an observed native resume session, or says it is unknown.
 When Codex asks to trust a hitch directory, startup stays queued. After
 choosing the native trust option, run `gang tick` to deliver the retained

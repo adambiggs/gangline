@@ -409,7 +409,7 @@ func TestStatusMarksExpiredDeadlineFromTheObservedWindowTitle(t *testing.T) {
 case "$1" in
  list-panes) printf '%%1\t?worker?\n'; printf 'listed\n' >> "$(dirname "$0")/listed";;
  capture-pane) printf 'still launching\n';;
- display-message) printf '0,0,0\n';;
+ display-message) printf '0,0,0,0,\n';;
  rename-window) printf '%s\n' "$*" > "$(dirname "$0")/marked";;
  *) exit 91;;
 esac

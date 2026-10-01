@@ -2,6 +2,7 @@ package acceptance
 
 import (
 	"bufio"
+	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -10,7 +11,9 @@ import (
 	"os/exec"
 	"path/filepath"
 	"strings"
+	"syscall"
 	"testing"
+	"time"
 )
 
 const fakeHarnessEnvironment = "GANGLINE_ACCEPTANCE_FAKE_HARNESS"
@@ -202,6 +205,27 @@ func runFakeHarness() int {
 }
 
 func runCommandHarness() int {
+	if failure := os.Getenv("GANGLINE_ACCEPTANCE_BOOT_EXIT"); failure != "" {
+		if channel := os.Getenv("GANGLINE_ACCEPTANCE_BOOT_EXIT_AFTER"); channel != "" {
+			// Bounded so a hitch that never signals cannot hold the pane forever.
+			ctx, cancel := context.WithTimeout(context.Background(), time.Minute)
+			defer cancel()
+			if output, err := exec.CommandContext(ctx, "tmux", "-S", os.Getenv("GANG_TMUX_SOCKET"), "wait-for", channel).CombinedOutput(); err != nil {
+				fmt.Fprintf(os.Stderr, "await boot exit: %v: %s", err, output)
+				return 1
+			}
+		}
+		// The write end stays open until the process exits, so the reader's EOF
+		// is an exit barrier. A raw descriptor has no finalizer to close it early.
+		if pipe := os.Getenv("GANGLINE_ACCEPTANCE_EXIT_PIPE"); pipe != "" {
+			if _, err := syscall.Open(pipe, syscall.O_WRONLY, 0); err != nil {
+				fmt.Fprintln(os.Stderr, err)
+				return 1
+			}
+		}
+		fmt.Fprintln(os.Stderr, failure)
+		return 7
+	}
 	argv := strings.Join(os.Args[1:], "\n") + "\n"
 	if err := os.WriteFile(os.Getenv("GANGLINE_ACCEPTANCE_ARGV_LEDGER"), []byte(argv), 0o600); err != nil {
 		fmt.Fprintln(os.Stderr, err)

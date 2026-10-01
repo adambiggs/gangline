@@ -86,11 +86,15 @@ func selectForegroundProcesses(root int, records map[int]processRecord, command 
 }
 
 func (backend *Backend) paneProcess(ctx context.Context, pane substrate.PaneID) (int, error) {
-	output, err := backend.run(ctx, "display-message", "-p", "-t", string(pane), "#{pane_pid} #{pane_dead}")
+	output, err := backend.run(ctx, "display-message", "-p", "-t", string(pane), "#{pane_pid} #{pane_dead} #{pane_dead_status}")
 	if err != nil {
 		return 0, tmuxError("read pane process", err, output)
 	}
+	// The exit status is empty for a live pane and until tmux collects one.
 	fields := strings.Fields(output)
+	if len(fields) >= 2 && len(fields) <= 3 && fields[1] == "1" {
+		return 0, backend.exitedPane(ctx, pane, strings.Join(fields[2:], ""))
+	}
 	if len(fields) != 2 || fields[1] != "0" {
 		return 0, fmt.Errorf("read pane process: no live pane process in %q", strings.TrimSpace(output))
 	}

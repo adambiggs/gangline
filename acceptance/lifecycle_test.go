@@ -122,6 +122,11 @@ func TestCommandLifecycleOnPrivateTmux(t *testing.T) {
 		t.Fatalf("claimed agents: %+v %v", agents, err)
 	}
 	worker := agents[0]
+	// The pane is held only until startup is observed; a ready agent's later
+	// exit must close it.
+	if held, err := runner.run("show-options", "-p", "-v", "-t", worker.Pane, "remain-on-exit"); err != nil || strings.TrimSpace(held) == "on" {
+		t.Fatalf("ready worker pane still holds its exit: %v %q", err, held)
+	}
 	argv, err := os.ReadFile(filepath.Join(root, "argv"))
 	if err != nil {
 		t.Fatal(err)
