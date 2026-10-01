@@ -137,7 +137,7 @@ func testLiveProvider(t *testing.T, collar, cli, cheapest string) {
 	if override := os.Getenv("GANGLINE_ACCEPTANCE_COLLARS"); override != "" {
 		collarDirectory = override
 	}
-	environment := append(withoutEnvironment(os.Environ(), "TMUX", "TMUX_PANE", "GANG_CONFIG_DIR", "GANG_SESSION", "GANG_STATE_ROOT", "GANG_TMUX_SOCKET", "GANG_COLLARS", "GANG_COLLAR", "GANGLINE_HITCH_ID", "GANG_LAUNCH_ARGS", "CODEX_HOME"),
+	environment := append(withoutEnvironment(os.Environ(), "TMUX", "TMUX_PANE", "GANG_CONFIG_DIR", "GANG_SESSION", "GANG_STATE_ROOT", "GANG_TMUX_SOCKET", "GANG_COLLARS", "GANG_COLLAR", "GANGLINE_HITCH_ID", "GANG_AGENT_ID", "GANG_AGENT_NONCE", "GANG_AGENT_TOKEN", "GANG_LAUNCH_ARGS", "CODEX_HOME"),
 		"GANG_CONFIG_DIR="+filepath.Join(root, "config"),
 		"GANG_SESSION="+session,
 		"GANG_STATE_ROOT="+filepath.Join(root, "state"),
