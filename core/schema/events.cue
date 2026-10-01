@@ -13,6 +13,7 @@ import "time"
  startup?: close({contract: #ID, doctrine?: string, role?: string})
  purpose?: "startup" | "assignment" | "resume"
  created_at: #Time
+ measured_at?: #Time
  not_before?: #Time
  outcome?: "accepted" | "delivered" | "failed" | "unverified" | "cancelled"
  reason?: string

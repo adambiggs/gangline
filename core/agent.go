@@ -134,18 +134,19 @@ func (s Sender) SameIdentity(other Sender) bool {
 }
 
 type Envelope struct {
-	ID        EnvelopeID       `json:"id"`
-	Token     string           `json:"token,omitempty"`
-	From      Sender           `json:"from"`
-	To        AgentName        `json:"to"`
-	Recipient HitchID          `json:"recipient"`
-	Message   Message          `json:"message"`
-	Startup   *StartupSections `json:"startup,omitempty"`
-	Purpose   string           `json:"purpose,omitempty"`
-	CreatedAt time.Time        `json:"created_at"`
-	NotBefore time.Time        `json:"not_before,omitzero"`
-	Outcome   string           `json:"outcome,omitempty"`
-	Reason    string           `json:"reason,omitempty"`
+	ID         EnvelopeID       `json:"id"`
+	Token      string           `json:"token,omitempty"`
+	From       Sender           `json:"from"`
+	To         AgentName        `json:"to"`
+	Recipient  HitchID          `json:"recipient"`
+	Message    Message          `json:"message"`
+	Startup    *StartupSections `json:"startup,omitempty"`
+	Purpose    string           `json:"purpose,omitempty"`
+	CreatedAt  time.Time        `json:"created_at"`
+	MeasuredAt *time.Time       `json:"measured_at,omitempty"`
+	NotBefore  time.Time        `json:"not_before,omitzero"`
+	Outcome    string           `json:"outcome,omitempty"`
+	Reason     string           `json:"reason,omitempty"`
 }
 
 type Compaction struct {
@@ -173,19 +174,20 @@ type Capacity struct {
 }
 
 type NativeState struct {
-	SessionID   string    `json:"session_id,omitempty"`
-	TurnID      string    `json:"turn_id,omitempty"`
-	Transcript  string    `json:"transcript,omitempty"`
-	TurnFailure string    `json:"turn_failure,omitempty"`
-	FailedTurn  string    `json:"failed_turn,omitempty"`
-	LastErrorAt time.Time `json:"last_error_at,omitzero"`
-	LastError   string    `json:"last_error,omitempty"`
-	Offset      int64     `json:"offset,omitempty"`
-	SubmittedAt time.Time `json:"submitted_at,omitzero"`
-	CompactedAt time.Time `json:"compacted_at,omitzero"`
-	Context     Reading   `json:"context,omitzero"`
-	Limits      Reading   `json:"limits,omitzero"`
-	Model       string    `json:"model,omitempty"`
+	SessionID            string    `json:"session_id,omitempty"`
+	TurnID               string    `json:"turn_id,omitempty"`
+	Transcript           string    `json:"transcript,omitempty"`
+	TurnFailure          string    `json:"turn_failure,omitempty"`
+	FailedTurn           string    `json:"failed_turn,omitempty"`
+	LastErrorAt          time.Time `json:"last_error_at,omitzero"`
+	LastError            string    `json:"last_error,omitempty"`
+	Offset               int64     `json:"offset,omitempty"`
+	SubmittedAt          time.Time `json:"submitted_at,omitzero"`
+	CompactedAt          time.Time `json:"compacted_at,omitzero"`
+	ConfirmedCompactedAt time.Time `json:"confirmed_compacted_at,omitzero"`
+	Context              Reading   `json:"context,omitzero"`
+	Limits               Reading   `json:"limits,omitzero"`
+	Model                string    `json:"model,omitempty"`
 }
 
 type Reading struct {

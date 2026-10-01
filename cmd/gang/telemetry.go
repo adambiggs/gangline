@@ -21,6 +21,9 @@ func acceptReadings(n *core.NativeState, readings []core.Reading) {
 	for _, r := range readings {
 		switch r.Kind {
 		case "compaction-checkpoint", "compaction-finished":
+			if r.Kind == "compaction-finished" && r.At != nil && r.At.After(n.ConfirmedCompactedAt) {
+				n.ConfirmedCompactedAt = *r.At
+			}
 			if r.At != nil && r.At.After(n.CompactedAt) {
 				n.CompactedAt = *r.At
 				if n.Context.At == nil || !n.Context.At.After(*r.At) {

@@ -434,3 +434,99 @@ collar: {context_bands: {"*": [{name: "early", at: 0.10}, {name: "late", at: 0.2
 		})
 	}
 }
+
+func TestQueuedContextBandFromBeforeCompactionIsCancelled(t *testing.T) {
+	f := newStateFixture(t)
+	a := f.add(t, "a", "worker", "codex")
+	p, err := f.run.team.Agent(a.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	l, err := p.TryLock()
+	if err != nil {
+		t.Fatal(err)
+	}
+	legacy := core.Envelope{
+		ID: "context-1", Token: "0123456789abcdef", From: core.Sender{Kind: core.SenderGangline, Name: "context-band"},
+		Recipient: a.ID, To: a.Name, Message: core.Message{Text: "legacy crossing"}, CreatedAt: f.cmd.now().Add(-2 * time.Hour),
+	}
+	old := legacy
+	old.ID, old.Token, old.Message.Text, old.CreatedAt = "context-2", "1234567890abcdef", "old crossing", f.cmd.now().Add(-30*time.Minute)
+	measured := f.cmd.now().Add(-2 * time.Hour)
+	old.MeasuredAt = &measured
+	newer := legacy
+	newer.ID, newer.Token, newer.Message.Text, newer.CreatedAt = "context-3", "fedcba9876543210", "new crossing", f.cmd.now()
+	for _, e := range []core.Envelope{legacy, old, newer} {
+		if err := f.run.publishOnce(l, &a, e); err != nil {
+			t.Fatal(err)
+		}
+	}
+	a.Native.CompactedAt = f.cmd.now().Add(-time.Hour)
+	a.Native.ConfirmedCompactedAt = a.Native.CompactedAt
+	if err := l.Save(a); err != nil {
+		t.Fatal(err)
+	}
+	if err := l.Close(); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := f.run.drain(a.ID, ""); err != nil {
+		t.Fatal(err)
+	}
+	if f.input.submits != 1 || !strings.Contains(f.input.pasted, "new crossing") {
+		t.Fatalf("submitted %d messages; last = %q", f.input.submits, f.input.pasted)
+	}
+	f.out.Reset()
+	if err := f.cmd.log(nil); err != nil {
+		t.Fatal(err)
+	}
+	cancelled := map[string]bool{}
+	if err := store.ReadLog(strings.NewReader(f.out.String()), func(e core.Event) error {
+		if e.Type == "send_cancelled" {
+			cancelled[e.ID] = true
+		}
+		return nil
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if !cancelled[string(legacy.ID)] || !cancelled[string(old.ID)] || cancelled[string(newer.ID)] {
+		t.Fatalf("cancelled notices = %v", cancelled)
+	}
+}
+
+func TestQueuedContextBandSurvivesUnconfirmedCheckpoint(t *testing.T) {
+	f := newStateFixture(t)
+	a := f.add(t, "a", "worker", "codex")
+	p, err := f.run.team.Agent(a.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	l, err := p.TryLock()
+	if err != nil {
+		t.Fatal(err)
+	}
+	e := core.Envelope{
+		ID: "context-1", Token: "0123456789abcdef", From: core.Sender{Kind: core.SenderGangline, Name: "context-band"},
+		Recipient: a.ID, To: a.Name, Message: core.Message{Text: "crossing"}, CreatedAt: f.cmd.now().Add(-2 * time.Hour),
+	}
+	if err := f.run.publishOnce(l, &a, e); err != nil {
+		t.Fatal(err)
+	}
+	checkpoint := f.cmd.now().Add(-time.Hour)
+	acceptReadings(&a.Native, []core.Reading{{Kind: "compaction-checkpoint", At: &checkpoint, Source: "session-log"}})
+	if err := l.Save(a); err != nil {
+		t.Fatal(err)
+	}
+	if err := l.Close(); err != nil {
+		t.Fatal(err)
+	}
+	f.input.screen = screenWithText("READY", "› draft")
+	if _, err := f.run.drain(a.ID, ""); err != nil {
+		t.Fatal(err)
+	}
+	if f.input.submits != 0 {
+		t.Fatalf("submitted %d messages while input was blocked", f.input.submits)
+	}
+	if _, err := p.ReadEnvelope("new", e.ID); err != nil {
+		t.Fatalf("notice was cancelled before compaction completed: %v", err)
+	}
+}

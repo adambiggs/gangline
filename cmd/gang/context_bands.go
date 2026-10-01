@@ -82,7 +82,8 @@ func (run *runtime) noteContextBands(a *core.Agent, c harness.Collar) error {
 		e := core.Envelope{
 			ID: core.EnvelopeID(fmt.Sprintf("context-%d", state.Sequence)), Token: token, Recipient: a.ID, To: a.Name,
 			From: core.Sender{Kind: core.SenderGangline, Name: "context-band"}, CreatedAt: run.cmd.now(),
-			Message: core.Message{Text: renderContextBandMessage(band, last != nil && band.Name == last.Name, a, r)},
+			MeasuredAt: r.At,
+			Message:    core.Message{Text: renderContextBandMessage(band, last != nil && band.Name == last.Name, a, r)},
 		}
 		state.Pending = append(state.Pending, core.ContextBandNote{Band: band.Name, Reading: r, Envelope: e})
 	}
