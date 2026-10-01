@@ -6,8 +6,11 @@ import (
 	"fmt"
 	"os"
 	"os/exec"
+	"os/signal"
 	"path/filepath"
 	"strings"
+	"sync"
+	"syscall"
 
 	"github.com/adambiggs/gangline/core"
 	"github.com/adambiggs/gangline/harness"
@@ -157,14 +160,14 @@ func (cmd command) hitchWithStaleClaim(args []string, supersede bool) (result er
 	if err != nil {
 		return err
 	}
-	ctx, cancel := context.WithTimeout(context.Background(), bootTimeout)
+	boot, cancel := context.WithTimeout(context.Background(), bootTimeout)
 	defer cancel()
-	exists, err := b.SessionExists(ctx)
+	exists, err := b.SessionExists(boot)
 	if err != nil {
 		return err
 	}
 	if exists {
-		windows, err := b.Windows(ctx)
+		windows, err := b.Windows(boot)
 		if err != nil {
 			return err
 		}
@@ -172,19 +175,35 @@ func (cmd command) hitchWithStaleClaim(args []string, supersede bool) (result er
 		if err != nil {
 			return err
 		}
-		registered := make(map[string]bool, len(agents))
+		owners := make(map[string][]core.Agent, len(agents))
 		for _, agent := range agents {
-			registered[agent.Pane] = true
+			if agent.Pane != "" {
+				owners[agent.Pane] = append(owners[agent.Pane], agent)
+			}
 		}
 		for _, window := range windows {
-			if !registered[string(window.Pane.ID)] && gangWindowTitle(window.Name) {
+			if !gangWindowTitle(window.Name) {
+				continue
+			}
+			owned, err := ownedPane(boot, b, owners[string(window.Pane.ID)])
+			if err != nil {
+				return err
+			}
+			if !owned {
 				return refuseError("unregistered pane %s (%s) in team %q; inspect it and close that exact pane before hitching", window.Pane.ID, window.Name, run.settings.Session)
 			}
 		}
 	}
+	// From the claim until startup is settled, SIGINT and SIGTERM sent to gang
+	// cancel ctx, and the hitch fails the record and removes its pane. Calls
+	// that create or replace a pane run on boot, so such a signal never loses a
+	// pane's id; one sent to gang's whole process group also ends the tmux
+	// client mid-command.
+	ctx, stopInterrupts := interruptible(boot)
+	defer stopInterrupts()
 	l, err := run.team.CreateAgent(a)
 	if errors.Is(err, store.ErrNameTaken) && supersede && !exists {
-		l, err = run.supersedeStoppedClaim(ctx, b, a)
+		l, err = run.supersedeStoppedClaim(boot, b, a)
 	}
 	if errors.Is(err, store.ErrNameTaken) {
 		if !supersede && !exists {
@@ -223,28 +242,76 @@ func (cmd command) hitchWithStaleClaim(args []string, supersede bool) (result er
 	if run.settings.CollarDir != "" {
 		spec.Env["GANG_COLLARS"] = run.settings.CollarDir
 	}
+	registered := false
+	fail := func(err error, reason string) error {
+		registered = false
+		return errors.Join(err, run.apply(l, &a, core.Event{Type: "hitch_failed", Reason: reason}))
+	}
+	// reason names why the hitch stopped: the signal that interrupted it, the
+	// native CLI's exit with its output, or both. It is empty for any other
+	// error.
+	reason := func(err error) (error, string) {
+		var exited *substrate.ExitedError
+		native := errors.As(err, &exited)
+		var interrupt interruptError
+		if errors.As(context.Cause(ctx), &interrupt) {
+			if native {
+				return errors.Join(interrupt, err), interrupt.Error() + ": " + exited.Error()
+			}
+			return errors.Join(interrupt, err), interrupt.Error()
+		}
+		if native {
+			return err, exited.Error()
+		}
+		return err, ""
+	}
+	if err, why := reason(nil); why != "" {
+		return fail(err, why)
+	}
+	// Creation and registration ignore the interrupt: a tmux client killed
+	// mid-command can leave a window whose pane id gang never learns.
 	var pane substrate.Pane
 	if exists {
-		pane, err = b.Spawn(ctx, spec)
+		pane, err = b.Spawn(boot, spec)
 	} else {
-		pane, err = b.CreateSession(ctx, spec)
+		pane, err = b.CreateSession(boot, spec)
 	}
 	if err != nil {
 		_ = run.apply(l, &a, core.Event{Type: "hitch_failed", Reason: err.Error()})
 		return err
 	}
-	registration, err := b.RegisterPane(ctx, pane.ID)
+	registration, err := b.RegisterPane(boot, pane.ID)
 	if err != nil {
-		cleanupErr := b.KillUnregisteredPane(context.Background(), pane.ID)
+		// Signals stay absorbed until this removal returns, so it is bounded.
+		removal, cancel := context.WithTimeout(context.Background(), operationTimeout)
+		cleanupErr := b.KillUnregisteredPane(removal, pane.ID)
+		cancel()
 		return errors.Join(err, cleanupErr, run.apply(l, &a, core.Event{Type: "hitch_failed", Reason: err.Error()}))
 	}
 	a.Registration = core.PaneRegistration{Generation: registration.Generation, Session: registration.Session, TokenHash: tokenHash(agentToken)}
-	registered := false
 	defer func() {
-		if !registered {
-			result = errors.Join(result, b.RemoveRegisteredPane(context.Background(), registration))
+		if registered {
+			return
+		}
+		// Signals stay absorbed until this removal returns, so it is bounded.
+		removal, cancel := context.WithTimeout(context.Background(), operationTimeout)
+		defer cancel()
+		if err := b.RemoveRegisteredPane(removal, registration); err != nil {
+			result = errors.Join(result, err)
+			return
+		}
+		// The record keeps a pane only while it exists, so tick and drop never
+		// address a removed one.
+		if a.Pane != "" {
+			a.Pane = ""
+			result = errors.Join(result, l.Save(a))
 		}
 	}()
+	// The record owns the pane from registration on, so a hitch killed before
+	// startup leaves a pane that tick probes and drop removes.
+	if err := run.apply(l, &a, core.Event{Type: "hitch_spawned", Pane: string(pane.ID)}); err != nil {
+		return err
+	}
 	// A native exit fails the hitch with the native output as its reason and
 	// removes the held pane.
 	nativeExit := func(err error) error {
@@ -252,8 +319,16 @@ func (cmd command) hitchWithStaleClaim(args []string, supersede bool) (result er
 		if !errors.As(err, &exited) {
 			return err
 		}
-		registered = false
-		return errors.Join(err, run.apply(l, &a, core.Event{Type: "hitch_failed", Reason: exited.Error()}))
+		return fail(err, exited.Error())
+	}
+	// A failure before the process identity is read leaves no pane worth
+	// keeping.
+	unspawned := func(err error) error {
+		err, why := reason(err)
+		if why == "" {
+			why = err.Error()
+		}
+		return fail(err, why)
 	}
 	// Hitch releases the hold on every path that keeps the pane, so a later
 	// exit closes it. The release outlives an expired boot context, and an exit
@@ -267,20 +342,19 @@ func (cmd command) hitchWithStaleClaim(args []string, supersede bool) (result er
 	}()
 	visible, err := b.ProcessVisibility(ctx, pane.ID)
 	if err != nil {
-		return nativeExit(err)
+		return unspawned(err)
 	}
 	if visible {
 		identity, err := b.Identity(ctx, pane.ID)
 		if err != nil {
-			return nativeExit(err)
+			return unspawned(err)
 		}
 		a.Process = storedIdentity(identity)
+		if err := l.Save(a); err != nil {
+			return unspawned(err)
+		}
 	} else if err := run.noteProcessUnavailable(a); err != nil {
-		return err
-	}
-
-	if err := run.apply(l, &a, core.Event{Type: "hitch_spawned", Pane: string(pane.ID)}); err != nil {
-		return err
+		return unspawned(err)
 	}
 	registered = true
 	schedulerErr := run.ensureWatchdog()
@@ -290,8 +364,12 @@ func (cmd command) hitchWithStaleClaim(args []string, supersede bool) (result er
 	}
 	startup, _, err := harness.AwaitStartup(ctx, b.Capture, pane.ID, c)
 	if err != nil {
-		return nativeExit(err)
+		if err, why := reason(err); why != "" {
+			return fail(err, why)
+		}
+		return err
 	}
+	stopInterrupts()
 	if startup.State != harness.StartupReady {
 		if err := run.apply(l, &a, core.Event{Type: "hitch_blocked", Reason: startup.Prompt}); err != nil {
 			return err
@@ -322,6 +400,78 @@ func (cmd command) hitchWithStaleClaim(args []string, supersede bool) (result er
 	}
 	return nil
 }
+
+// interruptError is the cause of a hitch cancelled by a signal.
+type interruptError struct{ signal os.Signal }
+
+func (e interruptError) Error() string {
+	name := e.signal.String()
+	switch e.signal {
+	case os.Interrupt:
+		name = "SIGINT"
+	case syscall.SIGTERM:
+		name = "SIGTERM"
+	}
+	return "hitch interrupted by " + name
+}
+
+// interruptible returns a context that the first SIGINT or SIGTERM cancels
+// with an interruptError. Later signals are absorbed until stop, so the hitch
+// records the interrupt and removes its pane; stop restores the inherited
+// action. A SIGINT gang started with ignored stays ignored.
+func interruptible(parent context.Context) (context.Context, func()) {
+	ctx, cancel := context.WithCancelCause(parent)
+	signals := make(chan os.Signal, 1)
+	signal.Notify(signals, syscall.SIGTERM)
+	// The Go runtime keeps an inherited ignored SIGINT ignored, as a
+	// non-interactive shell starts a background command; Notify would undo it.
+	if !signal.Ignored(os.Interrupt) {
+		signal.Notify(signals, os.Interrupt)
+	}
+	done := make(chan struct{})
+	go func() {
+		for {
+			select {
+			case received := <-signals:
+				// The first cause wins; a repeat only keeps gang alive.
+				cancel(interruptError{received})
+			case <-done:
+				return
+			}
+		}
+	}()
+	var once sync.Once
+	return ctx, func() {
+		once.Do(func() {
+			signal.Stop(signals)
+			close(done)
+		})
+	}
+}
+
+// ownedPane reports whether any of the records naming a pane id owns that
+// pane now. A record keeps its pane id across a tmux server restart, where
+// the same id can name a pane no record created, so ownership is the
+// record's registered server generation and session, not the id alone.
+func ownedPane(ctx context.Context, b paneRegistry, records []core.Agent) (bool, error) {
+	for _, a := range records {
+		if a.Registration.Generation == "" || a.Registration.Session == "" {
+			continue
+		}
+		present, err := b.CheckPane(ctx, paneIdentity(a))
+		if errors.Is(err, tmux.ErrPaneReplaced) {
+			continue
+		}
+		if err != nil {
+			return false, err
+		}
+		if present {
+			return true, nil
+		}
+	}
+	return false, nil
+}
+
 func gangWindowTitle(name string) bool {
 	if len(name) < 3 || name[0] != name[len(name)-1] {
 		return false
@@ -453,6 +603,7 @@ func (run *runtime) dropAgent(id core.HitchID, wait bool) error {
 	}
 	visible := false
 	replaced := false
+	exited := false
 	if a.Pane != "" {
 		if a.Registration.Generation == "" || a.Registration.Session == "" || a.Registration.TokenHash == "" {
 			return refuseError("refuse teardown: incomplete pane registration; inspect retained state at %s", p.State)
@@ -467,11 +618,16 @@ func (run *runtime) dropAgent(id core.HitchID, wait bool) error {
 		if present {
 			visible, err = registry.ProcessVisibility(context.Background(), substrate.PaneID(a.Pane))
 		}
+		// A pane held from boot outlives its native process, which leaves
+		// nothing to tear down but the pane.
+		if exit := (*substrate.ExitedError)(nil); errors.As(err, &exit) {
+			exited, err = true, nil
+		}
 		if err != nil {
 			return err
 		}
 	}
-	if !visible && !tmux.CanReadIdentity(nativeIdentity(a.Process)) {
+	if !visible && !exited && !tmux.CanReadIdentity(nativeIdentity(a.Process)) {
 		if err := run.noteProcessUnavailable(a); err != nil {
 			return err
 		}

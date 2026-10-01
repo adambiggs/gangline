@@ -518,6 +518,35 @@ func TestHookFailureStillExitsZeroAndRecordsFailure(t *testing.T) {
 	}
 }
 
+func TestHitchRefusesPaneOnlyAStaleRecordNames(t *testing.T) {
+	for _, tc := range []struct {
+		name, generation string
+		refused          bool
+	}{
+		{name: "other server", generation: strings.Repeat("b", 64), refused: true},
+		{name: "same server", generation: strings.Repeat("a", 64)},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			f := newStateFixture(t)
+			fakeCodexOnPath(t)
+			f.add(t, "a", "worker", "codex")
+			script := "#!/bin/sh\n# SPDX-License-Identifier: Apache-2.0\ncase \"$1 $2\" in\n'list-panes -a') printf '" + tc.generation + "\\t$1\\t%%1\\n';;\nlist-panes*) printf '%%1\\t?worker?\\n';;\ndisplay-message*) printf '$1\\n';;\nhas-session*) exit 0;;\n*) exit 91;;\nesac\n"
+			if err := os.WriteFile(f.env["GANG_TMUX"], []byte(script), 0700); err != nil {
+				t.Fatal(err)
+			}
+			err := f.cmd.hitch([]string{"lead", "-c", "codex"})
+			// The fake tmux refuses new-window, so an exempted pane ends at spawn.
+			want := "spawn pane"
+			if tc.refused {
+				want = "unregistered pane %1"
+			}
+			if err == nil || !strings.Contains(err.Error(), want) {
+				t.Fatalf("hitch error = %v, want %q", err, want)
+			}
+		})
+	}
+}
+
 func TestHitchRefusesUnregisteredPaneBeforeClaim(t *testing.T) {
 	f := newStateFixture(t)
 	fakeCodexOnPath(t)

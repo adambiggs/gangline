@@ -212,6 +212,11 @@ func (run *runtime) updateWatchdog(generation string, cleanup, reset bool) (proc
 				continue
 			}
 			visible, err := b.ProcessVisibility(context.Background(), substrate.PaneID(a.Pane))
+			// A pane held from boot after its native exit has no process to
+			// read; another pane answers for the host.
+			if exited := (*substrate.ExitedError)(nil); errors.As(err, &exited) {
+				continue
+			}
 			if err != nil {
 				return false, err
 			}

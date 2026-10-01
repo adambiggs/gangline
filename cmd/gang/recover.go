@@ -52,6 +52,11 @@ func (run *runtime) tickAgent(id core.HitchID, notice hookNotice, wait bool) err
 	if a.Status == core.Dropping || a.Status == core.Failed {
 		return run.mark(a)
 	}
+	// A claim whose hitch ended before creating a pane has nothing to probe;
+	// its boot deadline fails it.
+	if a.Pane == "" {
+		return nil
+	}
 	if err := run.reconcileNativeBoundary(l, &a, notice); err != nil {
 		return err
 	}
@@ -66,6 +71,15 @@ func (run *runtime) tickAgent(id core.HitchID, notice hookNotice, wait bool) err
 	ctx, cancel := context.WithTimeout(context.Background(), operationTimeout)
 	defer cancel()
 	screen, err := b.Capture(ctx, substrate.PaneID(a.Pane))
+	// A held pane reports its native exit instead of a screen, and that exit
+	// ends the agent.
+	var exited *substrate.ExitedError
+	if errors.As(err, &exited) {
+		if err := run.apply(l, &a, core.Event{Type: "hitch_failed", Reason: exited.Error()}); err != nil {
+			return err
+		}
+		return run.mark(a)
+	}
 	if err != nil {
 		return errors.Join(err, run.observeProbeFailure(l, &a, err))
 	}

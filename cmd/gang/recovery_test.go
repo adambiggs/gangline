@@ -16,6 +16,8 @@ import (
 
 	"github.com/adambiggs/gangline/core"
 	"github.com/adambiggs/gangline/store"
+	"github.com/adambiggs/gangline/substrate"
+	"github.com/adambiggs/gangline/substrate/tmux"
 )
 
 func TestKilledInputOwnerNeverRetypes(t *testing.T) {
@@ -300,6 +302,93 @@ func TestWaitChecksExpiredBootDeadline(t *testing.T) {
 	}
 	if a.Status != core.Failed {
 		t.Fatalf("expired boot retained: %+v", a)
+	}
+}
+
+func TestExpiredBootDeadlineReportsHeldNativeExit(t *testing.T) {
+	f := newStateFixture(t)
+	f.input.captureErr = &substrate.ExitedError{Status: "1", Output: "error: unknown model"}
+	a := f.add(t, "a", "worker", "codex")
+	p, _ := f.run.team.Agent(a.ID)
+	l, err := p.TryLock()
+	if err != nil {
+		t.Fatal(err)
+	}
+	a.Status = core.Booting
+	a.BootDeadline = f.cmd.now().Add(-time.Second)
+	if err := l.Save(a); err != nil {
+		t.Fatal(err)
+	}
+	_ = l.Close()
+	if err := f.run.tickAgent(a.ID, hookNotice{}, false); err != nil {
+		t.Fatalf("tick: %v", err)
+	}
+	a, err = p.Read()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if a.Status != core.Failed || !strings.Contains(a.Evidence, "error: unknown model") {
+		t.Fatalf("held native exit not recorded: %+v", a)
+	}
+}
+
+func TestExpiredBootDeadlineFailsRecordWithoutItsPane(t *testing.T) {
+	// The registry refuses an identity with no pane before it asks tmux.
+	registry, err := tmux.New(tmux.Config{Binary: filepath.Join(t.TempDir(), "tmux"), Session: "team"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, noPane := registry.CheckPane(context.Background(), tmux.PaneIdentity{})
+	if noPane == nil {
+		t.Fatal("registry accepted an identity with no pane")
+	}
+	for _, tc := range []struct {
+		name, pane string
+		present    bool
+		checkErr   error
+		kept       bool
+	}{
+		{name: "no pane", checkErr: noPane},
+		{name: "absent pane", pane: "%1"},
+		{name: "replaced pane", pane: "%1", checkErr: fmt.Errorf("%w: pane %%1 differs", tmux.ErrPaneReplaced)},
+		{name: "live pane", pane: "%1", present: true, kept: true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			f := newStateFixture(t)
+			f.input.captureErr = errors.New("can't find pane: %1")
+			f.run.cmd.paneBackend = identityFixture{inputFixture: f.input, present: tc.present, checkErr: tc.checkErr}
+			a := f.add(t, "a", "worker", "codex")
+			p, _ := f.run.team.Agent(a.ID)
+			l, err := p.TryLock()
+			if err != nil {
+				t.Fatal(err)
+			}
+			a.Status = core.Booting
+			a.Pane = tc.pane
+			a.BootDeadline = f.cmd.now().Add(-time.Second)
+			if err := l.Save(a); err != nil {
+				t.Fatal(err)
+			}
+			_ = l.Close()
+			tickErr := f.run.tickAgent(a.ID, hookNotice{}, false)
+			a, err = p.Read()
+			if err != nil {
+				t.Fatal(err)
+			}
+			if tc.kept {
+				// A capture error on a pane still present is transient.
+				if tickErr == nil || a.Status != core.Booting || a.Pane != tc.pane {
+					t.Fatalf("live pane: tick %v, record %+v", tickErr, a)
+				}
+				return
+			}
+			if tickErr != nil {
+				t.Fatalf("tick: %v", tickErr)
+			}
+			if a.Status != core.Failed || a.Pane != "" {
+				t.Fatalf("expired boot without its pane retained: %+v", a)
+			}
+		})
 	}
 }
 

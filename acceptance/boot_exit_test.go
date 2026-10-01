@@ -176,6 +176,10 @@ exec tmux "$@"
 			} else if err == nil {
 				t.Fatalf("server kept panes after failed hitch: %q", panes)
 			}
+			// The failed record never fails a tick of its agent.
+			if out, err := gang("tick", "--agent", "worker"); err != nil {
+				t.Fatalf("tick after failed hitch: %v\n%s", err, out)
+			}
 		})
 	}
 }

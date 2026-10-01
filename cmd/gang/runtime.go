@@ -11,6 +11,7 @@ import (
 	"github.com/adambiggs/gangline/harness"
 	"github.com/adambiggs/gangline/store"
 	"github.com/adambiggs/gangline/substrate"
+	"github.com/adambiggs/gangline/substrate/tmux"
 )
 
 const (
@@ -193,7 +194,7 @@ func (run *runtime) release(l *store.LockedAgent) error {
 func (run *runtime) checkDeadlines(l *store.LockedAgent, a *core.Agent) error {
 	// Trust can appear after AwaitStartup returns. Observe it before an
 	// expired boot budget converts an operator-owned prompt into failure.
-	if a.Status == core.Booting && !a.BootDeadline.IsZero() && !run.cmd.now().Before(a.BootDeadline) {
+	if a.Status == core.Booting && a.Pane != "" && !a.BootDeadline.IsZero() && !run.cmd.now().Before(a.BootDeadline) {
 		c, err := loadCollar(a.Collar, run.settings)
 		if err != nil {
 			return err
@@ -203,20 +204,32 @@ func (run *runtime) checkDeadlines(l *store.LockedAgent, a *core.Agent) error {
 			return err
 		}
 		screen, err := b.Capture(context.Background(), substrate.PaneID(a.Pane))
+		// A held pane shows no prompt, only its native exit.
+		var exited *substrate.ExitedError
+		if errors.As(err, &exited) {
+			return run.apply(l, a, core.Event{Type: "hitch_failed", Reason: exited.Error()})
+		}
 		if err != nil {
-			return err
-		}
-		startup, err := harness.InspectStartup(c, screen)
-		if err != nil {
-			return err
-		}
-		if startup.State == harness.StartupTrustRequired {
-			return run.apply(l, a, core.Event{Type: "hitch_blocked", Reason: startup.Prompt})
-		}
-		if startup.State == harness.StartupReady {
-			// A composer can precede Codex trust. Leave readiness to the
-			// stabilized startup observation in hitch or tick.
-			return nil
+			// A registered pane that is gone shows nothing either: the deadline
+			// fails the record, which no longer owns a pane.
+			gone, checkErr := run.paneGone(*a)
+			if checkErr != nil || !gone {
+				return errors.Join(err, checkErr)
+			}
+			a.Pane = ""
+		} else {
+			startup, err := harness.InspectStartup(c, screen)
+			if err != nil {
+				return err
+			}
+			if startup.State == harness.StartupTrustRequired {
+				return run.apply(l, a, core.Event{Type: "hitch_blocked", Reason: startup.Prompt})
+			}
+			if startup.State == harness.StartupReady {
+				// A composer can precede Codex trust. Leave readiness to the
+				// stabilized startup observation in hitch or tick.
+				return nil
+			}
 		}
 	}
 	next, _ := core.Step(*a, core.Event{Type: "deadline_checked", At: run.cmd.now(), HitchID: a.ID})
@@ -224,6 +237,20 @@ func (run *runtime) checkDeadlines(l *store.LockedAgent, a *core.Agent) error {
 		return nil
 	}
 	return run.apply(l, a, core.Event{Type: "deadline_checked"})
+}
+
+// paneGone reports whether the record's registered pane is absent or now
+// names another server's or session's pane.
+func (run *runtime) paneGone(a core.Agent) (bool, error) {
+	registry, err := run.registry()
+	if err != nil {
+		return false, err
+	}
+	present, err := registry.CheckPane(context.Background(), paneIdentity(a))
+	if errors.Is(err, tmux.ErrPaneReplaced) {
+		return true, nil
+	}
+	return !present && err == nil, err
 }
 func (run *runtime) recoverInput(l *store.LockedAgent, a *core.Agent) error {
 	if a.Input == nil {
