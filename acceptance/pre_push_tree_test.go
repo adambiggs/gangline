@@ -59,4 +59,7 @@ func TestPrePushChecksCommittedTree(t *testing.T) {
 	if err == nil || command.ProcessState.ExitCode() == 0 || !strings.Contains(string(output), "committed-gate-failed") || !strings.Contains(string(output), "pre-push: refusing") || strings.Contains(string(output), "working-tree-passed") {
 		t.Fatalf("pushed-tree hook result: %v\n%s", err, output)
 	}
+	if strings.Contains(string(output), "--no-verify") {
+		t.Fatalf("refusal advises bypassing the hook:\n%s", output)
+	}
 }

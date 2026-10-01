@@ -91,6 +91,5 @@ done < "$tmp/stdin"
 
 if [ "$fail" -ne 0 ]; then
   echo "pre-push: refusing — Go checks failed." >&2
-  echo "          push anyway with: git push --no-verify" >&2
   exit 1
 fi
