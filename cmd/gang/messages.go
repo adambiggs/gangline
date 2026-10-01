@@ -393,6 +393,13 @@ func (cmd command) compact(args []string) (result error) {
 	if a.Status != core.Active {
 		return refuseError("recipient is not active")
 	}
+	_, failedStartup, err := retainedStartup(l.Paths, "failed", a.LastFailed)
+	if err != nil {
+		return err
+	}
+	if failedStartup {
+		return refuseError("startup contract input is unverified; inspect the recipient and run gang hitch %s --recover before compacting", a.Name)
+	}
 	resumeFrom := core.Sender{Kind: core.SenderGangline, Name: "compact"}
 	if o.Resume != "" {
 		resumeFrom, err = run.observedSender()
@@ -442,6 +449,11 @@ func (cmd command) compact(args []string) (result error) {
 func (run *runtime) startCompaction(l *store.LockedAgent, a *core.Agent) (result error) {
 	if a.Compaction == nil || a.Compaction.Status != "queued" || a.Status != core.Active {
 		return nil
+	}
+	// The resume note would take the receipt slot that holds an unverified
+	// startup, so a queued compaction waits until startup recovery clears it.
+	if _, failedStartup, err := retainedStartup(l.Paths, "failed", a.LastFailed); err != nil || failedStartup {
+		return err
 	}
 	c, err := loadCollar(a.Collar, run.settings)
 	if err != nil {
