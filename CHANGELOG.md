@@ -1,5 +1,13 @@
 # Changelog
 
+## [1.10.1](https://github.com/adambiggs/gangline/compare/gangline-v1.10.0...gangline-v1.10.1) (2026-10-01)
+
+
+### Bug Fixes
+
+* **hitch:** leave the team usable after an interrupted hitch ([585e269](https://github.com/adambiggs/gangline/commit/585e2699c5b51d7aba4211089aee3e54d63e5bdc))
+* **hitch:** report a native CLI's boot exit instead of losing it with the pane ([163ef5f](https://github.com/adambiggs/gangline/commit/163ef5fb0fc94324cf9e2779ef240d9eda1695b9))
+
 ## [1.10.0](https://github.com/adambiggs/gangline/compare/gangline-v1.9.2...gangline-v1.10.0) (2026-10-01)
 
 
