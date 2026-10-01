@@ -158,7 +158,14 @@ func (run *runtime) cancelPendingCompactionResume(l *store.LockedAgent, a *core.
 			return err
 		}
 	}
-	if err := l.Settle(a, e, "cancelled", reason); err != nil {
+	var err error
+	if a.LastFailed != "" {
+		// Another retained failure, such as an unconfirmed startup, outranks it.
+		err = l.FileFailure(e, "cancelled", reason)
+	} else {
+		err = l.Settle(a, e, "cancelled", reason)
+	}
+	if err != nil {
 		return err
 	}
 	return run.record(*a, core.Event{Type: "send_cancelled", ID: string(e.ID), Reason: reason})

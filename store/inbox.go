@@ -129,16 +129,7 @@ func (l *LockedAgent) Settle(a *core.Agent, e core.Envelope, outcome, reason str
 		dir = "cur"
 		previous = a.LastAccepted
 	}
-	e.Outcome, e.Reason = outcome, reason
-	from, err := l.Paths.EnvelopePath("new", e.ID)
-	if err != nil {
-		return err
-	}
-	to, _ := l.Paths.EnvelopePath(dir, e.ID)
-	if err := atomicJSON(from, e); err != nil {
-		return err
-	}
-	if err := os.Rename(from, to); err != nil {
+	if err := l.fileResult(e, dir, outcome, reason); err != nil {
 		return err
 	}
 	if previous != "" && previous != e.ID {
@@ -155,6 +146,24 @@ func (l *LockedAgent) Settle(a *core.Agent, e core.Envelope, outcome, reason str
 		return err
 	}
 	return l.CleanResult(a)
+}
+
+// FileFailure files a failed result without taking the agent's receipt, so a
+// retained failure stays in force.
+func (l *LockedAgent) FileFailure(e core.Envelope, outcome, reason string) error {
+	return l.fileResult(e, "failed", outcome, reason)
+}
+func (l *LockedAgent) fileResult(e core.Envelope, dir, outcome, reason string) error {
+	e.Outcome, e.Reason = outcome, reason
+	from, err := l.Paths.EnvelopePath("new", e.ID)
+	if err != nil {
+		return err
+	}
+	to, _ := l.Paths.EnvelopePath(dir, e.ID)
+	if err := atomicJSON(from, e); err != nil {
+		return err
+	}
+	return os.Rename(from, to)
 }
 func (l *LockedAgent) ClearScheduled(sender core.Sender) ([]core.Envelope, error) {
 	envelopes, err := l.Paths.ListNew()

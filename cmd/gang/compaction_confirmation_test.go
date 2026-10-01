@@ -174,3 +174,43 @@ func TestCompactionConfirmationDeadlineIsExplicit(t *testing.T) {
 		}
 	}
 }
+
+func TestWithheldResumeKeepsRetainedStartupReceipt(t *testing.T) {
+	f, a, p := compactionFixture(t)
+	at := f.cmd.now()
+	retained := core.Envelope{ID: "startup-1", Token: "00112233445566ff", From: core.Sender{Kind: core.SenderGangline, Name: "startup"}, Recipient: a.ID, To: a.Name, Message: core.Message{Text: "contract"}, Purpose: "startup", CreatedAt: at}
+	if err := p.Publish(retained); err != nil {
+		t.Fatal(err)
+	}
+	l, err := p.TryLock()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := l.Settle(&a, retained, "unverified", "native input not yet confirmed"); err != nil {
+		t.Fatal(err)
+	}
+	a.Compaction = &core.Compaction{ID: "compact", Resume: core.Message{Text: "continue"}, ResumeToken: "aaaaaaaaaaaaaaaa", ResumeFrom: core.Sender{Kind: core.SenderSelfDeclared, Name: "compact"}, StartedAt: at.Add(-time.Minute), Status: "submitted"}
+	if err := l.Save(a); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := f.run.publishCompactionResume(l, &a); err != nil {
+		t.Fatal(err)
+	}
+	if err := l.Close(); err != nil {
+		t.Fatal(err)
+	}
+	if err := f.run.confirmCompactionHook(a.ID, hookNotice{Kind: "compaction-finished", SessionID: "s", At: at.Add(time.Second)}); err != nil {
+		t.Fatal(err)
+	}
+	resume, err := p.ReadEnvelope("failed", "resume-compact")
+	if err != nil || resume.Outcome != "cancelled" {
+		t.Fatalf("withheld resume: %+v, %v", resume, err)
+	}
+	got, err := p.Read()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, held, err := retainedStartup(p, "failed", got.LastFailed); err != nil || !held {
+		t.Fatalf("withheld resume released the startup hold: LastFailed=%q, %v", got.LastFailed, err)
+	}
+}
