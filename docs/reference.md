@@ -23,8 +23,8 @@ supply an explicit name when inspecting or controlling a single agent.
 | --- | --- |
 | `-c`, `--collar COLLAR` | Harness collar. |
 | `-d`, `--dir DIR` | Working directory; defaults to the current directory. |
-| `-m`, `--model MODEL` | Native model identifier from `gang models`. |
-| `-e`, `--effort EFFORT` | Native reasoning effort; requires `--model`. |
+| `-m`, `--model MODEL` | Native model identifier; the native CLI judges it. |
+| `-e`, `--effort EFFORT` | Native reasoning effort; requires `--model`. Refused when `gang models` lists the model without this effort. |
 | `-t`, `--task TASK` | Startup assignment. |
 | `-r`, `--role ROLE` | Role brief; `up` defaults to `lead`. |
 | `--stdin` | Read the assignment from stdin. |
@@ -208,10 +208,12 @@ A collar is a CUE file that tells Gangline how to launch and communicate with
 a particular harness. A collar's canonical name is the harness binary it
 launches: `claude` or `codex`.
 Each uses the installed native CLI and its account settings. Use
-`gang models -c COLLAR` for available
-model and effort identifiers. Gangline leaves native permissions, login, and
-trust decisions to the operator. Resumed collars must include the requested
-native session ID in their submit witness.
+`gang models -c COLLAR` for the model and effort identifiers the native
+catalog lists; the native CLI may accept models it does not list. `hitch`
+reads the catalog only for `--effort`. When the catalog cannot be read,
+`hitch` prints its diagnostic and launches. Gangline leaves native
+permissions, login, and trust decisions to the operator. Resumed collars must
+include the requested native session ID in their submit witness.
 
 In `GANG_COLLARS`, a `NAME.cue` matching a bundled collar overlays its fields;
 other names require a complete collar.

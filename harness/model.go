@@ -1,6 +1,7 @@
 package harness
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
@@ -18,9 +19,10 @@ type Model struct {
 	Efforts []string
 }
 
+// ModelCatalog lists the models and efforts a native CLI enumerates. A model
+// absent from it is left to the native CLI to judge.
 type ModelCatalog struct {
-	Models   []Model
-	Complete bool
+	Models []Model
 }
 
 type ModelValidation string
@@ -37,11 +39,20 @@ func DiscoverModels(ctx context.Context, collar Collar) (ModelCatalog, error) {
 		return ModelCatalog{}, fmt.Errorf("model catalog primitive %q declares no command", collar.Models.Catalog.Name)
 	}
 	args := strings.Fields(collar.Models.Catalog.Params["args"])
-	output, err := exec.CommandContext(ctx, command, args...).Output()
-	if err != nil {
-		return ModelCatalog{}, fmt.Errorf("run %s model catalog: %w", collar.Name, err)
+	var stderr bytes.Buffer
+	run := exec.CommandContext(ctx, command, args...)
+	run.Stderr = &stderr
+	output, err := run.Output()
+	if err == nil {
+		var catalog ModelCatalog
+		if catalog, err = ParseModelCatalog(collar.Models.Catalog, output); err == nil {
+			return catalog, nil
+		}
 	}
-	return ParseModelCatalog(collar.Models.Catalog, output)
+	if diagnostic := strings.TrimSpace(stderr.String()); diagnostic != "" {
+		return ModelCatalog{}, fmt.Errorf("run %s model catalog: %w: %s", collar.Name, err, diagnostic)
+	}
+	return ModelCatalog{}, fmt.Errorf("run %s model catalog: %w", collar.Name, err)
 }
 
 func ParseModelCatalog(invocation Invocation, output []byte) (ModelCatalog, error) {
@@ -55,16 +66,14 @@ func ParseModelCatalog(invocation Invocation, output []byte) (ModelCatalog, erro
 	}
 }
 
-func ValidateModel(catalog ModelCatalog, id string) ModelValidation {
+// ModelEfforts returns the efforts the catalog lists for model id.
+func ModelEfforts(catalog ModelCatalog, id string) []string {
 	for _, model := range catalog.Models {
 		if model.ID == id {
-			return ModelRecognized
+			return model.Efforts
 		}
 	}
-	if catalog.Complete {
-		return ModelUnrecognized
-	}
-	return ModelUnknown
+	return nil
 }
 
 func ValidateEffort(catalog ModelCatalog, id, effort string) ModelValidation {
@@ -72,14 +81,14 @@ func ValidateEffort(catalog ModelCatalog, id, effort string) ModelValidation {
 		if model.ID != id {
 			continue
 		}
+		if len(model.Efforts) == 0 {
+			return ModelUnknown
+		}
 		for _, supported := range model.Efforts {
 			if supported == effort {
 				return ModelRecognized
 			}
 		}
-		return ModelUnrecognized
-	}
-	if catalog.Complete {
 		return ModelUnrecognized
 	}
 	return ModelUnknown
@@ -145,7 +154,7 @@ func parseCodexModels(output []byte) (ModelCatalog, error) {
 		}
 		models = append(models, model)
 	}
-	return ModelCatalog{Models: models, Complete: true}, nil
+	return ModelCatalog{Models: models}, nil
 }
 
 func parseClaudeModels(output string) (ModelCatalog, error) {
@@ -174,7 +183,7 @@ func parseClaudeModels(output string) (ModelCatalog, error) {
 		models = append(models, Model{ID: alias[1], Efforts: append([]string(nil), efforts...)})
 	}
 	sort.Slice(models, func(left, right int) bool { return models[left].ID < models[right].ID })
-	return ModelCatalog{Models: models, Complete: false}, nil
+	return ModelCatalog{Models: models}, nil
 }
 
 func parseClaudeEfforts(output string) ([]string, error) {

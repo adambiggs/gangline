@@ -7,6 +7,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strings"
 
 	"github.com/adambiggs/gangline/core"
 	"github.com/adambiggs/gangline/harness"
@@ -56,18 +57,18 @@ func (cmd command) hitchWithStaleClaim(args []string, supersede bool) (result er
 	if o.Effort != "" && o.Model == "" {
 		return usageError("hitch: --effort requires --model")
 	}
-	if o.Model != "" {
+	if o.Effort != "" {
+		// The native CLI judges model ids; only an effort the catalog omits
+		// for a model it lists is refused here.
 		ctx, cancel := context.WithTimeout(context.Background(), operationTimeout)
 		catalog, err := harness.DiscoverModels(ctx, c)
 		cancel()
 		if err != nil {
-			return err
-		}
-		if harness.ValidateModel(catalog, o.Model) == harness.ModelUnrecognized {
-			return refuseError("model %q is not recognized", o.Model)
-		}
-		if o.Effort != "" && harness.ValidateEffort(catalog, o.Model, o.Effort) == harness.ModelUnrecognized {
-			return refuseError("effort %q is not recognized", o.Effort)
+			if _, err := fmt.Fprintf(cmd.stderr, "warning: hitch: effort %q left to the native CLI: %v\n", o.Effort, err); err != nil {
+				return err
+			}
+		} else if harness.ValidateEffort(catalog, o.Model, o.Effort) == harness.ModelUnrecognized {
+			return refuseError("effort %q is not listed for model %q (%s)", o.Effort, o.Model, strings.Join(harness.ModelEfforts(catalog, o.Model), ", "))
 		}
 	}
 	assignment := o.Task

@@ -69,9 +69,7 @@ func (cmd command) models(arguments []string) error {
 			return err
 		}
 	}
-	if !catalog.Complete {
-		_, err = fmt.Fprintln(cmd.stdout, "(the harness accepts full model ids that its catalog does not enumerate)")
-	}
+	_, err = fmt.Fprintln(cmd.stdout, "(the harness may accept model ids its catalog does not list)")
 	return err
 }
 

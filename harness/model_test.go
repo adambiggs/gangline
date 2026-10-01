@@ -1,16 +1,25 @@
 package harness
 
-import "testing"
+import (
+	"context"
+	"os"
+	"path/filepath"
+	"strings"
+	"testing"
+)
 
-func TestParseCodexModelCatalogIsComplete(t *testing.T) {
+func TestParseCodexModelCatalogLeavesUnlistedModelsUnknown(t *testing.T) {
 	catalog, err := ParseModelCatalog(Invocation{Name: "codex-debug-models"}, []byte(`{
   "models":[{"slug":"gpt-one","supported_reasoning_levels":[{"effort":"low"},{"effort":"high"}]}]
 }`))
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !catalog.Complete || ValidateModel(catalog, "missing") != ModelUnrecognized {
-		t.Fatalf("catalog = %+v", catalog)
+	if got := ValidateEffort(catalog, "missing", "high"); got != ModelUnknown {
+		t.Fatalf("unlisted model effort = %q", got)
+	}
+	if got := ValidateEffort(catalog, "gpt-one", "xhigh"); got != ModelUnrecognized {
+		t.Fatalf("unlisted effort = %q", got)
 	}
 }
 
@@ -25,10 +34,10 @@ func TestParseClaudeModelCatalogLeavesFullNamesUnknown(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if got := ValidateModel(catalog, "opus"); got != ModelRecognized {
+	if got := ValidateEffort(catalog, "opus", "high"); got != ModelRecognized {
 		t.Fatalf("opus = %q", got)
 	}
-	if got := ValidateModel(catalog, "claude-opus-5"); got != ModelUnknown {
+	if got := ValidateEffort(catalog, "claude-opus-5", "high"); got != ModelUnknown {
 		t.Fatalf("full model = %q", got)
 	}
 }
@@ -43,5 +52,33 @@ func TestReadClaudeSelectedModelFromHeader(t *testing.T) {
 	}
 	if model != "sonnet" {
 		t.Fatalf("model = %q", model)
+	}
+}
+
+func TestDiscoverModelsReportsNativeDiagnostic(t *testing.T) {
+	for _, test := range []struct{ script, status string }{
+		{"exit 9", "exit status 9"},
+		{"printf 'not json\\n'", "decode codex model catalog"},
+	} {
+		binary := filepath.Join(t.TempDir(), "fake-catalog")
+		if err := os.WriteFile(binary, []byte("#!/bin/sh\nprintf 'catalog credential failure\\n' >&2\n"+test.script+"\n"), 0700); err != nil {
+			t.Fatal(err)
+		}
+		c, err := EmbeddedCollar("codex")
+		if err != nil {
+			t.Fatal(err)
+		}
+		c.Models.Catalog.Params["command"] = binary
+		_, err = DiscoverModels(context.Background(), c)
+		if err == nil || !strings.Contains(err.Error(), "catalog credential failure") || !strings.Contains(err.Error(), test.status) {
+			t.Fatalf("%s: DiscoverModels = %v", test.script, err)
+		}
+	}
+}
+
+func TestValidateEffortLeavesModelWithoutListedEffortsUnknown(t *testing.T) {
+	catalog := ModelCatalog{Models: []Model{{ID: "bare"}}}
+	if got := ValidateEffort(catalog, "bare", "high"); got != ModelUnknown {
+		t.Fatalf("ValidateEffort = %s", got)
 	}
 }
