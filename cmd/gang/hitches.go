@@ -260,7 +260,7 @@ func (cmd command) hitchWithStaleClaim(args []string, supersede bool) (result er
 		return err
 	}
 	registered = true
-	_, schedulerErr := run.updateWatchdog("", false, false)
+	schedulerErr := run.ensureWatchdog()
 	defer func() { result = errors.Join(result, schedulerErr) }()
 	if err := run.mark(a); err != nil {
 		return err

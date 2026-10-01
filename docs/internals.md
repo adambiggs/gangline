@@ -104,7 +104,8 @@ resume that has no recorded native submission.
 A whole-team tick replaces a transient user-scheduler timer and re-arms it
 before observing agents. Gangline arms the initial timer when you hitch
 an agent. A scoped hook tick preserves an existing deadline so activity in one agent cannot postpone
-idle peers. Whole-team ticks skip occupied agent locks; detached scoped ticks
+idle peers, except while `[watchdog-unavailable]` is shown, when it replaces the
+recorded timer because that timer may have elapsed. Whole-team ticks skip occupied agent locks; detached scoped ticks
 can wait for a lock so native boundary notices survive contention.
 
 Linux uses systemd user timers. macOS uses a transient launchd job and a plist
@@ -116,7 +117,8 @@ Timer transactions have their own nonblocking lock, released before agent
 work. Generation tokens reject superseded timers. Last drop and team removal
 disarm the timer. Contention or scheduler errors fail visibly; uncertain
 launchd cleanup preserves the plist for a later attempt. Unsupported hosts
-log `watchdog_unavailable` once per team and retain ordinary ticks.
+log `watchdog_unavailable` once per outage and retain ordinary ticks; the next
+armed timer logs `watchdog_available`.
 
 Replacement costs bounded scheduler stop/start work and, on macOS, plist
 write/removal. Whole-team observation visits registered agents. Scoped ticks

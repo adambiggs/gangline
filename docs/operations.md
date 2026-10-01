@@ -47,8 +47,11 @@ wake remains available for the agent to inspect or clear.
 
 The schedule lives in the team state root, so it survives Gangline process
 restarts, compaction, and host reboot. Gangline does not start a team after a
-reboot. If the team is running at wake time, its watchdog delivers the wake;
-otherwise the next team startup delivers the pending wake and marks it overdue.
+reboot. If the team is running at wake time, its armed watchdog delivers the
+wake. When no scheduler can arm a timer, `gang snooze` warns and `gang roster` shows
+`[watchdog-unavailable]`; the wake then waits for the next hook tick or
+`gang tick` in the team. If the team is not running, the next team startup
+delivers the pending wake and marks it overdue.
 Keep a durable work note because a wake can reach a different lead after the
 original agent disappears. If the host stops after submitting a wake but before
 recording successful completion, the next team startup treats that work as

@@ -118,8 +118,9 @@ user scheduler available. The log's `tick` event identifies a command, hook,
 or watchdog source. If the scheduler is unavailable, `gang tick` still does
 ordinary work and logs `watchdog_unavailable`; a scheduler failure logs
 `watchdog_failed` and returns an error. After fixing the scheduler, run
-`gang tick` again. After the watchdog fires, `gang log --type tick` should
-include a record with `source` set to `watchdog`. A command-sourced tick alone
+`gang tick` again; once it arms the timer, an earlier `watchdog_unavailable`
+is followed by `watchdog_available`. After the watchdog fires,
+`gang log --type tick` should include a record with `source` set to `watchdog`. A command-sourced tick alone
 does not verify watchdog operation.
 
 ## Stop a team

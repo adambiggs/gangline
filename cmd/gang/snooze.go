@@ -351,6 +351,8 @@ func (cmd command) snooze(args []string) error {
 	}); err != nil {
 		return err
 	}
-	_, err = fmt.Fprintf(cmd.stdout, "%s\t%s\n", s.ID, due.UTC().Format(time.RFC3339))
-	return err
+	if _, err := fmt.Fprintf(cmd.stdout, "%s\t%s\n", s.ID, due.UTC().Format(time.RFC3339)); err != nil {
+		return err
+	}
+	return run.ensureWatchdog()
 }

@@ -34,7 +34,7 @@ import "time"
   "compaction_requested" | "compaction_submitted" | "compaction_completed" | "compaction_failed" | "compaction_unverified" |
   "interrupt_requested" | "interrupt_completed" | "deadline_checked" |
   "drop_started" | "drop_finished" | "curfew_set" | "curfew_cleared" |
-  "capacity_detected" | "capacity_submitted" | "capacity_cleared" | "snooze_cap_rejected" | "snooze_rearmed" | "tick" | "tick_failed" | "watchdog_unavailable" | "watchdog_failed" | "process_verification_unavailable"
+  "capacity_detected" | "capacity_submitted" | "capacity_cleared" | "snooze_cap_rejected" | "snooze_rearmed" | "tick" | "tick_failed" | "watchdog_unavailable" | "watchdog_available" | "watchdog_failed" | "process_verification_unavailable" | "process_verification_available"
  at: #Time
  source?: "hook" | "command" | "watchdog"
  hitch_id?: #ID, name?: #ID, pane?: #ID, id?: #ID, reason?: string, status?: string
@@ -43,7 +43,7 @@ import "time"
 })
 
 #Event: #Fields & (
- {type: "hitch_claimed" | "hitch_spawned" | "hitch_ready" | "hitch_blocked" | "hitch_failed" | "renamed" | "send_cancelled" | "delivery_accepted" | "delivery_succeeded" | "delivery_failed" | "delivery_unverified" | "activity_observed" | "observation" | "native_hook" | "compaction_submitted" | "compaction_completed" | "compaction_failed" | "compaction_unverified" | "interrupt_requested" | "interrupt_completed" | "deadline_checked" | "drop_started" | "drop_finished" | "curfew_set" | "curfew_cleared" | "capacity_detected" | "capacity_submitted" | "capacity_cleared"} |
+ {type: "hitch_claimed" | "hitch_spawned" | "hitch_ready" | "hitch_blocked" | "hitch_failed" | "renamed" | "send_cancelled" | "delivery_accepted" | "delivery_succeeded" | "delivery_failed" | "delivery_unverified" | "activity_observed" | "observation" | "native_hook" | "compaction_submitted" | "compaction_completed" | "compaction_failed" | "compaction_unverified" | "interrupt_requested" | "interrupt_completed" | "deadline_checked" | "drop_started" | "drop_finished" | "curfew_set" | "curfew_cleared" | "capacity_detected" | "capacity_submitted" | "capacity_cleared" | "watchdog_available" | "process_verification_available"} |
  {type: "send_queued", envelope: #Envelope} |
  {type: "context_band_crossed", id: #ID, hitch_id: #ID, status: #ID, envelope: #Envelope, readings: [#Reading]} |
  {type: "snooze_cap_rejected", id: #ID, hitch_id: #ID, reason: #ID} |

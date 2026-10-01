@@ -5,6 +5,7 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"errors"
+	"fmt"
 	"os"
 	"path/filepath"
 
@@ -102,7 +103,40 @@ func (run *runtime) verifyCaller(a core.Agent) error {
 	if err != nil {
 		return err
 	}
-	return requireHarnessForeground(context.Background(), input, substrate.PaneID(a.Pane), c)
+	if err := requireHarnessForeground(context.Background(), input, substrate.PaneID(a.Pane), c); err != nil {
+		return err
+	}
+	if visible && tmux.CanReadIdentity(nativeIdentity(a.Process)) {
+		// The marker is informational: failing to clear it must not refuse a
+		// caller that passed verification.
+		if err := run.noteProcessAvailable(a); err != nil {
+			_, err = fmt.Fprintf(run.cmd.stderr, "warning: process-unavailable marker not cleared: %v\n", err)
+			return err
+		}
+	}
+	return nil
+}
+
+// noteProcessAvailable clears the marker only from the agent's own verified
+// command whose hitch identity this process can read. Visibility is relative
+// to the caller, so another caller's view says nothing about this agent.
+func (run *runtime) noteProcessAvailable(a core.Agent) error {
+	p, err := run.team.Agent(a.ID)
+	if err != nil {
+		return err
+	}
+	marker := filepath.Join(p.Directory, "process-unavailable")
+	if _, err := os.Stat(marker); errors.Is(err, os.ErrNotExist) {
+		return nil
+	} else if err != nil {
+		return err
+	}
+	if err := os.Remove(marker); errors.Is(err, os.ErrNotExist) {
+		return nil
+	} else if err != nil {
+		return err
+	}
+	return run.record(a, core.Event{Type: "process_verification_available"})
 }
 
 // This marker is independent of the agent lock: a sender may already hold it.

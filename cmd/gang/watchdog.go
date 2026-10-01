@@ -102,9 +102,16 @@ func (run *runtime) updateWatchdog(generation string, cleanup, reset bool) (proc
 		}
 	}()
 	path := filepath.Join(run.team.Directory, "watchdog")
+	marker := filepath.Join(run.team.Directory, "watchdog-unavailable")
+	// A timer that elapsed during an outage leaves its intent behind, so an
+	// outage marker means the recorded timer may no longer exist.
+	outage, err := watchdogOutage(marker)
+	if err != nil {
+		return false, err
+	}
 	// Scoped ticks leave an existing team deadline alone, without contending
 	// with its expiry. Only a full sweep is allowed to postpone idle peers.
-	if !cleanup && !reset {
+	if !cleanup && !reset && !outage {
 		if _, err := os.Stat(path); err == nil {
 			return true, nil
 		} else if !errors.Is(err, os.ErrNotExist) {
@@ -147,6 +154,9 @@ func (run *runtime) updateWatchdog(generation string, cleanup, reset bool) (proc
 	old := string(data)
 	if generation != "" && generation != old {
 		return false, nil
+	}
+	if outage, err = watchdogOutage(marker); err != nil {
+		return false, err
 	}
 	agents, err := run.team.ListAgents()
 	if err != nil {
@@ -191,6 +201,12 @@ func (run *runtime) updateWatchdog(generation string, cleanup, reset bool) (proc
 				if err := run.noteProcessUnavailable(a); err != nil {
 					return false, err
 				}
+				// This caller cannot replace a recorded timer, which still fires and
+				// rearms from its own tick. That tick is this one when the generation
+				// matches, so its timer has already elapsed.
+				if old != "" && generation == "" && !cleanup {
+					return true, nil
+				}
 			}
 			break
 		}
@@ -205,16 +221,13 @@ func (run *runtime) updateWatchdog(generation string, cleanup, reset bool) (proc
 		if len(agents) == 0 && old == "" {
 			return false, nil
 		}
-		marker := filepath.Join(run.team.Directory, "watchdog-unavailable")
-		if _, err := os.Stat(marker); errors.Is(err, os.ErrNotExist) {
+		if !outage {
 			if err := run.team.Append(core.Event{Type: "watchdog_unavailable", At: run.cmd.now(), Reason: unavailableReason}); err != nil {
 				return false, err
 			}
 			if err := os.WriteFile(marker, nil, 0600); err != nil {
 				return false, err
 			}
-		} else if err != nil {
-			return false, err
 		}
 		if old != "" && cleanup {
 			if _, err := fmt.Fprintln(run.cmd.stderr, "warning: watchdog unavailable; existing timer cancellation deferred"); err != nil {
@@ -226,7 +239,7 @@ func (run *runtime) updateWatchdog(generation string, cleanup, reset bool) (proc
 	if cleanup && len(agents) != 0 {
 		return true, nil
 	}
-	if old != "" && !reset && !cleanup && len(agents) != 0 {
+	if old != "" && !reset && !cleanup && !outage && len(agents) != 0 {
 		return true, nil
 	}
 	if old != "" {
@@ -272,7 +285,35 @@ func (run *runtime) updateWatchdog(generation string, cleanup, reset bool) (proc
 	if err := scheduler.Arm(unit, executable, environment); err != nil {
 		return false, err
 	}
+	if err := os.Remove(marker); err == nil {
+		if err := run.team.Append(core.Event{Type: "watchdog_available", At: run.cmd.now()}); err != nil {
+			return false, err
+		}
+	} else if !errors.Is(err, os.ErrNotExist) {
+		return false, err
+	}
 	return true, nil
+}
+
+func watchdogOutage(marker string) (bool, error) {
+	_, err := os.Stat(marker)
+	if errors.Is(err, os.ErrNotExist) {
+		return false, nil
+	}
+	return err == nil, err
+}
+
+// ensureWatchdog arms a timer when the team records none, for a command that queues work only a
+// later tick can deliver, and says so when no timer can be armed.
+func (run *runtime) ensureWatchdog() error {
+	if _, err := run.updateWatchdog("", false, false); err != nil {
+		return err
+	}
+	if outage, err := watchdogOutage(filepath.Join(run.team.Directory, "watchdog-unavailable")); err != nil || !outage {
+		return err
+	}
+	_, err := fmt.Fprintln(run.cmd.stderr, "warning: watchdog unavailable; wakes and queued work wait for the next hook or gang tick (see gang log)")
+	return err
 }
 
 func (run *runtime) disarmEmptyWatchdog() error {

@@ -161,10 +161,12 @@ Identity and delivery use tmux's pane registration and foreground command,
 so they work when the caller cannot see host PIDs. Native ancestry checks and
 detached-descendant cleanup remain enabled when the host process namespace is
 visible. Otherwise `process_verification_unavailable` records the skipped
-checks, and `roster` retains `[process-unavailable]` to show that a caller skipped
-process checks for this registration. The process watchdog is
-also skipped visibly with `watchdog_unavailable` and `[watchdog-unavailable]`;
-ordinary hooks and commands still tick the team. A pane-only drop cannot
+checks, and `roster` shows `[process-unavailable]` until the agent's own command
+passes ancestry verification from the PID namespace recorded at hitch,
+which logs `process_verification_available`. The process watchdog is
+also skipped visibly with `watchdog_unavailable` and `[watchdog-unavailable]`,
+and `hitch` and `snooze` warn on stderr; ordinary hooks and commands still tick
+the team. The next armed timer clears the marker and logs `watchdog_available`. A pane-only drop cannot
 prove that detached descendants exited. Every registered pane requires a server
 generation, session, pane ID, and inherited capability. Missing registration or
 capability is refused; launch a fresh hitch to establish them. Later ordinary
