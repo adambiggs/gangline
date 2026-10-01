@@ -171,7 +171,8 @@ func (run *runtime) recoverStartup(name string) (result error) {
 		return err
 	}
 	if err := deliveryResult(outcome); err != nil {
-		return err
+		path, _ := l.Paths.EnvelopePath("failed", e.ID)
+		return commandError{status: exitUnknown, text: fmt.Sprintf("startup recovery is unverified: %s; inspect %s before retrying gang hitch %s --recover; retained startup: %s", reason, a.Name, a.Name, path)}
 	}
 	_, err = fmt.Fprintf(run.cmd.stdout, "%s\t%s\n", e.ID, outcome)
 	return err

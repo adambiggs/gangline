@@ -47,14 +47,26 @@ func TestRegisteredLongTextPreservesExactBytes(t *testing.T) {
 }
 
 func TestRegisteredTextInCopyMode(t *testing.T) {
-	testRegisteredTextMode(t, "\x1b[200~[gang:gangline:startup#b480bb271b092c51 startup] No assignment was supplied. [/gang:gangline:startup#b480bb271b092c51]\x1b[201~\n", true)
+	testRegisteredTextMode(t, "\x1b[200~[gang:gangline:startup#b480bb271b092c51 startup] No assignment was supplied. [/gang:gangline:startup#b480bb271b092c51]\x1b[201~\n", "copy-mode")
+}
+
+func TestRegisteredTextInViewMode(t *testing.T) {
+	t.Run("inline", func(t *testing.T) {
+		testRegisteredTextMode(t, "startup\n", "view-mode")
+	})
+	t.Run("source-file", func(t *testing.T) {
+		testRegisteredTextMode(t, strings.Repeat("contract\n", 2000), "view-mode")
+	})
+	t.Run("stacked viewer refused", func(t *testing.T) {
+		testRegisteredTextMode(t, "startup\n", "stacked-view-mode")
+	})
 }
 
 func testRegisteredText(t *testing.T, want string) {
-	testRegisteredTextMode(t, want, false)
+	testRegisteredTextMode(t, want, "")
 }
 
-func testRegisteredTextMode(t *testing.T, want string, copyMode bool) {
+func testRegisteredTextMode(t *testing.T, want, mode string) {
 	t.Helper()
 	t.Setenv("TMUX", "")
 	t.Setenv("TMUX_PANE", "")
@@ -103,8 +115,36 @@ func testRegisteredTextMode(t *testing.T, want string, copyMode bool) {
 		t.Fatalf("shell foreground command = %q: %v", command, err)
 	}
 	runTmux(t, binary, socket, "set-buffer", "keep")
-	if copyMode {
+	stacked := mode == "stacked-view-mode"
+	if stacked {
 		runTmux(t, binary, socket, "copy-mode", "-t", id.Pane)
+		mode = "view-mode"
+	}
+	if mode == "copy-mode" {
+		runTmux(t, binary, socket, "copy-mode", "-t", id.Pane)
+	} else if mode == "view-mode" {
+		runTmux(t, binary, socket, "run-shell", "-t", id.Pane, "printf 'tmux command output\\n'")
+	}
+	if got := strings.TrimSpace(runTmux(t, binary, socket, "display-message", "-p", "-t", id.Pane, "#{pane_mode}")); got != mode {
+		t.Fatalf("pane mode = %q, want %q", got, mode)
+	}
+	if stacked {
+		state := func() string {
+			return strings.TrimSpace(runTmux(t, binary, socket, "display-message", "-p", "-t", id.Pane, "#{pane_in_mode} #{pane_mode}"))
+		}
+		if got := state(); got != "2 view-mode" {
+			t.Fatalf("stacked fixture = %q", got)
+		}
+		if err := b.SendRegisteredKeys(context.Background(), id, command, substrate.Keys{Text: want + "END", Names: []string{"C-j"}}); err == nil {
+			t.Fatal("stacked viewer accepted input")
+		}
+		if got := state(); got != "2 view-mode" {
+			t.Fatalf("refusal changed viewer stack: %q", got)
+		}
+		if got := runTmux(t, binary, socket, "save-buffer", "-"); got != "keep" {
+			t.Fatalf("refusal changed default buffer: %q", got)
+		}
+		return
 	}
 	if err := b.SendRegisteredKeys(context.Background(), id, command, substrate.Keys{Text: want + "END", Names: []string{"C-j"}}); err != nil {
 		t.Fatal(err)

@@ -181,12 +181,14 @@ func (b *Backend) SendRegisteredKeys(ctx context.Context, id PaneIdentity, comma
 		_, err := b.CheckPane(ctx, id)
 		return err
 	}
-	// Capture reads the application screen even while tmux is in copy mode.
-	// Leave that viewing mode before typing so text cannot execute its bindings.
-	cancelCopy := tmuxCommand("if-shell", "-F", "-t", id.Pane, "#{==:#{pane_mode},copy-mode}", tmuxCommand("send-keys", "-t", id.Pane, "-X", "cancel"))
+	// Capture reads the application screen under both scrollback and command
+	// output viewers. Cancel either viewer before typing into the application.
+	cancelCopy := tmuxCommand("if-shell", "-F", "-t", id.Pane, viewingMode, tmuxCommand("send-keys", "-t", id.Pane, "-X", "cancel"))
 	commands = append([]string{cancelCopy}, commands...)
 	return b.mutateRegisteredPane(ctx, id, strings.Join(commands, " ; "), command, 0, false)
 }
+
+const viewingMode = "#{||:#{==:#{pane_mode},copy-mode},#{==:#{pane_mode},view-mode}}"
 
 // tmux parses if-shell branches as command strings, not shell scripts. Literal
 // newlines in shell-quoted arguments lose indentation and join escaped lines.
@@ -232,9 +234,9 @@ func (b *Backend) mutateRegisteredPane(ctx context.Context, id PaneIdentity, com
 	}
 	if foreground != "" {
 		condition = fmt.Sprintf("#{&&:%s,#{==:#{pane_current_command},%s}}", condition, foreground)
-		condition = fmt.Sprintf("#{&&:%s,#{||:#{==:#{pane_in_mode},0},#{==:#{pane_mode},copy-mode}}}", condition)
+		condition = fmt.Sprintf("#{&&:%s,#{||:#{==:#{pane_in_mode},0},#{&&:#{==:#{pane_in_mode},1},%s}}}", condition, viewingMode)
 	}
-	fallback := "display-message -p 'registered pane identity changed or input mode is unsupported'"
+	fallback := "display-message -p 'registered pane identity changed or input mode is unsupported (pane=#{pane_id}, session=#{session_id}, foreground=#{pane_current_command}, modes=#{pane_in_mode}, mode=#{pane_mode})'"
 	var out string
 	if len(command) > maxInlineRegisteredCommandBytes {
 		script := tmuxCommand("if-shell", "-F", "-t", id.Pane, condition, command, fallback) + "\n"

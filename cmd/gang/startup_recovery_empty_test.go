@@ -219,7 +219,7 @@ func TestStartupEnterErrorDoesNotAllowEmptyRetry(t *testing.T) {
 	}
 	b.screen = screenWithText("READY", "› ")
 	b.submit = func(string) error { return errors.New("Enter result unknown") }
-	if err := f.cmd.hitch([]string{"worker", "--recover"}); err == nil || b.submits != 1 {
+	if err := f.cmd.hitch([]string{"worker", "--recover"}); err == nil || !strings.Contains(err.Error(), "Enter result unknown") || !strings.Contains(err.Error(), "retained startup:") || b.submits != 1 {
 		t.Fatalf("Enter uncertainty: %v, submits=%d", err, b.submits)
 	}
 	b.screen = screenWithText("READY", "› ")
