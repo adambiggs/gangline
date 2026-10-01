@@ -152,6 +152,7 @@ type Envelope struct {
 	CreatedAt  time.Time        `json:"created_at"`
 	MeasuredAt *time.Time       `json:"measured_at,omitempty"`
 	NotBefore  time.Time        `json:"not_before,omitzero"`
+	NotAfter   time.Time        `json:"not_after,omitzero"`
 	Outcome    string           `json:"outcome,omitempty"`
 	Reason     string           `json:"reason,omitempty"`
 }

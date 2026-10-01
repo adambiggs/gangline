@@ -921,7 +921,7 @@ func TestFailedRecipientReroutesUncertainNativeInput(t *testing.T) {
 	lead := f.add(t, "new-lead", "lead", "codex")
 	f.env["GANGLINE_HITCH_ID"] = string(lead.ID)
 	if err := f.run.withUsageState(func(state *usageState) error {
-		state.Notices = []usageNotice{{ID: "notice", Token: "0123456789abcdef", RecipientID: caller.ID, RecipientName: caller.Name, Submission: "unverified", Text: "Cap warning"}}
+		state.Notices = []usageNotice{{ID: "notice", Token: "0123456789abcdef", RecipientID: caller.ID, RecipientName: caller.Name, Submission: "unverified", Text: "Cap warning", ResetAt: f.cmd.now().Add(time.Hour).Unix()}}
 		state.Recent[string(caller.ID)] = usageSnooze{ID: "recent", Token: "abcdef0123456789", CallerID: caller.ID, CallerName: caller.Name, RecipientID: caller.ID, RecipientName: caller.Name, At: f.cmd.now().Add(-time.Hour), TurnID: "old-turn", Note: "Resume saved work", CapCandidate: true}
 		return nil
 	}); err != nil {
@@ -1115,7 +1115,7 @@ func TestFailedNoticeRecipientDoesNotBlockOtherWakes(t *testing.T) {
 	worker := f.add(t, "caller-id", "worker", "codex")
 	f.env["GANGLINE_HITCH_ID"] = string(worker.ID)
 	if err := f.run.withUsageState(func(state *usageState) error {
-		state.Notices = []usageNotice{{ID: "usage-band-notice", Token: "0123456789abcdef", Text: "usage warning", CreatedAt: f.cmd.now(), RecipientID: lead.ID, RecipientName: lead.Name}}
+		state.Notices = []usageNotice{{ID: "usage-band-notice", Token: "0123456789abcdef", Text: "usage warning", CreatedAt: f.cmd.now(), ResetAt: f.cmd.now().Add(time.Hour).Unix(), RecipientID: lead.ID, RecipientName: lead.Name}}
 		state.Snoozes[string(worker.ID)] = usageSnooze{ID: "snooze-wake", Token: "fedcba9876543210", CallerID: worker.ID, CallerName: worker.Name, At: f.cmd.now().Add(-time.Hour), Note: "Resume work"}
 		state.Snoozes[string(lead.ID)] = usageSnooze{ID: "snooze-lead", Token: "00112233445566ff", CallerID: lead.ID, CallerName: lead.Name, At: f.cmd.now().Add(-time.Hour), Note: "Lead work"}
 		return nil
@@ -1134,5 +1134,115 @@ func TestFailedNoticeRecipientDoesNotBlockOtherWakes(t *testing.T) {
 	}
 	if len(state.Notices) != 1 || state.Notices[0].Submission != "" {
 		t.Fatalf("failed lead notice was not kept pending: %+v", state.Notices)
+	}
+}
+
+// A warning describes one provider window. Once that window resets, the
+// warning is false: no recipient may receive it, whenever one appears.
+func TestUsageNoticeExpiresWithItsWindow(t *testing.T) {
+	f := newStateFixture(t)
+	worker := f.add(t, "caller-id", "worker", "codex")
+	c, err := loadCollar("codex", f.run.settings)
+	if err != nil {
+		t.Fatal(err)
+	}
+	at := f.cmd.now()
+	reset := at.Add(time.Hour)
+	worker.Native.Limits = core.Reading{Kind: "provider-limits", Status: "observed", At: &at, Limits: []core.LimitWindow{{Label: "primary", WindowMinutes: 300, UsedPercent: 80, ResetAt: reset.Unix()}}}
+	if err := f.run.observeUsageBands(worker, c); err != nil {
+		t.Fatal(err)
+	}
+	if len(usageSnapshot(t, f.run).Notices) != 1 {
+		t.Fatal("band crossing recorded no notice")
+	}
+	f.cmd.clock = func() time.Time { return reset }
+	f.run.cmd.clock = f.cmd.clock
+	lead := f.add(t, "lead-id", "lead", "codex")
+	f.env["GANGLINE_HITCH_ID"] = string(lead.ID)
+	if err := f.run.flushUsageWork(); err != nil {
+		t.Fatal(err)
+	}
+	if f.input.submits != 0 {
+		t.Fatalf("notice for a reset window was delivered: %q", f.input.pasted)
+	}
+	if n := usageSnapshot(t, f.run).Notices; len(n) != 0 {
+		t.Fatalf("notice for a reset window was kept: %+v", n)
+	}
+}
+
+// A warning already queued behind a busy recipient is withdrawn, not typed,
+// once its window resets.
+func TestQueuedUsageNoticeIsCancelledAtReset(t *testing.T) {
+	f := newStateFixture(t)
+	lead := f.add(t, "lead-id", "lead", "codex")
+	f.env["GANGLINE_HITCH_ID"] = string(lead.ID)
+	c, err := loadCollar("codex", f.run.settings)
+	if err != nil {
+		t.Fatal(err)
+	}
+	at := f.cmd.now()
+	reset := at.Add(time.Hour)
+	lead.Native.Limits = core.Reading{Kind: "provider-limits", Status: "observed", At: &at, Limits: []core.LimitWindow{{Label: "primary", WindowMinutes: 300, UsedPercent: 80, ResetAt: reset.Unix()}}}
+	if err := f.run.observeUsageBands(lead, c); err != nil {
+		t.Fatal(err)
+	}
+	ready := f.input.screen
+	f.input.screen = screenWithText("READY", "› draft")
+	if err := f.run.flushUsageWork(); err != nil {
+		t.Fatal(err)
+	}
+	p, err := f.run.team.Agent(lead.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	queued, err := p.ListNew()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if f.input.submits != 0 || len(queued) != 1 {
+		t.Fatalf("notice did not wait behind the draft: submits=%d queued=%d", f.input.submits, len(queued))
+	}
+	// Withdrawal must leave an existing retained receipt in place.
+	retained := core.Envelope{ID: "retained", Token: "fedcba9876543210", Recipient: lead.ID, To: lead.Name, From: core.Sender{Kind: core.SenderGangline, Name: "other"}, Message: core.Message{Text: "unconfirmed"}, CreatedAt: at}
+	if err := p.Publish(retained); err != nil {
+		t.Fatal(err)
+	}
+	l, err := p.TryLock()
+	if err != nil {
+		t.Fatal(err)
+	}
+	agent, err := p.Read()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := l.Settle(&agent, retained, "unverified", "native input not yet confirmed"); err != nil {
+		t.Fatal(err)
+	}
+	if err := l.Close(); err != nil {
+		t.Fatal(err)
+	}
+	f.cmd.clock = func() time.Time { return reset }
+	f.run.cmd.clock = f.cmd.clock
+	f.input.screen = ready
+	if _, err := f.run.drain(lead.ID, ""); err != nil {
+		t.Fatal(err)
+	}
+	if f.input.submits != 0 {
+		t.Fatalf("queued notice for a reset window was delivered: %q", f.input.pasted)
+	}
+	if queued, err := p.ListNew(); err != nil || len(queued) != 0 {
+		t.Fatalf("queued notice was not withdrawn: %+v %v", queued, err)
+	}
+	if agent, err := p.Read(); err != nil || agent.LastFailed != retained.ID {
+		t.Fatalf("withdrawal replaced the retained receipt: %q %v", agent.LastFailed, err)
+	}
+	if _, err := p.ReadEnvelope("failed", retained.ID); err != nil {
+		t.Fatalf("withdrawal removed the retained receipt: %v", err)
+	}
+	if err := f.run.flushUsageWork(); err != nil {
+		t.Fatal(err)
+	}
+	if n := usageSnapshot(t, f.run).Notices; len(n) != 0 || f.input.submits != 0 {
+		t.Fatalf("withdrawn notice was kept or republished: %+v submits=%d", n, f.input.submits)
 	}
 }

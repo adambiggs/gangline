@@ -16,6 +16,7 @@ import "time"
  created_at: #Time
  measured_at?: #Time
  not_before?: #Time
+ not_after?: #Time
  outcome?: "accepted" | "delivered" | "failed" | "unverified" | "cancelled"
  reason?: string
 })

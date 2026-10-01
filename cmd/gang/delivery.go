@@ -305,6 +305,16 @@ func (run *runtime) drainLocked(l *store.LockedAgent, a *core.Agent, target core
 		}
 		var next *core.Envelope
 		for i := 0; i < len(pending); i++ {
+			if e := pending[i]; !e.NotAfter.IsZero() && !e.NotAfter.After(run.cmd.now()) {
+				const reason = "expired before delivery"
+				if err := l.Withdraw(e.ID); err != nil {
+					return result, pending, err
+				}
+				if err := run.record(*a, core.Event{Type: "send_cancelled", ID: string(e.ID), Reason: reason}); err != nil {
+					return result, pending, err
+				}
+				continue
+			}
 			if !pending[i].NotBefore.After(run.cmd.now()) {
 				next = &pending[i]
 				break

@@ -35,6 +35,7 @@ type usageNotice struct {
 	Collar        string          `json:"collar"`
 	Window        string          `json:"window"`
 	Band          string          `json:"band"`
+	ResetAt       int64           `json:"reset_at"`
 	Text          string          `json:"text"`
 	CreatedAt     time.Time       `json:"created_at"`
 	RecipientID   core.HitchID    `json:"recipient_id,omitempty"`
@@ -440,7 +441,7 @@ func (run *runtime) observeUsageBands(a core.Agent, c harness.Collar) error {
 				if err != nil {
 					return err
 				}
-				state.Notices = append(state.Notices, usageNotice{ID: core.EnvelopeID(id), Token: token, Collar: c.Name, Window: kind, Band: band.Name, Text: renderUsageBand(band, c.Name, kind, w.UsedPercent, w.ResetAt), CreatedAt: now})
+				state.Notices = append(state.Notices, usageNotice{ID: core.EnvelopeID(id), Token: token, Collar: c.Name, Window: kind, Band: band.Name, ResetAt: w.ResetAt, Text: renderUsageBand(band, c.Name, kind, w.UsedPercent, w.ResetAt), CreatedAt: now})
 				previous.Fired = append(previous.Fired, band.Name)
 				fired[band.Name] = true
 			}
@@ -564,6 +565,7 @@ func (run *runtime) flushUsageWork() error {
 			}
 			delete(state.Recent, key)
 		}
+		kept := state.Notices[:0]
 		for i := range state.Notices {
 			n := &state.Notices[i]
 			if _, exists := active[n.RecipientID]; !exists {
@@ -584,10 +586,17 @@ func (run *runtime) flushUsageWork() error {
 			if n.RecipientID == "" && haveLead {
 				n.RecipientID, n.RecipientName = lead.ID, lead.Name
 			}
+			// A warning about a window that has reset is false; drop it
+			// unless its input is already in flight.
+			if n.Submission == "" && n.ResetAt <= now.Unix() {
+				continue
+			}
+			kept = append(kept, *n)
 			if n.RecipientID != "" && n.Submission == "" {
 				notices = append(notices, *n)
 			}
 		}
+		state.Notices = kept
 		keys := make([]string, 0, len(state.Snoozes))
 		for key := range state.Snoozes {
 			keys = append(keys, key)
@@ -643,7 +652,7 @@ func (run *runtime) flushUsageWork() error {
 		}
 	}
 	for _, n := range notices {
-		publish("usage notice", core.Envelope{ID: n.ID, Token: n.Token, Recipient: n.RecipientID, To: n.RecipientName, From: core.Sender{Kind: core.SenderGangline, Name: "usage-band"}, Message: core.Message{Text: n.Text}, CreatedAt: n.CreatedAt})
+		publish("usage notice", core.Envelope{ID: n.ID, Token: n.Token, Recipient: n.RecipientID, To: n.RecipientName, From: core.Sender{Kind: core.SenderGangline, Name: "usage-band"}, Message: core.Message{Text: n.Text}, CreatedAt: n.CreatedAt, NotAfter: time.Unix(n.ResetAt, 0)})
 	}
 	for _, s := range wakes {
 		publish("wake", core.Envelope{ID: s.ID, Token: s.Token, Recipient: s.RecipientID, To: s.RecipientName, From: core.Sender{Kind: core.SenderGangline, Name: "snooze"}, Message: core.Message{Text: snoozeWakeText(s, now)}, CreatedAt: now})

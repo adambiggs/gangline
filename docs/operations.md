@@ -7,9 +7,11 @@ daily tasks and [troubleshooting](troubleshooting.md) for observable failures.
 
 Gangline reads the collar's native five-hour and weekly usage windows. When a
 configured usage band is crossed, it sends one notice for that collar and reset
-window to the active lead. The default notice contains only the provider,
-reported usage, and reset time. Bands do not change agent work. A collar
-overlay can supply an optional per-band `note` with operator guidance.
+window to the active lead. A notice still waiting for a lead, or queued behind
+one, when its window resets is withdrawn rather than delivered. The default
+notice contains only the provider, reported usage, and reset time. Bands do
+not change agent work. A collar overlay can supply an optional per-band `note`
+with operator guidance.
 Native
 readings can be absent or stale; `gang limits NAME` shows what an agent has
 observed, and `gang limits -c COLLAR` queries a collar that supports a

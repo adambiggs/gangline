@@ -34,6 +34,16 @@ func (p AgentPaths) Publish(e core.Envelope) error {
 	defer os.Remove(tmp)
 	return os.Rename(tmp, path)
 }
+
+// Withdraw removes an undelivered envelope without a result, so the agent's
+// retained receipts are untouched. The team log keeps its audit history.
+func (l *LockedAgent) Withdraw(id core.EnvelopeID) error {
+	path, err := l.Paths.EnvelopePath("new", id)
+	if err != nil {
+		return err
+	}
+	return os.Remove(path)
+}
 func (p AgentPaths) ReadEnvelope(dir string, id core.EnvelopeID) (core.Envelope, error) {
 	var e core.Envelope
 	path, err := p.EnvelopePath(dir, id)
