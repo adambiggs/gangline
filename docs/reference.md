@@ -251,9 +251,12 @@ collar: {
 }
 ```
 
-An optional usage-band message accepts `{{band}}`, `{{collar}}`,
+An optional per-band `note` appends operator guidance to the measurement;
+its default is empty. An optional `message` replaces the measurement template.
+Both accept `{{band}}`, `{{collar}}`,
 `{{window}}`, `{{threshold_percent}}`, `{{used_percent}}`,
-`{{reset_at}}` (UTC RFC3339), and `{{snooze_command}}`. Unknown native
+`{{reset_at}}` (UTC RFC3339), and `{{snooze_command}}`. With no message,
+the notice reports only provider, usage percent, and reset time. Unknown native
 window durations are ignored; Gangline does not estimate provider usage.
 
 | Token | Value |
@@ -273,7 +276,9 @@ through a private native app server without creating a conversation or turn.
 The Claude Code collar has no standalone limits query; use `gang limits NAME`
 for readings observed from an agent.
 
-`gang snooze` belongs to an active agent. With no `--at`, it uses a recent
+`gang snooze` is a manual override for an active agent. On an attributable
+provider cap refusal, Gangline automatically schedules a wake at the observed
+native reset. With no `--at`, `gang snooze` uses a recent
 native five-hour or weekly reset from that agent's collar, selecting the
 most-used window. `--at` accepts a duration, local `HH:MM`, or RFC3339
 timestamp. `--note` is delivered with the wake. A pending wake is durable;

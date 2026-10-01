@@ -14,10 +14,12 @@ import (
 )
 
 type usageState struct {
-	Windows map[string]usageWindowState `json:"windows,omitempty"`
-	Notices []usageNotice               `json:"notices,omitempty"`
-	Snoozes map[string]usageSnooze      `json:"snoozes,omitempty"`
-	Recent  map[string]usageSnooze      `json:"recent_wakes,omitempty"`
+	Windows        map[string]usageWindowState `json:"windows,omitempty"`
+	Notices        []usageNotice               `json:"notices,omitempty"`
+	Snoozes        map[string]usageSnooze      `json:"snoozes,omitempty"`
+	Recent         map[string]usageSnooze      `json:"recent_wakes,omitempty"`
+	AutoCaps       map[string]time.Time        `json:"auto_caps,omitempty"`
+	AutoCandidates map[string]autoCapCandidate `json:"auto_candidates,omitempty"`
 }
 
 type usageWindowState struct {
@@ -58,6 +60,12 @@ type usageSnooze struct {
 	CapFailedAt   time.Time       `json:"cap_failed_at,omitzero"`
 	TurnFailed    bool            `json:"turn_failed,omitempty"`
 	Rearms        int             `json:"rearms,omitempty"`
+	Auto          bool            `json:"auto,omitempty"`
+}
+
+type autoCapCandidate struct {
+	At          time.Time `json:"at"`
+	SubmittedAt time.Time `json:"submitted_at"`
 }
 
 func (run *runtime) withUsageState(change func(*usageState) error) (result error) {
@@ -78,6 +86,12 @@ func (run *runtime) withUsageState(change func(*usageState) error) (result error
 	}
 	if state.Recent == nil {
 		state.Recent = make(map[string]usageSnooze)
+	}
+	if state.AutoCaps == nil {
+		state.AutoCaps = make(map[string]time.Time)
+	}
+	if state.AutoCandidates == nil {
+		state.AutoCandidates = make(map[string]autoCapCandidate)
 	}
 	for key, legacy := range state.Windows {
 		kind, ok := strings.CutPrefix(key, "claude-code/")
@@ -269,17 +283,21 @@ func observedCappedReset(r core.Reading, submittedAt, now time.Time) (time.Time,
 		r.At.After(now) || now.Sub(*r.At) > 5*time.Minute {
 		return time.Time{}, false
 	}
-	reset, err := snoozeReset(r.Limits, now)
-	if err != nil {
-		return time.Time{}, false
-	}
-	for _, window := range r.Limits {
+	return cappedNativeReset(r.Limits, now)
+}
+
+func cappedNativeReset(limits []core.LimitWindow, now time.Time) (time.Time, bool) {
+	var reset time.Time
+	for _, window := range limits {
 		if harness.UsageWindowKind(window.Label, window.WindowMinutes) != "" &&
 			window.UsedPercent >= 99 && window.ResetAt > now.Unix() {
-			return reset, true
+			candidate := time.Unix(window.ResetAt, 0)
+			if reset.IsZero() || candidate.Before(reset) {
+				reset = candidate
+			}
 		}
 	}
-	return time.Time{}, false
+	return reset, !reset.IsZero()
 }
 
 // A wake completes only on a matching successful native turn. An attributable
@@ -304,8 +322,14 @@ func (run *runtime) observeSnoozeTurn(a core.Agent, notice hookNotice, providerB
 				continue
 			}
 			confirmed := false
-			if notice.TurnID == s.TurnID && notice.Kind == "turn-failed" && a.Native.FailedTurn == s.TurnID {
-				explicit, generic := usageCapFailure(notice.Failure)
+			failure := notice.Failure
+			failedTurn := notice.TurnID == s.TurnID && notice.Kind == "turn-failed" && a.Native.FailedTurn == s.TurnID
+			if s.Auto && a.Collar == "codex" && a.Native.TurnID == s.TurnID &&
+				!s.SubmittedAt.IsZero() && !a.Native.LastErrorAt.Before(s.SubmittedAt) {
+				failedTurn, failure = true, a.Native.LastError
+			}
+			if failedTurn {
+				explicit, generic := usageCapFailure(failure)
 				if !explicit && !generic {
 					s.TurnFailed = true
 					state.Recent[key] = s
@@ -332,17 +356,20 @@ func (run *runtime) observeSnoozeTurn(a core.Agent, notice hookNotice, providerB
 			if confirmed && !s.CapRejected {
 				s.CapRejected = true
 				state.Recent[key] = s
-				reason := notice.Failure
+				reason := failure
 				if reason == "" {
 					reason = "native rate limit confirmed by fresh capped-window reading"
 				}
-				if s.Rearms > 0 {
+				if s.Rearms > 0 && !s.Auto {
 					reason += "; no further wake scheduled"
 				}
 				events = append(events, core.Event{Type: "snooze_cap_rejected", At: now, HitchID: a.ID, Name: a.Name, ID: string(s.ID), Reason: reason})
 			}
-			if s.CapRejected && s.Rearms > 0 {
+			if s.CapRejected && s.Rearms > 0 && !s.Auto {
 				continue
+			}
+			if s.Auto && s.CapRejected && !observedCap {
+				reset, observedCap = recentNativeReset(a.Native.Limits, now)
 			}
 			if !s.CapRejected || !observedCap {
 				continue
@@ -386,7 +413,10 @@ func (run *runtime) observeSnoozeTurn(a core.Agent, notice hookNotice, providerB
 func renderUsageBand(band harness.UsageBand, collar, window string, used float64, reset int64) string {
 	message := band.Message
 	if message == "" {
-		message = "Provider {{collar}} {{window}} usage reached {{band}} ({{used_percent}}% used; reset {{reset_at}}). Wrap the team at the next checkpoint. The lead can ask agents to run `{{snooze_command}}`."
+		message = "{{collar}} {{window}} usage: {{used_percent}}% used, resets {{reset_at}}"
+	}
+	if band.Note != "" {
+		message += " " + band.Note
 	}
 	return strings.NewReplacer(
 		"{{band}}", band.Name,
@@ -600,7 +630,7 @@ func (run *runtime) flushUsageWork() error {
 		sort.Strings(keys)
 		for _, key := range keys {
 			s := state.Snoozes[key]
-			if s.At.After(now) {
+			if s.At.IsZero() || s.At.After(now) {
 				continue
 			}
 			if _, exists := active[s.RecipientID]; !exists {

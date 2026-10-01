@@ -26,6 +26,221 @@ func usageSnapshot(t *testing.T, run *runtime) usageState {
 	return state
 }
 
+func TestUsageBandDefaultIsMeasurementOnly(t *testing.T) {
+	reset := time.Date(2026, 10, 3, 16, 58, 14, 0, time.UTC).Unix()
+	got := renderUsageBand(harness.UsageBand{Name: "yellow", At: 0.75}, "codex", "weekly", 84, reset)
+	want := "codex weekly usage: 84% used, resets 2026-10-03T16:58:14Z"
+	if got != want {
+		t.Fatalf("default notice = %q, want %q", got, want)
+	}
+	custom := renderUsageBand(harness.UsageBand{Name: "red", Message: "{{collar}} {{band}}: operator note"}, "claude", "five_hour", 95, reset)
+	if custom != "claude red: operator note" {
+		t.Fatalf("operator message = %q", custom)
+	}
+	withNote := renderUsageBand(harness.UsageBand{Name: "red", Note: "{{band}}: operator guidance"}, "codex", "weekly", 95, reset)
+	if withNote != "codex weekly usage: 95% used, resets 2026-10-03T16:58:14Z red: operator guidance" {
+		t.Fatalf("operator note = %q", withNote)
+	}
+}
+
+func TestCapResetUsesEarliestCappedWindow(t *testing.T) {
+	now := time.Date(2026, 9, 22, 10, 0, 0, 0, time.UTC)
+	reset, ok := cappedNativeReset([]core.LimitWindow{
+		{Label: "weekly", WindowMinutes: 10080, UsedPercent: 100, ResetAt: now.Add(7 * 24 * time.Hour).Unix()},
+		{Label: "five_hour", WindowMinutes: 300, UsedPercent: 100, ResetAt: now.Add(5 * time.Hour).Unix()},
+	}, now)
+	if !ok || !reset.Equal(now.Add(5*time.Hour)) {
+		t.Fatalf("capped reset = %s, %t", reset, ok)
+	}
+}
+
+func TestNativeCapParksAndResumesWithoutManualSnooze(t *testing.T) {
+	for _, collar := range []string{"claude", "codex"} {
+		t.Run(collar, func(t *testing.T) {
+			f := newStateFixture(t)
+			f.input.command = collar
+			if collar == "claude" {
+				f.input.screen = screenWithText("────────────────────────────────────────────────────────────────────────────────", "❯", "────────────────────────────────────────────────────────────────────────────────")
+			}
+			a := f.add(t, "caller-id", "worker", collar)
+			at := f.cmd.now()
+			reset := at.Add(5 * time.Hour)
+			a.Native.SubmittedAt = at.Add(-time.Second)
+			a.Native.Limits = core.Reading{Kind: "provider-limits", Status: "observed", At: &at, Limits: []core.LimitWindow{{Label: "five_hour", WindowMinutes: 300, UsedPercent: 100, ResetAt: reset.Unix()}}}
+			failure := hookNotice{Kind: "turn-failed", TurnID: "native-turn", At: at, Failure: "You have hit your usage limit"}
+			if collar == "claude" {
+				a.Native.FailedTurn = "native-turn"
+			} else {
+				failure = hookNotice{}
+				a.Native.LastErrorAt, a.Native.LastError = at, "You have hit your usage limit"
+			}
+			if err := f.run.observeAutoCap(a, failure); err != nil {
+				t.Fatal(err)
+			}
+			parked := usageSnapshot(t, f.run).Snoozes[string(a.ID)]
+			if !parked.Auto || !parked.At.Equal(reset) {
+				t.Fatalf("cap did not park until reset: %+v", parked)
+			}
+			if err := f.run.observeAutoCap(a, failure); err != nil {
+				t.Fatal(err)
+			}
+			if got := usageSnapshot(t, f.run).Snoozes[string(a.ID)].ID; got != parked.ID {
+				t.Fatalf("duplicate cap created another wake: %s", got)
+			}
+			f.env["GANGLINE_HITCH_ID"] = string(a.ID)
+			if err := f.run.flushUsageWork(); err != nil {
+				t.Fatal(err)
+			}
+			if f.input.submits != 0 {
+				t.Fatal("wake submitted before reset")
+			}
+			f.run.cmd.clock = func() time.Time { return reset }
+			if err := f.run.flushUsageWork(); err != nil {
+				t.Fatal(err)
+			}
+			if f.input.submits != 1 || !strings.Contains(f.input.pasted, "Resume the interrupted work") {
+				t.Fatalf("reset did not resume parked agent: submits=%d text=%q", f.input.submits, f.input.pasted)
+			}
+		})
+	}
+}
+
+func TestCapWithoutResetWaitsForNativeReading(t *testing.T) {
+	f := newStateFixture(t)
+	a := f.add(t, "caller-id", "worker", "claude")
+	at := f.cmd.now()
+	a.Native.FailedTurn = "native-turn"
+	failure := hookNotice{Kind: "turn-failed", TurnID: "native-turn", At: at, Failure: "You have hit your usage limit"}
+	if err := f.run.observeAutoCap(a, failure); err != nil {
+		t.Fatal(err)
+	}
+	f.env["GANGLINE_HITCH_ID"] = string(a.ID)
+	if err := f.run.flushUsageWork(); err != nil {
+		t.Fatal(err)
+	}
+	if f.input.submits != 0 || !usageSnapshot(t, f.run).Snoozes[string(a.ID)].At.IsZero() {
+		t.Fatal("cap without reset submitted a wake")
+	}
+	a.Native.Limits = core.Reading{Kind: "provider-limits", Status: "observed", At: &at, Limits: []core.LimitWindow{{Label: "five_hour", UsedPercent: 100, ResetAt: at.Add(5 * time.Hour).Unix()}}}
+	if err := f.run.observeAutoCap(a, hookNotice{}); err != nil {
+		t.Fatal(err)
+	}
+	if usageSnapshot(t, f.run).Snoozes[string(a.ID)].At.IsZero() {
+		t.Fatal("native reading did not resolve parked wake")
+	}
+}
+
+func TestGenericCapFailureWaitsForFreshCappedReading(t *testing.T) {
+	f := newStateFixture(t)
+	f.input.command = "claude"
+	a := f.add(t, "caller-id", "worker", "claude")
+	at := f.cmd.now()
+	a.Native.SubmittedAt = at.Add(-time.Second)
+	a.Native.FailedTurn = "native-turn"
+	a.Native.Limits = core.Reading{Kind: "provider-limits", Status: "observed", At: &at, Limits: []core.LimitWindow{{Label: "five_hour", UsedPercent: 40, ResetAt: at.Add(5 * time.Hour).Unix()}}}
+	failure := hookNotice{Kind: "turn-failed", TurnID: "native-turn", At: at, Failure: "rate_limit"}
+	if err := f.run.observeAutoCap(a, failure); err != nil {
+		t.Fatal(err)
+	}
+	state := usageSnapshot(t, f.run)
+	if state.Snoozes[string(a.ID)].ID != "" || state.AutoCandidates[string(a.ID)].At.IsZero() {
+		t.Fatalf("generic throttle was parked without cap evidence: %+v", state)
+	}
+	f.env["GANG_AGENT_ID"] = string(a.ID)
+	f.env["TMUX_PANE"] = a.Pane
+	if err := f.cmd.snooze([]string{"--status"}); err != nil || !strings.Contains(f.out.String(), "provider cap unconfirmed") {
+		t.Fatalf("unconfirmed cap status: %q, %v", f.out.String(), err)
+	}
+	fresh := at.Add(time.Second)
+	a.Native.Limits.At = &fresh
+	a.Native.Limits.Limits[0].UsedPercent = 100
+	f.run.cmd.clock = func() time.Time { return fresh }
+	if err := f.run.observeAutoCap(a, hookNotice{}); err != nil {
+		t.Fatal(err)
+	}
+	state = usageSnapshot(t, f.run)
+	if !state.Snoozes[string(a.ID)].Auto || len(state.AutoCandidates) != 0 {
+		t.Fatalf("fresh cap reading did not confirm park: %+v", state)
+	}
+}
+
+func TestPostResetLowUsageWakesPendingCapImmediately(t *testing.T) {
+	f := newStateFixture(t)
+	a := f.add(t, "caller-id", "worker", "claude")
+	at := f.cmd.now()
+	a.Native.FailedTurn = "native-turn"
+	failure := hookNotice{Kind: "turn-failed", TurnID: "native-turn", At: at, Failure: "You have hit your usage limit"}
+	if err := f.run.observeAutoCap(a, failure); err != nil {
+		t.Fatal(err)
+	}
+	later := at.Add(5 * time.Hour)
+	a.Native.Limits = core.Reading{Kind: "provider-limits", Status: "observed", At: &later, Limits: []core.LimitWindow{{Label: "five_hour", UsedPercent: 1, ResetAt: later.Add(5 * time.Hour).Unix()}}}
+	f.run.cmd.clock = func() time.Time { return later }
+	if err := f.run.observeAutoCap(a, hookNotice{}); err != nil {
+		t.Fatal(err)
+	}
+	if got := usageSnapshot(t, f.run).Snoozes[string(a.ID)].At; !got.Equal(later) {
+		t.Fatalf("post-reset wake due %s, want %s", got, later)
+	}
+}
+
+func TestClaudeCapHookSchedulesAutomaticWake(t *testing.T) {
+	f := newStateFixture(t)
+	f.input.command = "claude"
+	f.input.screen = screenWithText("────────────────────────────────────────────────────────────────────────────────", "❯", "────────────────────────────────────────────────────────────────────────────────")
+	a := f.add(t, "caller-id", "worker", "claude")
+	at := f.cmd.now()
+	a.Native.Limits = core.Reading{Kind: "provider-limits", Status: "observed", At: &at, Limits: []core.LimitWindow{{Label: "five_hour", UsedPercent: 100, ResetAt: at.Add(5 * time.Hour).Unix()}}}
+	p, err := f.run.team.Agent(a.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := p.WriteWitness(store.Witness{ID: "native-submit", At: at.Add(-time.Second), SessionID: "s", TurnID: "native-turn"}); err != nil {
+		t.Fatal(err)
+	}
+	l, err := p.TryLock()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := l.Save(a); err != nil {
+		t.Fatal(err)
+	}
+	if err := l.Close(); err != nil {
+		t.Fatal(err)
+	}
+	failure := hookNotice{Kind: "turn-failed", SessionID: "s", TurnID: "native-turn", At: at, Failure: "You have hit your usage limit"}
+	if err := f.run.tickAgent(a.ID, failure, true); err != nil {
+		t.Fatal(err)
+	}
+	parked := usageSnapshot(t, f.run).Snoozes[string(a.ID)]
+	if !parked.Auto || !parked.At.Equal(at.Add(5*time.Hour)) {
+		t.Fatalf("hook failed to park agent: %+v", parked)
+	}
+}
+
+func TestCodexAutomaticWakeRearmsAfterAnotherCap(t *testing.T) {
+	f := newStateFixture(t)
+	a := f.add(t, "caller-id", "worker", "codex")
+	at := f.cmd.now()
+	a.Native.TurnID = "wake-turn"
+	a.Native.LastErrorAt, a.Native.LastError = at, "Usage limit reached"
+	reset := at.Add(5 * time.Hour)
+	a.Native.Limits = core.Reading{Kind: "provider-limits", Status: "observed", At: &at, Limits: []core.LimitWindow{{Label: "five_hour", UsedPercent: 100, ResetAt: reset.Unix()}}}
+	if err := f.run.withUsageState(func(state *usageState) error {
+		state.Recent[string(a.ID)] = usageSnooze{ID: "old-wake", CallerID: a.ID, CallerName: a.Name, RecipientID: a.ID, TurnID: "wake-turn", SubmittedAt: at.Add(-time.Second), Auto: true}
+		return nil
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if err := f.run.observeSnoozeTurn(a, hookNotice{}, false); err != nil {
+		t.Fatal(err)
+	}
+	next := usageSnapshot(t, f.run).Snoozes[string(a.ID)]
+	if !next.Auto || next.Rearms != 1 || !next.At.Equal(reset) {
+		t.Fatalf("automatic wake was not rearmed: %+v", next)
+	}
+}
+
 func TestLegacyClaudeUsageStateKeepsFiredBands(t *testing.T) {
 	f := newStateFixture(t)
 	a := f.add(t, "a", "worker", "claude-code")

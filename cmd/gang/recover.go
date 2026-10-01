@@ -144,6 +144,9 @@ func (run *runtime) tickAgent(id core.HitchID, notice hookNotice, wait bool) err
 	if err := run.observeSnoozeTurn(a, notice, found); err != nil {
 		return err
 	}
+	if err := run.observeAutoCap(a, notice); err != nil {
+		return err
+	}
 	if found {
 		if err := run.apply(l, &a, core.Event{Type: "capacity_detected", Fingerprint: capacity.Fingerprint, Reason: capacity.Evidence, Deadline: run.cmd.now().Add(run.settings.CapacityTimeout)}); err != nil {
 			return err

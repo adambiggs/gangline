@@ -15,6 +15,9 @@ const defaultSnoozeNote = "Re-read your assignment and durable state, then conti
 func snoozeWakeText(s usageSnooze, now time.Time) string {
 	when := s.At.UTC().Format(time.RFC3339)
 	message := fmt.Sprintf("Your scheduled wake was due at %s.", when)
+	if s.Auto {
+		message = fmt.Sprintf("Provider cap reset was due at %s. Resume the interrupted work.", when)
+	}
 	if now.After(s.At) {
 		message += fmt.Sprintf(" It is overdue by %s.", now.Sub(s.At).Round(time.Second))
 	}
@@ -49,9 +52,11 @@ func snoozeStatusText(s usageSnooze, submitted bool) string {
 		return "native submission unverified; inspect recipient"
 	}
 	switch {
+	case s.Auto && s.At.IsZero():
+		return "provider cap confirmed; awaiting native reset time"
 	case s.CapCandidate:
 		return "rate limit unconfirmed by native usage; inspect or clear"
-	case s.CapRejected && s.Rearms > 0:
+	case s.CapRejected && s.Rearms > 0 && !s.Auto:
 		return "usage cap rejected the replacement; manual action needed"
 	case s.CapRejected:
 		return "waiting for native reset after cap rejection"
@@ -94,11 +99,15 @@ func (cmd command) snooze(args []string) error {
 			if current := state.Snoozes[key]; current.ID != "" {
 				if current.Submission != "" {
 					rows = append(rows, fmt.Sprintf("%s\t%s", current.ID, snoozeStatusText(current, true)))
+				} else if current.At.IsZero() {
+					rows = append(rows, fmt.Sprintf("%s\t%s", current.ID, snoozeStatusText(current, false)))
 				} else {
 					rows = append(rows, fmt.Sprintf("%s\t%s", current.ID, current.At.UTC().Format(time.RFC3339)))
 				}
 			} else if current := state.Recent[key]; current.ID != "" {
 				rows = append(rows, fmt.Sprintf("%s\t%s", current.ID, snoozeStatusText(current, false)))
+			} else if candidate := state.AutoCandidates[key]; !candidate.At.IsZero() {
+				rows = append(rows, "provider cap unconfirmed; awaiting fresh native usage")
 			}
 			if isLead {
 				for _, n := range state.Notices {
@@ -178,6 +187,7 @@ func (cmd command) snooze(args []string) error {
 			}
 			delete(state.Snoozes, key)
 			delete(state.Recent, key)
+			delete(state.AutoCandidates, key)
 			return nil
 		}); err != nil {
 			return err

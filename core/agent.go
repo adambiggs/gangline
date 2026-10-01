@@ -179,6 +179,7 @@ type NativeState struct {
 	TurnFailure string    `json:"turn_failure,omitempty"`
 	FailedTurn  string    `json:"failed_turn,omitempty"`
 	LastErrorAt time.Time `json:"last_error_at,omitzero"`
+	LastError   string    `json:"last_error,omitempty"`
 	Offset      int64     `json:"offset,omitempty"`
 	SubmittedAt time.Time `json:"submitted_at,omitzero"`
 	CompactedAt time.Time `json:"compacted_at,omitzero"`

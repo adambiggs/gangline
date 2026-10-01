@@ -5,15 +5,12 @@ Give each assignment to one named
 agent with its purpose, constraints, and completion criteria. Base the next
 decision on the agent's completion report and the evidence it names.
 
-Provider usage-band notices go to the lead for the collar's account. At a
-checkpoint after a notice, ask agents to save unfinished work and schedule
-their own wake with `gang snooze`. Native readings can be unavailable; use an
-explicit `--at` when needed. A stopped team does not start itself at wake
-time. On its next startup an overdue wake reaches the caller, or the lead if
-the caller is gone.
-The wake remains pending until its native turn finishes successfully. An
-attributable Claude Code usage-cap failure causes Gangline to re-arm it at
-the next observed native reset. Inspect `gang snooze --status` from that
-agent if completion or reset is uncertain. Your own `gang snooze --status`
-also lists uncertain usage notices and fallback wakes sent to you; inspect
-native input before clearing one with `gang snooze --clear ID`.
+Provider usage-band notices report the collar's account usage and reset time.
+Agents continue working. An attributable provider cap refusal automatically
+schedules a wake for the affected agent at the native reset. The wake remains
+pending until its native turn finishes successfully. A stopped team does not
+start itself at wake time; on its next startup an overdue wake reaches the
+caller, or the lead if the caller is gone. `gang snooze` remains a manual
+override. Inspect `gang snooze --status` if a reset or wake completion is
+uncertain. Your own status also lists uncertain usage notices and fallback
+wakes sent to you; inspect native input before clearing one by ID.

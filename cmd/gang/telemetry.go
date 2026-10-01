@@ -48,6 +48,7 @@ func acceptReadings(n *core.NativeState, readings []core.Reading) {
 		case "error":
 			if r.At != nil && r.At.After(n.LastErrorAt) {
 				n.LastErrorAt = *r.At
+				n.LastError = r.Reason
 			}
 		}
 	}

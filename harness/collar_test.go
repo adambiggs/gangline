@@ -30,6 +30,15 @@ func TestUsageBandRejectsInvalidMessageToken(t *testing.T) {
 	}
 }
 
+func TestUsageBandRejectsInvalidNoteToken(t *testing.T) {
+	_, err := LoadCustomCollar("codex", "codex.cue", []byte(`collar: {
+		usage_bands: {weekly: [{name: "yellow", at: 0.75, note: "{{unknown}}"}]}
+	}`))
+	if err == nil {
+		t.Fatal("unknown usage-band note token passed validation")
+	}
+}
+
 func TestEmbeddedCollarsValidate(t *testing.T) {
 	want := []string{"claude", "codex"}
 	names, err := EmbeddedCollarNames()

@@ -16,7 +16,10 @@ restart a stopped team. On a later startup, an overdue wake goes to its
 caller if active, otherwise to the lead.
 An exact native submit witness records that the harness received the wake.
 The wake completes only after a matching successful native turn boundary.
-An attributable Claude Code usage-cap failure creates a replacement wake at
+An attributable cap failure creates a replacement wake at
 the next native reset while preserving the note. Unknown turn outcomes remain
 pending. A missing recipient after restart moves an unconfirmed wake back to
 the due queue for the caller or lead.
+Usage-band notices carry measurements only by default. An attributable native
+cap failure creates an automatic wake even when no manual wake was scheduled.
+If the reset is not yet observed, the parked wake waits for a native reading.

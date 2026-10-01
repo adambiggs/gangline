@@ -113,6 +113,7 @@ type UsageBand struct {
 	Name    string  `json:"name"`
 	At      float64 `json:"at"`
 	Message string  `json:"message,omitempty"`
+	Note    string  `json:"note,omitempty"`
 }
 
 func LoadCollar(filename string, data []byte) (Collar, error) {
@@ -391,24 +392,25 @@ var usageBandMessageTokens = map[string]bool{
 }
 
 func validateUsageBandMessage(band UsageBand) error {
-	message := band.Message
-	for len(message) > 0 {
-		if strings.HasPrefix(message, "{{") {
-			end := strings.Index(message[2:], "}}")
-			if end < 0 {
+	for _, message := range []string{band.Message, band.Note} {
+		for len(message) > 0 {
+			if strings.HasPrefix(message, "{{") {
+				end := strings.Index(message[2:], "}}")
+				if end < 0 {
+					return fmt.Errorf("usage band %q has malformed message token", band.Name)
+				}
+				token := message[2 : end+2]
+				if !usageBandMessageTokens[token] {
+					return fmt.Errorf("usage band %q has unknown message token %q", band.Name, token)
+				}
+				message = message[end+4:]
+				continue
+			}
+			if strings.HasPrefix(message, "}}") {
 				return fmt.Errorf("usage band %q has malformed message token", band.Name)
 			}
-			token := message[2 : end+2]
-			if !usageBandMessageTokens[token] {
-				return fmt.Errorf("usage band %q has unknown message token %q", band.Name, token)
-			}
-			message = message[end+4:]
-			continue
+			message = message[1:]
 		}
-		if strings.HasPrefix(message, "}}") {
-			return fmt.Errorf("usage band %q has malformed message token", band.Name)
-		}
-		message = message[1:]
 	}
 	return nil
 }
