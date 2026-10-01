@@ -106,6 +106,23 @@ func TestRecoverStartupReplacesCollapsedDraftAfterClear(t *testing.T) {
 	}
 }
 
+func TestRecoverStartupAfterFolderTrustRetainsCollapsedAssignment(t *testing.T) {
+	f, p, e, b, wire := newCollapsedRecoveryFixture(t)
+	b.screen = screenWithText("Do you trust the contents of this directory?", "› 1. Yes, continue", "  2. No, exit")
+	if err := f.cmd.hitch([]string{"worker", "--recover"}); err == nil || b.clears != 0 || b.repastes != 0 || b.submits != 0 {
+		t.Fatalf("folder trust was not left to operator: err=%v clears=%d pastes=%d submits=%d", err, b.clears, b.repastes, b.submits)
+	}
+	// The operator answers trust; the retained startup is still a paste chip.
+	b.screen = screenWithText(fmt.Sprintf("› [Pasted Content %d chars]", utf8.RuneCountInString(wire)))
+	if err := f.cmd.hitch([]string{"worker", "--recover"}); err != nil {
+		t.Fatal(err)
+	}
+	got, err := p.ReadEnvelope("cur", e.ID)
+	if err != nil || got.Outcome != "delivered" || got.Message != e.Message || b.pasted != wire || b.clears != 1 || b.repastes != 1 || b.submits != 1 {
+		t.Fatalf("startup changed or not recovered: receipt=%+v err=%v clears=%d pastes=%d submits=%d", got, err, b.clears, b.repastes, b.submits)
+	}
+}
+
 func TestRecoverStartupKeepsUnknownCollapsedDraftUnsubmitted(t *testing.T) {
 	for _, test := range []struct {
 		name  string

@@ -16,6 +16,9 @@ import (
 const fakeHarnessEnvironment = "GANGLINE_ACCEPTANCE_FAKE_HARNESS"
 
 func TestMain(m *testing.M) {
+	if os.Getenv("GANGLINE_ACCEPTANCE_RESUME_HARNESS") == "1" {
+		os.Exit(runResumeHarness())
+	}
 	if os.Getenv("GANGLINE_ACCEPTANCE_CMD_HARNESS") == "1" {
 		os.Exit(runCommandHarness())
 	}

@@ -5,8 +5,10 @@ import (
 	"errors"
 	"fmt"
 	"os"
+	"path/filepath"
 	"unicode/utf8"
 
+	"github.com/adambiggs/gangline/core"
 	"github.com/adambiggs/gangline/harness"
 	"github.com/adambiggs/gangline/store"
 	"github.com/adambiggs/gangline/substrate"
@@ -29,7 +31,37 @@ func startupWitnessUnchanged(paths store.AgentPaths, oldID string) error {
 	return nil
 }
 
-func (run *runtime) replaceCollapsedStartup(ctx context.Context, b harnessInput, pane substrate.PaneID, c harness.Collar, wire string, paths store.AgentPaths, oldID string) error {
+// Persist the loss of negative proof before any Enter can reach the harness.
+func startupSubmitPossible(paths store.AgentPaths, e *core.Envelope) error {
+	if e.PasteOnly == nil {
+		return nil
+	}
+	e.PasteOnly = nil
+	if err := paths.Publish(*e); err != nil {
+		return err
+	}
+	path, err := paths.EnvelopePath("new", e.ID)
+	if err != nil {
+		return err
+	}
+	// The old paste-only record must not reappear after a host crash.
+	failedPath, err := paths.EnvelopePath("failed", e.ID)
+	if err != nil {
+		return err
+	}
+	for _, name := range []string{path, filepath.Dir(path), filepath.Dir(failedPath)} {
+		f, err := os.Open(name)
+		if err != nil {
+			return err
+		}
+		if err := errors.Join(f.Sync(), f.Close()); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func (run *runtime) replaceCollapsedStartup(ctx context.Context, b harnessInput, pane substrate.PaneID, c harness.Collar, wire string, paths store.AgentPaths, oldID string, clear bool, beforeSubmit func() error) error {
 	wantChars := utf8.RuneCountInString(wire)
 	check := func(wantCollapsed bool) error {
 		screen, err := b.Capture(ctx, pane)
@@ -46,7 +78,7 @@ func (run *runtime) replaceCollapsedStartup(ctx context.Context, b harnessInput,
 			return err
 		}
 		if wantCollapsed {
-			if composer.CollapsedChars != wantChars {
+			if composer.CollapsedChars != wantChars && !harness.SameComposerText(composer.Text, wire) {
 				return fmt.Errorf("collapsed startup draft changed during recovery")
 			}
 		} else {
@@ -60,11 +92,16 @@ func (run *runtime) replaceCollapsedStartup(ctx context.Context, b harnessInput,
 		}
 		return startupWitnessUnchanged(paths, oldID)
 	}
-	if err := check(true); err != nil {
-		return err
-	}
-	if err := sendHarnessKeys(ctx, b, pane, c, c.Actions.StartupReplace.Input()); err != nil {
-		return err
+	if clear {
+		if err := beforeSubmit(); err != nil {
+			return err
+		}
+		if err := check(true); err != nil {
+			return err
+		}
+		if err := sendHarnessKeys(ctx, b, pane, c, c.Actions.StartupReplace.Input()); err != nil {
+			return err
+		}
 	}
 	if err := check(false); err != nil {
 		return err
@@ -72,6 +109,9 @@ func (run *runtime) replaceCollapsedStartup(ctx context.Context, b harnessInput,
 	input, err := harness.SubmitInput(c.Primitives.Submit, wire)
 	if err != nil {
 		return err
+	}
+	if !clear && !startupPasteSafe(input, wire) {
+		return fmt.Errorf("empty startup recovery requires bracketed paste")
 	}
 	if err := sendHarnessKeys(ctx, b, pane, c, input); err != nil {
 		return err
@@ -89,6 +129,9 @@ func (run *runtime) replaceCollapsedStartup(ctx context.Context, b harnessInput,
 		return err
 	}
 	if err := check(true); err != nil {
+		return err
+	}
+	if err := beforeSubmit(); err != nil {
 		return err
 	}
 	return sendHarnessKeys(ctx, b, pane, c, substrate.Keys{Submit: true})

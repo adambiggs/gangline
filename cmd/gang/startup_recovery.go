@@ -112,7 +112,9 @@ func (run *runtime) recoverStartup(name string) (result error) {
 	}
 	composer, err := harness.ReadComposer(c.Primitives.Composer, screen)
 	replaceCollapsed := err == nil && c.Actions.StartupReplace != nil && composer.CollapsedChars == utf8.RuneCountInString(wire)
-	if err != nil || !harness.SameComposerText(composer.Text, wire) && !replaceCollapsed {
+	idle, idleErr := harness.Idle(c, screen)
+	repasteEmpty := err == nil && idleErr == nil && idle && composer.Text == "" && !composer.TailOccupied && composer.CollapsedChars == 0 && e.PasteOnly != nil
+	if err != nil || !harness.SameComposerText(composer.Text, wire) && !replaceCollapsed && !repasteEmpty {
 		path, _ := l.Paths.EnvelopePath("failed", e.ID)
 		return commandError{status: exitUnknown, text: fmt.Sprintf("original startup text is not identifiable in the composer; input remains unverified; if the composer is empty, re-hitch with the retained contract and assignment: %s", path)}
 	}
@@ -123,14 +125,19 @@ func (run *runtime) recoverStartup(name string) (result error) {
 	if err != nil && !errors.Is(err, os.ErrNotExist) {
 		return err
 	}
+	if repasteEmpty && old.ID != e.PasteOnly.WitnessID {
+		path, _ := l.Paths.EnvelopePath("failed", e.ID)
+		return commandError{status: exitUnknown, text: fmt.Sprintf("startup submit witness changed after paste; input remains unverified; retained startup: %s", path)}
+	}
 	// Record the new submit intent before moving the prior receipt. A crash at
 	// either boundary stays unverified through normal input-owner recovery.
 	if err := run.reopenUnverified(l, &a, e); err != nil {
 		return err
 	}
-	if replaceCollapsed {
-		err = run.replaceCollapsedStartup(ctx, b, substrate.PaneID(a.Pane), c, wire, l.Paths, old.ID)
-	} else {
+	beforeSubmit := func() error { return startupSubmitPossible(l.Paths, &e) }
+	if replaceCollapsed || repasteEmpty {
+		err = run.replaceCollapsedStartup(ctx, b, substrate.PaneID(a.Pane), c, wire, l.Paths, old.ID, replaceCollapsed, beforeSubmit)
+	} else if err = beforeSubmit(); err == nil {
 		err = sendHarnessKeys(ctx, b, substrate.PaneID(a.Pane), c, substrate.Keys{Submit: true})
 	}
 	var witness store.Witness
@@ -150,7 +157,7 @@ func (run *runtime) recoverStartup(name string) (result error) {
 		if replaceCollapsed {
 			reason = "startup draft replacement incomplete; if the composer is empty, re-hitch with the retained assignment: " + reason
 		}
-	} else if a.Native.SessionID != "" && witness.SessionID != "" && a.Native.SessionID != witness.SessionID {
+	} else if a.Native.SessionID != "" && a.Native.SessionID != witness.SessionID {
 		outcome, reason = "unverified", "submit witness belongs to another native session"
 	} else {
 		a.Native.SessionID = witness.SessionID

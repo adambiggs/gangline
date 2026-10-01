@@ -134,6 +134,11 @@ func (s Sender) SameIdentity(other Sender) bool {
 	return s.Name == other.Name
 }
 
+// StartupPaste records the witness before startup input while no submit has been attempted.
+type StartupPaste struct {
+	WitnessID string `json:"witness_id"`
+}
+
 type Envelope struct {
 	ID         EnvelopeID       `json:"id"`
 	Token      string           `json:"token,omitempty"`
@@ -142,6 +147,7 @@ type Envelope struct {
 	Recipient  HitchID          `json:"recipient"`
 	Message    Message          `json:"message"`
 	Startup    *StartupSections `json:"startup,omitempty"`
+	PasteOnly  *StartupPaste    `json:"paste_only,omitempty"`
 	Purpose    string           `json:"purpose,omitempty"`
 	CreatedAt  time.Time        `json:"created_at"`
 	MeasuredAt *time.Time       `json:"measured_at,omitempty"`

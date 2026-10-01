@@ -10,6 +10,7 @@ import (
 	"strconv"
 	"strings"
 	"time"
+	"unicode"
 	"unicode/utf8"
 )
 
@@ -32,10 +33,17 @@ func readBody(reader io.Reader) (string, error) {
 	if body == "" {
 		return "", refuseError("message body is empty")
 	}
-	if !utf8.ValidString(body) || strings.IndexByte(body, 0) >= 0 {
-		return "", refuseError("message body must be UTF-8 text without NUL bytes")
+	if err := validateMessageText(body); err != nil {
+		return "", err
 	}
 	return body, nil
+}
+
+func validateMessageText(body string) error {
+	if !utf8.ValidString(body) || strings.ContainsFunc(body, func(r rune) bool { return unicode.IsControl(r) && r != '\n' && r != '\t' }) {
+		return refuseError("message body must be UTF-8 text without terminal controls other than newline and tab")
+	}
+	return nil
 }
 
 func randomID(prefix string) (string, error) {
@@ -69,6 +77,9 @@ func renderEnvelope(sender, nonce, marker, body string) (string, error) {
 }
 
 func renderEnvelopeTag(tag, marker, body string) (string, error) {
+	if err := validateMessageText(body); err != nil {
+		return "", err
+	}
 	if marker != "" && !envelopeMarkerPattern.MatchString(marker) {
 		return "", fmt.Errorf("envelope marker %q is invalid", marker)
 	}

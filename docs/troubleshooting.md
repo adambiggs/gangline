@@ -26,9 +26,11 @@ Inspect the pane and resolve any native prompt, then run:
 gang hitch NAME --recover
 ```
 
-Recovery submits the original startup message only when its exact text is
-still in the composer. If Gangline cannot identify it, recovery refuses and
-prints the retained message path. Keep that file for diagnosis. An ordinary
+Recovery submits the retained startup draft, or restores it to an empty idle
+composer when its receipt proves that submission was never attempted and the
+native submit witness has not changed. A matching native witness verifies
+startup without sending it again. Otherwise recovery refuses and prints the
+retained message path. Keep that file for diagnosis. An ordinary
 `gang send` does not replace the startup contract.
 
 ## A message stays queued

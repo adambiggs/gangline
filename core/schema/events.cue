@@ -11,6 +11,7 @@ import "time"
  recipient: #ID
  message: close({text: #ID})
  startup?: close({contract: #ID, doctrine?: string, role?: string})
+ paste_only?: close({witness_id: string})
  purpose?: "startup" | "assignment" | "resume"
  created_at: #Time
  measured_at?: #Time

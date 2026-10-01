@@ -38,6 +38,10 @@ func sendHarnessKeys(ctx context.Context, b harnessInput, pane substrate.PaneID,
 	}
 	return b.SendKeys(ctx, pane, keys)
 }
+func startupPasteSafe(input substrate.Keys, wire string) bool {
+	return !input.Submit && len(input.Names) == 0 && input.Text == "\x1b[200~"+wire+"\x1b[201~"
+}
+
 func isContextBandNotice(e core.Envelope) bool {
 	return e.From.Kind == core.SenderGangline && e.From.Name == "context-band"
 }
@@ -178,6 +182,12 @@ func (run *runtime) deliver(l *store.LockedAgent, a *core.Agent, e core.Envelope
 	if err := run.apply(l, a, core.Event{Type: "input_started", ID: string(e.ID), Status: "envelope"}); err != nil {
 		return "", err
 	}
+	if isStartupEnvelope(e) && startupPasteSafe(input, wire) {
+		e.PasteOnly = &core.StartupPaste{WitnessID: old.ID}
+		if err := l.Paths.Publish(e); err != nil {
+			return "", err
+		}
+	}
 	outcome, reason := "delivered", ""
 	ctx, cancel := run.cmd.timeout(operationTimeout)
 	defer cancel()
@@ -203,6 +213,9 @@ func (run *runtime) deliver(l *store.LockedAgent, a *core.Agent, e core.Envelope
 				err = fmt.Errorf("native prompt needs attention after paste: %s", blocker.Evidence)
 			}
 		}
+	}
+	if err == nil {
+		err = startupSubmitPossible(l.Paths, &e)
 	}
 	if err == nil {
 		err = sendHarnessKeys(ctx, b, pane, c, substrate.Keys{Submit: true})
@@ -238,7 +251,7 @@ func (run *runtime) deliver(l *store.LockedAgent, a *core.Agent, e core.Envelope
 	} else if accepted {
 		outcome, reason = "accepted", "native queue shows sender and one-time token; do not resend"
 	} else {
-		if a.Native.SessionID != "" && witness.SessionID != "" && a.Native.SessionID != witness.SessionID {
+		if a.Native.SessionID != "" && a.Native.SessionID != witness.SessionID {
 			outcome, reason = "unverified", "submit witness belongs to another native session"
 		} else {
 			a.Native.SessionID = witness.SessionID

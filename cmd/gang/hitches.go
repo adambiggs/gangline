@@ -109,6 +109,7 @@ func (cmd command) hitchWithStaleClaim(args []string, supersede bool) (result er
 	}
 	now := cmd.now()
 	a := core.Agent{ID: core.HitchID(id), Name: core.AgentName(o.Name), Collar: o.Collar, Role: o.Role, Directory: dir, Status: core.Starting, Activity: core.Unknown, CreatedAt: now, ChangedAt: now, BootDeadline: now.Add(bootTimeout)}
+	a.Native.SessionID = o.Resume
 	e := core.Envelope{ID: core.EnvelopeID(eid), Token: token, Recipient: a.ID, To: a.Name, From: sender, Purpose: purpose, Message: core.Message{Text: message}, CreatedAt: now}
 	if c.Options.RolePrompt == nil {
 		e.Startup = startupSections(o.Name, brief)
