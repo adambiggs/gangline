@@ -34,7 +34,6 @@ func TestHelpGroupsAliases(t *testing.T) {
 	aliases := map[string][]string{
 		"up":     {"-c, --collar COLLAR", "-d, --dir DIR", "-m, --model MODEL", "-e, --effort EFFORT", "-t, --task TASK", "-r, --role ROLE"},
 		"hitch":  {"-c, --collar COLLAR", "-d, --dir DIR", "-m, --model MODEL", "-e, --effort EFFORT", "-t, --task TASK", "-r, --role ROLE"},
-		"adopt":  {"-c, --collar COLLAR"},
 		"models": {"-c, --collar COLLAR"},
 	}
 	for name := range commandUsage {
@@ -180,7 +179,6 @@ func TestEveryCommandFlagParserConstructs(t *testing.T) {
 	bad := []string{"--unlisted"}
 	checks := map[string]func() error{
 		"hitch":      func() error { _, err := parseHitch([]string{"worker", "--unlisted"}, "codex", "/work"); return err },
-		"adopt":      func() error { _, err := parseCollarFlags("adopt", bad, "codex"); return err },
 		"send":       func() error { _, err := parseSend([]string{"worker", "--unlisted"}); return err },
 		"interrupt":  func() error { return cmd.interrupt(bad) },
 		"compact":    func() error { _, err := parseCompact(bad); return err },

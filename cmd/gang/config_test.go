@@ -64,9 +64,9 @@ func TestConfigShowsEnvironmentOnlyOrigins(t *testing.T) {
 	}
 }
 
-func TestLegacyClaudeDefaultDisplaysCanonicalName(t *testing.T) {
+func TestClaudeDefaultDisplaysConfiguredName(t *testing.T) {
 	directory := t.TempDir()
-	values := map[string]string{"GANG_CONFIG_DIR": directory, "GANG_COLLAR": "claude-code"}
+	values := map[string]string{"GANG_CONFIG_DIR": directory, "GANG_COLLAR": "claude"}
 	var output strings.Builder
 	cmd := command{
 		stdout:      &output,

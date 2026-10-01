@@ -387,7 +387,7 @@ func TestClaudeConfiguredContextBandsFromStatusline(t *testing.T) {
 			overlay := []byte(`package collars
 collar: {context_bands: {"*": [{name: "early", at: 0.10}, {name: "late", at: 0.20}]}}
 `)
-			if err := os.WriteFile(filepath.Join(dir, "claude-code.cue"), overlay, 0600); err != nil {
+			if err := os.WriteFile(filepath.Join(dir, "claude.cue"), overlay, 0600); err != nil {
 				t.Fatal(err)
 			}
 			f.env["GANG_COLLARS"] = dir

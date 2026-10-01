@@ -72,12 +72,6 @@ func TestOptionsBeforeAndAfterNames(t *testing.T) {
 			t.Fatalf("wait(%q) = %+v, %v", args, got, err)
 		}
 	}
-	for _, args := range [][]string{{"-c", "codex", "worker"}, {"worker", "-c", "codex"}} {
-		name, collar, err := parseAdopt(args)
-		if err != nil || name != "worker" || collar != "codex" {
-			t.Fatalf("adopt(%q) = %q, %q, %v", args, name, collar, err)
-		}
-	}
 }
 
 func TestTerminatorPreservesOperands(t *testing.T) {

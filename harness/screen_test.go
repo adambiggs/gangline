@@ -237,7 +237,7 @@ func TestReadContext(t *testing.T) {
 	}
 }
 
-func TestClaudeComposerAgainstLegacyFixtures(t *testing.T) {
+func TestClaudeComposerAgainstCapturedFixtures(t *testing.T) {
 	tests := []struct {
 		name string
 		file string

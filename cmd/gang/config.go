@@ -109,7 +109,6 @@ func (cmd command) settings() (settings, error) {
 			return settings{}, fmt.Errorf("%s must not be blank", label)
 		}
 	}
-	result.Collar = harness.CanonicalCollarName(result.Collar)
 	result.CapacityTimeout, err = time.ParseDuration(capacityTimeout)
 	if err != nil || result.CapacityTimeout <= 0 {
 		return settings{}, fmt.Errorf("GANG_CAPACITY_TIMEOUT must be a positive duration")
@@ -210,10 +209,7 @@ func valueOr(value, fallback string) string {
 
 func applyLaunchPolicy(command harness.Command, collar string, settings settings) harness.Command {
 	result := command
-	arguments, ok := settings.LaunchArgs[collar]
-	if !ok && collar == "claude" {
-		arguments = settings.LaunchArgs["claude-code"]
-	}
+	arguments := settings.LaunchArgs[collar]
 	result.Args = append(append([]string(nil), command.Args...), arguments...)
 	return result
 }

@@ -9,13 +9,13 @@ import (
 	"github.com/adambiggs/gangline/core"
 )
 
-func TestRosterDisplaysCanonicalNameForLegacyRegistration(t *testing.T) {
+func TestRosterDisplaysRegisteredCollarName(t *testing.T) {
 	f := newStateFixture(t)
-	f.add(t, "a", "worker", "claude-code")
+	f.add(t, "a", "worker", "claude")
 	if err := f.cmd.roster([]string{"--porcelain"}); err != nil {
 		t.Fatal(err)
 	}
-	if !strings.Contains(f.out.String(), "\tclaude\t") || strings.Contains(f.out.String(), "claude-code") {
+	if !strings.Contains(f.out.String(), "\tclaude\t") {
 		t.Fatalf("roster = %q", f.out.String())
 	}
 }

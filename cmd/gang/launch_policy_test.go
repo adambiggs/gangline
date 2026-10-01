@@ -29,17 +29,17 @@ func TestApplyLaunchPolicyKeepsOperatorArgumentsOutOfCollar(t *testing.T) {
 	}
 }
 
-func TestApplyLaunchPolicyAcceptsLegacyClaudeKey(t *testing.T) {
+func TestApplyLaunchPolicyUsesExactCollarName(t *testing.T) {
 	command := harness.Command{Name: "claude", Args: []string{"--model", "sonnet"}}
-	settings := settings{LaunchArgs: map[string][]string{"claude": {"--legacy"}}}
+	settings := settings{LaunchArgs: map[string][]string{"claude-code": {"--other"}}}
 	got := applyLaunchPolicy(command, "claude", settings)
-	if len(got.Args) != 3 || got.Args[2] != "--legacy" {
-		t.Fatalf("legacy arguments = %q", got.Args)
+	if len(got.Args) != 2 {
+		t.Fatalf("arguments from another collar: %q", got.Args)
 	}
-	settings.LaunchArgs["claude"] = []string{"--canonical"}
+	settings.LaunchArgs["claude"] = []string{"--configured"}
 	got = applyLaunchPolicy(command, "claude", settings)
-	if len(got.Args) != 3 || got.Args[2] != "--canonical" {
-		t.Fatalf("canonical arguments = %q", got.Args)
+	if len(got.Args) != 3 || got.Args[2] != "--configured" {
+		t.Fatalf("configured arguments = %q", got.Args)
 	}
 }
 

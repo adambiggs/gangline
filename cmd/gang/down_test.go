@@ -91,7 +91,6 @@ func TestDownRefusesRegistrationWhileConfirming(t *testing.T) {
 		}
 		for _, operation := range []func() error{
 			func() error { return f.cmd.hitch([]string{"late"}) },
-			func() error { return f.cmd.adopt([]string{"late", "-c", "codex"}) },
 			func() error { return f.cmd.drop([]string{"worker"}) },
 		} {
 			concurrentErrors = append(concurrentErrors, operation())

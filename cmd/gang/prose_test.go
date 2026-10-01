@@ -88,6 +88,7 @@ func TestLocalProsePreservesBytesAndSubordinatesRoleToOperator(t *testing.T) {
 func TestObservedSenderUsesRegisteredAgentIdentity(t *testing.T) {
 	f := newStateFixture(t)
 	a := f.add(t, "lead-hitch", "lead", "codex")
+	f.env["GANG_AGENT_ID"] = string(a.ID)
 	f.env["TMUX_PANE"] = a.Pane
 	sender, err := f.run.observedSender()
 	if err != nil || sender != (core.Sender{Kind: core.SenderAgent, Name: a.Name, HitchID: a.ID}) {
@@ -96,6 +97,7 @@ func TestObservedSenderUsesRegisteredAgentIdentity(t *testing.T) {
 	if _, err := f.run.sender("hitch"); err == nil {
 		t.Fatal("registered agent could override its sender")
 	}
+	delete(f.env, "GANG_AGENT_ID")
 	f.env["TMUX_PANE"] = "%unregistered"
 	if sender, err := f.run.observedSender(); err != nil || sender.Kind != "" {
 		t.Fatalf("unregistered pane claimed identity: %+v %v", sender, err)

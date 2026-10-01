@@ -62,21 +62,6 @@ func TestEmbeddedCollarsValidate(t *testing.T) {
 	}
 }
 
-func TestLegacyClaudeNameLoadsCanonicalCollar(t *testing.T) {
-	c, err := EmbeddedCollar("claude-code")
-	if err != nil || c.Name != "claude" {
-		t.Fatalf("embedded alias = %+v, %v", c, err)
-	}
-	c, err = LoadCustomCollar("claude-code", "legacy.cue", []byte(`collar: {launch: {args: ["--legacy"]}}`))
-	if err != nil || c.Name != "claude" || len(c.Launch.Args) != 1 || c.Launch.Args[0] != "--legacy" {
-		t.Fatalf("custom alias = %+v, %v", c, err)
-	}
-	c, err = LoadCustomCollar("claude-code", "legacy.cue", []byte(`collar: {name: "claude-code"}`))
-	if err != nil || c.Name != "claude" {
-		t.Fatalf("declared alias = %+v, %v", c, err)
-	}
-}
-
 func TestLoadCollarRejectsUnknownField(t *testing.T) {
 	data := []byte(`package collars
 

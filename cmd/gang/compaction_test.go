@@ -30,6 +30,7 @@ func TestCompactionQueuesResumeBeforeCompletion(t *testing.T) {
 				t.Fatal(err)
 			}
 			l.Close()
+			f.env["GANG_AGENT_ID"] = string(a.ID)
 			f.env["TMUX_PANE"] = a.Pane
 			f.env["GANGLINE_HITCH_ID"] = string(a.ID)
 			if collar == "claude" {
@@ -426,6 +427,7 @@ func TestAgentCompactsItselfAfterItsTurn(t *testing.T) {
 	f := newStateFixture(t)
 	a := f.add(t, "a", "worker", "codex")
 	p, _ := f.run.team.Agent(a.ID)
+	f.env["GANG_AGENT_ID"] = string(a.ID)
 	f.env["TMUX_PANE"] = a.Pane
 	f.input.screen = screenWithText("• Working (esc to interrupt)", "", "› ")
 	if err := f.cmd.compact([]string{"--resume", "state is in FILE"}); err != nil {
@@ -476,6 +478,7 @@ func TestCompactionResumeProceedsWhileWrappedCompactRemains(t *testing.T) {
 		t.Fatal(err)
 	}
 	l.Close()
+	f.env["GANG_AGENT_ID"] = string(a.ID)
 	f.env["TMUX_PANE"] = a.Pane
 	f.env["GANGLINE_HITCH_ID"] = string(a.ID)
 	b := &wrappedCompactInput{inputFixture: f.input}

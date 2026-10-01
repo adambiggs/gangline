@@ -28,7 +28,6 @@ const commandInventory = `usage: gang <command> [arguments]
 Start and end a team:
   up        start a team and join it
   hitch     add an agent
-  adopt     register an existing window
   rename    change an agent's registered name
   drop      remove one agent
   down      end the team
@@ -76,7 +75,6 @@ Native integration:
 var commandUsage = map[string]string{
 	"up":         "usage: gang up [NAME] [HITCH OPTIONS]\n",
 	"hitch":      "usage: gang hitch NAME [-c COLLAR] [-d DIR] [-m MODEL] [-e EFFORT]\n       [-t TASK] [-r ROLE] [--resume SESSION] [--stdin]\n       gang hitch NAME --recover\n",
-	"adopt":      "usage: gang adopt NAME [-c COLLAR]\n",
 	"rename":     "usage: gang rename OLD NEW\n",
 	"send":       "usage: gang send NAME [--from SENDER] [--live-only] [--supersede] [--at DURATION|HH:MM|RFC3339|clear] [BODY]\n       Without BODY, read stdin. Use -- before BODY when it begins with -.\n",
 	"queue":      "usage: gang queue [NAME]\n",
@@ -98,7 +96,7 @@ var commandUsage = map[string]string{
 	"teams":      "usage: gang teams\n",
 	"drop":       "usage: gang drop NAME\n",
 	"down":       "usage: gang down [-y|--yes]\n",
-	"collars":    "usage: gang collars\n       gang collar check NAME\n       Bundled names are claude and codex; claude-code is an alias for claude.\n",
+	"collars":    "usage: gang collars\n       gang collar check NAME\n       Bundled names are claude and codex.\n",
 	"collar":     "usage: gang collar check NAME\n",
 	"models":     "usage: gang models [-c COLLAR]\n",
 	"roles":      "usage: gang roles\n",
@@ -127,7 +125,6 @@ var commandOptions = map[string][]optionSpec{
 		{"recover", "", "recover the original startup message"},
 		{"stdin", "", "read the assignment from stdin"},
 	},
-	"adopt": {{"c", "COLLAR", "harness collar"}, {"collar", "COLLAR", "harness collar"}},
 	"send": {
 		{"from", "SENDER", "outside sender identity"},
 		{"live-only", "", "refuse rather than queue"},
@@ -211,7 +208,6 @@ func optionArgument(option optionSpec) string {
 var commandDescription = map[string]string{
 	"up":         "NAME names the lead agent (default lead) in the GANG_SESSION team\n(default gangline), not the team itself. Start and attach, or use --recover\nto recover that existing agent's startup.\n",
 	"hitch":      "NAME is an agent's registered name in the configured team.\nLaunch a new agent and deliver its startup, or use --recover to recover\nretained startup input for an existing agent.\n",
-	"adopt":      "NAME is the registered agent name for the current pane.\nAdopt it without launching a harness or delivering startup prose.\n",
 	"rename":     "OLD and NEW are registered agent names in the configured team.\nRename the agent without restarting its harness.\n",
 	"send":       "NAME is the recipient agent's registered name, not a team session.\nSend BODY or read stdin. An exact native hook proves delivery; a native\nqueue receipt proves acceptance. Otherwise input stays queued or unverified.\n",
 	"queue":      "NAME filters pending work to one registered agent. Omit it to list\npending work for every agent in the configured team.\n",

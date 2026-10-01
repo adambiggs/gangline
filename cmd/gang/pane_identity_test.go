@@ -35,6 +35,7 @@ func TestPaneTokenIdentityInPrivateNamespace(t *testing.T) {
 		{name: "sandbox", token: "secret", pane: "%1", present: true},
 		{name: "missing pane", token: "secret", present: true, want: "current pane"},
 		{name: "missing token", pane: "%1", present: true, want: "token"},
+		{name: "visible missing token", pane: "%1", present: true, visible: true, want: "token"},
 		{name: "wrong token", token: "other", pane: "%1", present: true, want: "token"},
 		{name: "wrong pane", token: "secret", pane: "%2", present: true, want: "current pane"},
 		{name: "pane absent", token: "secret", pane: "%1", want: "absent"},
@@ -96,77 +97,103 @@ func TestForeignForegroundSendDoesNotPublish(t *testing.T) {
 	}
 }
 
-type replacedNativeFixture struct{ *inputFixture }
-
-func (b replacedNativeFixture) Identity(context.Context, substrate.PaneID) (tmux.Identity, error) {
-	return tmux.Identity{PID: 7, Started: "replacement", BootID: "fixture", Namespace: "fixture"}, nil
-}
-
-func TestLegacySenderRejectsReusedPane(t *testing.T) {
-	f := newStateFixture(t)
-	a := f.add(t, "a", "worker", "codex")
-	f.env["TMUX_PANE"] = a.Pane
-	f.cmd.paneBackend = replacedNativeFixture{f.input}
-	run, err := f.cmd.runtime()
-	if err != nil {
-		t.Fatal(err)
-	}
-	if _, err := run.observedAgent(); err == nil || !strings.Contains(err.Error(), "native identity") {
-		t.Fatalf("reused pane accepted: %v", err)
-	}
-}
-
-func TestLegacySandboxOperationsKeepRegistrationAndInbox(t *testing.T) {
-	for _, op := range []string{"send", "drop"} {
-		t.Run(op, func(t *testing.T) {
+func TestIncompletePaneRegistrationIsNeverBoundOnDemand(t *testing.T) {
+	for _, field := range []string{"all", "generation", "session", "token", "pane"} {
+		t.Run(field, func(t *testing.T) {
 			f := newStateFixture(t)
 			a := f.add(t, "a", "worker", "codex")
-			f.cmd.paneBackend = identityFixture{inputFixture: f.input, present: true, visible: false}
-			var err error
-			if op == "send" {
-				err = f.cmd.send([]string{"worker", "--from", "operator", "do not queue"})
-			} else {
-				err = f.cmd.drop([]string{"worker"})
+			switch field {
+			case "all":
+				a.Registration = core.PaneRegistration{}
+			case "generation":
+				a.Registration.Generation = ""
+			case "session":
+				a.Registration.Session = ""
+			case "token":
+				a.Registration.TokenHash = ""
+			case "pane":
+				a.Pane = ""
 			}
-			if err == nil {
-				t.Fatal("unprovable legacy operation succeeded")
+			f.input.submit = nil
+			for name, check := range map[string]func() error{
+				"recipient": func() error { return f.run.checkRecipient(a) },
+				"caller":    func() error { return f.run.verifyCaller(a) },
+				"input": func() error {
+					return f.run.registeredInput(a, f.input).SendKeys(context.Background(), substrate.PaneID(a.Pane), substrate.Keys{Text: "must not send", Submit: true})
+				},
+			} {
+				if err := check(); err == nil || !strings.Contains(err.Error(), "incomplete pane registration") {
+					t.Errorf("%s accepted incomplete %s: %v", name, field, err)
+				}
 			}
-			p, _ := f.run.team.Agent(a.ID)
-			if _, err := p.Read(); err != nil {
-				t.Fatalf("registration lost: %v", err)
-			}
-			pending, err := p.ListNew()
-			if err != nil || len(pending) != 0 || f.input.submits != 0 {
-				t.Fatalf("pending=%+v submits=%d err=%v", pending, f.input.submits, err)
+			if f.input.registrations != 0 || f.input.submits != 0 || f.input.pasted != "" {
+				t.Fatalf("unregistered input mutated pane: registrations=%d submits=%d text=%q", f.input.registrations, f.input.submits, f.input.pasted)
 			}
 		})
 	}
 }
 
-func TestAdoptedPaneInputWorksButSandboxCallerIsRefused(t *testing.T) {
+func TestSandboxedOwnerAndLeadDeliverInBothDirections(t *testing.T) {
 	f := newStateFixture(t)
-	a := f.add(t, "a", "worker", "codex")
-	a.Registration = core.PaneRegistration{Generation: strings.Repeat("a", 64), Session: "$1"}
-	p, _ := f.run.team.Agent(a.ID)
+	lead := f.add(t, "lead-id", "lead", "codex")
+	owner := f.add(t, "owner-id", "owner", "codex")
+	owner.Pane = "%2"
+	p, err := f.run.team.Agent(owner.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
 	l, err := p.LockAgent()
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := l.Save(a); err != nil {
+	if err := l.Save(owner); err != nil {
 		t.Fatal(err)
 	}
-	l.Close()
+	if err := l.Close(); err != nil {
+		t.Fatal(err)
+	}
 	f.cmd.paneBackend = identityFixture{inputFixture: f.input, present: true, visible: false}
-	f.env["GANGLINE_HITCH_ID"] = string(a.ID)
-	if err := f.cmd.send([]string{"worker", "--from", "operator", "registered target"}); err != nil {
-		t.Fatal(err)
+	f.input.processErr = errors.New("host process tree unavailable in private namespace")
+	for _, direction := range []struct{ sender, recipient core.Agent }{{owner, lead}, {lead, owner}} {
+		f.env["GANG_AGENT_ID"] = string(direction.sender.ID)
+		f.env["TMUX_PANE"] = direction.sender.Pane
+		f.env["GANGLINE_HITCH_ID"] = string(direction.recipient.ID)
+		f.out.Reset()
+		if err := f.cmd.send([]string{string(direction.recipient.Name), "registered delivery"}); err != nil {
+			t.Fatalf("%s to %s: %v", direction.sender.Name, direction.recipient.Name, err)
+		}
+		p, err := f.run.team.Agent(direction.recipient.ID)
+		if err != nil {
+			t.Fatal(err)
+		}
+		a, err := p.Read()
+		if err != nil {
+			t.Fatal(err)
+		}
+		e, err := p.ReadEnvelope("cur", a.LastDelivered)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if e.Outcome != "delivered" || e.From.Kind != core.SenderAgent || e.From.HitchID != direction.sender.ID || e.From.Name != direction.sender.Name || !strings.Contains(f.out.String(), "delivered") {
+			t.Fatalf("wrong delivery or attribution: envelope=%+v output=%s", e, f.out.String())
+		}
 	}
+	if f.input.submits != 2 || f.input.registrations != 0 {
+		t.Fatalf("submits=%d registrations=%d", f.input.submits, f.input.registrations)
+	}
+}
+
+func TestRegisteredPaneRequiresInheritedHitchID(t *testing.T) {
+	f := newStateFixture(t)
+	a := f.add(t, "a", "worker", "codex")
 	f.env["TMUX_PANE"] = a.Pane
-	run, err := f.cmd.runtime()
-	if err != nil {
-		t.Fatal(err)
+	if _, err := f.run.observedAgent(); err == nil || !strings.Contains(err.Error(), "inherited hitch identity") {
+		t.Fatalf("pane inferred a caller without hitch ID: %v", err)
 	}
-	if _, err := run.observedAgent(); err == nil {
-		t.Fatal("adoption provided sandbox caller authority without inherited capability")
+	if err := f.cmd.send([]string{"worker", "--from", "operator", "must not send"}); err == nil || !strings.Contains(err.Error(), "inherited hitch identity") {
+		t.Fatalf("missing hitch ID bypassed sender attribution: %v", err)
+	}
+	if f.input.submits != 0 {
+		t.Fatalf("submitted without hitch ID: %d", f.input.submits)
 	}
 }

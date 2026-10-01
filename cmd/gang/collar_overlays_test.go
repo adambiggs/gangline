@@ -21,10 +21,10 @@ collar: {
 	}
 	primitives: {wedge: {params: {busy: "custom busy"}}}
 }`)
-	if err := os.WriteFile(filepath.Join(dir, "claude-code.cue"), data, 0600); err != nil {
+	if err := os.WriteFile(filepath.Join(dir, "claude.cue"), data, 0600); err != nil {
 		t.Fatal(err)
 	}
-	c, err := loadCollar("claude-code", settings{CollarDir: dir})
+	c, err := loadCollar("claude", settings{CollarDir: dir})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -33,56 +33,30 @@ collar: {
 	}
 }
 
-func TestClaudeCodeAliasUsesBundledCollar(t *testing.T) {
-	c, err := loadCollar("claude-code", settings{})
-	if err != nil {
-		t.Fatal(err)
-	}
-	if c.Name != "claude" || c.Launch.Command != "claude" {
-		t.Fatalf("claude-code alias loaded %+v", c)
-	}
-}
-
-func TestLegacyClaudeOverlayAndListedName(t *testing.T) {
+func TestCollarNamesHaveNoImplicitAliases(t *testing.T) {
 	dir := t.TempDir()
-	if err := os.WriteFile(filepath.Join(dir, "claude-code.cue"), []byte(`collar: {launch: {args: ["--legacy"]}}`), 0600); err != nil {
-		t.Fatal(err)
-	}
-	for _, name := range []string{"claude", "claude-code"} {
-		collar, err := loadCollar(name, settings{CollarDir: dir})
-		if err != nil || collar.Name != "claude" || len(collar.Launch.Args) != 1 || collar.Launch.Args[0] != "--legacy" {
-			t.Fatalf("load %s: %+v, %v", name, collar, err)
-		}
-	}
-	names, err := collarNames(settings{CollarDir: dir})
-	if err != nil || len(names) != 2 || names[0] != "claude" || names[1] != "codex" {
-		t.Fatalf("collars = %q, %v", names, err)
-	}
-}
-
-func TestCanonicalClaudeOverlayTakesPrecedenceOverLegacyOverlay(t *testing.T) {
-	dir := t.TempDir()
-	base, err := harness.EmbeddedCollar("claude")
-	if err != nil {
-		t.Fatal(err)
-	}
-	base.Name = "claude"
-	data, err := json.Marshal(map[string]any{"collar": base})
-	if err != nil {
-		t.Fatal(err)
-	}
-	if err := os.WriteFile(filepath.Join(dir, "claude.cue"), data, 0600); err != nil {
-		t.Fatal(err)
+	if _, err := loadCollar("claude-code", settings{}); err == nil {
+		t.Fatal("unbundled name loaded a bundled collar")
 	}
 	if err := os.WriteFile(filepath.Join(dir, "claude-code.cue"), []byte(`collar: {launch: {command: "wrong"}}`), 0600); err != nil {
 		t.Fatal(err)
 	}
-	c, err := loadCollar("claude-code", settings{CollarDir: dir})
-	if err != nil {
+	c, err := loadCollar("claude", settings{CollarDir: dir})
+	if err != nil || c.Name != "claude" || c.Launch.Command != "claude" {
+		t.Fatalf("another collar's file changed claude: %+v, %v", c, err)
+	}
+	if _, err := loadCollar("claude-code", settings{CollarDir: dir}); err == nil {
+		t.Fatal("partial unbundled collar inherited bundled fields")
+	}
+	names, err := collarNames(settings{CollarDir: dir})
+	if err != nil || strings.Join(names, ",") != "claude,claude-code,codex" {
+		t.Fatalf("collar filenames were renamed: %q, %v", names, err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, "claude.cue"), []byte(`collar: {name: "claude-code"}`), 0600); err != nil {
 		t.Fatal(err)
 	}
-	if c.Name != "claude" || c.Launch.Command != "claude" {
-		t.Fatalf("custom claude collar = %+v", c)
+	if _, err := loadCollar("claude", settings{CollarDir: dir}); err == nil {
+		t.Fatal("mismatched collar name was accepted")
 	}
 }
 
@@ -117,10 +91,10 @@ func TestOverlayRejectsUnknownMessageToken(t *testing.T) {
 func TestOverlayRejectsCUEBytesAsString(t *testing.T) {
 	dir := t.TempDir()
 	data := []byte(`collar: {launch: {command: 'claude'}}`)
-	if err := os.WriteFile(filepath.Join(dir, "claude-code.cue"), data, 0600); err != nil {
+	if err := os.WriteFile(filepath.Join(dir, "claude.cue"), data, 0600); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := loadCollar("claude-code", settings{CollarDir: dir}); err == nil {
+	if _, err := loadCollar("claude", settings{CollarDir: dir}); err == nil {
 		t.Fatal("CUE bytes passed string validation")
 	}
 }
@@ -138,10 +112,10 @@ func TestOverlayRejectsExactCUEThresholdAboveOne(t *testing.T) {
 
 func TestCustomCollarStillRequiresWholeDefinition(t *testing.T) {
 	dir := t.TempDir()
-	if err := os.WriteFile(filepath.Join(dir, "claude-code.cue"), []byte(`collar: {context_bands: {"*": [{name: "only", at: 0.5}]}}`), 0600); err != nil {
+	if err := os.WriteFile(filepath.Join(dir, "claude.cue"), []byte(`collar: {context_bands: {"*": [{name: "only", at: 0.5}]}}`), 0600); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := loadCollar("claude-code", settings{CollarDir: dir}); err != nil {
+	if _, err := loadCollar("claude", settings{CollarDir: dir}); err != nil {
 		t.Fatalf("partial bundled collar: %v", err)
 	}
 	base, err := harness.EmbeddedCollar("codex")

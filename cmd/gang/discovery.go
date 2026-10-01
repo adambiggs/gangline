@@ -95,7 +95,7 @@ func collarNames(settings settings) ([]string, error) {
 				if !collarNamePattern.MatchString(name) {
 					return nil, fmt.Errorf("custom collar filename %q is invalid", entry.Name())
 				}
-				unique[harness.CanonicalCollarName(name)] = true
+				unique[name] = true
 			}
 		}
 	}
@@ -111,29 +111,21 @@ func loadCollar(name string, settings settings) (harness.Collar, error) {
 	if !collarNamePattern.MatchString(name) {
 		return harness.Collar{}, usageError("invalid collar name %q", name)
 	}
-	name = harness.CanonicalCollarName(name)
 	if settings.CollarDir != "" {
-		filenames := []string{name + ".cue"}
-		if name == "claude" {
-			filenames = append(filenames, "claude-code.cue")
+		filename := filepath.Join(settings.CollarDir, name+".cue")
+		data, err := os.ReadFile(filename)
+		if err == nil {
+			collar, err := harness.LoadCustomCollar(name, filename, data)
+			if err != nil {
+				return harness.Collar{}, err
+			}
+			if collar.Name != name {
+				return harness.Collar{}, fmt.Errorf("collar %q declares name %q", filename, collar.Name)
+			}
+			return collar, nil
 		}
-		for _, file := range filenames {
-			filename := filepath.Join(settings.CollarDir, file)
-			data, err := os.ReadFile(filename)
-			if err == nil {
-				collar, err := harness.LoadCustomCollar(name, filename, data)
-				if err != nil {
-					return harness.Collar{}, err
-				}
-				if harness.CanonicalCollarName(collar.Name) != name {
-					return harness.Collar{}, fmt.Errorf("collar %q declares name %q", filename, collar.Name)
-				}
-				collar.Name = name
-				return collar, nil
-			}
-			if !os.IsNotExist(err) {
-				return harness.Collar{}, fmt.Errorf("read collar %q: %w", filename, err)
-			}
+		if !os.IsNotExist(err) {
+			return harness.Collar{}, fmt.Errorf("read collar %q: %w", filename, err)
 		}
 	}
 	return harness.EmbeddedCollar(name)

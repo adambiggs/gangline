@@ -241,32 +241,6 @@ func TestCodexAutomaticWakeRearmsAfterAnotherCap(t *testing.T) {
 	}
 }
 
-func TestLegacyClaudeUsageStateKeepsFiredBands(t *testing.T) {
-	f := newStateFixture(t)
-	a := f.add(t, "a", "worker", "claude-code")
-	c, err := loadCollar(a.Collar, f.run.settings)
-	if err != nil {
-		t.Fatal(err)
-	}
-	at := f.cmd.now()
-	reset := at.Add(5 * time.Hour).Unix()
-	if err := f.run.withUsageState(func(state *usageState) error {
-		state.Windows["claude-code/five_hour"] = usageWindowState{ResetAt: reset, ObservedAt: at, Percent: 80, Fired: []string{"yellow"}}
-		state.Notices = append(state.Notices, usageNotice{Collar: "claude-code", Text: "Provider claude-code five-hour usage reached yellow"})
-		return nil
-	}); err != nil {
-		t.Fatal(err)
-	}
-	a.Native.Limits = core.Reading{Kind: "provider-limits", Status: "observed", At: &at, Limits: []core.LimitWindow{{Label: "five_hour", WindowMinutes: 300, UsedPercent: 80, ResetAt: reset}}}
-	if err := f.run.observeUsageBands(a, c); err != nil {
-		t.Fatal(err)
-	}
-	state := usageSnapshot(t, f.run)
-	if _, old := state.Windows["claude-code/five_hour"]; old || len(state.Windows["claude/five_hour"].Fired) != 1 || len(state.Notices) != 1 || state.Notices[0].Collar != "claude" || state.Notices[0].Text != "Provider claude-code five-hour usage reached yellow" {
-		t.Fatalf("migrated usage state = %+v", state)
-	}
-}
-
 func TestUsageBandsAreAccountWideAndLeadOnly(t *testing.T) {
 	f := newStateFixture(t)
 	lead := f.add(t, "lead-id", "ser5", "codex")

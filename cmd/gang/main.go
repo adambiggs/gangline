@@ -139,8 +139,6 @@ func (cmd command) execute(args []string) error {
 		return cmd.up(arguments)
 	case "hitch":
 		return cmd.hitch(arguments)
-	case "adopt":
-		return cmd.adopt(arguments)
 	case "rename":
 		return cmd.rename(arguments)
 	case "send":

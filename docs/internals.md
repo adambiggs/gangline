@@ -102,9 +102,8 @@ resume that has no recorded native submission.
 ## Watchdog
 
 A whole-team tick replaces a transient user-scheduler timer and re-arms it
-before observing agents. Gangline arms the initial timer when you hitch or
-adopt an agent. A scoped hook
-tick preserves an existing deadline so activity in one agent cannot postpone
+before observing agents. Gangline arms the initial timer when you hitch
+an agent. A scoped hook tick preserves an existing deadline so activity in one agent cannot postpone
 idle peers. Whole-team ticks skip occupied agent locks; detached scoped ticks
 can wait for a lock so native boundary notices survive contention.
 

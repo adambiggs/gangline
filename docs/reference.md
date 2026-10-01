@@ -11,7 +11,6 @@ supply an explicit name when inspecting or controlling a single agent.
 | `gang up [NAME] [AGENT OPTIONS]` | Start the configured team with its lead agent named `NAME` (default `lead`), then attach an interactive terminal. |
 | `gang hitch NAME [OPTIONS]` | Launch an agent and deliver startup instructions and any task. |
 | `gang hitch NAME --recover` | Recover retained startup from its visible draft or a lone collapsed paste. |
-| `gang adopt NAME [-c COLLAR]` | Register the current pane without launching or delivering startup instructions. |
 | `gang rename OLD NEW` | Change a registered name and window title. |
 | `gang drop NAME` | Stop an agent and fail its pending messages. |
 | `gang down [-y, --yes]` | Confirm on a terminal, then drop the configured team's agents and delete its runtime state and history. Use `--yes` without a terminal. |
@@ -32,7 +31,7 @@ supply an explicit name when inspecting or controlling a single agent.
 | `--resume SESSION` | Resume a native conversation. |
 | `--recover` | Recover an agent's retained startup input. |
 
-`adopt` also accepts `--collar`. Resume checks for the bundled collars require
+Resume checks for the bundled collars require
 a matching native transcript. An unverifiable native session is refused.
 `drop` reports an observed native resume session, or says it is unknown.
 When Codex asks to trust a hitch directory, startup stays queued. After
@@ -164,13 +163,10 @@ checks, and `roster` retains `[process-unavailable]` to show that a caller skipp
 process checks for this registration. The process watchdog is
 also skipped visibly with `watchdog_unavailable` and `[watchdog-unavailable]`;
 ordinary hooks and commands still tick the team. A pane-only drop cannot
-prove that detached descendants exited. Older registrations without a generation require a matching native process
-identity for caller attribution and input. A live legacy pane cannot be dropped
-from a namespace that cannot verify it; drop it from its native host and re-hitch
-for sandbox support. Newly adopted panes have generation guards but still need
-native ancestry for caller attribution because adoption cannot change a running
-harness's environment. Fresh hitches inherit a capability usable by their sandboxed
-commands. Later ordinary windows do not inherit that per-hitch capability.
+prove that detached descendants exited. Every registered pane requires a server
+generation, session, pane ID, and inherited capability. Missing registration or
+capability is refused; launch a fresh hitch to establish them. Later ordinary
+windows do not inherit that per-hitch capability.
 
 For a separate team, keep its selection in the shell environment for every
 command. A separate state root and socket also isolate its files and server:
@@ -210,15 +206,15 @@ when the agent is hitched.
 
 A collar is a CUE file that tells Gangline how to launch and communicate with
 a particular harness. A collar's canonical name is the harness binary it
-launches: `claude` or `codex`. `claude-code` remains an alias for `claude`.
+launches: `claude` or `codex`.
 Each uses the installed native CLI and its account settings. Use
 `gang models -c COLLAR` for available
 model and effort identifiers. Gangline leaves native permissions, login, and
-trust decisions to the operator.
+trust decisions to the operator. Resumed collars must include the requested
+native session ID in their submit witness.
 
 In `GANG_COLLARS`, a `NAME.cue` matching a bundled collar overlays its fields;
-other names require a complete collar. An existing `claude-code.cue` still
-overlays `claude`, while `claude.cue` takes precedence when both exist.
+other names require a complete collar.
 Nested fields merge; a changed primitive
 name replaces that primitive and its parameters. Lists replace the bundled
 list. Each `context_bands` selector value replaces its entire band list;

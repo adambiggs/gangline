@@ -70,10 +70,7 @@ func (run *runtime) observedAgent() (*core.Agent, error) {
 		}
 		for _, a := range agents {
 			if a.Pane == pane && (a.Status == core.Active || a.Status == core.Booting) {
-				if err := run.verifyCaller(a); err != nil {
-					return nil, err
-				}
-				return &a, nil
+				return nil, refuseError("registered pane requires its inherited hitch identity; re-hitch this agent")
 			}
 		}
 	}

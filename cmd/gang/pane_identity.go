@@ -14,10 +14,8 @@ import (
 )
 
 type paneRegistry interface {
-	RegisterPane(context.Context, substrate.PaneID) (tmux.PaneIdentity, error)
 	Identity(context.Context, substrate.PaneID) (tmux.Identity, error)
 	AcquireTree(context.Context, substrate.PaneID, tmux.Identity) (*tmux.Owned, error)
-	RemovePane(context.Context, substrate.PaneID, tmux.Identity) error
 	RemoveRegisteredNativePane(context.Context, tmux.PaneIdentity, tmux.Identity) error
 	RemoveRegisteredPane(context.Context, tmux.PaneIdentity) error
 	CheckPane(context.Context, tmux.PaneIdentity) (bool, error)
@@ -42,9 +40,16 @@ func tokenHash(token string) string {
 	return hex.EncodeToString(sum[:])
 }
 
+func requirePaneRegistration(a core.Agent) error {
+	if a.Pane == "" || a.Registration.Generation == "" || a.Registration.Session == "" || a.Registration.TokenHash == "" {
+		return refuseError("hitch has an incomplete pane registration; inspect its retained state")
+	}
+	return nil
+}
+
 func (run *runtime) checkRecipient(a core.Agent) error {
-	if a.Registration.Generation == "" {
-		return run.verifyNativeIdentity(a)
+	if err := requirePaneRegistration(a); err != nil {
+		return err
 	}
 	b, err := run.registry()
 	if err != nil {
@@ -61,28 +66,19 @@ func (run *runtime) checkRecipient(a core.Agent) error {
 }
 
 func (run *runtime) verifyCaller(a core.Agent) error {
+	if err := requirePaneRegistration(a); err != nil {
+		return err
+	}
+	token := run.cmd.environment("GANG_AGENT_NONCE")
+	if token == "" || tokenHash(token) != a.Registration.TokenHash {
+		return refuseError("hitch token does not match the registered pane")
+	}
+	if err := run.checkRecipient(a); err != nil {
+		return err
+	}
 	b, err := run.registry()
 	if err != nil {
 		return err
-	}
-	if a.Registration.Generation != "" && a.Registration.TokenHash != "" {
-		token := run.cmd.environment("GANG_AGENT_NONCE")
-		if token == "" || tokenHash(token) != a.Registration.TokenHash {
-			return refuseError("hitch token does not match the registered pane")
-		}
-		if err := run.checkRecipient(a); err != nil {
-			return err
-		}
-	}
-	if a.Registration.TokenHash == "" {
-		if err := run.verifyNativeIdentity(a); err != nil {
-			return err
-		}
-		if a.Registration.Generation != "" {
-			if err := run.checkRecipient(a); err != nil {
-				return err
-			}
-		}
 	}
 	visible, err := b.ProcessVisibility(context.Background(), substrate.PaneID(a.Pane))
 	if err != nil {
@@ -91,9 +87,6 @@ func (run *runtime) verifyCaller(a core.Agent) error {
 	if !visible {
 		if run.cmd.environment("TMUX_PANE") == "" {
 			return refuseError("sandboxed hitch identity requires the current pane")
-		}
-		if a.Registration.Generation == "" {
-			return refuseError("hitch has no pane token and host ancestry is unavailable; re-hitch this agent")
 		}
 		if err := run.noteProcessUnavailable(a); err != nil {
 			return err
@@ -161,6 +154,9 @@ func (b paneInput) SendKeys(ctx context.Context, pane substrate.PaneID, keys sub
 	return b.registry.SendRegisteredKeys(ctx, b.identity, b.command, keys)
 }
 func (run *runtime) registeredInput(a core.Agent, input harnessInput) harnessInput {
+	if err := requirePaneRegistration(a); err != nil {
+		return failedPaneInput{harnessInput: input, err: err}
+	}
 	// The server checks both identity and foreground again when keys are sent.
 	b, err := run.registry()
 	if err != nil {
@@ -170,17 +166,7 @@ func (run *runtime) registeredInput(a core.Agent, input harnessInput) harnessInp
 	if err != nil {
 		return failedPaneInput{harnessInput: input, err: err}
 	}
-	identity := paneIdentity(a)
-	if a.Registration.Generation == "" {
-		identity, err = b.RegisterPane(context.Background(), substrate.PaneID(a.Pane))
-		if err == nil {
-			err = run.verifyNativeIdentity(a)
-		}
-		if err != nil {
-			return failedPaneInput{harnessInput: input, err: err}
-		}
-	}
-	return paneInput{input, b, identity, filepath.Base(c.Launch.Command)}
+	return paneInput{input, b, paneIdentity(a), filepath.Base(c.Launch.Command)}
 }
 
 type failedPaneInput struct {
@@ -193,40 +179,3 @@ func (b failedPaneInput) SendKeys(context.Context, substrate.PaneID, substrate.K
 }
 
 var _ harnessInput = paneInput{}
-
-// Legacy and adopted callers have no inherited capability. Native identity is
-// mandatory before their pane can be attributed or bound for an input operation.
-func (run *runtime) verifyNativeIdentity(a core.Agent) error {
-	if a.Process.PID == 0 {
-		return refuseError("hitch has no native process identity; re-hitch this agent")
-	}
-	b, err := run.registry()
-	if err != nil {
-		return err
-	}
-	visible, err := b.ProcessVisibility(context.Background(), substrate.PaneID(a.Pane))
-	if err != nil {
-		return err
-	}
-	if !visible {
-		return refuseError("legacy native identity cannot be verified here; re-hitch this agent for sandbox support")
-	}
-	actual, err := b.Identity(context.Background(), substrate.PaneID(a.Pane))
-	if err != nil {
-		return err
-	}
-	expected := a.Process
-	same := expected.PID == actual.PID && expected.BootID == actual.BootID
-	if expected.UniqueID != 0 {
-		same = same && expected.UniqueID == actual.UniqueID
-	} else {
-		same = same && expected.Started == actual.Started
-	}
-	if expected.Namespace != "" {
-		same = same && expected.Namespace == actual.Namespace
-	}
-	if !same {
-		return refuseError("pane process differs from its registered native identity; re-hitch this agent")
-	}
-	return nil
-}

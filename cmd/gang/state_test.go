@@ -27,11 +27,13 @@ type inputFixture struct {
 	foregroundErr    error
 	processErr       error
 	submits          int
+	registrations    int
 	submit           func(string) error
 	registeredSender harnessInput
 }
 
 func (b *inputFixture) RegisterPane(_ context.Context, p substrate.PaneID) (tmux.PaneIdentity, error) {
+	b.registrations++
 	return tmux.PaneIdentity{Generation: strings.Repeat("a", 64), Session: "$1", Pane: string(p)}, nil
 }
 func (b *inputFixture) Identity(context.Context, substrate.PaneID) (tmux.Identity, error) {
@@ -40,7 +42,6 @@ func (b *inputFixture) Identity(context.Context, substrate.PaneID) (tmux.Identit
 func (b *inputFixture) AcquireTree(context.Context, substrate.PaneID, tmux.Identity) (*tmux.Owned, error) {
 	return &tmux.Owned{}, nil
 }
-func (b *inputFixture) RemovePane(context.Context, substrate.PaneID, tmux.Identity) error { return nil }
 func (b *inputFixture) RemoveRegisteredNativePane(context.Context, tmux.PaneIdentity, tmux.Identity) error {
 	return nil
 }
@@ -137,7 +138,7 @@ func newStateFixture(t *testing.T) *stateFixture {
 	t.Helper()
 	root := t.TempDir()
 	out, errOut := &synchronizedBuffer{}, &synchronizedBuffer{}
-	env := map[string]string{"GANG_STATE_ROOT": root, "GANG_CONFIG_DIR": filepath.Join(root, "config"), "GANG_SESSION": "unit"}
+	env := map[string]string{"GANG_STATE_ROOT": root, "GANG_CONFIG_DIR": filepath.Join(root, "config"), "GANG_SESSION": "unit", "GANG_AGENT_NONCE": "fixture-nonce"}
 	backend := &inputFixture{screen: screenWithText("READY", "› "), command: "codex"}
 	cmd := command{newScheduler: func() watchdogScheduler { return nil }, stdin: strings.NewReader(""), stdout: out, stderr: errOut, getenv: func(k string) string { return env[k] }, getwd: func() (string, error) { return root, nil }, userHomeDir: func() (string, error) { return root, nil }, clock: func() time.Time { return time.Date(2026, 9, 22, 10, 0, 0, 0, time.UTC) }, paneBackend: backend, inputBackend: backend, settleInput: func(context.Context, harnessInput, substrate.PaneID, harness.Collar, time.Duration) error { return nil }, detach: func(string, hookNotice) error { return nil }}
 	cmd.awaitStartup = func(_ context.Context, _ substrate.PaneID, c harness.Collar) (harness.Startup, substrate.Screen, error) {
@@ -178,7 +179,7 @@ func fakeCodexOnPath(t *testing.T) {
 
 func (f *stateFixture) add(t *testing.T, id, name, collar string) core.Agent {
 	t.Helper()
-	a := core.Agent{ID: core.HitchID(id), Name: core.AgentName(name), Collar: collar, Directory: "/work", Pane: "%1", Process: core.ProcessIdentity{PID: 7, Started: "fixture", BootID: "fixture", Namespace: "fixture"}, Status: core.Active, Activity: core.Idle, CreatedAt: f.cmd.now(), ChangedAt: f.cmd.now()}
+	a := core.Agent{ID: core.HitchID(id), Name: core.AgentName(name), Collar: collar, Directory: "/work", Pane: "%1", Registration: core.PaneRegistration{Generation: strings.Repeat("a", 64), Session: "$1", TokenHash: tokenHash("fixture-nonce")}, Process: core.ProcessIdentity{PID: 7, Started: "fixture", BootID: "fixture", Namespace: "fixture"}, Status: core.Active, Activity: core.Idle, CreatedAt: f.cmd.now(), ChangedAt: f.cmd.now()}
 	l, err := f.run.team.CreateAgent(a)
 	if err != nil {
 		t.Fatal(err)
