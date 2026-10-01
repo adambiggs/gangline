@@ -50,13 +50,18 @@ func (cmd command) up(args []string) error {
 	if err := run.flushUsageWork(); err != nil {
 		return err
 	}
-	if f, ok := cmd.stdin.(*os.File); ok {
-		if info, err := f.Stat(); err == nil && info.Mode()&os.ModeCharDevice != 0 {
-			return cmd.attach(nil)
-		}
+	if cmd.upAttaches() {
+		return cmd.attach(nil)
 	}
 	return nil
 }
+
+// upAttaches reports whether up should attach: only a terminal can drive tmux.
+// /dev/null is a character device, so the file mode alone is not enough.
+func (cmd command) upAttaches() bool {
+	return cmd.stdinIsTerminal()
+}
+
 func upHitchArguments(name string, args []string) []string {
 	if len(args) == 1 {
 		if parsed, err := parseHitch([]string{name, args[0]}, "default", "default"); err == nil && parsed.Recover {
@@ -114,11 +119,12 @@ func (cmd command) stdinIsTerminal() bool {
 }
 
 func confirmDown(input io.Reader, output io.Writer, session string, agentCount int) error {
-	if _, err := fmt.Fprintf(output, "Stop team %q and its %d agents? Type yes to confirm: ", session, agentCount); err != nil {
+	if _, err := fmt.Fprintf(output, "Stop team %q and its %d agents? [y/N] ", session, agentCount); err != nil {
 		return err
 	}
 	response, err := bufio.NewReader(io.LimitReader(input, 64)).ReadString('\n')
-	if err != nil || strings.TrimSpace(response) != "yes" {
+	response = strings.TrimSpace(response)
+	if err != nil || !strings.EqualFold(response, "y") && !strings.EqualFold(response, "yes") {
 		return refuseError("down cancelled; team %q was not stopped", session)
 	}
 	return nil

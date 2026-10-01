@@ -214,12 +214,22 @@ func (cmd command) tick(args []string) (result error) {
 		"agent": &id, "source": &source, "watchdog": &generation,
 	})
 	positionals, err := parseOptions(flags, args)
-	if err != nil || len(positionals) != 0 {
-		return usageError("tick: expected optional --agent ID or --source watchdog --watchdog UNIT")
+	if err != nil {
+		return usageError("tick: %v", err)
+	}
+	if len(positionals) != 0 {
+		return usageError("tick: unexpected argument %q", positionals[0])
 	}
 	run, err := cmd.runtime()
 	if err != nil {
 		return err
+	}
+	if id != "" {
+		resolved, err := run.tickTarget(id)
+		if err != nil {
+			return err
+		}
+		id = string(resolved)
 	}
 	var notice hookNotice
 	if id != "" && cmd.environment("GANGLINE_BOUNDARY") != "" {
@@ -259,6 +269,28 @@ func (cmd command) tick(args []string) (result error) {
 	return errors.Join(eachAgent(agents, func(a core.Agent) error {
 		return run.tickFailed(source, a.ID, run.tickAgent(a.ID, hookNotice{}, false))
 	}), run.tickFailed(source, "", run.flushUsageWork()))
+}
+
+// tickTarget resolves --agent. Hooks pass a hitch ID and operators pass a
+// registered name. A hook may name an agent dropped since it fired, and
+// tickAgent ignores that agent, so only an operator tick refuses an unknown
+// value.
+func (run *runtime) tickTarget(value string) (core.HitchID, error) {
+	id := core.HitchID(value)
+	if p, err := run.team.Agent(id); err == nil {
+		if _, err := p.Read(); err == nil {
+			return id, nil
+		} else if !errors.Is(err, os.ErrNotExist) {
+			return "", err
+		}
+	}
+	if resolved, err := run.team.ResolveName(value); err == nil {
+		return resolved, nil
+	}
+	if run.cmd.environment("GANGLINE_BOUNDARY") != "" {
+		return id, nil
+	}
+	return "", refuseError("tick: %q is neither a registered agent nor a hitch ID", value)
 }
 
 // tickFailed records a tick error in the team log. A hook-triggered tick runs

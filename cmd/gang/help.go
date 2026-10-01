@@ -76,20 +76,20 @@ var commandUsage = map[string]string{
 	"up":         "usage: gang up [NAME] [HITCH OPTIONS]\n",
 	"hitch":      "usage: gang hitch NAME [-c COLLAR] [-d DIR] [-m MODEL] [-e EFFORT]\n       [-t TASK] [-r ROLE] [--resume SESSION] [--stdin]\n       gang hitch NAME --recover\n",
 	"rename":     "usage: gang rename OLD NEW\n",
-	"send":       "usage: gang send NAME [--from SENDER] [--live-only] [--supersede] [--at DURATION|HH:MM|RFC3339|clear] [BODY]\n       Without BODY, read stdin. Use -- before BODY when it begins with -.\n",
+	"send":       "usage: gang send NAME [--from SENDER] [--live-only] [--supersede] [--at DURATION|HH:MM|RFC3339] [BODY]\n       gang send NAME --clear\n       Without BODY, read stdin. Use -- before BODY when it begins with -.\n",
 	"queue":      "usage: gang queue [NAME]\n",
-	"interrupt":  "usage: gang interrupt [NAME] [-m REASON]\n",
+	"interrupt":  "usage: gang interrupt [NAME] [-m|--message REASON]\n",
 	"compact":    "usage: gang compact [NAME] [--resume TEXT]\n       gang compact [NAME] --recover\n",
 	"statusline": "usage: gang statusline [--install]\n",
-	"context":    "usage: gang context [NAME]\n       gang context --widget NAME|off\n",
+	"context":    "usage: gang context [NAME]\n       gang context --widget NAME | --clear\n",
 	"log":        "usage: gang log [--agent NAME|HITCH_ID] [--type TYPE|KIND] [LOG.jsonl]\n",
-	"limits":     "usage: gang limits [NAME] | -c COLLAR\n",
+	"limits":     "usage: gang limits [NAME] | -c|--collar COLLAR\n",
 	"snooze":     "usage: gang snooze [--at DURATION|HH:MM|RFC3339] [--note TEXT] [--clear [ID] | --status]\n",
 	"wait":       "usage: gang wait NAME [--timeout DURATION]\n",
 	"curfew":     "usage: gang curfew [DURATION | HH:MM | RFC3339 | clear]\n",
 	"status":     "usage: gang status [NAME] [--why]\n",
-	"tick":       "usage: gang tick [--agent ID]\n       gang tick --source watchdog --watchdog UNIT\n",
-	"capture":    "usage: gang capture [NAME] [LINES]\n       gang capture --composer [NAME]\n",
+	"tick":       "usage: gang tick [--agent NAME|HITCH_ID]\n       gang tick --source watchdog --watchdog UNIT\n",
+	"capture":    "usage: gang capture [NAME] [-n|--lines LINES]\n       gang capture --composer [NAME]\n",
 	"whoami":     "usage: gang whoami\n",
 	"roster":     "usage: gang roster [--porcelain]\n",
 	"attach":     "usage: gang attach\n",
@@ -129,20 +129,30 @@ var commandOptions = map[string][]optionSpec{
 		{"from", "SENDER", "outside sender identity"},
 		{"live-only", "", "refuse rather than queue"},
 		{"supersede", "", "replace older queued work"},
-		{"at", "DURATION|HH:MM|clear", "schedule delivery or clear scheduled messages"},
+		{"at", "DURATION|HH:MM|RFC3339", "schedule delivery"},
+		{"clear", "", "clear this sender's scheduled messages to NAME"},
 	},
-	"interrupt": {{"m", "REASON", "reason to deliver after interrupt"}},
+	"interrupt": {
+		{"m", "REASON", "reason to deliver after interrupt"},
+		{"message", "REASON", "reason to deliver after interrupt"},
+	},
 	"compact": {
 		{"resume", "TEXT", "continuation after compaction"},
 		{"recover", "", "interrupt an unconfirmed compaction while the pane is busy"},
 	},
 	"statusline": {{"install", "", "install the native status line"}},
-	"context":    {{"widget", "NAME|off", "show an agent's context or clear the widget"}},
+	"context": {
+		{"widget", "NAME", "show an agent's context in the widget"},
+		{"clear", "", "clear the widget"},
+	},
 	"log": {
 		{"agent", "NAME|HITCH_ID", "filter by agent name or hitch ID"},
 		{"type", "TYPE|KIND", "show events or readings of this type"},
 	},
-	"limits": {{"c", "COLLAR", "query a collar without an agent"}},
+	"limits": {
+		{"c", "COLLAR", "query a collar without an agent"},
+		{"collar", "COLLAR", "query a collar without an agent"},
+	},
 	"snooze": {
 		{"at", "DURATION|HH:MM|RFC3339", "wake time instead of native reset"},
 		{"note", "TEXT", "continuation to carry into the wake"},
@@ -152,12 +162,16 @@ var commandOptions = map[string][]optionSpec{
 	"wait":   {{"timeout", "DURATION", "maximum wait; zero checks once"}},
 	"status": {{"why", "", "include recorded wedge evidence"}},
 	"tick": {
-		{"agent", "ID", "tick one hitch ID"},
+		{"agent", "NAME|HITCH_ID", "tick one agent"},
 		{"source", "watchdog", "identify a watchdog tick"},
 		{"watchdog", "UNIT", "watchdog generation token"},
 	},
-	"capture": {{"composer", "", "print only the native composer"}},
-	"roster":  {{"porcelain", "", "print machine-readable rows"}},
+	"capture": {
+		{"n", "LINES", "print only the last LINES lines"},
+		{"lines", "LINES", "print only the last LINES lines"},
+		{"composer", "", "print only the native composer"},
+	},
+	"roster": {{"porcelain", "", "print machine-readable rows"}},
 	"models": {
 		{"c", "COLLAR", "harness collar"},
 		{"collar", "COLLAR", "harness collar"},
@@ -214,9 +228,9 @@ var commandDescription = map[string]string{
 	"interrupt":  "NAME is a registered agent; omit it for the current pane's agent.\nInterrupt its native turn and optionally deliver a reason afterward.\n",
 	"compact":    "NAME is a registered agent; omit it for the current pane's agent.\nQueue the continuation as compaction starts; admit it once when the harness submits it.\n",
 	"statusline": "Read native status-line JSON on stdin; --install fills an absent native setting.\n",
-	"context":    "NAME is a registered agent; omit it for the current pane's agent.\nPrint its native context reading. --widget NAME selects an agent to show.\n",
+	"context":    "NAME is a registered agent; omit it for the current pane's agent.\nPrint its native context reading. --widget NAME selects an agent for the\ntmux widget; --clear empties it.\n",
 	"log":        "Print the configured team's durable JSONL event log.\nThe agent filter accepts a registered NAME or a hitch ID.\n",
-	"limits":     "NAME is a registered agent; omit it for the current pane's agent.\nRead its provider limits, or use -c to query a collar without an agent.\n",
+	"limits":     "NAME is a registered agent; omit it for the current pane's agent.\nRead its provider limits, or use --collar to query a collar without an agent.\n",
 	"snooze":     "Schedule a wake for the calling agent. Without --at, use the most-used future native five-hour or weekly reset. A wake completes after its matching native turn succeeds. --status shows queued and uncertain wakes. --clear or a new --at withdraws a wake still queued for input; the lead can clear a notice or fallback wake by ID. Clearing cannot retract native input.\n",
 	"wait":       "NAME is the registered agent to watch for a recorded idle boundary.\nA zero timeout checks once.\n",
 	"curfew":     "Declare, inspect, or clear one team deadline.\n",
@@ -240,14 +254,19 @@ var commandDescription = map[string]string{
 	"version":    "Print the release version.\n",
 }
 
-const flagSyntaxHelp = "Flags accept - or --, VALUE or =VALUE; switches accept =true/=false.\n"
+const flagSyntaxHelp = "Flags accept - or --, VALUE or =VALUE, and one-letter flags also -cVALUE;\nswitches accept =true/=false. Flags may follow operands; -- ends flags.\n"
+
+// indented prefixes each line of text with two spaces.
+func indented(text string) string {
+	return "  " + strings.ReplaceAll(strings.TrimSuffix(text, "\n"), "\n", "\n  ") + "\n"
+}
 
 func (cmd command) printHelp(name string) error {
 	if name == "" {
 		var out strings.Builder
 		out.WriteString(commandInventory)
 		out.WriteString("\nGlobal flags:\n  -h, --help             show help\n  --version              print the release version\n")
-		out.WriteString("  " + flagSyntaxHelp)
+		out.WriteString(indented(flagSyntaxHelp))
 		_, err := io.WriteString(cmd.stdout, out.String())
 		return err
 	}

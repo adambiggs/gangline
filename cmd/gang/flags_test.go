@@ -24,13 +24,6 @@ func TestParseSendRejectsUnsafeCombinations(t *testing.T) {
 	}
 }
 
-func TestSendAtAcceptsClear(t *testing.T) {
-	options, err := parseSend([]string{"worker", "--at", "clear"})
-	if err != nil || options.At != "clear" {
-		t.Fatalf("options=%+v err=%v", options, err)
-	}
-}
-
 func TestParseSendAcceptsPositionalBody(t *testing.T) {
 	got, err := parseSend([]string{"worker", "--from", "operator", "two\nlines"})
 	if err != nil {
@@ -44,9 +37,6 @@ func TestParseSendAcceptsPositionalBody(t *testing.T) {
 	}
 	if _, err := parseSend([]string{"worker", "first", "second"}); err == nil {
 		t.Fatal("multiple message bodies passed")
-	}
-	if _, err := parseSend([]string{"worker", "--at", "clear", "body"}); err == nil {
-		t.Fatal("body with clear passed")
 	}
 	if got, err := parseSend([]string{"worker", "body", "--from", "operator"}); err != nil || got.From != "operator" || got.Body == nil || *got.Body != "body" {
 		t.Fatalf("late option = %+v, %v", got, err)

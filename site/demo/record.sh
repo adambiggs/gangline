@@ -41,7 +41,7 @@ cleanup() {
     if gang roster; then
       for name in lead worker; do
         if [ -L "$GANG_STATE_ROOT/teams/$GANG_SESSION/names/$name" ]; then
-          if ! gang capture "$name" 2000 > "$DEMO_STATE/$name.txt"; then
+          if ! gang capture "$name" -n 2000 > "$DEMO_STATE/$name.txt"; then
             echo "Failed to capture $name; ending the private demo team." >&2
             rc=1
           elif [ ! -s "$DEMO_STATE/$name.txt" ]; then

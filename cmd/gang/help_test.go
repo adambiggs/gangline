@@ -135,7 +135,7 @@ func TestTopLevelHelpShowsGlobalFlags(t *testing.T) {
 	if !strings.HasPrefix(output, "usage: gang <command> [arguments]\n\nStart and end a team:\n") ||
 		!strings.Contains(output, "\n\nInstallation:\n") ||
 		!strings.Contains(output, "\n\nGlobal flags:\n") ||
-		!strings.HasSuffix(output, "  "+flagSyntaxHelp) {
+		!strings.HasSuffix(output, indented(flagSyntaxHelp)) {
 		t.Error("top-level help sections are not separated or have the wrong flag syntax")
 	}
 	for _, line := range strings.Split(output, "\n") {
@@ -164,11 +164,19 @@ func TestMissingOrExtraHelpFlagIsDetected(t *testing.T) {
 	}
 }
 
-func TestHelpDoesNotOverrideOperands(t *testing.T) {
+func TestHelpFollowsOperandsButNotTerminatorOrValues(t *testing.T) {
 	for name := range commandUsage {
 		for _, helpFlag := range []string{"--help", "-h"} {
-			if helpRequested(name, []string{"unused", helpFlag}) {
-				t.Errorf("%s treats %s after an operand as help", name, helpFlag)
+			if !helpRequested(name, []string{"unused", helpFlag}) {
+				t.Errorf("%s ignores %s after an operand", name, helpFlag)
+			}
+			if helpRequested(name, []string{"unused", "--", helpFlag}) {
+				t.Errorf("%s treats %s after -- as help", name, helpFlag)
+			}
+			for _, option := range optionsFor(name) {
+				if option.argument != "" && helpRequested(name, []string{optionSpelling(option.name), helpFlag}) {
+					t.Errorf("%s treats %s as help in the value of %s", name, helpFlag, optionSpelling(option.name))
+				}
 			}
 		}
 	}
@@ -198,8 +206,8 @@ func TestEveryCommandFlagParserConstructs(t *testing.T) {
 	}
 	for name, check := range checks {
 		t.Run(name, func(t *testing.T) {
-			if err := check(); err == nil {
-				t.Fatal("unlisted option was accepted")
+			if err := check(); err == nil || !strings.Contains(err.Error(), "-unlisted") {
+				t.Fatalf("unlisted option error = %v, want the offending option", err)
 			}
 		})
 	}

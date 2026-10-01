@@ -39,19 +39,7 @@ func TestArgumentErrorsAreUsageErrors(t *testing.T) {
 	}
 }
 
-func TestHelpStopsAtOperandAndTerminator(t *testing.T) {
-	for _, args := range [][]string{
-		{"send", "worker", "--", "-h"},
-		{"send", "worker", "body", "-h"},
-		{"hitch", "worker", "--help"},
-	} {
-		if got := helpRequested(args[0], args[1:]); got {
-			t.Fatalf("helpRequested(%q) = true", args)
-		}
-	}
-	if !helpRequested("hitch", []string{"--collar", "codex", "--help"}) {
-		t.Fatal("option value hid later help")
-	}
+func TestHelpForUnknownCommandIsUsageError(t *testing.T) {
 	var out, errOut bytes.Buffer
 	if got := run([]string{"help", "bogus", "--help"}, strings.NewReader(""), &out, &errOut); got != exitUsage || !strings.Contains(errOut.String(), "unknown command \"bogus\"") {
 		t.Fatalf("status=%d stderr=%q", got, errOut.String())

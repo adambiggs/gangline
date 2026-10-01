@@ -16,8 +16,11 @@ func (cmd command) statusline(args []string) (result error) {
 	install := false
 	flags := boundFlagSet("statusline", map[string]any{"install": &install})
 	positionals, err := parseOptions(flags, args)
-	if err != nil || len(positionals) != 0 {
-		return usageError("statusline: invalid arguments")
+	if err != nil {
+		return usageError("statusline: %v", err)
+	}
+	if len(positionals) != 0 {
+		return usageError("statusline: unexpected argument %q", positionals[0])
 	}
 	if install {
 		// Claude Code reads its settings from CLAUDE_CONFIG_DIR when set.

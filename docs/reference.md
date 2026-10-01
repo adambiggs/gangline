@@ -4,16 +4,20 @@
 shows arguments and flags for the installed binary. From an operator shell,
 supply an explicit name when inspecting or controlling a single agent.
 
+Flags accept `-` or `--`, `VALUE` or `=VALUE`, and one-letter flags also
+`-cVALUE`; switches accept `=true` or `=false`. Flags may follow operands, and
+`--` ends flags. `--help` anywhere before `--` prints help and exits 0.
+
 ## Start and stop
 
 | Command | Effect |
 | --- | --- |
-| `gang up [NAME] [AGENT OPTIONS]` | Start the configured team with its lead agent named `NAME` (default `lead`), then attach an interactive terminal. |
+| `gang up [NAME] [AGENT OPTIONS]` | Start the configured team with its lead agent named `NAME` (default `lead`), then attach when stdin is a terminal. |
 | `gang hitch NAME [OPTIONS]` | Launch an agent and deliver startup instructions and any task. |
 | `gang hitch NAME --recover` | Recover retained startup from its visible draft or a lone collapsed paste. |
 | `gang rename OLD NEW` | Change a registered name and window title. |
 | `gang drop NAME` | Stop an agent and fail its pending messages. |
-| `gang down [-y, --yes]` | Confirm on a terminal, then drop the configured team's agents and delete its runtime state and history. Use `--yes` without a terminal. |
+| `gang down [-y, --yes]` | Confirm on a terminal (`[y/N]`, default no), then drop the configured team's agents and delete its runtime state and history. Use `--yes` without a terminal. |
 | `gang attach` | Attach to the configured team's tmux session. |
 | `gang teams` | List teams in the configured state root. |
 
@@ -46,11 +50,11 @@ contract and assignment.
 | --- | --- |
 | `gang send NAME [OPTIONS] [BODY]` | Send BODY, or read stdin when absent, and report its receipt. |
 | `gang queue [NAME]` | List pending message IDs, recipients, and senders. |
-| `gang interrupt [NAME] [-m REASON]` | Interrupt the turn; deliver an optional reason after it stops. |
+| `gang interrupt [NAME] [-m\|--message REASON]` | Interrupt the turn; deliver an optional reason after it stops. |
 | `gang compact [NAME] [--resume TEXT]` | Compact at native idle; submit the continuation behind compaction, ahead of later input. Refuses while startup input is unverified; a queued compaction waits until startup input is verified (`gang hitch NAME --recover`). |
 | `gang compact NAME --recover` | Interrupt a submitted or unconfirmed compaction with the collar's recovery keys while the pane shows it running. Refuses without sending on an approval, trust, draft, idle, or unrecognized screen; when the resume note was never queued or the harness has taken it; and after an earlier recovery of the same compaction. Records the compaction as unconfirmed and reports the screen it left. |
 | `gang curfew [DURATION\|HH:MM\|RFC3339\|clear]` | Show, set, or clear the team deadline. |
-| `gang tick [--agent ID]` | Check deadlines, recover native failures, and drain due messages. |
+| `gang tick [--agent NAME\|HITCH_ID]` | Check deadlines, recover native failures, and drain due messages. |
 | `gang wait NAME [--timeout DURATION]` | Wait for a recorded idle boundary; a zero timeout checks once. |
 
 The resume note enters native input when compaction starts and runs when the
@@ -70,7 +74,7 @@ Send options:
 | `--live-only` | Refuse instead of queuing if the recipient cannot take input now. |
 | `--supersede` | Clear this sender's older scheduled messages for this recipient first. |
 | `--at DURATION\|HH:MM\|RFC3339` | Schedule delivery after a duration, at a local time, or at an exact deadline. |
-| `--at clear` | Clear this sender's scheduled messages for the recipient. |
+| `--clear` | Clear this sender's scheduled messages for the recipient instead of sending; takes no body, `--at`, or `--live-only`. |
 
 `DURATION` uses Go duration syntax (for example, `1h30m` or `500ms`) for
 `--at`, `curfew`, and `--timeout`.
@@ -78,7 +82,7 @@ Send options:
 A send prints the message ID and `delivered`, `accepted`, `queued`, or
 `unverified`. See [message receipts](concepts.md#messages-and-envelopes).
 Oversized rendered messages are refused without splitting; put details in a
-file and send its path. `tick --agent` takes a hitch ID, not an agent name.
+file and send its path.
 `--source watchdog --watchdog UNIT` is the internal watchdog invocation.
 
 ## Inspect
@@ -87,12 +91,12 @@ file and send its path. `tick --agent` takes a hitch ID, not an agent name.
 | --- | --- |
 | `gang roster [--porcelain]` | Show registered agents and current states; `--porcelain` gives machine-readable rows. |
 | `gang status [NAME] [--why]` | Show state; `--why` includes activity and compaction evidence. |
-| `gang capture [NAME] [LINES]` | Print the native pane. |
+| `gang capture [NAME] [-n\|--lines LINES]` | Print the native pane, or only its last LINES lines. |
 | `gang capture --composer [NAME]` | Print draft input from the composer. |
 | `gang context [NAME]` | Show native context usage or an unknown reading. |
-| `gang context --widget NAME\|off` | Select a context widget for the tmux status line, or turn it off. |
+| `gang context --widget NAME` / `gang context --clear` | Select a context widget for the tmux status line, or clear it. |
 | `gang limits [NAME]` | Show observed provider limits. |
-| `gang limits -c COLLAR` | Query native account limits without a live agent, if supported. |
+| `gang limits -c\|--collar COLLAR` | Query native account limits without a live agent, if supported. |
 | `gang snooze [--at TIME] [--note TEXT]` | Schedule a wake for the calling agent at its observed native reset, or at an explicit future time. |
 | `gang snooze --status` / `gang snooze --clear [ID]` | Inspect or cancel a pending wake. The lead sees uncertain notices and fallback wakes, and can clear one by ID. |
 | `gang log [--agent NAME\|HITCH_ID] [--type TYPE\|KIND] [LOG.jsonl]` | Print JSONL events from a team or saved log, with optional filters. |

@@ -151,8 +151,11 @@ func (cmd command) snooze(args []string) error {
 	var clear, status bool
 	flags := boundFlagSet("snooze", map[string]any{"at": &at, "note": &note, "clear": &clear, "status": &status})
 	positionals, err := parseOptions(flags, args)
-	if err != nil || len(positionals) > 1 || len(positionals) == 1 && !clear {
-		return usageError("snooze: expected --at TIME, --note TEXT, --clear [ID], or --status")
+	if err != nil {
+		return usageError("snooze: %v", err)
+	}
+	if len(positionals) > 1 || len(positionals) == 1 && !clear {
+		return usageError("snooze: unexpected argument %q; only --clear takes an ID", positionals[len(positionals)-1])
 	}
 	if (clear || status) && (at != "" || note != "") || clear && status {
 		return usageError("snooze: --clear and --status take no other options")

@@ -19,7 +19,12 @@ func TestDownConfirmation(t *testing.T) {
 		accepted    bool
 	}{
 		{"yes", "yes\n", true},
+		{"y", "y\n", true},
+		{"Y", "Y\n", true},
+		{"YES", "YES\n", true},
+		{"spaced", " Yes \n", true},
 		{"no", "no\n", false},
+		{"n", "n\n", false},
 		{"empty", "\n", false},
 		{"eof", "", false},
 		{"partial", "yes", false},
@@ -31,7 +36,7 @@ func TestDownConfirmation(t *testing.T) {
 			if (err == nil) != test.accepted {
 				t.Fatalf("confirmation error = %v", err)
 			}
-			if !strings.Contains(prompt.String(), `"unit"`) || !strings.Contains(prompt.String(), "2 agents") {
+			if !strings.Contains(prompt.String(), `"unit"`) || !strings.Contains(prompt.String(), "2 agents") || !strings.HasSuffix(prompt.String(), "[y/N] ") {
 				t.Fatalf("prompt = %q", prompt.String())
 			}
 		})

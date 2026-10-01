@@ -24,17 +24,26 @@ func observationName(args []string, name string) (string, error) {
 	return args[0], nil
 }
 func (cmd command) context(args []string) error {
-	widget := ""
-	flags := boundFlagSet("context", map[string]any{"widget": &widget})
+	widget, clear := "", false
+	flags := boundFlagSet("context", map[string]any{"widget": &widget, "clear": &clear})
 	positionals, err := parseOptions(flags, args)
 	if err != nil {
 		return usageError("context: %v", err)
 	}
+	if clear {
+		if len(positionals) != 0 || flagWasSet(flags, "widget") {
+			return usageError("context --clear: takes no agent or --widget")
+		}
+		return cmd.contextWidget("")
+	}
 	if flagWasSet(flags, "widget") {
 		if len(positionals) != 0 {
-			return usageError("context --widget: expected NAME or off")
+			return usageError("context --widget: unexpected argument %q", positionals[0])
 		}
-		return cmd.contextWidget([]string{widget})
+		if err := validateAgentName(widget); err != nil {
+			return err
+		}
+		return cmd.contextWidget(widget)
 	}
 	name, err := observationName(positionals, "context")
 	if err != nil {
@@ -93,14 +102,14 @@ func (cmd command) context(args []string) error {
 }
 func (cmd command) limits(args []string) error {
 	collar := ""
-	flags := boundFlagSet("limits", map[string]any{"c": &collar})
+	flags := boundFlagSet("limits", map[string]any{"c": &collar, "collar": &collar})
 	positionals, err := parseOptions(flags, args)
 	if err != nil {
 		return usageError("limits: %v", err)
 	}
-	if flagWasSet(flags, "c") {
+	if flagWasSet(flags, "c") || flagWasSet(flags, "collar") {
 		if len(positionals) != 0 {
-			return usageError("limits -c: expected one collar and no agent")
+			return usageError("limits --collar: expected one collar and no agent")
 		}
 		s, err := cmd.settings()
 		if err != nil {
@@ -175,31 +184,30 @@ func (cmd command) limits(args []string) error {
 	return nil
 }
 func (cmd command) capture(args []string) error {
-	composer := false
-	flags := boundFlagSet("capture", map[string]any{"composer": &composer})
+	composer, count := false, ""
+	flags := boundFlagSet("capture", map[string]any{"n": &count, "lines": &count, "composer": &composer})
 	positionals, err := parseOptions(flags, args)
 	if err != nil {
 		return usageError("capture: %v", err)
 	}
-	args = positionals
-	if len(args) > 2 {
-		return usageError("capture: too many arguments")
+	if len(positionals) > 1 {
+		return usageError("capture: unexpected argument %q", positionals[1])
 	}
 	name := ""
-	if len(args) > 0 {
-		name = args[0]
+	if len(positionals) == 1 {
+		name = positionals[0]
 		if err := validateAgentName(name); err != nil {
 			return err
 		}
 	}
 	lines := 0
-	if len(args) == 2 {
+	if flagWasSet(flags, "n") || flagWasSet(flags, "lines") {
 		if composer {
-			return usageError("capture --composer does not accept a line count")
+			return usageError("capture --composer does not accept --lines")
 		}
-		parsed, err := strconv.Atoi(args[1])
+		parsed, err := strconv.Atoi(count)
 		if err != nil || parsed <= 0 {
-			return usageError("capture: lines must be positive")
+			return usageError("capture: --lines must be a positive integer")
 		}
 		lines = parsed
 	}
@@ -244,10 +252,10 @@ func (cmd command) capture(args []string) error {
 	}
 	return err
 }
-func (cmd command) contextWidget(args []string) error {
-	if len(args) != 1 {
-		return usageError("context --widget: expected NAME or off")
-	}
+
+// contextWidget shows name's context in the tmux widget, or clears the widget
+// when name is empty.
+func (cmd command) contextWidget(name string) error {
 	run, err := cmd.runtime()
 	if err != nil {
 		return err
@@ -256,10 +264,10 @@ func (cmd command) contextWidget(args []string) error {
 	if err != nil {
 		return err
 	}
-	if args[0] == "off" {
+	if name == "" {
 		return b.ContextWidget(context.Background(), "", "")
 	}
-	a, err := run.resolve(args[0])
+	a, err := run.resolve(name)
 	if err != nil {
 		return err
 	}

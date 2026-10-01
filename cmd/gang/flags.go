@@ -52,7 +52,7 @@ func parseHitch(arguments []string, defaultCollar, defaultDirectory string) (hit
 	if options.Collar == "" || options.Directory == "" {
 		return hitchOptions{}, usageError("hitch: collar and directory must not be empty")
 	}
-	if options.Recover && (len(arguments) != 2 || !flagWasSet(flags, "recover")) {
+	if options.Recover && !onlyFlagSet(flags, "recover") {
 		return hitchOptions{}, usageError("hitch: --recover takes only NAME")
 	}
 	return options, nil
@@ -65,6 +65,7 @@ type sendOptions struct {
 	LiveOnly  bool
 	Supersede bool
 	At        string
+	Clear     bool
 }
 
 type waitOptions struct {
@@ -99,7 +100,7 @@ func parseSend(arguments []string) (sendOptions, error) {
 	options := sendOptions{}
 	flags := boundFlagSet("send", map[string]any{
 		"from": &options.From, "live-only": &options.LiveOnly,
-		"supersede": &options.Supersede, "at": &options.At,
+		"supersede": &options.Supersede, "at": &options.At, "clear": &options.Clear,
 	})
 	positionals, err := parseOptions(flags, arguments)
 	if err != nil {
@@ -116,8 +117,8 @@ func parseSend(arguments []string) (sendOptions, error) {
 		body := positionals[1]
 		options.Body = &body
 	}
-	if options.Body != nil && options.At == "clear" {
-		return sendOptions{}, usageError("send: a message body cannot be used with --at clear")
+	if options.Clear && (options.Body != nil || options.At != "" || options.LiveOnly) {
+		return sendOptions{}, usageError("send: --clear takes no body, --at, or --live-only")
 	}
 	if err := validateAgentName(options.Name); err != nil {
 		return sendOptions{}, err
@@ -182,7 +183,16 @@ func parseOptions(flags *flag.FlagSet, arguments []string) ([]string, error) {
 }
 
 func partitionOptions(flags *flag.FlagSet, arguments []string) ([]string, []string) {
-	var flagArguments, positionals []string
+	flagArguments, positionals, _ := splitOptions(flags, arguments)
+	return flagArguments, positionals
+}
+
+// splitOptions separates flags from operands before --, reports whether -h or
+// -help appeared in flag position with either dash count, and splits an
+// attached one-letter value (-cVALUE) into the flag and its value. A token
+// whose text before = looks like a flag name (-name=VALUE) stays whole so a
+// mistyped long flag is reported.
+func splitOptions(flags *flag.FlagSet, arguments []string) (flagArguments, positionals []string, help bool) {
 	ended := false
 	for i := 0; i < len(arguments); i++ {
 		argument := arguments[i]
@@ -194,13 +204,17 @@ func partitionOptions(flags *flag.FlagSet, arguments []string) ([]string, []stri
 			positionals = append(positionals, argument)
 			continue
 		}
-		flagArguments = append(flagArguments, argument)
 		name, _, assigned := strings.Cut(strings.TrimLeft(argument, "-"), "=")
+		help = help || name == "h" || name == "help"
 		option := flags.Lookup(name)
-		if option == nil || assigned {
-			continue
+		if option == nil && !strings.HasPrefix(argument, "--") && len(argument) > 2 && (!assigned || len(name) == 1 || !flagNamePattern.MatchString(name)) {
+			if short := flags.Lookup(argument[1:2]); short != nil && !isBoolFlag(short) {
+				flagArguments = append(flagArguments, argument[:2], argument[2:])
+				continue
+			}
 		}
-		if boolean, ok := option.Value.(interface{ IsBoolFlag() bool }); ok && boolean.IsBoolFlag() {
+		flagArguments = append(flagArguments, argument)
+		if option == nil || assigned || isBoolFlag(option) {
 			continue
 		}
 		if i+1 < len(arguments) {
@@ -208,7 +222,28 @@ func partitionOptions(flags *flag.FlagSet, arguments []string) ([]string, []stri
 			flagArguments = append(flagArguments, arguments[i])
 		}
 	}
-	return flagArguments, positionals
+	return flagArguments, positionals, help
+}
+
+var flagNamePattern = regexp.MustCompile(`^[a-z][a-z-]*$`)
+
+func isBoolFlag(option *flag.Flag) bool {
+	boolean, ok := option.Value.(interface{ IsBoolFlag() bool })
+	return ok && boolean.IsBoolFlag()
+}
+
+// specFlagSet registers a command's options without bindings, so arguments can
+// be classified without running the command.
+func specFlagSet(name string) *flag.FlagSet {
+	flags := quietFlagSet(name)
+	for _, option := range optionsFor(name) {
+		if option.argument == "" {
+			flags.Bool(option.name, false, option.meaning)
+		} else {
+			flags.String(option.name, "", option.meaning)
+		}
+	}
+	return flags
 }
 
 func boundFlagSet(name string, bindings map[string]any) *flag.FlagSet {
@@ -252,6 +287,14 @@ func flagWasSet(flags *flag.FlagSet, name string) bool {
 		}
 	})
 	return set
+}
+
+func onlyFlagSet(flags *flag.FlagSet, name string) bool {
+	only := true
+	flags.Visit(func(option *flag.Flag) {
+		only = only && option.Name == name
+	})
+	return only
 }
 
 func parseCollarFlags(commandName string, arguments []string, defaultCollar string) (string, error) {

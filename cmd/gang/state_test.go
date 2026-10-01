@@ -464,7 +464,7 @@ func TestSchedulingOnlyClearsSendersOwnEnvelopes(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
-	if err := f.cmd.send([]string{"worker", "--from", "alice", "--at", "clear"}); err != nil {
+	if err := f.cmd.send([]string{"worker", "--from", "alice", "--clear"}); err != nil {
 		t.Fatal(err)
 	}
 	pending, err := p.ListNew()

@@ -100,6 +100,11 @@ func (cmd command) execute(args []string) error {
 		_, err := fmt.Fprintf(cmd.stdout, "gangline %s\n", version)
 		return err
 	}
+	if args[0] == "help" && len(args) > 1 && !strings.HasPrefix(args[1], "-") {
+		if _, ok := commandUsage[args[1]]; !ok {
+			return cmd.printHelp(args[1])
+		}
+	}
 	if args[0] == "help" && helpRequested("help", args[1:]) {
 		return cmd.printHelp("help")
 	}
@@ -201,24 +206,6 @@ func (cmd command) execute(args []string) error {
 }
 
 func helpRequested(name string, arguments []string) bool {
-	for i := 0; i < len(arguments); i++ {
-		argument := arguments[i]
-		if argument == "--" {
-			return false
-		}
-		if argument == "-h" || argument == "--help" {
-			return true
-		}
-		if !strings.HasPrefix(argument, "-") || argument == "-" {
-			return false
-		}
-		optionName, _, hasValue := strings.Cut(strings.TrimLeft(argument, "-"), "=")
-		for _, option := range optionsFor(name) {
-			if option.name == optionName && option.argument != "" && !hasValue {
-				i++
-				break
-			}
-		}
-	}
-	return false
+	_, _, help := splitOptions(specFlagSet(name), arguments)
+	return help
 }

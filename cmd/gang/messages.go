@@ -107,12 +107,19 @@ func (cmd command) send(args []string) (result error) {
 	if err != nil {
 		return err
 	}
-	if failedStartup && o.At != "clear" {
+	if failedStartup && !o.Clear {
 		return refuseError("startup contract input is unverified; inspect the recipient and run gang hitch %s --recover before sending another message", a.Name)
 	}
 	now := cmd.now()
 	var e core.Envelope
-	if o.At != "clear" {
+	if !o.Clear {
+		var due time.Time
+		if o.At != "" {
+			due, err = parseSchedule(o.At, now)
+			if err != nil {
+				return usageError("send: --at: %v", err)
+			}
+		}
 		bodyReader := cmd.stdin
 		if o.Body != nil {
 			bodyReader = strings.NewReader(*o.Body)
@@ -120,13 +127,6 @@ func (cmd command) send(args []string) (result error) {
 		body, err := readBody(bodyReader)
 		if err != nil {
 			return err
-		}
-		var due time.Time
-		if o.At != "" {
-			due, err = parseSchedule(o.At, now)
-			if err != nil {
-				return usageError("send: --at: %v", err)
-			}
 		}
 		id, err := randomID("msg")
 		if err != nil {
@@ -142,7 +142,7 @@ func (cmd command) send(args []string) (result error) {
 		}
 	}
 	var l *store.LockedAgent
-	if o.Supersede || o.At == "clear" || o.LiveOnly {
+	if o.Supersede || o.Clear || o.LiveOnly {
 		l, a, err = run.acquire(a.ID, false)
 		if errors.Is(err, store.ErrLocked) {
 			return refuseError("recipient is busy with an input operation")
@@ -152,7 +152,7 @@ func (cmd command) send(args []string) (result error) {
 		}
 		defer func() { result = errors.Join(result, run.release(l)) }()
 	}
-	if o.Supersede || o.At == "clear" {
+	if o.Supersede || o.Clear {
 		removed, err := l.ClearScheduled(sender)
 		if err != nil {
 			return err
@@ -162,7 +162,7 @@ func (cmd command) send(args []string) (result error) {
 				return err
 			}
 		}
-		if o.At == "clear" {
+		if o.Clear {
 			return nil
 		}
 	}
@@ -291,7 +291,7 @@ func (cmd command) queue(args []string) error {
 }
 func (cmd command) interrupt(args []string) (result error) {
 	reason := ""
-	flags := boundFlagSet("interrupt", map[string]any{"m": &reason})
+	flags := boundFlagSet("interrupt", map[string]any{"m": &reason, "message": &reason})
 	positionals, err := parseOptions(flags, args)
 	if err != nil {
 		return usageError("interrupt: %v", err)

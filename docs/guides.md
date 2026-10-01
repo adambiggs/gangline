@@ -39,7 +39,7 @@ Find which agent needs attention and what its pane shows:
 ```sh
 gang roster
 gang status worker --why
-gang capture worker 40
+gang capture worker -n 40
 gang capture --composer worker
 gang context worker
 gang log --agent worker

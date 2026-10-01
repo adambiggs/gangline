@@ -208,7 +208,7 @@ func testLiveProvider(t *testing.T, collar, cli, cheapest string) {
 			}
 		} else {
 			status, _, _ := runGang(ctx, "", "status", "worker", "--why")
-			screen, _, _ := runGang(ctx, "", "capture", "worker", "30")
+			screen, _, _ := runGang(ctx, "", "capture", "worker", "-n", "30")
 			if strings.Contains(strings.ToLower(status+screen+hitchDiagnostic), "trust") || strings.Contains(strings.ToLower(status+screen+hitchDiagnostic), "permission") {
 				keepForOperator = true
 				t.Fatalf("native prompt needs operator in private pane (socket %s, session %s): hitch=%s status=%s screen=%s", socket, session, hitchDiagnostic, status, screen)
@@ -237,7 +237,7 @@ func testLiveProvider(t *testing.T, collar, cli, cheapest string) {
 		diagnosticCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 		defer cancel()
 		status, _, _ := runGang(diagnosticCtx, "", "status", "worker", "--why")
-		screen, _, _ := runGang(diagnosticCtx, "", "capture", "worker", "30")
+		screen, _, _ := runGang(diagnosticCtx, "", "capture", "worker", "-n", "30")
 		pending, _, _ := runGang(diagnosticCtx, "", "queue", "worker")
 		if strings.Contains(strings.ToLower(status+screen), "hooks need review") {
 			keepForOperator = true
@@ -254,7 +254,7 @@ func testLiveProvider(t *testing.T, collar, cli, cheapest string) {
 		t.Fatalf("unexpected send receipt: stdout=%q stderr=%q", sent, sendDiagnostic)
 	}
 	if _, err := awaitProviderEvents(ctx, team.Log, sendFields[0], collar); err != nil {
-		screen, _, _ := runGang(ctx, "", "capture", "worker", "30")
+		screen, _, _ := runGang(ctx, "", "capture", "worker", "-n", "30")
 		t.Fatalf("provider events: %v; initial receipt=%s pane=%s screen=%s timeline=%s", err, sendFields[1], pane, screen, providerTimeline(team.Log))
 	}
 	lastWitness, err := awaitProviderWitness(ctx, paths, second)
