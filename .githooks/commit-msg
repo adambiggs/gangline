@@ -23,12 +23,10 @@ fi
 # The subject is the first line that is neither blank nor a git comment — the
 # message file arrives with the commented template still attached.
 #
-# grep does its own first-match with -m1. Do NOT reintroduce `| head -1`: head
-# closes the pipe after one line, grep dies of SIGPIPE, pipefail promotes 141 to
-# the pipeline status, and set -e kills a commit-msg hook — which REJECTS a
-# perfectly conforming commit with no explanation. It only opens up once grep's
-# block buffer is full, so it is invisible on short messages and fires on long
-# ones: 0/200 at 60 lines, 61/200 at 37KB.
+# grep takes its own first match with -m1 rather than piping into `head -1`.
+# head closes the pipe after one line, so once grep's block buffer fills on a
+# long message grep dies of SIGPIPE; pipefail promotes 141 to the pipeline
+# status and set -e rejects a conforming commit with no explanation.
 #
 # `|| rc=$?` rather than `|| true`: grep exits 1 for no-match but >1 for a real
 # failure, and swallowing both would turn an unreadable message file into an
@@ -81,8 +79,7 @@ fi
 types='build|chore|ci|docs|feat|fix|perf|refactor|revert|style|test'
 if printf '%s' "$subject" | grep -qE "^(${types})(\([a-z0-9._-]+\))?!?: .+"; then
   # `!` is a promise to callers, and the footer is the only part of it they can
-  # act on. Advising the footer and accepting its absence published breaking
-  # changes with nothing saying what to update, so the gate reads the body.
+  # act on, so the gate reads the body for it.
   # Both spellings the Conventional Commits specification accepts are taken.
   # A git comment line cannot carry it: the anchor rejects `# BREAKING CHANGE:`.
   printf '%s' "$subject" \
