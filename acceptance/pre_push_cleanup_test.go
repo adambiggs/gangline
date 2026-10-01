@@ -1,10 +1,12 @@
 package acceptance
 
 import (
+	"bytes"
 	"io/fs"
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"testing"
 )
@@ -91,5 +93,42 @@ func TestPrePushReportsWorktreeCleanupFailure(t *testing.T) {
 				t.Fatalf("cleanup failure reported more than once:\n%s", output)
 			}
 		})
+	}
+}
+
+func TestPrePushTerminationRefusesPush(t *testing.T) {
+	hook, err := filepath.Abs("../.githooks/pre-push")
+	if err != nil {
+		t.Fatal(err)
+	}
+	root, sha, env := prePushFixture(t, "kill -TERM \"$(cat \"$HOOK_FIXTURE/hook.pid\")\"\n")
+	command := exec.Command("bash", hook, "origin", "https://example.invalid/repo.git")
+	command.Dir, command.Env = root, env
+	stdin, err := command.StdinPipe()
+	if err != nil {
+		t.Fatal(err)
+	}
+	var output bytes.Buffer
+	command.Stdout, command.Stderr = &output, &output
+	if err := command.Start(); err != nil {
+		t.Fatal(err)
+	}
+	// The hook reads its whole ref stream before checking anything, so the pid
+	// file exists before the fixture gate can read it.
+	if err := os.WriteFile(filepath.Join(root, "hook.pid"), []byte(strconv.Itoa(command.Process.Pid)), 0600); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := stdin.Write([]byte("refs/heads/main " + sha + " refs/heads/main " + strings.Repeat("0", 40) + "\n")); err != nil {
+		t.Fatal(err)
+	}
+	if err := stdin.Close(); err != nil {
+		t.Fatal(err)
+	}
+	waitErr := command.Wait()
+	if code := command.ProcessState.ExitCode(); code != 143 {
+		t.Fatalf("terminated hook exit=%d, want 143: %v\n%s", code, waitErr, output.String())
+	}
+	if strings.Contains(output.String(), "cannot remove worktree") {
+		t.Fatalf("terminated hook reported a cleanup failure that did not happen:\n%s", output.String())
 	}
 }

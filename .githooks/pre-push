@@ -38,7 +38,12 @@ cleanup() {
   done
   rm -rf -- "$tmp" || :
 }
-trap cleanup EXIT HUP INT TERM
+# A signal ends the hook, and the exit refuses the push; cleanup runs once,
+# from the EXIT trap.
+trap cleanup EXIT
+trap 'exit 129' HUP
+trap 'exit 130' INT
+trap 'exit 143' TERM
 cat > "$tmp/stdin"
 
 # Repository checks supplement the user's global hook. Both receive the
