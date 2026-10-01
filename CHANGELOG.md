@@ -1,5 +1,38 @@
 # Changelog
 
+## [1.10.0](https://github.com/adambiggs/gangline/compare/gangline-v1.9.2...gangline-v1.10.0) (2026-10-01)
+
+
+### Features
+
+* **cli:** print roster, status, and context as JSON ([0343ce1](https://github.com/adambiggs/gangline/commit/0343ce1f0cd52ba1e573cb4ee754d9bfbebd5388))
+* **cli:** select the team with --team on every team command ([843646d](https://github.com/adambiggs/gangline/commit/843646d059f5b3ea583d155c0175a5af5aa8e2ab))
+* **queue:** show why each pending message waits ([4247a89](https://github.com/adambiggs/gangline/commit/4247a89b85f9a802f3fce6a6d2843a307e56b40d))
+
+
+### Bug Fixes
+
+* **cli:** parse flags the same way in every command ([542b5a4](https://github.com/adambiggs/gangline/commit/542b5a4e7b9bd48be3cab3919cfa19378e29ba3d))
+* **collar:** report unrun probes as unknown and surface cleanup failures ([fc24063](https://github.com/adambiggs/gangline/commit/fc240637d882a58a003f842fe2f1ff448899035f))
+* **collar:** type probe input through guarded pane input ([53b3af9](https://github.com/adambiggs/gangline/commit/53b3af9f99fcf85b259fc3bcc54420532c699dad))
+* **compact:** classify the native screen before compaction recovery ([4aec988](https://github.com/adambiggs/gangline/commit/4aec9882267a83b49d3e3a8ac4dbe282a41a785b))
+* **compact:** hold compaction while startup input is unverified ([11e67df](https://github.com/adambiggs/gangline/commit/11e67dfa36386f0eed03f856eaf3b8db3916fa63))
+* **compaction:** keep a retained failure receipt when withholding a resume ([7edafca](https://github.com/adambiggs/gangline/commit/7edafca2748e64923fe935c007f0e99f60d28695))
+* **context:** keep retained receipts when discarding stale context notes ([2f85d0b](https://github.com/adambiggs/gangline/commit/2f85d0b31fcf5c43102eb626e036a43368190aa5))
+* **hitch:** leave model ids to the native CLI and show catalog diagnostics ([a879f9e](https://github.com/adambiggs/gangline/commit/a879f9ec38a39026138e5a3f69962cf7b72920c5))
+* **hitch:** refuse a resume only when its transcript names another session ([666e6ec](https://github.com/adambiggs/gangline/commit/666e6ec5f087ac32f963a749900e111c58ee4451))
+* **hooks:** refuse the push when pre-push is interrupted ([935e566](https://github.com/adambiggs/gangline/commit/935e566e70a75075bb35fd5858d9f71add06e439))
+* **hooks:** report pre-push worktree cleanup failures ([8de0f68](https://github.com/adambiggs/gangline/commit/8de0f68b0203377f12b5be04132cb57be0a2dac2))
+* **hooks:** stop advising --no-verify when pre-push refuses ([6035e7f](https://github.com/adambiggs/gangline/commit/6035e7f16d5aab5869adb91ce2c96b0ef3edcac2))
+* **snooze:** withdraw a due wake still queued for native input ([e01186f](https://github.com/adambiggs/gangline/commit/e01186f83124cd26d6d5f0d44c784a6c1423cf20))
+* **statusline:** install into the Claude config directory Claude Code reads ([ff48774](https://github.com/adambiggs/gangline/commit/ff487740d82dfe2ed38763a37b3c83bbb2bb739e))
+* **tick:** record tick failures in the team log ([f49ae70](https://github.com/adambiggs/gangline/commit/f49ae705d7ad5c1b3964130a3a961a800f7a4c25))
+* **usage:** publish each recipient's notices and wakes independently ([d5a1183](https://github.com/adambiggs/gangline/commit/d5a1183c4bc0ef993b32e51048c1ab0219f1313e))
+* **usage:** withdraw usage warnings once their window resets ([e14b2e5](https://github.com/adambiggs/gangline/commit/e14b2e5dc6e7bead221568a423525ce822b02d87))
+* **watchdog:** mark an outage when an elapsed timer's tick cannot re-arm it ([b972f88](https://github.com/adambiggs/gangline/commit/b972f88f6b41a4aeea74ed50572a3412ca5f9da4))
+* **watchdog:** mark an outage when replacing the recorded timer fails ([42d0ba2](https://github.com/adambiggs/gangline/commit/42d0ba22f4c71685e7fbd55c8b34c21ecbd66bff))
+* **watchdog:** surface an unavailable scheduler and clear health markers on recovery ([00de05a](https://github.com/adambiggs/gangline/commit/00de05a2b2cbb6f97548a976a9b97353281e73d9))
+
 ## [1.9.2](https://github.com/adambiggs/gangline/compare/gangline-v1.9.1...gangline-v1.9.2) (2026-10-01)
 
 
