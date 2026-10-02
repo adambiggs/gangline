@@ -1,5 +1,19 @@
 # Changelog
 
+## [1.12.3](https://github.com/adambiggs/gangline/compare/gangline-v1.12.2...gangline-v1.12.3) (2026-10-02)
+
+
+### Bug Fixes
+
+* **blocked:** read a native prompt only from the live input surface ([baefa3b](https://github.com/adambiggs/gangline/commit/baefa3b0b8e3074e66bd873fe1812d6e3fd214db))
+* **cli:** name a route when an agent name is not registered ([a6a0e58](https://github.com/adambiggs/gangline/commit/a6a0e58ecf54d25199ba73f9b11f90121e259b9b))
+* **cli:** resolve --version as the version command in help ([c5f6067](https://github.com/adambiggs/gangline/commit/c5f6067b3c3cfb81882b9328cb022827d83728a8))
+* **compact:** fail a compaction whose queued resume note is blocked ([f38a97a](https://github.com/adambiggs/gangline/commit/f38a97a58d63f09c409ba6db5bb7dbd252b29438))
+* **compact:** refuse a compaction while the last resume note is queued ([892c0ce](https://github.com/adambiggs/gangline/commit/892c0ce252f951a8ea1a9ca068c50207fc6e803f))
+* **snooze:** name a route when the caller cannot snooze ([dd8bc3e](https://github.com/adambiggs/gangline/commit/dd8bc3e5838f78a568e540ff4d59a2dc3df4bd6f))
+* **snooze:** refuse a paste placeholder in a note for any harness ([7157215](https://github.com/adambiggs/gangline/commit/7157215923cac1728a1c38ae372a1bd8b9a3df53))
+* **startup:** read a trust prompt only from the live input surface ([771cf10](https://github.com/adambiggs/gangline/commit/771cf10f0c2ec7fab81479643e1c569bbe41047b))
+
 ## [1.12.2](https://github.com/adambiggs/gangline/compare/gangline-v1.12.1...gangline-v1.12.2) (2026-10-02)
 
 
