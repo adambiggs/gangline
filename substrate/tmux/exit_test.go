@@ -403,7 +403,8 @@ func TestLaunchHoldsItsPaneOnRelativePaths(t *testing.T) {
 	}
 }
 
-// The pane holds itself whatever shell the user's server runs commands with.
+// The pane holds itself whatever shell the user's server runs commands with,
+// and runs the native command through that shell.
 func TestLaunchHoldsItsPaneUnderAnyDefaultShell(t *testing.T) {
 	binary, err := exec.LookPath("tmux")
 	if err != nil {
@@ -416,9 +417,11 @@ func TestLaunchHoldsItsPaneUnderAnyDefaultShell(t *testing.T) {
 		_, _ = runTmuxResult(binary, socket, "kill-session", "-t", "=user")
 		_, _ = runTmuxResult(binary, socket, "kill-session", "-t", "=shelled")
 	})
-	// A shell that parses no command, standing in for one without POSIX syntax.
+	// A shell without POSIX subshells, which notes each command it runs.
 	shell := filepath.Join(root, "shell")
-	if err := os.WriteFile(shell, []byte("#!/bin/sh\nexit 97\n"), 0o700); err != nil {
+	ran := filepath.Join(root, "ran")
+	script := "#!/bin/sh\ncase \"$2\" in *'('*) exit 97;; esac\nprintf '%s\\n' \"$2\" >> '" + ran + "'\nexec /bin/sh -c \"$2\"\n"
+	if err := os.WriteFile(shell, []byte(script), 0o700); err != nil {
 		t.Fatal(err)
 	}
 	runTmux(t, binary, socket, "set-option", "-g", "default-shell", shell)
@@ -433,6 +436,9 @@ func TestLaunchHoldsItsPaneUnderAnyDefaultShell(t *testing.T) {
 	releaseAndAwaitExit(t, binary, socket, root, "release")
 	_, err = backend.Capture(context.Background(), pane.ID)
 	assertExited(t, err, "7")
+	if got, err := os.ReadFile(ran); err != nil || !strings.Contains(string(got), "boot failure") {
+		t.Fatalf("default-shell ran %q (%v), want the native command", got, err)
+	}
 }
 
 // A pane that cannot hold itself never starts the native command, whose exit

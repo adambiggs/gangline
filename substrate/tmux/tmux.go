@@ -205,8 +205,10 @@ func (backend *Backend) launchArguments(command string, spec substrate.SpawnSpec
 			hold = "cd -- " + shellWords([]string{filepath.Dir(socket)}) + " && " + hold + " " + shellWords([]string{"-S", filepath.Base(socket)})
 		}
 		// tmux runs a command of several words without the user's
-		// default-shell, which need not parse this one.
-		return arguments, []string{"/bin/sh", "-c", "(" + hold + ` set-option -p -t "$TMUX_PANE" remain-on-exit on) && ` + native}, nil
+		// default-shell, which need not parse the hold. The native command
+		// then runs through that shell, which tmux names in SHELL, as tmux
+		// runs a command of one word.
+		return arguments, []string{"/bin/sh", "-c", "(" + hold + ` set-option -p -t "$TMUX_PANE" remain-on-exit on) && exec "$SHELL" -c "$1"`, "sh", native}, nil
 	}
 	return arguments, []string{native}, nil
 }
