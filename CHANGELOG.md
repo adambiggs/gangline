@@ -1,5 +1,13 @@
 # Changelog
 
+## [1.10.3](https://github.com/adambiggs/gangline/compare/gangline-v1.10.2...gangline-v1.10.3) (2026-10-02)
+
+
+### Bug Fixes
+
+* **compact:** submit /compact only when the composer shows it ([6d48410](https://github.com/adambiggs/gangline/commit/6d484106d9af44606799381d1206ce44e24f38dc)), closes [#84](https://github.com/adambiggs/gangline/issues/84)
+* **harness:** verify a Claude paste that quotes its own wrapper tag ([684b30f](https://github.com/adambiggs/gangline/commit/684b30f7bcfb480cda6e0217c9b3a11755079729)), closes [#84](https://github.com/adambiggs/gangline/issues/84)
+
 ## [1.10.2](https://github.com/adambiggs/gangline/compare/gangline-v1.10.1...gangline-v1.10.2) (2026-10-02)
 
 
