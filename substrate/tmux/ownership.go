@@ -91,6 +91,13 @@ func (b *Backend) AcquireTree(ctx context.Context, pane substrate.PaneID, expect
 	}
 	owned, err := b.ownedProcesses(ctx, pane)
 	if err != nil {
+		// The pane can close between the registration read and the process
+		// reads; its recorded root is then taken as above.
+		if ctx.Err() == nil {
+			if _, exists, rerr := b.registeredPane(ctx, string(pane)); rerr == nil && !exists {
+				return AcquireRecorded([]Identity{expected})
+			}
+		}
 		return nil, err
 	}
 	if len(owned) == 0 {
