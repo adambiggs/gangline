@@ -5,6 +5,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"syscall"
 	"testing"
@@ -169,6 +170,30 @@ exec tmux "$@"
 					t.Fatalf("hitch calls = %q, want the ready rename, then one release", seen)
 				}
 				unheld()
+				// The record witnesses the process of the server that registered
+				// its pane.
+				records, err := filepath.Glob(filepath.Join(team, "state", "teams", session, "agents", "*", "agent.json"))
+				if err != nil || len(records) != 1 {
+					t.Fatalf("agent records: %v %q", err, records)
+				}
+				data, err := os.ReadFile(records[0])
+				if err != nil {
+					t.Fatal(err)
+				}
+				var record struct {
+					Registration struct {
+						Server struct {
+							PID int `json:"pid"`
+						} `json:"server"`
+					} `json:"registration"`
+				}
+				if err := json.Unmarshal(data, &record); err != nil {
+					t.Fatal(err)
+				}
+				server, err := runner.run("display-message", "-p", "#{pid}")
+				if err != nil || strconv.Itoa(record.Registration.Server.PID) != strings.TrimSpace(server) {
+					t.Fatalf("recorded server process = %d, tmux server is %q (%v)", record.Registration.Server.PID, server, err)
+				}
 				return
 			}
 			if status, ok := state.Sys().(syscall.WaitStatus); err == nil || !ok || !status.Signaled() || status.Signal() != syscall.SIGKILL {

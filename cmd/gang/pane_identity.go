@@ -20,7 +20,7 @@ type paneRegistry interface {
 	RemoveRegisteredNativePane(context.Context, tmux.PaneIdentity, tmux.Identity) error
 	RemoveRegisteredPane(context.Context, tmux.PaneIdentity) error
 	CheckPane(context.Context, tmux.PaneIdentity) (bool, error)
-	PaneClosed(context.Context, tmux.PaneIdentity) (bool, error)
+	PaneClosed(context.Context, tmux.PaneIdentity, tmux.Identity) (bool, error)
 	ProcessVisibility(context.Context, substrate.PaneID) (bool, error)
 	VerifyCaller(context.Context, substrate.PaneID) error
 	SendRegisteredKeys(context.Context, tmux.PaneIdentity, string, substrate.Keys) error

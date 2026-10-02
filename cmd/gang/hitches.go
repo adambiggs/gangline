@@ -404,6 +404,16 @@ func (cmd command) hitchWithStaleClaim(args []string, supersede bool) (result er
 		a.Registration.Held = false
 		result = errors.Join(result, l.Save(a))
 	}()
+	// The server's process is witnessed with the registration, so a later
+	// reader can tell that server's exit from a socket it cannot reach.
+	server, err := b.ServerIdentity(ctx, registration)
+	if err != nil {
+		return unspawned(err)
+	}
+	a.Registration.Server = storedIdentity(server)
+	if err := l.Save(a); err != nil {
+		return unspawned(err)
+	}
 	visible, err := b.ProcessVisibility(ctx, pane.ID)
 	if err != nil {
 		return unspawned(err)

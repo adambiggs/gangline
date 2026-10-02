@@ -55,7 +55,7 @@ func (b *inputFixture) RemoveRegisteredNativePane(context.Context, tmux.PaneIden
 }
 func (b *inputFixture) RemoveRegisteredPane(context.Context, tmux.PaneIdentity) error { return nil }
 func (b *inputFixture) CheckPane(context.Context, tmux.PaneIdentity) (bool, error)    { return true, nil }
-func (b *inputFixture) PaneClosed(context.Context, tmux.PaneIdentity) (bool, error) {
+func (b *inputFixture) PaneClosed(context.Context, tmux.PaneIdentity, tmux.Identity) (bool, error) {
 	return b.paneClosed, nil
 }
 func (b *inputFixture) ProcessVisibility(context.Context, substrate.PaneID) (bool, error) {

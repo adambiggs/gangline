@@ -268,9 +268,10 @@ func (run *runtime) forgetPane(l *store.LockedAgent, a *core.Agent) error {
 }
 
 // paneGone reports whether the record's registered pane is absent or now
-// names another server's or session's pane, and whether the server that
-// registered it confirms it closed. Only a closed pane may leave the record:
-// an unreachable server or a renamed session hides a pane that still runs.
+// names another server's or session's pane, and whether it is closed: the
+// server that registered it confirms that, or that server's process has
+// exited. Only a closed pane may leave the record: an unreachable server or a
+// renamed session hides a pane that still runs.
 func (run *runtime) paneGone(a core.Agent) (gone, closed bool, err error) {
 	registry, err := run.registry()
 	if err != nil {
@@ -284,7 +285,7 @@ func (run *runtime) paneGone(a core.Agent) (gone, closed bool, err error) {
 	if err != nil || present {
 		return false, false, err
 	}
-	closed, err = registry.PaneClosed(context.Background(), id)
+	closed, err = registry.PaneClosed(context.Background(), id, nativeIdentity(a.Registration.Server))
 	return true, closed, err
 }
 func (run *runtime) recoverInput(l *store.LockedAgent, a *core.Agent) error {

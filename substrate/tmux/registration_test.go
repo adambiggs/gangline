@@ -347,7 +347,7 @@ func TestPaneClosedOnlyOnTheRegisteringServer(t *testing.T) {
 	}
 	closed := func(b *Backend, id PaneIdentity) bool {
 		t.Helper()
-		got, err := b.PaneClosed(ctx, id)
+		got, err := b.PaneClosed(ctx, id, Identity{})
 		if err != nil {
 			t.Fatal(err)
 		}

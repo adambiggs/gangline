@@ -7,6 +7,7 @@ import (
 	"errors"
 	"fmt"
 	"os"
+	"strconv"
 	"strings"
 	"syscall"
 
@@ -92,18 +93,20 @@ func (b *Backend) CheckPane(ctx context.Context, expected PaneIdentity) (bool, e
 	return true, nil
 }
 
-// PaneClosed reports whether the server that registered the pane still runs
-// and no longer has it. tmux does not reuse a pane id within a server
-// lifetime, so only that server can witness the close. An unreachable or
-// different server, or a pane outside the configured session, proves nothing.
-func (b *Backend) PaneClosed(ctx context.Context, id PaneIdentity) (bool, error) {
+// PaneClosed reports whether the pane is closed for good: the server that
+// registered it still runs and no longer has it, or that server's process is
+// witnessed gone. tmux does not reuse a pane id within a server lifetime. An
+// unreachable or different server proves nothing while the registering one may
+// still run, and neither does a server with no session, whose pane listing
+// names no generation, or a pane outside the configured session.
+func (b *Backend) PaneClosed(ctx context.Context, id PaneIdentity, server Identity) (bool, error) {
 	if err := validPaneIdentity(id); err != nil {
 		return false, err
 	}
-	out, err := b.run(ctx, "list-panes", "-a", "-F", "#{"+generationOption+"}\t#{pane_id}")
+	out, err := b.listPanes(ctx, "#{"+generationOption+"}\t#{pane_id}")
 	if err != nil {
-		if absentTmuxServer(out) && ctx.Err() == nil {
-			return false, nil
+		if (absentTmuxServer(out) || emptyTmuxServer(out)) && ctx.Err() == nil {
+			return serverExited(server)
 		}
 		return false, tmuxError("read pane registration", err, out)
 	}
@@ -112,17 +115,108 @@ func (b *Backend) PaneClosed(ctx context.Context, id PaneIdentity) (bool, error)
 		if len(fields) != 2 {
 			return false, fmt.Errorf("invalid pane registration record %q", line)
 		}
-		if fields[0] != id.Generation || fields[1] == id.Pane {
+		if fields[0] != id.Generation {
+			return serverExited(server)
+		}
+		if fields[1] == id.Pane {
 			return false, nil
 		}
 	}
 	return true, nil
 }
 
-func (b *Backend) registeredPane(ctx context.Context, pane string) (PaneIdentity, bool, error) {
-	out, err := b.run(ctx, "list-panes", "-a", "-F", "#{"+generationOption+"}\t#{session_id}\t#{pane_id}")
+// ServerIdentity witnesses the process of the tmux server that registered the
+// pane, which the server generation names. It is zero when this caller cannot
+// read that server's process.
+func (b *Backend) ServerIdentity(ctx context.Context, id PaneIdentity) (Identity, error) {
+	if err := validPaneIdentity(id); err != nil {
+		return Identity{}, err
+	}
+	read := func() (string, int, error) {
+		out, err := b.run(ctx, "display-message", "-p", "#{"+generationOption+"}\t#{socket_path}\t#{pid}")
+		if err != nil {
+			return "", 0, tmuxError("read tmux server process", err, out)
+		}
+		fields := strings.Split(strings.TrimSuffix(out, "\n"), "\t")
+		if len(fields) != 3 || fields[0] != id.Generation || fields[1] == "" {
+			return "", 0, fmt.Errorf("read tmux server process: %w: the server is not the one that registered pane %s", ErrPaneReplaced, id.Pane)
+		}
+		pid, err := strconv.Atoi(fields[2])
+		if err != nil || pid <= 0 {
+			return "", 0, fmt.Errorf("invalid tmux server pid %q", fields[2])
+		}
+		return fields[1], pid, nil
+	}
+	socket, pid, err := read()
 	if err != nil {
-		if absentTmuxServer(out) && ctx.Err() == nil {
+		return Identity{}, err
+	}
+	visible, err := serverProcessVisible(ctx, socket, pid)
+	if err != nil || !visible {
+		return Identity{}, err
+	}
+	r, err := readCurrentProcess(pid)
+	if err != nil {
+		return Identity{}, err
+	}
+	// The same server answering again held the PID throughout, so the record
+	// read between its two answers is its own.
+	if _, again, err := read(); err != nil {
+		return Identity{}, err
+	} else if again != pid {
+		return Identity{}, fmt.Errorf("read tmux server process: %w: the server changed during the read", ErrPaneReplaced)
+	}
+	boot, err := bootIdentity()
+	if err != nil {
+		return Identity{}, err
+	}
+	namespace, err := nativeProcessNamespace()
+	if err != nil {
+		return Identity{}, err
+	}
+	return Identity{PID: r.PID, Started: r.started, Version: r.version, UniqueID: r.uniqueID, BootID: boot, Namespace: namespace}, nil
+}
+
+// serverExited reports whether the witnessed server process is gone. Without a
+// witness this caller can read, or with one from another boot, it is unknown
+// and reads as not exited.
+func serverExited(server Identity) (bool, error) {
+	if !CanReadIdentity(server) {
+		return false, nil
+	}
+	boot, err := bootIdentity()
+	if err != nil {
+		return false, err
+	}
+	if server.BootID != boot {
+		return false, nil
+	}
+	r, err := readCurrentProcess(server.PID)
+	if processGone(err) {
+		return true, nil
+	}
+	if err != nil {
+		return false, err
+	}
+	return !sameIdentity(server, r), nil
+}
+
+// listPanes reads every pane of the server. A client whose server exits while
+// it is connected reports only that it lost the server, which says nothing of
+// the panes, so that read is made once more: it finds the server absent, or
+// finds its successor.
+func (b *Backend) listPanes(ctx context.Context, format string) (string, error) {
+	out, err := b.run(ctx, "list-panes", "-a", "-F", format)
+	if err != nil && lostTmuxServer(out) && ctx.Err() == nil {
+		out, err = b.run(ctx, "list-panes", "-a", "-F", format)
+	}
+	return out, err
+}
+
+func (b *Backend) registeredPane(ctx context.Context, pane string) (PaneIdentity, bool, error) {
+	out, err := b.listPanes(ctx, "#{"+generationOption+"}\t#{session_id}\t#{pane_id}")
+	if err != nil {
+		if (absentTmuxServer(out) || emptyTmuxServer(out)) && ctx.Err() == nil {
 			return PaneIdentity{}, false, nil
 		}
 		return PaneIdentity{}, false, tmuxError("read pane registration", err, out)
@@ -360,6 +454,18 @@ func validPaneIdentity(id PaneIdentity) error {
 		return fmt.Errorf("invalid registered pane identity")
 	}
 	return nil
+}
+
+// lostTmuxServer matches a client that connected to a server which then exited
+// without answering.
+func lostTmuxServer(output string) bool {
+	return strings.HasPrefix(output, "server exited unexpectedly")
+}
+
+// emptyTmuxServer matches a read of every pane answered by a server with no
+// session, which has no pane. A server ends its last session before it exits.
+func emptyTmuxServer(output string) bool {
+	return strings.HasPrefix(output, "no current target")
 }
 
 func absentTmuxServer(output string) bool {
