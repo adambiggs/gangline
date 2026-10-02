@@ -155,16 +155,9 @@ func (b *Backend) ServerIdentity(ctx context.Context, id PaneIdentity) (Identity
 	if err != nil || !visible {
 		return Identity{}, err
 	}
-	r, err := readCurrentProcess(pid)
+	r, err := readServerProcess(pid, read, readCurrentProcess)
 	if err != nil {
 		return Identity{}, err
-	}
-	// The same server answering again held the PID throughout, so the record
-	// read between its two answers is its own.
-	if _, again, err := read(); err != nil {
-		return Identity{}, err
-	} else if again != pid {
-		return Identity{}, fmt.Errorf("read tmux server process: %w: the server changed during the read", ErrPaneReplaced)
 	}
 	boot, err := bootIdentity()
 	if err != nil {
@@ -175,6 +168,23 @@ func (b *Backend) ServerIdentity(ctx context.Context, id PaneIdentity) (Identity
 		return Identity{}, err
 	}
 	return Identity{PID: r.PID, Started: r.started, Version: r.version, UniqueID: r.uniqueID, BootID: boot, Namespace: namespace}, nil
+}
+
+// readServerProcess reads the server's record between two of its answers. The
+// same server answering again held the PID throughout, so the record is its
+// own. A record that vanished is a server that exited, and the second answer
+// reports that exit.
+func readServerProcess(pid int, answer func() (string, int, error), read func(int) (processRecord, error)) (processRecord, error) {
+	r, readErr := read(pid)
+	if readErr != nil && !processGone(readErr) {
+		return processRecord{}, readErr
+	}
+	if _, again, err := answer(); err != nil {
+		return processRecord{}, err
+	} else if again != pid {
+		return processRecord{}, fmt.Errorf("read tmux server process: %w: the server changed during the read", ErrPaneReplaced)
+	}
+	return r, readErr
 }
 
 // serverExited reports whether the witnessed server process is gone. Without a

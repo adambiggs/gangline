@@ -6,6 +6,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"syscall"
 	"testing"
 
 	"github.com/adambiggs/gangline/substrate"
@@ -148,5 +149,30 @@ func TestAcquireTreeReportsProcessThatExitsAfterItsReadAsGone(t *testing.T) {
 	})
 	if err != nil || len(owned.Identities()) != 0 {
 		t.Fatalf("exited process stopped teardown: owned=%v err=%v", owned, err)
+	}
+}
+
+func TestReadServerProcessReportsVanishedServerByItsAnswer(t *testing.T) {
+	gone := func(int) (processRecord, error) {
+		return processRecord{}, &os.PathError{Op: "open", Path: "/proc/100/stat", Err: os.ErrNotExist}
+	}
+	exited := errors.New("no server running")
+	_, err := readServerProcess(100, func() (string, int, error) { return "", 0, exited }, gone)
+	if !errors.Is(err, exited) {
+		t.Fatalf("exited server: err=%v, want the server's answer", err)
+	}
+	_, err = readServerProcess(100, func() (string, int, error) { return "socket", 200, nil }, gone)
+	if !errors.Is(err, ErrPaneReplaced) {
+		t.Fatalf("replaced server: err=%v, want replacement", err)
+	}
+	_, err = readServerProcess(100, func() (string, int, error) { return "socket", 100, nil }, gone)
+	if !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("server answering for a vanished record: err=%v, want the read error", err)
+	}
+	_, err = readServerProcess(100, func() (string, int, error) { t.Fatal("answered after a read failure"); return "", 0, nil }, func(int) (processRecord, error) {
+		return processRecord{}, syscall.EPERM
+	})
+	if !errors.Is(err, syscall.EPERM) {
+		t.Fatalf("read error was hidden: %v", err)
 	}
 }
