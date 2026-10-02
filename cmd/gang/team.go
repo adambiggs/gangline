@@ -232,15 +232,19 @@ func (run *runtime) observeRoster(agents []core.Agent) ([]core.Agent, error) {
 		if current.Pane != "" && !present[current.Pane] && current.Status != core.Dropping {
 			// A listing is enough to fail the agent. With no session to list,
 			// an unreachable socket hides a pane that may still run, so the
-			// record stands. Only a check that confirms the pane closed
-			// removes it from the record.
+			// record stands unless its recorded process has exited. Only a
+			// check that confirms the pane closed removes it from the record.
 			var err error
 			_, closed, checkErr := run.paneGone(current)
 			switch {
 			case checkErr == nil && closed:
 				err = run.forgetPane(l, &current)
 			case !listed:
-				unlisted = true
+				if !recordedProcessExited(current) {
+					unlisted = true
+				} else if current.Status != core.Failed {
+					err = run.apply(l, &current, core.Event{Type: "hitch_failed", Reason: "tmux lists no team session and the recorded process has exited"})
+				}
 			case current.Status != core.Failed:
 				err = run.apply(l, &current, core.Event{Type: "hitch_failed", Reason: "registered pane is absent from tmux"})
 			}

@@ -316,6 +316,21 @@ func (run *runtime) paneGone(a core.Agent) (gone, closed bool, err error) {
 	closed, err = registry.PaneClosed(context.Background(), id, nativeIdentity(a.Registration.Server))
 	return true, closed, err
 }
+
+// recordedProcessExited reports whether the record's native process is
+// witnessed gone: recorded under an earlier boot, or absent or replaced now.
+// An identity gang cannot check is not a witness.
+func recordedProcessExited(a core.Agent) bool {
+	if a.Process.PID == 0 || a.Process.BootID == "" {
+		return false
+	}
+	owned, err := tmux.AcquireRecorded([]tmux.Identity{nativeIdentity(a.Process)})
+	if err != nil {
+		return false
+	}
+	exited := len(owned.Identities()) == 0
+	return owned.Close() == nil && exited
+}
 func (run *runtime) recoverInput(l *store.LockedAgent, a *core.Agent) error {
 	if a.Input == nil {
 		return nil
