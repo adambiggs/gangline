@@ -11,7 +11,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        os: [ubuntu-latest, macos-latest]
+        os: [macos-latest]
         shard: [1, 2, 3]
     runs-on: ${{ matrix.os }}
     timeout-minutes: 45
@@ -47,7 +47,7 @@ jobs:
         run: |
           set -o pipefail
           mkdir -p "$RUNNER_TEMP/diag"
-          go test -count=100 -timeout=900s -run 'TestAcquireTree' ./substrate/tmux 2>&1 | tee "$RUNNER_TEMP/diag/acquire.txt" | grep -E -- '--- FAIL|_test.go:[0-9]+:|^(ok|FAIL)'
+          go test -count=300 -timeout=1800s -run 'TestAcquireTree' ./substrate/tmux 2>&1 | tee "$RUNNER_TEMP/diag/acquire.txt" | grep -E -- '--- FAIL|_test.go:[0-9]+:|^(ok|FAIL)'
       - name: Hunt
         run: |
           ci-hunt/watchdog.sh "$RUNNER_TEMP/diag/watch" &
