@@ -197,8 +197,11 @@ func (cmd command) snooze(args []string) error {
 	if err != nil {
 		return err
 	}
-	if a == nil || a.Status != core.Active {
-		return refuseError("snooze is available only to a registered active agent")
+	if a == nil {
+		return refuseError("snooze schedules a wake for the calling agent, and the operator is not an agent; ask the agent to snooze with gang send NAME")
+	}
+	if a.Status != core.Active {
+		return refuseError("hitch identity %s is %s, not active; run gang snooze once its hitch completes", a.Name, a.Status)
 	}
 	key := string(a.ID)
 	isLead := a.Role == "lead" || a.Name == "lead"

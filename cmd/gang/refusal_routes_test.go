@@ -115,3 +115,16 @@ func TestUnregisteredAgentRefusalNamesARoute(t *testing.T) {
 		}
 	}
 }
+
+func TestSnoozeRefusalsNameARoute(t *testing.T) {
+	f := newStateFixture(t)
+	a := f.add(t, "a", "worker", "codex")
+	if err := f.cmd.snooze([]string{"--at", "2h"}); err == nil || err.Error() != "snooze schedules a wake for the calling agent, and the operator is not an agent; ask the agent to snooze with gang send NAME" {
+		t.Errorf("snooze as the operator = %v", err)
+	}
+	f.setAgent(t, a, func(a *core.Agent) { a.Status = core.Booting })
+	f.env["GANG_AGENT_ID"], f.env["TMUX_PANE"] = string(a.ID), a.Pane
+	if err := f.cmd.snooze([]string{"--at", "2h"}); err == nil || err.Error() != "hitch identity worker is booting, not active; run gang snooze once its hitch completes" {
+		t.Errorf("snooze from a booting agent = %v", err)
+	}
+}
