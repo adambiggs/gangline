@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
@@ -193,34 +194,44 @@ func TestStaleSuccessDoesNotClearNewFailure(t *testing.T) {
 // A prompt typed into a turn that then fails runs from Claude Code's queue
 // with no submit hook of its own, so the witness keeps the failed turn's id.
 // The transcript records the queued prompt after the failed one, and its
-// finish proves the failure no longer describes the agent.
+// finish proves the failure no longer describes the agent. A finish hook
+// that names no transcript is ordered by the transcript the submit hook
+// named.
 func TestQueuedTurnFinishClearsFailureBeforeIt(t *testing.T) {
-	f, a, call := nativeFailureFixture(t)
-	transcript := filepath.Join(t.TempDir(), "transcript.jsonl")
-	appendLines(t, transcript,
-		`{"type":"user","promptId":"failed","timestamp":"2026-10-02T09:12:42Z"}`,
-		`{"type":"queue-operation","operation":"enqueue","timestamp":"2026-10-02T09:12:43Z","content":"next"}`)
-	call(map[string]string{"hook_event_name": "UserPromptSubmit", "session_id": "s", "prompt_id": "failed", "prompt": "first", "transcript_path": transcript})
-	call(map[string]string{"hook_event_name": "UserPromptSubmit", "session_id": "s", "prompt_id": "failed", "prompt": "next", "transcript_path": transcript})
-	failure := call(map[string]string{"hook_event_name": "StopFailure", "session_id": "s", "prompt_id": "failed", "error": "content filtered", "transcript_path": transcript})
-	if err := f.run.tickAgent(a.ID, failure, true); err != nil {
-		t.Fatal(err)
-	}
-	p, _ := f.run.team.Agent(a.ID)
-	got, _ := p.Read()
-	if got.Native.FailedTurn != "failed" {
-		t.Fatalf("failure not recorded: %+v", got.Native)
-	}
-	appendLines(t, transcript,
-		`{"type":"queue-operation","operation":"dequeue","timestamp":"2026-10-02T09:13:22Z"}`,
-		`{"type":"user","promptId":"queued","timestamp":"2026-10-02T09:13:23Z"}`)
-	success := call(map[string]string{"hook_event_name": "Stop", "session_id": "s", "prompt_id": "queued", "transcript_path": transcript})
-	if err := f.run.tickAgent(a.ID, success, true); err != nil {
-		t.Fatal(err)
-	}
-	got, _ = p.Read()
-	if got.Native.TurnFailure != "" || got.Native.FailedTurn != "" || got.Activity != core.Idle {
-		t.Fatalf("queued turn's finish left the failure: %+v %s", got.Native, got.Evidence)
+	for _, finishNamesTranscript := range []bool{true, false} {
+		t.Run(fmt.Sprintf("finish names transcript %t", finishNamesTranscript), func(t *testing.T) {
+			f, a, call := nativeFailureFixture(t)
+			transcript := filepath.Join(t.TempDir(), "transcript.jsonl")
+			appendLines(t, transcript,
+				`{"type":"user","promptId":"failed","timestamp":"2026-10-02T09:12:42Z"}`,
+				`{"type":"queue-operation","operation":"enqueue","timestamp":"2026-10-02T09:12:43Z","content":"next"}`)
+			call(map[string]string{"hook_event_name": "UserPromptSubmit", "session_id": "s", "prompt_id": "failed", "prompt": "first", "transcript_path": transcript})
+			call(map[string]string{"hook_event_name": "UserPromptSubmit", "session_id": "s", "prompt_id": "failed", "prompt": "next", "transcript_path": transcript})
+			failure := call(map[string]string{"hook_event_name": "StopFailure", "session_id": "s", "prompt_id": "failed", "error": "content filtered", "transcript_path": transcript})
+			if err := f.run.tickAgent(a.ID, failure, true); err != nil {
+				t.Fatal(err)
+			}
+			p, _ := f.run.team.Agent(a.ID)
+			got, _ := p.Read()
+			if got.Native.FailedTurn != "failed" {
+				t.Fatalf("failure not recorded: %+v", got.Native)
+			}
+			appendLines(t, transcript,
+				`{"type":"queue-operation","operation":"dequeue","timestamp":"2026-10-02T09:13:22Z"}`,
+				`{"type":"user","promptId":"queued","timestamp":"2026-10-02T09:13:23Z"}`)
+			stop := map[string]string{"hook_event_name": "Stop", "session_id": "s", "prompt_id": "queued"}
+			if finishNamesTranscript {
+				stop["transcript_path"] = transcript
+			}
+			success := call(stop)
+			if err := f.run.tickAgent(a.ID, success, true); err != nil {
+				t.Fatal(err)
+			}
+			got, _ = p.Read()
+			if got.Native.TurnFailure != "" || got.Native.FailedTurn != "" || got.Activity != core.Idle {
+				t.Fatalf("queued turn's finish left the failure: %+v %s", got.Native, got.Evidence)
+			}
+		})
 	}
 }
 
