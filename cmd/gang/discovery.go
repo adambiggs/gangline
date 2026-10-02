@@ -19,8 +19,8 @@ import (
 var collarNamePattern = regexp.MustCompile(`^[a-z][a-z0-9-]*$`)
 
 func (cmd command) collars(arguments []string) error {
-	if len(arguments) != 0 {
-		return usageError("collars takes no arguments")
+	if err := noArguments(arguments, "collars"); err != nil {
+		return err
 	}
 	settings, err := cmd.settings()
 	if err != nil {
@@ -130,8 +130,8 @@ func loadCollar(name string, settings settings) (harness.Collar, error) {
 }
 
 func (cmd command) roles(arguments []string) error {
-	if len(arguments) != 0 {
-		return usageError("roles takes no arguments")
+	if err := noArguments(arguments, "roles"); err != nil {
+		return err
 	}
 	settings, err := cmd.settings()
 	if err != nil {
@@ -182,8 +182,8 @@ func (cmd command) roles(arguments []string) error {
 }
 
 func (cmd command) config(arguments []string) error {
-	if len(arguments) != 0 {
-		return usageError("config takes no arguments")
+	if err := noArguments(arguments, "config"); err != nil {
+		return err
 	}
 	settings, err := cmd.settings()
 	if err != nil {

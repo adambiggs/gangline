@@ -97,6 +97,9 @@ func TestOptionErrorsStateTheAcceptedForm(t *testing.T) {
 		{[]string{"roster", "extra"}, "unexpected argument \"extra\""},
 		{[]string{"version", "x"}, `gang: version: unexpected argument "x"`},
 		{[]string{"--version", "x"}, `gang: version: unexpected argument "x"`},
+		{[]string{"collars", "x"}, `gang: collars: unexpected argument "x"`},
+		{[]string{"roles", "x"}, `gang: roles: unexpected argument "x"`},
+		{[]string{"config", "x"}, `gang: config: unexpected argument "x"`},
 	} {
 		var stdout, stderr bytes.Buffer
 		status := run(test.args, strings.NewReader(""), &stdout, &stderr)
