@@ -69,6 +69,10 @@ func (o *Owned) Close() error                   { return closeOwnedProcesses(o.p
 func (o *Owned) Stop(ctx context.Context) error { return reapOwnedProcesses(ctx, o.processes) }
 
 func (b *Backend) AcquireTree(ctx context.Context, pane substrate.PaneID, expected Identity) (*Owned, error) {
+	return b.acquireTree(ctx, pane, expected, readCurrentProcess)
+}
+
+func (b *Backend) acquireTree(ctx context.Context, pane substrate.PaneID, expected Identity, read func(int) (processRecord, error)) (*Owned, error) {
 	boot, err := bootIdentity()
 	if err != nil {
 		return nil, err
@@ -79,8 +83,8 @@ func (b *Backend) AcquireTree(ctx context.Context, pane substrate.PaneID, expect
 	if !CanReadIdentity(expected) {
 		return nil, fmt.Errorf("registered process namespace is not visible")
 	}
-	r, err := readCurrentProcess(expected.PID)
-	if errors.Is(err, os.ErrNotExist) || errors.Is(err, syscall.ESRCH) {
+	r, err := read(expected.PID)
+	if processGone(err) {
 		return &Owned{}, nil
 	}
 	if err != nil {
@@ -98,8 +102,11 @@ func (b *Backend) AcquireTree(ctx context.Context, pane substrate.PaneID, expect
 	}
 	owned, err := b.ownedProcesses(ctx, pane)
 	if err != nil {
-		// The pane can close between the registration read and the process
-		// reads; its recorded root is then taken as above.
+		// The pane can close, or its process exit, between the registration
+		// read and the process reads; its recorded root is then taken as above.
+		if errors.As(err, new(*substrate.ExitedError)) {
+			return AcquireRecorded([]Identity{expected})
+		}
 		if ctx.Err() == nil {
 			if _, exists, rerr := b.registeredPane(ctx, string(pane)); rerr == nil && !exists {
 				return AcquireRecorded([]Identity{expected})

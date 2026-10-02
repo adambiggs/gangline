@@ -130,3 +130,23 @@ func TestOpenProcessHandleReportsReapedProcessAsGone(t *testing.T) {
 		t.Fatalf("reaped process handle: err=%v, want a gone process", err)
 	}
 }
+
+func TestAcquireTreeReportsProcessThatExitsAfterItsReadAsGone(t *testing.T) {
+	backend, pane, exit := vanishingPane(t)
+	ctx := context.Background()
+	if _, err := backend.RegisterPane(ctx, pane); err != nil {
+		t.Fatal(err)
+	}
+	expected, err := backend.Identity(ctx, pane)
+	if err != nil {
+		t.Fatal(err)
+	}
+	owned, err := backend.acquireTree(ctx, pane, expected, func(pid int) (processRecord, error) {
+		r, err := readCurrentProcess(pid)
+		exit()
+		return r, err
+	})
+	if err != nil || len(owned.Identities()) != 0 {
+		t.Fatalf("exited process stopped teardown: owned=%v err=%v", owned, err)
+	}
+}
