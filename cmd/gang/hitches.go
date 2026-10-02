@@ -631,7 +631,10 @@ func (run *runtime) dropAgent(id core.HitchID, wait bool) error {
 			return err
 		}
 	}
-	if !visible && !exited && !tmux.CanReadIdentity(nativeIdentity(a.Process)) {
+	// Cleanup is skipped when gang cannot see into a registered pane, open or
+	// closed, or read its recorded process; a claim that never registered a
+	// pane started no native to leave descendants.
+	if !visible && !exited && (a.Registration.Generation != "" || a.Process.PID != 0) && !tmux.CanReadIdentity(nativeIdentity(a.Process)) {
 		if err := run.noteProcessUnavailable(a); err != nil {
 			return err
 		}

@@ -203,9 +203,14 @@ exec tmux "$@"
 					t.Fatalf("hitch_failed reason lacks the native output: %v\n%s", err, failed)
 				}
 			}
-			if tc.signal == syscall.SIGKILL && !strings.HasPrefix(tc.steps, "create:") {
-				if out, _, err := gang(environment, "drop", "worker"); err != nil {
+			if tc.signal == syscall.SIGKILL {
+				out, _, err := gang(environment, "drop", "worker")
+				if err != nil {
 					t.Fatalf("drop after killed hitch: %v\n%s", err, out)
+				}
+				// Every pane and process the hitch recorded is visible here.
+				if strings.Contains(out, "warning") {
+					t.Fatalf("drop after killed hitch warned:\n%s", out)
 				}
 				assertPanes(t, runner, "control")
 			}

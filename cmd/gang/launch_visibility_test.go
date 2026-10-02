@@ -186,6 +186,50 @@ func TestClosedPaneIsForgotten(t *testing.T) {
 	}
 }
 
+// A hitch killed before it recorded a pane leaves no process whose cleanup
+// drop could skip.
+func TestDropOfPanelessClaimDoesNotWarn(t *testing.T) {
+	f := newStateFixture(t)
+	a := f.setAgent(t, f.add(t, "a", "worker", "codex"), func(a *core.Agent) {
+		a.Pane, a.Registration, a.Process, a.Status = "", core.PaneRegistration{}, core.ProcessIdentity{}, core.Starting
+	})
+	f.cmd.paneBackend = identityFixture{inputFixture: f.input}
+	if err := f.cmd.drop([]string{"worker"}); err != nil {
+		t.Fatal(err)
+	}
+	if f.errOut.Len() != 0 {
+		t.Fatalf("drop of %s warned: %q", a.Name, f.errOut.String())
+	}
+	log, err := os.ReadFile(f.run.team.Log)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(string(log), "process_verification_unavailable") {
+		t.Fatal("drop recorded process visibility as unavailable")
+	}
+}
+
+// A registered pane whose native process identity was never readable may
+// have left descendants behind when it closed, whether the record still
+// names the pane or has forgotten it.
+func TestDropOfClosedUnreadablePaneWarns(t *testing.T) {
+	for name, pane := range map[string]string{"recorded": "%1", "forgotten": ""} {
+		t.Run(name, func(t *testing.T) {
+			f := newStateFixture(t)
+			f.setAgent(t, f.add(t, "a", "worker", "codex"), func(a *core.Agent) {
+				a.Pane, a.Process, a.Status = pane, core.ProcessIdentity{}, core.Failed
+			})
+			f.cmd.paneBackend = identityFixture{inputFixture: f.input}
+			if err := f.cmd.drop([]string{"worker"}); err != nil {
+				t.Fatal(err)
+			}
+			if !strings.Contains(f.errOut.String(), "detached-descendant cleanup skipped") {
+				t.Fatalf("drop did not warn: %q", f.errOut.String())
+			}
+		})
+	}
+}
+
 // Before its deadline, a blocked startup whose pane still shows the prompt is
 // read only for an exit; the prompt is not recorded again.
 func TestRosterLeavesLiveBlockedStartupAlone(t *testing.T) {
