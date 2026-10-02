@@ -546,7 +546,7 @@ func TestHitchRefusesPaneOnlyAStaleRecordNames(t *testing.T) {
 			f := newStateFixture(t)
 			fakeCodexOnPath(t)
 			f.add(t, "a", "worker", "codex")
-			script := "#!/bin/sh\n# SPDX-License-Identifier: Apache-2.0\ncase \"$1 $2\" in\n'list-panes -a') printf '" + tc.generation + "\\t$1\\t%%1\\n';;\nlist-panes*) printf '%%1\\t?worker?\\n';;\ndisplay-message*) printf '$1\\n';;\nhas-session*) exit 0;;\n*) exit 91;;\nesac\n"
+			script := "#!/bin/sh\n# SPDX-License-Identifier: Apache-2.0\ncase \"$1 $2\" in\n'list-panes -a') printf '" + tc.generation + "\\t$1\\t%%1\\tunit\\n';;\nlist-panes*) printf '%%1\\t?worker?\\n';;\ndisplay-message*) printf '$1\\n';;\nhas-session*) exit 0;;\n*) exit 91;;\nesac\n"
 			if err := os.WriteFile(f.env["GANG_TMUX"], []byte(script), 0700); err != nil {
 				t.Fatal(err)
 			}

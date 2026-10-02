@@ -214,38 +214,36 @@ func (b *Backend) listPanes(ctx context.Context, format string) (string, error) 
 }
 
 func (b *Backend) registeredPane(ctx context.Context, pane string) (PaneIdentity, bool, error) {
-	out, err := b.listPanes(ctx, "#{"+generationOption+"}\t#{session_id}\t#{pane_id}")
+	// One listing reads the pane and its sessions together: a session that
+	// ends between two tmux commands would leave the second to misread it.
+	out, err := b.listPanes(ctx, "#{"+generationOption+"}\t#{session_id}\t#{pane_id}\t#{session_name}")
 	if err != nil {
 		if (absentTmuxServer(out) || emptyTmuxServer(out)) && ctx.Err() == nil {
 			return PaneIdentity{}, false, nil
 		}
 		return PaneIdentity{}, false, tmuxError("read pane registration", err, out)
 	}
-	var matches []PaneIdentity
+	found, configured := false, false
 	for _, line := range strings.Split(strings.TrimSuffix(out, "\n"), "\n") {
 		fields := strings.Split(line, "\t")
-		if len(fields) != 3 {
+		if len(fields) != 4 {
 			return PaneIdentity{}, false, fmt.Errorf("invalid pane registration record %q", line)
 		}
-		if fields[2] == pane {
-			matches = append(matches, PaneIdentity{fields[0], fields[1], fields[2]})
+		inSession := fields[3] == b.config.Session
+		configured = configured || inSession
+		if fields[2] != pane {
+			continue
+		}
+		found = true
+		if inSession {
+			return PaneIdentity{Generation: fields[0], Session: fields[1], Pane: fields[2]}, true, nil
 		}
 	}
-	if len(matches) == 0 {
+	if !found {
 		return PaneIdentity{}, false, nil
 	}
-	// '=' prevents tmux's usual session-name prefix matching.
-	out, err = b.run(ctx, "display-message", "-p", "-t", "="+b.config.Session+":", "#{session_id}")
-	if err != nil {
-		if strings.HasPrefix(out, "can't find session:") {
-			return PaneIdentity{}, false, fmt.Errorf("%w: configured session %q is absent", ErrPaneReplaced, b.config.Session)
-		}
-		return PaneIdentity{}, false, tmuxError("resolve registered session", err, out)
-	}
-	for _, id := range matches {
-		if id.Session == strings.TrimSpace(out) {
-			return id, true, nil
-		}
+	if !configured {
+		return PaneIdentity{}, false, fmt.Errorf("%w: configured session %q is absent", ErrPaneReplaced, b.config.Session)
 	}
 	return PaneIdentity{}, false, fmt.Errorf("%w: pane %s is outside configured session %q", ErrPaneReplaced, pane, b.config.Session)
 }

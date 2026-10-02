@@ -201,11 +201,12 @@ func TestCollarCheckOffersAnIssueOnlyForObservedFailures(t *testing.T) {
 // The probe types into the native composer through the guarded input that
 // real delivery uses, so an output viewer over the pane is dismissed first.
 func TestCollarCheckTypesThroughGuardedInput(t *testing.T) {
-	f := fakeCollarCheckTmux(t, `new-session) prev= prev2= generation=
-	for argument; do [ "$prev2" = -soq ] && generation=$argument; prev2=$prev; prev=$argument; done
+	f := fakeCollarCheckTmux(t, `new-session) prev= prev2= generation= name=
+	for argument; do [ "$prev2" = -soq ] && generation=$argument; [ "$prev" = -s ] && [ -z "$name" ] && name=$argument; prev2=$prev; prev=$argument; done
 	printf '%s' "$generation" > "$socket.generation"
+	printf '%s' "$name" > "$socket.session"
 	printf '%%1\n%s\t$1\t%%1\n' "$generation";;
-list-panes) printf '%s\t$1\t%%1\n' "$(cat "$socket.generation")";;
+list-panes) printf '%s\t$1\t%%1\t%s\n' "$(cat "$socket.generation")" "$(cat "$socket.session")";;
 display-message) for format; do :; done; [ "$format" = '#{session_id}' ] && printf '$1\n' || printf 'codex\n';;
 has-session) exit 0;;
 kill-session) exit 0;;

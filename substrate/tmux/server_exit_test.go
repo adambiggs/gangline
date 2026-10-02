@@ -65,11 +65,11 @@ func TestPaneReadIsRepeatedOnceWhenItsServerIsLost(t *testing.T) {
 		t.Fatalf("closed check ran %q", got)
 	}
 	// The repeated read reaches the server's successor, whose answer stands.
-	fixture("[ \"$1\" = list-panes ] && printf '" + id.Generation + "\\t$0\\t%%1\\n' || echo '$0'")
+	fixture("[ \"$1\" = list-panes ] && printf '" + id.Generation + "\\t$0\\t%%1\\ttest\\n'")
 	if present, err := b.CheckPane(ctx, id); !present || err != nil {
 		t.Fatalf("pane found by the repeated read = %v, %v, want present", present, err)
 	}
-	if got := reads(); got != "list-panes\nlist-panes\ndisplay-message\n" {
+	if got := reads(); got != "list-panes\nlist-panes\n" {
 		t.Fatalf("pane check ran %q", got)
 	}
 	// A second loss is reported: the read is repeated once only.
