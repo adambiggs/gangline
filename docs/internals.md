@@ -65,7 +65,8 @@ probe error cannot consume the boundary notice.
 
 An observation failure reports unknown with its reason. It breaks continuous
 screen observation; a later successful probe can establish busy or idle again.
-A locked status read reports unavailable observation. A draft without native
+A roster or status read of an agent whose state another operation holds
+reports the saved record without probing the pane. A draft without native
 busy evidence is blocked on unsubmitted input; observation never submits it.
 
 ## Context and compaction

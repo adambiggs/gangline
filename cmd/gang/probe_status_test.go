@@ -86,27 +86,6 @@ func TestProbeTimeoutIsUnknownInsteadOfWedged(t *testing.T) {
 	}
 }
 
-func TestLockedActivityProbeDoesNotPresentStaleWedge(t *testing.T) {
-	f := newStateFixture(t)
-	a := f.add(t, "a", "worker", "codex")
-	p, _ := f.run.team.Agent(a.ID)
-	l, err := p.TryLock()
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer l.Close()
-	a.Activity, a.Evidence = core.Wedged, "context deadline exceeded"
-	if err := l.Save(a); err != nil {
-		t.Fatal(err)
-	}
-	if err := f.cmd.status([]string{"worker", "--why"}); err != nil {
-		t.Fatal(err)
-	}
-	if !strings.Contains(f.out.String(), "unknown") || !strings.Contains(f.out.String(), "probe unavailable") || strings.Contains(f.out.String(), "wedged") {
-		t.Fatalf("stale locked output: %q", f.out)
-	}
-}
-
 func TestUnverifiedInputTimeoutDoesNotDiagnoseNativeWedge(t *testing.T) {
 	a := core.Agent{ID: "a", Status: core.Active, Activity: core.Busy, Input: &core.InputIntent{ID: "m", Kind: "envelope"}}
 	got, effects := core.Step(a, core.Event{Type: "input_finished", HitchID: a.ID, At: time.Date(2026, 9, 22, 10, 0, 0, 0, time.UTC), ID: "m", Status: "unverified", Reason: context.DeadlineExceeded.Error()})

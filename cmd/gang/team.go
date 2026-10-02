@@ -213,7 +213,9 @@ func (run *runtime) observeRoster(agents []core.Agent) ([]core.Agent, error) {
 	for i, a := range agents {
 		l, current, err := run.acquire(a.ID, false)
 		if errors.Is(err, store.ErrLocked) {
-			agents[i].Activity, agents[i].Evidence = core.Unknown, "native activity probe unavailable: agent state is locked"
+			// The operation holding the lock maintains the record, so the row
+			// is the record as saved, with its deadlines read against now.
+			agents[i], _ = core.Step(a, core.Event{Type: "deadline_checked", At: run.cmd.now(), HitchID: a.ID})
 			continue
 		}
 		if err != nil {
