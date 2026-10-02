@@ -274,6 +274,13 @@ func (run *runtime) checkDeadlines(l *store.LockedAgent, a *core.Agent) error {
 			}
 		}
 	}
+	// Name the compaction that outlived its deadline, so the log records why
+	// the agent's reading changed.
+	if c := a.Compaction; c != nil && c.Status == "submitted" && !run.cmd.now().Before(c.Deadline) {
+		if err := run.apply(l, a, core.Event{Type: "compaction_unverified", ID: c.ID, Reason: core.CompactionUnconfirmed}); err != nil {
+			return err
+		}
+	}
 	next, _ := core.Step(*a, core.Event{Type: "deadline_checked", At: run.cmd.now(), HitchID: a.ID})
 	if next.Status == a.Status && next.Activity == a.Activity && next.Evidence == a.Evidence {
 		return nil

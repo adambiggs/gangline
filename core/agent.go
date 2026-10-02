@@ -157,6 +157,10 @@ type Envelope struct {
 	Reason     string           `json:"reason,omitempty"`
 }
 
+// CompactionUnconfirmed is the reason a submitted compaction carries once its
+// deadline passes with no native completion.
+const CompactionUnconfirmed = "native compaction completion unconfirmed; queued continuation may run"
+
 type Compaction struct {
 	ID             string    `json:"id"`
 	Resume         Message   `json:"resume"`
