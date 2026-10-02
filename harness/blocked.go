@@ -1,6 +1,7 @@
 package harness
 
 import (
+	"crypto/sha256"
 	"errors"
 	"fmt"
 	"regexp"
@@ -29,7 +30,11 @@ func detectBlocked(invocation Invocation, lines []string) (Blocked, bool, error)
 	if !prompt.MatchString(text) || !choice.MatchString(text) {
 		return Blocked{}, false, nil
 	}
-	return Blocked{Evidence: fmt.Sprintf("native input choice: %s; %s", strings.Join(strings.Fields(prompt.FindString(text)), " "), strings.Join(strings.Fields(choice.FindString(text)), " "))}, true, nil
+	// The evidence names the class and fingerprints the matched prompt: the
+	// matches are screen text, which the log never carries, and a different
+	// prompt must still read as a new reading.
+	digest := sha256.Sum256([]byte(strings.Join(strings.Fields(prompt.FindString(text)), " ") + "\n" + strings.Join(strings.Fields(choice.FindString(text)), " ")))
+	return Blocked{Evidence: fmt.Sprintf("native input choice awaits an answer (prompt %x)", digest[:6])}, true, nil
 }
 
 // nativeInputLines returns the screen lines where a native prompt can be

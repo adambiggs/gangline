@@ -25,7 +25,7 @@ func TestCodexRetryMenuRequiresPromptAndChoice(t *testing.T) {
 			if err != nil || found != tc.want {
 				t.Fatalf("found=%v err=%v", found, err)
 			}
-			if found && !strings.Contains(got.Evidence, "Giving this request a little extra thought") {
+			if found && (!blockedEvidenceShape.MatchString(got.Evidence) || strings.Contains(got.Evidence, "extra thought")) {
 				t.Fatalf("evidence=%q", got.Evidence)
 			}
 		})

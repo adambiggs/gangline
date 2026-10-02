@@ -23,17 +23,17 @@ func TestRetryMenuReportsBlockerAndPreservesSend(t *testing.T) {
 			}
 			err := f.cmd.send(args)
 			if liveOnly {
-				if err == nil || !strings.Contains(err.Error(), "Giving this request a little extra thought") {
+				if err == nil || !strings.Contains(err.Error(), "native input choice awaits an answer") {
 					t.Fatalf("missing precise refusal: %v", err)
 				}
-			} else if err != nil || !strings.Contains(f.errOut.String(), "Giving this request a little extra thought") {
+			} else if err != nil || !strings.Contains(f.errOut.String(), "native input choice awaits an answer") {
 				t.Fatalf("missing blocker: err=%v stderr=%s", err, f.errOut)
 			}
 			got, err := p.Read()
 			if err != nil {
 				t.Fatal(err)
 			}
-			if got.Activity != core.Blocked || !strings.Contains(got.Evidence, "Retry with a faster model") || f.input.pasted != "" || f.input.submits != 0 {
+			if got.Activity != core.Blocked || !strings.HasPrefix(got.Evidence, "native input choice awaits an answer") || f.input.pasted != "" || f.input.submits != 0 {
 				t.Fatalf("blocked state=%+v pasted=%q submits=%d", got, f.input.pasted, f.input.submits)
 			}
 			queued, err := p.ListNew()

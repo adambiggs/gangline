@@ -1,6 +1,7 @@
 package harness
 
 import (
+	"regexp"
 	"strings"
 	"testing"
 
@@ -196,10 +197,39 @@ func TestBlockedEvidenceNamesThePromptNotTheScrollback(t *testing.T) {
 	if err != nil || !found {
 		t.Fatalf("blocked = %#v, found = %t, err = %v", blocked, found, err)
 	}
-	if blocked.Evidence != "native input choice: Do you want to proceed?; ❯ 1. Yes" {
-		t.Fatalf("evidence = %q", blocked.Evidence)
+	alone, found, err := InputBlocked(collar, linesScreen(fixtureLines(t, "claude-code-2.1.287-permission-bash.txt")))
+	if err != nil || !found {
+		t.Fatalf("prompt alone: found = %t, err = %v", found, err)
+	}
+	if blocked.Evidence != alone.Evidence {
+		t.Fatalf("evidence = %q, prompt alone = %q", blocked.Evidence, alone.Evidence)
+	}
+	if !blockedEvidenceShape.MatchString(blocked.Evidence) {
+		t.Fatalf("evidence = %q, want a class and a prompt fingerprint", blocked.Evidence)
 	}
 }
+
+// Blocked evidence carries no screen text, so a fingerprint of the matched
+// prompt is what tells one prompt from another.
+func TestBlockedEvidenceDistinguishesPrompts(t *testing.T) {
+	collar, err := EmbeddedCollar("claude")
+	if err != nil {
+		t.Fatal(err)
+	}
+	var evidence []string
+	for _, name := range []string{"claude-code-2.1.287-permission-bash.txt", "claude-code-2.1.287-ask-user-question.txt"} {
+		blocked, found, err := InputBlocked(collar, linesScreen(fixtureLines(t, name)))
+		if err != nil || !found || !blockedEvidenceShape.MatchString(blocked.Evidence) {
+			t.Fatalf("%s: evidence = %q, found = %t, err = %v", name, blocked.Evidence, found, err)
+		}
+		evidence = append(evidence, blocked.Evidence)
+	}
+	if evidence[0] == evidence[1] {
+		t.Fatalf("two prompts share evidence %q", evidence[0])
+	}
+}
+
+var blockedEvidenceShape = regexp.MustCompile(`^native input choice awaits an answer \(prompt [0-9a-f]{12}\)$`)
 
 func TestTrustTextInTheConversationDoesNotBlockInput(t *testing.T) {
 	codexComposer := fixtureLines(t, "codex-0.151.0-composer.txt")

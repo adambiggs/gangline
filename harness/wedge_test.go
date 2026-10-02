@@ -18,7 +18,7 @@ func TestDetectWedgeRequiresStableBusyActiveTurn(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !wedge.Detected || wedge.Evidence != "esc to interrupt" {
+	if !wedge.Detected || wedge.Evidence != "busy screen unchanged for at least 5m" {
 		t.Fatalf("wedge = %+v", wedge)
 	}
 }

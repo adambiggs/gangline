@@ -45,20 +45,14 @@ func DetectWedge(invocation Invocation, observation WedgeObservation) (Wedge, er
 	if !busy.MatchString(plain) {
 		return Wedge{}, nil
 	}
+	// The evidence names the rule, not the screen: screen text never reaches
+	// the log, and the reading's fingerprint already identifies the screen.
 	return Wedge{
 		Detected: true,
-		Evidence: boundedTail(plain, 20),
+		Evidence: fmt.Sprintf("busy screen unchanged for at least %s", invocation.Params["after"]),
 	}, nil
 }
 
 func ScreenFingerprint(screen substrate.Screen) string {
 	return fmt.Sprintf("%x", sha256.Sum256([]byte(strings.Join(screenLines(screen, true), "\n"))))
-}
-
-func boundedTail(text string, lines int) string {
-	rows := strings.Split(text, "\n")
-	if len(rows) > lines {
-		rows = rows[len(rows)-lines:]
-	}
-	return strings.Join(rows, "\n")
 }
