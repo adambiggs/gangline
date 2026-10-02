@@ -50,7 +50,7 @@ collar: {
 	}
 	actions: {
 		interrupt: {keys: ["Escape"]}
-		compact: {text: "/compact {{instructions}}", submit: true}
+		compact: {text: "/compact {{instructions}}", submit: true, active: "(?m)^[·✢✳✶✻✽*] Compacting conversation… \\([0-9]+s"}
 		compact_recover: [{keys: ["Escape"]}]
 		compact_clear: {keys: ["C-u"]}
 	}

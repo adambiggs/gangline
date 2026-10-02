@@ -154,7 +154,7 @@ match `collar.name`. Unknown fields or primitive names fail before launch.
 | `models` | Model discovery and selection. |
 | `options` | Effort and role-prompt argument templates. |
 | `primitives` | Built-in native behaviors, readings, queue witnesses, and optional limits queries. |
-| `actions` | Interrupt, compact, and recovery key sequences; optional refusal patterns. |
+| `actions` | Interrupt, compact, and recovery key sequences; optional refusal and running-compaction patterns. |
 | `context_bands` | Named context thresholds by model. |
 | `usage_bands` | Named native provider-usage thresholds by window. |
 

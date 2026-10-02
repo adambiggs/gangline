@@ -1,0 +1,12 @@
+  ctrl+x ctrl+s to send now
+
+✽ Compacting conversation… (22s · ↓ 1.5k tokens)
+  ⎿  Tip: Control this session from the Claude mobile app
+     (https://claude.com/download#mobile) · run /remote-control
+
+────────────────────────────────────────────────────────────────────────────────
+❯ Press up to edit queued messages
+────────────────────────────────────────────────────────────────────────────────
+  50k/200k (25%)
+  ⏸ manual mode on · ← for agents
+

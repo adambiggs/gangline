@@ -99,6 +99,7 @@ type Actions struct {
 
 type Action struct {
 	Refusal string   `json:"refusal,omitempty"`
+	Active  string   `json:"active,omitempty"`
 	Text    string   `json:"text,omitempty"`
 	Keys    []string `json:"keys,omitempty"`
 	Submit  bool     `json:"submit,omitempty"`
@@ -219,6 +220,9 @@ func mergeCollarFields(base, overlay map[string]any) {
 func validateCollar(collar Collar) error {
 	if _, err := regexp.Compile(collar.Actions.Compact.Refusal); err != nil {
 		return fmt.Errorf("compact refusal pattern: %w", err)
+	}
+	if _, err := regexp.Compile(collar.Actions.Compact.Active); err != nil {
+		return fmt.Errorf("compact active pattern: %w", err)
 	}
 	if collar.Primitives.Capacity != nil {
 		if err := validateCapacity(*collar.Primitives.Capacity); err != nil {

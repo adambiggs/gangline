@@ -511,6 +511,11 @@ func classifyRecoverSurface(c harness.Collar, screen substrate.Screen) (recoverS
 	if err != nil {
 		return recoverSurface{}, err
 	}
+	if compacting, err := harness.CompactionActive(c, screen); err != nil {
+		return recoverSurface{}, err
+	} else if compacting {
+		busy = true
+	}
 	if !busy {
 		return recoverSurface{"idle", "native harness is idle"}, nil
 	}

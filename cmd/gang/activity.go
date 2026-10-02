@@ -18,8 +18,15 @@ func (run *runtime) observeActivity(l *store.LockedAgent, a *core.Agent, c harne
 		return err
 	}
 	activity, evidence := a.Activity, a.Evidence
+	compacting, compactErr := harness.CompactionActive(c, screen)
 	if found {
 		activity, evidence = core.Blocked, blocked.Evidence
+	} else if compactErr != nil {
+		activity, evidence = core.Unknown, compactErr.Error()
+	} else if compacting {
+		if a.InterruptDeadline.IsZero() {
+			activity, evidence = core.Compacting, "native compaction in progress"
+		}
 	} else {
 		idle, err := harness.Idle(c, screen)
 		if err != nil {

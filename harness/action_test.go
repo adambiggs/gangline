@@ -67,3 +67,38 @@ func TestActionConvertsToSubstrateKeys(t *testing.T) {
 		t.Fatalf("keys = %+v", keys)
 	}
 }
+
+func TestClaudeCompactionActiveMatchesOnlyTheLiveSpinner(t *testing.T) {
+	collar, err := EmbeddedCollar("claude")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if active, err := CompactionActive(collar, fixtureScreen(t, "claude-code-2.1.287-compacting.txt")); err != nil || !active {
+		t.Fatalf("compacting screen: active=%v err=%v", active, err)
+	}
+	if active, err := CompactionActive(collar, testScreen(testCells("✻ Compacting conversation… (0s)", false))); err != nil || !active {
+		t.Fatalf("first spinner frame: active=%v err=%v", active, err)
+	}
+	for _, line := range []string{
+		"  ✽ Compacting conversation… (4s)",
+		"⏺ ✽ Compacting conversation… (4s)",
+		"✽ Compacting conversation… was quoted here",
+		"✻ Conversation compacted (ctrl+o for history)",
+	} {
+		screen := testScreen(testCells(line, false), testCells("❯ ", false))
+		if active, err := CompactionActive(collar, screen); err != nil || active {
+			t.Fatalf("%q: active=%v err=%v", line, active, err)
+		}
+	}
+	codex, err := EmbeddedCollar("codex")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if active, err := CompactionActive(codex, fixtureScreen(t, "claude-code-2.1.287-compacting.txt")); err != nil || active {
+		t.Fatalf("collar without an active pattern: active=%v err=%v", active, err)
+	}
+	collar.Actions.Compact.Active = "("
+	if err := validateCollar(collar); err == nil {
+		t.Fatal("invalid compact active pattern accepted")
+	}
+}

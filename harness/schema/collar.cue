@@ -43,6 +43,7 @@ package harness
 
 #Action: close({
  refusal?: string
+	active?: string
 	text?: string
 	keys?: [...string]
 	submit?: bool

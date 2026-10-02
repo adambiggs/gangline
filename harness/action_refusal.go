@@ -18,3 +18,16 @@ func ActionRefusals(action Action, screen substrate.Screen) ([]string, error) {
 	}
 	return pattern.FindAllString(strings.Join(screenLines(screen, true), "\n"), -1), nil
 }
+
+// CompactionActive reports whether the screen shows the harness compacting.
+// A collar that declares no active pattern never reports one.
+func CompactionActive(c Collar, screen substrate.Screen) (bool, error) {
+	if c.Actions.Compact.Active == "" {
+		return false, nil
+	}
+	pattern, err := regexp.Compile(c.Actions.Compact.Active)
+	if err != nil {
+		return false, err
+	}
+	return pattern.MatchString(strings.Join(screenLines(screen, true), "\n")), nil
+}

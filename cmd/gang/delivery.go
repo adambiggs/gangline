@@ -142,6 +142,13 @@ func (run *runtime) inputState(l *store.LockedAgent, a *core.Agent, b harnessInp
 		}
 		return inputVerdict{Blocker: blocker.Evidence, Reason: blocker.Evidence}, nil
 	}
+	// A prompt typed during a compaction waits in the harness's own queue,
+	// where no receipt witnesses it until the compaction ends.
+	if compacting, err := harness.CompactionActive(c, screen); err != nil {
+		return inputVerdict{}, err
+	} else if compacting {
+		return inputVerdict{Reason: "recipient is compacting; its harness defers queued input"}, nil
+	}
 	composer, err := harness.ReadComposer(c.Primitives.Composer, screen)
 	if err != nil {
 		return inputVerdict{}, err

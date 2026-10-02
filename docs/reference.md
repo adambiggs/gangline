@@ -82,6 +82,12 @@ an occupied composer, the command fails and withholds the note rather than
 delivering it out of order. Recovery also cancels a continuation that was
 published but never submitted to native input.
 
+While the collar's `actions.compact.active` pattern matches the pane, the agent
+reads as compacting: sends wait in Gangline's queue, a queued compaction waits,
+and `gang compact NAME --recover` treats the pane as running. A harness that
+queues input typed during compaction witnesses it only when compaction ends,
+so a send typed then could not be confirmed.
+
 Gangline never presses Enter on a composer that holds anything other than the
 compact command. Claude Code shows a long or multi-line paste as a placeholder
 and would submit it as an ordinary prompt, so such a resume note fails there:
