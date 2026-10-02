@@ -93,9 +93,12 @@ func (cmd command) watchdogScheduler(directory string) watchdogScheduler {
 	return systemdWatchdog{}
 }
 
-// updateWatchdog holds only the scheduler transaction, never agent work. A tick
-// that loses this nonblocking lock leaves replacement to the current owner,
-// unless it is the recorded timer's own elapsed tick, which marks an outage.
+// updateWatchdog holds only the scheduler transaction, never agent work. A
+// caller that arms never waits for the scheduler lock: one that loses it leaves
+// replacement to the current owner, unless it is the recorded timer's own
+// elapsed tick, which marks an outage. Cleanup waits for the lock, so a tick
+// still running when the last agent leaves cannot fail the drop or down that
+// disarms the timer.
 func (run *runtime) updateWatchdog(generation string, cleanup, reset bool) (proceed bool, result error) {
 	path := filepath.Join(run.team.Directory, "watchdog")
 	marker := filepath.Join(run.team.Directory, "watchdog-unavailable")
@@ -150,7 +153,22 @@ func (run *runtime) updateWatchdog(generation string, cleanup, reset bool) (proc
 			}
 			return false, run.noteWatchdogOutage(marker, "watchdog timer elapsed while another tick held the scheduler lock")
 		}
-		return false, fmt.Errorf("watchdog scheduler busy: %w", err)
+		if !errors.Is(err, syscall.EWOULDBLOCK) {
+			return false, fmt.Errorf("watchdog scheduler busy: %w", err)
+		}
+		// Cleanup must disarm. Every cleanup holds the team lock, and no
+		// holder of the scheduler lock waits for a team or agent lock, so the
+		// wait ends when the holder's scheduler transaction does.
+		if run.cmd.schedulerLockWait != nil {
+			run.cmd.schedulerLockWait()
+		}
+		err = syscall.Flock(int(lock.Fd()), syscall.LOCK_EX)
+		for errors.Is(err, syscall.EINTR) {
+			err = syscall.Flock(int(lock.Fd()), syscall.LOCK_EX)
+		}
+		if err != nil {
+			return false, fmt.Errorf("watchdog scheduler busy: %w", err)
+		}
 	}
 	defer syscall.Flock(int(lock.Fd()), syscall.LOCK_UN)
 	held, err := lock.Stat()

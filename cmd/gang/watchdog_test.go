@@ -20,6 +20,8 @@ type fakeWatchdog struct {
 	failure     error
 	now         func() time.Time
 	due         time.Time
+	// disarming runs inside Disarm, while the caller holds whatever it holds.
+	disarming func() error
 }
 
 func (s *fakeWatchdog) Arm(unit, executable string, environment map[string]string) error {
@@ -42,6 +44,11 @@ func (s *fakeWatchdog) Arm(unit, executable string, environment map[string]strin
 func (s *fakeWatchdog) Disarm(unit string) error {
 	if s.failure != nil {
 		return s.failure
+	}
+	if s.disarming != nil {
+		if err := s.disarming(); err != nil {
+			return err
+		}
 	}
 	if s.armed != "" && s.armed != unit {
 		return errors.New("wrong timer")
@@ -228,6 +235,55 @@ func TestWatchdogSchedulerLockNeverWaits(t *testing.T) {
 	}
 	if s.arms != 1 {
 		t.Fatal("replacement ignored lock")
+	}
+}
+func TestWatchdogLastDropWaitsForSchedulerLock(t *testing.T) {
+	for _, action := range []string{"drop", "down"} {
+		t.Run(action, func(t *testing.T) {
+			f, s := watchdogFixture(t)
+			if err := f.cmd.tick(nil); err != nil {
+				t.Fatal(err)
+			}
+			// A detached tick holds the scheduler lock while the last agent
+			// leaves; the cleanup waits for it instead of failing.
+			lock, err := os.OpenFile(filepath.Join(f.run.team.Directory, "watchdog.lock"), os.O_RDWR, 0600)
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer lock.Close()
+			if err := syscall.Flock(int(lock.Fd()), syscall.LOCK_EX|syscall.LOCK_NB); err != nil {
+				t.Fatal(err)
+			}
+			waited := 0
+			f.cmd.schedulerLockWait = func() {
+				waited++
+				if err := syscall.Flock(int(lock.Fd()), syscall.LOCK_UN); err != nil {
+					t.Fatal(err)
+				}
+			}
+			// The disarm runs only while cleanup holds the lock it waited for.
+			s.disarming = func() error {
+				err := syscall.Flock(int(lock.Fd()), syscall.LOCK_EX|syscall.LOCK_NB)
+				if err == nil {
+					return errors.Join(errors.New("disarmed without the scheduler lock"), syscall.Flock(int(lock.Fd()), syscall.LOCK_UN))
+				}
+				if !errors.Is(err, syscall.EWOULDBLOCK) {
+					return err
+				}
+				return nil
+			}
+			if action == "drop" {
+				err = f.cmd.drop([]string{"worker"})
+			} else {
+				err = f.cmd.down([]string{"--yes"})
+			}
+			if err != nil {
+				t.Fatal(err)
+			}
+			if waited != 1 || s.armed != "" || s.stops != 1 {
+				t.Fatalf("waited %d, timer %+v", waited, s)
+			}
+		})
 	}
 }
 func TestWatchdogUnavailableLogsOnceAndStillTicks(t *testing.T) {
