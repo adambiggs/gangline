@@ -39,7 +39,7 @@ collar: {
 		composer: {name: "claude-composer"}
 		submit: {name: "enter-submit", params: {paste: "bracketed", settle: "400ms"}}
 		submit_witness: {name: "claude-pasted-content"}
-		turn_boundary: {name: "hook-boundary"}
+		turn_boundary: {name: "hook-boundary", params: {open_turn_quiet: "60s"}}
 		blocked: {name: "screen-blocked", params: {
 			prompt: "Do you want to proceed\\?|Allow .*\\?|needs your permission|Permission required"
 			choice: "(?m)^[[:space:]❯>]*1\\. Yes|Yes, and don't ask again|Allow"

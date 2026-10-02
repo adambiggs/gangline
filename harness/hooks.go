@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"strings"
+	"time"
 	"unicode/utf8"
 )
 
@@ -23,6 +24,24 @@ const (
 	TurnCompactionStarted  TurnBoundary = "compaction-started"
 	TurnCompactionFinished TurnBoundary = "compaction-finished"
 )
+
+// OpenTurnQuiet is how long an idle-looking screen must stay unchanged before
+// a submitted turn with no finish boundary counts as over, as after Escape or
+// a turn that dies without its Stop hook. Zero leaves turn state to the screen.
+func OpenTurnQuiet(invocation Invocation) (time.Duration, error) {
+	if invocation.Name != "hook-boundary" {
+		return 0, fmt.Errorf("unknown turn-boundary primitive %q", invocation.Name)
+	}
+	value := invocation.Params["open_turn_quiet"]
+	if value == "" {
+		return 0, nil
+	}
+	duration, err := time.ParseDuration(value)
+	if err != nil || duration <= 0 {
+		return 0, fmt.Errorf("turn boundary open_turn_quiet %q is not a positive duration", value)
+	}
+	return duration, nil
+}
 
 func DetectTurnBoundary(collar Collar, data []byte) (TurnBoundary, HookEvent, error) {
 	if collar.Primitives.TurnBoundary.Name != "hook-boundary" {

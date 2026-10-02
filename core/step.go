@@ -76,6 +76,9 @@ func Step(agent Agent, event Event) (Agent, []Effect) {
 		agent.Activity, agent.InterruptDeadline = Interrupting, event.Deadline
 	case "interrupt_completed":
 		agent.Activity, agent.InterruptDeadline = Idle, time.Time{}
+		if event.At.After(agent.Native.FinishedAt) {
+			agent.Native.FinishedAt = event.At
+		}
 	case "drop_started":
 		agent.Status = Dropping
 	case "capacity_detected":

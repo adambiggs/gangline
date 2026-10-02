@@ -277,6 +277,20 @@ func (run *runtime) reconcileNativeBoundary(l *store.LockedAgent, a *core.Agent,
 	if a.Native.Transcript == "" {
 		a.Native.Transcript = notice.Transcript
 	}
+	if notice.Kind == "turn-finished" || notice.Kind == "turn-failed" {
+		// Gang records its own delivery after the submit hook ran, so the
+		// witnessed prompt's boundary closes the turn even when it ran first.
+		finished := notice.At
+		if notice.TurnID != "" && witnessErr == nil && notice.TurnID == witness.TurnID && a.Native.SubmittedAt.After(finished) {
+			finished = a.Native.SubmittedAt
+		}
+		if finished.After(a.Native.FinishedAt) {
+			a.Native.FinishedAt = finished
+			if err := l.Save(*a); err != nil {
+				return err
+			}
+		}
+	}
 	if notice.Kind == "turn-failed" {
 		// A delayed async hook may start after the next synchronous submit.
 		// Only native prompt identity can attribute its reason to this turn.

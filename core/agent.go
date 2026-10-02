@@ -193,6 +193,7 @@ type NativeState struct {
 	LastError            string    `json:"last_error,omitempty"`
 	Offset               int64     `json:"offset,omitempty"`
 	SubmittedAt          time.Time `json:"submitted_at,omitzero"`
+	FinishedAt           time.Time `json:"finished_at,omitzero"`
 	CompactedAt          time.Time `json:"compacted_at,omitzero"`
 	ConfirmedCompactedAt time.Time `json:"confirmed_compacted_at,omitzero"`
 	Context              Reading   `json:"context,omitzero"`

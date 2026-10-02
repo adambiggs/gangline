@@ -290,6 +290,14 @@ What a collar renders into the launch command (`launch`, `models.option`,
 `options`, and hook `install_args`) takes effect when an agent is hitched. Gangline reads the collar again for each later operation, so edits to
 its other fields apply to agents already running.
 
+A harness can stream a reply with no busy marker on screen. When the
+`hook-boundary` turn boundary sets `open_turn_quiet`, a turn whose submit was
+witnessed reads busy on an idle-looking screen until its finish or failure
+hook arrives, an interrupt brings the composer back, or the screen stays
+unchanged for that long. A turn that ends without its hook, as after a
+keyboard Escape, reads busy for that window; a shorter window lets a pause
+in streamed text read as idle.
+
 Each context band has a `name`, threshold `at` (a fraction from 0 to 1), and
 optional `message`. A nonfinal band without a message advises saving state and
 compacting at the next good stopping point; the last orders compaction now.
