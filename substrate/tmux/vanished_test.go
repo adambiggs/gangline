@@ -2,6 +2,8 @@ package tmux
 
 import (
 	"context"
+	"errors"
+	"os"
 	"os/exec"
 	"path/filepath"
 	"testing"
@@ -53,3 +55,66 @@ func TestProcessVisibilityReportsVanishedProcessAsExit(t *testing.T) {
 
 // childProcess starts a process this test owns. The returned function ends
 // and reaps it, so a process read after it finds the process gone.
+func childProcess(t *testing.T) (processRecord, func()) {
+	t.Helper()
+	child := exec.Command("cat")
+	stdin, err := child.StdinPipe()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := child.Start(); err != nil {
+		t.Fatal(err)
+	}
+	reaped := false
+	reap := func() {
+		reaped = true
+		if err := stdin.Close(); err != nil {
+			t.Fatal(err)
+		}
+		if err := child.Wait(); err != nil {
+			t.Fatal(err)
+		}
+	}
+	t.Cleanup(func() {
+		if !reaped {
+			_ = stdin.Close()
+			_ = child.Wait()
+		}
+	})
+	r, err := readCurrentProcess(child.Process.Pid)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return r, reap
+}
+
+func TestAcquireRecordedSkipsProcessThatVanishesBeforePinning(t *testing.T) {
+	r, reap := childProcess(t)
+	boot, err := bootIdentity()
+	if err != nil {
+		t.Fatal(err)
+	}
+	namespace, err := nativeProcessNamespace()
+	if err != nil {
+		t.Fatal(err)
+	}
+	id := Identity{PID: r.PID, Started: r.started, Version: r.version, UniqueID: r.uniqueID, BootID: boot, Namespace: namespace}
+	// The observation is taken while the process lives; it is then reaped,
+	// so the reads that pin it find it gone.
+	owned, err := acquireRecorded([]Identity{id}, boot, func(pid int) (processObservation, error) {
+		observation, err := observeProcess(pid)
+		if err == nil {
+			reap()
+		}
+		return observation, err
+	})
+	if err != nil || len(owned.Identities()) != 0 {
+		t.Fatalf("vanished process stopped recorded teardown: owned=%v err=%v", owned, err)
+	}
+	_, err = acquireRecorded([]Identity{id}, boot, func(pid int) (processObservation, error) {
+		return processObservation{record: r, read: func() (processRecord, error) { return processRecord{}, os.ErrPermission }, close: func() error { return nil }}, nil
+	})
+	if !errors.Is(err, os.ErrPermission) {
+		t.Fatalf("pin error was hidden: %v", err)
+	}
+}

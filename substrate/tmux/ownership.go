@@ -161,11 +161,15 @@ func sameIdentity(expected Identity, actual processRecord) bool {
 // AcquireRecorded finishes a partial teardown without depending on a live pane.
 // Missing or replaced processes have already exited; replacements are untouched.
 func AcquireRecorded(ids []Identity) (*Owned, error) {
-	out := &Owned{}
 	boot, err := bootIdentity()
 	if err != nil {
 		return nil, err
 	}
+	return acquireRecorded(ids, boot, observeProcess)
+}
+
+func acquireRecorded(ids []Identity, boot string, observe func(int) (processObservation, error)) (*Owned, error) {
+	out := &Owned{}
 	for _, id := range ids {
 		if id.BootID != boot {
 			continue
@@ -174,8 +178,8 @@ func AcquireRecorded(ids []Identity) (*Owned, error) {
 			_ = out.Close()
 			return nil, fmt.Errorf("recorded process namespace is not visible")
 		}
-		observation, err := observeProcess(id.PID)
-		if errors.Is(err, os.ErrNotExist) || errors.Is(err, syscall.ESRCH) {
+		observation, err := observe(id.PID)
+		if processGone(err) {
 			continue
 		}
 		if err != nil {
@@ -188,6 +192,9 @@ func AcquireRecorded(ids []Identity) (*Owned, error) {
 		}
 		pinned, err := pinObservedProcess(observation.record, observation.read, openProcessHandle)
 		closeErr := observation.close()
+		if processGone(err) && closeErr == nil {
+			continue
+		}
 		if err != nil || closeErr != nil {
 			_ = out.Close()
 			return nil, errors.Join(err, closeErr)
