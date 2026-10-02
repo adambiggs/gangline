@@ -78,7 +78,7 @@ func (run *runtime) recoverStartup(name string) (result error) {
 		return err
 	}
 	if a.Status != core.Active {
-		return refuseError("recipient is not active")
+		return inactiveRecipient(a)
 	}
 	if !failedStartup {
 		return refuseError("no retained unverified startup message for %s", name)

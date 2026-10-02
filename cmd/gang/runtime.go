@@ -81,6 +81,13 @@ func (run *runtime) apply(l *store.LockedAgent, a *core.Agent, e core.Event) err
 	*a = next
 	return run.team.Append(e)
 }
+
+// inactiveRecipient refuses input to an agent that is not active and names
+// the command that shows why.
+func inactiveRecipient(a core.Agent) error {
+	return refuseError("recipient %s is %s, not active; gang status %s shows why", a.Name, a.Status, a.Name)
+}
+
 func (run *runtime) resolve(name string) (core.Agent, error) {
 	if name == "" {
 		a, err := run.observedAgent()

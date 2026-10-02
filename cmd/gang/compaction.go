@@ -468,7 +468,7 @@ func (run *runtime) recoverCompaction(l *store.LockedAgent, a *core.Agent, b har
 		return refuseError("compaction %s was already recovered; a busy pane is later work; use gang interrupt to stop it", pending.ID)
 	}
 	if a.Status != core.Active {
-		return refuseError("recipient is not active")
+		return inactiveRecipient(*a)
 	}
 	ctx, cancel := run.cmd.timeout(operationTimeout)
 	defer cancel()

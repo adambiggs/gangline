@@ -55,8 +55,11 @@ func (run *runtime) observedAgent() (*core.Agent, error) {
 		if err != nil {
 			return nil, refuseError("hitch identity is not registered: %v", err)
 		}
-		if a.ID != id || a.Pane == "" || a.Status != core.Active && a.Status != core.Booting {
-			return nil, refuseError("hitch identity is not active")
+		if a.Pane == "" {
+			return nil, refuseError("hitch identity %s has no registered pane; re-hitch this agent", a.Name)
+		}
+		if a.Status != core.Active && a.Status != core.Booting {
+			return nil, refuseError("hitch identity %s is %s, not active; re-hitch this agent", a.Name, a.Status)
 		}
 		if pane := run.cmd.environment("TMUX_PANE"); pane != "" && pane != a.Pane {
 			return nil, refuseError("hitch identity does not match the current pane")
@@ -100,7 +103,7 @@ func (cmd command) send(args []string) (result error) {
 		return refuseError("sender and recipient are the same hitch")
 	}
 	if a.Status != core.Active && a.Status != core.Booting {
-		return refuseError("recipient is not active")
+		return inactiveRecipient(a)
 	}
 	p, err := run.team.Agent(a.ID)
 	if err != nil {
@@ -148,7 +151,7 @@ func (cmd command) send(args []string) (result error) {
 	if o.Supersede || o.Clear || o.LiveOnly {
 		l, a, err = run.acquire(a.ID, false)
 		if errors.Is(err, store.ErrLocked) {
-			return refuseError("recipient is busy with an input operation")
+			return refuseError("recipient is busy with an input operation; retry")
 		}
 		if err != nil {
 			return err
@@ -459,7 +462,7 @@ func (cmd command) interrupt(args []string) (result error) {
 	}
 	defer func() { result = errors.Join(result, run.release(l)) }()
 	if a.Status != core.Active {
-		return refuseError("recipient is not active")
+		return inactiveRecipient(a)
 	}
 	c, err := loadCollar(a.Collar, run.settings)
 	if err != nil {
@@ -533,7 +536,7 @@ func (cmd command) compact(args []string) (result error) {
 		return run.recoverCompaction(l, &a, b, c)
 	}
 	if a.Status != core.Active {
-		return refuseError("recipient is not active")
+		return inactiveRecipient(a)
 	}
 	_, failedStartup, err := retainedStartup(l.Paths, "failed", a.LastFailed)
 	if err != nil {
