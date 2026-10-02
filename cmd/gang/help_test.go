@@ -71,11 +71,19 @@ func expectedHelpOptions(name string) map[string]bool {
 	return want
 }
 
+// helpHasOptionRow reports whether one row shows the option, its argument and
+// its meaning. A row is a label line plus the meaning line that follows a label
+// too wide for the column.
 func helpHasOptionRow(output string, option optionSpec) bool {
-	for _, line := range strings.Split(output, "\n") {
+	lines := strings.Split(output, "\n")
+	for i, line := range lines {
+		row := line
+		if i+1 < len(lines) && strings.HasPrefix(lines[i+1], strings.Repeat(" ", helpOptionColumn)) {
+			row += " " + strings.TrimSpace(lines[i+1])
+		}
 		if helpOptionNames(line)[optionSpelling(option.name)] &&
-			strings.Contains(line, optionArgument(option)) &&
-			strings.Contains(line, option.meaning) {
+			strings.Contains(row, optionArgument(option)) &&
+			strings.Contains(row, option.meaning) {
 			return true
 		}
 	}
@@ -252,6 +260,35 @@ func TestHelpFitsWidth(t *testing.T) {
 	for name := range commandUsage {
 		check("help "+name, []string{"help", name})
 		check(name+" --help", []string{name, "--help"})
+	}
+}
+
+// helpOptionColumn is where help prints every option's meaning.
+const helpOptionColumn = 25
+
+func TestHelpOptionMeaningsShareAColumn(t *testing.T) {
+	for name := range commandUsage {
+		var stdout, stderr bytes.Buffer
+		run([]string{"help", name}, strings.NewReader(""), &stdout, &stderr)
+		_, section, found := strings.Cut(stdout.String(), "\nOptions:\n")
+		if !found {
+			continue
+		}
+		section, _, _ = strings.Cut(section, "\n\n")
+		lines := strings.Split(section, "\n")
+		for i := 0; i < len(lines); i++ {
+			line := lines[i]
+			labelled := len(line) > helpOptionColumn && line[helpOptionColumn-1] == ' ' && line[helpOptionColumn] != ' '
+			switch {
+			case !strings.HasPrefix(line, "  -"):
+				t.Errorf("help %s: option line %q does not begin with an option", name, line)
+			case labelled:
+			case !labelled && i+1 < len(lines) && strings.HasPrefix(lines[i+1], strings.Repeat(" ", helpOptionColumn)) && lines[i+1][helpOptionColumn] != ' ':
+				i++
+			default:
+				t.Errorf("help %s: meaning is not at column %d: %q", name, helpOptionColumn, line)
+			}
+		}
 	}
 }
 

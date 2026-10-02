@@ -219,6 +219,10 @@ func optionSpelling(name string) string {
 	return "--" + name
 }
 
+// optionColumn is the width of the option labels before each meaning. A wider
+// label takes its own line and its meaning starts the next one.
+const optionColumn = 22
+
 func optionHelp(name string) string {
 	var out strings.Builder
 	options := helpOptions(name)
@@ -232,7 +236,13 @@ func optionHelp(name string) string {
 				i++
 			}
 		}
-		fmt.Fprintf(&out, "  %-22s %s\n", label+optionArgument(option), option.meaning)
+		label += optionArgument(option)
+		if len(label) > optionColumn {
+			fmt.Fprintf(&out, "  %s\n%*s", label, optionColumn+3, "")
+		} else {
+			fmt.Fprintf(&out, "  %-*s ", optionColumn, label)
+		}
+		fmt.Fprintf(&out, "%s\n", option.meaning)
 	}
 	return out.String()
 }
