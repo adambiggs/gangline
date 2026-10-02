@@ -56,10 +56,10 @@ func TestHitchNamesWhyThePaneHoldFailed(t *testing.T) {
 			wrapper := filepath.Join(team, "tmux")
 			if err := os.WriteFile(wrapper, []byte(`#!/bin/sh
 # SPDX-License-Identifier: Apache-2.0
-order='`+refused+`' socket='`+socket+`' listed='`+filepath.Join(team, "listed")+`'
+order='`+refused+`' socket='`+socket+`' listed='`+filepath.Join(team, "listed")+`' bounded='`+exe+`'
 case " $* " in
 *" remain-on-exit on "*)
-	[ "$order" = after-registration ] && timeout 60 tmux -S "$socket" wait-for registered
+	[ "$order" = after-registration ] && GANGLINE_ACCEPTANCE_BOUNDED_WAIT=registered "$bounded" "$socket"
 	echo "hold refused: wrapper sentinel" >&2
 	exit 1;;
 esac
@@ -67,7 +67,7 @@ case "$order $3 $4" in
 "before-registration list-panes -a")
 	if [ ! -e "$listed" ]; then
 		: >"$listed"
-		timeout 60 tmux -S "$socket" wait-for closed
+		GANGLINE_ACCEPTANCE_BOUNDED_WAIT=closed "$bounded" "$socket"
 	fi;;
 "after-registration display-message -p")
 	tmux -S "$socket" wait-for -S registered;;

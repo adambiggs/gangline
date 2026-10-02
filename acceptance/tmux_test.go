@@ -19,6 +19,11 @@ import (
 const fakeHarnessEnvironment = "GANGLINE_ACCEPTANCE_FAKE_HARNESS"
 
 func TestMain(m *testing.M) {
+	// Fixture scripts run this binary to wait on a tmux channel with a bound;
+	// they inherit the harness settings below, so it is checked first.
+	if channel := os.Getenv("GANGLINE_ACCEPTANCE_BOUNDED_WAIT"); channel != "" {
+		os.Exit(runBoundedWait(os.Args[1], channel))
+	}
 	if os.Getenv("GANGLINE_ACCEPTANCE_RESUME_HARNESS") == "1" {
 		os.Exit(runResumeHarness())
 	}
@@ -179,6 +184,18 @@ func (runner tmuxRunner) run(arguments ...string) (string, error) {
 	command.Env = runner.env
 	output, err := command.CombinedOutput()
 	return string(output), err
+}
+
+// runBoundedWait waits on a channel of the tmux server at socket for at most a
+// minute, so a signal that never comes fails the test instead of holding it.
+func runBoundedWait(socket, channel string) int {
+	ctx, cancel := context.WithTimeout(context.Background(), time.Minute)
+	defer cancel()
+	if output, err := exec.CommandContext(ctx, "tmux", "-S", socket, "wait-for", channel).CombinedOutput(); err != nil {
+		fmt.Fprintf(os.Stderr, "wait for %s: %v: %s", channel, err, output)
+		return 1
+	}
+	return 0
 }
 
 func runFakeHarness() int {
