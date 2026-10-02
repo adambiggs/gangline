@@ -368,7 +368,7 @@ func (b *Backend) ReleaseRegisteredExit(ctx context.Context, id PaneIdentity) er
 		tmuxCommand("set-option", "-p", "-u", "-t", id.Pane, "remain-on-exit"),
 	}, " ; ")
 	// The reap comes first so an exit already made reports its status.
-	out, err := b.run(ctx, "run-shell", "true", ";", "if-shell", "-F", "-t", id.Pane, registeredCondition(id), release, "display-message -p '"+ErrPaneReplaced.Error()+"'")
+	out, err := b.reaped(ctx, "if-shell", "-F", "-t", id.Pane, registeredCondition(id), release, "display-message -p '"+ErrPaneReplaced.Error()+"'")
 	if err != nil {
 		return tmuxError("release exited pane", err, out)
 	}

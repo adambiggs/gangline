@@ -86,10 +86,14 @@ func selectForegroundProcesses(root int, records map[int]processRecord, command 
 	return result, nil
 }
 
-// paneProcess reads the pane's live process, or reports its exit. Commands in
-// before run in the same command list first.
-func (backend *Backend) paneProcess(ctx context.Context, pane substrate.PaneID, before ...string) (int, error) {
-	output, err := backend.run(ctx, append(before, "display-message", "-p", "-t", string(pane), "#{pane_pid} #{pane_dead} #{pane_dead_status}")...)
+// paneProcess reads the pane's live process, or reports its exit.
+func (backend *Backend) paneProcess(ctx context.Context, pane substrate.PaneID) (int, error) {
+	return backend.readPaneProcess(ctx, pane, backend.run)
+}
+
+// readPaneProcess is paneProcess with the read run through run.
+func (backend *Backend) readPaneProcess(ctx context.Context, pane substrate.PaneID, run func(context.Context, ...string) (string, error)) (int, error) {
+	output, err := run(ctx, "display-message", "-p", "-t", string(pane), "#{pane_pid} #{pane_dead} #{pane_dead_status}")
 	if err != nil {
 		return 0, tmuxError("read pane process", err, output)
 	}
@@ -110,11 +114,11 @@ func (backend *Backend) paneProcess(ctx context.Context, pane substrate.PaneID, 
 
 // paneExited reports the exit of a pane whose process a read found gone. That
 // process has exited, but tmux can still read the pane as live until it reaps
-// the process or its terminal closes. run-shell returns only once the server
-// has reaped its own child, and the server reaps every exited child as it
-// does. A pane tmux still reads as live leaves gone as the answer.
+// the process or its terminal closes, so the pane is read once the server has
+// reaped every exited child. A pane tmux still reads as live leaves gone as
+// the answer.
 func (backend *Backend) paneExited(ctx context.Context, pane substrate.PaneID, gone error) error {
-	if _, err := backend.paneProcess(ctx, pane, "run-shell", "true", ";"); err != nil {
+	if _, err := backend.readPaneProcess(ctx, pane, backend.reaped); err != nil {
 		return err
 	}
 	return gone

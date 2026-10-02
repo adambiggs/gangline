@@ -90,7 +90,7 @@ func (backend *Backend) ReleaseExit(ctx context.Context, pane substrate.PaneID) 
 	}
 	// One command list: the process cannot exit between the check and the
 	// release. It reaps first, so an exit already made reports its status.
-	output, err := backend.run(ctx, "run-shell", "true", ";",
+	output, err := backend.reaped(ctx,
 		"display-message", "-p", "-t", string(pane), "#{pane_dead},#{pane_dead_status}", ";",
 		"capture-pane", "-p", "-J", "-S", "-", "-t", string(pane), ";",
 		"set-option", "-p", "-u", "-t", string(pane), "remain-on-exit")
@@ -114,12 +114,11 @@ func releasedExit(output string) error {
 }
 
 // Some tmux versions mark a pane dead when its terminal closes, which can come
-// before the server reaps the process and collects its status. run-shell
-// returns only once the server has reaped its own child, and the server reaps
-// every exited child as it does, so the status is read after that collection.
+// before the server reaps the process and collects its status, so the status
+// is read once the server has reaped every exited child.
 func (backend *Backend) exitedPane(ctx context.Context, pane substrate.PaneID, status string) error {
 	if status == "" {
-		output, err := backend.run(ctx, "run-shell", "true", ";", "display-message", "-p", "-t", string(pane), "#{pane_dead_status}")
+		output, err := backend.reaped(ctx, "display-message", "-p", "-t", string(pane), "#{pane_dead_status}")
 		if err != nil {
 			return tmuxError("read exit status", err, output)
 		}
