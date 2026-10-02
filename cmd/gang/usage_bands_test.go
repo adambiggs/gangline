@@ -709,7 +709,8 @@ func TestAttributableUsageCapFailureRearmsOneWakeAtNativeReset(t *testing.T) {
 	if err := p.Publish(e); err != nil {
 		t.Fatal(err)
 	}
-	if err := p.WriteWitness(store.Witness{ID: "wake-start", At: at.Add(-time.Second), TurnID: "wake-turn"}); err != nil {
+	witness := store.Witness{ID: "wake-start", At: at.Add(-time.Second), TurnID: "wake-turn"}
+	if err := p.WriteWitness(witness); err != nil {
 		t.Fatal(err)
 	}
 	l, err := p.TryLock()
@@ -720,7 +721,7 @@ func TestAttributableUsageCapFailureRearmsOneWakeAtNativeReset(t *testing.T) {
 	if err := f.run.apply(l, &a, core.Event{Type: "input_started", ID: string(e.ID), Status: "envelope"}); err != nil {
 		t.Fatal(err)
 	}
-	if err := f.run.finishInput(l, &a, e, "delivered", ""); err != nil {
+	if err := f.run.finishInput(l, &a, e, "delivered", "", witness); err != nil {
 		t.Fatal(err)
 	}
 	if err := l.Close(); err != nil {
@@ -758,7 +759,8 @@ func TestAttributableUsageCapFailureRearmsOneWakeAtNativeReset(t *testing.T) {
 	if err := p.Publish(second); err != nil {
 		t.Fatal(err)
 	}
-	if err := p.WriteWitness(store.Witness{ID: "second-start", At: reset.Add(-time.Second), TurnID: "second-turn"}); err != nil {
+	witness = store.Witness{ID: "second-start", At: reset.Add(-time.Second), TurnID: "second-turn"}
+	if err := p.WriteWitness(witness); err != nil {
 		t.Fatal(err)
 	}
 	l, err = p.TryLock()
@@ -769,7 +771,7 @@ func TestAttributableUsageCapFailureRearmsOneWakeAtNativeReset(t *testing.T) {
 	if err := f.run.apply(l, &a, core.Event{Type: "input_started", ID: string(second.ID), Status: "envelope"}); err != nil {
 		t.Fatal(err)
 	}
-	if err := f.run.finishInput(l, &a, second, "delivered", ""); err != nil {
+	if err := f.run.finishInput(l, &a, second, "delivered", "", witness); err != nil {
 		t.Fatal(err)
 	}
 	if err := l.Close(); err != nil {

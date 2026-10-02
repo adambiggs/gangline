@@ -109,17 +109,8 @@ func (run *runtime) acknowledgeUsageDelivery(l *store.LockedAgent, a core.Agent,
 	}
 	var submittedAt time.Time
 	joined := false
-	if outcome == "delivered" && e.From.Name == "snooze" {
-		if len(witnessed) > 0 {
-			submittedAt, joined = witnessed[0].At, witnessed[0].Joined
-		} else {
-			w, err := l.Paths.ReadWitness()
-			if err == nil && w.TurnID == a.Native.TurnID {
-				submittedAt, joined = w.At, w.Joined
-			} else if err != nil && !errors.Is(err, os.ErrNotExist) {
-				return err
-			}
-		}
+	if outcome == "delivered" && e.From.Name == "snooze" && len(witnessed) > 0 {
+		submittedAt, joined = witnessed[0].At, witnessed[0].Joined
 	}
 	return run.withUsageState(func(state *usageState) error {
 		if e.From.Name == "usage-band" {
