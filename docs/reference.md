@@ -86,10 +86,13 @@ While the collar's `actions.compact.active` pattern matches the pane, the agent
 reads as compacting: sends wait in Gangline's queue, a queued compaction waits,
 and `gang compact NAME --recover` treats the pane as running. A harness that
 queues input typed during compaction witnesses it only when compaction ends,
-so a send typed then could not be confirmed.
+so a send typed then could not be confirmed. For such a collar the resume note
+also waits for the pattern, or a busy screen, after the compact Enter: a
+command that leaves the composer without either fails as not run and withholds
+the note, since an empty composer does not show that a compaction started.
 
 Gangline never presses Enter on a composer that holds anything other than the
-compact command. Claude Code shows a long or multi-line paste as a placeholder
+compact command, nor on one the command has already left. Claude Code shows a long or multi-line paste as a placeholder
 and would submit it as an ordinary prompt, so such a resume note fails there:
 Gangline clears the composer with the collar's `compact_clear` keys and submits
 nothing. Keep the note short, on one line, and pointed at a state file. Without

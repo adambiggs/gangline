@@ -31,6 +31,7 @@ func compactionFixture(t *testing.T) (*stateFixture, core.Agent, store.AgentPath
 	f.input.submit = func(prompt string) error {
 		return nil
 	}
+	echoCompactInput(f)
 	return f, a, p
 }
 

@@ -180,12 +180,14 @@ func (run *runtime) queueCompactionResume(l *store.LockedAgent, a *core.Agent, b
 		return err
 	}
 	pane := substrate.PaneID(a.Pane)
-	ctx, cancel := run.cmd.timeout(operationTimeout)
-	defer cancel()
-	screen, err := awaitCompactionComposer(ctx, b, pane, c, compactText)
+	startCtx, cancelStart := run.cmd.timeout(compactStartWindow)
+	defer cancelStart()
+	screen, err := awaitCompactionComposer(startCtx, b, pane, c, compactText)
 	if err != nil {
 		return err
 	}
+	ctx, cancel := run.cmd.timeout(operationTimeout)
+	defer cancel()
 	wire, err := envelopeText(e)
 	if err != nil {
 		return err
@@ -237,11 +239,22 @@ func (run *runtime) queueCompactionResume(l *store.LockedAgent, a *core.Agent, b
 	return run.reconcileDelivery(l, a)
 }
 
+// compactStartWindow bounds the wait, after the compact submit key, for the
+// command to leave the composer and the compaction to show on screen.
+const compactStartWindow = 2 * time.Second
+
+// errCompactionNotStarted reports a compact command that left the composer
+// without the pane ever showing a compaction, as when the harness consumed it
+// as nothing.
+var errCompactionNotStarted = errors.New("compact command left the composer but no compaction started")
+
+// awaitCompactionComposer waits until the compact command has left the
+// composer and, for a collar that can show a compaction running, the pane
+// shows one or a native task. An empty composer alone is not evidence that the
+// command started anything.
 func awaitCompactionComposer(ctx context.Context, b harnessInput, pane substrate.PaneID, c harness.Collar, compactText string) (substrate.Screen, error) {
 	ticker := time.NewTicker(25 * time.Millisecond)
 	defer ticker.Stop()
-	deadline := time.NewTimer(2 * time.Second)
-	defer deadline.Stop()
 	for {
 		screen, err := b.Capture(ctx, pane)
 		if err != nil {
@@ -256,20 +269,39 @@ func awaitCompactionComposer(ctx context.Context, b harnessInput, pane substrate
 		if err != nil {
 			return substrate.Screen{}, err
 		}
-		if composer.Text == "" {
-			return screen, nil
-		}
-		if !harness.SameComposerText(composer.Text, compactText) {
+		left := composer.Text == ""
+		if !left && !harness.SameComposerText(composer.Text, compactText) {
 			return substrate.Screen{}, fmt.Errorf("native composer occupied before continuation input; resume retained")
+		}
+		if left {
+			started, err := compactionShown(c, screen)
+			if err != nil {
+				return substrate.Screen{}, err
+			}
+			if started || c.Actions.Compact.Active == "" {
+				return screen, nil
+			}
+		}
+		if ctx.Err() != nil {
+			if left {
+				return substrate.Screen{}, errCompactionNotStarted
+			}
+			return substrate.Screen{}, fmt.Errorf("native compact command remained in the composer; resume retained")
 		}
 		select {
 		case <-ctx.Done():
-			return substrate.Screen{}, ctx.Err()
-		case <-deadline.C:
-			return substrate.Screen{}, fmt.Errorf("native compact command remained in the composer; resume retained")
 		case <-ticker.C:
 		}
 	}
+}
+
+// compactionShown reports whether the screen shows the harness compacting or
+// running a native task.
+func compactionShown(c harness.Collar, screen substrate.Screen) (bool, error) {
+	if active, err := harness.CompactionActive(c, screen); err != nil || active {
+		return active, err
+	}
+	return harness.Busy(c, screen)
 }
 
 func (run *runtime) observeCompaction(l *store.LockedAgent, a *core.Agent, c harness.Collar, screen substrate.Screen) error {
@@ -374,8 +406,8 @@ func (run *runtime) notifyRequester(a core.Agent, phase compactionPhase, reason 
 }
 
 // abandonCompactDraft clears compact input that must not be submitted and
-// fails the compaction, which never ran.
-func (run *runtime) abandonCompactDraft(ctx context.Context, l *store.LockedAgent, a *core.Agent, b harnessInput, c harness.Collar, draft, reason string) error {
+// fails the compaction.
+func (run *runtime) abandonCompactDraft(ctx context.Context, l *store.LockedAgent, a *core.Agent, b harnessInput, c harness.Collar, draft string, phase compactionPhase, reason string) error {
 	if draft != "" {
 		if err := run.clearCompactDraft(ctx, b, substrate.PaneID(a.Pane), c, draft); err != nil {
 			reason += "; " + err.Error()
@@ -383,33 +415,49 @@ func (run *runtime) abandonCompactDraft(ctx context.Context, l *store.LockedAgen
 			reason += "; composer cleared"
 		}
 	}
-	return run.failCompaction(l, a, compactionNotRun, reason)
+	return run.failCompaction(l, a, phase, reason)
 }
 
 // abortCompactInput fails a compaction whose input was abandoned before its
 // submit key, clearing any draft it left. It works under a fresh deadline
 // because the cause may be the operation's own. Behind a blocking prompt the
 // clear keys would answer the prompt, so the draft stays and the reason says so.
-func (run *runtime) abortCompactInput(l *store.LockedAgent, a *core.Agent, b harnessInput, c harness.Collar, cause error) error {
+//
+// A bracketed paste cannot submit itself, so while the command is still in the
+// composer, or gone with the pane idle, the compaction never ran. Gone with the
+// pane running something, someone else's Enter may have started it, and the
+// composer is left alone.
+func (run *runtime) abortCompactInput(l *store.LockedAgent, a *core.Agent, b harnessInput, c harness.Collar, compactText string, cause error) error {
 	ctx, cancel := run.cmd.timeout(compactAbortTimeout)
 	defer cancel()
 	reason := "compaction not submitted: " + cause.Error()
+	notRun := compactionNotRun
+	if !harness.BracketedPaste(c.Primitives.Submit) {
+		notRun = compactionMayHaveRun
+	}
 	pane := substrate.PaneID(a.Pane)
 	screen, err := b.Capture(ctx, pane)
 	if err != nil {
-		return run.failCompaction(l, a, compactionNotRun, reason+"; composer unread: "+err.Error())
+		return run.failCompaction(l, a, notRun, reason+"; composer unread: "+err.Error())
 	}
 	if _, blocked, err := harness.InputBlocked(c, screen); err != nil || blocked {
 		if err != nil {
 			reason += "; " + err.Error()
 		}
-		return run.failCompaction(l, a, compactionNotRun, reason+"; the compact input may remain in the composer behind the prompt")
+		return run.failCompaction(l, a, notRun, reason+"; the compact input may remain in the composer behind the prompt")
 	}
 	composer, err := harness.ReadComposer(c.Primitives.Composer, screen)
 	if err != nil {
-		return run.failCompaction(l, a, compactionNotRun, reason+"; composer unread: "+err.Error())
+		return run.failCompaction(l, a, notRun, reason+"; composer unread: "+err.Error())
 	}
-	return run.abandonCompactDraft(ctx, l, a, b, c, composer.Text, reason)
+	if compactText == "" || !harness.SameComposerText(composer.Text, compactText) {
+		if running, err := compactionShown(c, screen); err != nil {
+			return run.failCompaction(l, a, compactionMayHaveRun, reason+"; "+err.Error())
+		} else if running {
+			return run.failCompaction(l, a, compactionMayHaveRun, reason+"; the native harness is running a compaction or task")
+		}
+	}
+	return run.abandonCompactDraft(ctx, l, a, b, c, composer.Text, notRun, reason)
 }
 
 // compactAbortTimeout bounds the clear after an abandoned compact paste. When

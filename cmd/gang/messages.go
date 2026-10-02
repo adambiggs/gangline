@@ -647,13 +647,13 @@ func (run *runtime) startCompaction(l *store.LockedAgent, a *core.Agent) (result
 	// Pasted input cannot submit itself, so a failure before the compact
 	// Enter leaves a compaction that never ran; after it, the compaction may
 	// have started.
-	entered := false
+	entered, compactText := false, ""
 	defer func() {
 		if result == nil || a.Input == nil {
 			return
 		}
 		if !entered {
-			result = run.abortCompactInput(l, a, b, c, result)
+			result = run.abortCompactInput(l, a, b, c, compactText, result)
 			return
 		}
 		result = errors.Join(result, run.apply(l, a, core.Event{Type: "compaction_unverified", ID: a.Compaction.ID, Reason: result.Error()}))
@@ -662,6 +662,7 @@ func (run *runtime) startCompaction(l *store.LockedAgent, a *core.Agent) (result
 	if err != nil {
 		return err
 	}
+	compactText = action.Text
 	input, err := harness.SubmitInput(c.Primitives.Submit, action.Text)
 	if err != nil {
 		return err
@@ -697,17 +698,21 @@ func (run *runtime) startCompaction(l *store.LockedAgent, a *core.Agent) (result
 	// A harness may show pasted input as something other than the command it
 	// was, such as a collapsed paste placeholder. Submitting that would send
 	// the command as an ordinary prompt.
-	// An empty composer is let through: Enter on it submits nothing.
-	if composer.Text != "" && !harness.SameComposerText(composer.Text, action.Text) {
+	// An empty composer means the command left it without gang's submit key,
+	// so Enter here would prove nothing about whether a compaction started.
+	if composer.Text == "" {
+		return errors.New("the compact command left the composer before its submit key")
+	}
+	if !harness.SameComposerText(composer.Text, action.Text) {
 		// The reason reaches the agent as input, so it must not quote the
 		// composer: Claude Code expands a quoted paste placeholder in input
 		// back into the paste it names.
-		return run.abandonCompactDraft(ctx, l, a, b, c, composer.Text, fmt.Sprintf("compaction not submitted: the native composer did not read back as the %d-character compact command, as when the harness collapses a long or multi-line paste", utf8.RuneCountInString(action.Text)))
+		return run.abandonCompactDraft(ctx, l, a, b, c, composer.Text, compactionNotRun, fmt.Sprintf("compaction not submitted: the native composer did not read back as the %d-character compact command, as when the harness collapses a long or multi-line paste", utf8.RuneCountInString(action.Text)))
 	}
 	if busy, err := harness.Busy(c, screen); err != nil {
 		return err
 	} else if busy {
-		return run.abandonCompactDraft(ctx, l, a, b, c, composer.Text, "compaction not submitted: native task became active before compaction submit")
+		return run.abandonCompactDraft(ctx, l, a, b, c, composer.Text, compactionNotRun, "compaction not submitted: native task became active before compaction submit")
 	}
 	entered = true
 	if err := sendHarnessKeys(ctx, b, pane, c, substrate.Keys{Names: action.Keys, Submit: action.Submit}); err != nil {
@@ -716,7 +721,9 @@ func (run *runtime) startCompaction(l *store.LockedAgent, a *core.Agent) (result
 	if err := run.apply(l, a, core.Event{Type: "compaction_submitted", ID: a.Compaction.ID}); err != nil {
 		return err
 	}
-	if err := run.queueCompactionResume(l, a, b, c, action.Text); err != nil {
+	if err := run.queueCompactionResume(l, a, b, c, action.Text); errors.Is(err, errCompactionNotStarted) {
+		return run.failCompaction(l, a, compactionNotRun, err.Error()+"; resume withheld")
+	} else if err != nil {
 		return run.failCompaction(l, a, compactionMayHaveRun, "resume submission failed; continuation withheld: "+err.Error())
 	}
 	if err := run.refreshNative(l, a, c); err != nil {

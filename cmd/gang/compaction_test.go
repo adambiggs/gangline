@@ -55,6 +55,7 @@ func TestCompactionQueuesResumeBeforeCompletion(t *testing.T) {
 				}
 				return nil
 			}
+			echoCompactInput(f)
 			var ce commandError
 			if err := f.cmd.compact([]string{"worker", "--resume", "continue the work"}); !errors.As(err, &ce) || ce.status != exitUnknown {
 				t.Fatalf("submission: %v", err)
@@ -333,6 +334,7 @@ func TestCompactionOccupiedComposerFailsWithoutLateResume(t *testing.T) {
 		}
 		return p.WriteWitness(store.Witness{ID: "resume-witness", At: f.cmd.now(), Prompt: prompt, SessionID: "s"})
 	}
+	echoCompactInput(f)
 	if err := f.cmd.compact([]string{"worker"}); err == nil || !strings.Contains(err.Error(), "composer occupied") {
 		t.Fatalf("occupied composer result: %v", err)
 	}
@@ -411,6 +413,7 @@ func TestCompletedCompactionResumesBeforeQueuedMessages(t *testing.T) {
 		prompts = append(prompts, prompt)
 		return p.WriteWitness(store.Witness{ID: fmt.Sprintf("witness-%d", len(prompts)), At: f.cmd.now(), Prompt: prompt, SessionID: "s"})
 	}
+	echoCompactInput(f)
 	var ce commandError
 	if err := f.cmd.compact([]string{"worker", "--resume", "state is in FILE"}); !errors.As(err, &ce) || ce.status != exitUnknown {
 		t.Fatalf("submission: %v", err)
@@ -436,6 +439,7 @@ func TestAgentCompactsItselfAfterItsTurn(t *testing.T) {
 	f.env["GANG_AGENT_ID"] = string(a.ID)
 	f.env["TMUX_PANE"] = a.Pane
 	f.input.screen = screenWithText("• Working (esc to interrupt)", "", "› ")
+	echoCompactInput(f)
 	if err := f.cmd.compact([]string{"--resume", "state is in FILE"}); err != nil {
 		t.Fatal(err)
 	}
@@ -456,7 +460,8 @@ func TestAgentCompactsItselfAfterItsTurn(t *testing.T) {
 }
 
 // wrappedCompactInput shows the submitted /compact command wrapped across
-// composer lines for a few captures before the harness consumes it.
+// composer lines for a few captures before the harness consumes it and starts
+// compacting.
 type wrappedCompactInput struct {
 	*inputFixture
 	captures int
@@ -466,7 +471,7 @@ type wrappedCompactInput struct {
 func (b *wrappedCompactInput) Capture(ctx context.Context, pane substrate.PaneID) (substrate.Screen, error) {
 	b.captures++
 	if b.linger > 0 && b.captures > b.linger {
-		b.screen = screenWithText("────────", "❯ ", "────────")
+		b.screen = screenWithText("✻ Compacting conversation… (0s)", "────────", "❯ ", "────────")
 	}
 	return b.inputFixture.Capture(ctx, pane)
 }
@@ -498,6 +503,7 @@ func TestCompactionResumeProceedsWhileWrappedCompactRemains(t *testing.T) {
 		}
 		return nil
 	}
+	echoCompactInput(f)
 	f.cmd.inputBackend = b
 	var ce commandError
 	if err := f.cmd.compact([]string{"worker", "--resume", resume}); !errors.As(err, &ce) || ce.status != exitUnknown {

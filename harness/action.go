@@ -43,6 +43,12 @@ func SubmitInput(invocation Invocation, text string) (substrate.Keys, error) {
 	}
 }
 
+// BracketedPaste reports whether the submit primitive pastes text bracketed,
+// so that no newline in it can submit the composer.
+func BracketedPaste(invocation Invocation) bool {
+	return invocation.Params["paste"] == "bracketed"
+}
+
 func RenderAction(action Action, values map[string]string) (Action, error) {
 	text, err := renderArgs([]string{action.Text}, values)
 	if err != nil {
