@@ -1,5 +1,24 @@
 # Changelog
 
+## [1.13.0](https://github.com/adambiggs/gangline/compare/gangline-v1.12.5...gangline-v1.13.0) (2026-10-02)
+
+
+### Features
+
+* **log:** record what each activity reading was derived from ([1471987](https://github.com/adambiggs/gangline/commit/1471987cf26863ecc4f123bd1b7313672e8c686d))
+
+
+### Bug Fixes
+
+* **compact:** log the move to unverified when a compaction passes its deadline ([659f151](https://github.com/adambiggs/gangline/commit/659f151716f57fcedb7bf3eb3047f5264c7a2a72))
+* **compact:** name the agent and its mode in the busy retry ([2a0c74e](https://github.com/adambiggs/gangline/commit/2a0c74ee55ee1cb49e243bfa6deac164873383b9))
+* **delivery:** keep a drain or drop going when the sender notice fails ([97d7aee](https://github.com/adambiggs/gangline/commit/97d7aee1f6cf1b5a3e9f9ea1382648bb770d482b))
+* **drop:** finish when an unheld pane closes before its identity read ([6ab460b](https://github.com/adambiggs/gangline/commit/6ab460bc17f8a2d49841ac453d7da00dcc0e1838))
+* **native:** clear a turn failure when a queued turn finishes after it ([5f6c4d7](https://github.com/adambiggs/gangline/commit/5f6c4d74096fce8e4fb96d8d5c5b6c1bb816e443))
+* **snooze:** judge a queued wake by the turn that ran it ([a4fe3e2](https://github.com/adambiggs/gangline/commit/a4fe3e26e8dd96d88f9692aa0ab3b2f799c0250d))
+* **tmux:** retry a macOS process-exit wait a signal interrupted ([af8b1f3](https://github.com/adambiggs/gangline/commit/af8b1f39d430ba2cfb238f6e3f99d689cef44d41))
+* **watchdog:** wait for the scheduler lock when the last agent leaves ([ac333e5](https://github.com/adambiggs/gangline/commit/ac333e55ce987fc8c5232e8f47f16a6141e102a2))
+
 ## [1.12.5](https://github.com/adambiggs/gangline/compare/gangline-v1.12.4...gangline-v1.12.5) (2026-10-02)
 
 
