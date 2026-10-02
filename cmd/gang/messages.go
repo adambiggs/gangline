@@ -570,6 +570,23 @@ func (cmd command) compact(args []string) (result error) {
 	if pending := a.Compaction; pending != nil && continuationQueued(*pending, cmd.now()) {
 		return refuseError("compaction %s resume note is queued in the harness and not yet admitted; compact again once it arrives, or after %s", pending.ID, pending.CompletedAt.Add(operationTimeout).UTC().Format(time.RFC3339))
 	}
+	// A compaction past its deadline holds its note in the harness's queue for
+	// as long as the harness is still compacting, which only the screen shows.
+	// A busy turn is not that evidence: an agent compacting itself is always
+	// busy. A recovered compaction was already stopped.
+	if pending := a.Compaction; pending != nil && pending.Status == "unverified" && pending.Continuation && !pending.ResumeAdmitted && !pending.Recovered {
+		screen, err := b.Capture(context.Background(), substrate.PaneID(a.Pane))
+		if err != nil {
+			return err
+		}
+		running, err := harness.CompactionActive(c, screen)
+		if err != nil {
+			return err
+		}
+		if running {
+			return refuseError("compaction %s is unverified and the harness is still running it with the resume note queued; compact again once it finishes, or stop it with gang compact %s --recover", pending.ID, a.Name)
+		}
+	}
 	requester, err := run.observedSender()
 	if err != nil {
 		if o.Resume != "" {

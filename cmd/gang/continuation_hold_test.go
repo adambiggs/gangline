@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/adambiggs/gangline/core"
+	"github.com/adambiggs/gangline/substrate"
 )
 
 // completedWithQueuedContinuation is a Claude agent whose compaction has just
@@ -240,5 +241,66 @@ func TestCompactRefusedWhileContinuationQueued(t *testing.T) {
 	}
 	if got := f.agent(t, a.ID); got.Compaction.ID == "c" {
 		t.Fatalf("expired hold kept the record: %+v", got.Compaction)
+	}
+}
+
+// A compaction that outlives its deadline is unverified while the harness may
+// still be compacting with the note queued behind it. Replacing the record
+// then would make that note arrive stale, so compact refuses while the screen
+// shows the compaction and accepts once it does not.
+func TestCompactRefusedWhileUnverifiedCompactionHoldsItsNote(t *testing.T) {
+	f, a := completedWithQueuedContinuation(t)
+	a = f.setAgent(t, a, func(a *core.Agent) {
+		a.Compaction.Status, a.Compaction.CompletedAt = "unverified", time.Time{}
+	})
+	idle := f.input.screen
+	f.input.screen = screenWithText("✻ Compacting conversation… (40s)", "────────", "❯ ", "────────")
+	var refused commandError
+	err := f.cmd.compact([]string{"worker", "--resume", "second"})
+	if !errors.As(err, &refused) || refused.status != exitRefused || !strings.Contains(err.Error(), "compaction c") || !strings.Contains(err.Error(), "--recover") {
+		t.Fatalf("compact while the unverified compaction runs: %v", err)
+	}
+	if got := f.agent(t, a.ID); got.Compaction.ID != "c" || got.Compaction.Status != "unverified" {
+		t.Fatalf("record replaced: %+v", got.Compaction)
+	}
+	f.input.screen = idle
+	if err := f.cmd.compact([]string{"worker", "--resume", "second"}); errors.As(err, &refused) && refused.status == exitRefused {
+		t.Fatalf("compact once the harness stopped compacting: %v", err)
+	}
+	if got := f.agent(t, a.ID); got.Compaction.ID == "c" {
+		t.Fatalf("idle harness kept the record: %+v", got.Compaction)
+	}
+}
+
+// Once the note is admitted, when none was queued, when the compaction was
+// recovered, or when the screen shows a turn rather than a compaction (as it
+// always does for an agent compacting itself), compact is accepted.
+func TestCompactAcceptedWhenUnverifiedCompactionHoldsNoNote(t *testing.T) {
+	compacting := screenWithText("✻ Compacting conversation… (40s)", "────────", "❯ ", "────────")
+	turn := screenWithText("✻ Pondering… (esc to interrupt)", "────────", "❯ ", "────────")
+	for name, tc := range map[string]struct {
+		edit   func(*core.Compaction)
+		screen substrate.Screen
+	}{
+		"admitted":        {func(c *core.Compaction) { c.ResumeAdmitted = true }, compacting},
+		"no continuation": {func(c *core.Compaction) { c.Continuation = false }, compacting},
+		"recovered":       {func(c *core.Compaction) { c.Recovered = true }, compacting},
+		"busy turn":       {func(*core.Compaction) {}, turn},
+	} {
+		t.Run(name, func(t *testing.T) {
+			f, a := completedWithQueuedContinuation(t)
+			a = f.setAgent(t, a, func(a *core.Agent) {
+				a.Compaction.Status, a.Compaction.CompletedAt = "unverified", time.Time{}
+				tc.edit(a.Compaction)
+			})
+			f.input.screen = tc.screen
+			var refused commandError
+			if err := f.cmd.compact([]string{"worker", "--resume", "second"}); errors.As(err, &refused) && refused.status == exitRefused {
+				t.Fatalf("compact refused: %v", err)
+			}
+			if got := f.agent(t, a.ID); got.Compaction.ID == "c" {
+				t.Fatalf("record kept: %+v", got.Compaction)
+			}
+		})
 	}
 }
