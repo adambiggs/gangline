@@ -2,6 +2,7 @@ package main
 
 import (
 	"errors"
+	"fmt"
 	"os"
 	"strings"
 	"testing"
@@ -68,6 +69,7 @@ func TestBlockedStartupWithClosedPaneFails(t *testing.T) {
 		a.Status, a.Activity = core.Booting, core.Blocked
 	})
 	f.input.captureErr = errors.New("capture pane: can't find pane: %1")
+	f.input.paneClosed = true
 	f.cmd.paneBackend = identityFixture{inputFixture: f.input}
 	if err := f.cmd.tick([]string{"--agent", "worker"}); err != nil {
 		t.Fatal(err)
@@ -138,51 +140,67 @@ func TestTickReleasesBootHoldAtReadiness(t *testing.T) {
 }
 
 // A tick or roster that finds an agent's pane closed outside gang fails the
-// agent and forgets the pane, so no later observation addresses it.
-func TestClosedPaneIsForgotten(t *testing.T) {
-	for _, tc := range []struct {
-		name   string
-		status core.Status
-		roster bool
-	}{
-		{name: "tick active", status: core.Active},
-		{name: "tick booting", status: core.Booting},
-		{name: "tick failed", status: core.Failed},
-		{name: "roster active", status: core.Active, roster: true},
-		{name: "roster failed", status: core.Failed, roster: true},
-	} {
-		t.Run(tc.name, func(t *testing.T) {
-			f := newStateFixture(t)
-			a := f.setAgent(t, f.add(t, "a", "worker", "codex"), func(a *core.Agent) {
-				// The fixture's tmux lists only %1.
-				a.Pane, a.Status = "%2", tc.status
-				if tc.status == core.Booting {
-					a.BootDeadline = f.cmd.now().Add(bootTimeout)
+// agent and forgets the pane, so no later observation addresses it. A pane
+// gang cannot see without seeing it closed, as through an unreachable server
+// or a renamed session, stays recorded so no hitch mistakes it for a foreign
+// pane.
+func TestOnlyClosedPaneIsForgotten(t *testing.T) {
+	for _, closed := range []bool{true, false} {
+		for _, tc := range []struct {
+			name   string
+			status core.Status
+			roster bool
+		}{
+			{name: "tick active", status: core.Active},
+			{name: "tick booting", status: core.Booting},
+			{name: "tick failed", status: core.Failed},
+			{name: "roster active", status: core.Active, roster: true},
+			{name: "roster failed", status: core.Failed, roster: true},
+		} {
+			t.Run(fmt.Sprintf("%s closed=%v", tc.name, closed), func(t *testing.T) {
+				f := newStateFixture(t)
+				a := f.setAgent(t, f.add(t, "a", "worker", "codex"), func(a *core.Agent) {
+					// The fixture's tmux lists only %1.
+					a.Pane, a.Status = "%2", tc.status
+					if tc.status == core.Booting {
+						a.BootDeadline = f.cmd.now().Add(bootTimeout)
+					}
+					if tc.status == core.Failed {
+						a.Evidence = "boot deadline elapsed"
+					}
+				})
+				f.input.captureErr = errors.New("capture pane: can't find pane: %2")
+				f.input.paneClosed = closed
+				f.cmd.paneBackend = identityFixture{inputFixture: f.input}
+				var err error
+				if tc.roster {
+					err = f.cmd.roster(nil)
+				} else {
+					err = f.cmd.tick([]string{"--agent", "worker"})
 				}
+				got := f.agent(t, a.ID)
+				if !closed && !tc.roster && tc.status != core.Failed {
+					// A probe failure without a witnessed close is the tick's error.
+					if err == nil || got.Status != tc.status || got.Pane != "%2" {
+						t.Fatalf("tick %v, record = %s pane %q; want an error and the record kept", err, got.Status, got.Pane)
+					}
+					return
+				}
+				if err != nil {
+					t.Fatal(err)
+				}
+				want, pane := "registered pane is absent from tmux", ""
 				if tc.status == core.Failed {
-					a.Evidence = "boot deadline elapsed"
+					want = "boot deadline elapsed"
+				}
+				if !closed {
+					pane = "%2"
+				}
+				if got.Status != core.Failed || got.Pane != pane || got.Evidence != want {
+					t.Fatalf("record = %s pane %q %q, want failed with pane %q, %q", got.Status, got.Pane, got.Evidence, pane, want)
 				}
 			})
-			f.input.captureErr = errors.New("capture pane: can't find pane: %2")
-			f.cmd.paneBackend = identityFixture{inputFixture: f.input}
-			var err error
-			if tc.roster {
-				err = f.cmd.roster(nil)
-			} else {
-				err = f.cmd.tick([]string{"--agent", "worker"})
-			}
-			if err != nil {
-				t.Fatal(err)
-			}
-			got := f.agent(t, a.ID)
-			want := "registered pane is absent from tmux"
-			if tc.status == core.Failed {
-				want = "boot deadline elapsed"
-			}
-			if got.Status != core.Failed || got.Pane != "" || got.Evidence != want {
-				t.Fatalf("record = %s pane %q %q, want failed without its pane, %q", got.Status, got.Pane, got.Evidence, want)
-			}
-		})
+		}
 	}
 }
 

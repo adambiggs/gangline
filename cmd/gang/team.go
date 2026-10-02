@@ -225,9 +225,9 @@ func (run *runtime) observeRoster(agents []core.Agent) ([]core.Agent, error) {
 		}
 		if current.Pane != "" && !present[current.Pane] && current.Status != core.Dropping {
 			// The listing is enough to fail the agent. Only a check that
-			// confirms the pane gone removes it from the record.
+			// confirms the pane closed removes it from the record.
 			var err error
-			if gone, checkErr := run.paneGone(current); checkErr == nil && gone {
+			if _, closed, checkErr := run.paneGone(current); checkErr == nil && closed {
 				err = run.forgetPane(l, &current)
 			} else if current.Status != core.Failed {
 				err = run.apply(l, &current, core.Event{Type: "hitch_failed", Reason: "registered pane is absent from tmux"})

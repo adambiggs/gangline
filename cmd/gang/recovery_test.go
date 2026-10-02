@@ -332,7 +332,7 @@ func TestExpiredBootDeadlineReportsHeldNativeExit(t *testing.T) {
 	}
 }
 
-func TestExpiredBootDeadlineFailsRecordWithoutItsPane(t *testing.T) {
+func TestExpiredBootDeadlineFailsRecordAndForgetsOnlyClosedPane(t *testing.T) {
 	// The registry refuses an identity with no pane before it asks tmux.
 	registry, err := tmux.New(tmux.Config{Binary: filepath.Join(t.TempDir(), "tmux"), Session: "team"})
 	if err != nil {
@@ -343,19 +343,23 @@ func TestExpiredBootDeadlineFailsRecordWithoutItsPane(t *testing.T) {
 		t.Fatal("registry accepted an identity with no pane")
 	}
 	for _, tc := range []struct {
-		name, pane string
-		present    bool
-		checkErr   error
-		kept       bool
+		name, pane      string
+		present, closed bool
+		checkErr        error
+		live, keepsPane bool
 	}{
 		{name: "no pane", checkErr: noPane},
-		{name: "absent pane", pane: "%1"},
-		{name: "replaced pane", pane: "%1", checkErr: fmt.Errorf("%w: pane %%1 differs", tmux.ErrPaneReplaced)},
-		{name: "live pane", pane: "%1", present: true, kept: true},
+		{name: "closed pane", pane: "%1", closed: true},
+		// Neither an unreachable server nor a renamed session shows that the
+		// pane closed, so the failed record keeps it.
+		{name: "unreachable pane", pane: "%1", keepsPane: true},
+		{name: "replaced pane", pane: "%1", checkErr: fmt.Errorf("%w: pane %%1 differs", tmux.ErrPaneReplaced), keepsPane: true},
+		{name: "live pane", pane: "%1", present: true, live: true, keepsPane: true},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			f := newStateFixture(t)
 			f.input.captureErr = errors.New("can't find pane: %1")
+			f.input.paneClosed = tc.closed
 			f.run.cmd.paneBackend = identityFixture{inputFixture: f.input, present: tc.present, checkErr: tc.checkErr}
 			a := f.add(t, "a", "worker", "codex")
 			p, _ := f.run.team.Agent(a.ID)
@@ -375,7 +379,7 @@ func TestExpiredBootDeadlineFailsRecordWithoutItsPane(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			if tc.kept {
+			if tc.live {
 				// A capture error on a pane still present is transient.
 				if tickErr == nil || a.Status != core.Booting || a.Pane != tc.pane {
 					t.Fatalf("live pane: tick %v, record %+v", tickErr, a)
@@ -385,8 +389,12 @@ func TestExpiredBootDeadlineFailsRecordWithoutItsPane(t *testing.T) {
 			if tickErr != nil {
 				t.Fatalf("tick: %v", tickErr)
 			}
-			if a.Status != core.Failed || a.Pane != "" {
-				t.Fatalf("expired boot without its pane retained: %+v", a)
+			want := ""
+			if tc.keepsPane {
+				want = tc.pane
+			}
+			if a.Status != core.Failed || a.Pane != want {
+				t.Fatalf("expired boot: want failed with pane %q, got %+v", want, a)
 			}
 		})
 	}

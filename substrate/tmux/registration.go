@@ -92,6 +92,33 @@ func (b *Backend) CheckPane(ctx context.Context, expected PaneIdentity) (bool, e
 	return true, nil
 }
 
+// PaneClosed reports whether the server that registered the pane still runs
+// and no longer has it. tmux does not reuse a pane id within a server
+// lifetime, so only that server can witness the close. An unreachable or
+// different server, or a pane outside the configured session, proves nothing.
+func (b *Backend) PaneClosed(ctx context.Context, id PaneIdentity) (bool, error) {
+	if err := validPaneIdentity(id); err != nil {
+		return false, err
+	}
+	out, err := b.run(ctx, "list-panes", "-a", "-F", "#{"+generationOption+"}\t#{pane_id}")
+	if err != nil {
+		if absentTmuxServer(out) && ctx.Err() == nil {
+			return false, nil
+		}
+		return false, tmuxError("read pane registration", err, out)
+	}
+	for _, line := range strings.Split(strings.TrimSuffix(out, "\n"), "\n") {
+		fields := strings.Split(line, "\t")
+		if len(fields) != 2 {
+			return false, fmt.Errorf("invalid pane registration record %q", line)
+		}
+		if fields[0] != id.Generation || fields[1] == id.Pane {
+			return false, nil
+		}
+	}
+	return true, nil
+}
+
 func (b *Backend) registeredPane(ctx context.Context, pane string) (PaneIdentity, bool, error) {
 	out, err := b.run(ctx, "list-panes", "-a", "-F", "#{"+generationOption+"}\t#{session_id}\t#{pane_id}")
 	if err != nil {

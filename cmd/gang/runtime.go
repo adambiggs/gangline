@@ -213,10 +213,17 @@ func (run *runtime) checkDeadlines(l *store.LockedAgent, a *core.Agent) error {
 			return run.apply(l, a, core.Event{Type: "hitch_failed", Reason: exited.Error()})
 		}
 		if err != nil {
-			// A registered pane that is gone shows nothing either: the record
-			// fails and no longer owns a pane.
-			gone, checkErr := run.forgetGonePane(l, a)
-			if checkErr != nil || !gone {
+			// A registered pane that is gone shows nothing either. A closed pane
+			// fails the record, which no longer owns it. A pane that is only
+			// unobservable stays recorded, and an expired deadline fails it.
+			gone, closed, checkErr := run.paneGone(*a)
+			switch {
+			case checkErr == nil && closed:
+				return run.forgetPane(l, a)
+			case !expired:
+				// The startup is not due; tick reports its own capture error.
+				return nil
+			case checkErr != nil || !gone:
 				return errors.Join(err, checkErr)
 			}
 		} else if expired {
@@ -241,12 +248,12 @@ func (run *runtime) checkDeadlines(l *store.LockedAgent, a *core.Agent) error {
 	return run.apply(l, a, core.Event{Type: "deadline_checked"})
 }
 
-// forgetGonePane fails a record whose registered pane is gone and removes the
-// pane from it, so no later observation addresses a pane gang does not own.
-// It reports whether the pane was gone.
-func (run *runtime) forgetGonePane(l *store.LockedAgent, a *core.Agent) (bool, error) {
-	gone, err := run.paneGone(*a)
-	if err != nil || !gone {
+// forgetClosedPane fails a record whose registered pane is closed and removes
+// the pane from it, so no later observation addresses a pane gang does not
+// own. It reports whether the pane was closed.
+func (run *runtime) forgetClosedPane(l *store.LockedAgent, a *core.Agent) (bool, error) {
+	_, closed, err := run.paneGone(*a)
+	if err != nil || !closed {
 		return false, err
 	}
 	return true, run.forgetPane(l, a)
@@ -261,17 +268,24 @@ func (run *runtime) forgetPane(l *store.LockedAgent, a *core.Agent) error {
 }
 
 // paneGone reports whether the record's registered pane is absent or now
-// names another server's or session's pane.
-func (run *runtime) paneGone(a core.Agent) (bool, error) {
+// names another server's or session's pane, and whether the server that
+// registered it confirms it closed. Only a closed pane may leave the record:
+// an unreachable server or a renamed session hides a pane that still runs.
+func (run *runtime) paneGone(a core.Agent) (gone, closed bool, err error) {
 	registry, err := run.registry()
 	if err != nil {
-		return false, err
+		return false, false, err
 	}
-	present, err := registry.CheckPane(context.Background(), paneIdentity(a))
+	id := paneIdentity(a)
+	present, err := registry.CheckPane(context.Background(), id)
 	if errors.Is(err, tmux.ErrPaneReplaced) {
-		return true, nil
+		present, err = false, nil
 	}
-	return !present && err == nil, err
+	if err != nil || present {
+		return false, false, err
+	}
+	closed, err = registry.PaneClosed(context.Background(), id)
+	return true, closed, err
 }
 func (run *runtime) recoverInput(l *store.LockedAgent, a *core.Agent) error {
 	if a.Input == nil {

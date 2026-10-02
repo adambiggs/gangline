@@ -319,3 +319,59 @@ func TestCreatedSessionDoesNotRetainHitchCapabilities(t *testing.T) {
 		t.Fatalf("ordinary pane inherited capability=%q err=%v", data, err)
 	}
 }
+
+func TestPaneClosedOnlyOnTheRegisteringServer(t *testing.T) {
+	t.Setenv("TMUX", "")
+	t.Setenv("TMUX_PANE", "")
+	binary, err := exec.LookPath("tmux")
+	if err != nil {
+		t.Skip("tmux is required")
+	}
+	root := privateTmuxRoot(t)
+	socket := filepath.Join(root, "tmux.sock")
+	const session = "closed-test"
+	runTmux(t, binary, socket, "new-session", "-d", "-s", session)
+	t.Cleanup(func() { runTmux(t, binary, socket, "kill-session", "-t", "="+session) })
+	b, err := New(Config{Binary: binary, Socket: socket, Session: session})
+	if err != nil {
+		t.Fatal(err)
+	}
+	ctx := context.Background()
+	pane, err := b.Spawn(ctx, substrate.SpawnSpec{Name: "registered", Directory: root, Command: "cat"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	id, err := b.RegisterPane(ctx, pane.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	closed := func(b *Backend, id PaneIdentity) bool {
+		t.Helper()
+		got, err := b.PaneClosed(ctx, id)
+		if err != nil {
+			t.Fatal(err)
+		}
+		return got
+	}
+	if closed(b, id) {
+		t.Fatal("live pane reads closed")
+	}
+	runTmux(t, binary, socket, "rename-session", "-t", "="+session, "renamed")
+	if closed(b, id) {
+		t.Fatal("pane in a renamed session reads closed")
+	}
+	runTmux(t, binary, socket, "rename-session", "-t", "=renamed", session)
+	elsewhere, _ := New(Config{Binary: binary, Socket: filepath.Join(root, "absent.sock"), Session: session})
+	if closed(elsewhere, id) {
+		t.Fatal("pane reads closed on an unreachable server")
+	}
+	runTmux(t, binary, socket, "kill-pane", "-t", id.Pane)
+	if !closed(b, id) {
+		t.Fatal("closed pane on its own server does not read closed")
+	}
+	other := id
+	other.Generation = strings.Repeat("a", 64)
+	if closed(b, other) {
+		t.Fatal("pane of another server generation reads closed")
+	}
+}
