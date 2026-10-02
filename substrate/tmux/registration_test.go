@@ -375,3 +375,54 @@ func TestPaneClosedOnlyOnTheRegisteringServer(t *testing.T) {
 		t.Fatal("pane of another server generation reads closed")
 	}
 }
+
+// A registration names only its own pane's window: a pane id that now names
+// another server's pane, or a pane gang cannot see, keeps its name.
+func TestRenameRegisteredWindowNamesOnlyItsPane(t *testing.T) {
+	t.Setenv("TMUX", "")
+	t.Setenv("TMUX_PANE", "")
+	binary, err := exec.LookPath("tmux")
+	if err != nil {
+		t.Skip("tmux is required")
+	}
+	root := privateTmuxRoot(t)
+	socket := filepath.Join(root, "tmux.sock")
+	const session = "rename-test"
+	runTmux(t, binary, socket, "new-session", "-d", "-s", session)
+	t.Cleanup(func() { runTmux(t, binary, socket, "kill-session", "-t", "="+session) })
+	b, err := New(Config{Binary: binary, Socket: socket, Session: session})
+	if err != nil {
+		t.Fatal(err)
+	}
+	ctx := context.Background()
+	pane, err := b.Spawn(ctx, substrate.SpawnSpec{Name: "registered", Directory: root, Command: "cat"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	id, err := b.RegisterPane(ctx, pane.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	name := func() string {
+		t.Helper()
+		return strings.TrimSpace(runTmux(t, binary, socket, "display-message", "-p", "-t", id.Pane, "#{window_name}"))
+	}
+	other := id
+	other.Generation = strings.Repeat("a", 64)
+	if err := b.RenameRegisteredWindow(ctx, other, "stale"); err != nil {
+		t.Fatal(err)
+	}
+	if got := name(); got != "registered" {
+		t.Fatalf("pane of another server generation renamed to %q", got)
+	}
+	elsewhere, _ := New(Config{Binary: binary, Socket: filepath.Join(root, "absent.sock"), Session: session})
+	if err := elsewhere.RenameRegisteredWindow(ctx, id, "unreachable"); err != nil {
+		t.Fatalf("rename on an unreachable server: %v", err)
+	}
+	if err := b.RenameRegisteredWindow(ctx, id, "renamed#S"); err != nil {
+		t.Fatal(err)
+	}
+	if got := name(); got != "renamed#S" {
+		t.Fatalf("registered pane named %q, want the literal name", got)
+	}
+}

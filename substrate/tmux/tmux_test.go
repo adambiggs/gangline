@@ -167,7 +167,11 @@ func TestBackendDrivesPrivateTmuxServer(t *testing.T) {
 	if found, err := backend.PaneNamed(context.Background(), "worker#S"); err != nil || found.ID != pane.ID {
 		t.Fatalf("named pane = %#v, %v; want %q", found, err, pane.ID)
 	}
-	if err := backend.Rename(context.Background(), pane.ID, "renamed#S"); err != nil {
+	id, err := backend.RegisterPane(context.Background(), pane.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := backend.RenameRegisteredWindow(context.Background(), id, "renamed#S"); err != nil {
 		t.Fatal(err)
 	}
 	if found, err := backend.PaneNamed(context.Background(), "renamed#S"); err != nil || found.ID != pane.ID {

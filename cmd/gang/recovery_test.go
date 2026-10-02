@@ -504,10 +504,16 @@ func TestStatusMarksExpiredDeadlineFromTheObservedWindowTitle(t *testing.T) {
 	script := `#!/bin/sh
 # SPDX-License-Identifier: Apache-2.0
 case "$1" in
- list-panes) printf '%%1\t?worker?\n'; printf 'listed\n' >> "$(dirname "$0")/listed";;
+ list-panes) case "$*" in
+  *gangline_generation*) printf '%s\t$1\t%%1\n' ` + strings.Repeat("a", 64) + `;;
+  *) printf '%%1\t?worker?\n'; printf 'listed\n' >> "$(dirname "$0")/listed";;
+  esac;;
  capture-pane) printf 'still launching\n';;
- display-message) printf '0,0,0,0,\n';;
- rename-window) printf '%s\n' "$*" > "$(dirname "$0")/marked";;
+ display-message) case "$*" in
+  *session_id*) printf '$1\n';;
+  *) printf '0,0,0,0,\n';;
+  esac;;
+ if-shell) printf '%s\n' "$*" > "$(dirname "$0")/marked";;
  *) exit 91;;
 esac
 `

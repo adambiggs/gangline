@@ -357,8 +357,11 @@ func (run *runtime) input() (harnessInput, error) {
 	}
 	return run.cmd.tmux(run.settings)
 }
+
+// mark titles the agent's window through its registration, so a pane id that
+// now names another pane keeps that pane's title.
 func (run *runtime) mark(a core.Agent) error {
-	if a.Pane == "" {
+	if requirePaneRegistration(a) != nil {
 		return nil
 	}
 	if run.cmd.inputBackend != nil {
@@ -368,5 +371,5 @@ func (run *runtime) mark(a core.Agent) error {
 	if err != nil {
 		return err
 	}
-	return b.Rename(context.Background(), substrate.PaneID(a.Pane), windowTitle(a))
+	return b.RenameRegisteredWindow(context.Background(), paneIdentity(a), windowTitle(a))
 }

@@ -270,6 +270,20 @@ func (b *Backend) ReleaseRegisteredExit(ctx context.Context, id PaneIdentity) er
 	return releasedExit(out)
 }
 
+// RenameRegisteredWindow names the window of a registered pane. A pane that is
+// absent, or whose id now names another server's or session's pane, keeps its
+// name: that window is not the registration's.
+func (b *Backend) RenameRegisteredWindow(ctx context.Context, id PaneIdentity, name string) error {
+	if err := validWindowName(name); err != nil {
+		return err
+	}
+	err := b.mutateRegisteredPane(ctx, id, tmuxCommand("rename-window", "-t", id.Pane, "--", escapeFormat(name)), "", 0, true)
+	if errors.Is(err, ErrPaneReplaced) {
+		return nil
+	}
+	return err
+}
+
 func (b *Backend) mutateRegisteredPane(ctx context.Context, id PaneIdentity, command, foreground string, nativePID int, absentOK bool) error {
 	exists, err := b.CheckPane(ctx, id)
 	if err != nil {

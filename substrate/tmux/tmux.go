@@ -341,20 +341,6 @@ func (backend *Backend) ForegroundCommand(ctx context.Context, pane substrate.Pa
 	return command, nil
 }
 
-func (backend *Backend) Rename(ctx context.Context, pane substrate.PaneID, name string) error {
-	if err := validPaneID(pane); err != nil {
-		return err
-	}
-	if err := validWindowName(name); err != nil {
-		return err
-	}
-	output, err := backend.run(ctx, "rename-window", "-t", string(pane), "--", escapeFormat(name))
-	if err != nil {
-		return tmuxError("rename pane", err, output)
-	}
-	return nil
-}
-
 func (backend *Backend) SendKeys(ctx context.Context, pane substrate.PaneID, keys substrate.Keys) error {
 	if err := validPaneID(pane); err != nil {
 		return err
