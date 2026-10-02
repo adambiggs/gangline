@@ -21,7 +21,7 @@ dump() {
     echo "== trigger pid=$pid args=$args"
     date -u; uname -a; tmux -V
     echo "== ps"
-    ps ax -o pid,ppid,pgid,stat,etime,wchan,blocked,pending,caught,ignored,command
+    ps ax -o pid,ppid,pgid,stat,etime,wchan,blocked,pending,command
     socket="$(printf '%s\n' "$args" | awk '{for(i=1;i<NF;i++) if ($i=="-S") {print $(i+1); exit}}')"
     echo "== socket $socket"
     server="$(bounded 5 tmux -S "$socket" display-message -p '#{pid}' 2>&1)"

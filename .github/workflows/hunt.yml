@@ -33,7 +33,7 @@ jobs:
       - name: Environment
         run: |
           tmux -V; go version; command -v strace || true
-          grep -E '^Sig' /proc/self/status || ps -o pid,blocked,pending,ignored -p $$
+          grep -E "^Sig" /proc/self/status || ps -o pid,blocked,pending -p $$
       - name: Hunt
         run: |
           ci-hunt/watchdog.sh "$RUNNER_TEMP/diag/watch" &
