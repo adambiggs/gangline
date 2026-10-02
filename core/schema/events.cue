@@ -36,7 +36,7 @@ import "time"
   "renamed" | "send_queued" | "send_cancelled" |
   "input_started" | "input_finished" | "delivery_accepted" | "delivery_succeeded" | "delivery_failed" | "delivery_unverified" |
   "activity_observed" | "observation" | "native_hook" | "hook_failed" | "context_band_crossed" |
-  "compaction_requested" | "compaction_submitted" | "compaction_completed" | "compaction_failed" | "compaction_unverified" |
+  "compaction_requested" | "compaction_waiting" | "compaction_submitted" | "compaction_completed" | "compaction_failed" | "compaction_unverified" |
   "interrupt_requested" | "interrupt_completed" | "deadline_checked" |
   "drop_started" | "drop_finished" | "curfew_set" | "curfew_cleared" |
   "capacity_detected" | "capacity_submitted" | "capacity_cleared" | "snooze_scheduled" | "snooze_cleared" | "snooze_completed" | "snooze_failed" | "snooze_cap_rejected" | "snooze_rearmed" | "notice_failed" | "tick" | "tick_failed" | "watchdog_unavailable" | "watchdog_available" | "watchdog_failed" | "process_verification_unavailable" | "process_verification_available"
@@ -48,7 +48,7 @@ import "time"
 })
 
 #Event: #Fields & (
- {type: "hitch_claimed" | "hitch_spawned" | "hitch_ready" | "hitch_blocked" | "hitch_failed" | "renamed" | "send_cancelled" | "delivery_accepted" | "delivery_succeeded" | "delivery_failed" | "delivery_unverified" | "activity_observed" | "observation" | "native_hook" | "compaction_submitted" | "compaction_completed" | "compaction_failed" | "compaction_unverified" | "interrupt_requested" | "interrupt_completed" | "deadline_checked" | "drop_started" | "drop_finished" | "curfew_set" | "curfew_cleared" | "capacity_detected" | "capacity_submitted" | "capacity_cleared" | "watchdog_available" | "process_verification_available"} |
+ {type: "hitch_claimed" | "hitch_spawned" | "hitch_ready" | "hitch_blocked" | "hitch_failed" | "renamed" | "send_cancelled" | "delivery_accepted" | "delivery_succeeded" | "delivery_failed" | "delivery_unverified" | "activity_observed" | "observation" | "native_hook" | "compaction_waiting" | "compaction_submitted" | "compaction_completed" | "compaction_failed" | "compaction_unverified" | "interrupt_requested" | "interrupt_completed" | "deadline_checked" | "drop_started" | "drop_finished" | "curfew_set" | "curfew_cleared" | "capacity_detected" | "capacity_submitted" | "capacity_cleared" | "watchdog_available" | "process_verification_available"} |
  {type: "send_queued", envelope: #Envelope} |
  {type: "context_band_crossed", id: #ID, hitch_id: #ID, status: #ID, envelope: #Envelope, readings: [#Reading]} |
  {type: "snooze_scheduled" | "snooze_cleared" | "snooze_failed", id: #ID, hitch_id: #ID, reason: #ID} |

@@ -49,6 +49,11 @@ func Step(agent Agent, event Event) (Agent, []Effect) {
 		}
 		c := *event.Compaction
 		agent.Compaction = &c
+	case "compaction_waiting":
+		if agent.Compaction == nil || agent.Compaction.ID != event.ID || agent.Compaction.Status != "queued" {
+			return agent, nil
+		}
+		agent.Compaction.Reason = event.Reason
 	case "compaction_submitted":
 		if agent.Compaction == nil || agent.Compaction.ID != event.ID {
 			return agent, nil

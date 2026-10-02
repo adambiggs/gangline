@@ -94,6 +94,14 @@ and an idle-looking screen does not show that none will: the harness may hold
 the command behind a turn still streaming, or still be running its
 pre-compaction hooks.
 
+A recorded native turn failure leaves the agent's activity unknown, but a
+queued compaction still starts once the screen reads idle with no turn open.
+A provider capacity failure (`rate_limit`, `overloaded`, `server_error`,
+`billing_error`) would fail the compaction the same way, so it keeps waiting
+until a later turn finishes: one `compaction_waiting` event names the class,
+`gang compact` and `gang status NAME --why` show it as the compaction's reason, and
+an empty `compaction_waiting` marks the end of the wait.
+
 For a harness without a native queue witness, sends also wait after the
 compaction ends until the harness admits the queued resume note, whose submit
 hook must run first. If that hook blocks the note, the compaction fails, the

@@ -13,9 +13,17 @@ import (
 
 // observeActivity uses current pane evidence without changing message receipts.
 func (run *runtime) observeActivity(l *store.LockedAgent, a *core.Agent, c harness.Collar, screen substrate.Screen) error {
+	_, err := run.observeScreen(l, a, c, screen)
+	return err
+}
+
+// observeScreen is observeActivity that also reports whether the screen alone
+// reads idle with no open turn, before a recorded turn failure or pending
+// compaction overrides the activity.
+func (run *runtime) observeScreen(l *store.LockedAgent, a *core.Agent, c harness.Collar, screen substrate.Screen) (screenIdle bool, err error) {
 	blocked, found, err := harness.InputBlocked(c, screen)
 	if err != nil {
-		return err
+		return false, err
 	}
 	activity, evidence := a.Activity, a.Evidence
 	fingerprint := harness.ScreenFingerprint(screen)
@@ -41,7 +49,7 @@ func (run *runtime) observeActivity(l *store.LockedAgent, a *core.Agent, c harne
 			activity, evidence, basis.Screen = core.Idle, "", "idle"
 			open, err := run.openTurn(l, a, c, fingerprint)
 			if err != nil {
-				return err
+				return false, err
 			}
 			if open {
 				activity, evidence, basis.Rule = core.Busy, "native turn open: submit witnessed, no finish boundary yet", "open-turn"
@@ -59,6 +67,7 @@ func (run *runtime) observeActivity(l *store.LockedAgent, a *core.Agent, c harne
 			}
 		}
 	}
+	screenIdle = activity == core.Idle
 	if a.Compaction != nil && a.Compaction.Status == "submitted" && activity != core.Blocked {
 		activity, evidence, basis.Rule = core.Compacting, "native compaction completion unconfirmed; queued resume awaits confirmation", "compaction-record"
 	}
@@ -68,7 +77,7 @@ func (run *runtime) observeActivity(l *store.LockedAgent, a *core.Agent, c harne
 	if a.ScreenFingerprint != fingerprint {
 		a.ScreenFingerprint, a.ScreenSince = fingerprint, run.cmd.now()
 		if err := l.Save(*a); err != nil {
-			return err
+			return false, err
 		}
 	}
 	wedge, err := harness.DetectWedge(c.Primitives.Wedge, harness.WedgeObservation{
@@ -76,17 +85,17 @@ func (run *runtime) observeActivity(l *store.LockedAgent, a *core.Agent, c harne
 		ObservedAt: run.cmd.now(), TurnActive: screenBusy,
 	})
 	if err != nil {
-		return err
+		return false, err
 	}
 	if wedge.Detected {
 		activity, evidence, basis.Rule = core.Wedged, wedge.Evidence, "wedge"
 	}
 	if activity != a.Activity || evidence != a.Evidence {
 		if err := run.apply(l, a, core.Event{Type: "activity_observed", Activity: activity, Reason: evidence, Fingerprint: fingerprint, Basis: &basis}); err != nil {
-			return err
+			return false, err
 		}
 	}
-	return nil
+	return screenIdle, nil
 }
 
 // activityBasis names what an activity reading of a was derived from: the

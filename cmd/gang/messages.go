@@ -631,7 +631,11 @@ func (cmd command) compact(args []string) (result error) {
 		return err
 	}
 	if a.Compaction.Status == "queued" {
-		_, err := fmt.Fprintf(cmd.stdout, "%s\tqueued; waiting for native idle; resume enters native queue when compaction starts\n", id)
+		wait := "waiting for native idle"
+		if a.Compaction.Reason != "" {
+			wait = a.Compaction.Reason
+		}
+		_, err := fmt.Fprintf(cmd.stdout, "%s\tqueued; %s; resume enters native queue when compaction starts\n", id, wait)
 		return err
 	}
 	if a.Compaction.Status == "failed" {
@@ -650,6 +654,26 @@ func (cmd command) compact(args []string) (result error) {
 	_, err = fmt.Fprintf(cmd.stdout, "%s\tcompleted; resume %s\n", id, outcome)
 	return err
 }
+
+// turnFailureClass is the native error class that leads a recorded turn
+// failure, without the prefix gang adds when no turn identity matched.
+func turnFailureClass(failure string) string {
+	failure = strings.TrimPrefix(failure, "native failure without turn identity: ")
+	class, _, _ := strings.Cut(failure, ": ")
+	return class
+}
+
+// capacityFailure names the native classes that report the provider unable to
+// serve this account now. An unlisted class starts the compaction: one spent
+// attempt fails smaller than a compaction that never starts.
+func capacityFailure(class string) bool {
+	switch class {
+	case "rate_limit", "overloaded", "server_error", "billing_error":
+		return true
+	}
+	return false
+}
+
 func (run *runtime) startCompaction(l *store.LockedAgent, a *core.Agent) (result error) {
 	if a.Compaction == nil || a.Compaction.Status != "queued" || a.Status != core.Active {
 		return nil
@@ -675,10 +699,27 @@ func (run *runtime) startCompaction(l *store.LockedAgent, a *core.Agent) (result
 	if err != nil {
 		return errors.Join(err, run.observeProbeFailure(l, a, err))
 	}
-	if err := run.observeActivity(l, a, c, screen); err != nil {
+	screenIdle, err := run.observeScreen(l, a, c, screen)
+	if err != nil {
 		return err
 	}
-	if a.Activity != core.Idle {
+	// A failed turn leaves the activity unknown until a later turn finishes,
+	// and a compaction is what the agent needs to recover. Only a provider
+	// capacity failure keeps it waiting: compacting would fail the same way.
+	wait := ""
+	if a.Native.TurnFailure != "" && screenIdle {
+		if class := turnFailureClass(a.Native.TurnFailure); capacityFailure(class) {
+			wait = "native turn failed with provider capacity class " + class + "; compaction waits until a later turn finishes"
+		}
+	} else if a.Activity != core.Idle {
+		return nil
+	}
+	if wait != a.Compaction.Reason {
+		if err := run.apply(l, a, core.Event{Type: "compaction_waiting", ID: a.Compaction.ID, Reason: wait}); err != nil {
+			return err
+		}
+	}
+	if wait != "" {
 		return nil
 	}
 	free, _, err := run.available(l, a, b, c)
