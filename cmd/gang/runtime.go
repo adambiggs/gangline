@@ -210,13 +210,12 @@ func (run *runtime) checkDeadlines(l *store.LockedAgent, a *core.Agent) error {
 			return run.apply(l, a, core.Event{Type: "hitch_failed", Reason: exited.Error()})
 		}
 		if err != nil {
-			// A registered pane that is gone shows nothing either: the deadline
-			// fails the record, which no longer owns a pane.
-			gone, checkErr := run.paneGone(*a)
+			// A registered pane that is gone shows nothing either: the record
+			// fails and no longer owns a pane.
+			gone, checkErr := run.forgetGonePane(l, a)
 			if checkErr != nil || !gone {
 				return errors.Join(err, checkErr)
 			}
-			a.Pane = ""
 		} else {
 			startup, err := harness.InspectStartup(c, screen)
 			if err != nil {
@@ -237,6 +236,25 @@ func (run *runtime) checkDeadlines(l *store.LockedAgent, a *core.Agent) error {
 		return nil
 	}
 	return run.apply(l, a, core.Event{Type: "deadline_checked"})
+}
+
+// forgetGonePane fails a record whose registered pane is gone and removes the
+// pane from it, so no later observation addresses a pane gang does not own.
+// It reports whether the pane was gone.
+func (run *runtime) forgetGonePane(l *store.LockedAgent, a *core.Agent) (bool, error) {
+	gone, err := run.paneGone(*a)
+	if err != nil || !gone {
+		return false, err
+	}
+	return true, run.forgetPane(l, a)
+}
+
+func (run *runtime) forgetPane(l *store.LockedAgent, a *core.Agent) error {
+	a.Pane = ""
+	if a.Status == core.Failed {
+		return l.Save(*a)
+	}
+	return run.apply(l, a, core.Event{Type: "hitch_failed", Reason: "registered pane is absent from tmux"})
 }
 
 // paneGone reports whether the record's registered pane is absent or now

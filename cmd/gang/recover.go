@@ -49,6 +49,11 @@ func (run *runtime) tickAgent(id core.HitchID, notice hookNotice, wait bool) err
 	if err := run.checkDeadlines(l, &a); err != nil {
 		return err
 	}
+	if a.Status == core.Failed && a.Pane != "" {
+		if _, err := run.forgetGonePane(l, &a); err != nil {
+			return err
+		}
+	}
 	if a.Status == core.Dropping || a.Status == core.Failed {
 		return run.mark(a)
 	}
@@ -81,7 +86,12 @@ func (run *runtime) tickAgent(id core.HitchID, notice hookNotice, wait bool) err
 		return run.mark(a)
 	}
 	if err != nil {
-		return errors.Join(err, run.observeProbeFailure(l, &a, err))
+		// A pane closed outside gang ends the agent; nothing is left to probe.
+		gone, checkErr := run.forgetGonePane(l, &a)
+		if checkErr != nil || !gone {
+			return errors.Join(err, checkErr, run.observeProbeFailure(l, &a, err))
+		}
+		return nil
 	}
 	if a.Status == core.Booting {
 		startup, err := harness.InspectStartup(c, screen)
