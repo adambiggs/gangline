@@ -426,3 +426,114 @@ func TestRenameRegisteredWindowNamesOnlyItsPane(t *testing.T) {
 		t.Fatalf("registered pane named %q, want the literal name", got)
 	}
 }
+
+func TestRegisteredPaneActsWhileItsWindowIsInOtherSessions(t *testing.T) {
+	t.Setenv("TMUX", "")
+	t.Setenv("TMUX_PANE", "")
+	binary, err := exec.LookPath("tmux")
+	if err != nil {
+		t.Skip("tmux is required")
+	}
+	for _, view := range []struct {
+		name string
+		add  func(binary, socket, session, pane string)
+	}{
+		{"grouped", func(binary, socket, session, _ string) {
+			runTmux(t, binary, socket, "new-session", "-d", "-t", "="+session, "-s", session+"-view")
+		}},
+		{"linked", func(binary, socket, session, pane string) {
+			runTmux(t, binary, socket, "new-session", "-d", "-s", session+"-view")
+			runTmux(t, binary, socket, "link-window", "-s", pane, "-t", "="+session+"-view:")
+		}},
+	} {
+		t.Run(view.name, func(t *testing.T) {
+			root := privateTmuxRoot(t)
+			socket := filepath.Join(root, "tmux.sock")
+			session := "views-" + view.name
+			runTmux(t, binary, socket, "new-session", "-d", "-s", session)
+			t.Cleanup(func() {
+				runTmux(t, binary, socket, "kill-session", "-t", "="+session+"-view")
+				runTmux(t, binary, socket, "kill-session", "-t", "="+session)
+			})
+			b, err := New(Config{Binary: binary, Socket: socket, Session: session})
+			if err != nil {
+				t.Fatal(err)
+			}
+			ctx := context.Background()
+			pane, err := b.Spawn(ctx, substrate.SpawnSpec{Name: "registered", Directory: root, Command: "cat"})
+			if err != nil {
+				t.Fatal(err)
+			}
+			id, err := b.RegisterPane(ctx, pane.ID)
+			if err != nil {
+				t.Fatal(err)
+			}
+			view.add(binary, socket, session, id.Pane)
+			if got := strings.TrimSpace(runTmux(t, binary, socket, "display-message", "-p", "-t", id.Pane, "#{session_id}")); got == id.Session {
+				t.Fatalf("pane %s resolves to its registered session %s; the view does not exercise another session", id.Pane, got)
+			}
+			if err := b.RenameRegisteredWindow(ctx, id, "renamed"); err != nil {
+				t.Fatalf("rename: %v", err)
+			}
+			if got := strings.TrimSpace(runTmux(t, binary, socket, "display-message", "-p", "-t", id.Pane, "#{window_name}")); got != "renamed" {
+				t.Fatalf("window named %q, want renamed", got)
+			}
+			if err := b.ReleaseRegisteredExit(ctx, id); err != nil {
+				t.Fatalf("release: %v", err)
+			}
+			if err := b.SendRegisteredKeys(ctx, id, "cat", substrate.Keys{Text: "typed"}); err != nil {
+				t.Fatalf("send: %v", err)
+			}
+			if err := b.RemoveRegisteredPane(ctx, id); err != nil {
+				t.Fatalf("remove: %v", err)
+			}
+			if present, err := b.CheckPane(ctx, id); err != nil || present {
+				t.Fatalf("pane after removal: present=%v err=%v", present, err)
+			}
+		})
+	}
+}
+
+func TestRegisteredPaneRefusedOutsideItsSession(t *testing.T) {
+	t.Setenv("TMUX", "")
+	t.Setenv("TMUX_PANE", "")
+	binary, err := exec.LookPath("tmux")
+	if err != nil {
+		t.Skip("tmux is required")
+	}
+	root := privateTmuxRoot(t)
+	socket := filepath.Join(root, "tmux.sock")
+	const session = "moved"
+	runTmux(t, binary, socket, "new-session", "-d", "-s", session)
+	runTmux(t, binary, socket, "new-session", "-d", "-s", session+"-other")
+	t.Cleanup(func() {
+		runTmux(t, binary, socket, "kill-session", "-t", "="+session+"-other")
+		runTmux(t, binary, socket, "kill-session", "-t", "="+session)
+	})
+	b, err := New(Config{Binary: binary, Socket: socket, Session: session})
+	if err != nil {
+		t.Fatal(err)
+	}
+	ctx := context.Background()
+	pane, err := b.Spawn(ctx, substrate.SpawnSpec{Name: "registered", Directory: root, Command: "cat"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	id, err := b.RegisterPane(ctx, pane.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	runTmux(t, binary, socket, "move-window", "-s", id.Pane, "-t", "="+session+"-other:")
+	if err := b.RenameRegisteredWindow(ctx, id, "renamed"); err != nil {
+		t.Fatalf("rename: %v", err)
+	}
+	if got := strings.TrimSpace(runTmux(t, binary, socket, "display-message", "-p", "-t", id.Pane, "#{window_name}")); got != "registered" {
+		t.Fatalf("window named %q, want registered", got)
+	}
+	if err := b.ReleaseRegisteredExit(ctx, id); !errors.Is(err, ErrPaneReplaced) {
+		t.Fatalf("release: %v, want %v", err, ErrPaneReplaced)
+	}
+	if err := b.SendRegisteredKeys(ctx, id, "cat", substrate.Keys{Text: "typed"}); err == nil {
+		t.Fatal("keys sent to a pane outside its registered session")
+	}
+}

@@ -244,8 +244,13 @@ func tmuxCommand(command string, arguments ...string) string {
 	return out.String()
 }
 
+// registeredCondition holds for the registered pane while it belongs to its
+// registered session. A window can belong to several sessions, and a pane
+// target resolves to whichever of them tmux prefers, so membership is read by
+// walking the registered session's panes rather than from the target's session.
 func registeredCondition(id PaneIdentity) string {
-	return fmt.Sprintf("#{&&:#{==:#{%s},%s},#{&&:#{==:#{session_id},%s},#{==:#{pane_id},%s}}}", generationOption, id.Generation, id.Session, id.Pane)
+	member := fmt.Sprintf("#{S:#{?#{==:#{session_id},%s},#{W:#{P:#{?#{==:#{pane_id},%s},1,}}},}}", id.Session, id.Pane)
+	return fmt.Sprintf("#{&&:#{==:#{%s},%s},#{&&:%s,#{==:#{pane_id},%s}}}", generationOption, id.Generation, member, id.Pane)
 }
 
 // ReleaseRegisteredExit is ReleaseExit for a registered pane. The identity
