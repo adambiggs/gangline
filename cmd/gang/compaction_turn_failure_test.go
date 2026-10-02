@@ -97,6 +97,35 @@ func TestCompactionWaitsOnCapacityTurnFailure(t *testing.T) {
 	}
 }
 
+// Claude keeps its final 529 error on screen after the turn fails, and the
+// collar reads that line as a retry in progress, so the screen is not idle; the
+// capacity wait must still be logged and shown.
+func TestCompactionCapacityWaitShownWhileScreenReadsBusy(t *testing.T) {
+	f, a := failedTurnCompactFixture(t, "server_error")
+	c, err := loadCollar("claude", f.run.settings)
+	if err != nil {
+		t.Fatal(err)
+	}
+	f.input.screen = screenWithText("⏺ API Error: 529 Overloaded. This is a server-side issue, usually", "  temporary — try again in a moment.", "", "────────", "❯ ", "────────")
+	if busy, err := harness.Busy(c, f.input.screen); err != nil || !busy {
+		t.Fatalf("failed-turn screen premise: busy=%v err=%v", busy, err)
+	}
+	if err := f.cmd.compact([]string{"--resume", "Resume from the state file."}); err != nil {
+		t.Fatal(err)
+	}
+	want := "native turn failed with provider capacity class server_error"
+	if out := f.out.String(); !strings.Contains(out, "queued; "+want) {
+		t.Fatalf("output does not name the capacity wait: %q", out)
+	}
+	got := readAgent(t, f, a.ID)
+	if f.input.submits != 0 || got.Compaction.Status != "queued" || !strings.Contains(got.Compaction.Reason, want) {
+		t.Fatalf("submits=%d compaction=%+v", f.input.submits, got.Compaction)
+	}
+	if n := eventsOfType(t, f, "compaction_waiting"); n != 1 {
+		t.Fatalf("logged %d capacity waits, want 1", n)
+	}
+}
+
 // Claude paints no spinner while a reply streams, so an idle-looking screen
 // after a failure is not idle while a later submitted turn is still open.
 func TestCompactionAfterTurnFailureWaitsForOpenTurn(t *testing.T) {

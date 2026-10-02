@@ -706,10 +706,14 @@ func (run *runtime) startCompaction(l *store.LockedAgent, a *core.Agent) (result
 	// A failed turn leaves the activity unknown until a later turn finishes,
 	// and a compaction is what the agent needs to recover. Only a provider
 	// capacity failure keeps it waiting: compacting would fail the same way.
+	// That wait is named whatever the screen shows, since a failed turn's
+	// error can stay on screen looking like a retry in progress.
 	wait := ""
-	if a.Native.TurnFailure != "" && screenIdle {
+	if a.Native.TurnFailure != "" {
 		if class := turnFailureClass(a.Native.TurnFailure); capacityFailure(class) {
 			wait = "native turn failed with provider capacity class " + class + "; compaction waits until a later turn finishes"
+		} else if !screenIdle {
+			return nil
 		}
 	} else if a.Activity != core.Idle {
 		return nil
