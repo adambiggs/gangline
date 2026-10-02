@@ -538,7 +538,13 @@ func (cmd command) compact(args []string) (result error) {
 	name := a.Name
 	l, a, err := run.acquire(a.ID, false)
 	if errors.Is(err, store.ErrLocked) {
-		return refuseError("%s is busy with another gang operation; retry gang compact", name)
+		retry := "gang compact " + name
+		if o.Recover {
+			retry += " --recover"
+		} else if o.Resume != "" {
+			retry += " --resume with the same note"
+		}
+		return refuseError("%s is busy with another gang operation; retry %s", name, retry)
 	}
 	if err != nil {
 		return err

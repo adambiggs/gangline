@@ -84,9 +84,18 @@ func TestCompactRefusesALockedAgentWithItsRetry(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer held.Close()
-	err = f.cmd.compact([]string{"worker", "--resume", "continue"})
-	var ce commandError
-	if !errors.As(err, &ce) || ce.status != exitRefused || err.Error() != "worker is busy with another gang operation; retry gang compact" {
-		t.Fatalf("compact on a locked agent: %v", err)
+	for _, c := range []struct {
+		args  []string
+		retry string
+	}{
+		{[]string{"worker"}, "gang compact worker"},
+		{[]string{"worker", "--resume", "continue"}, "gang compact worker --resume with the same note"},
+		{[]string{"worker", "--recover"}, "gang compact worker --recover"},
+	} {
+		err = f.cmd.compact(c.args)
+		var ce commandError
+		if !errors.As(err, &ce) || ce.status != exitRefused || err.Error() != "worker is busy with another gang operation; retry "+c.retry {
+			t.Fatalf("compact %v on a locked agent: %v", c.args, err)
+		}
 	}
 }
