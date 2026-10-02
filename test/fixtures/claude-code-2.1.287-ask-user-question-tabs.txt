@@ -1,0 +1,21 @@
+● I read the Gangline delivery contract and operator doctrine. I'm ask3;
+  assignment noted.
+
+  Using AskUserQuestion now with both questions in one call:
+────────────────────────────────────────────────────────────────────────────────
+←  ☐ Colour  ☐ Size  ✔ Submit  →
+
+Which colour do you prefer?
+
+❯ 1. Red
+     The colour red
+  2. Green
+     The colour green
+  3. Blue
+     The colour blue
+  4. Type something.
+────────────────────────────────────────────────────────────────────────────────
+  5. Chat about this
+
+Enter to select · Tab/Arrow keys to navigate · Esc to cancel
+

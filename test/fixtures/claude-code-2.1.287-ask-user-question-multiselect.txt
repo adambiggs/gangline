@@ -1,0 +1,20 @@
+● I've read the Gangline delivery contract and operator doctrine. I'm ask2, and
+  I have an assignment. Beginning now.
+────────────────────────────────────────────────────────────────────────────────
+←  ☐ Fruits  ✔ Submit  →
+
+Which fruits do you like?
+
+❯ 1. [ ] Apple
+         A crisp red or green fruit
+  2. [ ] Banana
+         A yellow tropical fruit
+  3. [ ] Cherry
+         A small red stone fruit
+  4. [ ] Type something
+     Submit
+────────────────────────────────────────────────────────────────────────────────
+  5. Chat about this
+
+Enter to select · ↑/↓ to navigate · Esc to cancel
+

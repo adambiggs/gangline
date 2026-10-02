@@ -18,6 +18,11 @@ func TestEmbeddedCollarsDetectRuntimeApprovalSurfaces(t *testing.T) {
 		{name: "codex command approval", collar: "codex", file: "codex-0.151.0-command-approval.txt"},
 		{name: "claude bash permission", collar: "claude", file: "claude-code-2.1.287-permission-bash.txt"},
 		{name: "claude permission taller than the screen", collar: "claude", file: "claude-code-2.1.287-permission-tall.txt"},
+		{name: "claude question", collar: "claude", file: "claude-code-2.1.287-ask-user-question.txt"},
+		{name: "claude multi-select question", collar: "claude", file: "claude-code-2.1.287-ask-user-question-multiselect.txt"},
+		{name: "claude question in tabs", collar: "claude", file: "claude-code-2.1.287-ask-user-question-tabs.txt"},
+		{name: "claude question submit tab", collar: "claude", file: "claude-code-2.1.287-ask-user-question-submit.txt"},
+		{name: "claude question taller than the screen", collar: "claude", file: "claude-code-2.1.287-ask-user-question-tall.txt"},
 	}
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
@@ -116,11 +121,7 @@ func TestTrustTextInTheConversationDoesNotBlockInput(t *testing.T) {
 	codexComposer := fixtureLines(t, "codex-0.151.0-composer.txt")
 	directoryTrust := fixtureLines(t, "codex-0.151.0-directory-trust.txt")
 	quoted := func(intro string, lines []string) []string {
-		reply := []string{intro, ""}
-		for _, line := range lines {
-			reply = append(reply, "    "+line)
-		}
-		return append(reply, codexComposer...)
+		return append(quotedLines(intro, lines), codexComposer...)
 	}
 	tests := []struct {
 		name   string
@@ -179,6 +180,16 @@ func TestBlockedPrimitiveRequiresPromptAndChoice(t *testing.T) {
 	if found {
 		t.Fatal("prompt without a choice was detected as blocked")
 	}
+}
+
+// quotedLines renders lines the way a reply quotes a screen: an introduction,
+// a blank line, and the quoted lines indented as a code block.
+func quotedLines(intro string, lines []string) []string {
+	reply := []string{intro, ""}
+	for _, line := range lines {
+		reply = append(reply, "    "+line)
+	}
+	return reply
 }
 
 func fixtureLines(t *testing.T, name string) []string {

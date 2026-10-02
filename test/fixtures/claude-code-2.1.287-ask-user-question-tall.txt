@@ -1,0 +1,24 @@
+     version instantly once verified. Enables immediate rollback if issues
+     arise. Higher infrastructure cost but minimal downtime and fastest
+     recovery.
+  2. Canary
+     Route a small percentage of traffic to the new version while most users
+     stay on the old one. Gradually increase traffic if no issues detected.
+     Catches problems early with limited blast radius. Slower rollout but safe
+     for critical systems.
+  3. Rolling
+     Update instances incrementally, one at a time or in small batches. Old and
+     new versions coexist briefly. Tight resource constraints but lower cost.
+     Requires careful backward compatibility and monitoring during the
+     transition window.
+  4. Immediate (Big-bang)
+     Deploy the new version to all instances simultaneously. Fastest possible
+     rollout with minimal complexity. High risk if issues are discovered
+     post-deployment. Best for non-critical systems or when thorough testing
+     eliminates risk.
+  5. Type something.
+────────────────────────────────────────────────────────────────────────────────
+  6. Chat about this
+
+Enter to select · ↑/↓ to navigate · Esc to cancel
+
