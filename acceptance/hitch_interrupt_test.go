@@ -8,7 +8,6 @@ import (
 	"strings"
 	"syscall"
 	"testing"
-	"time"
 )
 
 // A hitch stopped by a signal mid-boot leaves the team usable: a handled
@@ -105,12 +104,12 @@ exec tmux "$@"
 				"GANGLINE_ACCEPTANCE_INTERRUPT="+tc.steps, "GANGLINE_ACCEPTANCE_INTERRUPT_SIGNAL="+strings.TrimPrefix(signalName(tc.signal), "SIG"), "GANGLINE_ACCEPTANCE_INTERRUPT_ONCE="+filepath.Join(team, "interrupted"))
 			// The native CLI takes its mode from the tmux server's environment.
 			var native []string
-			pipe := filepath.Join(team, "exit-pipe")
+			pipe, trace := filepath.Join(team, "exit-pipe"), filepath.Join(team, "native-trace")
 			if tc.exits {
 				if err := syscall.Mkfifo(pipe, 0o600); err != nil {
 					t.Fatal(err)
 				}
-				native = append(native, "GANGLINE_ACCEPTANCE_BOOT_EXIT="+failure, "GANGLINE_ACCEPTANCE_BOOT_EXIT_AFTER=boot-exit", "GANGLINE_ACCEPTANCE_EXIT_PIPE="+pipe)
+				native = append(native, "GANGLINE_ACCEPTANCE_BOOT_EXIT="+failure, "GANGLINE_ACCEPTANCE_BOOT_EXIT_AFTER=boot-exit", "GANGLINE_ACCEPTANCE_EXIT_PIPE="+pipe, "GANGLINE_ACCEPTANCE_NATIVE_TRACE="+trace)
 			} else {
 				// The native CLI never renders its composer, so startup cannot
 				// finish before the signal is handled.
@@ -125,6 +124,7 @@ exec tmux "$@"
 			if out, err := runner.run("new-session", "-d", "-s", session, "-n", "control"); err != nil {
 				t.Fatalf("private session: %v %s", err, out)
 			}
+			server := runner.serverPID(t)
 			// Output goes to a file, not a pipe: a tmux client left blocked by a
 			// killed gang inherits its descriptors and would hold a pipe open.
 			gang := func(env []string, args ...string) (string, *os.ProcessState, error) {
@@ -175,23 +175,9 @@ exec tmux "$@"
 				assertPanes(t, runner, "control")
 			}
 			if tc.exits {
-				// The native CLI exits once released, and the pipe's EOF plus
-				// run-shell show tmux has reaped it while the pane is held.
-				bound := time.AfterFunc(time.Minute, func() {
-					if writer, err := os.OpenFile(pipe, os.O_WRONLY|syscall.O_NONBLOCK, 0); err == nil {
-						_ = writer.Close()
-					}
-				})
-				defer bound.Stop()
-				if out, err := runner.run("wait-for", "-S", "boot-exit"); err != nil {
-					t.Fatalf("release native exit: %v %s", err, out)
-				}
-				if _, err := os.ReadFile(pipe); err != nil {
-					t.Fatal(err)
-				}
-				if out, err := runner.run("run-shell", "true"); err != nil {
-					t.Fatalf("reap native exit: %v %s", err, out)
-				}
+				// The native CLI exits once released, and tmux reaps it while
+				// the pane is held.
+				awaitNativeExit(t, runner, server, "boot-exit", pipe, trace)
 			}
 			// The targeted tick waits for the agent's lock and probes its
 			// record; the bare tick then covers the whole team.

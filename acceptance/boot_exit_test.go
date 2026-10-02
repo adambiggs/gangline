@@ -1,7 +1,6 @@
 package acceptance
 
 import (
-	"io"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -119,7 +118,7 @@ exec tmux "$@"
 				if err := syscall.Mkfifo(pipe, 0o600); err != nil {
 					t.Fatal(err)
 				}
-				environment = append(environment, "GANGLINE_ACCEPTANCE_BOOT_BLOCKED=1", "GANGLINE_ACCEPTANCE_BOOT_EXIT_AFTER=boot-exit", "GANGLINE_ACCEPTANCE_EXIT_PIPE="+pipe)
+				environment = append(environment, "GANGLINE_ACCEPTANCE_BOOT_BLOCKED=1", "GANGLINE_ACCEPTANCE_BOOT_EXIT_AFTER=boot-exit", "GANGLINE_ACCEPTANCE_EXIT_PIPE="+pipe, "GANGLINE_ACCEPTANCE_NATIVE_TRACE="+filepath.Join(team, "native-trace"))
 			} else if tc.capture == "exit" {
 				environment = append(environment, "GANGLINE_ACCEPTANCE_BOOT_EXIT_AFTER=boot-exit")
 			} else {
@@ -148,32 +147,8 @@ exec tmux "$@"
 					t.Fatalf("hitch did not report the blocked startup:\n%s", out)
 				}
 				// The operator's answer ends the native CLI after the hitch
-				// returned; the pipe's EOF is the exit barrier.
-				exited := make(chan error, 1)
-				go func() {
-					pipe, err := os.Open(filepath.Join(team, "exit-pipe"))
-					if err != nil {
-						exited <- err
-						return
-					}
-					defer pipe.Close()
-					_, err = io.Copy(io.Discard, pipe)
-					exited <- err
-				}()
-				if out, err := runner.run("wait-for", "-S", "boot-exit"); err != nil {
-					t.Fatalf("answer startup prompt: %v %s", err, out)
-				}
-				select {
-				case err := <-exited:
-					if err != nil {
-						t.Fatalf("await native exit: %v", err)
-					}
-				case <-time.After(time.Minute):
-					t.Fatal("native CLI did not exit")
-				}
-				if out, err := runner.run("run-shell", "true"); err != nil {
-					t.Fatalf("reap native process: %v %s", err, out)
-				}
+				// returned.
+				awaitNativeExit(t, runner, runner.serverPID(t), "boot-exit", filepath.Join(team, "exit-pipe"), filepath.Join(team, "native-trace"))
 				if out, err := gang("tick", "--agent", "worker"); err != nil {
 					t.Fatalf("tick after native exit: %v\n%s", err, out)
 				}

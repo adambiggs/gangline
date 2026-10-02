@@ -10,6 +10,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"syscall"
 	"testing"
@@ -179,11 +180,127 @@ type tmuxRunner struct {
 }
 
 func (runner tmuxRunner) run(arguments ...string) (string, error) {
+	return runner.runContext(context.Background(), arguments...)
+}
+
+// runContext runs a tmux command that ctx bounds, so a server that stops
+// answering fails the test instead of holding it. A client passes its output
+// descriptors to the server, so a stopped server holds the output pipe open
+// after the client is killed; WaitDelay ends the read.
+func (runner tmuxRunner) runContext(ctx context.Context, arguments ...string) (string, error) {
 	arguments = append([]string{"-S", runner.socket, "-f", "/dev/null"}, arguments...)
-	command := exec.Command(runner.binary, arguments...)
+	command := exec.CommandContext(ctx, runner.binary, arguments...)
 	command.Env = runner.env
+	command.WaitDelay = time.Second
 	output, err := command.CombinedOutput()
 	return string(output), err
+}
+
+// serverPID is the pid of the test's own tmux server, read while it answers.
+func (runner tmuxRunner) serverPID(t *testing.T) int {
+	t.Helper()
+	out, err := runner.run("display-message", "-p", "#{pid}")
+	if err != nil {
+		t.Fatalf("read tmux server pid: %v %s", err, out)
+	}
+	pid, err := strconv.Atoi(strings.TrimSpace(out))
+	if err != nil {
+		t.Fatalf("read tmux server pid: %v", err)
+	}
+	return pid
+}
+
+// nativeExitProbe bounds each tmux and ps call of a failure's diagnosis.
+const nativeExitProbe = 5 * time.Second
+
+// awaitNativeExit releases a native CLI waiting on channel, then waits for it
+// to exit and for tmux to reap it. The pipe's EOF is the exit barrier: the
+// native CLI holds its write end until it exits. The wait ends within a
+// minute, and early enough before the test deadline for the diagnosis and the
+// cleanup to finish, since the timeout panic discards the failure.
+func awaitNativeExit(t *testing.T, runner tmuxRunner, server int, channel, pipe, trace string) {
+	t.Helper()
+	bound := time.Minute
+	if deadline, ok := t.Deadline(); ok {
+		bound = min(bound, time.Until(deadline)-4*nativeExitProbe)
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), bound)
+	defer cancel()
+	exited := make(chan error, 1)
+	go func() {
+		reader, err := os.Open(pipe)
+		if err != nil {
+			exited <- err
+			return
+		}
+		defer reader.Close()
+		_, err = io.Copy(io.Discard, reader)
+		exited <- err
+	}()
+	fail := func(format string, arguments ...any) {
+		t.Helper()
+		t.Fatalf(format+"\n%s", append(arguments, nativeExitDiagnosis(runner, server, trace))...)
+	}
+	if out, err := runner.runContext(ctx, "wait-for", "-S", channel); err != nil {
+		fail("release native exit: %v %s", err, out)
+	}
+	select {
+	case err := <-exited:
+		if err != nil {
+			fail("await native exit: %v", err)
+		}
+	case <-ctx.Done():
+		fail("native CLI did not exit")
+	}
+	if out, err := runner.runContext(ctx, "run-shell", "true"); err != nil {
+		fail("reap native exit: %v %s", err, out)
+	}
+}
+
+// nativeExitDiagnosis reports the native CLI's own record of its exit path,
+// which needs no tmux to read, and what the tmux server shows if it answers.
+// A server that does not answer is killed: the cleanup's kill-session would
+// otherwise hold the test until the package timeout, which discards the
+// failure this reports.
+func nativeExitDiagnosis(runner tmuxRunner, server int, trace string) string {
+	var report strings.Builder
+	if record, err := os.ReadFile(trace); err != nil {
+		fmt.Fprintf(&report, "native trace: %v\n", err)
+	} else {
+		fmt.Fprintf(&report, "native trace:\n%s", record)
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), nativeExitProbe)
+	defer cancel()
+	panes, err := runner.runContext(ctx, "list-panes", "-a", "-F", "#{pane_id} #{window_name} pid=#{pane_pid} dead=#{pane_dead} status=#{pane_dead_status}")
+	if ctx.Err() != nil {
+		fmt.Fprintf(&report, "tmux server %d did not answer\n", server)
+		// The pid is killed only while it still runs this test's server.
+		check, cancel := context.WithTimeout(context.Background(), nativeExitProbe)
+		defer cancel()
+		command, err := exec.CommandContext(check, "ps", "-o", "command=", "-p", strconv.Itoa(server)).Output()
+		if err == nil && strings.Contains(string(command), runner.socket) {
+			fmt.Fprintf(&report, "killed it: %v\n", syscall.Kill(server, syscall.SIGKILL))
+		}
+		return report.String()
+	}
+	if err != nil {
+		fmt.Fprintf(&report, "list panes: %v %s\n", err, panes)
+		return report.String()
+	}
+	pids := []string{strconv.Itoa(server)}
+	for _, line := range strings.Split(strings.TrimSpace(panes), "\n") {
+		for _, field := range strings.Fields(line) {
+			if pid, ok := strings.CutPrefix(field, "pid="); ok {
+				pids = append(pids, pid)
+			}
+		}
+	}
+	processes, err := exec.CommandContext(ctx, "ps", "-o", "pid,ppid,stat,command", "-p", strings.Join(pids, ",")).CombinedOutput()
+	fmt.Fprintf(&report, "panes:\n%s\nprocesses (%v):\n", panes, err)
+	for _, line := range strings.Split(strings.TrimSpace(string(processes)), "\n") {
+		fmt.Fprintf(&report, "%.160s\n", line)
+	}
+	return report.String()
 }
 
 // runBoundedWait waits on a channel of the tmux server at socket for at most a
@@ -221,6 +338,21 @@ func runFakeHarness() int {
 	return 0
 }
 
+// traceNative appends a step of the native CLI's exit path to the trace file a
+// test names, so a test can tell where an exit stopped without its pane.
+func traceNative(format string, arguments ...any) {
+	path := os.Getenv("GANGLINE_ACCEPTANCE_NATIVE_TRACE")
+	if path == "" {
+		return
+	}
+	file, err := os.OpenFile(path, os.O_WRONLY|os.O_APPEND|os.O_CREATE, 0o600)
+	if err != nil {
+		return
+	}
+	defer file.Close()
+	fmt.Fprintf(file, "%d %s: "+format+"\n", append([]any{os.Getpid(), time.Now().Format(time.RFC3339Nano)}, arguments...)...)
+}
+
 func runCommandHarness() int {
 	if failure := os.Getenv("GANGLINE_ACCEPTANCE_BOOT_EXIT"); failure != "" {
 		if os.Getenv("GANGLINE_ACCEPTANCE_BOOT_BLOCKED") != "" {
@@ -228,22 +360,28 @@ func runCommandHarness() int {
 			fmt.Println("BLOCKED ALLOW")
 		}
 		if channel := os.Getenv("GANGLINE_ACCEPTANCE_BOOT_EXIT_AFTER"); channel != "" {
+			traceNative("await %s", channel)
 			// Bounded so a hitch that never signals cannot hold the pane forever.
 			ctx, cancel := context.WithTimeout(context.Background(), time.Minute)
 			defer cancel()
 			if output, err := exec.CommandContext(ctx, "tmux", "-S", os.Getenv("GANG_TMUX_SOCKET"), "wait-for", channel).CombinedOutput(); err != nil {
+				traceNative("await %s failed: %v: %s", channel, err, output)
 				fmt.Fprintf(os.Stderr, "await boot exit: %v: %s", err, output)
 				return 1
 			}
+			traceNative("released by %s", channel)
 		}
 		// The write end stays open until the process exits, so the reader's EOF
 		// is an exit barrier. A raw descriptor has no finalizer to close it early.
 		if pipe := os.Getenv("GANGLINE_ACCEPTANCE_EXIT_PIPE"); pipe != "" {
 			if _, err := syscall.Open(pipe, syscall.O_WRONLY, 0); err != nil {
+				traceNative("open exit pipe: %v", err)
 				fmt.Fprintln(os.Stderr, err)
 				return 1
 			}
+			traceNative("exit pipe open")
 		}
+		traceNative("exit 7")
 		fmt.Fprintln(os.Stderr, failure)
 		return 7
 	}
