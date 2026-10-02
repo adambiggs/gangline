@@ -203,6 +203,7 @@ func TestCompactionPublicationRecoveryCancelsUnsubmittedContinuation(t *testing.
 		t.Fatal(err)
 	}
 	f.env["GANGLINE_HITCH_ID"] = "a"
+	notices := witnessFailureNotices(f, p)
 	cmd := f.cmd
 	cmd.stdin = strings.NewReader("next")
 	if err := cmd.send([]string{"worker", "--from", "operator"}); err != nil {
@@ -219,8 +220,11 @@ func TestCompactionPublicationRecoveryCancelsUnsubmittedContinuation(t *testing.
 		t.Fatal(err)
 	}
 	resume, err := p.ReadEnvelope("failed", "resume-c")
-	if err != nil || got.Compaction.Status != "failed" || resume.Outcome != "cancelled" || f.input.submits != 1 {
+	if err != nil || got.Compaction.Status != "failed" || resume.Outcome != "cancelled" || f.input.submits != 2 {
 		t.Fatalf("recovery sent continuation late: %+v, %v; status=%s submits=%d", resume, err, got.Compaction.Status, f.input.submits)
+	}
+	if len(*notices) != 1 || !strings.Contains((*notices)[0], "Compaction c failed: resume was not entered") || !strings.Contains((*notices)[0], "Your context was compacted, but") {
+		t.Fatalf("other submit was not the failure notice: %q", *notices)
 	}
 }
 
@@ -241,6 +245,7 @@ func TestCompactionPublicationAcknowledgedBeforeInputIsCancelled(t *testing.T) {
 		t.Fatal(err)
 	}
 	l.Close()
+	witnessFailureNotices(f, p)
 	if err := f.run.tickAgent(a.ID, hookNotice{}, false); err != nil {
 		t.Fatal(err)
 	}
@@ -249,8 +254,11 @@ func TestCompactionPublicationAcknowledgedBeforeInputIsCancelled(t *testing.T) {
 		t.Fatal(err)
 	}
 	resume, err := p.ReadEnvelope("failed", e.ID)
-	if err != nil || got.Compaction.Status != "failed" || resume.Outcome != "cancelled" || f.input.submits != 0 {
+	if err != nil || got.Compaction.Status != "failed" || resume.Outcome != "cancelled" || f.input.submits != 1 {
 		t.Fatalf("recovery submitted an unqueued resume: %+v, %v; status=%s submits=%d", resume, err, got.Compaction.Status, f.input.submits)
+	}
+	if notice := failureNotice(t, p, "cur", "c"); notice.Outcome != "delivered" || f.input.pasted != mustEnvelopeText(t, notice) {
+		t.Fatalf("only submit was not the failure notice: %+v; pasted=%q", notice, f.input.pasted)
 	}
 }
 

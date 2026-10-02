@@ -285,16 +285,126 @@ func (run *runtime) observeCompaction(l *store.LockedAgent, a *core.Agent, c har
 		return err
 	}
 	if len(refusals) > pending.RefusalBefore {
-		reason := strings.TrimSpace(refusals[len(refusals)-1])
-		if err := run.apply(l, a, core.Event{Type: "compaction_failed", ID: pending.ID, Reason: reason}); err != nil {
-			return err
-		}
-		if err := run.cancelPendingCompactionResume(l, a, reason); err != nil {
-			return err
-		}
-		return commandError{status: exitNative, text: fmt.Sprintf("native compaction refused: %s; resume withheld", reason)}
+		return run.failCompaction(l, a, compactionNotRun, fmt.Sprintf("native compaction refused: %s; resume withheld", strings.TrimSpace(refusals[len(refusals)-1])))
 	}
 	return nil
+}
+
+// compactionPhase says how far a failed compaction got, which decides what
+// its failure notice can tell the agent about its own context.
+type compactionPhase int
+
+const (
+	compactionNotRun compactionPhase = iota
+	compactionMayHaveRun
+	compactionRan
+)
+
+// failCompaction records a failed compaction, withholds its continuation, and
+// tells the agent, whose resume note will not arrive. The notice waits in the
+// agent's queue like any message, so a caller that has already returned still
+// learns of the failure.
+func (run *runtime) failCompaction(l *store.LockedAgent, a *core.Agent, phase compactionPhase, reason string) error {
+	id := a.Compaction.ID
+	if err := run.apply(l, a, core.Event{Type: "compaction_failed", ID: id, Reason: reason}); err != nil {
+		return err
+	}
+	if err := run.cancelPendingCompactionResume(l, a, reason); err != nil {
+		return err
+	}
+	token, err := randomEnvelopeToken()
+	if err != nil {
+		return err
+	}
+	text := fmt.Sprintf("Compaction %s failed: %s. ", id, reason)
+	switch phase {
+	case compactionNotRun:
+		text += "Your context was not compacted, and the resume note was not delivered."
+	case compactionMayHaveRun:
+		text += "The compaction may have run, and the resume note was withheld. If your context was compacted, re-read your brief and durable state."
+	default:
+		text += "Your context was compacted, but the resume note was withheld. Re-read your brief and durable state."
+	}
+	return run.publishOnce(l, a, core.Envelope{ID: core.EnvelopeID("failed-" + id), Token: token, Recipient: a.ID, To: a.Name, From: core.Sender{Kind: core.SenderGangline, Name: "compact"}, Message: core.Message{Text: text}, CreatedAt: run.cmd.now()})
+}
+
+// abandonCompactDraft clears compact input that must not be submitted and
+// fails the compaction, which never ran.
+func (run *runtime) abandonCompactDraft(ctx context.Context, l *store.LockedAgent, a *core.Agent, b harnessInput, c harness.Collar, draft, reason string) error {
+	if draft != "" {
+		if err := run.clearCompactDraft(ctx, b, substrate.PaneID(a.Pane), c, draft); err != nil {
+			reason += "; " + err.Error()
+		} else {
+			reason += "; composer cleared"
+		}
+	}
+	return run.failCompaction(l, a, compactionNotRun, reason)
+}
+
+// clearCompactDraft removes unsubmitted compact input with the collar's clear
+// keys, one press per attempt, until the composer reads empty. A press can
+// clear as little as one composer line.
+func (run *runtime) clearCompactDraft(ctx context.Context, b harnessInput, pane substrate.PaneID, c harness.Collar, draft string) error {
+	if c.Actions.CompactClear == nil {
+		return fmt.Errorf("the collar declares no compact clear keys; the composer still holds the unsubmitted input")
+	}
+	shown := draft
+	for attempt := 0; attempt < 2*(strings.Count(draft, "\n")+1); attempt++ {
+		if err := sendHarnessKeys(ctx, b, pane, c, c.Actions.CompactClear.Input()); err != nil {
+			return err
+		}
+		var err error
+		if run.cmd.settleInput != nil {
+			err = run.cmd.settleInput(ctx, b, pane, c, compactClearSettle)
+		} else {
+			err = awaitComposerChange(ctx, b, pane, c, shown, compactClearSettle)
+		}
+		if err != nil {
+			return err
+		}
+		screen, err := b.Capture(ctx, pane)
+		if err != nil {
+			return err
+		}
+		composer, err := harness.ReadComposer(c.Primitives.Composer, screen)
+		if err != nil {
+			return err
+		}
+		if composer.Text == "" {
+			return nil
+		}
+		shown = composer.Text
+	}
+	return fmt.Errorf("the composer still holds the unsubmitted input after clearing")
+}
+
+// compactClearSettle bounds how long one clear press may take to repaint the
+// composer before the next press or the final verdict.
+const compactClearSettle = time.Second
+
+// awaitComposerChange waits until the composer no longer reads as shown, or
+// until limit passes; the caller judges the composer it then reads.
+func awaitComposerChange(ctx context.Context, b harnessInput, pane substrate.PaneID, c harness.Collar, shown string, limit time.Duration) error {
+	ticker := time.NewTicker(25 * time.Millisecond)
+	defer ticker.Stop()
+	deadline := time.NewTimer(limit)
+	defer deadline.Stop()
+	for {
+		screen, err := b.Capture(ctx, pane)
+		if err != nil {
+			return err
+		}
+		if composer, err := harness.ReadComposer(c.Primitives.Composer, screen); err == nil && composer.Text != shown {
+			return nil
+		}
+		select {
+		case <-ctx.Done():
+			return ctx.Err()
+		case <-deadline.C:
+			return nil
+		case <-ticker.C:
+		}
+	}
 }
 
 // compactRecoverSettle bounds how long recovery watches the harness after a

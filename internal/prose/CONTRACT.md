@@ -16,7 +16,8 @@ You are one agent in a Gangline team.
   inspect or cancel a pending wake. A lead also sees uncertain usage notices
   and fallback wakes in status, and can clear one with `gang snooze --clear ID`.
 - `gang compact --resume 'TEXT'`: compact your own context. Save your state
-  to a file and name it in TEXT. Gangline queues TEXT as the native
+  to a file and name it in TEXT, kept short and on one line; a long or
+  multi-line TEXT can fail the compaction. Gangline queues TEXT as the native
   continuation when compaction starts, ahead of later input. It runs only
   after compaction is confirmed complete; if compaction or resume submission
   fails, Gangline reports that instead. Codex may put a later Enter steer in

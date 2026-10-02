@@ -332,11 +332,7 @@ func (run *runtime) continueCompaction(l *store.LockedAgent, a *core.Agent) erro
 	if c.Continuation && errors.Is(err, os.ErrNotExist) {
 		return nil
 	}
-	reason := "resume was not entered when compaction started; continuation withheld"
-	if err := run.apply(l, a, core.Event{Type: "compaction_failed", ID: c.ID, Reason: reason}); err != nil {
-		return err
-	}
-	return run.cancelPendingCompactionResume(l, a, reason)
+	return run.failCompaction(l, a, compactionRan, "resume was not entered when compaction started; continuation withheld")
 }
 
 func (run *runtime) publishCompactionResume(l *store.LockedAgent, a *core.Agent) (core.Envelope, error) {

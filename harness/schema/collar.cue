@@ -83,6 +83,7 @@ package harness
 		interrupt: #Action
 		compact: #Action
 		compact_recover: [...#Action]
+		compact_clear?: #Action
 		startup_replace?: #Action
 	})
 	context_bands: [string & !=""]: [...#ContextBand]

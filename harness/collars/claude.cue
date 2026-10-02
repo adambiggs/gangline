@@ -52,6 +52,7 @@ collar: {
 		interrupt: {keys: ["Escape"]}
 		compact: {text: "/compact {{instructions}}", submit: true}
 		compact_recover: [{keys: ["Escape"]}]
+		compact_clear: {keys: ["C-u"]}
 	}
 	context_bands: {
 		"*": [

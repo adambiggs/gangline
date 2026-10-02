@@ -257,10 +257,6 @@ func (run *runtime) observeRoster(agents []core.Agent) ([]core.Agent, error) {
 				}
 			} else {
 				err = run.observeCompaction(l, &current, c, screen)
-				var refusal commandError
-				if errors.As(err, &refusal) && refusal.status == exitNative {
-					err = nil
-				}
 				if err == nil {
 					err = run.observeActivity(l, &current, c, screen)
 				}

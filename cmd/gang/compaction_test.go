@@ -6,8 +6,10 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"slices"
 	"strings"
 	"testing"
+	"testing/synctest"
 	"time"
 
 	"github.com/adambiggs/gangline/core"
@@ -349,8 +351,12 @@ func TestCompactionOccupiedComposerFailsWithoutLateResume(t *testing.T) {
 	if err := f.run.tickAgent(a.ID, hookNotice{}, false); err != nil {
 		t.Fatal(err)
 	}
-	if f.input.submits != 1 {
-		t.Fatalf("continuation ran after ordering failed: %d", f.input.submits)
+	// The one later submit is the failure notice, never the continuation.
+	if f.input.submits != 2 || !strings.HasPrefix(f.input.pasted, "[gang:compact#") || !strings.Contains(f.input.pasted, "composer occupied") || !strings.Contains(f.input.pasted, "may have run") {
+		t.Fatalf("continuation ran after ordering failed: submits=%d pasted=%q", f.input.submits, f.input.pasted)
+	}
+	if e, err := p.ReadEnvelope("failed", core.EnvelopeID("resume-"+got.Compaction.ID)); err != nil || e.Outcome != "cancelled" {
+		t.Fatalf("continuation left its cancelled slot: %+v, %v", e, err)
 	}
 }
 
@@ -504,4 +510,136 @@ func TestCompactionResumeProceedsWhileWrappedCompactRemains(t *testing.T) {
 	if got.Compaction.Status != "submitted" || b.submits != 2 {
 		t.Fatalf("wrapped compact text blocked the continuation: status=%s submits=%d reason=%s", got.Compaction.Status, b.submits, got.Compaction.Reason)
 	}
+}
+
+// Claude Code 2.1.287 shows a bracketed paste longer than 800 characters as a
+// placeholder and submits it as an ordinary prompt wrapped in pasted_content,
+// so Enter on a collapsed /compact line never runs the command.
+func TestCollapsedCompactCommandIsNeverSubmitted(t *testing.T) {
+	resume := "Resume from the state file. " + strings.Repeat("Read it and confirm the team. ", 28)
+	for _, tc := range []struct {
+		name          string
+		queued, stuck bool
+	}{
+		{name: "immediate"},
+		{name: "queued", queued: true},
+		{name: "clear refused", stuck: true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			f := newStateFixture(t)
+			a := f.add(t, "a", "worker", "claude")
+			p, _ := f.run.team.Agent(a.ID)
+			a.Native.SessionID = "s"
+			l, err := p.TryLock()
+			if err != nil {
+				t.Fatal(err)
+			}
+			if err := l.Save(a); err != nil {
+				t.Fatal(err)
+			}
+			l.Close()
+			f.env["GANG_AGENT_ID"] = string(a.ID)
+			f.env["TMUX_PANE"] = a.Pane
+			f.env["GANGLINE_HITCH_ID"] = string(a.ID)
+			f.input.command = "claude"
+			empty := screenWithText("────────", "❯ ", "────────")
+			f.input.screen = empty
+			if tc.queued {
+				f.input.screen = screenWithText("✻ Working… (esc to interrupt)", "────────", "❯ ", "────────")
+			}
+			f.input.onKeys = func(k substrate.Keys) error {
+				if strings.Contains(k.Text, "/compact ") {
+					f.input.screen = screenWithText("────────", "❯ [Pasted text #1]", "────────")
+				}
+				if slices.Contains(k.Names, "C-u") && !tc.stuck {
+					f.input.screen = empty
+				}
+				return nil
+			}
+			notices := witnessFailureNotices(f, p)
+			err = f.cmd.compact([]string{"--resume", resume})
+			if tc.queued {
+				if err != nil || !strings.Contains(f.out.String(), "queued") {
+					t.Fatalf("busy compaction: %v, %q", err, f.out.String())
+				}
+				f.input.screen = empty
+				if err := f.run.tickAgent(a.ID, hookNotice{}, false); err != nil {
+					t.Fatal(err)
+				}
+			} else if ce := (commandError{}); !errors.As(err, &ce) || ce.status != exitNative || !strings.Contains(err.Error(), "did not read back as the") {
+				t.Fatalf("collapsed command not reported: %v", err)
+			}
+			got, err := p.Read()
+			if err != nil {
+				t.Fatal(err)
+			}
+			if got.Compaction.Status != "failed" || got.Compaction.Continuation {
+				t.Fatalf("collapsed command state: %+v", got.Compaction)
+			}
+			want := "composer cleared"
+			if tc.stuck {
+				want = "the composer still holds the unsubmitted input after clearing"
+			}
+			if !strings.Contains(got.Compaction.Reason, want) {
+				t.Fatalf("reason %q lacks %q", got.Compaction.Reason, want)
+			}
+			// Enter reaches the pane only for the failure notice, and only
+			// once the composer is clear.
+			wantNotices := 0
+			if tc.queued {
+				wantNotices = 1
+			}
+			if f.input.submits != wantNotices || len(*notices) != wantNotices {
+				t.Fatalf("submits=%d notices=%q", f.input.submits, *notices)
+			}
+			dir := "new"
+			if tc.queued {
+				dir = "cur"
+			}
+			// Claude Code expands a paste placeholder quoted in input back
+			// into the paste, so the notice must never repeat the composer.
+			if notice := failureNotice(t, p, dir, got.Compaction.ID); !strings.Contains(notice.Message.Text, "did not read back as the") || strings.Contains(notice.Message.Text, "[Pasted text") {
+				t.Fatalf("notice: %q", notice.Message.Text)
+			}
+		})
+	}
+}
+
+// The clear waits on the production composer loop: after a clear the composer
+// is empty, which a paste-settle wait never accepts.
+func TestCollapsedCompactClearUsesProductionWait(t *testing.T) {
+	synctest.Test(t, func(t *testing.T) {
+		f := newStateFixture(t)
+		a := f.add(t, "a", "worker", "claude")
+		p, _ := f.run.team.Agent(a.ID)
+		f.env["GANG_AGENT_ID"] = string(a.ID)
+		f.env["TMUX_PANE"] = a.Pane
+		f.env["GANGLINE_HITCH_ID"] = string(a.ID)
+		f.input.command = "claude"
+		empty := screenWithText("────────", "❯ ", "────────")
+		f.input.screen = empty
+		f.cmd.settleInput = nil
+		f.run.cmd = f.cmd
+		f.input.onKeys = func(k substrate.Keys) error {
+			if strings.Contains(k.Text, "/compact ") {
+				f.input.screen = screenWithText("────────", "❯ [Pasted text #1]", "────────")
+			}
+			if slices.Contains(k.Names, "C-u") {
+				f.input.screen = empty
+			}
+			return nil
+		}
+		start := time.Now()
+		err := f.cmd.compact([]string{"--resume", strings.Repeat("Read the state file. ", 45)})
+		if ce := (commandError{}); !errors.As(err, &ce) || ce.status != exitNative || !strings.Contains(err.Error(), "composer cleared") {
+			t.Fatalf("clear result: %v", err)
+		}
+		if elapsed := time.Since(start); elapsed >= operationTimeout {
+			t.Fatalf("clear waited out the operation: %v", elapsed)
+		}
+		got, err := p.Read()
+		if err != nil || got.Compaction.Status != "failed" || f.input.submits != 0 {
+			t.Fatalf("state: %+v, %v; submits=%d", got.Compaction, err, f.input.submits)
+		}
+	})
 }

@@ -82,6 +82,15 @@ an occupied composer, the command fails and withholds the note rather than
 delivering it out of order. Recovery also cancels a continuation that was
 published but never submitted to native input.
 
+Gangline never presses Enter on a composer that holds anything other than the
+compact command. Claude Code shows a long or multi-line paste as a placeholder
+and would submit it as an ordinary prompt, so such a resume note fails there:
+Gangline clears the composer with the collar's `compact_clear` keys and submits
+nothing. Keep the note short, on one line, and pointed at a state file. Every
+failed compaction queues a `[gang:compact#…]` notice to the agent saying whether
+its context was compacted, so a caller whose command already returned still
+learns of the failure.
+
 Send options:
 
 | Option | Meaning |

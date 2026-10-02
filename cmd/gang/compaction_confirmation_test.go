@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"errors"
+	"fmt"
 	"strings"
 	"testing"
 	"time"
@@ -31,6 +32,46 @@ func compactionFixture(t *testing.T) (*stateFixture, core.Agent, store.AgentPath
 		return nil
 	}
 	return f, a, p
+}
+
+// witnessFailureNotices lets the fixture's native submit hook witness each
+// compaction failure notice, which reaches the agent as ordinary input.
+// It returns the notices submitted so far.
+func witnessFailureNotices(f *stateFixture, p store.AgentPaths) *[]string {
+	submit, notices := f.input.submit, &[]string{}
+	f.input.submit = func(prompt string) error {
+		if strings.HasPrefix(prompt, "[gang:compact#") && strings.Contains(prompt, " failed: ") {
+			*notices = append(*notices, prompt)
+			return p.WriteWitness(store.Witness{ID: fmt.Sprintf("failure-notice-%d", len(*notices)), At: f.cmd.now(), Prompt: prompt, SessionID: "s"})
+		}
+		if submit != nil {
+			return submit(prompt)
+		}
+		return nil
+	}
+	return notices
+}
+
+// failureNotice reads the failure notice for compaction id from dir.
+func failureNotice(t *testing.T, p store.AgentPaths, dir, id string) core.Envelope {
+	t.Helper()
+	e, err := p.ReadEnvelope(dir, core.EnvelopeID("failed-"+id))
+	if err != nil {
+		t.Fatalf("compaction failure notice in %s: %v", dir, err)
+	}
+	if e.From != (core.Sender{Kind: core.SenderGangline, Name: "compact"}) || !strings.Contains(e.Message.Text, "Compaction "+id+" failed: ") {
+		t.Fatalf("compaction failure notice: %+v", e)
+	}
+	return e
+}
+
+func mustEnvelopeText(t *testing.T, e core.Envelope) string {
+	t.Helper()
+	wire, err := envelopeText(e)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return wire
 }
 
 func TestCompactionObservesIdleBeforeStarting(t *testing.T) {
@@ -122,8 +163,12 @@ func TestCompactionRechecksBusyBeforeSubmit(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if f.input.submits != 0 || a.Compaction.Status != "unverified" || a.Compaction.Continuation || a.Input != nil {
+	// Codex declares no clear keys, so the draft stays and the reason says so.
+	if f.input.submits != 0 || a.Compaction.Status != "failed" || a.Compaction.Continuation || a.Input != nil || !strings.Contains(a.Compaction.Reason, "still holds the unsubmitted input") {
 		t.Fatalf("unsafe submission: %+v submits=%d", a.Compaction, f.input.submits)
+	}
+	if notice := failureNotice(t, p, "new", a.Compaction.ID); !strings.Contains(notice.Message.Text, "Your context was not compacted") {
+		t.Fatalf("notice: %q", notice.Message.Text)
 	}
 }
 
@@ -139,25 +184,34 @@ func TestCompactionSurfacesNativeRefusalWithoutResume(t *testing.T) {
 				}
 				return submit(prompt)
 			}
+			witnessFailureNotices(f, p)
 			err := f.cmd.compact([]string{"worker"})
 			if delayed {
 				f.input.screen = screenWithText(refusal, "› ")
-				err = f.run.tickAgent(a.ID, hookNotice{}, false)
-			}
-			var ce commandError
-			if !errors.As(err, &ce) || ce.status != exitNative || !strings.Contains(err.Error(), refusal) {
+				if err := f.run.tickAgent(a.ID, hookNotice{}, false); err != nil {
+					t.Fatal(err)
+				}
+			} else if ce := (commandError{}); !errors.As(err, &ce) || ce.status != exitNative || !strings.Contains(err.Error(), refusal) {
 				t.Fatalf("refusal not surfaced: %v", err)
 			}
 			got, err := p.Read()
 			if err != nil {
 				t.Fatal(err)
 			}
-			pending, err := p.ListNew()
-			if err != nil {
-				t.Fatal(err)
+			if got.Compaction.Status != "failed" || !got.Compaction.Continuation {
+				t.Fatalf("refusal resumed: %+v", got.Compaction)
 			}
-			if got.Compaction.Status != "failed" || !got.Compaction.Continuation || len(pending) != 0 || f.input.submits != 2 {
-				t.Fatalf("refusal resumed: %+v pending=%d submits=%d", got.Compaction, len(pending), f.input.submits)
+			if _, err := p.ReadEnvelope("failed", core.EnvelopeID("resume-"+got.Compaction.ID)); err != nil {
+				t.Fatalf("resume not withheld: %v", err)
+			}
+			// The command reports the refusal itself; a later tick reports it
+			// only through the queued notice.
+			dir, submits := "new", 2
+			if delayed {
+				dir, submits = "cur", 3
+			}
+			if notice := failureNotice(t, p, dir, got.Compaction.ID); !strings.Contains(notice.Message.Text, refusal) || !strings.Contains(notice.Message.Text, "Your context was not compacted") || f.input.submits != submits {
+				t.Fatalf("failure notice: %+v; submits=%d", notice, f.input.submits)
 			}
 		})
 	}

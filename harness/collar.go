@@ -93,6 +93,7 @@ type Actions struct {
 	Interrupt      Action   `json:"interrupt"`
 	Compact        Action   `json:"compact"`
 	CompactRecover []Action `json:"compact_recover"`
+	CompactClear   *Action  `json:"compact_clear,omitempty"`
 	StartupReplace *Action  `json:"startup_replace,omitempty"`
 }
 
@@ -352,6 +353,9 @@ func validateCollar(collar Collar) error {
 	}
 	if action := collar.Actions.StartupReplace; action != nil && (len(action.Keys) == 0 || action.Text != "" || action.Submit) {
 		return fmt.Errorf("startup replacement must declare keys without text or submit")
+	}
+	if action := collar.Actions.CompactClear; action != nil && (len(action.Keys) == 0 || action.Text != "" || action.Submit) {
+		return fmt.Errorf("compact clear must declare keys without text or submit")
 	}
 	return nil
 }
