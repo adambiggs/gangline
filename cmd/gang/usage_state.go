@@ -60,6 +60,8 @@ type usageSnooze struct {
 	CapCandidate  bool            `json:"cap_candidate,omitempty"`
 	CapFailedAt   time.Time       `json:"cap_failed_at,omitzero"`
 	TurnFailed    bool            `json:"turn_failed,omitempty"`
+	Joined        bool            `json:"joined,omitempty"`
+	QueuedBehind  bool            `json:"queued_behind,omitempty"`
 	Rearms        int             `json:"rearms,omitempty"`
 	Auto          bool            `json:"auto,omitempty"`
 }
@@ -100,19 +102,20 @@ func (run *runtime) withUsageState(change func(*usageState) error) (result error
 	return l.Save(state)
 }
 
-func (run *runtime) acknowledgeUsageDelivery(l *store.LockedAgent, a core.Agent, e core.Envelope, outcome string, witnessedAt ...time.Time) error {
+func (run *runtime) acknowledgeUsageDelivery(l *store.LockedAgent, a core.Agent, e core.Envelope, outcome string, witnessed ...store.Witness) error {
 	if e.From.Kind != core.SenderGangline ||
 		e.From.Name != "snooze" && e.From.Name != "usage-band" {
 		return nil
 	}
 	var submittedAt time.Time
+	joined := false
 	if outcome == "delivered" && e.From.Name == "snooze" {
-		if len(witnessedAt) > 0 {
-			submittedAt = witnessedAt[0]
+		if len(witnessed) > 0 {
+			submittedAt, joined = witnessed[0].At, witnessed[0].Joined
 		} else {
 			w, err := l.Paths.ReadWitness()
 			if err == nil && w.TurnID == a.Native.TurnID {
-				submittedAt = w.At
+				submittedAt, joined = w.At, w.Joined
 			} else if err != nil && !errors.Is(err, os.ErrNotExist) {
 				return err
 			}
@@ -145,6 +148,7 @@ func (run *runtime) acknowledgeUsageDelivery(l *store.LockedAgent, a core.Agent,
 				}
 				s.TurnID = a.Native.TurnID
 				s.SubmittedAt = submittedAt
+				s.Joined = joined
 				s.Submission = ""
 				s.InputText = ""
 				state.Recent[key] = s
@@ -220,7 +224,7 @@ func (run *runtime) reconcileUsageSubmission(l *store.LockedAgent, a *core.Agent
 			continue
 		}
 		s.Submission, s.InputText = "", ""
-		s.TurnID, s.SubmittedAt = w.TurnID, w.At
+		s.TurnID, s.SubmittedAt, s.Joined = w.TurnID, w.At, w.Joined
 		if state.Recent == nil {
 			state.Recent = make(map[string]usageSnooze)
 		}
@@ -283,6 +287,10 @@ func (run *runtime) appendEvents(events []core.Event) error {
 
 // A wake completes only on a matching successful native turn. An attributable
 // usage-cap failure can re-arm it once at the next observed provider reset.
+// A wake typed into a running turn shares that turn's prompt id and runs next
+// as a queued turn whose id no hook announces, so the first boundary after
+// that turn's finish is the wake's own. A wake that started its turn is judged
+// by that turn even when a later prompt queued behind it.
 func (run *runtime) observeSnoozeTurn(a core.Agent, notice hookNotice, providerBlocked bool) error {
 	now := run.cmd.now()
 	var events []core.Event
@@ -292,6 +300,15 @@ func (run *runtime) observeSnoozeTurn(a core.Agent, notice hookNotice, providerB
 				continue
 			}
 			reset, observedCap := observedCappedReset(a.Native.Limits, s.SubmittedAt, now)
+			if s.Joined && notice.TurnID == s.TurnID && notice.Kind == "turn-finished" && notice.Queued {
+				s.QueuedBehind = true
+				state.Recent[key] = s
+				continue
+			}
+			adopted := false
+			if s.QueuedBehind && notice.TurnID != "" && (notice.Kind == "turn-failed" || notice.Kind == "turn-finished" && !notice.Queued) {
+				s.TurnID, s.QueuedBehind, adopted = notice.TurnID, false, true
+			}
 			if notice.TurnID == s.TurnID && notice.Kind == "turn-finished" {
 				nativeError := !s.SubmittedAt.IsZero() && !a.Native.LastErrorAt.Before(s.SubmittedAt)
 				if !providerBlocked && !nativeError && a.Native.TurnFailure == "" {
@@ -313,7 +330,7 @@ func (run *runtime) observeSnoozeTurn(a core.Agent, notice hookNotice, providerB
 			}
 			confirmed := false
 			failure := notice.Failure
-			failedTurn := notice.TurnID == s.TurnID && notice.Kind == "turn-failed" && a.Native.FailedTurn == s.TurnID
+			failedTurn := notice.TurnID == s.TurnID && notice.Kind == "turn-failed" && (adopted || a.Native.FailedTurn == s.TurnID)
 			if s.Auto && a.Collar == "codex" && a.Native.TurnID == s.TurnID &&
 				!s.SubmittedAt.IsZero() && !a.Native.LastErrorAt.Before(s.SubmittedAt) {
 				failedTurn, failure = true, a.Native.LastError
@@ -588,7 +605,7 @@ func (run *runtime) flushUsageWork() error {
 				}
 				pending.ID, pending.Token = core.EnvelopeID(id), token
 				pending.RecipientID, pending.RecipientName, pending.TurnID = "", "", ""
-				pending.CapRejected, pending.CapCandidate, pending.TurnFailed = false, false, false
+				pending.CapRejected, pending.CapCandidate, pending.TurnFailed, pending.QueuedBehind = false, false, false, false
 				pending.CapFailedAt = time.Time{}
 				pending.Submission = ""
 				pending.SubmittedAt = time.Time{}

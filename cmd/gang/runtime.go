@@ -391,8 +391,8 @@ func (run *runtime) recoverInput(l *store.LockedAgent, a *core.Agent) error {
 	}
 	return run.notifySender(*a, e, "unverified")
 }
-func (run *runtime) finishInput(l *store.LockedAgent, a *core.Agent, e core.Envelope, outcome, reason string, witnessedAt ...time.Time) error {
-	if err := run.acknowledgeUsageDelivery(l, *a, e, outcome, witnessedAt...); err != nil {
+func (run *runtime) finishInput(l *store.LockedAgent, a *core.Agent, e core.Envelope, outcome, reason string, witnessed ...store.Witness) error {
+	if err := run.acknowledgeUsageDelivery(l, *a, e, outcome, witnessed...); err != nil {
 		return err
 	}
 	if err := l.Settle(a, e, outcome, reason); err != nil {

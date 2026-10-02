@@ -29,6 +29,9 @@ type hookNotice struct {
 	TurnID      string         `json:"turn_id,omitempty"`
 	Transcript  string         `json:"transcript,omitempty"`
 	Failure     string         `json:"failure,omitempty"`
+	// Queued marks a finished turn with a prompt queued behind it. Gang reads
+	// it from the transcript; the hook never carries it.
+	Queued bool `json:"-"`
 }
 
 func (cmd command) hook(args []string) error {
@@ -145,7 +148,13 @@ func (cmd command) handleHook(args []string) (result error) {
 	}
 	switch event.Kind {
 	case "turn-started":
-		if err := p.WriteWitness(store.Witness{ID: receipt, At: cmd.now(), Prompt: event.Payload["prompt"], SessionID: event.Payload["session_id"], TurnID: event.Payload["turn_id"], Transcript: event.Payload["transcript_path"]}); err != nil {
+		prev, err := p.ReadWitness()
+		if err != nil && !errors.Is(err, os.ErrNotExist) {
+			return err
+		}
+		w := store.Witness{ID: receipt, At: cmd.now(), Prompt: event.Payload["prompt"], SessionID: event.Payload["session_id"], TurnID: event.Payload["turn_id"], Transcript: event.Payload["transcript_path"]}
+		w.Joined = w.TurnID != "" && w.TurnID == prev.TurnID && w.SessionID == prev.SessionID
+		if err := p.WriteWitness(w); err != nil {
 			return err
 		}
 		// Always reconcile: a concurrent failure tick may have read the old

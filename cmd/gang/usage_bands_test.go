@@ -478,7 +478,7 @@ func TestUnconfirmedUsageInputIsNotResubmittedAfterReceiptEviction(t *testing.T)
 				if err != nil {
 					t.Fatal(err)
 				}
-				if err := p.WriteWitness(store.Witness{ID: "late-wake", At: at.Add(time.Second), TurnID: "wake-turn", Prompt: wire}); err != nil {
+				if err := p.WriteWitness(store.Witness{ID: "late-wake", At: at.Add(time.Second), TurnID: "wake-turn", Prompt: wire, Joined: true}); err != nil {
 					t.Fatal(err)
 				}
 				l, a, err := f.run.acquire(a.ID, false)
@@ -489,7 +489,7 @@ func TestUnconfirmedUsageInputIsNotResubmittedAfterReceiptEviction(t *testing.T)
 					t.Fatal(err)
 				}
 				state = usageSnapshot(t, f.run)
-				if state.Snoozes[string(a.ID)].ID != "" || state.Recent[string(a.ID)].TurnID != "wake-turn" {
+				if state.Snoozes[string(a.ID)].ID != "" || state.Recent[string(a.ID)].TurnID != "wake-turn" || !state.Recent[string(a.ID)].Joined {
 					t.Fatalf("late witness did not link wake turn: %+v", state)
 				}
 				if err := f.run.observeSnoozeTurn(a, hookNotice{Kind: "turn-finished", TurnID: "wake-turn"}, false); err != nil {
@@ -937,7 +937,7 @@ func TestFailedRecipientReroutesUncertainNativeInput(t *testing.T) {
 	}
 }
 
-func TestDeliveredWakeKeepsOriginalWitnessTime(t *testing.T) {
+func TestDeliveredWakeKeepsItsOwnWitness(t *testing.T) {
 	f := newStateFixture(t)
 	a := f.add(t, "caller-id", "worker", "codex")
 	at := f.cmd.now()
@@ -968,14 +968,14 @@ func TestDeliveredWakeKeepsOriginalWitnessTime(t *testing.T) {
 	if err := f.run.apply(l, &a, core.Event{Type: "input_started", ID: string(e.ID), Status: "envelope"}); err != nil {
 		t.Fatal(err)
 	}
-	if err := f.run.finishInput(l, &a, e, "delivered", "", witnessAt); err != nil {
+	if err := f.run.finishInput(l, &a, e, "delivered", "", store.Witness{At: witnessAt, Joined: true}); err != nil {
 		t.Fatal(err)
 	}
 	if err := l.Close(); err != nil {
 		t.Fatal(err)
 	}
-	if got := usageSnapshot(t, f.run).Recent[string(a.ID)].SubmittedAt; !got.Equal(witnessAt) {
-		t.Fatalf("original submit time %s was replaced by later witness time %s", witnessAt, got)
+	if got := usageSnapshot(t, f.run).Recent[string(a.ID)]; !got.SubmittedAt.Equal(witnessAt) || !got.Joined {
+		t.Fatalf("delivered wake lost its own witness (submitted %s, joined): %+v", witnessAt, got)
 	}
 	a.Native.LastErrorAt = witnessAt.Add(500 * time.Millisecond)
 	if err := f.run.observeSnoozeTurn(a, hookNotice{Kind: "turn-finished", TurnID: "wake-turn"}, false); err != nil {

@@ -67,9 +67,11 @@ func (run *runtime) tickAgent(id core.HitchID, notice hookNotice, wait bool) err
 	if err != nil {
 		return err
 	}
-	if err := run.reconcileNativeBoundary(l, &a, c, notice); err != nil {
+	queued, err := run.reconcileNativeBoundary(l, &a, c, notice)
+	if err != nil {
 		return err
 	}
+	notice.Queued = queued
 	b, err := run.input()
 	if err != nil {
 		return err
@@ -246,19 +248,22 @@ func (run *runtime) tickAgent(id core.HitchID, notice hookNotice, wait bool) err
 	_, err = run.drainFrom(l, a, "")
 	return err
 }
-func (run *runtime) reconcileNativeBoundary(l *store.LockedAgent, a *core.Agent, c harness.Collar, notice hookNotice) error {
+
+// reconcileNativeBoundary reports whether a prompt is queued behind a finished
+// turn.
+func (run *runtime) reconcileNativeBoundary(l *store.LockedAgent, a *core.Agent, c harness.Collar, notice hookNotice) (bool, error) {
 	witness, witnessErr := l.Paths.ReadWitness()
 	if run.afterWitnessRead != nil {
 		run.afterWitnessRead()
 	}
 	if witnessErr == nil {
 		if a.Native.SessionID != "" && witness.SessionID != a.Native.SessionID {
-			return fmt.Errorf("native witness changed session identity")
+			return false, fmt.Errorf("native witness changed session identity")
 		}
 		if witness.At.After(a.Native.SubmittedAt) {
 			a.Native.SessionID, a.Native.TurnID, a.Native.Transcript, a.Native.SubmittedAt = witness.SessionID, witness.TurnID, witness.Transcript, witness.At
 			if err := l.Save(*a); err != nil {
-				return err
+				return false, err
 			}
 		}
 		// UserPromptSubmit is synchronous: a distinct native prompt ID proves
@@ -266,14 +271,14 @@ func (run *runtime) reconcileNativeBoundary(l *store.LockedAgent, a *core.Agent,
 		if a.Native.TurnFailure != "" && a.Native.FailedTurn != "" && witness.TurnID != "" && witness.TurnID != a.Native.FailedTurn {
 			a.Native.TurnFailure, a.Native.FailedTurn = "", ""
 			if err := l.Save(*a); err != nil {
-				return err
+				return false, err
 			}
 		}
 	} else if !errors.Is(witnessErr, os.ErrNotExist) {
-		return witnessErr
+		return false, witnessErr
 	}
 	if notice.SessionID != "" && a.Native.SessionID != "" && notice.SessionID != a.Native.SessionID {
-		return fmt.Errorf("hook boundary belongs to another native session")
+		return false, fmt.Errorf("hook boundary belongs to another native session")
 	}
 	if a.Native.SessionID == "" {
 		a.Native.SessionID = notice.SessionID
@@ -301,7 +306,7 @@ func (run *runtime) reconcileNativeBoundary(l *store.LockedAgent, a *core.Agent,
 		if finished.After(a.Native.FinishedAt) {
 			a.Native.FinishedAt = finished
 			if err := l.Save(*a); err != nil {
-				return err
+				return false, err
 			}
 		}
 	}
@@ -320,15 +325,15 @@ func (run *runtime) reconcileNativeBoundary(l *store.LockedAgent, a *core.Agent,
 			a.Native.TurnFailure, a.Native.FailedTurn = "native failure without turn identity: "+reason, ""
 		}
 		if err := l.Save(*a); err != nil {
-			return err
+			return false, err
 		}
 	} else if notice.Kind == "turn-finished" && a.Native.TurnFailure != "" && a.Native.FailedTurn == "" && notice.TurnID != "" && witnessErr == nil && notice.TurnID == witness.TurnID {
 		a.Native.TurnFailure = ""
 		if err := l.Save(*a); err != nil {
-			return err
+			return false, err
 		}
 	}
-	return nil
+	return queued, nil
 }
 
 func (run *runtime) publishOnce(l *store.LockedAgent, a *core.Agent, e core.Envelope) error {

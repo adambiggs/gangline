@@ -203,6 +203,11 @@ type Witness struct {
 	SessionID  string    `json:"session_id,omitempty"`
 	TurnID     string    `json:"turn_id,omitempty"`
 	Transcript string    `json:"transcript,omitempty"`
+	// Joined marks a submit that carried the turn id the previous submit
+	// announced: the prompt was typed into a running turn and queued there.
+	// A turn that ran from the queue has an id no submit announced, so a
+	// prompt typed into it is not marked.
+	Joined bool `json:"joined,omitempty"`
 }
 
 func (p AgentPaths) WriteWitness(w Witness) error { return atomicJSON(p.Witness, w) }

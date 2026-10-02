@@ -3,6 +3,7 @@ package main
 import (
 	"bytes"
 	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 	"time"
@@ -192,7 +193,7 @@ func TestWakeRoutedToLeadIsLoggedUnderItsCaller(t *testing.T) {
 	f := newStateFixture(t)
 	caller := f.add(t, "caller-id", "worker", "codex")
 	if err := f.run.withUsageState(func(state *usageState) error {
-		state.Recent[string(caller.ID)] = usageSnooze{ID: "submitted-wake", Token: "0123456789abcdef", CallerID: caller.ID, CallerName: caller.Name, RecipientID: caller.ID, RecipientName: caller.Name, TurnID: "old-turn", At: f.cmd.now().Add(-time.Hour), Note: "Resume saved work"}
+		state.Recent[string(caller.ID)] = usageSnooze{ID: "submitted-wake", Token: "0123456789abcdef", CallerID: caller.ID, CallerName: caller.Name, RecipientID: caller.ID, RecipientName: caller.Name, TurnID: "old-turn", QueuedBehind: true, At: f.cmd.now().Add(-time.Hour), Note: "Resume saved work"}
 		return nil
 	}); err != nil {
 		t.Fatal(err)
@@ -205,7 +206,11 @@ func TestWakeRoutedToLeadIsLoggedUnderItsCaller(t *testing.T) {
 	if err := f.run.flushUsageWork(); err != nil {
 		t.Fatal(err)
 	}
-	next := usageSnapshot(t, f.run).Recent[string(caller.ID)].ID
+	rearmed := usageSnapshot(t, f.run).Recent[string(caller.ID)]
+	if rearmed.QueuedBehind {
+		t.Fatalf("re-armed wake waits behind the departed recipient's turn: %+v", rearmed)
+	}
+	next := rearmed.ID
 	f.env["GANG_AGENT_ID"], f.env["TMUX_PANE"] = string(lead.ID), lead.Pane
 	if err := f.cmd.snooze([]string{"--clear", string(next)}); err != nil {
 		t.Fatal(err)
@@ -328,5 +333,100 @@ func TestFailedWakeIsLoggedOnce(t *testing.T) {
 	}
 	if !strings.Contains(events[0].Reason, "provider blocked") {
 		t.Fatalf("failure reason = %q", events[0].Reason)
+	}
+}
+
+// A wake typed into a running Claude Code turn shares that turn's submit hook
+// and prompt id, then runs as its own queued turn. The wake is judged by the
+// queued turn, not by the turn it was typed into.
+func TestWakeQueuedBehindARunningTurnIsJudgedByItsOwnTurn(t *testing.T) {
+	// Each step starts the queued prompt next, unless next is empty, then
+	// delivers the notice and expects the wake events want.
+	type step struct {
+		next   string
+		notice hookNotice
+		want   string
+	}
+	for _, tc := range []struct {
+		name  string
+		ahead bool
+		steps []step
+	}{
+		{"finished", false, []step{{"p2", hookNotice{Kind: "turn-finished", TurnID: "p2"}, "snooze_completed queued-wake"}}},
+		{"failed", false, []step{
+			{"p2", hookNotice{Kind: "turn-failed", TurnID: "p2", Failure: "Login expired"}, "snooze_failed queued-wake"},
+			{"p3", hookNotice{Kind: "turn-finished", TurnID: "p3"}, "snooze_failed queued-wake"},
+		}},
+		{"unattributed failure", false, []step{
+			{"p2", hookNotice{Kind: "turn-failed", Failure: "Login expired"}, ""},
+			{"", hookNotice{Kind: "turn-finished", TurnID: "p2"}, "snooze_failed queued-wake"},
+		}},
+		{"prompt queued ahead", true, []step{
+			{"p2", hookNotice{Kind: "turn-finished", TurnID: "p2"}, ""},
+			{"p3", hookNotice{Kind: "turn-finished", TurnID: "p3"}, "snooze_completed queued-wake"},
+		}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			f, a, start := openTurnFixture(t)
+			stamp := func(d time.Duration) string { return start.Add(d).UTC().Format(time.RFC3339Nano) }
+			key := string(a.ID)
+			if err := f.run.withUsageState(func(state *usageState) error {
+				state.Recent[key] = usageSnooze{ID: "queued-wake", CallerID: a.ID, CallerName: a.Name, RecipientID: a.ID, RecipientName: a.Name, TurnID: "p1", Joined: true, SubmittedAt: start, At: start}
+				return nil
+			}); err != nil {
+				t.Fatal(err)
+			}
+			transcript := filepath.Join(t.TempDir(), "transcript.jsonl")
+			appendLines(t, transcript, `{"type":"user","promptId":"p1","timestamp":"`+stamp(-time.Second)+`"}`)
+			if tc.ahead {
+				appendLines(t, transcript, `{"type":"queue-operation","operation":"enqueue","timestamp":"`+stamp(-500*time.Millisecond)+`","content":"ahead"}`)
+			}
+			appendLines(t, transcript, `{"type":"queue-operation","operation":"enqueue","timestamp":"`+stamp(0)+`","content":"wake"}`)
+			f.tickAt(t, a, start.Add(2*time.Second), hookNotice{Kind: "turn-finished", TurnID: "p1", Transcript: transcript})
+			if got := wakeEventSummary(wakeEvents(t, f, string(a.Name))); got != "" {
+				t.Fatalf("wake judged by the turn it was typed into: %s", got)
+			}
+			for i, st := range tc.steps {
+				at := time.Duration(3+i) * time.Second
+				if st.next != "" {
+					appendLines(t, transcript, `{"type":"system","subtype":"stop_hook_summary","timestamp":"`+stamp(at)+`"}`,
+						`{"type":"queue-operation","operation":"dequeue","timestamp":"`+stamp(at+100*time.Millisecond)+`"}`,
+						`{"type":"user","promptId":"`+st.next+`","timestamp":"`+stamp(at+200*time.Millisecond)+`"}`)
+				}
+				st.notice.Transcript = transcript
+				f.tickAt(t, a, start.Add(at+time.Second), st.notice)
+				if got := wakeEventSummary(wakeEvents(t, f, string(a.Name))); got != st.want {
+					t.Fatalf("wake events after %s %s: %q, want %q", st.notice.Kind, st.notice.TurnID, got, st.want)
+				}
+			}
+		})
+	}
+}
+
+// A wake submitted at idle starts its own turn. A prompt typed into that turn
+// queues behind it, and its later turn does not judge the wake.
+func TestWakeThatStartsItsTurnIsJudgedByThatTurn(t *testing.T) {
+	f, a, start := openTurnFixture(t)
+	stamp := func(d time.Duration) string { return start.Add(d).UTC().Format(time.RFC3339Nano) }
+	key := string(a.ID)
+	if err := f.run.withUsageState(func(state *usageState) error {
+		state.Recent[key] = usageSnooze{ID: "own-wake", CallerID: a.ID, CallerName: a.Name, RecipientID: a.ID, RecipientName: a.Name, TurnID: "p1", SubmittedAt: start, At: start}
+		return nil
+	}); err != nil {
+		t.Fatal(err)
+	}
+	transcript := filepath.Join(t.TempDir(), "transcript.jsonl")
+	appendLines(t, transcript, `{"type":"user","promptId":"p1","timestamp":"`+stamp(0)+`"}`,
+		`{"type":"queue-operation","operation":"enqueue","timestamp":"`+stamp(time.Second)+`","content":"typed later"}`)
+	f.tickAt(t, a, start.Add(2*time.Second), hookNotice{Kind: "turn-finished", TurnID: "p1", Transcript: transcript})
+	if got := wakeEventSummary(wakeEvents(t, f, string(a.Name))); got != "snooze_completed own-wake" {
+		t.Fatalf("wake events after its own turn finished: %q", got)
+	}
+	appendLines(t, transcript, `{"type":"system","subtype":"stop_hook_summary","timestamp":"`+stamp(3*time.Second)+`"}`,
+		`{"type":"queue-operation","operation":"dequeue","timestamp":"`+stamp(3100*time.Millisecond)+`"}`,
+		`{"type":"user","promptId":"p2","timestamp":"`+stamp(3200*time.Millisecond)+`"}`)
+	f.tickAt(t, a, start.Add(4*time.Second), hookNotice{Kind: "turn-failed", TurnID: "p2", Failure: "Login expired", Transcript: transcript})
+	if got := wakeEventSummary(wakeEvents(t, f, string(a.Name))); got != "snooze_completed own-wake" {
+		t.Fatalf("wake judged by the prompt queued behind it: %q", got)
 	}
 }

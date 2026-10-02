@@ -66,6 +66,21 @@ func (f *stateFixture) tickAt(t *testing.T, a core.Agent, at time.Time, notice h
 	return f.agent(t, a.ID)
 }
 
+// appendLines appends each line to the transcript at path.
+func appendLines(t *testing.T, path string, lines ...string) {
+	t.Helper()
+	file, err := os.OpenFile(path, os.O_CREATE|os.O_APPEND|os.O_WRONLY, 0o600)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer file.Close()
+	for _, line := range lines {
+		if _, err := file.WriteString(line + "\n"); err != nil {
+			t.Fatal(err)
+		}
+	}
+}
+
 // A turn the submit hook witnessed stays busy on an idle-looking screen until
 // its finish boundary arrives.
 func TestWitnessedTurnReadsBusyUntilItsBoundary(t *testing.T) {
@@ -109,18 +124,7 @@ func TestQueuedPromptKeepsTurnOpenPastItsPredecessor(t *testing.T) {
 	f, a, start := openTurnFixture(t)
 	stamp := func(d time.Duration) string { return start.Add(d).UTC().Format(time.RFC3339Nano) }
 	transcript := filepath.Join(t.TempDir(), "transcript.jsonl")
-	write := func(lines ...string) {
-		file, err := os.OpenFile(transcript, os.O_CREATE|os.O_APPEND|os.O_WRONLY, 0o600)
-		if err != nil {
-			t.Fatal(err)
-		}
-		defer file.Close()
-		for _, line := range lines {
-			if _, err := file.WriteString(line + "\n"); err != nil {
-				t.Fatal(err)
-			}
-		}
-	}
+	write := func(lines ...string) { appendLines(t, transcript, lines...) }
 	write(`{"type":"user","promptId":"p1","timestamp":"`+stamp(0)+`"}`,
 		`{"type":"queue-operation","operation":"enqueue","timestamp":"`+stamp(time.Second)+`","content":"next"}`)
 	got := f.tickAt(t, a, start.Add(3*time.Second), hookNotice{Kind: "turn-finished", TurnID: "p1", Transcript: transcript})
