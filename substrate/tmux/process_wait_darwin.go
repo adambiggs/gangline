@@ -100,18 +100,25 @@ func openProcessHandle(observed processRecord) (processHandle, error) {
 
 func (handle *darwinProcessHandle) signal(signal syscall.Signal) error {
 	err := signalDarwinToken(&handle.token, signal)
-	if errors.Is(err, syscall.ESRCH) {
+	// A signal that races the target's exit can fail with EPERM instead of
+	// ESRCH. A process the kernel has moved to its zombie list no longer
+	// reads, so a refusal stands only for a process that still does.
+	if !errors.Is(err, syscall.ESRCH) && !errors.Is(err, syscall.EPERM) {
+		return err
+	}
+	current, _, readErr := readDarwinProcess(handle.pid)
+	switch {
+	case readErr == nil && current.started != handle.started:
 		// An exec changes pidversion without ending the process. Refuse
 		// visibly instead of waiting forever on the still-live registration.
-		current, _, readErr := readDarwinProcess(handle.pid)
-		if readErr == nil && current.started != handle.started {
-			return fmt.Errorf("recorded process %d changed identity; descendant teardown is incomplete", handle.pid)
-		}
-		if readErr != nil && !errors.Is(readErr, syscall.ESRCH) {
-			return readErr
-		}
+		return fmt.Errorf("recorded process %d changed identity; descendant teardown is incomplete", handle.pid)
+	case readErr == nil:
+		return err
+	case errors.Is(readErr, syscall.ESRCH):
+		return syscall.ESRCH
+	default:
+		return readErr
 	}
-	return err
 }
 
 func (handle *darwinProcessHandle) close() error { return syscall.Close(handle.kqueue) }
