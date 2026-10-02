@@ -4,7 +4,7 @@
   "type": "module",
   "scripts": {
     "prebuild": "node scripts/prepare-assets.mjs",
-    "build": "astro build && node scripts/check-links.mjs",
+    "build": "astro build && node scripts/check-links.mjs && node scripts/check-nav.mjs",
     "predev": "node scripts/prepare-assets.mjs",
     "dev": "astro dev",
     "preview": "astro preview"

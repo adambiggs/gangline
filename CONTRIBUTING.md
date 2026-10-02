@@ -55,7 +55,8 @@ CI runs the Go checks on Linux and macOS. Test rules are in
 
 The Astro site in `site/` renders the repository's Markdown directly. After
 changing docs or navigation, run `npm ci --prefix site` and
-`npm run build --prefix site`. The build checks local links and heading anchors.
+`npm run build --prefix site`. The build checks local links, heading anchors,
+and the navigation column on the home and docs pages.
 
 ## Commit
 
