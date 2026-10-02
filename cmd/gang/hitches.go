@@ -258,7 +258,10 @@ func (cmd command) hitchWithStaleClaim(args []string, supersede bool) (result er
 			if native {
 				return errors.Join(interrupt, err), interrupt.Error() + ": " + exited.Error()
 			}
-			return errors.Join(interrupt, err), interrupt.Error()
+			// The interrupt cancels the call in flight, so that call's error
+			// (a cancelled context, or a tmux client killed with it) is its
+			// consequence and adds nothing to it.
+			return interrupt, interrupt.Error()
 		}
 		if native {
 			return err, exited.Error()

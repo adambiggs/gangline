@@ -164,6 +164,10 @@ exec tmux "$@"
 				if !errors.As(err, &exit) || exit.ExitCode() != 1 || !strings.Contains(out, "hitch interrupted by "+signalName(tc.signal)) {
 					t.Fatalf("hitch did not report the interrupt: %v\n%s", err, out)
 				}
+				// The calls the interrupt cancelled add nothing to it.
+				if strings.Contains(strings.TrimSpace(out), "\n") {
+					t.Fatalf("hitch reported more than the interrupt:\n%s", out)
+				}
 				failed, _, err := gang(environment, "log", "--type", "hitch_failed")
 				if err != nil || !strings.Contains(failed, "hitch interrupted by "+signalName(tc.signal)) {
 					t.Fatalf("hitch_failed reason lacks the interrupt: %v\n%s", err, failed)
