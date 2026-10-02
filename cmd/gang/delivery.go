@@ -437,10 +437,28 @@ func (run *runtime) drainLocked(l *store.LockedAgent, a *core.Agent, target core
 // sending command reports its own message's outcome, so only an outcome
 // reached by a later command needs the notice. Gangline sends the notice
 // itself, and only agents receive one, so a notice never produces another.
+// The notice rides on a drain, drop, or recovery that has already settled e,
+// so a notice that cannot be sent is logged and warned about rather than
+// failing that operation.
 func (run *runtime) notifySender(a core.Agent, e core.Envelope, outcome string) error {
 	if e.From.Kind != core.SenderAgent || e.From.HitchID == a.ID {
 		return nil
 	}
+	err := run.sendNotice(a, e, outcome)
+	if err == nil {
+		return nil
+	}
+	if err := run.record(a, core.Event{Type: "notice_failed", ID: string(e.ID), Reason: err.Error()}); err != nil {
+		return err
+	}
+	if run.cmd.stderr != nil {
+		if _, err := fmt.Fprintf(run.cmd.stderr, "warning: could not tell %s about message %s: %v\n", e.From.Name, e.ID, err); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+func (run *runtime) sendNotice(a core.Agent, e core.Envelope, outcome string) error {
 	p, err := run.team.Agent(e.From.HitchID)
 	if err != nil {
 		return err

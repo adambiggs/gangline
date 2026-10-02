@@ -34,7 +34,7 @@ import "time"
   "compaction_requested" | "compaction_submitted" | "compaction_completed" | "compaction_failed" | "compaction_unverified" |
   "interrupt_requested" | "interrupt_completed" | "deadline_checked" |
   "drop_started" | "drop_finished" | "curfew_set" | "curfew_cleared" |
-  "capacity_detected" | "capacity_submitted" | "capacity_cleared" | "snooze_scheduled" | "snooze_cleared" | "snooze_completed" | "snooze_failed" | "snooze_cap_rejected" | "snooze_rearmed" | "tick" | "tick_failed" | "watchdog_unavailable" | "watchdog_available" | "watchdog_failed" | "process_verification_unavailable" | "process_verification_available"
+  "capacity_detected" | "capacity_submitted" | "capacity_cleared" | "snooze_scheduled" | "snooze_cleared" | "snooze_completed" | "snooze_failed" | "snooze_cap_rejected" | "snooze_rearmed" | "notice_failed" | "tick" | "tick_failed" | "watchdog_unavailable" | "watchdog_available" | "watchdog_failed" | "process_verification_unavailable" | "process_verification_available"
  at: #Time
  source?: "hook" | "command" | "watchdog"
  hitch_id?: #ID, name?: #ID, pane?: #ID, id?: #ID, reason?: string, status?: string
@@ -48,6 +48,7 @@ import "time"
  {type: "context_band_crossed", id: #ID, hitch_id: #ID, status: #ID, envelope: #Envelope, readings: [#Reading]} |
  {type: "snooze_scheduled" | "snooze_cleared" | "snooze_failed", id: #ID, hitch_id: #ID, reason: #ID} |
  {type: "snooze_completed", id: #ID, hitch_id: #ID} |
+ {type: "notice_failed", id: #ID, hitch_id: #ID, reason: #ID} |
  {type: "snooze_cap_rejected", id: #ID, hitch_id: #ID, reason: #ID} |
  {type: "snooze_rearmed", id: #ID, hitch_id: #ID, deadline: #Time, reason: #ID} |
  {type: "input_started" | "input_finished", id: #ID, status: #ID, hitch_id: #ID} |

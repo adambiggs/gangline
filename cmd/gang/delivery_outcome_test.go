@@ -2,6 +2,8 @@ package main
 
 import (
 	"errors"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 
@@ -198,5 +200,70 @@ func TestDroppedRecipientHeldMessageReachesSender(t *testing.T) {
 	}
 	if len(*woken) != 1 || (*woken)[0] != string(lead.ID) {
 		t.Fatalf("woken: %v", *woken)
+	}
+}
+
+// The notice rides on an operation that has already settled the message, so a
+// sender that cannot take the notice is logged and warned about while the
+// drain, recovery, or drop finishes.
+func TestUnsendableNoticeDoesNotStopTheOperation(t *testing.T) {
+	for _, test := range []struct {
+		name string
+		run  func(*testing.T, *stateFixture, core.Agent, core.Envelope) error
+		want string
+	}{
+		{"drain", func(t *testing.T, f *stateFixture, a core.Agent, _ core.Envelope) error {
+			_, err := f.run.drain(a.ID, "")
+			return err
+		}, "delivery_unverified"},
+		{"recover", func(t *testing.T, f *stateFixture, a core.Agent, e core.Envelope) error {
+			f.setAgent(t, a, func(a *core.Agent) { a.Input = &core.InputIntent{ID: string(e.ID), Kind: "envelope"} })
+			f.input.screen = screenWithText("• Working (esc to interrupt)", "› ")
+			_, err := f.run.drain(a.ID, "")
+			return err
+		}, "input_finished"},
+		{"drop", func(t *testing.T, f *stateFixture, _ core.Agent, _ core.Envelope) error {
+			return f.cmd.drop([]string{"worker"})
+		}, "drop_finished"},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			f, a, _ := queueSendFixture(t)
+			lead := f.add(t, "b", "lead", "claude")
+			e, woken := holdFor(t, f, a, agentSender(lead), "check the build")
+			p, _ := f.run.team.Agent(lead.ID)
+			path, _ := p.EnvelopePath("new", "outcome-"+e.ID)
+			inbox := filepath.Dir(path)
+			if err := os.Chmod(inbox, 0500); err != nil {
+				t.Fatal(err)
+			}
+			t.Cleanup(func() { os.Chmod(inbox, 0700) })
+			if err := test.run(t, f, a, e); err != nil {
+				t.Fatalf("%s: %v", test.name, err)
+			}
+			log, err := os.Open(f.run.team.Log)
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer log.Close()
+			var failed, finished bool
+			if err := store.ReadLog(log, func(event core.Event) error {
+				if event.Type == "notice_failed" && event.HitchID == a.ID && event.ID == string(e.ID) && strings.Contains(event.Reason, "permission denied") {
+					failed = true
+				}
+				finished = finished || event.Type == test.want && event.HitchID == a.ID
+				return nil
+			}); err != nil {
+				t.Fatal(err)
+			}
+			if !failed || !finished {
+				t.Fatalf("notice_failed %v, %s %v", failed, test.want, finished)
+			}
+			if !strings.Contains(f.errOut.String(), "warning: could not tell lead about message "+string(e.ID)) {
+				t.Fatalf("stderr: %q", f.errOut.String())
+			}
+			if len(*woken) != 0 {
+				t.Fatalf("woken: %v", *woken)
+			}
+		})
 	}
 }
