@@ -244,6 +244,32 @@ func tmuxCommand(command string, arguments ...string) string {
 	return out.String()
 }
 
+func registeredCondition(id PaneIdentity) string {
+	return fmt.Sprintf("#{&&:#{==:#{%s},%s},#{&&:#{==:#{session_id},%s},#{==:#{pane_id},%s}}}", generationOption, id.Generation, id.Session, id.Pane)
+}
+
+// ReleaseRegisteredExit is ReleaseExit for a registered pane. The identity
+// check runs in the same command queue as the release, so a pane that reuses
+// the id on another server keeps its own remain-on-exit setting.
+func (b *Backend) ReleaseRegisteredExit(ctx context.Context, id PaneIdentity) error {
+	if err := validPaneIdentity(id); err != nil {
+		return err
+	}
+	release := strings.Join([]string{
+		tmuxCommand("display-message", "-p", "-t", id.Pane, "#{pane_dead},#{pane_dead_status}"),
+		tmuxCommand("capture-pane", "-p", "-J", "-S", "-", "-t", id.Pane),
+		tmuxCommand("set-option", "-p", "-u", "-t", id.Pane, "remain-on-exit"),
+	}, " ; ")
+	out, err := b.run(ctx, "if-shell", "-F", "-t", id.Pane, registeredCondition(id), release, "display-message -p '"+ErrPaneReplaced.Error()+"'")
+	if err != nil {
+		return tmuxError("release exited pane", err, out)
+	}
+	if strings.TrimSpace(out) == ErrPaneReplaced.Error() {
+		return fmt.Errorf("release exited pane: %w", ErrPaneReplaced)
+	}
+	return releasedExit(out)
+}
+
 func (b *Backend) mutateRegisteredPane(ctx context.Context, id PaneIdentity, command, foreground string, nativePID int, absentOK bool) error {
 	exists, err := b.CheckPane(ctx, id)
 	if err != nil {
@@ -255,7 +281,7 @@ func (b *Backend) mutateRegisteredPane(ctx context.Context, id PaneIdentity, com
 		}
 		return fmt.Errorf("registered pane %s is absent", id.Pane)
 	}
-	condition := fmt.Sprintf("#{&&:#{==:#{%s},%s},#{&&:#{==:#{session_id},%s},#{==:#{pane_id},%s}}}", generationOption, id.Generation, id.Session, id.Pane)
+	condition := registeredCondition(id)
 	if nativePID != 0 {
 		condition = fmt.Sprintf("#{&&:%s,#{==:#{pane_pid},%d}}", condition, nativePID)
 	}

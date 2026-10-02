@@ -96,12 +96,17 @@ func (backend *Backend) ReleaseExit(ctx context.Context, pane substrate.PaneID) 
 	if err != nil {
 		return tmuxError("release exited pane", err, output)
 	}
+	return releasedExit(output)
+}
+
+// releasedExit reads the pane state line and history that a release printed.
+func releasedExit(output string) error {
 	state, history, _ := strings.Cut(output, "\n")
 	dead, status, ok := strings.Cut(state, ",")
-	if !ok {
+	if !ok || dead != "0" && dead != "1" {
 		return fmt.Errorf("release exited pane: tmux returned %q", state)
 	}
-	if dead != "1" {
+	if dead == "0" {
 		return nil
 	}
 	return exited(status, history)

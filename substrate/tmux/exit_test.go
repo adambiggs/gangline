@@ -198,6 +198,60 @@ func TestReleaseExitLetsLivePaneClose(t *testing.T) {
 	}
 }
 
+// A pane id names a different pane on a restarted server. The release
+// changes only the registered pane, and still reports its exit.
+func TestReleaseRegisteredExitChecksIdentity(t *testing.T) {
+	binary, err := exec.LookPath("tmux")
+	if err != nil {
+		t.Skip("tmux is required")
+	}
+	root := privateTmuxRoot(t)
+	socket := filepath.Join(root, "tmux.sock")
+	backend, err := New(Config{Binary: binary, Socket: socket, Session: "registered-releases"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := backend.CreateSession(context.Background(), substrate.SpawnSpec{Name: "first", Directory: root, Command: "sh"}); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _, _ = runTmuxResult(binary, socket, "kill-session", "-t", "=registered-releases") })
+	for _, live := range []bool{true, false} {
+		dir := filepath.Join(root, fmt.Sprint(live))
+		if err := os.Mkdir(dir, 0o700); err != nil {
+			t.Fatal(err)
+		}
+		pane, err := backend.Spawn(context.Background(), exitingSpec(t, binary, socket, dir, "release-"+dir, "6"))
+		if err != nil {
+			t.Fatal(err)
+		}
+		started := awaitStart(t, dir)
+		id, err := backend.RegisterPane(context.Background(), pane.ID)
+		if err != nil {
+			t.Fatal(err)
+		}
+		stale := id
+		stale.Generation = strings.Repeat("a", 64)
+		if err := backend.ReleaseRegisteredExit(context.Background(), stale); !errors.Is(err, ErrPaneReplaced) {
+			t.Fatalf("release of a replaced pane = %v", err)
+		}
+		if held := runTmux(t, binary, socket, "show-options", "-p", "-v", "-t", id.Pane, "remain-on-exit"); strings.TrimSpace(held) != "on" {
+			t.Fatalf("release of a replaced pane changed remain-on-exit to %q", held)
+		}
+		if live {
+			if err := backend.ReleaseRegisteredExit(context.Background(), id); err != nil {
+				t.Fatal(err)
+			}
+			awaitExit(t, binary, socket, started, "release-"+dir)
+			if panes := runTmux(t, binary, socket, "list-panes", "-s", "-t", "=registered-releases:", "-F", "#{pane_id}"); strings.Contains(panes, id.Pane+"\n") {
+				t.Fatalf("released pane %s stayed after exit: %q", id.Pane, panes)
+			}
+			continue
+		}
+		awaitExit(t, binary, socket, started, "release-"+dir)
+		assertExited(t, backend.ReleaseRegisteredExit(context.Background(), id), "6")
+	}
+}
+
 // User hooks that split the new window and open another run before any
 // command after the launch, and take focus from the launched pane. The hold
 // stays on the launched pane alone.

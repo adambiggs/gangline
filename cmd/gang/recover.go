@@ -123,7 +123,7 @@ func (run *runtime) tickAgent(id core.HitchID, notice hookNotice, wait bool) err
 		if err != nil {
 			return err
 		}
-		if err := registry.ReleaseExit(ctx, substrate.PaneID(a.Pane)); err != nil {
+		if err := registry.ReleaseRegisteredExit(ctx, paneIdentity(a)); err != nil {
 			if !errors.As(err, &exited) {
 				return err
 			}

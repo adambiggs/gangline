@@ -9,6 +9,7 @@ import (
 
 	"github.com/adambiggs/gangline/core"
 	"github.com/adambiggs/gangline/substrate"
+	"github.com/adambiggs/gangline/substrate/tmux"
 )
 
 // setAgent rewrites a fixture record under its lock.
@@ -108,8 +109,9 @@ func TestRosterShowsWhyAnAgentIsUnhealthy(t *testing.T) {
 	}
 }
 
-// Startup observed by a tick ends the boot hold, and an exit the hold kept
-// fails the agent with its output.
+// Startup observed by a tick ends the boot hold of the registered pane, and
+// an exit the hold kept fails the agent with its output. A pane id that now
+// names another pane is left alone and the record stays booting.
 func TestTickReleasesBootHoldAtReadiness(t *testing.T) {
 	for _, tc := range []struct {
 		name   string
@@ -118,6 +120,7 @@ func TestTickReleasesBootHoldAtReadiness(t *testing.T) {
 	}{
 		{name: "running", status: core.Active},
 		{name: "exited", exit: &substrate.ExitedError{Status: "1", Output: "Do you trust the files in this folder?\nNo, exit"}, status: core.Failed},
+		{name: "replaced", exit: fmt.Errorf("release exited pane: %w", tmux.ErrPaneReplaced), status: core.Booting},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			f := newStateFixture(t)
@@ -125,14 +128,19 @@ func TestTickReleasesBootHoldAtReadiness(t *testing.T) {
 				a.Status, a.Activity, a.BootDeadline = core.Booting, core.Unknown, f.cmd.now().Add(bootTimeout)
 			})
 			f.input.releaseErr = tc.exit
-			if err := f.cmd.tick([]string{"--agent", "worker"}); err != nil {
+			if err := f.cmd.tick([]string{"--agent", "worker"}); !errors.Is(err, tmux.ErrPaneReplaced) && err != nil {
 				t.Fatal(err)
+			} else if tc.status == core.Booting && err == nil {
+				t.Fatal("tick ignored a replaced pane")
 			}
 			got := f.agent(t, a.ID)
 			if f.input.releases != 1 || got.Status != tc.status {
 				t.Fatalf("releases = %d, status = %s; want 1, %s", f.input.releases, got.Status, tc.status)
 			}
-			if tc.exit != nil && got.Evidence != bootExit {
+			if f.input.released != paneIdentity(a) {
+				t.Fatalf("released %+v, want the registered pane %+v", f.input.released, paneIdentity(a))
+			}
+			if tc.status == core.Failed && got.Evidence != bootExit {
 				t.Fatalf("evidence = %q, want the native exit", got.Evidence)
 			}
 		})

@@ -31,6 +31,7 @@ type inputFixture struct {
 	captures         int
 	captureErr       error
 	releases         int
+	released         tmux.PaneIdentity
 	releaseErr       error
 	paneClosed       bool
 	keys             []string
@@ -61,8 +62,9 @@ func (b *inputFixture) ProcessVisibility(context.Context, substrate.PaneID) (boo
 	return true, nil
 }
 func (b *inputFixture) VerifyCaller(context.Context, substrate.PaneID) error { return nil }
-func (b *inputFixture) ReleaseExit(context.Context, substrate.PaneID) error {
+func (b *inputFixture) ReleaseRegisteredExit(_ context.Context, id tmux.PaneIdentity) error {
 	b.releases++
+	b.released = id
 	return b.releaseErr
 }
 func (b *inputFixture) SendRegisteredKeys(ctx context.Context, id tmux.PaneIdentity, _ string, k substrate.Keys) error {
