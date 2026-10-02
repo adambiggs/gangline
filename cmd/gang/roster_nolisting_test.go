@@ -55,8 +55,8 @@ func paneProcesses(t *testing.T) (live, gone core.ProcessIdentity) {
 
 // exitedPaneProcess records a pane process, releases it, and returns once the
 // server has collected it. The process holds the write end of an exit pipe,
-// so EOF on the pipe witnesses its exit; run-shell makes the server collect
-// every exited child before the command returns.
+// so EOF on the pipe witnesses its exit; the reap makes the server collect
+// every exited child before it returns.
 func exitedPaneProcess(t *testing.T, b *tmux.Backend, binary, socket, root string) core.ProcessIdentity {
 	t.Helper()
 	fifo := filepath.Join(root, "exit-pipe")
@@ -107,8 +107,14 @@ func exitedPaneProcess(t *testing.T, b *tmux.Backend, binary, socket, root strin
 	case <-time.After(time.Minute):
 		t.Fatal("process did not exit")
 	}
-	if out, err := exec.Command(binary, "-S", socket, "run-shell", "true").CombinedOutput(); err != nil {
-		t.Fatalf("run-shell: %v\n%s", err, out)
+	// Bounded so a server that stops answering cannot hold the test forever.
+	reap, cancel := context.WithTimeout(ctx, time.Minute)
+	defer cancel()
+	if out, err := tmux.Reaped(reap, func(ctx context.Context, arguments ...string) (string, error) {
+		out, err := exec.CommandContext(ctx, binary, append([]string{"-S", socket}, arguments...)...).CombinedOutput()
+		return string(out), err
+	}); err != nil {
+		t.Fatalf("reap: %v\n%s", err, out)
 	}
 	return storedIdentity(identity)
 }
