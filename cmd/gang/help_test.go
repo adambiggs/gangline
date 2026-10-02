@@ -254,3 +254,16 @@ func TestHelpFitsWidth(t *testing.T) {
 		check(name+" --help", []string{name, "--help"})
 	}
 }
+
+func TestHelpReachesCollarCheck(t *testing.T) {
+	var want, stdout, stderr bytes.Buffer
+	if status := run([]string{"collar", "check", "--help"}, strings.NewReader(""), &want, &stderr); status != exitOK {
+		t.Fatalf("collar check --help status=%d stderr=%q", status, stderr.String())
+	}
+	for _, spelling := range []string{"help", "--help", "-h"} {
+		stdout.Reset()
+		if status := run([]string{spelling, "collar", "check"}, strings.NewReader(""), &stdout, &stderr); status != exitOK || stdout.String() != want.String() {
+			t.Errorf("%s collar check status=%d stdout=%q stderr=%q; want %q", spelling, status, stdout.String(), stderr.String(), want.String())
+		}
+	}
+}

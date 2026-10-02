@@ -113,6 +113,9 @@ func (cmd command) execute(args []string) error {
 		if args[0] == "help" && len(args) > 1 && args[1] == "--" {
 			args = append(args[:1:1], args[2:]...)
 		}
+		if len(args) == 3 && args[1] == "collar" && args[2] == "check" {
+			return cmd.printHelp("collar")
+		}
 		if len(args) > 2 {
 			if args[0] == "help" {
 				if _, ok := commandUsage[args[1]]; !ok {
