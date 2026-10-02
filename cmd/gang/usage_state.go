@@ -506,7 +506,7 @@ func (run *runtime) publishUsageEnvelope(e core.Envelope) (bool, error) {
 	if err != nil {
 		return false, err
 	}
-	defer l.Close()
+	defer run.unlock(l)
 	if a.Status != core.Active {
 		return false, nil
 	}

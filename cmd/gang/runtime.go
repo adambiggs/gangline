@@ -25,6 +25,12 @@ type runtime struct {
 	settings         settings
 	team             store.TeamPaths
 	afterWitnessRead func()
+	// reported names the compaction whose outcome this command returns to
+	// its requester directly.
+	reported string
+	// wake holds agents given a message while another agent's lock was held;
+	// unlock starts their ticks once that lock is gone.
+	wake []core.HitchID
 }
 
 func (cmd command) runtime() (*runtime, error) {
@@ -163,7 +169,7 @@ func (run *runtime) acquire(id core.HitchID, wait bool) (*store.LockedAgent, cor
 		err = run.checkDeadlines(l, &a)
 	}
 	if err != nil {
-		_ = l.Close()
+		_ = run.unlock(l)
 		return nil, a, err
 	}
 	return l, a, nil
@@ -175,7 +181,7 @@ func (run *runtime) release(l *store.LockedAgent) error {
 	if !l.Held() {
 		return nil
 	}
-	if err := l.Close(); err != nil {
+	if err := run.unlock(l); err != nil {
 		return err
 	}
 	if run.cmd.afterUnlock != nil {
@@ -190,13 +196,28 @@ func (run *runtime) release(l *store.LockedAgent) error {
 	}
 	for _, e := range pending {
 		if !e.NotBefore.After(run.cmd.now()) {
-			if run.cmd.detach != nil {
-				return run.cmd.detach(string(e.Recipient), hookNotice{})
-			}
-			return run.cmd.detachTick(string(e.Recipient), hookNotice{}, run.settings)
+			return run.detachTick(e.Recipient)
 		}
 	}
 	return nil
+}
+
+// unlock releases an agent lock, then starts the ticks of agents given a
+// message while it was held.
+func (run *runtime) unlock(l *store.LockedAgent) error {
+	err := l.Close()
+	wake := run.wake
+	run.wake = nil
+	for _, id := range wake {
+		err = errors.Join(err, run.detachTick(id))
+	}
+	return err
+}
+func (run *runtime) detachTick(id core.HitchID) error {
+	if run.cmd.detach != nil {
+		return run.cmd.detach(string(id), hookNotice{})
+	}
+	return run.cmd.detachTick(string(id), hookNotice{}, run.settings)
 }
 func (run *runtime) checkDeadlines(l *store.LockedAgent, a *core.Agent) error {
 	// Trust can appear after AwaitStartup returns. Observe it before an

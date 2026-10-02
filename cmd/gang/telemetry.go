@@ -105,7 +105,7 @@ func (run *runtime) latest(a core.Agent) (core.Agent, error) {
 	if err != nil {
 		return a, err
 	}
-	defer l.Close()
+	defer run.unlock(l)
 	if err := run.checkDeadlines(l, &updated); err != nil {
 		return a, err
 	}

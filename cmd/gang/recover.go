@@ -46,7 +46,7 @@ func (run *runtime) tickAgent(id core.HitchID, notice hookNotice, wait bool) err
 	if err != nil {
 		return err
 	}
-	defer l.Close()
+	defer run.unlock(l)
 	if err := run.checkDeadlines(l, &a); err != nil {
 		return err
 	}
@@ -304,8 +304,11 @@ func (run *runtime) reconcileNativeBoundary(l *store.LockedAgent, a *core.Agent,
 }
 
 func (run *runtime) publishOnce(l *store.LockedAgent, a *core.Agent, e core.Envelope) error {
+	return run.publishOnceTo(l.Paths, *a, e)
+}
+func (run *runtime) publishOnceTo(p store.AgentPaths, a core.Agent, e core.Envelope) error {
 	for _, dir := range []string{"new", "cur", "failed"} {
-		_, err := l.Paths.ReadEnvelope(dir, e.ID)
+		_, err := p.ReadEnvelope(dir, e.ID)
 		if err == nil {
 			return nil
 		}
@@ -313,10 +316,10 @@ func (run *runtime) publishOnce(l *store.LockedAgent, a *core.Agent, e core.Enve
 			return err
 		}
 	}
-	if err := l.Paths.Publish(e); err != nil {
+	if err := p.Publish(e); err != nil {
 		return err
 	}
-	return run.record(*a, core.Event{Type: "send_queued", Envelope: &e})
+	return run.record(a, core.Event{Type: "send_queued", Envelope: &e})
 }
 func (run *runtime) continueCompaction(l *store.LockedAgent, a *core.Agent) error {
 	c := a.Compaction

@@ -401,7 +401,7 @@ func (run *runtime) drainFrom(l *store.LockedAgent, a core.Agent, target core.En
 		if got != "queued" {
 			result = got
 		}
-		closeErr := l.Close()
+		closeErr := run.unlock(l)
 		if err != nil {
 			return result, err
 		}

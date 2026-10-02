@@ -224,7 +224,7 @@ func (run *runtime) observeRoster(agents []core.Agent) ([]core.Agent, error) {
 			return nil, err
 		}
 		if err := run.checkDeadlines(l, &current); err != nil {
-			_ = l.Close()
+			_ = run.unlock(l)
 			return nil, err
 		}
 		if current.Pane != "" && !present[current.Pane] && current.Status != core.Dropping {
@@ -237,19 +237,19 @@ func (run *runtime) observeRoster(agents []core.Agent) ([]core.Agent, error) {
 				err = run.apply(l, &current, core.Event{Type: "hitch_failed", Reason: "registered pane is absent from tmux"})
 			}
 			if err != nil {
-				_ = l.Close()
+				_ = run.unlock(l)
 				return nil, err
 			}
 		}
 		if present[current.Pane] && current.Status == core.Active {
 			c, err := loadCollar(current.Collar, run.settings)
 			if err != nil {
-				_ = l.Close()
+				_ = run.unlock(l)
 				return nil, err
 			}
 			input, err := run.input()
 			if err != nil {
-				_ = l.Close()
+				_ = run.unlock(l)
 				return nil, err
 			}
 			screen, err := input.Capture(context.Background(), substrate.PaneID(current.Pane))
@@ -266,14 +266,14 @@ func (run *runtime) observeRoster(agents []core.Agent) ([]core.Agent, error) {
 				}
 			}
 			if err != nil {
-				_ = l.Close()
+				_ = run.unlock(l)
 				return nil, err
 			}
 		}
 		agents[i] = current
 		if present[current.Pane] && titles[current.Pane] != windowTitle(current) {
 			if err := run.mark(current); err != nil {
-				_ = l.Close()
+				_ = run.unlock(l)
 				return nil, err
 			}
 		}

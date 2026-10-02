@@ -695,7 +695,7 @@ func (run *runtime) dropAgent(id core.HitchID, wait bool) error {
 	if err != nil {
 		return err
 	}
-	defer l.Close()
+	defer run.unlock(l)
 	a, err := p.Read()
 	if err != nil {
 		return err

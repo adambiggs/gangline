@@ -48,7 +48,7 @@ func (run *runtime) recoverStartup(name string) (result error) {
 	}
 	for _, e := range pending {
 		if isStartupEnvelope(e) {
-			if err := l.Close(); err != nil {
+			if err := run.unlock(l); err != nil {
 				return err
 			}
 			if err := run.tickAgent(a.ID, hookNotice{}, false); err != nil {

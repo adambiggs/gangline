@@ -52,7 +52,7 @@ func (run *runtime) admitCompactionResume(id core.HitchID, c harness.Collar, pro
 	if err != nil {
 		return "", err
 	}
-	defer l.Close()
+	defer run.unlock(l)
 	if reason := run.resumePromptBlock(a, c, prompt, session); reason != "" {
 		return reason, nil
 	}
@@ -86,7 +86,7 @@ func (run *runtime) confirmCompactionHook(id core.HitchID, notice hookNotice) er
 	if err != nil {
 		return err
 	}
-	return l.Close()
+	return run.unlock(l)
 }
 
 func (run *runtime) reconcileCompactionWitness(l *store.LockedAgent, a *core.Agent) error {
@@ -325,7 +325,52 @@ func (run *runtime) failCompaction(l *store.LockedAgent, a *core.Agent, phase co
 	default:
 		text += "Your context was compacted, but the resume note was withheld. Re-read your brief and durable state."
 	}
-	return run.publishOnce(l, a, core.Envelope{ID: core.EnvelopeID("failed-" + id), Token: token, Recipient: a.ID, To: a.Name, From: core.Sender{Kind: core.SenderGangline, Name: "compact"}, Message: core.Message{Text: text}, CreatedAt: run.cmd.now()})
+	if err := run.publishOnce(l, a, core.Envelope{ID: core.EnvelopeID("failed-" + id), Token: token, Recipient: a.ID, To: a.Name, From: core.Sender{Kind: core.SenderGangline, Name: "compact"}, Message: core.Message{Text: text}, CreatedAt: run.cmd.now()}); err != nil {
+		return err
+	}
+	return run.notifyRequester(*a, phase, reason)
+}
+
+// notifyRequester tells the agent that requested a compaction of another agent
+// that it failed. The requesting command reports a failure it saw itself, so
+// only a failure in a later operation needs the message.
+func (run *runtime) notifyRequester(a core.Agent, phase compactionPhase, reason string) error {
+	c, r := a.Compaction, a.Compaction.Requester
+	if r.Kind != core.SenderAgent || r.HitchID == a.ID || c.ID == run.reported {
+		return nil
+	}
+	p, err := run.team.Agent(r.HitchID)
+	if err != nil {
+		return err
+	}
+	requester, err := p.Read()
+	if errors.Is(err, os.ErrNotExist) {
+		return nil
+	}
+	if err != nil {
+		return err
+	}
+	if requester.Status != core.Active {
+		return nil
+	}
+	token, err := randomEnvelopeToken()
+	if err != nil {
+		return err
+	}
+	text := fmt.Sprintf("Compaction %s failed: %s. ", c.ID, reason)
+	switch phase {
+	case compactionNotRun:
+		text += fmt.Sprintf("%s's context was not compacted, and its resume note was not delivered.", a.Name)
+	case compactionMayHaveRun:
+		text += fmt.Sprintf("%s's compaction may have run, and its resume note was withheld.", a.Name)
+	default:
+		text += fmt.Sprintf("%s's context was compacted, but its resume note was withheld.", a.Name)
+	}
+	if err := run.publishOnceTo(p, requester, core.Envelope{ID: core.EnvelopeID("failed-" + c.ID), Token: token, Recipient: requester.ID, To: requester.Name, From: core.Sender{Kind: core.SenderGangline, Name: "compact"}, Message: core.Message{Text: text}, CreatedAt: run.cmd.now()}); err != nil {
+		return err
+	}
+	run.wake = append(run.wake, requester.ID)
+	return nil
 }
 
 // abandonCompactDraft clears compact input that must not be submitted and

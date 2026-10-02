@@ -28,7 +28,7 @@ func (run *runtime) supersedeStoppedClaim(ctx context.Context, b *tmux.Backend, 
 	if err != nil {
 		return nil, err
 	}
-	defer func() { result = errors.Join(result, l.Close()) }()
+	defer func() { result = errors.Join(result, run.unlock(l)) }()
 	current, err := run.team.ResolveName(string(replacement.Name))
 	if err != nil {
 		return nil, err

@@ -545,12 +545,16 @@ func (cmd command) compact(args []string) (result error) {
 	if failedStartup {
 		return refuseError("startup contract input is unverified; inspect the recipient and run gang hitch %s --recover before compacting", a.Name)
 	}
-	resumeFrom := core.Sender{Kind: core.SenderGangline, Name: "compact"}
-	if o.Resume != "" {
-		resumeFrom, err = run.observedSender()
-		if err != nil {
+	requester, err := run.observedSender()
+	if err != nil {
+		if o.Resume != "" {
 			return err
 		}
+		requester = core.Sender{}
+	}
+	resumeFrom := core.Sender{Kind: core.SenderGangline, Name: "compact"}
+	if o.Resume != "" {
+		resumeFrom = requester
 		if resumeFrom.Kind == "" {
 			resumeFrom = core.Sender{Kind: core.SenderSelfDeclared, Name: "compact"}
 		}
@@ -567,10 +571,11 @@ func (cmd command) compact(args []string) (result error) {
 		return err
 	}
 	now := cmd.now()
-	compact := core.Compaction{ID: id, Resume: core.Message{Text: resume}, ResumeFrom: resumeFrom, StartedAt: now, Deadline: now.Add(operationTimeout), Status: "queued"}
+	compact := core.Compaction{ID: id, Resume: core.Message{Text: resume}, ResumeFrom: resumeFrom, Requester: requester, StartedAt: now, Deadline: now.Add(operationTimeout), Status: "queued"}
 	if err := run.apply(l, &a, core.Event{Type: "compaction_requested", Compaction: &compact}); err != nil {
 		return err
 	}
+	run.reported = id
 	if err := run.startCompaction(l, &a); err != nil {
 		return err
 	}

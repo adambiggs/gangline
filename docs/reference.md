@@ -91,8 +91,8 @@ nothing. Keep the note short, on one line, and pointed at a state file. Without
 names `gang log --agent NAME --type send_queued`, which records the messages
 queued for it. Every
 failed compaction queues a `[gang:compact#…]` notice to the agent saying whether
-its context was compacted, so a caller whose command already returned still
-learns of the failure.
+its context was compacted, and a copy to the agent that requested it when the
+failure comes after its command returned.
 
 Send options:
 
