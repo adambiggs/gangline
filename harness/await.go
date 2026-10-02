@@ -136,9 +136,11 @@ func AwaitComposerSettle(ctx context.Context, capture captureScreen, pane substr
 		// a fresh stability window when it returns; never submit a missing
 		// composer or retry input that has already been pasted.
 		if err != nil {
-			observed = composerStability{}
+			observed.text, observed.since, observed.emptySince = "", time.Time{}, time.Time{}
 		} else if observed.ready(composer.Text, time.Now(), settle) {
 			return nil
+		} else if observed.emptied(composer.Text, time.Now(), settle) {
+			return ErrComposerEmptied
 		}
 		select {
 		case <-ctx.Done():
@@ -148,9 +150,33 @@ func AwaitComposerSettle(ctx context.Context, capture captureScreen, pane substr
 	}
 }
 
+// ErrComposerEmptied reports pasted input that left the composer before it
+// was submitted: something other than gang cleared or consumed it.
+var ErrComposerEmptied = errors.New("native composer emptied before submission")
+
 type composerStability struct {
 	text  string
 	since time.Time
+	// painted records that the composer has shown text; emptySince when it
+	// last read empty afterwards.
+	painted    bool
+	emptySince time.Time
+}
+
+// emptied reports a composer that showed text and has read empty for a full
+// settle window since.
+func (observed *composerStability) emptied(text string, now time.Time, settle time.Duration) bool {
+	if text != "" {
+		observed.painted, observed.emptySince = true, time.Time{}
+		return false
+	}
+	if !observed.painted {
+		return false
+	}
+	if observed.emptySince.IsZero() {
+		observed.emptySince = now
+	}
+	return now.Sub(observed.emptySince) >= settle
 }
 
 func (observed *composerStability) ready(text string, now time.Time, settle time.Duration) bool {

@@ -639,10 +639,19 @@ func (run *runtime) startCompaction(l *store.LockedAgent, a *core.Agent) (result
 	if err := run.apply(l, a, core.Event{Type: "input_started", ID: a.Compaction.ID, Status: "compaction"}); err != nil {
 		return err
 	}
+	// Pasted input cannot submit itself, so a failure before the compact
+	// Enter leaves a compaction that never ran; after it, the compaction may
+	// have started.
+	entered := false
 	defer func() {
-		if result != nil && a.Input != nil {
-			result = errors.Join(result, run.apply(l, a, core.Event{Type: "compaction_unverified", ID: a.Compaction.ID, Reason: result.Error()}))
+		if result == nil || a.Input == nil {
+			return
 		}
+		if !entered {
+			result = run.abortCompactInput(l, a, b, c, result)
+			return
+		}
+		result = errors.Join(result, run.apply(l, a, core.Event{Type: "compaction_unverified", ID: a.Compaction.ID, Reason: result.Error()}))
 	}()
 	action, err := harness.RenderAction(c.Actions.Compact, map[string]string{"instructions": a.Compaction.Resume.Text})
 	if err != nil {
@@ -674,7 +683,7 @@ func (run *runtime) startCompaction(l *store.LockedAgent, a *core.Agent) (result
 	if blocker, blocked, err := harness.InputBlocked(c, screen); err != nil {
 		return err
 	} else if blocked {
-		return commandError{status: exitNative, text: "native compaction input blocked: " + blocker.Evidence + "; compaction not submitted"}
+		return errors.New("native compaction input blocked: " + blocker.Evidence)
 	}
 	composer, err := harness.ReadComposer(c.Primitives.Composer, screen)
 	if err != nil {
@@ -695,6 +704,7 @@ func (run *runtime) startCompaction(l *store.LockedAgent, a *core.Agent) (result
 	} else if busy {
 		return run.abandonCompactDraft(ctx, l, a, b, c, composer.Text, "compaction not submitted: native task became active before compaction submit")
 	}
+	entered = true
 	if err := sendHarnessKeys(ctx, b, pane, c, substrate.Keys{Names: action.Keys, Submit: action.Submit}); err != nil {
 		return err
 	}

@@ -79,3 +79,51 @@ func TestComposerSettleStopsOnUnsafeSurfaceOrCaptureFailure(t *testing.T) {
 		})
 	}
 }
+
+// Pasted input that leaves the composer will not return, so the wait ends one
+// settle window after the composer empties instead of at the deadline.
+func TestComposerSettleReportsEmptiedComposer(t *testing.T) {
+	synctest.Test(t, func(t *testing.T) {
+		collar, _ := EmbeddedCollar("claude")
+		start := time.Now()
+		ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+		defer cancel()
+		err := AwaitComposerSettle(ctx, func(context.Context, substrate.PaneID) (substrate.Screen, error) {
+			text := "❯ "
+			if time.Since(start) < 200*time.Millisecond {
+				text = "❯ /compact resume"
+			}
+			return testScreen(testCells("────────", false), testCells(text, false), testCells("────────", false)), nil
+		}, "%1", collar, 400*time.Millisecond)
+		if !errors.Is(err, ErrComposerEmptied) {
+			t.Fatalf("emptied composer: %v", err)
+		}
+		// Fake time: text for 200ms, then empty for one 400ms settle window.
+		if elapsed := time.Since(start); elapsed != 600*time.Millisecond {
+			t.Fatalf("reported after %s, want 600ms", elapsed)
+		}
+	})
+}
+
+// A composer that is empty before the paste paints is not an emptied one.
+func TestComposerSettleWaitsForPastePaint(t *testing.T) {
+	synctest.Test(t, func(t *testing.T) {
+		collar, _ := EmbeddedCollar("claude")
+		start := time.Now()
+		ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+		defer cancel()
+		err := AwaitComposerSettle(ctx, func(context.Context, substrate.PaneID) (substrate.Screen, error) {
+			text := "❯ /compact resume"
+			if time.Since(start) < time.Second {
+				text = "❯ "
+			}
+			return testScreen(testCells("────────", false), testCells(text, false), testCells("────────", false)), nil
+		}, "%1", collar, 400*time.Millisecond)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if elapsed := time.Since(start); elapsed != 1400*time.Millisecond {
+			t.Fatalf("settled after %s, want 1.4s", elapsed)
+		}
+	})
+}

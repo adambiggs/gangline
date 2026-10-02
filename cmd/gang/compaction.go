@@ -341,6 +341,37 @@ func (run *runtime) abandonCompactDraft(ctx context.Context, l *store.LockedAgen
 	return run.failCompaction(l, a, compactionNotRun, reason)
 }
 
+// abortCompactInput fails a compaction whose input was abandoned before its
+// submit key, clearing any draft it left. It works under a fresh deadline
+// because the cause may be the operation's own. Behind a blocking prompt the
+// clear keys would answer the prompt, so the draft stays and the reason says so.
+func (run *runtime) abortCompactInput(l *store.LockedAgent, a *core.Agent, b harnessInput, c harness.Collar, cause error) error {
+	ctx, cancel := run.cmd.timeout(compactAbortTimeout)
+	defer cancel()
+	reason := "compaction not submitted: " + cause.Error()
+	pane := substrate.PaneID(a.Pane)
+	screen, err := b.Capture(ctx, pane)
+	if err != nil {
+		return run.failCompaction(l, a, compactionNotRun, reason+"; composer unread: "+err.Error())
+	}
+	if _, blocked, err := harness.InputBlocked(c, screen); err != nil || blocked {
+		if err != nil {
+			reason += "; " + err.Error()
+		}
+		return run.failCompaction(l, a, compactionNotRun, reason+"; the compact input may remain in the composer behind the prompt")
+	}
+	composer, err := harness.ReadComposer(c.Primitives.Composer, screen)
+	if err != nil {
+		return run.failCompaction(l, a, compactionNotRun, reason+"; composer unread: "+err.Error())
+	}
+	return run.abandonCompactDraft(ctx, l, a, b, c, composer.Text, reason)
+}
+
+// compactAbortTimeout bounds the clear after an abandoned compact paste. When
+// it runs out the draft stays, and the failure reason says the composer still
+// holds it.
+const compactAbortTimeout = 10 * time.Second
+
 // clearCompactDraft removes unsubmitted compact input with the collar's clear
 // keys, one press per attempt, until the composer reads empty. A press can
 // clear as little as one composer line.
