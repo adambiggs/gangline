@@ -1,0 +1,23 @@
+
+  >_ OpenAI Codex (v0.160.0)
+     ~/project
+
+  Well, this terminal just got interesting.
+
+
+
+
+  PermissionRequest hooks
+  1 hook needs review before it can run.
+
+› [!] Hook 1 · modified
+
+  Event     PermissionRequest
+  Source    Session flags - /<session-flags>/config.toml
+  Command   /opt/gangline/bin/gang hook
+  Mode      Sync
+  Timeout   600s
+  Trust     Modified since last trusted - review required
+
+
+  t trust · esc back

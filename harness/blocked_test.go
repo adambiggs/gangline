@@ -248,6 +248,8 @@ func TestTrustPromptsBlockInput(t *testing.T) {
 		// its composer and parks the hidden cursor at or below that row.
 		{collar: "codex", file: "codex-0.160.0-hooks-list.txt", cursor: substrate.Cursor{Row: 23, Column: 80}},
 		{collar: "codex", file: "codex-0.160.0-hooks-list-first-row.txt", cursor: substrate.Cursor{Row: 14, Column: 80}},
+		// Enter on an event row opens that event's hooks, one row per hook.
+		{collar: "codex", file: "codex-0.160.0-hooks-event.txt", cursor: substrate.Cursor{Row: 22, Column: 40}},
 	}
 	for _, test := range tests {
 		t.Run(test.file, func(t *testing.T) {

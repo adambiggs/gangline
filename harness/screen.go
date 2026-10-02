@@ -197,9 +197,10 @@ func trustPrompt(name string, lines []string) (string, bool) {
 		if strings.Contains(flat, "Trust this folder?") && regexp.MustCompile(`(?m)^[[:space:]]*[❯›>] [0-9]+\. Trust and continue[[:space:]]*$`).MatchString(flat) {
 			return "Codex folder trust is required", true
 		}
-		title := regexp.MustCompile(`(?im)^[[:space:]]*(?:⚠ )?(?:[0-9]+ )?hooks need review(?: before they can run)?\.?[[:space:]]*$`)
-		// The hooks list selects an event row: its name, then its counts.
-		choice := regexp.MustCompile(`(?m)^[[:space:]]*[❯›>] (?:[0-9]+\. Review hooks|[A-Z][A-Za-z]+(?:[[:space:]]+[0-9]+){3})(?:[[:space:]]|$)`)
+		title := regexp.MustCompile(`(?im)^[[:space:]]*(?:⚠ )?(?:[0-9]+ )?(?:hooks need review(?: before they can run)?|hook needs review(?: before it can run)?)\.?[[:space:]]*$`)
+		// The hooks list selects an event row: its name, then its counts. An
+		// event's view selects one of its hooks: a status mark, then Hook N.
+		choice := regexp.MustCompile(`(?m)^[[:space:]]*[❯›>] (?:[0-9]+\. Review hooks|[A-Z][A-Za-z]+(?:[[:space:]]+[0-9]+){3}|\[.\] Hook [0-9]+)(?:[[:space:]]|$)`)
 		if title.MatchString(flat) && choice.MatchString(flat) {
 			return "native hooks need review before they can run", true
 		}
