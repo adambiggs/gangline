@@ -114,7 +114,7 @@ func readCodexComposer(screen substrate.Screen) (Composer, error) {
 		text := strings.TrimPrefix(line, "›")
 		text = strings.TrimPrefix(text, " ")
 		text = strings.ReplaceAll(text, "\u00a0", "")
-		composer := Composer{Text: text}
+		composer := Composer{Text: text, first: index, end: len(lines)}
 		blankBeforeFooter := false
 		for _, following := range lines[index+1:] {
 			following = strings.TrimSpace(following)
@@ -197,8 +197,9 @@ func trustPrompt(name string, lines []string) (string, bool) {
 		if strings.Contains(flat, "Trust this folder?") && regexp.MustCompile(`(?m)^[[:space:]]*[❯›>] [0-9]+\. Trust and continue[[:space:]]*$`).MatchString(flat) {
 			return "Codex folder trust is required", true
 		}
-		title := regexp.MustCompile(`(?im)^[[:space:]]*(?:[0-9]+ )?hooks need review(?: before they can run)?[[:space:]]*$`)
-		choice := regexp.MustCompile(`(?m)^[[:space:]]*[❯›>] (?:[0-9]+\. )?(?:Review hooks|Stop|PostCompact|UserPromptSubmit|PreCompact|PostToolUse|PermissionRequest)(?:[[:space:]]|$)`)
+		title := regexp.MustCompile(`(?im)^[[:space:]]*(?:⚠ )?(?:[0-9]+ )?hooks need review(?: before they can run)?\.?[[:space:]]*$`)
+		// The hooks list selects an event row: its name, then its counts.
+		choice := regexp.MustCompile(`(?m)^[[:space:]]*[❯›>] (?:[0-9]+\. Review hooks|[A-Z][A-Za-z]+(?:[[:space:]]+[0-9]+){3})(?:[[:space:]]|$)`)
 		if title.MatchString(flat) && choice.MatchString(flat) {
 			return "native hooks need review before they can run", true
 		}

@@ -39,9 +39,11 @@ func nativeInputLines(composer Invocation, screen substrate.Screen) ([]string, b
 	lines := screenLines(screen, true)
 	switch composer.Name {
 	case "codex-composer":
-		// Codex draws a native prompt in place of its composer.
-		_, err := readCodexComposer(screen)
-		return lines, err == nil, nil
+		// Codex draws a native prompt in place of its composer. A list can
+		// mark its selected row with the composer's ›, so a readable composer
+		// owns input only while it holds the cursor.
+		composer, err := readCodexComposer(screen)
+		return lines, err == nil && composer.holdsCursor(screen), nil
 	case "claude-composer":
 		// Claude Code draws a native prompt below the last rule line, or over
 		// the whole screen when the prompt leaves no rule visible. A readable

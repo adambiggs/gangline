@@ -1,9 +1,6 @@
 package harness
 
-import (
-	"github.com/adambiggs/gangline/substrate"
-	"testing"
-)
+import "testing"
 
 func TestCapacityRequiresFinalNativeErrorAndIdleComposer(t *testing.T) {
 	// Screen shape: the Codex TUI after a capacity failure, a retry, and a
@@ -36,11 +33,7 @@ func TestCapacityRequiresFinalNativeErrorAndIdleComposer(t *testing.T) {
 		{"unrelated provider error", []string{"› do the work", "■ Quota exceeded.", "", "› "}, false, false},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			var rows [][]substrate.Cell
-			for _, line := range tc.lines {
-				rows = append(rows, testCells(line, false))
-			}
-			got, found, err := DetectCapacity(collar, testScreen(rows...))
+			got, found, err := DetectCapacity(collar, codexComposerScreen(tc.lines))
 			if found != tc.found || (err != nil) != tc.unknown {
 				t.Fatalf("found=%v capacity=%+v error=%v", found, got, err)
 			}

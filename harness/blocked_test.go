@@ -75,7 +75,11 @@ func TestBlockedIgnoresPatternTextOutsideTheInputSurface(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			blocked, found, err := InputBlocked(collar, linesScreen(test.lines))
+			screen := linesScreen(test.lines)
+			if test.collar == "codex" {
+				screen = codexComposerScreen(test.lines)
+			}
+			blocked, found, err := InputBlocked(collar, screen)
 			if err != nil || found {
 				t.Fatalf("blocked = %#v, found = %t, err = %v", blocked, found, err)
 			}
@@ -111,6 +115,21 @@ func TestBlockedIgnoresACommandSuggestionBelowTheComposer(t *testing.T) {
 	}
 	screen := fixtureScreen(t, "claude-code-2.1.287-command-suggestion.txt")
 	screen.Cursor = substrate.Cursor{Row: 5, Column: 6, Visible: true}
+	blocked, found, err := InputBlocked(collar, screen)
+	if err != nil || found {
+		t.Fatalf("blocked = %#v, found = %t, err = %v", blocked, found, err)
+	}
+}
+
+// Codex keeps the cursor on the last line of a multi-line draft, below the
+// composer's › row.
+func TestBlockedIgnoresPatternTextInACodexDraft(t *testing.T) {
+	collar, err := EmbeddedCollar("codex")
+	if err != nil {
+		t.Fatal(err)
+	}
+	screen := fixtureScreen(t, "codex-0.160.0-draft.txt")
+	screen.Cursor = substrate.Cursor{Row: 20, Column: 2, Visible: true}
 	blocked, found, err := InputBlocked(collar, screen)
 	if err != nil || found {
 		t.Fatalf("blocked = %#v, found = %t, err = %v", blocked, found, err)
@@ -185,7 +204,11 @@ func TestTrustTextInTheConversationDoesNotBlockInput(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			blocked, found, err := InputBlocked(collar, linesScreen(test.lines))
+			screen := linesScreen(test.lines)
+			if test.collar == "codex" {
+				screen = codexComposerScreen(test.lines)
+			}
+			blocked, found, err := InputBlocked(collar, screen)
 			if err != nil || found {
 				t.Fatalf("blocked = %#v, found = %t, err = %v", blocked, found, err)
 			}
@@ -194,10 +217,17 @@ func TestTrustTextInTheConversationDoesNotBlockInput(t *testing.T) {
 }
 
 func TestTrustPromptsBlockInput(t *testing.T) {
-	tests := []struct{ collar, file string }{
-		{"claude", "claude-code-2.1.278-directory-trust.txt"},
-		{"codex", "codex-0.151.0-directory-trust.txt"},
-		{"codex", "codex-0.151.0-hook-trust.txt"},
+	tests := []struct {
+		collar, file string
+		cursor       substrate.Cursor
+	}{
+		{collar: "claude", file: "claude-code-2.1.278-directory-trust.txt"},
+		{collar: "codex", file: "codex-0.151.0-directory-trust.txt"},
+		{collar: "codex", file: "codex-0.151.0-hook-trust.txt"},
+		// Codex draws the selected row of its hooks list with the same › as
+		// its composer and parks the hidden cursor at or below that row.
+		{collar: "codex", file: "codex-0.160.0-hooks-list.txt", cursor: substrate.Cursor{Row: 23, Column: 80}},
+		{collar: "codex", file: "codex-0.160.0-hooks-list-first-row.txt", cursor: substrate.Cursor{Row: 14, Column: 80}},
 	}
 	for _, test := range tests {
 		t.Run(test.file, func(t *testing.T) {
@@ -205,7 +235,9 @@ func TestTrustPromptsBlockInput(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			blocked, found, err := InputBlocked(collar, fixtureScreen(t, test.file))
+			screen := fixtureScreen(t, test.file)
+			screen.Cursor = test.cursor
+			blocked, found, err := InputBlocked(collar, screen)
 			if err != nil || !found {
 				t.Fatalf("blocked = %#v, found = %t, err = %v", blocked, found, err)
 			}
@@ -235,6 +267,19 @@ func quotedLines(intro string, lines []string) []string {
 		reply = append(reply, "    "+line)
 	}
 	return reply
+}
+
+// codexComposerScreen shows lines with the visible cursor on the last › row,
+// where Codex draws it while its composer holds input.
+func codexComposerScreen(lines []string) substrate.Screen {
+	screen := linesScreen(lines)
+	for index := len(lines) - 1; index >= 0; index-- {
+		if strings.HasPrefix(lines[index], "›") {
+			screen.Cursor = substrate.Cursor{Row: index, Column: 2, Visible: true}
+			break
+		}
+	}
+	return screen
 }
 
 func fixtureLines(t *testing.T, name string) []string {
