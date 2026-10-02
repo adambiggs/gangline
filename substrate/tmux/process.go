@@ -9,6 +9,7 @@ import (
 	"strconv"
 	"strings"
 	"syscall"
+	"time"
 
 	"github.com/adambiggs/gangline/substrate"
 )
@@ -291,6 +292,35 @@ func reapOwnedProcesses(ctx context.Context, owned []processIdentity) error {
 		}
 	}
 	return nil
+}
+
+// waitExitEvent waits for a process exit through wait, which receives the
+// time left before ctx's deadline, negative for none, and reports whether the
+// exit arrived. A signal can end a native wait early, so an interrupted wait
+// is retried with the time then left.
+func waitExitEvent(ctx context.Context, wait func(remaining time.Duration) (bool, error)) error {
+	for {
+		if err := ctx.Err(); err != nil {
+			return err
+		}
+		remaining := time.Duration(-1)
+		if deadline, ok := ctx.Deadline(); ok {
+			if remaining = time.Until(deadline); remaining <= 0 {
+				return context.DeadlineExceeded
+			}
+		}
+		exited, err := wait(remaining)
+		if errors.Is(err, syscall.EINTR) {
+			continue
+		}
+		if err != nil {
+			return err
+		}
+		if !exited {
+			return context.DeadlineExceeded
+		}
+		return nil
+	}
 }
 
 // pinObservedProcess reads the native identity on both sides of handle

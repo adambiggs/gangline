@@ -7,6 +7,7 @@ import (
 	"strings"
 	"syscall"
 	"testing"
+	"time"
 
 	"github.com/adambiggs/gangline/substrate"
 )
@@ -367,5 +368,43 @@ func TestObserveProcessCandidatesBoundsFilesAndUsesNativeAncestry(t *testing.T) 
 	}
 	if len(pinned) != 1 || pinned[0] != 100 {
 		t.Fatalf("coarse ps ancestry authorized changed native branch: pinned=%v", pinned)
+	}
+}
+
+func TestWaitExitEventRetriesInterruptedWait(t *testing.T) {
+	ctx, cancel := context.WithTimeout(context.Background(), time.Hour)
+	defer cancel()
+	for _, final := range []struct {
+		exited bool
+		err    error
+		want   error
+	}{{true, nil, nil}, {false, nil, context.DeadlineExceeded}, {false, syscall.EBADF, syscall.EBADF}} {
+		calls := 0
+		err := waitExitEvent(ctx, func(remaining time.Duration) (bool, error) {
+			calls++
+			if remaining <= 0 || remaining > time.Hour {
+				t.Fatalf("wait %d given %v of a one-hour deadline", calls, remaining)
+			}
+			if calls <= 2 {
+				return false, syscall.EINTR
+			}
+			return final.exited, final.err
+		})
+		if calls != 3 || !errors.Is(err, final.want) || (final.want == nil) != (err == nil) {
+			t.Fatalf("calls = %d, error = %v; want 3, %v", calls, err, final.want)
+		}
+	}
+	unbounded := 0
+	if err := waitExitEvent(context.Background(), func(remaining time.Duration) (bool, error) {
+		unbounded++
+		if remaining >= 0 {
+			t.Fatalf("unbounded wait given %v", remaining)
+		}
+		if unbounded == 1 {
+			return false, syscall.EINTR
+		}
+		return true, nil
+	}); err != nil || unbounded != 2 {
+		t.Fatalf("unbounded calls = %d, error = %v", unbounded, err)
 	}
 }

@@ -117,33 +117,25 @@ func (handle *darwinProcessHandle) signal(signal syscall.Signal) error {
 func (handle *darwinProcessHandle) close() error { return syscall.Close(handle.kqueue) }
 
 func (handle *darwinProcessHandle) wait(ctx context.Context) error {
-	if err := ctx.Err(); err != nil {
-		return err
-	}
-	var timeout *syscall.Timespec
-	if deadline, ok := ctx.Deadline(); ok {
-		remaining := time.Until(deadline)
-		if remaining <= 0 {
-			return context.DeadlineExceeded
+	return waitExitEvent(ctx, func(remaining time.Duration) (bool, error) {
+		var timeout *syscall.Timespec
+		if remaining >= 0 {
+			value := syscall.NsecToTimespec(remaining.Nanoseconds())
+			timeout = &value
 		}
-		value := syscall.NsecToTimespec(remaining.Nanoseconds())
-		timeout = &value
-	}
-	events := make([]syscall.Kevent_t, 1)
-	count, err := syscall.Kevent(handle.kqueue, nil, events, timeout)
-	if err != nil {
-		return err
-	}
-	if count == 0 {
-		return context.DeadlineExceeded
-	}
-	if events[0].Flags&syscall.EV_ERROR != 0 {
-		return syscall.Errno(events[0].Data)
-	}
-	if events[0].Filter != syscall.EVFILT_PROC || events[0].Fflags&syscall.NOTE_EXIT == 0 {
-		return fmt.Errorf("unexpected process exit event: %+v", events[0])
-	}
-	return nil
+		events := make([]syscall.Kevent_t, 1)
+		count, err := syscall.Kevent(handle.kqueue, nil, events, timeout)
+		if err != nil || count == 0 {
+			return false, err
+		}
+		if events[0].Flags&syscall.EV_ERROR != 0 {
+			return false, syscall.Errno(events[0].Data)
+		}
+		if events[0].Filter != syscall.EVFILT_PROC || events[0].Fflags&syscall.NOTE_EXIT == 0 {
+			return false, fmt.Errorf("unexpected process exit event: %+v", events[0])
+		}
+		return true, nil
+	})
 }
 
 func readCurrentProcess(pid int) (processRecord, error) {
