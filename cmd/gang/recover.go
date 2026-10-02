@@ -126,8 +126,9 @@ func (run *runtime) tickAgent(id core.HitchID, notice hookNotice, wait bool) err
 		}
 		if err := registry.ReleaseRegisteredExit(ctx, paneIdentity(a)); err != nil {
 			// A pane id that names another pane shows nothing of this agent's
-			// startup, so the boot deadline fails the agent.
-			if errors.Is(err, tmux.ErrPaneReplaced) && !a.BootDeadline.IsZero() && !run.cmd.now().Before(a.BootDeadline) {
+			// startup, so the boot deadline fails the agent. A blocked startup
+			// has no deadline and waits only on its own pane.
+			if errors.Is(err, tmux.ErrPaneReplaced) && (a.Activity == core.Blocked || !a.BootDeadline.IsZero() && !run.cmd.now().Before(a.BootDeadline)) {
 				return run.apply(l, &a, core.Event{Type: "hitch_failed", Reason: tmux.ErrPaneReplaced.Error()})
 			}
 			if !errors.As(err, &exited) {

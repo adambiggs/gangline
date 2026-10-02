@@ -6,6 +6,7 @@ import (
 	"os"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/adambiggs/gangline/core"
 	"github.com/adambiggs/gangline/substrate"
@@ -119,12 +120,14 @@ func TestTickReleasesBootHoldAtReadiness(t *testing.T) {
 		name    string
 		exit    error
 		expired bool
+		blocked bool
 		status  core.Status
 	}{
 		{name: "running", status: core.Active},
 		{name: "exited", exit: &substrate.ExitedError{Status: "1", Output: "Do you trust the files in this folder?\nNo, exit"}, status: core.Failed},
 		{name: "replaced", exit: replaced, status: core.Booting},
 		{name: "replaced expired", exit: replaced, expired: true, status: core.Failed},
+		{name: "replaced blocked", exit: replaced, blocked: true, status: core.Failed},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			f := newStateFixture(t)
@@ -134,6 +137,9 @@ func TestTickReleasesBootHoldAtReadiness(t *testing.T) {
 			}
 			a := f.setAgent(t, f.add(t, "a", "worker", "codex"), func(a *core.Agent) {
 				a.Status, a.Activity, a.BootDeadline = core.Booting, core.Unknown, deadline
+				if tc.blocked {
+					a.Activity, a.BootDeadline = core.Blocked, time.Time{}
+				}
 			})
 			f.input.releaseErr = tc.exit
 			if err := f.cmd.tick([]string{"--agent", "worker"}); !errors.Is(err, tmux.ErrPaneReplaced) && err != nil {
@@ -150,7 +156,7 @@ func TestTickReleasesBootHoldAtReadiness(t *testing.T) {
 			}
 			if tc.status == core.Failed {
 				want := bootExit
-				if tc.expired {
+				if tc.expired || tc.blocked {
 					want = tmux.ErrPaneReplaced.Error()
 				}
 				if got.Evidence != want || got.Pane != a.Pane {
