@@ -76,8 +76,11 @@ func TestClaudeCompactionActiveMatchesOnlyTheLiveSpinner(t *testing.T) {
 	if active, err := CompactionActive(collar, fixtureScreen(t, "claude-code-2.1.287-compacting.txt")); err != nil || !active {
 		t.Fatalf("compacting screen: active=%v err=%v", active, err)
 	}
-	if active, err := CompactionActive(collar, testScreen(testCells("✻ Compacting conversation… (0s)", false))); err != nil || !active {
-		t.Fatalf("first spinner frame: active=%v err=%v", active, err)
+	// Claude Code writes a duration past a minute in minutes and seconds.
+	for _, line := range []string{"✻ Compacting conversation… (0s)", "✻ Compacting conversation… (1m 5s · ↓ 4.1k tokens)"} {
+		if active, err := CompactionActive(collar, testScreen(testCells(line, false))); err != nil || !active {
+			t.Fatalf("%q: active=%v err=%v", line, active, err)
+		}
 	}
 	for _, line := range []string{
 		"  ✽ Compacting conversation… (4s)",
