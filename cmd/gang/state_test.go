@@ -80,8 +80,12 @@ func (b *inputFixture) ForegroundCommand(context.Context, substrate.PaneID) (str
 	return b.command, b.foregroundErr
 }
 
-func (b *inputFixture) Capture(context.Context, substrate.PaneID) (substrate.Screen, error) {
+// Capture fails on a done context, as a tmux capture run under it does.
+func (b *inputFixture) Capture(ctx context.Context, _ substrate.PaneID) (substrate.Screen, error) {
 	b.captures++
+	if err := ctx.Err(); err != nil {
+		return substrate.Screen{}, err
+	}
 	return b.screen, b.captureErr
 }
 func (b *inputFixture) ForegroundProcesses(context.Context, substrate.PaneID) ([]substrate.Process, error) {

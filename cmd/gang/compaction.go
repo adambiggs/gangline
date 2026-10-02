@@ -180,14 +180,14 @@ func (run *runtime) queueCompactionResume(l *store.LockedAgent, a *core.Agent, b
 		return err
 	}
 	pane := substrate.PaneID(a.Pane)
-	startCtx, cancelStart := run.cmd.timeout(compactStartWindow)
-	defer cancelStart()
-	screen, err := awaitCompactionComposer(startCtx, b, pane, c, compactText)
+	ctx, cancel := run.cmd.timeout(operationTimeout)
+	defer cancel()
+	window, cancelWindow := run.cmd.timeout(compactStartWindow)
+	defer cancelWindow()
+	screen, err := awaitCompactionComposer(ctx, window, b, pane, c, compactText)
 	if err != nil {
 		return err
 	}
-	ctx, cancel := run.cmd.timeout(operationTimeout)
-	defer cancel()
 	wire, err := envelopeText(e)
 	if err != nil {
 		return err
@@ -251,8 +251,8 @@ var errCompactionNotStarted = errors.New("compact command left the composer but 
 // awaitCompactionComposer waits until the compact command has left the
 // composer and, for a collar that can show a compaction running, the pane
 // shows one or a native task. An empty composer alone is not evidence that the
-// command started anything.
-func awaitCompactionComposer(ctx context.Context, b harnessInput, pane substrate.PaneID, c harness.Collar, compactText string) (substrate.Screen, error) {
+// command started anything. Captures run under ctx; window ends the wait.
+func awaitCompactionComposer(ctx, window context.Context, b harnessInput, pane substrate.PaneID, c harness.Collar, compactText string) (substrate.Screen, error) {
 	ticker := time.NewTicker(25 * time.Millisecond)
 	defer ticker.Stop()
 	for {
@@ -282,7 +282,7 @@ func awaitCompactionComposer(ctx context.Context, b harnessInput, pane substrate
 				return screen, nil
 			}
 		}
-		if ctx.Err() != nil {
+		if window.Err() != nil {
 			if left {
 				return substrate.Screen{}, errCompactionNotStarted
 			}
@@ -290,6 +290,7 @@ func awaitCompactionComposer(ctx context.Context, b harnessInput, pane substrate
 		}
 		select {
 		case <-ctx.Done():
+		case <-window.Done():
 		case <-ticker.C:
 		}
 	}
