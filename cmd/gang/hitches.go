@@ -749,11 +749,19 @@ func (run *runtime) dropAgent(id core.HitchID, wait bool) error {
 	if visible && a.Process.PID == 0 && a.Registration.Generation != "" {
 		identity, err := registry.Identity(context.Background(), substrate.PaneID(a.Pane))
 		// A native process that exited since its visibility was read records
-		// no identity and leaves nothing to tear down but the pane.
+		// no identity and leaves nothing to tear down but the pane. An unheld
+		// pane closes with it, so tmux answers the read for a missing pane.
 		if err == nil {
 			a.Process = storedIdentity(identity)
 		} else if !errors.As(err, new(*substrate.ExitedError)) {
-			return err
+			present, checkErr := registry.CheckPane(context.Background(), paneIdentity(a))
+			if errors.Is(checkErr, tmux.ErrPaneReplaced) {
+				replaced = true
+			} else if checkErr != nil {
+				return checkErr
+			} else if present {
+				return err
+			}
 		}
 	}
 	nativeVisible := visible || tmux.CanReadIdentity(nativeIdentity(a.Process))
