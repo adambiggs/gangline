@@ -119,8 +119,8 @@ type optionSpec struct {
 // names a required value; an empty argument denotes a boolean switch.
 var commandOptions = map[string][]optionSpec{
 	"hitch": {
-		{"c", "COLLAR", "harness collar"}, {"collar", "COLLAR", "harness collar"},
-		{"d", "DIR", "working directory"}, {"dir", "DIR", "working directory"},
+		{"c", "COLLAR", "harness collar (default GANG_COLLAR)"}, {"collar", "COLLAR", "harness collar (default GANG_COLLAR)"},
+		{"d", "DIR", "working directory (default current)"}, {"dir", "DIR", "working directory (default current)"},
 		{"m", "MODEL", "native model"}, {"model", "MODEL", "native model"},
 		{"e", "EFFORT", "reasoning effort"}, {"effort", "EFFORT", "reasoning effort"},
 		{"t", "TASK", "startup assignment"}, {"task", "TASK", "startup assignment"},
@@ -141,7 +141,7 @@ var commandOptions = map[string][]optionSpec{
 		{"message", "REASON", "reason to deliver after interrupt"},
 	},
 	"compact": {
-		{"resume", "TEXT", "continuation after compaction"},
+		{"resume", "TEXT", "resume note (default a re-read note)"},
 		{"recover", "", "interrupt an unconfirmed compaction while busy"},
 	},
 	"statusline": {{"install", "", "install the native status line"}},
@@ -151,8 +151,8 @@ var commandOptions = map[string][]optionSpec{
 		{"json", "", "print the exact reading as JSON"},
 	},
 	"log": {
-		{"agent", "NAME|HITCH_ID", "filter by agent name or hitch ID"},
-		{"type", "TYPE|KIND", "show events or readings of this type"},
+		{"agent", "NAME|HITCH_ID", "filter by agent name or hitch ID (default all)"},
+		{"type", "TYPE|KIND", "show events or readings of this type (default all)"},
 	},
 	"limits": {
 		{"c", "COLLAR", "query a collar without an agent"},
@@ -160,35 +160,46 @@ var commandOptions = map[string][]optionSpec{
 	},
 	"snooze": {
 		{"at", "DURATION|HH:MM|RFC3339", "wake time instead of native reset"},
-		{"note", "TEXT", "continuation to carry into the wake"},
+		{"note", "TEXT", "continuation for the wake (default a re-read note)"},
 		{"clear", "", "clear or withdraw own wake; lead may clear by ID"},
 		{"status", "", "show own wake; lead sees every wake"},
 	},
-	"wait":   {{"timeout", "DURATION", "maximum wait; zero checks once"}},
+	"wait":   {{"timeout", "DURATION", "maximum wait (default " + operationTimeout.String() + "); zero checks once"}},
 	"status": {{"why", "", "include recorded wedge evidence"}, {"json", "", "print the agent, its evidence, and compaction as JSON"}},
 	"tick": {
-		{"agent", "NAME|HITCH_ID", "tick one agent"},
+		{"agent", "NAME|HITCH_ID", "tick one agent (default every agent)"},
 		{"source", "watchdog", "identify a watchdog tick"},
 		{"watchdog", "UNIT", "watchdog generation token"},
 	},
 	"capture": {
-		{"n", "LINES", "print only the last LINES lines"},
-		{"lines", "LINES", "print only the last LINES lines"},
+		{"n", "LINES", "print only the last LINES lines (default all)"},
+		{"lines", "LINES", "print only the last LINES lines (default all)"},
 		{"composer", "", "print only the native composer"},
 	},
 	"roster": {{"json", "", "print agents and availability as JSON"}},
 	"queue":  {{"json", "", "print pending messages as JSON"}},
 	"models": {
-		{"c", "COLLAR", "harness collar"},
-		{"collar", "COLLAR", "harness collar"},
+		{"c", "COLLAR", "harness collar (default GANG_COLLAR)"},
+		{"collar", "COLLAR", "harness collar (default GANG_COLLAR)"},
 	},
 	"down":    {{"y", "", "skip confirmation"}, {"yes", "", "skip confirmation"}},
 	"upgrade": {{"check", "", "check for a release without installing"}},
 }
 
+// upOptions are hitch's options with the role default up applies.
+var upOptions = func() []optionSpec {
+	options := append([]optionSpec{}, commandOptions["hitch"]...)
+	for i := range options {
+		if options[i].name == "r" || options[i].name == "role" {
+			options[i].meaning = "role brief (default lead)"
+		}
+	}
+	return options
+}()
+
 func optionsFor(name string) []optionSpec {
 	if name == "up" {
-		return commandOptions["hitch"]
+		return upOptions
 	}
 	return commandOptions[name]
 }

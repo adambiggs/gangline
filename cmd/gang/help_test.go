@@ -292,6 +292,29 @@ func TestHelpOptionMeaningsShareAColumn(t *testing.T) {
 	}
 }
 
+func TestHelpStatesDefaults(t *testing.T) {
+	for _, test := range []struct{ command, want string }{
+		{"wait", "  --timeout DURATION     maximum wait (default " + operationTimeout.String() + "); zero checks once\n"},
+		{"hitch", "  -c, --collar COLLAR    harness collar (default GANG_COLLAR)\n"},
+		{"hitch", "  -d, --dir DIR          working directory (default current)\n"},
+		{"up", "  -c, --collar COLLAR    harness collar (default GANG_COLLAR)\n"},
+		{"up", "  -r, --role ROLE        role brief (default lead)\n"},
+		{"hitch", "  -r, --role ROLE        role brief\n"},
+		{"models", "  -c, --collar COLLAR    harness collar (default GANG_COLLAR)\n"},
+		{"capture", "  -n, --lines LINES      print only the last LINES lines (default all)\n"},
+		{"log", "  --agent NAME|HITCH_ID  filter by agent name or hitch ID (default all)\n"},
+		{"log", "  --type TYPE|KIND       show events or readings of this type (default all)\n"},
+		{"tick", "  --agent NAME|HITCH_ID  tick one agent (default every agent)\n"},
+		{"compact", "  --resume TEXT          resume note (default a re-read note)\n"},
+		{"snooze", "  --note TEXT            continuation for the wake (default a re-read note)\n"},
+	} {
+		var stdout, stderr bytes.Buffer
+		if status := run([]string{"help", test.command}, strings.NewReader(""), &stdout, &stderr); status != exitOK || !strings.Contains(stdout.String(), test.want) {
+			t.Errorf("help %s status=%d lacks %q:\n%s", test.command, status, test.want, stdout.String())
+		}
+	}
+}
+
 func TestHelpReachesCollarCheck(t *testing.T) {
 	var want, stdout, stderr bytes.Buffer
 	if status := run([]string{"collar", "check", "--help"}, strings.NewReader(""), &want, &stderr); status != exitOK {

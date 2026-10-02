@@ -34,7 +34,7 @@ there. `log` refuses `--team` together with a `LOG.jsonl` operand. `teams`, `col
 
 | Option | Meaning |
 | --- | --- |
-| `-c`, `--collar COLLAR` | Harness collar. |
+| `-c`, `--collar COLLAR` | Harness collar; defaults to `GANG_COLLAR`. |
 | `-d`, `--dir DIR` | Working directory; defaults to the current directory. |
 | `-m`, `--model MODEL` | Native model identifier; the native CLI judges it. |
 | `-e`, `--effort EFFORT` | Native reasoning effort; requires `--model`. Refused when `gang models` lists the model without this effort. |
@@ -70,8 +70,8 @@ contract and assignment.
 | `gang compact [NAME] [--resume TEXT]` | Compact at native idle; submit the continuation behind compaction, ahead of later input. Refuses while startup input is unverified; a queued compaction waits until startup input is verified (`gang hitch NAME --recover`). |
 | `gang compact NAME --recover` | Interrupt a submitted or unconfirmed compaction with the collar's recovery keys while the pane shows it running. Refuses without sending on an approval, trust, draft, idle, or unrecognized screen; when the resume note was never queued or the harness has taken it; and after an earlier recovery of the same compaction. Records the compaction as unconfirmed and reports the screen it left. |
 | `gang curfew [DURATION\|HH:MM\|RFC3339\|clear]` | Show, set, or clear the team deadline. |
-| `gang tick [--agent NAME\|HITCH_ID]` | Check deadlines, recover native failures, and drain due messages. |
-| `gang wait NAME [--timeout DURATION]` | Wait for a recorded idle boundary; a zero timeout checks once. |
+| `gang tick [--agent NAME\|HITCH_ID]` | Check deadlines, recover native failures, and drain due messages, for every agent or the one `--agent` names. |
+| `gang wait NAME [--timeout DURATION]` | Wait up to DURATION (default 30s) for a recorded idle boundary; a zero timeout checks once. |
 
 The resume note enters native input when compaction starts and runs when the
 harness takes it. Gangline admits that exact note once; until a completion hook
