@@ -86,7 +86,10 @@ Gangline never presses Enter on a composer that holds anything other than the
 compact command. Claude Code shows a long or multi-line paste as a placeholder
 and would submit it as an ordinary prompt, so such a resume note fails there:
 Gangline clears the composer with the collar's `compact_clear` keys and submits
-nothing. Keep the note short, on one line, and pointed at a state file. Every
+nothing. Keep the note short, on one line, and pointed at a state file. Without
+`--resume`, the note tells the agent to re-read its brief and durable state and
+names `gang log --agent NAME --type send_queued`, which records the messages
+queued for it. Every
 failed compaction queues a `[gang:compact#…]` notice to the agent saying whether
 its context was compacted, so a caller whose command already returned still
 learns of the failure.

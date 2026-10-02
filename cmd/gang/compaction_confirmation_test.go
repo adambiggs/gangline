@@ -268,3 +268,19 @@ func TestWithheldResumeKeepsRetainedStartupReceipt(t *testing.T) {
 		t.Fatalf("withheld resume released the startup hold: LastFailed=%q, %v", got.LastFailed, err)
 	}
 }
+
+func TestDefaultResumeNotePointsAtQueuedMessages(t *testing.T) {
+	f, _, p := compactionFixture(t)
+	f.input.screen = screenWithText("Working (esc to interrupt)", "› ")
+	if err := f.cmd.compact([]string{"worker"}); err != nil {
+		t.Fatal(err)
+	}
+	got, err := p.Read()
+	if err != nil {
+		t.Fatal(err)
+	}
+	note := got.Compaction.Resume.Text
+	if !strings.Contains(note, "gang log --agent worker --type send_queued") || strings.Contains(note, "\n") {
+		t.Fatalf("default resume note = %q; want one line naming gang log --agent worker --type send_queued", note)
+	}
+}

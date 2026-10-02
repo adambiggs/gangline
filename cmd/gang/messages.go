@@ -557,7 +557,7 @@ func (cmd command) compact(args []string) (result error) {
 	}
 	resume := o.Resume
 	if resume == "" {
-		resume = "Your context was compacted. Re-read your brief and durable state, then resume your work or report it complete."
+		resume = fmt.Sprintf("Your context was compacted. Re-read your brief and durable state, then resume your work or report it complete. Messages queued for you are recorded in gang log --agent %s --type send_queued.", a.Name)
 	}
 	id, err := randomID("compact")
 	if err != nil {
