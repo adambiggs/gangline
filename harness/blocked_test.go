@@ -112,6 +112,61 @@ func TestBlockedEvidenceNamesThePromptNotTheScrollback(t *testing.T) {
 	}
 }
 
+func TestTrustTextInTheConversationDoesNotBlockInput(t *testing.T) {
+	codexComposer := fixtureLines(t, "codex-0.151.0-composer.txt")
+	directoryTrust := fixtureLines(t, "codex-0.151.0-directory-trust.txt")
+	quoted := func(intro string, lines []string) []string {
+		reply := []string{intro, ""}
+		for _, line := range lines {
+			reply = append(reply, "    "+line)
+		}
+		return append(reply, codexComposer...)
+	}
+	tests := []struct {
+		name   string
+		collar string
+		lines  []string
+	}{
+		{name: "claude history above an idle composer", collar: "claude", lines: append([]string{"❯ Yes, read it", "Do you trust the contents of this directory?"},
+			fixtureLines(t, "claude-code-2.1.287-pattern-in-reply.txt")...)},
+		{name: "codex reply quoting directory trust", collar: "codex", lines: quoted("• The trust screen reads:", directoryTrust)},
+		{name: "codex reply quoting hook trust", collar: "codex", lines: quoted("• The hook screen reads:", fixtureLines(t, "codex-0.151.0-hook-trust.txt"))},
+		{name: "codex history above an idle composer", collar: "codex", lines: append([]string{"› Yes, continue with the plan", "", "• Codex asks:", directoryTrust[2], ""}, codexComposer...)},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			collar, err := EmbeddedCollar(test.collar)
+			if err != nil {
+				t.Fatal(err)
+			}
+			blocked, found, err := InputBlocked(collar, linesScreen(test.lines))
+			if err != nil || found {
+				t.Fatalf("blocked = %#v, found = %t, err = %v", blocked, found, err)
+			}
+		})
+	}
+}
+
+func TestTrustPromptsBlockInput(t *testing.T) {
+	tests := []struct{ collar, file string }{
+		{"claude", "claude-code-2.1.278-directory-trust.txt"},
+		{"codex", "codex-0.151.0-directory-trust.txt"},
+		{"codex", "codex-0.151.0-hook-trust.txt"},
+	}
+	for _, test := range tests {
+		t.Run(test.file, func(t *testing.T) {
+			collar, err := EmbeddedCollar(test.collar)
+			if err != nil {
+				t.Fatal(err)
+			}
+			blocked, found, err := InputBlocked(collar, fixtureScreen(t, test.file))
+			if err != nil || !found {
+				t.Fatalf("blocked = %#v, found = %t, err = %v", blocked, found, err)
+			}
+		})
+	}
+}
+
 func TestBlockedPrimitiveRequiresPromptAndChoice(t *testing.T) {
 	collar := Collar{Primitives: Primitives{
 		Composer: Invocation{Name: "codex-composer"},

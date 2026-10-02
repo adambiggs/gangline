@@ -52,8 +52,10 @@ func InspectStartup(collar Collar, screen substrate.Screen) (Startup, error) {
 	for _, invocation := range collar.Primitives.Startup {
 		switch invocation.Name {
 		case "claude-trust-prompt", "codex-trust-prompt":
-			prompt, found := trustPrompt(invocation.Name, screen)
-			if found {
+			if owned {
+				continue
+			}
+			if prompt, found := trustPrompt(invocation.Name, lines); found {
 				return Startup{State: StartupTrustRequired, Prompt: prompt}, nil
 			}
 		case "claude-composer", "codex-composer":
@@ -181,8 +183,8 @@ func readClaudeComposer(screen substrate.Screen) (Composer, error) {
 	return Composer{Text: strings.TrimRight(strings.Join(body, "\n"), "\n")}, nil
 }
 
-func trustPrompt(name string, screen substrate.Screen) (string, bool) {
-	flat := strings.Join(screenLines(screen, true), "\n")
+func trustPrompt(name string, lines []string) (string, bool) {
+	flat := strings.Join(lines, "\n")
 	if name == "codex-trust-prompt" {
 		if strings.Contains(flat, "Trust this folder?") && regexp.MustCompile(`(?m)^[[:space:]]*[❯›>] [0-9]+\. Trust and continue[[:space:]]*$`).MatchString(flat) {
 			return "Codex folder trust is required", true
