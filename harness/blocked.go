@@ -1,6 +1,7 @@
 package harness
 
 import (
+	"errors"
 	"fmt"
 	"regexp"
 	"strings"
@@ -12,7 +13,7 @@ type Blocked struct {
 	Evidence string
 }
 
-func DetectBlocked(invocation Invocation, screen substrate.Screen) (Blocked, bool, error) {
+func detectBlocked(invocation Invocation, lines []string) (Blocked, bool, error) {
 	if invocation.Name != "screen-blocked" {
 		return Blocked{}, false, fmt.Errorf("unknown blocked primitive %q", invocation.Name)
 	}
@@ -24,11 +25,38 @@ func DetectBlocked(invocation Invocation, screen substrate.Screen) (Blocked, boo
 	if err != nil {
 		return Blocked{}, false, err
 	}
-	text := strings.Join(screenLines(screen, true), "\n")
+	text := strings.Join(lines, "\n")
 	if !prompt.MatchString(text) || !choice.MatchString(text) {
 		return Blocked{}, false, nil
 	}
 	return Blocked{Evidence: fmt.Sprintf("native input choice: %s; %s", strings.Join(strings.Fields(prompt.FindString(text)), " "), strings.Join(strings.Fields(choice.FindString(text)), " "))}, true, nil
+}
+
+// nativeInputLines returns the screen lines where a native prompt can be
+// drawn, or owned when the agent's own composer holds input. Prompt text
+// elsewhere on screen belongs to a reply, a diff, or a draft.
+func nativeInputLines(composer Invocation, screen substrate.Screen) ([]string, bool, error) {
+	lines := screenLines(screen, true)
+	switch composer.Name {
+	case "codex-composer":
+		// Codex draws a native prompt in place of its composer.
+		_, err := readCodexComposer(screen)
+		return lines, err == nil, nil
+	case "claude-composer":
+		// Claude Code draws a native prompt below the last rule line, or over
+		// the whole screen when the prompt leaves no rule visible. A readable
+		// composer does not rule a prompt out: a rule line in the conversation
+		// can open a composer frame that the prompt's own border closes.
+		if _, err := readClaudeComposer(screen); errors.Is(err, ErrComposerClipped) {
+			return nil, true, nil
+		}
+		if rule := lastRule(screenLines(screen, false)); rule >= 0 {
+			lines = lines[rule+1:]
+		}
+		return lines, false, nil
+	default:
+		return nil, false, fmt.Errorf("unknown composer primitive %q", composer.Name)
+	}
 }
 
 func blockedPattern(invocation Invocation, name string) (*regexp.Regexp, error) {

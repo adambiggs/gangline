@@ -300,7 +300,7 @@ func TestContextBandNotesScreenCollarAndBlockedDelivery(t *testing.T) {
 	f.run.settings.CollarDir = dir
 	a := f.add(t, "a", "worker", c.Name)
 	f.env["GANGLINE_HITCH_ID"] = "a"
-	f.input.screen = screenWithText("gpt-test ·", "ctx 500/1000 50%", "Would you like to run this command?", "Yes, proceed", "› ")
+	f.input.screen = screenWithText("gpt-test ·", "ctx 500/1000 50%", "Would you like to run this command?", "› 1. Yes, proceed")
 	for range 2 {
 		if err := f.run.tickAgent(a.ID, hookNotice{}, false); err != nil {
 			t.Fatal(err)

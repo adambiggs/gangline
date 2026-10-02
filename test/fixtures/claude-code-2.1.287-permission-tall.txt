@@ -1,0 +1,59 @@
+ Bash command
+ Generate numbers 1-600 in English words
+╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌
+ │ cat > /tmp/numwords.sh << 'ENDSCRIPT'
+ │ convert_to_words() {
+ │   local n=$1
+ │   local ones=("" "one" "two" "three" "four" "five" "six" "seven" "eight" "nine")
+ │   local teens=("ten" "eleven" "twelve" "thirteen" "fourteen" "fifteen" "sixteen" "seventeen" "eighteen" "nineteen")
+ │   local tens=("" "" "twenty" "thirty" "forty" "fifty" "sixty" "seventy" "eighty" "ninety")
+ │
+ │   if [ $n -lt 10 ]; then
+ │     echo "${ones[$n]}"
+ │   elif [ $n -lt 20 ]; then
+ │     echo "${teens[$((n - 10))]}"
+ │   elif [ $n -lt 100 ]; then
+ │     local ten=$((n / 10))
+ │     local one=$((n % 10))
+ │     if [ $one -eq 0 ]; then
+ │       echo "${tens[$ten]}"
+ │     else
+ │       echo "${tens[$ten]} ${ones[$one]}"
+ │     fi
+ │   else
+ │     local hundred=$((n / 100))
+ │     local remainder=$((n % 100))
+ │     local result="${ones[$hundred]} hundred"
+ │     if [ $remainder -gt 0 ]; then
+ │       local ten=$((remainder / 10))
+ │       local one=$((remainder % 10))
+ │       if [ $ten -eq 0 ]; then
+ │         result="$result ${ones[$one]}"
+ │       elif [ $ten -eq 1 ]; then
+ │         result="$result ${teens[$one]}"
+ │       else
+ │         if [ $one -eq 0 ]; then
+ │           result="$result ${tens[$ten]}"
+ │         else
+ │           result="$result ${tens[$ten]} ${ones[$one]}"
+ │         fi
+ │       fi
+ │     fi
+ │     echo "$result"
+ │   fi
+ │ }
+ │
+ │ for i in {1..600}; do
+ │   convert_to_words $i
+ │ done
+ │ ENDSCRIPT
+ │ bash /tmp/numwords.sh
+ │
+╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌
+ Contains brace with quote character (expansion obfuscation)
+
+ Do you want to proceed?
+ ❯ 1. Yes
+   2. No
+
+ Esc to cancel · Tab to amend
