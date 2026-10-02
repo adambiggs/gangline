@@ -11,12 +11,18 @@ func TestPasteHazardRefusesPlaceholderShapesForClaude(t *testing.T) {
 		"[Pasted text #3]",
 		"quote [Pasted text #12 +40 lines] in a reply",
 		"line one\n[Pasted text #101 +2 lines]\nline three",
+		"see [Image #2] above",
+		"[...Truncated text #7 +300 lines...]",
+		"[Image #2 +4 lines]",
+		"[...Truncated text #7...]",
+		"[...Truncated text #7]",
+		"[Pasted text #3...]",
 	} {
 		reason, err := PasteHazard(claude, text)
 		if err != nil || reason == "" {
 			t.Errorf("%q: reason=%q err=%v", text, reason, err)
 		}
-		if strings.Contains(reason, "Pasted text #") {
+		if strings.Contains(reason, " #") {
 			t.Errorf("reason quotes the token it refuses: %q", reason)
 		}
 	}
@@ -25,6 +31,9 @@ func TestPasteHazardRefusesPlaceholderShapesForClaude(t *testing.T) {
 		"[Pasted text #]",
 		"[Pasted text 3]",
 		"[Pasted text #3",
+		"[Pasted text #3 then more]",
+		"[pasted text #3]",
+		"[Image #2 +4]",
 	} {
 		if reason, err := PasteHazard(claude, text); err != nil || reason != "" {
 			t.Errorf("%q: reason=%q err=%v", text, reason, err)

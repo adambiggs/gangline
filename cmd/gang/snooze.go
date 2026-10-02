@@ -364,6 +364,13 @@ func (cmd command) snooze(args []string) error {
 	if strings.TrimSpace(note) == "" {
 		note = defaultSnoozeNote
 	}
+	c, err := loadCollar(a.Collar, run.settings)
+	if err != nil {
+		return err
+	}
+	if err := refusePasteHazard(c, note); err != nil {
+		return err
+	}
 	id, err := randomID("snooze")
 	if err != nil {
 		return err

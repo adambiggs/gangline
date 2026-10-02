@@ -6,6 +6,7 @@ import (
 	"testing"
 
 	"github.com/adambiggs/gangline/core"
+	"github.com/adambiggs/gangline/harness"
 	"github.com/adambiggs/gangline/store"
 )
 
@@ -114,5 +115,49 @@ func TestDeliveryFailsPastePlaceholderBeforeTyping(t *testing.T) {
 	failed, err := p.ReadEnvelope("failed", e.ID)
 	if outcome != "failed" || err != nil || failed.Outcome != "failed" || !strings.Contains(failed.Reason, "paste placeholder") {
 		t.Fatalf("outcome=%s envelope=%+v err=%v", outcome, failed, err)
+	}
+}
+
+// Delivery checks the rendered envelope, so the envelope's own closing tag
+// must not complete a token that the message text leaves open.
+func TestEnvelopeTagsDoNotCompletePastePlaceholder(t *testing.T) {
+	f, a, _ := claudeRecipient(t)
+	c, err := loadCollar("claude", f.run.settings)
+	if err != nil {
+		t.Fatal(err)
+	}
+	e := core.Envelope{Token: "0123456789abcdef", To: a.Name, From: core.Sender{Kind: core.SenderGangline, Name: "interrupt"}, Message: core.Message{Text: "the quote ended at [Pasted text #3"}}
+	wire, err := envelopeText(e)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if reason, err := harness.PasteHazard(c.Primitives.SubmitWitness, wire); err != nil || reason != "" {
+		t.Fatalf("wire %q: reason=%q err=%v", wire, reason, err)
+	}
+}
+
+// A refused superseding send leaves the sender's scheduled message in place.
+func TestRefusedSupersedeKeepsScheduledMessage(t *testing.T) {
+	f, _, p := claudeRecipient(t)
+	if err := f.cmd.send([]string{"worker", "--from", "operator", "--at", "2h", "later"}); err != nil {
+		t.Fatal(err)
+	}
+	requirePlaceholderRefusal(t, f.cmd.send([]string{"worker", "--from", "operator", "--supersede", placeholderQuote}))
+	pending, err := p.ListNew()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(pending) != 1 || pending[0].Message.Text != "later" {
+		t.Fatalf("scheduled message after refused supersede: %+v", pending)
+	}
+}
+
+func TestSnoozeRefusesPastePlaceholderInNote(t *testing.T) {
+	f, a, _ := claudeRecipient(t)
+	f.env["GANG_AGENT_ID"] = string(a.ID)
+	f.env["TMUX_PANE"] = a.Pane
+	requirePlaceholderRefusal(t, f.cmd.snooze([]string{"--at", "2h", "--note", placeholderQuote}))
+	if id := usageSnapshot(t, f.run).Snoozes[string(a.ID)].ID; id != "" {
+		t.Fatalf("refused snooze recorded: %s", id)
 	}
 }

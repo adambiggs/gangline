@@ -143,7 +143,15 @@ func (cmd command) send(args []string) (result error) {
 			return err
 		}
 		e = core.Envelope{ID: core.EnvelopeID(id), Token: token, Recipient: a.ID, To: a.Name, From: sender, Message: core.Message{Text: body}, CreatedAt: now, NotBefore: due}
-		if _, err := envelopeText(e); err != nil {
+		wire, err := envelopeText(e)
+		if err != nil {
+			return err
+		}
+		c, err := loadCollar(a.Collar, run.settings)
+		if err != nil {
+			return err
+		}
+		if err := refusePasteHazard(c, wire); err != nil {
 			return err
 		}
 	}
@@ -213,9 +221,6 @@ func (cmd command) send(args []string) (result error) {
 	}
 	b, err := run.input()
 	if err != nil {
-		return err
-	}
-	if err := refusePasteHazard(c, e.Message.Text); err != nil {
 		return err
 	}
 	if err := requireHarnessForeground(context.Background(), b, substrate.PaneID(a.Pane), c); err != nil {

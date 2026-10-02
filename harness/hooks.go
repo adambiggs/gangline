@@ -127,14 +127,16 @@ func SubmittedPromptMatches(primitive Invocation, sent, witnessed string) (bool,
 	}
 }
 
-// pastePlaceholder is the shape of Claude Code's placeholder for a collapsed
-// paste: a bracketed label, a hash, the paste number, and an optional line
-// count.
-var pastePlaceholder = regexp.MustCompile(`\[Pasted text #[0-9]+[^\]]*\]`)
+// pastePlaceholder is the reference pattern Claude Code expands in a
+// submitted prompt: a bracketed label for pasted text, an image, or truncated
+// text, a paste number, an optional line count, and any trailing dots. Claude
+// Code substitutes any such token whose number names a live text paste,
+// whatever its label.
+var pastePlaceholder = regexp.MustCompile(`\[(?:Pasted text|Image|\.\.\.Truncated text) #\d+(?: \+\d+ lines)?\.*\]`)
 
 // PasteHazard returns why text cannot be typed into a harness unchanged.
-// Claude Code replaces a placeholder-shaped token with the text of a live
-// earlier paste carrying that number, and a paste stays live after its
+// Claude Code replaces a placeholder token with the content of a live earlier
+// paste carrying that number, and a paste stays live after its
 // composer is cleared. Gangline cannot see which numbers are live, so every
 // such token is refused.
 func PasteHazard(primitive Invocation, text string) (string, error) {
@@ -143,7 +145,7 @@ func PasteHazard(primitive Invocation, text string) (string, error) {
 		return "", nil
 	case "claude-pasted-content":
 		if pastePlaceholder.MatchString(text) {
-			return "text contains a bracketed paste placeholder with a number; Claude Code can replace it with the text of an earlier paste, so describe it in words", nil
+			return "text contains a numbered paste placeholder in brackets, for pasted text, an image, or truncated text; Claude Code can replace it with the content of an earlier paste, so describe it in words", nil
 		}
 		return "", nil
 	default:
