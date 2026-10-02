@@ -12,5 +12,6 @@ pending until its native turn finishes successfully. A stopped team does not
 start itself at wake time; on its next startup an overdue wake reaches the
 caller, or the lead if the caller is gone. `gang snooze` remains a manual
 override. Inspect `gang snooze --status` if a reset or wake completion is
-uncertain. Your own status also lists uncertain usage notices and fallback
-wakes sent to you; inspect native input before clearing one by ID.
+uncertain. Your own status also lists every teammate's wake with its due time
+and note, and uncertain usage notices; inspect native input before clearing a
+notice or fallback wake by ID.

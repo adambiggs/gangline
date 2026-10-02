@@ -266,6 +266,21 @@ func cappedNativeReset(limits []core.LimitWindow, now time.Time) (time.Time, boo
 	return reset, !reset.IsZero()
 }
 
+// wakeEvent records a wake stage under the agent that scheduled the wake, so
+// gang log --agent finds it wherever the wake was delivered.
+func wakeEvent(kind string, s usageSnooze, now time.Time, reason string) core.Event {
+	return core.Event{Type: kind, At: now, HitchID: s.CallerID, Name: s.CallerName, ID: string(s.ID), Deadline: s.At, Reason: reason}
+}
+
+func (run *runtime) appendEvents(events []core.Event) error {
+	for _, event := range events {
+		if err := run.team.Append(event); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
 // A wake completes only on a matching successful native turn. An attributable
 // usage-cap failure can re-arm it once at the next observed provider reset.
 func (run *runtime) observeSnoozeTurn(a core.Agent, notice hookNotice, providerBlocked bool) error {
@@ -281,9 +296,18 @@ func (run *runtime) observeSnoozeTurn(a core.Agent, notice hookNotice, providerB
 				nativeError := !s.SubmittedAt.IsZero() && !a.Native.LastErrorAt.Before(s.SubmittedAt)
 				if !providerBlocked && !nativeError && a.Native.TurnFailure == "" {
 					delete(state.Recent, key)
-				} else {
+					events = append(events, wakeEvent("snooze_completed", s, now, ""))
+				} else if !s.TurnFailed {
+					reason := a.Native.TurnFailure
+					switch {
+					case providerBlocked:
+						reason = "provider blocked the native turn"
+					case nativeError:
+						reason = "native error during the turn: " + a.Native.LastError
+					}
 					s.TurnFailed = true
 					state.Recent[key] = s
+					events = append(events, wakeEvent("snooze_failed", s, now, boundedFailureReason(reason)))
 				}
 				continue
 			}
@@ -297,8 +321,11 @@ func (run *runtime) observeSnoozeTurn(a core.Agent, notice hookNotice, providerB
 			if failedTurn {
 				explicit, generic := usageCapFailure(failure)
 				if !explicit && !generic {
-					s.TurnFailed = true
-					state.Recent[key] = s
+					if !s.TurnFailed {
+						s.TurnFailed = true
+						state.Recent[key] = s
+						events = append(events, wakeEvent("snooze_failed", s, now, boundedFailureReason("native turn failed: "+failure)))
+					}
 					continue
 				}
 				if generic && !observedCap {
@@ -311,7 +338,10 @@ func (run *runtime) observeSnoozeTurn(a core.Agent, notice hookNotice, providerB
 			}
 			if s.CapCandidate && (s.CapFailedAt.IsZero() || now.Sub(s.CapFailedAt) > 5*time.Minute) {
 				s.CapCandidate = false
-				s.TurnFailed = true
+				if !s.TurnFailed {
+					s.TurnFailed = true
+					events = append(events, wakeEvent("snooze_failed", s, now, "rate limit unconfirmed by a fresh native usage reading"))
+				}
 				state.Recent[key] = s
 				continue
 			}
@@ -342,6 +372,7 @@ func (run *runtime) observeSnoozeTurn(a core.Agent, notice hookNotice, providerB
 			}
 			if current := state.Snoozes[key]; current.ID != "" {
 				delete(state.Recent, key)
+				events = append(events, wakeEvent("snooze_cleared", s, now, "superseded by "+string(current.ID)))
 				continue
 			}
 			id, err := randomID("snooze")
@@ -368,12 +399,7 @@ func (run *runtime) observeSnoozeTurn(a core.Agent, notice hookNotice, providerB
 	}); err != nil {
 		return err
 	}
-	for _, event := range events {
-		if err := run.team.Append(event); err != nil {
-			return err
-		}
-	}
-	return nil
+	return run.appendEvents(events)
 }
 
 func renderUsageBand(band harness.UsageBand, collar, window string, used float64, reset int64) string {
@@ -540,13 +566,18 @@ func (run *runtime) flushUsageWork() error {
 	}
 	var notices []usageNotice
 	var wakes []usageSnooze
+	var events []core.Event
 	now := run.cmd.now()
 	if err := run.withUsageState(func(state *usageState) error {
 		for key, pending := range state.Recent {
 			if _, exists := active[pending.RecipientID]; exists {
 				continue
 			}
-			if state.Snoozes[key].ID == "" {
+			gone := fmt.Sprintf("recipient %s is no longer active", pending.RecipientName)
+			if current := state.Snoozes[key]; current.ID != "" {
+				events = append(events, wakeEvent("snooze_cleared", pending, now, gone+"; superseded by "+string(current.ID)))
+			} else {
+				old := pending.ID
 				id, err := randomID("snooze")
 				if err != nil {
 					return err
@@ -562,6 +593,7 @@ func (run *runtime) flushUsageWork() error {
 				pending.Submission = ""
 				pending.SubmittedAt = time.Time{}
 				state.Snoozes[key] = pending
+				events = append(events, wakeEvent("snooze_rearmed", pending, now, gone+"; replaces "+string(old)))
 			}
 			delete(state.Recent, key)
 		}
@@ -617,7 +649,9 @@ func (run *runtime) flushUsageWork() error {
 					if err != nil {
 						return err
 					}
+					reason := fmt.Sprintf("recipient %s is no longer active; replaces %s", s.RecipientName, s.ID)
 					s.ID, s.Token = core.EnvelopeID(id), token
+					events = append(events, wakeEvent("snooze_rearmed", s, now, reason))
 				}
 				s.RecipientID, s.RecipientName = "", ""
 				s.Submission = ""
@@ -636,6 +670,9 @@ func (run *runtime) flushUsageWork() error {
 		}
 		return nil
 	}); err != nil {
+		return err
+	}
+	if err := run.appendEvents(events); err != nil {
 		return err
 	}
 	// Recipients are independent: a publication error stops only that

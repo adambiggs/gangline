@@ -123,7 +123,7 @@ file and send its path.
 | `gang limits [NAME]` | Show observed provider limits. |
 | `gang limits -c\|--collar COLLAR` | Query native account limits without a live agent, if supported. |
 | `gang snooze [--at TIME] [--note TEXT]` | Schedule a wake for the calling agent at its observed native reset, or at an explicit future time. |
-| `gang snooze --status` / `gang snooze --clear [ID]` | Inspect or cancel a pending wake. The lead sees uncertain notices and fallback wakes, and can clear one by ID. |
+| `gang snooze --status` / `gang snooze --clear [ID]` | Inspect or cancel a pending wake. The lead sees every agent's wake and uncertain notices, and can clear a notice or fallback wake by ID. |
 | `gang log [--agent NAME\|HITCH_ID] [--type TYPE\|KIND] [LOG.jsonl]` | Print JSONL events from a team or saved log, with optional filters. |
 | `gang whoami` | Print the calling pane's registered identity. |
 
@@ -330,11 +330,21 @@ timestamp. `--note` is delivered with the wake. A pending wake is durable;
 repeating the command replaces it until it is submitted. The due wake is sent
 to the caller, or the active lead if the caller is gone. `--status` shows
 scheduled, queued, submitted, or failed wakes. For the lead it also lists
-uncertain usage notices and fallback wakes; `--clear ID` removes one of those
-intents. An agent can clear its own wake with `--clear`. A wake still queued
+every other agent's wake with its due time and note, and uncertain usage
+notices; `--clear ID` removes a notice or a wake routed to the lead. An
+agent can clear its own wake with `--clear`. A wake still queued
 for native input is withdrawn from the recipient's inbox; clearing cannot
-retract input the harness already accepted. See
-[operations](operations.md).
+retract input the harness already accepted.
+
+The team log records each wake stage under the agent that scheduled it, so
+`gang log --agent NAME` shows the life of NAME's wakes: `snooze_scheduled`
+(with its due time once known), `snooze_cleared` (cleared, replaced, or
+superseded), `snooze_rearmed` (given a new ID because its recipient is gone),
+`snooze_completed`, and `snooze_failed`. Delivery of a due wake is logged as
+`send_queued` and `delivery_*` events under its recipient. A usage-cap
+rejection of the wake's turn and the wake that replaces it are logged as
+`snooze_cap_rejected` and `snooze_rearmed` under the agent whose turn was
+rejected. See [operations](operations.md).
 
 Linux uses systemd user timers for the watchdog; macOS uses transient launchd
 user agents. On a host without a supported user scheduler, ordinary commands

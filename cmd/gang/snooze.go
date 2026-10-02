@@ -76,6 +76,35 @@ func snoozeQueuedText(s usageSnooze) string {
 	return fmt.Sprintf("queued for %s, not yet submitted; due %s", s.RecipientName, s.At.UTC().Format(time.RFC3339))
 }
 
+// teammateWakeRow describes another agent's wake to the lead. The lead can
+// clear only a wake routed to it.
+func teammateWakeRow(s usageSnooze, recent bool, lead core.HitchID) string {
+	due := "; due " + s.At.UTC().Format(time.RFC3339)
+	var state string
+	switch {
+	case recent && s.CapCandidate && s.RecipientID != lead:
+		state = "rate limit unconfirmed by native usage" + due
+	case recent:
+		state = snoozeStatusText(s, false) + due
+	case s.Submission != "":
+		state = snoozeStatusText(s, true) + due
+	case s.RecipientID != "":
+		state = snoozeQueuedText(s)
+		if s.RecipientID == lead {
+			state += "; --clear ID withdraws it"
+		}
+	case s.At.IsZero():
+		state = snoozeStatusText(s, false)
+	default:
+		state = "scheduled" + due
+	}
+	row := fmt.Sprintf("%s\twake for %s; %s", s.ID, s.CallerName, state)
+	if note := strings.Join(strings.Fields(s.Note), " "); note != "" {
+		row += "; note: " + note
+	}
+	return row
+}
+
 func queuedWakeRecipient(s usageSnooze) core.HitchID {
 	if s.Submission != "" {
 		return ""
@@ -198,15 +227,13 @@ func (cmd command) snooze(args []string) error {
 					}
 				}
 				for caller, s := range state.Snoozes {
-					if caller != key && s.RecipientID == a.ID && s.Submission != "" {
-						rows = append(rows, fmt.Sprintf("%s\twake for %s; %s", s.ID, s.CallerName, snoozeStatusText(s, true)))
-					} else if caller != key && s.RecipientID == a.ID {
-						rows = append(rows, fmt.Sprintf("%s\twake for %s; %s; --clear ID withdraws it", s.ID, s.CallerName, snoozeQueuedText(s)))
+					if caller != key {
+						rows = append(rows, teammateWakeRow(s, false, a.ID))
 					}
 				}
 				for caller, s := range state.Recent {
-					if caller != key && s.RecipientID == a.ID {
-						rows = append(rows, fmt.Sprintf("%s\twake for %s; %s", s.ID, s.CallerName, snoozeStatusText(s, false)))
+					if caller != key {
+						rows = append(rows, teammateWakeRow(s, true, a.ID))
 					}
 				}
 			}
@@ -233,6 +260,8 @@ func (cmd command) snooze(args []string) error {
 			}
 			id := core.EnvelopeID(positionals[0])
 			found := false
+			var events []core.Event
+			now := cmd.now()
 			if err := run.withQueuedWake(func(state *usageState) core.HitchID {
 				for _, s := range state.Snoozes {
 					if s.ID == id && s.RecipientID == a.ID {
@@ -255,6 +284,7 @@ func (cmd command) snooze(args []string) error {
 						}
 						delete(state.Snoozes, caller)
 						found = true
+						events = append(events, wakeEvent("snooze_cleared", s, now, "cleared by lead "+string(a.Name)))
 						return nil
 					}
 				}
@@ -262,6 +292,7 @@ func (cmd command) snooze(args []string) error {
 					if s.ID == id && s.RecipientID == a.ID {
 						delete(state.Recent, caller)
 						found = true
+						events = append(events, wakeEvent("snooze_cleared", s, now, "cleared by lead "+string(a.Name)))
 						return nil
 					}
 				}
@@ -272,14 +303,24 @@ func (cmd command) snooze(args []string) error {
 			if !found {
 				return refuseError("usage intent %s is not awaiting review for this lead", id)
 			}
+			if err := run.appendEvents(events); err != nil {
+				return err
+			}
 			_, err = fmt.Fprintf(cmd.stdout, "%s\tcleared\n", id)
 			return err
 		}
+		var events []core.Event
+		now := cmd.now()
 		if err := run.withQueuedWake(func(state *usageState) core.HitchID {
 			return queuedWakeRecipient(state.Snoozes[key])
 		}, func(state *usageState, withdraw func(usageSnooze) error) error {
 			if err := withdraw(state.Snoozes[key]); err != nil {
 				return err
+			}
+			for _, s := range []usageSnooze{state.Snoozes[key], state.Recent[key]} {
+				if s.ID != "" {
+					events = append(events, wakeEvent("snooze_cleared", s, now, "cleared by its agent"))
+				}
 			}
 			delete(state.Snoozes, key)
 			delete(state.Recent, key)
@@ -288,12 +329,17 @@ func (cmd command) snooze(args []string) error {
 		}); err != nil {
 			return err
 		}
+		if err := run.appendEvents(events); err != nil {
+			return err
+		}
 		_, err = fmt.Fprintln(cmd.stdout, "wake cleared")
 		return err
 	}
 	now := cmd.now()
 	var due time.Time
+	reason := "native usage reset"
 	if at != "" {
+		reason = "explicit time"
 		due, err = parseSchedule(at, now)
 		if err != nil {
 			return usageError("snooze: --at: %v", err)
@@ -335,6 +381,7 @@ func (cmd command) snooze(args []string) error {
 		return usageError("snooze: %v", err)
 	}
 	s.RecipientID = ""
+	var events []core.Event
 	if err := run.withQueuedWake(func(state *usageState) core.HitchID {
 		return queuedWakeRecipient(state.Snoozes[key])
 	}, func(state *usageState, withdraw func(usageSnooze) error) error {
@@ -348,10 +395,19 @@ func (cmd command) snooze(args []string) error {
 		if err := withdraw(current); err != nil {
 			return err
 		}
+		for _, old := range []usageSnooze{current, state.Recent[key]} {
+			if old.ID != "" {
+				events = append(events, wakeEvent("snooze_cleared", old, now, "replaced by "+string(s.ID)))
+			}
+		}
+		events = append(events, wakeEvent("snooze_scheduled", s, now, reason))
 		delete(state.Recent, key)
 		state.Snoozes[key] = s
 		return nil
 	}); err != nil {
+		return err
+	}
+	if err := run.appendEvents(events); err != nil {
 		return err
 	}
 	if _, err := fmt.Fprintf(cmd.stdout, "%s\t%s\n", s.ID, due.UTC().Format(time.RFC3339)); err != nil {

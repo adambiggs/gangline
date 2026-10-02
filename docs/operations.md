@@ -32,9 +32,12 @@ prompt remains pending until its matching turn finishes successfully. When
 native input is accepted or its outcome cannot be verified, Gangline records
 the submission and does not type it again. The caller can
 inspect an uncertain wake with `gang snooze --status` and clear it after
-checking the native turn. The lead sees uncertain notices and wakes routed
-from absent callers in the same status output, and can clear or withdraw one
-with `gang snooze --clear ID`. Clearing cannot retract native input.
+checking the native turn. The lead's `gang snooze --status` lists every
+agent's wake with its due time and note, and uncertain usage notices; the
+lead can clear a notice or withdraw a wake routed from an absent caller with
+`gang snooze --clear ID`. `gang log --agent NAME` shows the wakes NAME
+scheduled, cleared, completed, or failed; their delivery is logged under the
+recipient. Clearing cannot retract native input.
 If an automatic wake is rejected by another attributable cap, Gangline
 schedules another wake at the next observed reset. A manually scheduled wake
 is re-armed once when a fresh reading confirms the capped window.

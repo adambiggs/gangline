@@ -35,7 +35,8 @@ func (run *runtime) observeAutoCap(a core.Agent, notice hookNotice) error {
 	}
 	explicit, generic := usageCapFailure(reason)
 	reset, capped := observedCappedReset(a.Native.Limits, a.Native.SubmittedAt, now)
-	return run.withUsageState(func(state *usageState) error {
+	var events []core.Event
+	if err := run.withUsageState(func(state *usageState) error {
 		if (explicit || generic) && failureAt.After(state.AutoCaps[key]) && !failureAt.After(now) {
 			state.AutoCaps[key] = failureAt
 			delete(state.AutoCandidates, key)
@@ -45,7 +46,7 @@ func (run *runtime) observeAutoCap(a core.Agent, notice hookNotice) error {
 				if !capped {
 					reset, _ = recentNativeReset(a.Native.Limits, now)
 				}
-				if err := scheduleAutomaticWake(state, a, reset); err != nil {
+				if err := scheduleAutomaticWake(state, a, reset, now, &events); err != nil {
 					return err
 				}
 			}
@@ -56,7 +57,7 @@ func (run *runtime) observeAutoCap(a core.Agent, notice hookNotice) error {
 			} else if a.Native.Limits.At != nil && !a.Native.Limits.At.Before(candidate.At) {
 				if candidateReset, confirmed := observedCappedReset(a.Native.Limits, candidate.SubmittedAt, now); confirmed {
 					delete(state.AutoCandidates, key)
-					if err := scheduleAutomaticWake(state, a, candidateReset); err != nil {
+					if err := scheduleAutomaticWake(state, a, candidateReset, now, &events); err != nil {
 						return err
 					}
 				}
@@ -72,13 +73,19 @@ func (run *runtime) observeAutoCap(a core.Agent, notice hookNotice) error {
 				// A fresh low-usage reading proves the prior reset has passed.
 				s.At = now
 			}
-			state.Snoozes[key] = s
+			if !s.At.IsZero() {
+				state.Snoozes[key] = s
+				events = append(events, wakeEvent("snooze_scheduled", s, now, "native reset observed for a provider cap"))
+			}
 		}
 		return nil
-	})
+	}); err != nil {
+		return err
+	}
+	return run.appendEvents(events)
 }
 
-func scheduleAutomaticWake(state *usageState, a core.Agent, reset time.Time) error {
+func scheduleAutomaticWake(state *usageState, a core.Agent, reset, now time.Time, events *[]core.Event) error {
 	key := string(a.ID)
 	if state.Snoozes[key].ID != "" || state.Recent[key].ID != "" {
 		return nil
@@ -91,9 +98,11 @@ func scheduleAutomaticWake(state *usageState, a core.Agent, reset time.Time) err
 	if err != nil {
 		return err
 	}
-	state.Snoozes[key] = usageSnooze{
+	s := usageSnooze{
 		ID: core.EnvelopeID(id), Token: token, CallerID: a.ID, CallerName: a.Name,
 		At: reset, Note: defaultSnoozeNote, Auto: true,
 	}
+	state.Snoozes[key] = s
+	*events = append(*events, wakeEvent("snooze_scheduled", s, now, "provider usage cap"))
 	return nil
 }
