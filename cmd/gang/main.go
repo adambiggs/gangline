@@ -97,6 +97,14 @@ func (cmd command) execute(args []string) error {
 		_, err := io.WriteString(cmd.stdout, welcomeHelp)
 		return err
 	}
+	// --version is the version command's spelling as a flag, so help resolves
+	// it as that command in either position.
+	if args[0] == "--version" {
+		args = append([]string{"version"}, args[1:]...)
+	}
+	if (args[0] == "help" || args[0] == "--help" || args[0] == "-h") && len(args) > 1 && args[1] == "--version" {
+		args = append([]string{args[0], "version"}, args[2:]...)
+	}
 	if args[0] == "help" && len(args) > 1 && !strings.HasPrefix(args[1], "-") {
 		if _, ok := commandUsage[args[1]]; !ok {
 			return cmd.printHelp(args[1])
@@ -145,7 +153,7 @@ func (cmd command) execute(args []string) error {
 		}
 	}
 	switch name {
-	case "version", "--version":
+	case "version":
 		if err := noArguments(arguments, "version"); err != nil {
 			return err
 		}

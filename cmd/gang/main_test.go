@@ -18,6 +18,10 @@ func TestVersionAndHelpDoNotLoadRuntimeConfiguration(t *testing.T) {
 		{args: []string{"--version"}, want: "gangline dev"},
 		{args: []string{"version"}, want: "gangline dev"},
 		{args: []string{"version", "--help"}, want: "usage: gang version"},
+		{args: []string{"--version", "--help"}, want: "usage: gang version"},
+		{args: []string{"--help", "--version"}, want: "usage: gang version"},
+		{args: []string{"-h", "--version"}, want: "usage: gang version"},
+		{args: []string{"help", "--version"}, want: "usage: gang version"},
 	} {
 		var stdout, stderr bytes.Buffer
 		status := run(test.args, strings.NewReader(""), &stdout, &stderr)
