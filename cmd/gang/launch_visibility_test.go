@@ -344,3 +344,58 @@ func eventsOfType(t *testing.T, f *stateFixture, kind string) int {
 	}
 	return count
 }
+
+// A blocked startup's prompt is recorded once however many ticks observe it,
+// and again only when the record stops naming it as blocked.
+func TestTickRecordsABlockedStartupOnce(t *testing.T) {
+	for _, tc := range []struct {
+		name           string
+		before         func(a *core.Agent, prompt string)
+		recordedBefore int
+	}{
+		{"unrecorded prompt", func(a *core.Agent, _ string) {}, 0},
+		{"recorded prompt", func(a *core.Agent, prompt string) { a.Activity, a.Evidence = core.Blocked, prompt }, 1},
+		{"other prompt recorded", func(a *core.Agent, _ string) { a.Activity, a.Evidence = core.Blocked, "an earlier prompt" }, 0},
+		{"prompt named while not blocked", func(a *core.Agent, prompt string) { a.Activity, a.Evidence = core.Unknown, prompt }, 0},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			f := newStateFixture(t)
+			f.input.screen = screenWithText("Trust this folder?", "› 1. Trust and continue")
+			prompt := blockedStartupPrompt(t)
+			a := f.setAgent(t, f.add(t, "a", "worker", "codex"), func(a *core.Agent) {
+				a.Status, a.Activity, a.Evidence, a.BootDeadline = core.Booting, core.Unknown, "", time.Time{}
+				tc.before(a, prompt)
+			})
+			for i := 0; i < 3; i++ {
+				if err := f.cmd.tick(nil); err != nil {
+					t.Fatal(err)
+				}
+			}
+			if got := f.agent(t, a.ID); got.Status != core.Booting || got.Activity != core.Blocked || got.Evidence != prompt {
+				t.Fatalf("record = %s %s %q, want booting blocked %q", got.Status, got.Activity, got.Evidence, prompt)
+			}
+			if n := eventsOfType(t, f, "hitch_blocked"); n != 1-tc.recordedBefore {
+				t.Fatalf("three ticks recorded %d hitch_blocked events, want %d", n, 1-tc.recordedBefore)
+			}
+		})
+	}
+}
+
+// blockedStartupPrompt is the prompt a tick records for the fixture's trust
+// screen, read from a tick rather than restated.
+func blockedStartupPrompt(t *testing.T) string {
+	t.Helper()
+	f := newStateFixture(t)
+	f.input.screen = screenWithText("Trust this folder?", "› 1. Trust and continue")
+	a := f.setAgent(t, f.add(t, "a", "worker", "codex"), func(a *core.Agent) {
+		a.Status, a.Activity, a.BootDeadline = core.Booting, core.Unknown, time.Time{}
+	})
+	if err := f.cmd.tick(nil); err != nil {
+		t.Fatal(err)
+	}
+	got := f.agent(t, a.ID)
+	if got.Activity != core.Blocked || got.Evidence == "" {
+		t.Fatalf("fixture screen did not block startup: %s %q", got.Activity, got.Evidence)
+	}
+	return got.Evidence
+}

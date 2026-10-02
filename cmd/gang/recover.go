@@ -111,8 +111,12 @@ func (run *runtime) tickAgent(id core.HitchID, notice hookNotice, wait bool) err
 		}
 		if startup.State != harness.StartupReady {
 			if startup.State == harness.StartupTrustRequired {
-				if err := run.apply(l, &a, core.Event{Type: "hitch_blocked", Reason: startup.Prompt}); err != nil {
-					return err
+				// Every tick and roster read sees the prompt until the
+				// operator answers it, so it is recorded once.
+				if a.Activity != core.Blocked || a.Evidence != startup.Prompt {
+					if err := run.apply(l, &a, core.Event{Type: "hitch_blocked", Reason: startup.Prompt}); err != nil {
+						return err
+					}
 				}
 				return run.mark(a)
 			}
