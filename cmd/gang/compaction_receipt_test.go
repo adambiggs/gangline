@@ -75,3 +75,18 @@ func TestQueuedCompactionWaitsForStartupHold(t *testing.T) {
 		t.Fatalf("held compaction started: %+v submits=%d", got.Compaction, f.input.submits)
 	}
 }
+
+func TestCompactRefusesALockedAgentWithItsRetry(t *testing.T) {
+	f, _, p := compactionFixture(t)
+	f.input.screen = screenWithText("READY", "› ")
+	held, err := p.TryLock()
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer held.Close()
+	err = f.cmd.compact([]string{"worker", "--resume", "continue"})
+	var ce commandError
+	if !errors.As(err, &ce) || ce.status != exitRefused || err.Error() != "worker is busy with another gang operation; retry gang compact" {
+		t.Fatalf("compact on a locked agent: %v", err)
+	}
+}
