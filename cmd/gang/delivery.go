@@ -163,7 +163,8 @@ func (run *runtime) inputState(l *store.LockedAgent, a *core.Agent, b harnessInp
 	}
 	if blocked {
 		if a.Activity != core.Blocked || a.Evidence != blocker.Evidence {
-			if err := run.apply(l, a, core.Event{Type: "activity_observed", Activity: core.Blocked, Reason: blocker.Evidence}); err != nil {
+			basis := activityBasis(*a, "blocked", "screen")
+			if err := run.apply(l, a, core.Event{Type: "activity_observed", Activity: core.Blocked, Reason: blocker.Evidence, Fingerprint: harness.ScreenFingerprint(screen), Basis: &basis}); err != nil {
 				return inputVerdict{}, err
 			}
 		}

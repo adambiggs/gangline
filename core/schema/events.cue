@@ -26,6 +26,11 @@ import "time"
  used?: int & >=0, limit?: int & >0, percent?: number & >=0
  limits?: [...close({label: #ID, used_percent: number & >=0, reset_at: int & >0, window_minutes?: int & >0})]
 })
+#Basis: close({
+ screen: "blocked" | "compacting" | "idle" | "busy" | "unsubmitted" | "unreadable" | "unread"
+ rule: "screen" | "open-turn" | "interrupt-pending" | "compaction-record" | "turn-failure" | "wedge" | "probe-failure"
+ compaction?: "queued" | "submitted" | "completed" | "failed" | "unverified"
+})
 #Fields: close({
  type: "hitch_claimed" | "hitch_spawned" | "hitch_ready" | "hitch_blocked" | "hitch_failed" |
   "renamed" | "send_queued" | "send_cancelled" |
@@ -39,7 +44,7 @@ import "time"
  source?: "hook" | "command" | "watchdog"
  hitch_id?: #ID, name?: #ID, pane?: #ID, id?: #ID, reason?: string, status?: string
  activity?: #Activity, deadline?: #Time, envelope?: #Envelope, compaction?: #Compaction
- readings?: [...#Reading], native_event?: string, fingerprint?: #ID
+ readings?: [...#Reading], native_event?: string, fingerprint?: #ID, basis?: #Basis
 })
 
 #Event: #Fields & (

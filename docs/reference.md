@@ -168,6 +168,14 @@ Window titles use `?name?` for changing or unknown state, `~name~` for idle,
 `-name-` for work, and `!name!` for blocked, wedged, or failed agents.
 Use a hitch ID in log filters to follow a registration across renames.
 
+Each `activity_observed` event records what its reading was derived from.
+`basis.screen` is the collar's reading of the pane: `blocked`, `compacting`,
+`idle`, `busy`, `unsubmitted`, `unreadable`, or `unread` when the capture
+failed. `basis.rule` is the rule that set the activity: `screen`, `open-turn`,
+`interrupt-pending`, `compaction-record`, `turn-failure`, `wedge`, or
+`probe-failure`. `basis.compaction` is the compaction record's status, and
+`fingerprint` is a hash of the screen. Neither carries screen text.
+
 ## Discover and maintain
 
 | Command | Effect |

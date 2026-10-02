@@ -21,40 +21,49 @@ func (run *runtime) observeActivity(l *store.LockedAgent, a *core.Agent, c harne
 	fingerprint := harness.ScreenFingerprint(screen)
 	screenBusy := false
 	compacting, compactErr := harness.CompactionActive(c, screen)
+	basis := activityBasis(*a, "", "screen")
 	if found {
-		activity, evidence = core.Blocked, blocked.Evidence
+		activity, evidence, basis.Screen = core.Blocked, blocked.Evidence, "blocked"
 	} else if compactErr != nil {
-		activity, evidence = core.Unknown, compactErr.Error()
+		activity, evidence, basis.Screen = core.Unknown, compactErr.Error(), "unreadable"
 	} else if compacting {
+		basis.Screen = "compacting"
 		if a.InterruptDeadline.IsZero() {
 			activity, evidence = core.Compacting, "native compaction in progress"
+		} else {
+			basis.Rule = "interrupt-pending"
 		}
 	} else {
 		idle, err := harness.Idle(c, screen)
 		if err != nil {
-			activity, evidence = core.Unknown, err.Error()
+			activity, evidence, basis.Screen = core.Unknown, err.Error(), "unreadable"
 		} else if idle {
-			activity, evidence = core.Idle, ""
+			activity, evidence, basis.Screen = core.Idle, "", "idle"
 			open, err := run.openTurn(l, a, c, fingerprint)
 			if err != nil {
 				return err
 			}
 			if open {
-				activity, evidence = core.Busy, "native turn open: submit witnessed, no finish boundary yet"
+				activity, evidence, basis.Rule = core.Busy, "native turn open: submit witnessed, no finish boundary yet", "open-turn"
 			}
 		} else if busy, err := harness.Busy(c, screen); err != nil {
-			activity, evidence = core.Unknown, err.Error()
+			activity, evidence, basis.Screen = core.Unknown, err.Error(), "unreadable"
 		} else if !busy {
-			activity, evidence = core.Blocked, "native composer contains unsubmitted input"
-		} else if a.InterruptDeadline.IsZero() {
-			activity, evidence, screenBusy = core.Busy, "", true
+			activity, evidence, basis.Screen = core.Blocked, "native composer contains unsubmitted input", "unsubmitted"
+		} else {
+			basis.Screen = "busy"
+			if a.InterruptDeadline.IsZero() {
+				activity, evidence, screenBusy = core.Busy, "", true
+			} else {
+				basis.Rule = "interrupt-pending"
+			}
 		}
 	}
 	if a.Compaction != nil && a.Compaction.Status == "submitted" && activity != core.Blocked {
-		activity, evidence = core.Compacting, "native compaction completion unconfirmed; queued resume awaits confirmation"
+		activity, evidence, basis.Rule = core.Compacting, "native compaction completion unconfirmed; queued resume awaits confirmation", "compaction-record"
 	}
 	if a.Native.TurnFailure != "" {
-		activity, evidence = core.Unknown, "native turn failed: "+a.Native.TurnFailure
+		activity, evidence, basis.Rule = core.Unknown, "native turn failed: "+a.Native.TurnFailure, "turn-failure"
 	}
 	if a.ScreenFingerprint != fingerprint {
 		a.ScreenFingerprint, a.ScreenSince = fingerprint, run.cmd.now()
@@ -70,14 +79,24 @@ func (run *runtime) observeActivity(l *store.LockedAgent, a *core.Agent, c harne
 		return err
 	}
 	if wedge.Detected {
-		activity, evidence = core.Wedged, wedge.Evidence
+		activity, evidence, basis.Rule = core.Wedged, wedge.Evidence, "wedge"
 	}
 	if activity != a.Activity || evidence != a.Evidence {
-		if err := run.apply(l, a, core.Event{Type: "activity_observed", Activity: activity, Reason: evidence}); err != nil {
+		if err := run.apply(l, a, core.Event{Type: "activity_observed", Activity: activity, Reason: evidence, Fingerprint: fingerprint, Basis: &basis}); err != nil {
 			return err
 		}
 	}
 	return nil
+}
+
+// activityBasis names what an activity reading of a was derived from: the
+// collar's reading of the screen and the rule that set the activity.
+func activityBasis(a core.Agent, screen, rule string) core.ActivityBasis {
+	basis := core.ActivityBasis{Screen: screen, Rule: rule}
+	if a.Compaction != nil {
+		basis.Compaction = a.Compaction.Status
+	}
+	return basis
 }
 
 // openTurn reports whether a submitted turn is still running behind an
@@ -108,7 +127,8 @@ func (run *runtime) observeProbeFailure(l *store.LockedAgent, a *core.Agent, cau
 	if err := l.Save(*a); err != nil {
 		return err
 	}
-	if err := run.apply(l, a, core.Event{Type: "activity_observed", Activity: core.Unknown, Reason: reason}); err != nil {
+	basis := activityBasis(*a, "unread", "probe-failure")
+	if err := run.apply(l, a, core.Event{Type: "activity_observed", Activity: core.Unknown, Reason: reason, Basis: &basis}); err != nil {
 		return err
 	}
 	return run.mark(*a)
