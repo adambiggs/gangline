@@ -53,9 +53,11 @@ in the composer.
 Most hooks append an event and exit without acquiring the agent lock. Submit
 hooks publish a witness and schedule detached reconciliation. A submit hook
 blocks an altered compaction resume and admits the exact queued continuation
-once; a compaction-end hook records completion durably. The next agent access
-cancels stale context-band notices before delivery. Turn-end and
-compaction-end hooks also schedule a detached tick for other work.
+once; a compaction-end hook records completion durably. Blocking the current
+compaction's own note fails that compaction, since input waits behind a note
+that will not arrive. The next agent access cancels stale context-band notices
+before delivery. Turn-end, compaction-end, and blocked submit hooks also
+schedule a detached tick for other work.
 
 Claude Code's native prompt ID ties asynchronous failure or success to the
 submit witness. A late callback cannot change a newer identified turn. Missing

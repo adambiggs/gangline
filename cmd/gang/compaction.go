@@ -47,6 +47,15 @@ func (run *runtime) resumePromptBlock(a core.Agent, c harness.Collar, prompt, se
 	return ""
 }
 
+// pendingResumeNote reports a prompt headed by the resume token of a
+// compaction whose queued note has not been admitted.
+func pendingResumeNote(c *core.Compaction, prompt string) bool {
+	if c == nil || c.ResumeToken == "" || c.ResumeAdmitted || c.Status == "failed" {
+		return false
+	}
+	return regexp.MustCompile(`(?m)^\[gang:[^]\n]*#` + regexp.QuoteMeta(c.ResumeToken) + ` resume\]`).MatchString(prompt)
+}
+
 func (run *runtime) admitCompactionResume(id core.HitchID, c harness.Collar, prompt, session string) (string, error) {
 	l, a, err := run.acquire(id, true)
 	if err != nil {
@@ -54,7 +63,16 @@ func (run *runtime) admitCompactionResume(id core.HitchID, c harness.Collar, pro
 	}
 	defer run.unlock(l)
 	if reason := run.resumePromptBlock(a, c, prompt, session); reason != "" {
-		return reason, nil
+		if !pendingResumeNote(a.Compaction, prompt) {
+			return reason, nil
+		}
+		// The blocked note was the one input waits behind, and it will not
+		// reach the agent, so the compaction fails and says so.
+		phase := compactionMayHaveRun
+		if a.Compaction.Status == "completed" {
+			phase = compactionRan
+		}
+		return reason, run.failCompaction(l, &a, phase, "resume note blocked: "+reason)
 	}
 	a.Compaction.ResumeAdmitted = true
 	if a.Compaction.Status == "submitted" && !a.Compaction.CompletedAt.After(a.Compaction.StartedAt) {

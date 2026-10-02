@@ -115,7 +115,11 @@ func (cmd command) handleHook(args []string) (result error) {
 				return err
 			}
 			blockedWritten = true
-			return run.record(a, core.Event{Type: "native_hook", NativeEvent: event.NativeEvent, Status: "resume-blocked", Reason: reason})
+			if err := run.record(a, core.Event{Type: "native_hook", NativeEvent: event.NativeEvent, Status: "resume-blocked", Reason: reason}); err != nil {
+				return err
+			}
+			// Input held behind a blocked note need not wait for the watchdog.
+			return run.detachTick(id)
 		}
 	}
 	receipt, err := randomID("hook")

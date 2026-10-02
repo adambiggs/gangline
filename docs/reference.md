@@ -96,8 +96,10 @@ pre-compaction hooks.
 
 For a harness without a native queue witness, sends also wait after the
 compaction ends until the harness admits the queued resume note, whose submit
-hook must run first. If no admission arrives within one operation's timeout,
-the hold ends and held messages go out at the agent's next tick.
+hook must run first. If that hook blocks the note, the compaction fails, the
+agent is told its note was withheld, and held messages go out at once. If no
+admission arrives within one operation's timeout, the hold ends and held
+messages go out at the agent's next tick.
 
 Gangline never presses Enter on a composer that holds anything other than the
 compact command, nor on one the command has already left. Claude Code shows a long or multi-line paste as a placeholder
