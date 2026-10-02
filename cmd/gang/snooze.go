@@ -342,7 +342,7 @@ func (cmd command) snooze(args []string) error {
 		reason = "explicit time"
 		due, err = parseSchedule(at, now)
 		if err != nil {
-			return usageError("snooze: --at: %v", err)
+			return usageError("snooze: invalid --at %q (%v)", at, err)
 		}
 	} else {
 		updated, err := run.latest(*a)

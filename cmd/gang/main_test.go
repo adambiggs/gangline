@@ -72,22 +72,37 @@ func TestCommandsRejectIgnoredArguments(t *testing.T) {
 	}
 }
 
-func TestFlagDiagnosticsNameTheBadInput(t *testing.T) {
+func TestOptionErrorsStateTheAcceptedForm(t *testing.T) {
 	for _, test := range []struct {
 		args []string
 		want string
 	}{
-		{[]string{"roster", "--wat"}, "flag provided but not defined: -wat"},
-		{[]string{"status", "--wat"}, "flag provided but not defined: -wat"},
-		{[]string{"interrupt", "--wat"}, "flag provided but not defined: -wat"},
-		{[]string{"interrupt", "-m"}, "flag needs an argument: -m"},
-		{[]string{"upgrade", "--wat"}, "flag provided but not defined: -wat"},
+		{[]string{"roster", "--wat"}, "roster: unknown option --wat\n"},
+		{[]string{"status", "--wat"}, "status: unknown option --wat\n"},
+		{[]string{"interrupt", "--wat"}, "interrupt: unknown option --wat\n"},
+		{[]string{"upgrade", "--wat"}, "upgrade: unknown option --wat\n"},
+		{[]string{"up", "--bogus"}, "up: unknown option --bogus\n"},
+		{[]string{"models", "--bogus"}, "models: unknown option --bogus\n"},
+		{[]string{"interrupt", "-m"}, "interrupt: -m needs a value (expected REASON)"},
+		{[]string{"wait", "worker", "--timeout"}, "wait: --timeout needs a value (expected DURATION)"},
+		{[]string{"wait", "worker", "--timeout=abc"}, `wait: invalid --timeout "abc" (expected a duration such as 30s or 5m)`},
+		{[]string{"roster", "--json=maybe"}, `roster: invalid --json "maybe" (expected true or false)`},
+		{[]string{"send", "worker", "--from", "bad name", "hi"}, `send: invalid --from "bad name" (expected letters, digits, '.', '_' or '-', starting with a letter or digit; hitch and gangline are reserved)`},
+		{[]string{"send", "worker", "---from", "x"}, "send: malformed option ---from (expected one or two dashes before the name)"},
+		{[]string{"status", "--team"}, "status: --team needs a value (expected TEAM)"},
+		{[]string{"collar", "check", "--bogus"}, `invalid collar name "--bogus" (expected lowercase letters, digits or '-', starting with a letter)`},
+		{[]string{"help", "bogus"}, `help: unknown command "bogus" (run 'gang help')`},
 		{[]string{"roster", "extra"}, "unexpected argument \"extra\""},
 	} {
 		var stdout, stderr bytes.Buffer
 		status := run(test.args, strings.NewReader(""), &stdout, &stderr)
 		if status != exitUsage || !strings.Contains(stderr.String(), test.want) {
 			t.Errorf("run(%q) status=%d stderr=%q; want %q", test.args, status, stderr.String(), test.want)
+		}
+		for _, leaked := range flagPackageText {
+			if strings.Contains(stderr.String(), leaked) {
+				t.Errorf("run(%q) stderr=%q carries flag-package text %q", test.args, stderr.String(), leaked)
+			}
 		}
 	}
 }

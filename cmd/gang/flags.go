@@ -123,10 +123,8 @@ func parseSend(arguments []string) (sendOptions, error) {
 	if err := validateAgentName(options.Name); err != nil {
 		return sendOptions{}, err
 	}
-	if options.From != "" {
-		if err := validateAgentName(options.From); err != nil {
-			return sendOptions{}, usageError("send: invalid --from identity: %v", err)
-		}
+	if options.From != "" && !validAgentName(options.From) {
+		return sendOptions{}, usageError("send: invalid --from %q (%s)", options.From, agentNameForm)
 	}
 	if options.LiveOnly && options.At != "" {
 		return sendOptions{}, usageError("send: --live-only and --at cannot be combined")
@@ -173,13 +171,68 @@ func quietFlagSet(name string) *flag.FlagSet {
 }
 
 // parseOptions accepts flags on either side of operands and preserves -- as
-// the point after which every token is an operand.
+// the point after which every token is an operand. It sets each option itself
+// rather than through FlagSet.Parse, so every error states what would have
+// been accepted.
 func parseOptions(flags *flag.FlagSet, arguments []string) ([]string, error) {
-	flagArguments, positionals := partitionOptions(flags, arguments)
-	if err := flags.Parse(flagArguments); err != nil {
-		return nil, err
+	var positionals []string
+	for _, word := range scanOptions(flags, arguments) {
+		switch {
+		case word.terminator:
+		case word.option == "":
+			positionals = append(positionals, word.tokens...)
+		default:
+			if err := setOption(flags, word); err != nil {
+				return nil, err
+			}
+		}
 	}
 	return positionals, nil
+}
+
+// setOption applies one scanned option. -h and -help, when the command does
+// not define them, return flag.ErrHelp as FlagSet.Parse does.
+func setOption(flags *flag.FlagSet, word optionWord) error {
+	spelling, value, assigned := strings.Cut(word.tokens[0], "=")
+	if strings.HasPrefix(spelling, "---") {
+		return fmt.Errorf("malformed option %s (expected one or two dashes before the name)", spelling)
+	}
+	option := flags.Lookup(word.option)
+	if option == nil {
+		if word.option == "h" || word.option == "help" {
+			return flag.ErrHelp
+		}
+		return fmt.Errorf("unknown option %s", spelling)
+	}
+	switch {
+	case assigned:
+	case len(word.tokens) == 2:
+		value = word.tokens[1]
+	case isBoolFlag(option):
+		value = "true"
+	default:
+		return fmt.Errorf("%s needs a value (expected %s)", spelling, optionArgumentName(flags.Name(), option.Name))
+	}
+	if err := flags.Set(option.Name, value); err != nil {
+		switch option.Value.(flag.Getter).Get().(type) {
+		case bool:
+			return fmt.Errorf("invalid %s %q (expected true or false)", spelling, value)
+		case time.Duration:
+			return fmt.Errorf("invalid %s %q (expected a duration such as 30s or 5m)", spelling, value)
+		}
+		return fmt.Errorf("invalid %s %q: %v", spelling, value, err)
+	}
+	return nil
+}
+
+// optionArgumentName is the value placeholder help shows for an option.
+func optionArgumentName(command, name string) string {
+	for _, option := range helpOptions(command) {
+		if option.name == name {
+			return option.argument
+		}
+	}
+	return "VALUE"
 }
 
 func partitionOptions(flags *flag.FlagSet, arguments []string) ([]string, []string) {
@@ -271,7 +324,7 @@ func takeTeam(name string, arguments []string) (team string, rest []string, err 
 			value, assigned = word.tokens[1], true
 		}
 		if !assigned {
-			return "", nil, usageError("%s: flag needs an argument: --team", name)
+			return "", nil, usageError("%s: --team needs a value (expected %s)", name, teamOption.argument)
 		}
 		team, selected = value, true
 	}
@@ -366,9 +419,16 @@ func parseCollarFlags(commandName string, arguments []string, defaultCollar stri
 	return collar, nil
 }
 
+// agentNameForm states the names validAgentName accepts.
+const agentNameForm = "expected letters, digits, '.', '_' or '-', starting with a letter or digit; hitch and gangline are reserved"
+
+func validAgentName(name string) bool {
+	return agentNamePattern.MatchString(name) && name != "hitch" && name != "gangline"
+}
+
 func validateAgentName(name string) error {
-	if !agentNamePattern.MatchString(name) || name == "hitch" || name == "gangline" {
-		return usageError("invalid agent name %q", name)
+	if !validAgentName(name) {
+		return usageError("invalid agent name %q (%s)", name, agentNameForm)
 	}
 	return nil
 }

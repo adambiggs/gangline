@@ -30,10 +30,11 @@ func (cmd command) up(args []string) error {
 		"r": &options.Role, "role": &options.Role,
 		"resume": &options.Resume, "recover": &options.Recover, "stdin": &options.Stdin,
 	})
-	flagArguments, positionals := partitionOptions(flags, args)
-	if err := flags.Parse(flagArguments); err != nil {
+	positionals, err := parseOptions(flags, args)
+	if err != nil {
 		return usageError("up: %v", err)
 	}
+	flagArguments, _ := partitionOptions(flags, args)
 	name := "lead"
 	if len(positionals) > 1 {
 		return usageError("up: unexpected argument %q", positionals[1])
@@ -166,7 +167,7 @@ func (cmd command) curfew(args []string) error {
 	} else {
 		team.Curfew, err = parseSchedule(args[0], cmd.now())
 		if err != nil {
-			return usageError("curfew: %v", err)
+			return usageError("curfew: invalid deadline %q (%v)", args[0], err)
 		}
 		event.Deadline = team.Curfew
 	}

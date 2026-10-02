@@ -297,7 +297,7 @@ func (cmd command) printHelp(name string) error {
 	}
 	usage, ok := commandUsage[name]
 	if !ok {
-		return usageError("help: unknown command %q", name)
+		return usageError("help: unknown command %q (run 'gang help')", name)
 	}
 	_, err := fmt.Fprintf(cmd.stdout, "%s\n%s", usage, commandDescription[name])
 	if err != nil {

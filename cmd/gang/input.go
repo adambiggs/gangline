@@ -4,6 +4,7 @@ import (
 	"crypto/rand"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"regexp"
@@ -101,6 +102,10 @@ func renderEnvelopeTag(tag, marker, body string) (string, error) {
 
 var clockPattern = regexp.MustCompile(`^([01][0-9]|2[0-3]):([0-5][0-9])$`)
 
+// errScheduleForm states the forms parseSchedule accepts. Callers name the
+// option or operand and the rejected value around it.
+var errScheduleForm = errors.New("expected a positive DURATION such as 30m, HH:MM, or RFC3339")
+
 func parseSchedule(value string, now time.Time) (time.Time, error) {
 	if deadline, err := time.Parse(time.RFC3339, value); err == nil {
 		return deadline, nil
@@ -116,7 +121,7 @@ func parseSchedule(value string, now time.Time) (time.Time, error) {
 	}
 	duration, err := parseDuration(value)
 	if err != nil {
-		return time.Time{}, err
+		return time.Time{}, errScheduleForm
 	}
 	return now.Add(duration), nil
 }

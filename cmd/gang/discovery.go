@@ -107,7 +107,7 @@ func collarNames(settings settings) ([]string, error) {
 
 func loadCollar(name string, settings settings) (harness.Collar, error) {
 	if !collarNamePattern.MatchString(name) {
-		return harness.Collar{}, usageError("invalid collar name %q", name)
+		return harness.Collar{}, usageError("invalid collar name %q (expected lowercase letters, digits or '-', starting with a letter)", name)
 	}
 	if settings.CollarDir != "" {
 		filename := filepath.Join(settings.CollarDir, name+".cue")

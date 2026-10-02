@@ -357,7 +357,7 @@ and [internals](internals.md#watchdog).
 | --- | --- |
 | `0` | Successful command; a send may still be queued. |
 | `1` | Execution or I/O error. |
-| `2` | Bad usage. |
+| `2` | Bad usage; the message names the problem and, for a bad value, the accepted form. A known command's usage follows. |
 | `3` | Refused operation. |
 | `4` | Native harness needs attention. |
 | `5` | Unknown result, such as input without a confirmed receipt. |

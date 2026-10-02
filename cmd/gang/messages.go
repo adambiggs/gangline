@@ -120,7 +120,7 @@ func (cmd command) send(args []string) (result error) {
 		if o.At != "" {
 			due, err = parseSchedule(o.At, now)
 			if err != nil {
-				return usageError("send: --at: %v", err)
+				return usageError("send: invalid --at %q (%v)", o.At, err)
 			}
 		}
 		bodyReader := cmd.stdin
