@@ -118,3 +118,15 @@ func TestAcquireRecordedSkipsProcessThatVanishesBeforePinning(t *testing.T) {
 		t.Fatalf("pin error was hidden: %v", err)
 	}
 }
+
+func TestOpenProcessHandleReportsReapedProcessAsGone(t *testing.T) {
+	r, reap := childProcess(t)
+	reap()
+	handle, err := openProcessHandle(r)
+	if err == nil {
+		_ = handle.close()
+	}
+	if !processGone(err) {
+		t.Fatalf("reaped process handle: err=%v, want a gone process", err)
+	}
+}

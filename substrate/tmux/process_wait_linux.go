@@ -57,7 +57,12 @@ func openProcessHandle(observed processRecord) (processHandle, error) {
 	// FindProcess can fall back to numeric signalling on old kernels.
 	// Refuse that fallback before tmux or any signal can have an effect.
 	if err := process.WithHandle(func(uintptr) {}); err != nil {
+		// A process already reaped has no handle to take.
+		gone := errors.Is(process.Signal(syscall.Signal(0)), os.ErrProcessDone)
 		_ = process.Release()
+		if gone {
+			return nil, fmt.Errorf("open process %d: %w", observed.PID, syscall.ESRCH)
+		}
 		return nil, fmt.Errorf("identity-bound process handle unavailable: %w", err)
 	}
 	return &linuxProcessHandle{process: process}, nil
