@@ -40,7 +40,7 @@ func TestAttachStoppedTeamWithClaimedLeadAdvisesUp(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if listed.Status != core.Failed || listed.Pane != a.Pane || !strings.Contains(listed.Evidence, "registered pane is absent from tmux") {
+	if listed.Status != core.Active || listed.Pane != a.Pane || listed.Evidence != "" {
 		t.Fatalf("roster left claim in unexpected state: %+v", listed)
 	}
 	err = f.cmd.attach(nil)
@@ -48,8 +48,40 @@ func TestAttachStoppedTeamWithClaimedLeadAdvisesUp(t *testing.T) {
 		t.Fatalf("attach error = %v, want start advice", err)
 	}
 	retained, err := f.run.resolve("lead")
-	if err != nil || retained.ID != a.ID || retained.Status != core.Failed {
+	if err != nil || retained.ID != a.ID || retained.Status != core.Active {
 		t.Fatalf("lead claim changed: %+v, %v", retained, err)
+	}
+}
+
+// A socket that answers nothing lists no panes, which says nothing of a pane
+// the registering server may still run. The roster reports the agent unknown
+// and leaves its record as it was.
+func TestRosterWithoutTeamListingKeepsRecord(t *testing.T) {
+	f := newStateFixture(t)
+	program := "#!/bin/sh\n# SPDX-License-Identifier: Apache-2.0\n" +
+		"printf 'no server running on fixture\\n' >&2; exit 1\n"
+	if err := os.WriteFile(f.env["GANG_TMUX"], []byte(program), 0700); err != nil {
+		t.Fatal(err)
+	}
+	a := f.add(t, "a", "worker", "codex")
+	f.setAgent(t, f.add(t, "b", "failed", "codex"), func(b *core.Agent) {
+		b.Status, b.Activity, b.Evidence = core.Failed, core.Unknown, "boot deadline elapsed"
+	})
+	for range 2 {
+		rows := rosterRows(t, f)
+		if row := rows["worker"]; !strings.Contains(row, " active ") || !strings.Contains(row, " unknown ") || !strings.HasSuffix(row, "tmux lists no team session") {
+			t.Fatalf("row = %q", row)
+		}
+		if row := rows["failed"]; !strings.HasSuffix(row, "boot deadline elapsed") {
+			t.Fatalf("failed row = %q", row)
+		}
+	}
+	got := f.agent(t, a.ID)
+	if got.Status != core.Active || got.Activity != core.Idle || got.Pane != a.Pane || got.Evidence != "" {
+		t.Fatalf("record changed: status=%s activity=%s pane=%q evidence=%q", got.Status, got.Activity, got.Pane, got.Evidence)
+	}
+	if n := eventsOfType(t, f, "hitch_failed"); n != 0 {
+		t.Fatalf("hitch_failed events = %d", n)
 	}
 }
 

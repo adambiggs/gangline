@@ -197,6 +197,7 @@ func (run *runtime) observeRoster(agents []core.Agent) ([]core.Agent, error) {
 		return nil, err
 	}
 	windows, err := b.Windows(context.Background())
+	listed := err == nil
 	if err != nil {
 		exists, checkErr := b.SessionExists(context.Background())
 		if checkErr != nil {
@@ -227,13 +228,20 @@ func (run *runtime) observeRoster(agents []core.Agent) ([]core.Agent, error) {
 			_ = run.unlock(l)
 			return nil, err
 		}
+		unlisted := false
 		if current.Pane != "" && !present[current.Pane] && current.Status != core.Dropping {
-			// The listing is enough to fail the agent. Only a check that
-			// confirms the pane closed removes it from the record.
+			// A listing is enough to fail the agent. With no session to list,
+			// an unreachable socket hides a pane that may still run, so the
+			// record stands. Only a check that confirms the pane closed
+			// removes it from the record.
 			var err error
-			if _, closed, checkErr := run.paneGone(current); checkErr == nil && closed {
+			_, closed, checkErr := run.paneGone(current)
+			switch {
+			case checkErr == nil && closed:
 				err = run.forgetPane(l, &current)
-			} else if current.Status != core.Failed {
+			case !listed:
+				unlisted = true
+			case current.Status != core.Failed:
 				err = run.apply(l, &current, core.Event{Type: "hitch_failed", Reason: "registered pane is absent from tmux"})
 			}
 			if err != nil {
@@ -271,6 +279,9 @@ func (run *runtime) observeRoster(agents []core.Agent) ([]core.Agent, error) {
 			}
 		}
 		agents[i] = current
+		if unlisted && current.Status != core.Failed {
+			agents[i].Activity, agents[i].Evidence = core.Unknown, "tmux lists no team session"
+		}
 		if present[current.Pane] && titles[current.Pane] != windowTitle(current) {
 			if err := run.mark(current); err != nil {
 				_ = run.unlock(l)
