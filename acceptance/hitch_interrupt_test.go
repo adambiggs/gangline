@@ -217,6 +217,13 @@ exec tmux "$@"
 					t.Fatalf("drop after killed hitch warned:\n%s", out)
 				}
 				assertPanes(t, runner, "control")
+			} else if strings.HasPrefix(tc.steps, "visibility") {
+				// The interrupt removed the pane of a running native CLI whose
+				// identity the hitch had not read, so its cleanup is skipped.
+				out, _, err := gang(environment, "drop", "worker")
+				if err != nil || !strings.Contains(out, "detached-descendant cleanup skipped") {
+					t.Fatalf("drop after interrupted hitch did not warn: %v\n%s", err, out)
+				}
 			}
 			// A later hitch is not refused: it spawns, and its native CLI's
 			// boot exit is the failure it reports.

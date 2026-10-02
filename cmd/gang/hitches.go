@@ -292,6 +292,7 @@ func (cmd command) hitchWithStaleClaim(args []string, supersede bool) (result er
 		return errors.Join(err, cleanupErr, run.apply(l, &a, core.Event{Type: "hitch_failed", Reason: err.Error()}))
 	}
 	a.Registration = core.PaneRegistration{Generation: registration.Generation, Session: registration.Session, TokenHash: tokenHash(agentToken), Held: true}
+	exitedUnread := false
 	defer func() {
 		if registered {
 			return
@@ -304,9 +305,14 @@ func (cmd command) hitchWithStaleClaim(args []string, supersede bool) (result er
 			return
 		}
 		// The record keeps a pane only while it exists, so tick and drop never
-		// address a removed one.
+		// address a removed one. Its registration goes with the pane when the
+		// native process was seen to exit before its identity was read: no
+		// process is left whose cleanup drop could skip.
 		if a.Pane != "" {
 			a.Pane, a.Registration.Held = "", false
+			if exitedUnread {
+				a.Registration = core.PaneRegistration{}
+			}
 			result = errors.Join(result, l.Save(a))
 		}
 	}()
@@ -331,6 +337,7 @@ func (cmd command) hitchWithStaleClaim(args []string, supersede bool) (result er
 		if why == "" {
 			why = err.Error()
 		}
+		exitedUnread = errors.As(err, new(*substrate.ExitedError))
 		return fail(err, why)
 	}
 	// Hitch releases the hold on every path that keeps the pane, so a later
@@ -670,8 +677,9 @@ func (run *runtime) dropAgent(id core.HitchID, wait bool) error {
 		}
 	}
 	// Cleanup is skipped when gang cannot see into a registered pane, open or
-	// closed, or read its recorded process; a claim that never registered a
-	// pane started no native to leave descendants.
+	// closed, or read its recorded process. A claim without a registration
+	// either started no native process or saw it exit at boot, and leaves
+	// nothing to clean up.
 	if !visible && !exited && (a.Registration.Generation != "" || a.Process.PID != 0) && !tmux.CanReadIdentity(nativeIdentity(a.Process)) {
 		if err := run.noteProcessUnavailable(a); err != nil {
 			return err

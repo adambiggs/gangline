@@ -235,6 +235,10 @@ exec tmux "$@"
 			if out, err := gang("tick", "--agent", "worker"); err != nil {
 				t.Fatalf("tick after failed hitch: %v\n%s", err, out)
 			}
+			// The exit left no process whose cleanup the drop could skip.
+			if out, err := gang("drop", "worker"); err != nil || strings.Contains(out, "warning") {
+				t.Fatalf("drop after native exit: %v\n%s", err, out)
+			}
 		})
 	}
 }
