@@ -59,7 +59,13 @@ func (run *runtime) reconcileDelivery(l *store.LockedAgent, a *core.Agent) error
 			return err
 		}
 		a.Native.SessionID, a.Native.TurnID, a.Native.Transcript = w.SessionID, w.TurnID, w.Transcript
-		return run.finishInput(l, a, e, "delivered", "", w)
+		if err := run.finishInput(l, a, e, "delivered", "", w); err != nil {
+			return err
+		}
+		if e.Outcome == "unverified" {
+			return run.notifySender(*a, e, "delivered")
+		}
+		return nil
 	}
 	return nil
 }

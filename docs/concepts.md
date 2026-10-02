@@ -48,7 +48,9 @@ None of these receipts means the agent read or acted on the message. A reply
 is separate evidence. Queued messages wait while a recipient is alive;
 dropping it fails pending messages. When a later operation, not the sending
 command, ends a message failed or unverified, Gangline queues a notice naming
-the message for the agent that sent it.
+the message for the agent that sent it. When hook proof or `gang hitch
+--recover` later confirms an unverified message, the sender gets a
+notice saying it was delivered, so it does not send the message again.
 
 ## Roles and startup instructions
 

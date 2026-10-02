@@ -434,9 +434,10 @@ func (run *runtime) drainLocked(l *store.LockedAgent, a *core.Agent, target core
 	}
 }
 
-// notifySender tells the agent that sent e that it was not delivered. A
-// sending command reports its own message's outcome, so only an outcome
-// reached by a later command needs the notice. Gangline sends the notice
+// notifySender tells the agent that sent e that it was not delivered, or that
+// a message it was told was unverified has since been delivered. A sending
+// command reports its own message's outcome, so only an outcome reached by a
+// later command needs the notice. Gangline sends the notice
 // itself, and only agents receive one, so a notice never produces another.
 // The notice rides on a drain, drop, or recovery that has already settled e,
 // so a notice that cannot be sent is logged and warned about rather than
@@ -479,7 +480,13 @@ func (run *runtime) sendNotice(a core.Agent, e core.Envelope, outcome string) er
 		return err
 	}
 	text := fmt.Sprintf("Message %s to %s ", e.ID, a.Name)
+	id := core.EnvelopeID("outcome-" + e.ID)
 	switch outcome {
+	case "delivered":
+		// A notice is published once per ID, so the unverified notice already
+		// holds "outcome-" for this message.
+		id = core.EnvelopeID("delivered-" + e.ID)
+		text += "is delivered: Gangline confirmed delivery after recording it unverified; do not send it again."
 	case "unverified":
 		text += fmt.Sprintf("is unverified: Gangline could not confirm delivery and may still confirm it later. Inspect %s before sending again; gang log has the reason.", a.Name)
 	case "dropped":
@@ -487,7 +494,7 @@ func (run *runtime) sendNotice(a core.Agent, e core.Envelope, outcome string) er
 	default:
 		text += "failed and was not delivered; gang log has the reason."
 	}
-	if err := run.publishOnceTo(p, sender, core.Envelope{ID: core.EnvelopeID("outcome-" + e.ID), Token: token, Recipient: sender.ID, To: sender.Name, From: core.Sender{Kind: core.SenderGangline, Name: "delivery"}, Message: core.Message{Text: text}, CreatedAt: run.cmd.now()}); err != nil {
+	if err := run.publishOnceTo(p, sender, core.Envelope{ID: id, Token: token, Recipient: sender.ID, To: sender.Name, From: core.Sender{Kind: core.SenderGangline, Name: "delivery"}, Message: core.Message{Text: text}, CreatedAt: run.cmd.now()}); err != nil {
 		return err
 	}
 	run.wake = append(run.wake, sender.ID)

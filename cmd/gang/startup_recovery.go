@@ -167,6 +167,11 @@ func (run *runtime) recoverStartup(name string) (result error) {
 	if err := run.finishInput(l, &a, e, outcome, reason); err != nil {
 		return err
 	}
+	if outcome == "delivered" {
+		if err := run.notifySender(a, e, outcome); err != nil {
+			return err
+		}
+	}
 	if err := run.mark(a); err != nil {
 		return err
 	}

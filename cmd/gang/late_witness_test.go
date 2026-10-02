@@ -12,13 +12,14 @@ import (
 )
 
 func TestLateSubmitWitnessReconcilesWithoutRetyping(t *testing.T) {
-	for _, kind := range []string{"exact", "different text", "different session"} {
+	for _, kind := range []string{"exact", "accepted", "different text", "different session"} {
 		t.Run(kind, func(t *testing.T) {
 			f := newStateFixture(t)
 			a := f.add(t, "a", "worker", "codex")
+			lead := f.add(t, "b", "lead", "codex")
 			p, _ := f.run.team.Agent(a.ID)
 			a.Native.SessionID = "s"
-			e := core.Envelope{ID: "late", Token: "0123456789abcdef", Recipient: a.ID, To: a.Name, From: core.Sender{Kind: core.SenderSelfDeclared, Name: "operator"}, Message: core.Message{Text: "queued during native work"}, CreatedAt: f.cmd.now()}
+			e := core.Envelope{ID: "late", Token: "0123456789abcdef", Recipient: a.ID, To: a.Name, From: agentSender(lead), Message: core.Message{Text: "queued during native work"}, CreatedAt: f.cmd.now()}
 			if err := p.Publish(e); err != nil {
 				t.Fatal(err)
 			}
@@ -27,8 +28,18 @@ func TestLateSubmitWitnessReconcilesWithoutRetyping(t *testing.T) {
 				t.Fatal(err)
 			}
 			a.Input = &core.InputIntent{ID: string(e.ID), Kind: "envelope", At: f.cmd.now()}
-			if err := f.run.finishInput(l, &a, e, "unverified", "context deadline exceeded"); err != nil {
+			initial := "unverified"
+			if kind == "accepted" {
+				initial = "accepted"
+			}
+			if err := f.run.finishInput(l, &a, e, initial, "context deadline exceeded"); err != nil {
 				t.Fatal(err)
+			}
+			if initial == "unverified" {
+				if err := f.run.notifySender(a, e, initial); err != nil {
+					t.Fatal(err)
+				}
+				outcomeNotice(t, f, lead, e.ID)
 			}
 			l.Close()
 			wire, err := envelopeText(e)
@@ -51,16 +62,26 @@ func TestLateSubmitWitnessReconcilesWithoutRetyping(t *testing.T) {
 				t.Fatal(err)
 			}
 			l.Close()
-			if kind == "exact" {
+			if kind == "exact" || kind == "accepted" {
 				got, err := p.ReadEnvelope("cur", e.ID)
 				if err != nil {
 					t.Fatal(err)
 				}
-				if got.Outcome != "delivered" || a.LastFailed != "" {
+				if got.Outcome != "delivered" || a.LastFailed != "" || a.LastAccepted != "" {
 					t.Fatalf("late receipt: %+v %+v", got, a)
 				}
 			} else if a.LastFailed != e.ID {
 				t.Fatalf("unrelated witness cleared uncertainty: %+v", a)
+			}
+			// Only a sender that was told the message was unverified needs
+			// word that it was delivered after all.
+			switch kind {
+			case "exact":
+				deliveredNotice(t, f, lead, e.ID)
+			case "accepted":
+				requireNoNotices(t, f)
+			default:
+				requireNoDeliveredNotice(t, f, lead, e.ID)
 			}
 			if f.input.pasted != "" || f.input.submits != 0 {
 				t.Fatal("late witness retyped input")

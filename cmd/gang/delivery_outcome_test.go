@@ -46,6 +46,29 @@ func outcomeNotice(t *testing.T, f *stateFixture, sender core.Agent, id core.Env
 	return e
 }
 
+// deliveredNotice reads the notice that tells sender a message it was told
+// was unverified has since been delivered.
+func deliveredNotice(t *testing.T, f *stateFixture, sender core.Agent, id core.EnvelopeID) core.Envelope {
+	t.Helper()
+	p, _ := f.run.team.Agent(sender.ID)
+	e, err := p.ReadEnvelope("new", "delivered-"+id)
+	if err != nil {
+		t.Fatalf("delivered notice for %s: %v", id, err)
+	}
+	if e.From != (core.Sender{Kind: core.SenderGangline, Name: "delivery"}) || e.Recipient != sender.ID || !strings.Contains(e.Message.Text, "Message "+string(id)+" to worker is delivered") || !strings.Contains(e.Message.Text, "do not send it again") {
+		t.Fatalf("delivered notice: %+v", e)
+	}
+	return e
+}
+
+func requireNoDeliveredNotice(t *testing.T, f *stateFixture, sender core.Agent, id core.EnvelopeID) {
+	t.Helper()
+	p, _ := f.run.team.Agent(sender.ID)
+	if e, err := p.ReadEnvelope("new", "delivered-"+id); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("delivered notice for %s: %+v %v", id, e, err)
+	}
+}
+
 func requireNoNotices(t *testing.T, f *stateFixture) {
 	t.Helper()
 	agents, err := f.run.team.ListAgents()
@@ -59,7 +82,7 @@ func requireNoNotices(t *testing.T, f *stateFixture) {
 			t.Fatal(err)
 		}
 		for _, e := range pending {
-			if strings.HasPrefix(string(e.ID), "outcome-") {
+			if strings.HasPrefix(string(e.ID), "outcome-") || strings.HasPrefix(string(e.ID), "delivered-") {
 				t.Fatalf("%s got outcome notice %+v", a.Name, e)
 			}
 		}

@@ -231,8 +231,9 @@ func TestRecoverStartupSubmitsOriginalComposerWithoutRepaste(t *testing.T) {
 		t.Run(screen, func(t *testing.T) {
 			f := newStateFixture(t)
 			a := f.add(t, "a", "worker", "codex")
+			lead := f.add(t, "b", "lead", "codex")
 			p, _ := f.run.team.Agent(a.ID)
-			e := core.Envelope{ID: "original", Token: "0123456789abcdef", Recipient: a.ID, To: a.Name, From: core.Sender{Kind: core.SenderSelfDeclared, Name: "hitch"}, Purpose: "assignment", Message: core.Message{Text: "Standing contract: report completion. Assignment: fix it."}, CreatedAt: f.cmd.now()}
+			e := core.Envelope{ID: "original", Token: "0123456789abcdef", Recipient: a.ID, To: a.Name, From: agentSender(lead), Purpose: "assignment", Message: core.Message{Text: "Standing contract: report completion. Assignment: fix it."}, CreatedAt: f.cmd.now()}
 			if err := p.Publish(e); err != nil {
 				t.Fatal(err)
 			}
@@ -243,6 +244,14 @@ func TestRecoverStartupSubmitsOriginalComposerWithoutRepaste(t *testing.T) {
 			a.Input = &core.InputIntent{ID: string(e.ID), Kind: "envelope", At: f.cmd.now()}
 			if err := f.run.finishInput(l, &a, e, "unverified", "another surface owns input"); err != nil {
 				t.Fatal(err)
+			}
+			if screen == "original" {
+				// A later command found the startup unverified and told the
+				// hitcher. Elsewhere the hitch command reported it itself.
+				if err := f.run.notifySender(a, e, "unverified"); err != nil {
+					t.Fatal(err)
+				}
+				outcomeNotice(t, f, lead, e.ID)
 			}
 			l.Close()
 			wire, err := envelopeText(e)
@@ -270,6 +279,7 @@ func TestRecoverStartupSubmitsOriginalComposerWithoutRepaste(t *testing.T) {
 				if !errors.As(err, &ce) || (ce.status != exitNative && ce.status != exitUnknown) || f.input.submits != 0 {
 					t.Fatalf("unsafe recovery err=%v submits=%d", err, f.input.submits)
 				}
+				requireNoNotices(t, f)
 				return
 			}
 			if err != nil {
@@ -282,6 +292,9 @@ func TestRecoverStartupSubmitsOriginalComposerWithoutRepaste(t *testing.T) {
 			if got.Message.Text != e.Message.Text || f.input.submits != 1 || !strings.Contains(f.out.String(), "delivered") {
 				t.Fatalf("recovery: %+v submits=%d output=%s", got, f.input.submits, f.out)
 			}
+			// The hitcher was told the startup was unverified; it must also
+			// learn that recovery delivered it, or it may hitch again.
+			deliveredNotice(t, f, lead, e.ID)
 		})
 	}
 }
