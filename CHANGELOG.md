@@ -1,5 +1,19 @@
 # Changelog
 
+## [1.12.2](https://github.com/adambiggs/gangline/compare/gangline-v1.12.1...gangline-v1.12.2) (2026-10-02)
+
+
+### Bug Fixes
+
+* **cli:** name the next step in identity refusals ([7d7447b](https://github.com/adambiggs/gangline/commit/7d7447beac0a549db5622a4caf58b3944706d9a1))
+* **cli:** refuse extra arguments to gang version as unexpected ([13279fa](https://github.com/adambiggs/gangline/commit/13279fa45ef365d8a639f3be12d884f6e5b4e383))
+* **cli:** word collars, roles and config argument errors like other commands ([a64ad1c](https://github.com/adambiggs/gangline/commit/a64ad1c8a2b60e6cd8fe6a06fd8b8bc638bd7661))
+* **roster:** fail an unlisted agent whose recorded process has exited ([50c1511](https://github.com/adambiggs/gangline/commit/50c151125eafe3cb49b9aa82f62ce4ba8f4da9f5))
+* **roster:** keep the record when tmux lists no team session ([01ef169](https://github.com/adambiggs/gangline/commit/01ef1691c9109369a0874f43c7c42cd370b35aeb))
+* **tick:** record a blocked startup's prompt once ([a15ee89](https://github.com/adambiggs/gangline/commit/a15ee899012ca81460404fc64eba6a34d69899a1))
+* **tmux:** read a registered pane and its session from one listing ([5b68164](https://github.com/adambiggs/gangline/commit/5b68164ee0dfad0df65465f9157e045967b34f3f))
+* **tmux:** take the recorded root when a pane closes during a drop ([06cba3c](https://github.com/adambiggs/gangline/commit/06cba3c5949fb9d727c04f8533f199b3c6572259))
+
 ## [1.12.1](https://github.com/adambiggs/gangline/compare/gangline-v1.12.0...gangline-v1.12.1) (2026-10-02)
 
 
