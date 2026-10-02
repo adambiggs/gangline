@@ -34,6 +34,20 @@ jobs:
         run: |
           tmux -V; go version; command -v strace || true
           grep -E "^Sig" /proc/self/status || ps -o pid,blocked,pending -p $$
+      - name: Darwin signal probe
+        if: runner.os == 'macOS'
+        continue-on-error: true
+        run: |
+          set -o pipefail
+          mkdir -p "$RUNNER_TEMP/diag"
+          GANG_HUNT=1 go test -count=1 -v -timeout=600s -run TestHuntDarwinTokenSignalRace ./substrate/tmux 2>&1 | tee "$RUNNER_TEMP/diag/probe.txt"
+      - name: Acquire-tree repeat
+        if: runner.os == 'macOS'
+        continue-on-error: true
+        run: |
+          set -o pipefail
+          mkdir -p "$RUNNER_TEMP/diag"
+          go test -count=100 -timeout=900s -run 'TestAcquireTree' ./substrate/tmux 2>&1 | tee "$RUNNER_TEMP/diag/acquire.txt" | grep -E -- '--- FAIL|_test.go:[0-9]+:|^(ok|FAIL)'
       - name: Hunt
         run: |
           ci-hunt/watchdog.sh "$RUNNER_TEMP/diag/watch" &
