@@ -50,7 +50,12 @@ func nativeInputLines(composer Invocation, screen substrate.Screen) ([]string, b
 		if _, err := readClaudeComposer(screen); errors.Is(err, ErrComposerClipped) {
 			return nil, true, nil
 		}
-		if rule := lastRule(screenLines(screen, false)); rule >= 0 {
+		rule := lastRule(screenLines(screen, false))
+		if rule < 0 {
+			// A full-screen view such as the transcript draws its only rule dim.
+			rule = lastRule(lines)
+		}
+		if rule >= 0 {
 			lines = lines[rule+1:]
 		}
 		return lines, false, nil

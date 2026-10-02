@@ -83,6 +83,24 @@ func TestBlockedIgnoresPatternTextOutsideTheInputSurface(t *testing.T) {
 	}
 }
 
+// The transcript view replaces the composer with a footer under a dim rule,
+// so no rule is visible to a reader that skips dim cells.
+func TestBlockedIgnoresPatternTextAboveADimRule(t *testing.T) {
+	collar, err := EmbeddedCollar("claude")
+	if err != nil {
+		t.Fatal(err)
+	}
+	lines := fixtureLines(t, "claude-code-2.1.287-transcript-view.txt")
+	rows := make([][]substrate.Cell, len(lines))
+	for index, line := range lines {
+		rows[index] = testCells(line, onlyRune(line, '─'))
+	}
+	blocked, found, err := InputBlocked(collar, testScreen(rows...))
+	if err != nil || found {
+		t.Fatalf("blocked = %#v, found = %t, err = %v", blocked, found, err)
+	}
+}
+
 // A rule line in the conversation, of the same width as the permission
 // dialog's border and followed by a ❯ line, opens a frame that the dialog's
 // border closes, so the screen reads as a composer.
