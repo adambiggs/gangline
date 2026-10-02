@@ -331,6 +331,11 @@ while the Claude Code transcript still holds a queued prompt or records one
 leaving the queue for the next turn. If the transcript cannot be read, the
 finish hook closes the turn. A queued turn's finish also clears a native turn
 failure when the transcript records the queued prompt after the failed one.
+A wake typed while a turn runs is judged by the turn the transcript records
+running it, under the prompt id of the wake or of any prompt dequeued into
+that turn with it. No finish hook judges the wake while it waits in the
+queue, a wake the running turn absorbs is judged by that turn, and if the
+transcript cannot be read the wake is judged by the turn it was typed into.
 
 Each context band has a `name`, threshold `at` (a fraction from 0 to 1), and
 optional `message`. A nonfinal band without a message advises saving state and

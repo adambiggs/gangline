@@ -203,12 +203,16 @@ type Witness struct {
 	SessionID  string    `json:"session_id,omitempty"`
 	TurnID     string    `json:"turn_id,omitempty"`
 	Transcript string    `json:"transcript,omitempty"`
-	// Joined marks a submit that carried the turn id the previous submit
-	// announced: the prompt was typed into a running turn and queued there.
-	// A turn that ran from the queue has an id no submit announced, so a
-	// prompt typed into it is not marked.
-	Joined bool `json:"joined,omitempty"`
+	// A witness an earlier release wrote can carry joined; it is read and
+	// discarded so that witness still decodes.
+	Joined Ignored `json:"joined,omitzero"`
 }
+
+// Ignored reads any JSON value, keeps nothing, and is never written. It holds
+// the place of a field that state an earlier release wrote can carry.
+type Ignored struct{}
+
+func (*Ignored) UnmarshalJSON([]byte) error { return nil }
 
 func (p AgentPaths) WriteWitness(w Witness) error { return atomicJSON(p.Witness, w) }
 func (p AgentPaths) ReadWitness() (Witness, error) {

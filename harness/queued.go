@@ -6,7 +6,9 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"slices"
 	"sort"
+	"strings"
 	"time"
 )
 
@@ -96,12 +98,103 @@ func TurnRanAfter(invocation Invocation, transcript, earlier, later string) (boo
 	return seen && first[later].After(earlierAt), nil
 }
 
+// PromptTurn finds the prompt ids of the turn that ran the prompt opening
+// with opening, that prompt's own id first. A prompt typed mid-turn waits in
+// Claude Code's queue and runs as its own turn under a prompt id no hook
+// announced, so only the transcript ties the prompt to that turn. Claude Code
+// can dequeue several queued prompts into one turn, each with its own prompt
+// id, and the transcript does not record which of them the turn's hooks
+// carry. pending reports the prompt still waiting in the queue. A prompt the
+// running turn absorbed, or one the transcript does not hold, has neither.
+func PromptTurn(invocation Invocation, transcript, opening string) ([]string, bool, error) {
+	source, err := queuedTurnSource(invocation)
+	if err != nil || source == "" || transcript == "" {
+		return nil, false, err
+	}
+	records, err := claudeQueueRecords(transcript)
+	if err != nil {
+		return nil, false, err
+	}
+	pending := false
+	for i, r := range records {
+		switch {
+		case r.Type == "user" && strings.HasPrefix(r.text(), opening):
+			return dequeuedTogether(records, i), false, nil
+		case r.Type == "queue-operation" && r.Operation == "enqueue" && strings.HasPrefix(r.text(), opening):
+			pending = true
+		case r.Type == "queue-operation" && r.Operation == "remove" && strings.HasPrefix(r.text(), opening),
+			r.Type == "queue-operation" && r.Operation == "popAll":
+			pending = false
+		}
+	}
+	return nil, pending, nil
+}
+
+// dequeuedTogether is the prompt ids of the queued user records written with
+// records[i] after its dequeue and before the turn's first response, and placed
+// in the same turn, records[i]'s own id first. Claude Code also writes prompts
+// of different turns next to each other with no response between: a prompt
+// typed after a local command, or after a prompt cancelled before any response,
+// which keeps the cancelled prompt's turn position. A compaction summary
+// repeats the turn position of the turn before it. So only queued records with
+// no dequeue between them and records[i], in the same turn position, were
+// dequeued together.
+func dequeuedTogether(records []claudeQueueRecord, i int) []string {
+	boundary := func(r claudeQueueRecord) bool {
+		return r.Type == "assistant" || r.Type == "system" || r.Type == "queue-operation" && r.Operation == "dequeue"
+	}
+	start, end := i, i+1
+	for start > 0 && !boundary(records[start-1]) {
+		start--
+	}
+	for end < len(records) && !boundary(records[end]) {
+		end++
+	}
+	ids := []string{records[i].PromptID}
+	turn := records[i].TurnPosition
+	for _, r := range records[start:end] {
+		if r.Type == "user" && r.PromptSource == "queued" && turn != nil && r.TurnPosition != nil && r.TurnPosition.TurnIndex == turn.TurnIndex && !slices.Contains(ids, r.PromptID) {
+			ids = append(ids, r.PromptID)
+		}
+	}
+	return ids
+}
+
 type claudeQueueRecord struct {
-	Type      string    `json:"type"`
-	Subtype   string    `json:"subtype"`
-	Operation string    `json:"operation"`
-	PromptID  string    `json:"promptId"`
-	Timestamp time.Time `json:"timestamp"`
+	Type      string          `json:"type"`
+	Subtype   string          `json:"subtype"`
+	Operation string          `json:"operation"`
+	PromptID  string          `json:"promptId"`
+	Timestamp time.Time       `json:"timestamp"`
+	Content   json.RawMessage `json:"content"`
+	Message   json.RawMessage `json:"message"`
+	// PromptSource is "queued" on a prompt Claude Code ran from its queue.
+	PromptSource string `json:"promptSource"`
+	// TurnPosition places a prompt's user record in its turn; Claude Code
+	// gives prompts it dequeues into one turn the same turn index.
+	TurnPosition *struct {
+		TurnIndex int `json:"turnIndex"`
+	} `json:"turnPosition"`
+}
+
+// text is a queue operation's prompt or a user record's prompt text; any
+// other shape reads as empty.
+func (r claudeQueueRecord) text() string {
+	content := r.Content
+	if r.Type == "user" {
+		var message struct {
+			Content json.RawMessage `json:"content"`
+		}
+		if json.Unmarshal(r.Message, &message) != nil {
+			return ""
+		}
+		content = message.Content
+	}
+	var text string
+	if json.Unmarshal(content, &text) != nil {
+		return ""
+	}
+	return text
 }
 
 func claudeQueueRecords(transcript string) ([]claudeQueueRecord, error) {

@@ -67,11 +67,9 @@ func (run *runtime) tickAgent(id core.HitchID, notice hookNotice, wait bool) err
 	if err != nil {
 		return err
 	}
-	queued, err := run.reconcileNativeBoundary(l, &a, c, notice)
-	if err != nil {
+	if err := run.reconcileNativeBoundary(l, &a, c, notice); err != nil {
 		return err
 	}
-	notice.Queued = queued
 	b, err := run.input()
 	if err != nil {
 		return err
@@ -201,7 +199,7 @@ func (run *runtime) tickAgent(id core.HitchID, notice hookNotice, wait bool) err
 	if err != nil {
 		return err
 	}
-	if err := run.observeSnoozeTurn(a, notice, found); err != nil {
+	if err := run.observeSnoozeTurn(a, c.Primitives.TurnBoundary, notice, found); err != nil {
 		return err
 	}
 	if err := run.observeAutoCap(a, notice); err != nil {
@@ -249,21 +247,21 @@ func (run *runtime) tickAgent(id core.HitchID, notice hookNotice, wait bool) err
 	return err
 }
 
-// reconcileNativeBoundary reports whether a prompt is queued behind a finished
-// turn.
-func (run *runtime) reconcileNativeBoundary(l *store.LockedAgent, a *core.Agent, c harness.Collar, notice hookNotice) (bool, error) {
+// reconcileNativeBoundary records a hook boundary in the agent's native turn
+// state.
+func (run *runtime) reconcileNativeBoundary(l *store.LockedAgent, a *core.Agent, c harness.Collar, notice hookNotice) error {
 	witness, witnessErr := l.Paths.ReadWitness()
 	if run.afterWitnessRead != nil {
 		run.afterWitnessRead()
 	}
 	if witnessErr == nil {
 		if a.Native.SessionID != "" && witness.SessionID != a.Native.SessionID {
-			return false, fmt.Errorf("native witness changed session identity")
+			return fmt.Errorf("native witness changed session identity")
 		}
 		if witness.At.After(a.Native.SubmittedAt) {
 			a.Native.SessionID, a.Native.TurnID, a.Native.Transcript, a.Native.SubmittedAt = witness.SessionID, witness.TurnID, witness.Transcript, witness.At
 			if err := l.Save(*a); err != nil {
-				return false, err
+				return err
 			}
 		}
 		// UserPromptSubmit is synchronous: a distinct native prompt ID proves
@@ -271,14 +269,14 @@ func (run *runtime) reconcileNativeBoundary(l *store.LockedAgent, a *core.Agent,
 		if a.Native.TurnFailure != "" && a.Native.FailedTurn != "" && witness.TurnID != "" && witness.TurnID != a.Native.FailedTurn {
 			a.Native.TurnFailure, a.Native.FailedTurn = "", ""
 			if err := l.Save(*a); err != nil {
-				return false, err
+				return err
 			}
 		}
 	} else if !errors.Is(witnessErr, os.ErrNotExist) {
-		return false, witnessErr
+		return witnessErr
 	}
 	if notice.SessionID != "" && a.Native.SessionID != "" && notice.SessionID != a.Native.SessionID {
-		return false, fmt.Errorf("hook boundary belongs to another native session")
+		return fmt.Errorf("hook boundary belongs to another native session")
 	}
 	if a.Native.SessionID == "" {
 		a.Native.SessionID = notice.SessionID
@@ -306,7 +304,7 @@ func (run *runtime) reconcileNativeBoundary(l *store.LockedAgent, a *core.Agent,
 		if finished.After(a.Native.FinishedAt) {
 			a.Native.FinishedAt = finished
 			if err := l.Save(*a); err != nil {
-				return false, err
+				return err
 			}
 		}
 	}
@@ -325,12 +323,12 @@ func (run *runtime) reconcileNativeBoundary(l *store.LockedAgent, a *core.Agent,
 			a.Native.TurnFailure, a.Native.FailedTurn = "native failure without turn identity: "+reason, ""
 		}
 		if err := l.Save(*a); err != nil {
-			return false, err
+			return err
 		}
 	} else if notice.Kind == "turn-finished" && a.Native.TurnFailure != "" && a.Native.FailedTurn == "" && notice.TurnID != "" && witnessErr == nil && notice.TurnID == witness.TurnID {
 		a.Native.TurnFailure = ""
 		if err := l.Save(*a); err != nil {
-			return false, err
+			return err
 		}
 	} else if notice.Kind == "turn-finished" && a.Native.FailedTurn != "" {
 		// A turn that ran from the queue fires no submit hook, so only the
@@ -339,11 +337,11 @@ func (run *runtime) reconcileNativeBoundary(l *store.LockedAgent, a *core.Agent,
 		if after, _ := harness.TurnRanAfter(c.Primitives.TurnBoundary, transcript, a.Native.FailedTurn, notice.TurnID); after {
 			a.Native.TurnFailure, a.Native.FailedTurn = "", ""
 			if err := l.Save(*a); err != nil {
-				return false, err
+				return err
 			}
 		}
 	}
-	return queued, nil
+	return nil
 }
 
 func (run *runtime) publishOnce(l *store.LockedAgent, a *core.Agent, e core.Envelope) error {

@@ -77,6 +77,15 @@ func renderEnvelope(sender, nonce, marker, body string) (string, error) {
 	return renderEnvelopeTag(sender+"#"+nonce, marker, body)
 }
 
+// envelopeOpening is the opening tag every envelope with this tag and marker
+// starts with. A body cannot repeat it: rendering defangs tag-shaped text.
+func envelopeOpening(tag, marker string) string {
+	if marker != "" {
+		return "[gang:" + tag + " " + marker + "]"
+	}
+	return "[gang:" + tag + "]"
+}
+
 func renderEnvelopeTag(tag, marker, body string) (string, error) {
 	if err := validateMessageText(body); err != nil {
 		return "", err
@@ -84,12 +93,8 @@ func renderEnvelopeTag(tag, marker, body string) (string, error) {
 	if marker != "" && !envelopeMarkerPattern.MatchString(marker) {
 		return "", fmt.Errorf("envelope marker %q is invalid", marker)
 	}
-	suffix := ""
-	if marker != "" {
-		suffix = " " + marker
-	}
 	body = tagShapedTextPattern.ReplaceAllString(body, "$1")
-	wire := fmt.Sprintf("[gang:%s%s] %s [/gang:%s]", tag, suffix, body, tag)
+	wire := fmt.Sprintf("%s %s [/gang:%s]", envelopeOpening(tag, marker), body, tag)
 	encoded, err := json.Marshal(wire)
 	if err != nil {
 		return "", err

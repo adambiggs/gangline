@@ -4,13 +4,17 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 	"time"
 )
 
 // claudeTranscript writes Claude Code transcript records in the order given;
-// each record's timestamp is its offset in seconds from a fixed start.
+// each record's timestamp is its offset in seconds from a fixed start. Text
+// after a user or queue record's third field is its prompt text. A user
+// record's prompt id written id@n places it at turn index n, and id@n/source
+// also gives its prompt source.
 func claudeTranscript(t *testing.T, records ...string) string {
 	t.Helper()
 	start := time.Date(2026, 10, 2, 10, 55, 0, 0, time.UTC)
@@ -21,12 +25,23 @@ func claudeTranscript(t *testing.T, records ...string) string {
 		if _, err := fmt.Sscanf(r, "%g %s %s", &at, &kind, &value); err != nil {
 			t.Fatalf("record %q: %v", r, err)
 		}
+		user, queued := "x", "next"
+		if fields := strings.SplitN(r, " ", 4); len(fields) == 4 {
+			user, queued = fields[3], fields[3]
+		}
 		stamp := start.Add(time.Duration(at * float64(time.Second))).Format(time.RFC3339Nano)
 		switch kind {
 		case "user":
-			lines = append(lines, fmt.Sprintf(`{"type":"user","promptId":%q,"timestamp":%q,"message":{"role":"user","content":"x"}}`, value, stamp))
+			position := ""
+			if id, index, ok := strings.Cut(value, "@"); ok {
+				value, position = id, fmt.Sprintf(`,"turnPosition":{"promptIndex":%s,"turnIndex":%s}`, index, index)
+				if index, source, ok := strings.Cut(index, "/"); ok {
+					position = fmt.Sprintf(`,"promptSource":%q,"turnPosition":{"promptIndex":%s,"turnIndex":%s}`, source, index, index)
+				}
+			}
+			lines = append(lines, fmt.Sprintf(`{"type":"user","promptId":%q,"timestamp":%q,"message":{"role":"user","content":%q}%s}`, value, stamp, user, position))
 		case "queue":
-			lines = append(lines, fmt.Sprintf(`{"type":"queue-operation","operation":%q,"timestamp":%q,"content":"next"}`, value, stamp))
+			lines = append(lines, fmt.Sprintf(`{"type":"queue-operation","operation":%q,"timestamp":%q,"content":%q}`, value, stamp, queued))
 		case "system":
 			lines = append(lines, fmt.Sprintf(`{"type":"system","subtype":%q,"timestamp":%q}`, value, stamp))
 		case "assistant":
@@ -97,6 +112,49 @@ func TestTurnRanAfter(t *testing.T) {
 	}
 	if _, err := TurnRanAfter(claudeQueuedTurns, filepath.Join(t.TempDir(), "missing.jsonl"), "p1", "p2"); err == nil {
 		t.Fatal("missing transcript read as unordered")
+	}
+}
+
+func TestPromptTurn(t *testing.T) {
+	const opening = "[gang:snooze#abc]"
+	for _, test := range []struct {
+		name    string
+		records []string
+		turn    []string
+		pending bool
+	}{
+		{"ran from the queue", []string{"0 user p1 go", "1 queue enqueue " + opening + " wake", "2 assistant -", "3 queue dequeue", "3.5 system stop_hook_summary", "4 user p2 " + opening + " wake", "5 assistant -", "6 user p2 tool result", "7 system stop_hook_summary", "8 user p3 later"}, []string{"p2"}, false},
+		{"dequeued with the prompt behind it", []string{"0 user p1@1 go", "1 queue enqueue " + opening + " wake", "1.5 queue enqueue next", "2 assistant -", "3 queue dequeue", "3 queue dequeue", "3.5 system stop_hook_summary", "3.6 system turn_duration", "4 user p3@2/queued next", "4 user p2@2/queued " + opening + " wake", "4 user p4@2/queued more", "5 assistant -", "6 system stop_hook_summary", "7 user p5@3/typed later"}, []string{"p2", "p3", "p4"}, false},
+		{"dequeued together with no turn position", []string{"0 user p1 go", "1 queue enqueue " + opening + " wake", "1.5 queue enqueue next", "2 assistant -", "3 queue dequeue", "3 queue dequeue", "3.5 system stop_hook_summary", "4 user p3 next", "4 user p2 " + opening + " wake", "5 assistant -"}, []string{"p2"}, false},
+		// A prompt cancelled before any response leaves its turn position to the
+		// next prompt.
+		{"a prompt typed after the wake was cancelled", []string{"0 user p1@1/typed go", "1 queue enqueue " + opening + " wake", "2 assistant -", "3 queue dequeue", "3.5 system stop_hook_summary", "4 user p2@2/queued " + opening + " wake", "6 user p3@2/typed next", "7 assistant -"}, []string{"p2"}, false},
+		{"a prompt dequeued after the wake was cancelled", []string{"0 user p1@1/typed go", "1 queue enqueue " + opening + " wake", "1.5 queue enqueue next", "2 assistant -", "3 queue dequeue", "3.5 system stop_hook_summary", "4 user p2@2/queued " + opening + " wake", "6 queue dequeue", "6.1 user p3@2/queued next", "7 assistant -"}, []string{"p2"}, false},
+		{"a wake typed after a local command", []string{"0 user p1@1/typed /model", "0.5 user p1 local command output", "2 user p2@2/typed " + opening + " wake", "3 assistant -"}, []string{"p2"}, false},
+		{"a compaction summary in the wake's turn position", []string{"0 user p1@1 go", "1 queue enqueue " + opening + " wake", "2 assistant -", "3 queue dequeue", "3.5 system stop_hook_summary", "4 user p2@2/queued " + opening + " wake", "5 assistant -", "6 user c1@2 summary", "7 assistant -"}, []string{"p2"}, false},
+		{"after a turn that wrote no response", []string{"0 user p1 go", "1 queue enqueue " + opening + " wake", "2 system stop_hook_summary", "3 queue dequeue", "4 user p2 " + opening + " wake", "5 assistant -"}, []string{"p2"}, false},
+		// A turn that dies mid-response fires no Stop.
+		{"after a turn that ended without a finish", []string{"0 user p1 go", "1 queue enqueue " + opening + " wake", "2 assistant -", "3 queue dequeue", "4 user p2 " + opening + " wake", "5 assistant -"}, []string{"p2"}, false},
+		{"still queued", []string{"0 user p1 go", "1 queue enqueue " + opening + " wake"}, nil, true},
+		{"another prompt queued", []string{"0 user p1 go", "1 queue enqueue next"}, nil, false},
+		{"another prompt left the queue", []string{"0 user p1 go", "1 queue enqueue " + opening + " wake", "2 queue enqueue next", "3 queue remove next"}, nil, true},
+		{"absorbed by the running turn", []string{"0 user p1 go", "1 queue enqueue " + opening + " wake", "2 queue remove " + opening + " wake"}, nil, false},
+		{"queue emptied", []string{"0 user p1 go", "1 queue enqueue " + opening + " wake", "2 queue popAll edited"}, nil, false},
+		{"named mid-prompt", []string{"0 user p1 summary of " + opening + " wake"}, nil, false},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			turn, pending, err := PromptTurn(claudeQueuedTurns, claudeTranscript(t, test.records...), opening)
+			if err != nil || !slices.Equal(turn, test.turn) || pending != test.pending {
+				t.Fatalf("turn=%q pending=%v err=%v, want %q %v", turn, pending, err, test.turn, test.pending)
+			}
+		})
+	}
+	transcript := claudeTranscript(t, "0 user p1 "+opening+" wake")
+	if turn, pending, err := PromptTurn(Invocation{Name: "hook-boundary"}, transcript, opening); err != nil || turn != nil || pending {
+		t.Fatalf("turn=%q pending=%v err=%v without queued_turns", turn, pending, err)
+	}
+	if _, _, err := PromptTurn(claudeQueuedTurns, filepath.Join(t.TempDir(), "missing.jsonl"), opening); err == nil {
+		t.Fatal("missing transcript read as no turn")
 	}
 }
 
