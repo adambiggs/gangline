@@ -8,11 +8,11 @@ import (
 	"io"
 	"os"
 	"os/exec"
+	"path/filepath"
 	"sort"
 	"strconv"
 	"strings"
 	"sync"
-	"time"
 	"unicode"
 	"unicode/utf8"
 
@@ -53,17 +53,11 @@ func New(config Config) (*Backend, error) {
 }
 
 func (backend *Backend) CreateSession(ctx context.Context, spec substrate.SpawnSpec) (substrate.Pane, error) {
-	arguments, err := backend.launchArguments("new-session", spec)
+	arguments, command, err := backend.launchArguments("new-session", spec)
 	if err != nil {
 		return substrate.Pane{}, err
 	}
-	arguments = append(arguments[:len(arguments)-1], "-s", backend.config.Session, arguments[len(arguments)-1])
-	if spec.KeepExited {
-		// This assumes the new session's only pane is the one the target
-		// resolves to; a user after-new-session hook that splits the window
-		// would make it the active pane instead.
-		arguments = append(arguments, ";", "set-option", "-p", "-t", "="+backend.config.Session+":", "remain-on-exit", "on")
-	}
+	arguments = append(append(arguments, "-s", backend.config.Session), command...)
 	return backend.launch(ctx, "create session", arguments)
 }
 
@@ -79,37 +73,13 @@ func (backend *Backend) SessionExists(ctx context.Context) (bool, error) {
 }
 
 func (backend *Backend) Spawn(ctx context.Context, spec substrate.SpawnSpec) (substrate.Pane, error) {
-	arguments, err := backend.launchArguments("new-window", spec)
+	arguments, command, err := backend.launchArguments("new-window", spec)
 	if err != nil {
 		return substrate.Pane{}, err
 	}
-	arguments = append(arguments[:len(arguments)-1], "-t", "="+backend.config.Session+":", arguments[len(arguments)-1])
-	if !spec.KeepExited {
-		return backend.launch(ctx, "spawn pane", arguments)
-	}
-	// A detached window is not current, so a command after new-window would
-	// reach another pane. The hook runs with the new pane as its target. It
-	// takes its own global index so hooks already set still run, and it only
-	// exists inside this command list.
-	arguments = append([]string{"set-hook", "-g", keepExitedHook, "set-option -p remain-on-exit on", ";"}, arguments...)
-	arguments = append(arguments, ";", "set-hook", "-gu", keepExitedHook)
-	pane, err := backend.launch(ctx, "spawn pane", arguments)
-	if err != nil {
-		// Best effort: a list that stopped early may have left the hook set.
-		// The launch may have failed on ctx's deadline, so the cleanup gets
-		// its own.
-		cleanup, cancel := context.WithTimeout(context.WithoutCancel(ctx), keepExitedCleanup)
-		defer cancel()
-		_, _ = backend.run(cleanup, "set-hook", "-gu", keepExitedHook)
-	}
-	return pane, err
+	arguments = append(append(arguments, "-t", "="+backend.config.Session+":"), command...)
+	return backend.launch(ctx, "spawn pane", arguments)
 }
-
-// keepExitedHook is a global hook slot reserved for one spawn's command list.
-const keepExitedHook = "after-new-window[7193]"
-
-// keepExitedCleanup bounds the removal of a hook a failed spawn left set.
-const keepExitedCleanup = 5 * time.Second
 
 // ReleaseExit restores the default close-on-exit behaviour for a pane spawned
 // with KeepExited. A pane whose process already exited is left open and
@@ -175,15 +145,17 @@ func exited(status, history string) *substrate.ExitedError {
 	return &substrate.ExitedError{Status: status, Output: output}
 }
 
-func (backend *Backend) launchArguments(command string, spec substrate.SpawnSpec) ([]string, error) {
+// launchArguments returns the arguments that create a pane for spec and,
+// separately, the command the pane runs, which ends the tmux command.
+func (backend *Backend) launchArguments(command string, spec substrate.SpawnSpec) ([]string, []string, error) {
 	if err := validWindowName(spec.Name); err != nil {
-		return nil, err
+		return nil, nil, err
 	}
 	if spec.Directory == "" {
-		return nil, fmt.Errorf("spawn directory is required")
+		return nil, nil, fmt.Errorf("spawn directory is required")
 	}
 	if spec.Command == "" {
-		return nil, fmt.Errorf("spawn command is required")
+		return nil, nil, fmt.Errorf("spawn command is required")
 	}
 	arguments := []string{
 		command, "-d", "-P", "-F", "#{pane_id}",
@@ -198,12 +170,65 @@ func (backend *Backend) launchArguments(command string, spec substrate.SpawnSpec
 	for _, name := range names {
 		value := spec.Env[name]
 		if name == "" || strings.ContainsAny(name, "=\x00") || strings.ContainsRune(value, '\x00') {
-			return nil, fmt.Errorf("invalid spawn environment %q", name)
+			return nil, nil, fmt.Errorf("invalid spawn environment %q", name)
 		}
 		arguments = append(arguments, "-e", name+"="+value)
 	}
-	arguments = append(arguments, shellCommand(spec.Command, spec.Args))
-	return arguments, nil
+	native := shellCommand(spec.Command, spec.Args)
+	if spec.KeepExited {
+		// The pane holds itself before the native command starts. A tmux
+		// hook or a command after this one resolves its pane when it runs,
+		// so a user hook that splits the window or opens another could
+		// move the hold to its own pane.
+		// The pane starts in spec.Directory, not gang's directory.
+		binary, err := exec.LookPath(backend.config.Binary)
+		if err == nil {
+			binary, err = physicalPath(binary)
+		}
+		if err != nil {
+			return nil, nil, fmt.Errorf("find %s: %w", backend.config.Binary, err)
+		}
+		hold := shellWords([]string{binary})
+		if backend.config.Socket != "" {
+			socket, err := physicalPath(backend.config.Socket)
+			if err != nil {
+				return nil, nil, err
+			}
+			// A unix socket address is short, so the hold connects from
+			// the socket's directory by its name, in a subshell that
+			// leaves the native command's directory alone.
+			hold = "cd -- " + shellWords([]string{filepath.Dir(socket)}) + " && " + hold + " " + shellWords([]string{"-S", filepath.Base(socket)})
+		}
+		// tmux runs a command of several words without the user's
+		// default-shell, which need not parse this one.
+		return arguments, []string{"/bin/sh", "-c", "(" + hold + ` set-option -p -t "$TMUX_PANE" remain-on-exit on) && ` + native}, nil
+	}
+	return arguments, []string{native}, nil
+}
+
+// physicalPath makes path absolute the way the kernel resolves it, where a
+// ".." after a symbolic link leaves the link's target rather than the
+// directory that holds the link.
+func physicalPath(path string) (string, error) {
+	dir, name := filepath.Split(path)
+	if dir == "" {
+		dir = "."
+	}
+	dir, err := filepath.EvalSymlinks(dir)
+	if err != nil {
+		return "", err
+	}
+	if !filepath.IsAbs(dir) {
+		wd, err := os.Getwd()
+		if err == nil {
+			wd, err = filepath.EvalSymlinks(wd)
+		}
+		if err != nil {
+			return "", err
+		}
+		dir = filepath.Join(wd, dir)
+	}
+	return filepath.Join(dir, name), nil
 }
 
 func (backend *Backend) launch(ctx context.Context, action string, arguments []string) (substrate.Pane, error) {
@@ -489,11 +514,15 @@ func escapeFormat(value string) string {
 }
 
 func shellCommand(command string, arguments []string) string {
-	words := append([]string{command}, arguments...)
+	return "exec " + shellWords(append([]string{command}, arguments...))
+}
+
+func shellWords(words []string) string {
+	quoted := make([]string, len(words))
 	for index, word := range words {
-		words[index] = "'" + strings.ReplaceAll(word, "'", "'\\''") + "'"
+		quoted[index] = "'" + strings.ReplaceAll(word, "'", "'\\''") + "'"
 	}
-	return "exec " + strings.Join(words, " ")
+	return strings.Join(quoted, " ")
 }
 
 func nonNegative(value string) (int, error) {
