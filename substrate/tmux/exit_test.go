@@ -442,7 +442,8 @@ func TestLaunchHoldsItsPaneUnderAnyDefaultShell(t *testing.T) {
 }
 
 // A pane that cannot hold itself never starts the native command, whose exit
-// would otherwise close the pane with its output.
+// would otherwise close the pane with its output. It closes with what the hold
+// printed, so that and the hold's exit status go to the hold log.
 func TestLaunchWithoutHoldDoesNotStartNative(t *testing.T) {
 	binary, err := exec.LookPath("tmux")
 	if err != nil {
@@ -452,7 +453,7 @@ func TestLaunchWithoutHoldDoesNotStartNative(t *testing.T) {
 	socket := filepath.Join(root, "tmux.sock")
 	refusing := filepath.Join(root, "tmux")
 	// Refuses only the hold the pane sets on itself.
-	script := "#!/bin/sh\n[ \"$3 $7 $8\" = \"set-option remain-on-exit on\" ] && exit 1\nexec '" + binary + "' \"$@\"\n"
+	script := "#!/bin/sh\n[ \"$3 $7 $8\" = \"set-option remain-on-exit on\" ] && { echo 'hold refused' >&2; exit 3; }\nexec '" + binary + "' \"$@\"\n"
 	if err := os.WriteFile(refusing, []byte(script), 0o700); err != nil {
 		t.Fatal(err)
 	}
@@ -468,10 +469,17 @@ func TestLaunchWithoutHoldDoesNotStartNative(t *testing.T) {
 		t.Fatal(err)
 	}
 	started := filepath.Join(root, "started")
+	// The log is named relative to this process's directory, and the pane
+	// starts in another.
+	work := filepath.Join(root, "work")
+	if err := os.Mkdir(work, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	t.Chdir(root)
 	if _, err := backend.CreateSession(context.Background(), substrate.SpawnSpec{
-		Name: "native", Directory: root, Command: "sh",
+		Name: "native", Directory: work, Command: "sh",
 		Args:       []string{"-c", `touch "$1"; exec sleep 600`, "sh", started},
-		KeepExited: true,
+		KeepExited: true, HoldLog: "hold",
 	}); err != nil {
 		t.Fatal(err)
 	}
@@ -495,6 +503,50 @@ func TestLaunchWithoutHoldDoesNotStartNative(t *testing.T) {
 	}
 	if _, err := os.Stat(started); !errors.Is(err, os.ErrNotExist) {
 		t.Fatalf("native command started without the hold: %v", err)
+	}
+	if got, err := os.ReadFile(filepath.Join(root, "hold")); err != nil || string(got) != "hold refused\nexit status 3\n" {
+		t.Fatalf("hold log = %q (%v), want the hold's output and exit status", got, err)
+	}
+}
+
+// A hold that succeeds starts the native command whatever it printed and
+// whether or not the pane can write the hold log, and leaves no log.
+func TestLaunchStartsNativeWhateverTheHoldLog(t *testing.T) {
+	binary, err := exec.LookPath("tmux")
+	if err != nil {
+		t.Skip("tmux is required")
+	}
+	for _, test := range []struct{ name, log string }{
+		{"printing-hold", "hold"},
+		{"unwritable-log", "missing/hold"},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			root := privateTmuxRoot(t)
+			socket := filepath.Join(root, "tmux.sock")
+			noting := filepath.Join(root, "tmux")
+			// Notes the hold the pane sets on itself, then sets it.
+			script := "#!/bin/sh\n[ \"$3 $7 $8\" = \"set-option remain-on-exit on\" ] && echo 'hold noted' >&2\nexec '" + binary + "' \"$@\"\n"
+			if err := os.WriteFile(noting, []byte(script), 0o700); err != nil {
+				t.Fatal(err)
+			}
+			backend, err := New(Config{Binary: noting, Socket: socket, Session: "noted"})
+			if err != nil {
+				t.Fatal(err)
+			}
+			spec := exitingSpec(t, binary, socket, root, "release", "8")
+			spec.HoldLog = filepath.Join(root, test.log)
+			pane, err := backend.CreateSession(context.Background(), spec)
+			if err != nil {
+				t.Fatal(err)
+			}
+			t.Cleanup(func() { _, _ = runTmuxResult(binary, socket, "kill-session", "-t", "=noted") })
+			releaseAndAwaitExit(t, binary, socket, root, "release")
+			_, err = backend.Capture(context.Background(), pane.ID)
+			assertExited(t, err, "8")
+			if _, err := os.Stat(spec.HoldLog); !errors.Is(err, os.ErrNotExist) {
+				t.Fatalf("a hold that succeeded left a log: %v", err)
+			}
+		})
 	}
 }
 

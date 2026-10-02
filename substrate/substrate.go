@@ -39,6 +39,10 @@ type SpawnSpec struct {
 	// KeepExited holds the pane open after its process exits, so the exit
 	// status and final output stay readable until the pane is released.
 	KeepExited bool
+	// HoldLog names a file that receives what the hold printed and its exit
+	// status when the pane could not hold itself. Such a pane closes without
+	// starting its process.
+	HoldLog string
 }
 
 // ExitedError reports a pane whose process has exited. Status is empty when

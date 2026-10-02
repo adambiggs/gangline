@@ -11,6 +11,7 @@ import (
 	"strings"
 	"sync"
 	"syscall"
+	"unicode/utf8"
 
 	"github.com/adambiggs/gangline/core"
 	"github.com/adambiggs/gangline/harness"
@@ -233,6 +234,16 @@ func (cmd command) hitchWithStaleClaim(args []string, supersede bool) (result er
 	// Hold the pane open until startup is observed, so a native CLI that
 	// exits at boot leaves its status and final output for the hitch error.
 	spec.KeepExited = true
+	spec.HoldLog = filepath.Join(l.Paths.Directory, "hold")
+	defer func() { _ = os.Remove(spec.HoldLog) }()
+	// A pane that could not hold itself closes before the native CLI starts, so
+	// the error that finds it gone carries what the hold printed.
+	holdFailed := func(err error) (error, bool) {
+		if why := holdFailure(spec.HoldLog); err != nil && why != "" {
+			return fmt.Errorf("%w: pane hold failed: %s", err, why), true
+		}
+		return err, false
+	}
 	for k, v := range map[string]string{"GANG_SESSION": run.settings.Session, "GANG_STATE_ROOT": run.settings.StateRoot, "GANG_COLLAR": o.Collar, "GANG_CONFIG_DIR": run.settings.ConfigDir, "GANG_AGENT_ID": id, "GANGLINE_HITCH_ID": id} {
 		spec.Env[k] = v
 	}
@@ -266,6 +277,9 @@ func (cmd command) hitchWithStaleClaim(args []string, supersede bool) (result er
 		if native {
 			return err, exited.Error()
 		}
+		if err, failed := holdFailed(err); failed {
+			return err, err.Error()
+		}
 		return err, ""
 	}
 	if err, why := reason(nil); why != "" {
@@ -285,6 +299,7 @@ func (cmd command) hitchWithStaleClaim(args []string, supersede bool) (result er
 	}
 	registration, err := b.RegisterPane(boot, pane.ID)
 	if err != nil {
+		err, _ = holdFailed(err)
 		// Signals stay absorbed until this removal returns, so it is bounded.
 		removal, cancel := context.WithTimeout(context.Background(), operationTimeout)
 		cleanupErr := b.KillUnregisteredPane(removal, pane.ID)
@@ -448,6 +463,32 @@ func (cmd command) hitchWithStaleClaim(args []string, supersede bool) (result er
 		return err
 	}
 	return nil
+}
+
+// holdFailureBytes bounds how much of a failed hold's output an error carries.
+const holdFailureBytes = 512
+
+// holdFailure reads what a pane's hold left in its log as one line. It is
+// empty when the hold succeeded or left nothing.
+func holdFailure(log string) string {
+	data, err := os.ReadFile(log)
+	if err != nil {
+		return ""
+	}
+	var lines []string
+	for _, line := range strings.Split(string(data), "\n") {
+		if line = strings.Join(strings.Fields(line), " "); line != "" {
+			lines = append(lines, line)
+		}
+	}
+	text := strings.Join(lines, "; ")
+	if len(text) > holdFailureBytes {
+		text = text[len(text)-holdFailureBytes:]
+		for text != "" && !utf8.RuneStart(text[0]) {
+			text = text[1:]
+		}
+	}
+	return text
 }
 
 // interruptError is the cause of a hitch cancelled by a signal.

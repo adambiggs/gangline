@@ -208,7 +208,18 @@ func (backend *Backend) launchArguments(command string, spec substrate.SpawnSpec
 		// default-shell, which need not parse the hold. The native command
 		// then runs through that shell, which tmux names in SHELL, as tmux
 		// runs a command of one word.
-		return arguments, []string{"/bin/sh", "-c", "(" + hold + ` set-option -p -t "$TMUX_PANE" remain-on-exit on) && exec "$SHELL" -c "$1"`, "sh", native}, nil
+		// A pane that fails to hold itself closes with whatever the hold
+		// printed, so that goes to the log with the hold's exit status. Only
+		// a failed hold writes the log, and a log the pane cannot write
+		// changes nothing else. The pane resolves the path from its own
+		// directory, so the path is absolute.
+		log := os.DevNull
+		if spec.HoldLog != "" {
+			if log, err = filepath.Abs(spec.HoldLog); err != nil {
+				return nil, nil, err
+			}
+		}
+		return arguments, []string{"/bin/sh", "-c", "out=$( (" + hold + ` set-option -p -t "$TMUX_PANE" remain-on-exit on) 2>&1 ) || { status=$?; printf '%s\nexit status %s\n' "$out" "$status" >"$2"; exit "$status"; }; exec "$SHELL" -c "$1"`, "sh", native, log}, nil
 	}
 	return arguments, []string{native}, nil
 }
