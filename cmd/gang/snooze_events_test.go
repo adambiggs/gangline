@@ -557,3 +557,55 @@ func TestWakeThatStartsItsTurnIsJudgedByThatTurn(t *testing.T) {
 		t.Fatalf("wake judged by the prompt queued behind it: %q", got)
 	}
 }
+
+// Pulling queued prompts back into the composer takes the wake out of Claude
+// Code's queue without running it. The wake fails at the next turn end, which
+// frees its caller to schedule another, and it still completes if it is
+// submitted again and its own turn finishes.
+func TestWakePulledOutOfTheQueueFailsAtTheNextTurnEnd(t *testing.T) {
+	for _, tc := range []struct {
+		name   string
+		notice hookNotice
+	}{
+		{"the turn it was typed into finishes", hookNotice{Kind: "turn-finished", TurnID: "p1"}},
+		// An interrupted turn fires no finish, so a later turn's end judges.
+		{"a later turn finishes", hookNotice{Kind: "turn-finished", TurnID: "p2"}},
+		{"a later turn fails", hookNotice{Kind: "turn-failed", TurnID: "p2", Failure: "Login expired"}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			f, a, start := openTurnFixture(t)
+			key := string(a.ID)
+			if err := f.run.withUsageState(func(state *usageState) error {
+				state.Recent[key] = usageSnooze{ID: "pulled-wake", Token: wakeFixtureToken, CallerID: a.ID, CallerName: a.Name, RecipientID: a.ID, RecipientName: a.Name, TurnID: "p1", SubmittedAt: start, At: start}
+				return nil
+			}); err != nil {
+				t.Fatal(err)
+			}
+			tr := newWakeTranscript(t, start)
+			tr.prompt(-time.Second, "p1", "first")
+			tr.queue(0, "enqueue", "wake")
+			tr.queue(time.Second, "popAll", "wake")
+			if tc.notice.TurnID == "p2" {
+				tr.prompt(2*time.Second, "p2", "later")
+			}
+			tc.notice.Transcript = tr.path
+			f.tickAt(t, a, start.Add(3*time.Second), tc.notice)
+			if got := wakeEventSummary(wakeEvents(t, f, string(a.Name))); got != "snooze_failed pulled-wake" {
+				t.Fatalf("wake events after a turn end with the wake out of the queue: %q", got)
+			}
+			if err := f.run.withUsageState(func(state *usageState) error {
+				if s := state.Recent[key]; !s.TurnFailed {
+					t.Fatalf("pulled wake still blocks a new wake: %+v", s)
+				}
+				return nil
+			}); err != nil {
+				t.Fatal(err)
+			}
+			tr.prompt(4*time.Second, "p3", "wake")
+			f.tickAt(t, a, start.Add(5*time.Second), hookNotice{Kind: "turn-finished", TurnID: "p3", Transcript: tr.path})
+			if got := wakeEventSummary(wakeEvents(t, f, string(a.Name))); got != "snooze_failed pulled-wake\nsnooze_completed pulled-wake" {
+				t.Fatalf("wake events after the wake was submitted again and finished: %q", got)
+			}
+		})
+	}
+}

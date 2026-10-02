@@ -104,30 +104,35 @@ func TurnRanAfter(invocation Invocation, transcript, earlier, later string) (boo
 // announced, so only the transcript ties the prompt to that turn. Claude Code
 // can dequeue several queued prompts into one turn, each with its own prompt
 // id, and the transcript does not record which of them the turn's hooks
-// carry. pending reports the prompt still waiting in the queue. A prompt the
-// running turn absorbed, or one the transcript does not hold, has neither.
-func PromptTurn(invocation Invocation, transcript, opening string) ([]string, bool, error) {
+// carry. pending reports the prompt still waiting in the queue. left reports
+// the prompt pulled out of the queue back into the composer, where it runs
+// only if submitted again. A prompt the running turn absorbed, or one the
+// transcript does not hold, has none of these.
+func PromptTurn(invocation Invocation, transcript, opening string) (turns []string, pending, left bool, err error) {
 	source, err := queuedTurnSource(invocation)
 	if err != nil || source == "" || transcript == "" {
-		return nil, false, err
+		return nil, false, false, err
 	}
 	records, err := claudeQueueRecords(transcript)
 	if err != nil {
-		return nil, false, err
+		return nil, false, false, err
 	}
-	pending := false
 	for i, r := range records {
 		switch {
 		case r.Type == "user" && strings.HasPrefix(r.text(), opening):
-			return dequeuedTogether(records, i), false, nil
+			return dequeuedTogether(records, i), false, false, nil
 		case r.Type == "queue-operation" && r.Operation == "enqueue" && strings.HasPrefix(r.text(), opening):
-			pending = true
+			pending, left = true, false
+		case r.Type == "queue-operation" && r.Operation == "popAll" && strings.HasPrefix(r.text(), opening):
+			// Claude Code writes popAll only when it moves queued prompts
+			// into the composer for editing, one record per prompt.
+			pending, left = false, true
 		case r.Type == "queue-operation" && r.Operation == "remove" && strings.HasPrefix(r.text(), opening),
 			r.Type == "queue-operation" && r.Operation == "popAll":
 			pending = false
 		}
 	}
-	return nil, pending, nil
+	return nil, pending, left, nil
 }
 
 // dequeuedTogether is the prompt ids of the queued user records written with

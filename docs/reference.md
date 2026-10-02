@@ -411,7 +411,10 @@ The team log records each wake stage under the agent that scheduled it, so
 `gang log --agent NAME` shows the life of NAME's wakes: `snooze_scheduled`
 (with its due time once known), `snooze_cleared` (cleared, replaced, or
 superseded), `snooze_rearmed` (given a new ID because its recipient is gone),
-`snooze_completed`, and `snooze_failed`. Delivery of a due wake is logged as
+`snooze_completed`, and `snooze_failed`. A wake pulled out of the native
+queue back into the composer has no turn of its own: the recipient's next turn
+end logs `snooze_failed`, and the wake still completes if it is submitted again
+and its turn finishes. Delivery of a due wake is logged as
 `send_queued` and `delivery_*` events under its recipient. A usage-cap
 rejection of the wake's turn and the wake that replaces it are logged as
 `snooze_cap_rejected` and `snooze_rearmed` under the agent whose turn was

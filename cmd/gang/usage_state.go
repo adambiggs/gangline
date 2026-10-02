@@ -285,7 +285,9 @@ func (run *runtime) appendEvents(events []core.Event) error {
 // own prompt in the transcript names the turn that ran it, and a turn that
 // dequeued other prompts with the wake is named by any of their ids. No
 // boundary judges the wake while it waits in the queue, and a wake the
-// running turn absorbed is judged by that turn.
+// running turn absorbed is judged by that turn. A wake pulled out of the
+// queue into the composer has no turn of its own, and the next turn end fails
+// it; a turn of its own after that still completes it.
 func (run *runtime) observeSnoozeTurn(a core.Agent, boundary harness.Invocation, notice hookNotice, providerBlocked bool) error {
 	transcript := notice.Transcript
 	if transcript == "" {
@@ -304,8 +306,16 @@ func (run *runtime) observeSnoozeTurn(a core.Agent, boundary harness.Invocation,
 				// Only a turn's end can judge a wake, so only it reads the
 				// transcript. An unreadable transcript leaves the wake with the
 				// turn it was typed into.
-				turns, pending, _ := harness.PromptTurn(boundary, transcript, envelopeOpening("snooze#"+s.Token, ""))
+				turns, pending, left, _ := harness.PromptTurn(boundary, transcript, envelopeOpening("snooze#"+s.Token, ""))
 				if pending {
+					continue
+				}
+				if left {
+					if !s.TurnFailed {
+						s.TurnFailed = true
+						state.Recent[key] = s
+						events = append(events, wakeEvent("snooze_failed", s, now, "wake left the native queue without a turn of its own"))
+					}
 					continue
 				}
 				if len(turns) > 0 {

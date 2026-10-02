@@ -122,38 +122,42 @@ func TestPromptTurn(t *testing.T) {
 		records []string
 		turn    []string
 		pending bool
+		left    bool
 	}{
-		{"ran from the queue", []string{"0 user p1 go", "1 queue enqueue " + opening + " wake", "2 assistant -", "3 queue dequeue", "3.5 system stop_hook_summary", "4 user p2 " + opening + " wake", "5 assistant -", "6 user p2 tool result", "7 system stop_hook_summary", "8 user p3 later"}, []string{"p2"}, false},
-		{"dequeued with the prompt behind it", []string{"0 user p1@1 go", "1 queue enqueue " + opening + " wake", "1.5 queue enqueue next", "2 assistant -", "3 queue dequeue", "3 queue dequeue", "3.5 system stop_hook_summary", "3.6 system turn_duration", "4 user p3@2/queued next", "4 user p2@2/queued " + opening + " wake", "4 user p4@2/queued more", "5 assistant -", "6 system stop_hook_summary", "7 user p5@3/typed later"}, []string{"p2", "p3", "p4"}, false},
-		{"dequeued together with no turn position", []string{"0 user p1 go", "1 queue enqueue " + opening + " wake", "1.5 queue enqueue next", "2 assistant -", "3 queue dequeue", "3 queue dequeue", "3.5 system stop_hook_summary", "4 user p3 next", "4 user p2 " + opening + " wake", "5 assistant -"}, []string{"p2"}, false},
+		{"ran from the queue", []string{"0 user p1 go", "1 queue enqueue " + opening + " wake", "2 assistant -", "3 queue dequeue", "3.5 system stop_hook_summary", "4 user p2 " + opening + " wake", "5 assistant -", "6 user p2 tool result", "7 system stop_hook_summary", "8 user p3 later"}, []string{"p2"}, false, false},
+		{"dequeued with the prompt behind it", []string{"0 user p1@1 go", "1 queue enqueue " + opening + " wake", "1.5 queue enqueue next", "2 assistant -", "3 queue dequeue", "3 queue dequeue", "3.5 system stop_hook_summary", "3.6 system turn_duration", "4 user p3@2/queued next", "4 user p2@2/queued " + opening + " wake", "4 user p4@2/queued more", "5 assistant -", "6 system stop_hook_summary", "7 user p5@3/typed later"}, []string{"p2", "p3", "p4"}, false, false},
+		{"dequeued together with no turn position", []string{"0 user p1 go", "1 queue enqueue " + opening + " wake", "1.5 queue enqueue next", "2 assistant -", "3 queue dequeue", "3 queue dequeue", "3.5 system stop_hook_summary", "4 user p3 next", "4 user p2 " + opening + " wake", "5 assistant -"}, []string{"p2"}, false, false},
 		// A prompt cancelled before any response leaves its turn position to the
 		// next prompt.
-		{"a prompt typed after the wake was cancelled", []string{"0 user p1@1/typed go", "1 queue enqueue " + opening + " wake", "2 assistant -", "3 queue dequeue", "3.5 system stop_hook_summary", "4 user p2@2/queued " + opening + " wake", "6 user p3@2/typed next", "7 assistant -"}, []string{"p2"}, false},
-		{"a prompt dequeued after the wake was cancelled", []string{"0 user p1@1/typed go", "1 queue enqueue " + opening + " wake", "1.5 queue enqueue next", "2 assistant -", "3 queue dequeue", "3.5 system stop_hook_summary", "4 user p2@2/queued " + opening + " wake", "6 queue dequeue", "6.1 user p3@2/queued next", "7 assistant -"}, []string{"p2"}, false},
-		{"a wake typed after a local command", []string{"0 user p1@1/typed /model", "0.5 user p1 local command output", "2 user p2@2/typed " + opening + " wake", "3 assistant -"}, []string{"p2"}, false},
-		{"a compaction summary in the wake's turn position", []string{"0 user p1@1 go", "1 queue enqueue " + opening + " wake", "2 assistant -", "3 queue dequeue", "3.5 system stop_hook_summary", "4 user p2@2/queued " + opening + " wake", "5 assistant -", "6 user c1@2 summary", "7 assistant -"}, []string{"p2"}, false},
-		{"after a turn that wrote no response", []string{"0 user p1 go", "1 queue enqueue " + opening + " wake", "2 system stop_hook_summary", "3 queue dequeue", "4 user p2 " + opening + " wake", "5 assistant -"}, []string{"p2"}, false},
+		{"a prompt typed after the wake was cancelled", []string{"0 user p1@1/typed go", "1 queue enqueue " + opening + " wake", "2 assistant -", "3 queue dequeue", "3.5 system stop_hook_summary", "4 user p2@2/queued " + opening + " wake", "6 user p3@2/typed next", "7 assistant -"}, []string{"p2"}, false, false},
+		{"a prompt dequeued after the wake was cancelled", []string{"0 user p1@1/typed go", "1 queue enqueue " + opening + " wake", "1.5 queue enqueue next", "2 assistant -", "3 queue dequeue", "3.5 system stop_hook_summary", "4 user p2@2/queued " + opening + " wake", "6 queue dequeue", "6.1 user p3@2/queued next", "7 assistant -"}, []string{"p2"}, false, false},
+		{"a wake typed after a local command", []string{"0 user p1@1/typed /model", "0.5 user p1 local command output", "2 user p2@2/typed " + opening + " wake", "3 assistant -"}, []string{"p2"}, false, false},
+		{"a compaction summary in the wake's turn position", []string{"0 user p1@1 go", "1 queue enqueue " + opening + " wake", "2 assistant -", "3 queue dequeue", "3.5 system stop_hook_summary", "4 user p2@2/queued " + opening + " wake", "5 assistant -", "6 user c1@2 summary", "7 assistant -"}, []string{"p2"}, false, false},
+		{"after a turn that wrote no response", []string{"0 user p1 go", "1 queue enqueue " + opening + " wake", "2 system stop_hook_summary", "3 queue dequeue", "4 user p2 " + opening + " wake", "5 assistant -"}, []string{"p2"}, false, false},
 		// A turn that dies mid-response fires no Stop.
-		{"after a turn that ended without a finish", []string{"0 user p1 go", "1 queue enqueue " + opening + " wake", "2 assistant -", "3 queue dequeue", "4 user p2 " + opening + " wake", "5 assistant -"}, []string{"p2"}, false},
-		{"still queued", []string{"0 user p1 go", "1 queue enqueue " + opening + " wake"}, nil, true},
-		{"another prompt queued", []string{"0 user p1 go", "1 queue enqueue next"}, nil, false},
-		{"another prompt left the queue", []string{"0 user p1 go", "1 queue enqueue " + opening + " wake", "2 queue enqueue next", "3 queue remove next"}, nil, true},
-		{"absorbed by the running turn", []string{"0 user p1 go", "1 queue enqueue " + opening + " wake", "2 queue remove " + opening + " wake"}, nil, false},
-		{"queue emptied", []string{"0 user p1 go", "1 queue enqueue " + opening + " wake", "2 queue popAll edited"}, nil, false},
-		{"named mid-prompt", []string{"0 user p1 summary of " + opening + " wake"}, nil, false},
+		{"after a turn that ended without a finish", []string{"0 user p1 go", "1 queue enqueue " + opening + " wake", "2 assistant -", "3 queue dequeue", "4 user p2 " + opening + " wake", "5 assistant -"}, []string{"p2"}, false, false},
+		{"still queued", []string{"0 user p1 go", "1 queue enqueue " + opening + " wake"}, nil, true, false},
+		{"another prompt queued", []string{"0 user p1 go", "1 queue enqueue next"}, nil, false, false},
+		{"another prompt left the queue", []string{"0 user p1 go", "1 queue enqueue " + opening + " wake", "2 queue enqueue next", "3 queue remove next"}, nil, true, false},
+		{"absorbed by the running turn", []string{"0 user p1 go", "1 queue enqueue " + opening + " wake", "2 queue remove " + opening + " wake"}, nil, false, false},
+		{"queue emptied", []string{"0 user p1 go", "1 queue enqueue " + opening + " wake", "2 queue popAll edited"}, nil, false, false},
+		{"pulled into the composer", []string{"0 user p1 go", "1 queue enqueue " + opening + " wake", "2 queue popAll " + opening + " wake"}, nil, false, true},
+		{"pulled into the composer and queued again", []string{"0 user p1 go", "1 queue enqueue " + opening + " wake", "2 queue popAll " + opening + " wake", "3 queue enqueue " + opening + " wake"}, nil, true, false},
+		{"pulled into the composer and submitted again", []string{"0 user p1 go", "1 queue enqueue " + opening + " wake", "2 queue popAll " + opening + " wake", "3 system stop_hook_summary", "4 user p2 " + opening + " wake", "5 assistant -"}, []string{"p2"}, false, false},
+		{"named mid-prompt", []string{"0 user p1 summary of " + opening + " wake"}, nil, false, false},
 	} {
 		t.Run(test.name, func(t *testing.T) {
-			turn, pending, err := PromptTurn(claudeQueuedTurns, claudeTranscript(t, test.records...), opening)
-			if err != nil || !slices.Equal(turn, test.turn) || pending != test.pending {
-				t.Fatalf("turn=%q pending=%v err=%v, want %q %v", turn, pending, err, test.turn, test.pending)
+			turn, pending, left, err := PromptTurn(claudeQueuedTurns, claudeTranscript(t, test.records...), opening)
+			if err != nil || !slices.Equal(turn, test.turn) || pending != test.pending || left != test.left {
+				t.Fatalf("turn=%q pending=%v left=%v err=%v, want %q %v %v", turn, pending, left, err, test.turn, test.pending, test.left)
 			}
 		})
 	}
 	transcript := claudeTranscript(t, "0 user p1 "+opening+" wake")
-	if turn, pending, err := PromptTurn(Invocation{Name: "hook-boundary"}, transcript, opening); err != nil || turn != nil || pending {
-		t.Fatalf("turn=%q pending=%v err=%v without queued_turns", turn, pending, err)
+	if turn, pending, left, err := PromptTurn(Invocation{Name: "hook-boundary"}, transcript, opening); err != nil || turn != nil || pending || left {
+		t.Fatalf("turn=%q pending=%v left=%v err=%v without queued_turns", turn, pending, left, err)
 	}
-	if _, _, err := PromptTurn(claudeQueuedTurns, filepath.Join(t.TempDir(), "missing.jsonl"), opening); err == nil {
+	if _, _, _, err := PromptTurn(claudeQueuedTurns, filepath.Join(t.TempDir(), "missing.jsonl"), opening); err == nil {
 		t.Fatal("missing transcript read as no turn")
 	}
 }
