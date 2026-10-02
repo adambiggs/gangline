@@ -88,8 +88,11 @@ and `gang compact NAME --recover` treats the pane as running. A harness that
 queues input typed during compaction witnesses it only when compaction ends,
 so a send typed then could not be confirmed. For such a collar the resume note
 also waits for the pattern, or a busy screen, after the compact Enter: a
-command that leaves the composer without either fails as not run and withholds
-the note, since an empty composer does not show that a compaction started.
+command that leaves the composer without either fails as possibly run and
+withholds the note. An empty composer does not show that a compaction started,
+and an idle-looking screen does not show that none will: the harness may hold
+the command behind a turn still streaming, or still be running its
+pre-compaction hooks.
 
 Gangline never presses Enter on a composer that holds anything other than the
 compact command, nor on one the command has already left. Claude Code shows a long or multi-line paste as a placeholder

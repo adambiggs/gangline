@@ -731,7 +731,7 @@ func (run *runtime) startCompaction(l *store.LockedAgent, a *core.Agent) (result
 		return err
 	}
 	if err := run.queueCompactionResume(l, a, b, c, action.Text); errors.Is(err, errCompactionNotStarted) {
-		return run.failCompaction(l, a, compactionNotRun, err.Error()+"; resume withheld")
+		return run.failCompaction(l, a, compactionMayHaveRun, err.Error()+"; resume withheld")
 	} else if err != nil {
 		return run.failCompaction(l, a, compactionMayHaveRun, "resume submission failed; continuation withheld: "+err.Error())
 	}

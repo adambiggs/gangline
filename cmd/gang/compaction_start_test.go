@@ -106,8 +106,9 @@ func TestCompactCommandGoneBeforeSubmitKey(t *testing.T) {
 }
 
 // An empty composer after the submit key is not evidence that a compaction
-// started: the command can be consumed as nothing. The resume note is pasted
-// only once the pane shows the compaction running.
+// started: the command can be consumed as nothing, or held behind a streaming
+// turn and run later. The resume note is pasted only once the pane shows the
+// compaction running; without that the compaction may have run.
 func TestCompactionResumeNeedsStartEvidence(t *testing.T) {
 	t.Run("no compaction shown", func(t *testing.T) {
 		f, a := compactStartFixture(t, compactDraftScreen, idleEmptyScreen)
@@ -120,11 +121,23 @@ func TestCompactionResumeNeedsStartEvidence(t *testing.T) {
 		if f.input.submits != 1 || !strings.HasPrefix(f.input.pasted, "/compact ") {
 			t.Fatalf("resume reached the pane: submits=%d pasted=%q", f.input.submits, f.input.pasted)
 		}
-		if got.Compaction.Status != "failed" || !strings.Contains(got.Compaction.Reason, "no compaction started") || got.Input != nil {
+		if got.Compaction.Status != "failed" || !strings.Contains(got.Compaction.Reason, "no compaction showed") || got.Input != nil {
 			t.Fatalf("compaction: %+v input=%+v", got.Compaction, got.Input)
 		}
-		if notice := failureNotice(t, p, "new", got.Compaction.ID); !strings.Contains(notice.Message.Text, "was not compacted") {
+		if notice := failureNotice(t, p, "new", got.Compaction.ID); !strings.Contains(notice.Message.Text, "may have run") {
 			t.Fatalf("notice: %q", notice.Message.Text)
+		}
+	})
+	t.Run("command stays in the composer", func(t *testing.T) {
+		f, a := compactStartFixture(t, compactDraftScreen, compactDraftScreen)
+		_ = f.cmd.compact([]string{"--resume", "Resume from the state file."})
+		p, _ := f.run.team.Agent(a.ID)
+		got, err := p.Read()
+		if err != nil {
+			t.Fatal(err)
+		}
+		if f.input.submits != 1 || got.Compaction.Status != "failed" || !strings.Contains(got.Compaction.Reason, "remained in the composer") {
+			t.Fatalf("submits=%d compaction: %+v", f.input.submits, got.Compaction)
 		}
 	})
 	t.Run("compaction shown", func(t *testing.T) {

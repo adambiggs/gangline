@@ -244,9 +244,10 @@ func (run *runtime) queueCompactionResume(l *store.LockedAgent, a *core.Agent, b
 const compactStartWindow = 2 * time.Second
 
 // errCompactionNotStarted reports a compact command that left the composer
-// without the pane ever showing a compaction, as when the harness consumed it
-// as nothing.
-var errCompactionNotStarted = errors.New("compact command left the composer but no compaction started")
+// without the pane showing a compaction within the start window. The harness
+// may have consumed it as nothing, or queued it behind a turn whose screen
+// looks idle, or still be running its pre-compaction hooks.
+var errCompactionNotStarted = errors.New("compact command left the composer but no compaction showed")
 
 // awaitCompactionComposer waits until the compact command has left the
 // composer and, for a collar that can show a compaction running, the pane
