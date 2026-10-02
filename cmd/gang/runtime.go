@@ -386,7 +386,10 @@ func (run *runtime) recoverInput(l *store.LockedAgent, a *core.Agent) error {
 	if e.Outcome == "accepted" {
 		return run.finishInput(l, a, e, "accepted", e.Reason)
 	}
-	return run.finishInput(l, a, e, "unverified", "input owner exited before recording the outcome")
+	if err := run.finishInput(l, a, e, "unverified", "input owner exited before recording the outcome"); err != nil {
+		return err
+	}
+	return run.notifySender(*a, e, "unverified")
 }
 func (run *runtime) finishInput(l *store.LockedAgent, a *core.Agent, e core.Envelope, outcome, reason string, witnessedAt ...time.Time) error {
 	if err := run.acknowledgeUsageDelivery(l, *a, e, outcome, witnessedAt...); err != nil {

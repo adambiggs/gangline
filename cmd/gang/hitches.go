@@ -824,6 +824,9 @@ func (run *runtime) dropAgent(id core.HitchID, wait bool) error {
 		if err := os.Rename(from, to); err != nil {
 			return err
 		}
+		if err := run.notifySender(a, e, "dropped"); err != nil {
+			return err
+		}
 	}
 	// A submit hook can have recorded identity after the last saved state.
 	witness, err := p.ReadWitness()

@@ -1,0 +1,202 @@
+package main
+
+import (
+	"errors"
+	"strings"
+	"testing"
+
+	"github.com/adambiggs/gangline/core"
+	"github.com/adambiggs/gangline/store"
+)
+
+// holdFor publishes a message from sender to recipient as a queued send
+// leaves it, and records the agents later woken.
+func holdFor(t *testing.T, f *stateFixture, recipient core.Agent, sender core.Sender, text string) (core.Envelope, *[]string) {
+	t.Helper()
+	p, err := f.run.team.Agent(recipient.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	e := core.Envelope{ID: "msg-held", Token: "0123456789abcdef", Recipient: recipient.ID, To: recipient.Name, From: sender, Message: core.Message{Text: text}, CreatedAt: f.cmd.now()}
+	if err := p.Publish(e); err != nil {
+		t.Fatal(err)
+	}
+	woken := []string{}
+	f.cmd.detach = func(id string, _ hookNotice) error { woken = append(woken, id); return nil }
+	f.run.cmd = f.cmd
+	return e, &woken
+}
+
+func agentSender(a core.Agent) core.Sender {
+	return core.Sender{Kind: core.SenderAgent, Name: a.Name, HitchID: a.ID}
+}
+
+func outcomeNotice(t *testing.T, f *stateFixture, sender core.Agent, id core.EnvelopeID) core.Envelope {
+	t.Helper()
+	p, _ := f.run.team.Agent(sender.ID)
+	e, err := p.ReadEnvelope("new", "outcome-"+id)
+	if err != nil {
+		t.Fatalf("outcome notice for %s: %v", id, err)
+	}
+	if e.From != (core.Sender{Kind: core.SenderGangline, Name: "delivery"}) || e.Recipient != sender.ID || !strings.Contains(e.Message.Text, "Message "+string(id)+" to worker ") {
+		t.Fatalf("outcome notice: %+v", e)
+	}
+	return e
+}
+
+func requireNoNotices(t *testing.T, f *stateFixture) {
+	t.Helper()
+	agents, err := f.run.team.ListAgents()
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, a := range agents {
+		p, _ := f.run.team.Agent(a.ID)
+		pending, err := p.ListNew()
+		if err != nil {
+			t.Fatal(err)
+		}
+		for _, e := range pending {
+			if strings.HasPrefix(string(e.ID), "outcome-") {
+				t.Fatalf("%s got outcome notice %+v", a.Name, e)
+			}
+		}
+	}
+}
+
+// A message held for a busy or locked agent is delivered by a later command,
+// after the sending command reported it queued, so the sender learns from its
+// own queue when that delivery does not succeed.
+func TestHeldMessageOutcomeReachesSender(t *testing.T) {
+	for _, test := range []struct {
+		name, outcome, text, want string
+		recipient                 func(*testing.T) (*stateFixture, core.Agent, store.AgentPaths)
+	}{
+		{"unverified", "unverified", "check the build", "is unverified", queueSendFixture},
+		{"failed", "failed", placeholderQuote, "failed and was not delivered", claudeRecipient},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			f, a, _ := test.recipient(t)
+			lead := f.add(t, "b", "lead", "claude")
+			e, woken := holdFor(t, f, a, agentSender(lead), test.text)
+			outcome, err := f.run.drain(a.ID, "")
+			if err != nil || outcome != "queued" {
+				t.Fatalf("tick drain: %s %v", outcome, err)
+			}
+			p, _ := f.run.team.Agent(a.ID)
+			if settled, err := p.ReadEnvelope("failed", e.ID); err != nil || settled.Outcome != test.outcome {
+				t.Fatalf("held message: %+v %v", settled, err)
+			}
+			if notice := outcomeNotice(t, f, lead, e.ID); !strings.Contains(notice.Message.Text, test.want) || strings.Contains(notice.Message.Text, "placeholder") {
+				t.Fatalf("notice: %q", notice.Message.Text)
+			}
+			if len(*woken) != 1 || (*woken)[0] != string(lead.ID) {
+				t.Fatalf("woken: %v", *woken)
+			}
+		})
+	}
+}
+
+// Gangline's own messages, which include these notices, and senders Gangline
+// did not observe have no queue to tell, so a notice never produces another.
+func TestHeldMessageOutcomeSkipsUnobservedSenders(t *testing.T) {
+	for _, from := range []core.Sender{
+		{Kind: core.SenderGangline, Name: "delivery"},
+		{Kind: core.SenderSelfDeclared, Name: "lead"},
+		{Kind: core.SenderAgent, Name: "worker", HitchID: "a"},
+		{Kind: core.SenderAgent, Name: "gone", HitchID: "c"},
+	} {
+		t.Run(string(from.Kind)+"/"+string(from.Name), func(t *testing.T) {
+			f, a, _ := queueSendFixture(t)
+			f.add(t, "b", "lead", "claude")
+			_, woken := holdFor(t, f, a, from, "check the build")
+			if outcome, err := f.run.drain(a.ID, ""); err != nil || outcome != "queued" {
+				t.Fatalf("tick drain: %s %v", outcome, err)
+			}
+			requireNoNotices(t, f)
+			if len(*woken) != 0 {
+				t.Fatalf("woken: %v", *woken)
+			}
+		})
+	}
+}
+
+func TestHeldMessageOutcomeSkipsDroppingSender(t *testing.T) {
+	f, a, _ := queueSendFixture(t)
+	lead := f.add(t, "b", "lead", "claude")
+	f.setAgent(t, lead, func(a *core.Agent) { a.Status = core.Dropping })
+	_, woken := holdFor(t, f, a, agentSender(lead), "check the build")
+	if outcome, err := f.run.drain(a.ID, ""); err != nil || outcome != "queued" {
+		t.Fatalf("tick drain: %s %v", outcome, err)
+	}
+	requireNoNotices(t, f)
+	if len(*woken) != 0 {
+		t.Fatalf("woken: %v", *woken)
+	}
+}
+
+func TestDeliveredHeldMessageSendsNoNotice(t *testing.T) {
+	f := newStateFixture(t)
+	a := f.add(t, "a", "worker", "codex")
+	lead := f.add(t, "b", "lead", "claude")
+	f.env["GANGLINE_HITCH_ID"] = string(a.ID)
+	e, _ := holdFor(t, f, a, agentSender(lead), "check the build")
+	if outcome, err := f.run.drain(a.ID, ""); err != nil || outcome != "queued" {
+		t.Fatalf("tick drain: %s %v", outcome, err)
+	}
+	p, _ := f.run.team.Agent(a.ID)
+	if settled, err := p.ReadEnvelope("cur", e.ID); err != nil || settled.Outcome != "delivered" {
+		t.Fatalf("held message: %+v %v", settled, err)
+	}
+	requireNoNotices(t, f)
+}
+
+// The sending command reports its own message's outcome by exit status.
+func TestDirectSendReportsItsOwnOutcomeWithoutNotice(t *testing.T) {
+	f, _, _ := queueSendFixture(t)
+	lead := f.add(t, "b", "lead", "codex")
+	f.env["GANG_AGENT_ID"] = string(lead.ID)
+	f.env["TMUX_PANE"] = lead.Pane
+	f.env["GANGLINE_HITCH_ID"] = string(lead.ID)
+	err := f.cmd.send([]string{"worker", "check the build"})
+	var unknown commandError
+	if !errors.As(err, &unknown) || unknown.status != exitUnknown {
+		t.Fatalf("send: %v", err)
+	}
+	requireNoNotices(t, f)
+}
+
+// An input owner that exits mid-delivery never reports the outcome, so the
+// command that recovers its input tells the sender.
+func TestRecoveredHeldMessageReachesSender(t *testing.T) {
+	f, a, _ := queueSendFixture(t)
+	lead := f.add(t, "b", "lead", "claude")
+	e, woken := holdFor(t, f, a, agentSender(lead), "check the build")
+	f.setAgent(t, a, func(a *core.Agent) { a.Input = &core.InputIntent{ID: string(e.ID), Kind: "envelope"} })
+	f.input.screen = screenWithText("• Working (esc to interrupt)", "› ")
+	if _, err := f.run.drain(a.ID, ""); err != nil {
+		t.Fatal(err)
+	}
+	if notice := outcomeNotice(t, f, lead, e.ID); !strings.Contains(notice.Message.Text, "is unverified") {
+		t.Fatalf("notice: %q", notice.Message.Text)
+	}
+	if len(*woken) != 1 || (*woken)[0] != string(lead.ID) {
+		t.Fatalf("woken: %v", *woken)
+	}
+}
+
+func TestDroppedRecipientHeldMessageReachesSender(t *testing.T) {
+	f := newStateFixture(t)
+	a := f.add(t, "a", "worker", "codex")
+	lead := f.add(t, "b", "lead", "claude")
+	e, woken := holdFor(t, f, a, agentSender(lead), "check the build")
+	if err := f.cmd.drop([]string{"worker"}); err != nil {
+		t.Fatal(err)
+	}
+	if notice := outcomeNotice(t, f, lead, e.ID); !strings.Contains(notice.Message.Text, "worker was dropped") {
+		t.Fatalf("notice: %q", notice.Message.Text)
+	}
+	if len(*woken) != 1 || (*woken)[0] != string(lead.ID) {
+		t.Fatalf("woken: %v", *woken)
+	}
+}

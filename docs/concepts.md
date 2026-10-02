@@ -46,7 +46,9 @@ The receipt tells you who holds the input:
 
 None of these receipts means the agent read or acted on the message. A reply
 is separate evidence. Queued messages wait while a recipient is alive;
-dropping it fails pending messages.
+dropping it fails pending messages. When a later operation, not the sending
+command, ends a message failed or unverified, Gangline queues a notice naming
+the message for the agent that sent it.
 
 ## Roles and startup instructions
 

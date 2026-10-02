@@ -425,7 +425,54 @@ func (run *runtime) drainLocked(l *store.LockedAgent, a *core.Agent, target core
 		if err != nil {
 			return result, pending, err
 		}
+		if next.ID != target && (outcome == "failed" || outcome == "unverified") {
+			if err := run.notifySender(*a, *next, outcome); err != nil {
+				return result, pending, err
+			}
+		}
 	}
+}
+
+// notifySender tells the agent that sent e that it was not delivered. A
+// sending command reports its own message's outcome, so only an outcome
+// reached by a later command needs the notice. Gangline sends the notice
+// itself, and only agents receive one, so a notice never produces another.
+func (run *runtime) notifySender(a core.Agent, e core.Envelope, outcome string) error {
+	if e.From.Kind != core.SenderAgent || e.From.HitchID == a.ID {
+		return nil
+	}
+	p, err := run.team.Agent(e.From.HitchID)
+	if err != nil {
+		return err
+	}
+	sender, err := p.Read()
+	if errors.Is(err, os.ErrNotExist) {
+		return nil
+	}
+	if err != nil {
+		return err
+	}
+	if sender.Status != core.Active {
+		return nil
+	}
+	token, err := randomEnvelopeToken()
+	if err != nil {
+		return err
+	}
+	text := fmt.Sprintf("Message %s to %s ", e.ID, a.Name)
+	switch outcome {
+	case "unverified":
+		text += fmt.Sprintf("is unverified: Gangline could not confirm delivery and may still confirm it later. Inspect %s before sending again; gang log has the reason.", a.Name)
+	case "dropped":
+		text += fmt.Sprintf("was not delivered: %s was dropped.", a.Name)
+	default:
+		text += "failed and was not delivered; gang log has the reason."
+	}
+	if err := run.publishOnceTo(p, sender, core.Envelope{ID: core.EnvelopeID("outcome-" + e.ID), Token: token, Recipient: sender.ID, To: sender.Name, From: core.Sender{Kind: core.SenderGangline, Name: "delivery"}, Message: core.Message{Text: text}, CreatedAt: run.cmd.now()}); err != nil {
+		return err
+	}
+	run.wake = append(run.wake, sender.ID)
+	return nil
 }
 func (run *runtime) drain(id core.HitchID, target core.EnvelopeID) (string, error) {
 	l, a, err := run.acquire(id, false)
