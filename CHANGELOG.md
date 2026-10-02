@@ -1,5 +1,26 @@
 # Changelog
 
+## [1.10.2](https://github.com/adambiggs/gangline/compare/gangline-v1.10.1...gangline-v1.10.2) (2026-10-02)
+
+
+### Bug Fixes
+
+* **cli:** wrap help and usage text to 78 columns ([609a180](https://github.com/adambiggs/gangline/commit/609a1806daca41a3d7a071a99c5b9e9a2cb675e7))
+* **drop:** warn about skipped cleanup only when there was something to clean ([0439faf](https://github.com/adambiggs/gangline/commit/0439faf7f9728c8d556ff6e85a8f1bbeb1250a3f))
+* **hitch:** keep a native exit at a blocked startup and release at readiness ([e1700bc](https://github.com/adambiggs/gangline/commit/e1700bcc8fe6ba0e0da182652721d13a7f556013))
+* **hitch:** report an interrupted hitch on one line ([ba25ddf](https://github.com/adambiggs/gangline/commit/ba25ddfa073644157af1bc9a0e0cc6662f5466e2))
+* **roster:** show why an agent is failed, blocked, wedged, or unknown ([2c75052](https://github.com/adambiggs/gangline/commit/2c750529362d5acd9657db7914acd4e78e3c0588))
+* **site:** restore the home page's left column and lead with the CLI ([a5884b9](https://github.com/adambiggs/gangline/commit/a5884b968f3b4c003b1d3fe0f177f778cc464abc))
+* **tick:** fail a blocked startup whose pane id names another pane ([9cc400a](https://github.com/adambiggs/gangline/commit/9cc400a164fdf6256dca48884ab27cc1d2f4abc8))
+* **tick:** fail a booting agent whose pane id names another pane at its deadline ([9755276](https://github.com/adambiggs/gangline/commit/9755276f1d83404fae7f009447989be119ca8195))
+* **tick:** fail and forget a registered pane closed outside gang ([b99034f](https://github.com/adambiggs/gangline/commit/b99034fe46ab465f91ba1e180b045e88d44e4be1))
+* **tick:** forget a registered pane only when its server shows it closed ([b532931](https://github.com/adambiggs/gangline/commit/b532931359fbd39bc8b8ef46e88f17d2f0dc0d69))
+* **tick:** release a boot hold only on the registered pane ([59174fa](https://github.com/adambiggs/gangline/commit/59174fa2eeacb9d888d7bed52887d97fae1aa446))
+* **tmux:** hold a launched pane from inside it before the native starts ([e1b1b1c](https://github.com/adambiggs/gangline/commit/e1b1b1c76d4a9547b536a0b54587adfeca9cc16a))
+* **tmux:** match a registered pane in a window shared by several sessions ([fabc4e7](https://github.com/adambiggs/gangline/commit/fabc4e73f137c197bdc65e843bd15e51f1b9a51d))
+* **tmux:** run a held native command through the user's default shell ([5d76a2c](https://github.com/adambiggs/gangline/commit/5d76a2c8df9bbeb8e978a8e5867f77857f4806ef))
+* **tmux:** title an agent's window only through its pane registration ([770875b](https://github.com/adambiggs/gangline/commit/770875b62ff0b0bf20d2c7333321eff83a1a41d0))
+
 ## [1.10.1](https://github.com/adambiggs/gangline/compare/gangline-v1.10.0...gangline-v1.10.1) (2026-10-01)
 
 
