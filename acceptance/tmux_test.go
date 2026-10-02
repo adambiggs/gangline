@@ -15,6 +15,8 @@ import (
 	"syscall"
 	"testing"
 	"time"
+
+	"github.com/adambiggs/gangline/substrate/tmux"
 )
 
 const fakeHarnessEnvironment = "GANGLINE_ACCEPTANCE_FAKE_HARNESS"
@@ -252,7 +254,7 @@ func awaitNativeExit(t *testing.T, runner tmuxRunner, server int, channel, pipe,
 	case <-ctx.Done():
 		fail("native CLI did not exit")
 	}
-	if out, err := runner.runContext(ctx, "run-shell", "true"); err != nil {
+	if out, err := tmux.Reaped(ctx, runner.runContext); err != nil {
 		fail("reap native exit: %v %s", err, out)
 	}
 }

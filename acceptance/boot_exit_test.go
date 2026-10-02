@@ -55,9 +55,14 @@ if [ "$capture$color" = 11 ]; then
 	exit) tmux -S "$GANG_TMUX_SOCKET" wait-for -S boot-exit || exit 1;;
 	# The pipe reaches EOF when the native CLI exits, and run-shell makes tmux
 	# reap it, so only the release after the failed startup can see the exit.
+	# The background run-shell commands give a server that lost a SIGCHLD
+	# another child to exit, as tmux.Reaped does.
 	fail-exit) tmux -S "$GANG_TMUX_SOCKET" wait-for -S boot-exit || exit 1
 		cat "$GANGLINE_ACCEPTANCE_EXIT_PIPE" >/dev/null
+		( while sleep 0.1; do tmux -S "$GANG_TMUX_SOCKET" run-shell -b true || exit; done ) &
+		kick=$!
 		tmux -S "$GANG_TMUX_SOCKET" run-shell true
+		kill "$kick"
 		echo 'capture refused' >&2; exit 1;;
 	esac
 fi
