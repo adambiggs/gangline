@@ -184,7 +184,8 @@ func collectProcessRecords(ctx context.Context, root int, pids []int, read func(
 		}
 		record, err := read(pid)
 		if err != nil {
-			if pid != root && (processGone(err) || errors.Is(err, syscall.EPERM) || errors.Is(err, syscall.EACCES)) {
+			// A pane root that exited is absent, as from any process table.
+			if processGone(err) || pid != root && (errors.Is(err, syscall.EPERM) || errors.Is(err, syscall.EACCES)) {
 				continue
 			}
 			return nil, fmt.Errorf("read process tree: inspect process %d: %w", pid, err)

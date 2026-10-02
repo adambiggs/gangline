@@ -285,6 +285,15 @@ func TestCollectProcessRecordsKeepsPaneLineageAndSkipsInaccessiblePIDs(t *testin
 	if !errors.Is(err, syscall.EPERM) {
 		t.Fatalf("pane process denial = %v", err)
 	}
+	records, err = collectProcessRecords(context.Background(), 100, []int{100, 200}, func(pid int) (processRecord, error) {
+		if pid == 100 {
+			return processRecord{}, syscall.ESRCH
+		}
+		return want[pid], nil
+	})
+	if _, ok := records[100]; err != nil || ok || records[200] != want[200] {
+		t.Fatalf("exited pane process: table = %+v, err=%v", records, err)
+	}
 }
 
 func TestParseDarwinArgv0KeepsInvokedSymlinkName(t *testing.T) {
