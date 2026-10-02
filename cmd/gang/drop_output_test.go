@@ -28,7 +28,7 @@ func TestDropRefusesAnUnregisteredAgent(t *testing.T) {
 	f := newStateFixture(t)
 	err := f.cmd.drop([]string{"nosuch"})
 	commandErr, ok := err.(commandError)
-	if !ok || commandErr.status != exitRefused || commandErr.text != `agent "nosuch" is not registered` {
+	if !ok || commandErr.status != exitRefused || commandErr.text != `agent "nosuch" is not registered in team unit; gang roster --team unit lists the registered agents` {
 		t.Fatalf("drop of an unregistered agent = %#v, want the exit-3 refusal send gives", err)
 	}
 }

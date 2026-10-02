@@ -94,6 +94,11 @@ func inactiveRecipient(a core.Agent) error {
 	return refuseError("recipient %s is %s, not active; gang status %s shows why", a.Name, a.Status, a.Name)
 }
 
+// unregistered refuses a name that no agent in the selected team holds.
+func (run *runtime) unregistered(name string) error {
+	return refuseError("agent %q is not registered in team %s; gang roster --team %s lists the registered agents", name, run.settings.Session, run.settings.Session)
+}
+
 func (run *runtime) resolve(name string) (core.Agent, error) {
 	if name == "" {
 		a, err := run.observedAgent()
@@ -107,7 +112,7 @@ func (run *runtime) resolve(name string) (core.Agent, error) {
 	}
 	id, err := run.team.ResolveName(name)
 	if errors.Is(err, os.ErrNotExist) {
-		return core.Agent{}, refuseError("agent %q is not registered", name)
+		return core.Agent{}, run.unregistered(name)
 	}
 	if err != nil {
 		return core.Agent{}, err

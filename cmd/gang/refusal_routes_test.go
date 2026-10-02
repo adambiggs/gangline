@@ -95,3 +95,23 @@ func TestIdentityRefusalsNameARoute(t *testing.T) {
 		t.Errorf("send from an undecodable identity = %v", err)
 	}
 }
+
+func TestUnregisteredAgentRefusalNamesARoute(t *testing.T) {
+	f := newStateFixture(t)
+	want := `agent "nosuch" is not registered in team unit; gang roster --team unit lists the registered agents`
+	for _, test := range []struct {
+		name string
+		call func() error
+	}{
+		{"send", func() error {
+			f.cmd.stdin = strings.NewReader("hello")
+			return f.cmd.send([]string{"nosuch", "--from", "operator"})
+		}},
+		{"status", func() error { return f.cmd.status([]string{"nosuch"}) }},
+		{"drop", func() error { return f.cmd.drop([]string{"nosuch"}) }},
+	} {
+		if err := test.call(); err == nil || err.Error() != want {
+			t.Errorf("%s to an unregistered agent = %v; want %q", test.name, err, want)
+		}
+	}
+}
