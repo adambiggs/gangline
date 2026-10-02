@@ -14,6 +14,10 @@ import (
 // ProcessVisibility establishes whether tmux's PIDs can safely be interpreted
 // through this caller's process APIs, before looking up any pane process.
 func (b *Backend) ProcessVisibility(ctx context.Context, pane substrate.PaneID) (bool, error) {
+	return b.processVisibility(ctx, pane, readCurrentProcess)
+}
+
+func (b *Backend) processVisibility(ctx context.Context, pane substrate.PaneID, read func(int) (processRecord, error)) (bool, error) {
 	if !numericTmuxID(string(pane), '%') {
 		return false, fmt.Errorf("invalid pane id %q", pane)
 	}
@@ -40,7 +44,14 @@ func (b *Backend) ProcessVisibility(ctx context.Context, pane substrate.PaneID) 
 	if err != nil {
 		return b.visibilityFailure(ctx, pane, err)
 	}
-	_, err = readCurrentProcess(root)
+	_, err = read(root)
+	// A root that vanished since tmux named it has exited, which its pane
+	// reports; it is not a process hidden from this caller.
+	if processGone(err) {
+		if err := b.paneExited(ctx, pane, nil); err != nil {
+			return b.visibilityFailure(ctx, pane, err)
+		}
+	}
 	return processReadVisibility(err)
 }
 

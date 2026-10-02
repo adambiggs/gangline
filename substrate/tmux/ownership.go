@@ -24,11 +24,18 @@ type Identity struct {
 }
 
 func (b *Backend) Identity(ctx context.Context, pane substrate.PaneID) (Identity, error) {
+	return b.identity(ctx, pane, observeProcess)
+}
+
+func (b *Backend) identity(ctx context.Context, pane substrate.PaneID, observe func(int) (processObservation, error)) (Identity, error) {
 	pid, err := b.paneProcess(ctx, pane)
 	if err != nil {
 		return Identity{}, err
 	}
-	observation, err := observeProcess(pid)
+	observation, err := observe(pid)
+	if processGone(err) {
+		return Identity{}, b.paneExited(ctx, pane, err)
+	}
 	if err != nil {
 		return Identity{}, err
 	}

@@ -85,8 +85,10 @@ func selectForegroundProcesses(root int, records map[int]processRecord, command 
 	return result, nil
 }
 
-func (backend *Backend) paneProcess(ctx context.Context, pane substrate.PaneID) (int, error) {
-	output, err := backend.run(ctx, "display-message", "-p", "-t", string(pane), "#{pane_pid} #{pane_dead} #{pane_dead_status}")
+// paneProcess reads the pane's live process, or reports its exit. Commands in
+// before run in the same command list first.
+func (backend *Backend) paneProcess(ctx context.Context, pane substrate.PaneID, before ...string) (int, error) {
+	output, err := backend.run(ctx, append(before, "display-message", "-p", "-t", string(pane), "#{pane_pid} #{pane_dead} #{pane_dead_status}")...)
 	if err != nil {
 		return 0, tmuxError("read pane process", err, output)
 	}
@@ -103,6 +105,18 @@ func (backend *Backend) paneProcess(ctx context.Context, pane substrate.PaneID) 
 		return 0, fmt.Errorf("read pane process: tmux returned %q", strings.TrimSpace(output))
 	}
 	return root, nil
+}
+
+// paneExited reports the exit of a pane whose process a read found gone. That
+// process has exited, but tmux can still read the pane as live until it reaps
+// the process or its terminal closes. run-shell returns only once the server
+// has reaped its own child, and the server reaps every exited child as it
+// does. A pane tmux still reads as live leaves gone as the answer.
+func (backend *Backend) paneExited(ctx context.Context, pane substrate.PaneID, gone error) error {
+	if _, err := backend.paneProcess(ctx, pane, "run-shell", "true", ";"); err != nil {
+		return err
+	}
+	return gone
 }
 
 func (backend *Backend) ownedProcesses(ctx context.Context, pane substrate.PaneID) (owned []processIdentity, result error) {
