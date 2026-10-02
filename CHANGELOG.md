@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.11.0](https://github.com/adambiggs/gangline/compare/gangline-v1.10.3...gangline-v1.11.0) (2026-10-02)
+
+
+### Features
+
+* **snooze:** show the lead every wake and log each wake stage ([9ceebeb](https://github.com/adambiggs/gangline/commit/9ceebeb2377fbdf259cbe51bfa2a158615590ea5))
+
 ## [1.10.3](https://github.com/adambiggs/gangline/compare/gangline-v1.10.2...gangline-v1.10.3) (2026-10-02)
 
 
