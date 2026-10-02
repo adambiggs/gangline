@@ -98,7 +98,8 @@ func (cmd command) watchdogScheduler(directory string) watchdogScheduler {
 // replacement to the current owner, unless it is the recorded timer's own
 // elapsed tick, which marks an outage. Cleanup waits for the lock, so a tick
 // still running when the last agent leaves cannot fail the drop or down that
-// disarms the timer.
+// disarms the timer. The wait is bounded, because the holder's transaction
+// can itself stall.
 func (run *runtime) updateWatchdog(generation string, cleanup, reset bool) (proceed bool, result error) {
 	path := filepath.Join(run.team.Directory, "watchdog")
 	marker := filepath.Join(run.team.Directory, "watchdog-unavailable")
@@ -158,16 +159,13 @@ func (run *runtime) updateWatchdog(generation string, cleanup, reset bool) (proc
 		}
 		// Cleanup must disarm. Every cleanup holds the team lock, and no
 		// holder of the scheduler lock waits for a team or agent lock, so the
-		// wait ends when the holder's scheduler transaction does.
+		// wait ends when the holder's scheduler transaction does, or at the
+		// bound.
 		if run.cmd.schedulerLockWait != nil {
 			run.cmd.schedulerLockWait()
 		}
-		err = syscall.Flock(int(lock.Fd()), syscall.LOCK_EX)
-		for errors.Is(err, syscall.EINTR) {
-			err = syscall.Flock(int(lock.Fd()), syscall.LOCK_EX)
-		}
-		if err != nil {
-			return false, fmt.Errorf("watchdog scheduler busy: %w", err)
+		if err := run.waitSchedulerLock(lock); err != nil {
+			return false, err
 		}
 	}
 	defer syscall.Flock(int(lock.Fd()), syscall.LOCK_UN)
@@ -367,6 +365,49 @@ func (run *runtime) ensureWatchdog() error {
 	}
 	_, warnErr := fmt.Fprintln(run.cmd.stderr, "warning: watchdog unavailable; wakes and queued work wait for the next hook or gang tick (see gang log)")
 	return errors.Join(err, warnErr)
+}
+
+// waitSchedulerLock blocks for the scheduler lock for at most
+// schedulerLockTimeout. A holder stuck in its own transaction would otherwise
+// hang the drop or down that waits for it. The wait runs on a duplicate of the
+// lock's descriptor, which shares its open file description, so a lock taken
+// there is the caller's lock; one taken after the caller gave up is released.
+func (run *runtime) waitSchedulerLock(lock *os.File) error {
+	fd, err := syscall.Dup(int(lock.Fd()))
+	if err != nil {
+		return fmt.Errorf("watchdog scheduler busy: %w", err)
+	}
+	syscall.CloseOnExec(fd)
+	flock := run.cmd.flock
+	if flock == nil {
+		flock = syscall.Flock
+	}
+	acquired := make(chan error, 1)
+	go func() {
+		err := flock(fd, syscall.LOCK_EX)
+		for errors.Is(err, syscall.EINTR) {
+			err = flock(fd, syscall.LOCK_EX)
+		}
+		acquired <- err
+	}()
+	ctx, cancel := run.cmd.timeout(schedulerLockTimeout)
+	defer cancel()
+	select {
+	case err := <-acquired:
+		syscall.Close(fd)
+		if err != nil {
+			return fmt.Errorf("watchdog scheduler busy: %w", err)
+		}
+		return nil
+	case <-ctx.Done():
+		go func() {
+			if <-acquired == nil {
+				syscall.Flock(fd, syscall.LOCK_UN)
+			}
+			syscall.Close(fd)
+		}()
+		return fmt.Errorf("watchdog scheduler lock %s still held by another gang command after %s; the watchdog timer stays armed until its next tick or gang down disarms it once that command exits", lock.Name(), schedulerLockTimeout)
+	}
 }
 
 func (run *runtime) disarmEmptyWatchdog() error {

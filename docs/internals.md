@@ -116,9 +116,11 @@ in the team directory, outside login-loaded LaunchAgents. The expiry shell
 lets its tick child survive job removal so it can re-arm. Both depend on an
 awake host and available user scheduler.
 
-Timer transactions have their own nonblocking lock, released before agent
-work. Generation tokens reject superseded timers. Last drop and team removal
-disarm the timer. Contention or scheduler errors fail visibly; uncertain
+Timer transactions have their own lock, released before agent work. Callers
+that arm never wait for it. Generation tokens reject superseded timers. Last
+drop and team removal disarm the timer and wait a bounded time for a holder of
+the lock; one that outlasts the wait fails the drop or down with the lock's
+path and leaves the timer armed. Contention or scheduler errors fail visibly; uncertain
 launchd cleanup preserves the plist for a later attempt. Unsupported hosts
 log `watchdog_unavailable` once per outage and retain ordinary ticks; the next
 armed timer logs `watchdog_available`. An elapsed timer's tick that cannot

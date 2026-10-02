@@ -62,6 +62,9 @@ type command struct {
 	// schedulerLockWait runs when cleanup finds the watchdog scheduler lock
 	// held, before it waits for the lock.
 	schedulerLockWait func()
+	// flock takes the watchdog scheduler lock in cleanup's blocking wait;
+	// nil means syscall.Flock.
+	flock func(fd int, how int) error
 }
 
 func main() {

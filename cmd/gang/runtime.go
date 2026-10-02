@@ -17,6 +17,7 @@ import (
 const (
 	bootTimeout                = 30 * time.Second
 	operationTimeout           = 30 * time.Second
+	schedulerLockTimeout       = operationTimeout
 	boundaryHookTimeoutSeconds = 5
 )
 

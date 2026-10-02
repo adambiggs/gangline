@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"os"
@@ -282,6 +283,72 @@ func TestWatchdogLastDropWaitsForSchedulerLock(t *testing.T) {
 			}
 			if waited != 1 || s.armed != "" || s.stops != 1 {
 				t.Fatalf("waited %d, timer %+v", waited, s)
+			}
+		})
+	}
+}
+func TestWatchdogLastDropBoundsSchedulerLockWait(t *testing.T) {
+	for _, action := range []string{"drop", "down"} {
+		t.Run(action, func(t *testing.T) {
+			f, s := watchdogFixture(t)
+			if err := f.cmd.tick(nil); err != nil {
+				t.Fatal(err)
+			}
+			// A holder that never finishes its scheduler transaction must not
+			// hang the cleanup that waits for it.
+			path := filepath.Join(f.run.team.Directory, "watchdog.lock")
+			lock, err := os.OpenFile(path, os.O_RDWR, 0600)
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer lock.Close()
+			if err := syscall.Flock(int(lock.Fd()), syscall.LOCK_EX|syscall.LOCK_NB); err != nil {
+				t.Fatal(err)
+			}
+			expired := false
+			f.cmd.schedulerLockWait = func() { expired = true }
+			f.cmd.newTimeout = func(parent context.Context, d time.Duration) (context.Context, context.CancelFunc) {
+				if !expired {
+					return context.WithTimeout(parent, d)
+				}
+				ctx, cancel := context.WithCancel(parent)
+				cancel()
+				return ctx, cancel
+			}
+			if action == "drop" {
+				err = f.cmd.drop([]string{"worker"})
+			} else {
+				err = f.cmd.down([]string{"--yes"})
+			}
+			if err == nil || !strings.Contains(err.Error(), path) {
+				t.Fatalf("cleanup error does not name the lock: %v", err)
+			}
+			// The drop already unregistered its agent, so repeating it is refused;
+			// the advice must name a command that still disarms the timer.
+			if !strings.Contains(err.Error(), "gang down") || strings.Contains(err.Error(), "run this command again") {
+				t.Fatalf("cleanup error does not name a working retry: %v", err)
+			}
+			if s.armed == "" || s.stops != 0 {
+				t.Fatalf("timer changed without the lock: %+v", s)
+			}
+			data, err := os.ReadFile(f.run.team.Log)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if !strings.Contains(string(data), `"type":"watchdog_failed"`) {
+				t.Fatalf("lock timeout not logged: %s", data)
+			}
+			if err := syscall.Flock(int(lock.Fd()), syscall.LOCK_UN); err != nil {
+				t.Fatal(err)
+			}
+			// Running down again once the holder exits disarms the timer.
+			expired = false
+			f.cmd.schedulerLockWait = nil
+			if err := f.cmd.down([]string{"--yes"}); err != nil {
+				t.Fatal(err)
+			}
+			if s.armed != "" || s.stops != 1 {
+				t.Fatalf("retry did not disarm: %+v", s)
 			}
 		})
 	}
