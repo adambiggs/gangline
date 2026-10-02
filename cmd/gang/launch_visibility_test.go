@@ -111,21 +111,29 @@ func TestRosterShowsWhyAnAgentIsUnhealthy(t *testing.T) {
 
 // Startup observed by a tick ends the boot hold of the registered pane, and
 // an exit the hold kept fails the agent with its output. A pane id that now
-// names another pane is left alone and the record stays booting.
+// names another pane is left alone; the record stays booting until its boot
+// deadline fails it.
 func TestTickReleasesBootHoldAtReadiness(t *testing.T) {
+	replaced := fmt.Errorf("release exited pane: %w", tmux.ErrPaneReplaced)
 	for _, tc := range []struct {
-		name   string
-		exit   error
-		status core.Status
+		name    string
+		exit    error
+		expired bool
+		status  core.Status
 	}{
 		{name: "running", status: core.Active},
 		{name: "exited", exit: &substrate.ExitedError{Status: "1", Output: "Do you trust the files in this folder?\nNo, exit"}, status: core.Failed},
-		{name: "replaced", exit: fmt.Errorf("release exited pane: %w", tmux.ErrPaneReplaced), status: core.Booting},
+		{name: "replaced", exit: replaced, status: core.Booting},
+		{name: "replaced expired", exit: replaced, expired: true, status: core.Failed},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			f := newStateFixture(t)
+			deadline := f.cmd.now().Add(bootTimeout)
+			if tc.expired {
+				deadline = f.cmd.now()
+			}
 			a := f.setAgent(t, f.add(t, "a", "worker", "codex"), func(a *core.Agent) {
-				a.Status, a.Activity, a.BootDeadline = core.Booting, core.Unknown, f.cmd.now().Add(bootTimeout)
+				a.Status, a.Activity, a.BootDeadline = core.Booting, core.Unknown, deadline
 			})
 			f.input.releaseErr = tc.exit
 			if err := f.cmd.tick([]string{"--agent", "worker"}); !errors.Is(err, tmux.ErrPaneReplaced) && err != nil {
@@ -140,8 +148,14 @@ func TestTickReleasesBootHoldAtReadiness(t *testing.T) {
 			if f.input.released != paneIdentity(a) {
 				t.Fatalf("released %+v, want the registered pane %+v", f.input.released, paneIdentity(a))
 			}
-			if tc.status == core.Failed && got.Evidence != bootExit {
-				t.Fatalf("evidence = %q, want the native exit", got.Evidence)
+			if tc.status == core.Failed {
+				want := bootExit
+				if tc.expired {
+					want = tmux.ErrPaneReplaced.Error()
+				}
+				if got.Evidence != want || got.Pane != a.Pane {
+					t.Fatalf("record = %q pane %q, want %q with its pane kept", got.Evidence, got.Pane, want)
+				}
 			}
 		})
 	}

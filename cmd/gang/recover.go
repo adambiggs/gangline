@@ -10,6 +10,7 @@ import (
 	"github.com/adambiggs/gangline/harness"
 	"github.com/adambiggs/gangline/store"
 	"github.com/adambiggs/gangline/substrate"
+	"github.com/adambiggs/gangline/substrate/tmux"
 )
 
 func (run *runtime) tickAgent(id core.HitchID, notice hookNotice, wait bool) error {
@@ -124,6 +125,11 @@ func (run *runtime) tickAgent(id core.HitchID, notice hookNotice, wait bool) err
 			return err
 		}
 		if err := registry.ReleaseRegisteredExit(ctx, paneIdentity(a)); err != nil {
+			// A pane id that names another pane shows nothing of this agent's
+			// startup, so the boot deadline fails the agent.
+			if errors.Is(err, tmux.ErrPaneReplaced) && !a.BootDeadline.IsZero() && !run.cmd.now().Before(a.BootDeadline) {
+				return run.apply(l, &a, core.Event{Type: "hitch_failed", Reason: tmux.ErrPaneReplaced.Error()})
+			}
 			if !errors.As(err, &exited) {
 				return err
 			}
