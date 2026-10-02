@@ -97,10 +97,6 @@ func (cmd command) execute(args []string) error {
 		_, err := io.WriteString(cmd.stdout, welcomeHelp)
 		return err
 	}
-	if len(args) == 1 && (args[0] == "--version" || args[0] == "version") {
-		_, err := fmt.Fprintf(cmd.stdout, "gangline %s\n", version)
-		return err
-	}
 	if args[0] == "help" && len(args) > 1 && !strings.HasPrefix(args[1], "-") {
 		if _, ok := commandUsage[args[1]]; !ok {
 			return cmd.printHelp(args[1])
@@ -149,6 +145,12 @@ func (cmd command) execute(args []string) error {
 		}
 	}
 	switch name {
+	case "version", "--version":
+		if err := noArguments(arguments, "version"); err != nil {
+			return err
+		}
+		_, err := fmt.Fprintf(cmd.stdout, "gangline %s\n", version)
+		return err
 	case "up":
 		return cmd.up(arguments)
 	case "hitch":

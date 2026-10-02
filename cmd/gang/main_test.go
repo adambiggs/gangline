@@ -16,6 +16,8 @@ func TestVersionAndHelpDoNotLoadRuntimeConfiguration(t *testing.T) {
 		{args: []string{"help"}, want: "usage: gang <command>"},
 		{args: []string{"hitch", "--help"}, want: "usage: gang hitch NAME"},
 		{args: []string{"--version"}, want: "gangline dev"},
+		{args: []string{"version"}, want: "gangline dev"},
+		{args: []string{"version", "--help"}, want: "usage: gang version"},
 	} {
 		var stdout, stderr bytes.Buffer
 		status := run(test.args, strings.NewReader(""), &stdout, &stderr)
@@ -93,6 +95,8 @@ func TestOptionErrorsStateTheAcceptedForm(t *testing.T) {
 		{[]string{"collar", "check", "--bogus"}, `invalid collar name "--bogus" (expected lowercase letters, digits or '-', starting with a letter)`},
 		{[]string{"help", "bogus"}, `help: unknown command "bogus" (run 'gang help')`},
 		{[]string{"roster", "extra"}, "unexpected argument \"extra\""},
+		{[]string{"version", "x"}, `gang: version: unexpected argument "x"`},
+		{[]string{"--version", "x"}, `gang: version: unexpected argument "x"`},
 	} {
 		var stdout, stderr bytes.Buffer
 		status := run(test.args, strings.NewReader(""), &stdout, &stderr)
