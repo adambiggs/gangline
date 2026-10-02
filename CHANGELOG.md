@@ -1,5 +1,24 @@
 # Changelog
 
+## [1.12.4](https://github.com/adambiggs/gangline/compare/gangline-v1.12.3...gangline-v1.12.4) (2026-10-02)
+
+
+### Bug Fixes
+
+* **blocked:** bound a Claude Code view whose only rule is dim ([a1ccbf2](https://github.com/adambiggs/gangline/commit/a1ccbf23d716ebac416e1b9e5ef2e57aa4a6bca7))
+* **blocked:** detect a Claude Code question dialog ([9aa0bad](https://github.com/adambiggs/gangline/commit/9aa0bad283e05357747dc4a80ca5aa97f9159ef1))
+* **blocked:** let a Claude Code composer holding the cursor own input ([5c1baa4](https://github.com/adambiggs/gangline/commit/5c1baa4a79ccd930be9101e8279982807b8ac988))
+* **blocked:** read a Codex prompt only below the conversation ([7c87dcc](https://github.com/adambiggs/gangline/commit/7c87dccb58ec365ca2e886afc03dd709404c5eb5))
+* **drop:** finish teardown when the native exits before its identity is read ([acfa429](https://github.com/adambiggs/gangline/commit/acfa42907972e06569077b62b9f1d95625685076))
+* **startup:** detect the Codex hooks review list ([302817c](https://github.com/adambiggs/gangline/commit/302817c582be7f4818aa261c53e676d4705b36fa))
+* **startup:** detect the Codex per-event hooks review ([f80f568](https://github.com/adambiggs/gangline/commit/f80f568229ca2104fa452e39f440eb5d6b63b5c5))
+* **tmux:** read a pane root that exits during the macOS table read as gone ([0b8c2d5](https://github.com/adambiggs/gangline/commit/0b8c2d5e4186f6c173a755cffd53d1e5775bf85c))
+* **tmux:** report a pane process that vanished between reads as its exit ([251f745](https://github.com/adambiggs/gangline/commit/251f745991d68964611dacb211e774ce3c6c7e46))
+* **tmux:** report a reaped process as gone when opening its handle ([93628a0](https://github.com/adambiggs/gangline/commit/93628a0829e51e1c88df681a95a2223bb3df16b5))
+* **tmux:** report a tmux server that exits mid-witness by its own answer ([9726923](https://github.com/adambiggs/gangline/commit/972692355438a1ee9d098808c75a44c692f26b2c))
+* **tmux:** skip a recorded process reaped before it is pinned ([74f0aab](https://github.com/adambiggs/gangline/commit/74f0aab09a8431f21b5e977631b773a1782732e1))
+* **tmux:** take the recorded root when a pane process exits during acquisition ([3107921](https://github.com/adambiggs/gangline/commit/31079210fd9afe1dacd0d63f84dd604243d4f7fb))
+
 ## [1.12.3](https://github.com/adambiggs/gangline/compare/gangline-v1.12.2...gangline-v1.12.3) (2026-10-02)
 
 
