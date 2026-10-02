@@ -645,6 +645,9 @@ func (cmd command) drop(args []string) error {
 	}
 	defer lock.Close()
 	id, err := run.team.ResolveName(name)
+	if errors.Is(err, os.ErrNotExist) {
+		return refuseError("agent %q is not registered", name)
+	}
 	if err != nil {
 		return err
 	}

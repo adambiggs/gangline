@@ -25,7 +25,7 @@ there. `log` refuses `--team` together with a `LOG.jsonl` operand. `teams`, `col
 | `gang hitch NAME [OPTIONS]` | Launch an agent and deliver startup instructions and any task. |
 | `gang hitch NAME --recover` | Recover retained startup from its visible draft or a lone collapsed paste. |
 | `gang rename OLD NEW` | Change a registered name and window title. |
-| `gang drop NAME` | Stop an agent and fail its pending messages. |
+| `gang drop NAME` | Stop an agent and fail its pending messages. An unregistered `NAME` is refused. |
 | `gang down [-y, --yes]` | Confirm on a terminal (`[y/N]`, default no), then drop the selected team's agents and delete its runtime state and history. Use `--yes` without a terminal. |
 | `gang attach` | Attach to the selected team's tmux session. |
 | `gang teams` | List teams in the configured state root. |
