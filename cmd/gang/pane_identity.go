@@ -23,6 +23,7 @@ type paneRegistry interface {
 	ProcessVisibility(context.Context, substrate.PaneID) (bool, error)
 	VerifyCaller(context.Context, substrate.PaneID) error
 	SendRegisteredKeys(context.Context, tmux.PaneIdentity, string, substrate.Keys) error
+	ReleaseExit(context.Context, substrate.PaneID) error
 }
 
 func (run *runtime) registry() (paneRegistry, error) {

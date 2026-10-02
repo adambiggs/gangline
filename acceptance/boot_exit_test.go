@@ -1,6 +1,7 @@
 package acceptance
 
 import (
+	"io"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -73,12 +74,16 @@ exec tmux "$@"
 		capture string
 		// exits is false when the native CLI stays up and only startup fails.
 		exits bool
+		// blocked shows a startup prompt, and the native CLI exits only after
+		// the hitch returns.
+		blocked bool
 	}{
 		{name: "spawn", existing: true, exits: true},
 		{name: "create", exits: true},
 		{name: "exit-after-spawned", existing: true, capture: "exit", exits: true},
 		{name: "startup-error", existing: true, capture: "fail"},
 		{name: "exit-after-startup-error", existing: true, capture: "fail-exit", exits: true},
+		{name: "exit-at-blocked-startup", existing: true, exits: true, blocked: true},
 	} {
 		name, existing := tc.name, tc.existing
 		t.Run(name, func(t *testing.T) {
@@ -109,6 +114,12 @@ exec tmux "$@"
 				})
 				t.Cleanup(func() { bound.Stop() })
 				environment = append(environment, "GANGLINE_ACCEPTANCE_BOOT_EXIT_AFTER=boot-exit", "GANGLINE_ACCEPTANCE_EXIT_PIPE="+pipe)
+			} else if tc.blocked {
+				pipe := filepath.Join(team, "exit-pipe")
+				if err := syscall.Mkfifo(pipe, 0o600); err != nil {
+					t.Fatal(err)
+				}
+				environment = append(environment, "GANGLINE_ACCEPTANCE_BOOT_BLOCKED=1", "GANGLINE_ACCEPTANCE_BOOT_EXIT_AFTER=boot-exit", "GANGLINE_ACCEPTANCE_EXIT_PIPE="+pipe)
 			} else if tc.capture == "exit" {
 				environment = append(environment, "GANGLINE_ACCEPTANCE_BOOT_EXIT_AFTER=boot-exit")
 			} else {
@@ -131,6 +142,50 @@ exec tmux "$@"
 			out, err := gang("hitch", "worker")
 			if err == nil {
 				t.Fatalf("hitch succeeded:\n%s", out)
+			}
+			if tc.blocked {
+				if !strings.Contains(out, "resolve native prompts") {
+					t.Fatalf("hitch did not report the blocked startup:\n%s", out)
+				}
+				// The operator's answer ends the native CLI after the hitch
+				// returned; the pipe's EOF is the exit barrier.
+				exited := make(chan error, 1)
+				go func() {
+					pipe, err := os.Open(filepath.Join(team, "exit-pipe"))
+					if err != nil {
+						exited <- err
+						return
+					}
+					defer pipe.Close()
+					_, err = io.Copy(io.Discard, pipe)
+					exited <- err
+				}()
+				if out, err := runner.run("wait-for", "-S", "boot-exit"); err != nil {
+					t.Fatalf("answer startup prompt: %v %s", err, out)
+				}
+				select {
+				case err := <-exited:
+					if err != nil {
+						t.Fatalf("await native exit: %v", err)
+					}
+				case <-time.After(time.Minute):
+					t.Fatal("native CLI did not exit")
+				}
+				if out, err := runner.run("run-shell", "true"); err != nil {
+					t.Fatalf("reap native process: %v %s", err, out)
+				}
+				if out, err := gang("tick", "--agent", "worker"); err != nil {
+					t.Fatalf("tick after native exit: %v\n%s", err, out)
+				}
+				out, err := gang("roster")
+				if err != nil || !strings.Contains(out, "failed") || !strings.Contains(out, failure) {
+					t.Fatalf("roster lacks the native exit: %v\n%s", err, out)
+				}
+				log, err := gang("log", "--type", "hitch_failed")
+				if err != nil || !strings.Contains(log, failure) {
+					t.Fatalf("hitch_failed reason lacks the native output: %v\n%s", err, log)
+				}
+				return
 			}
 			if !tc.exits {
 				if !strings.Contains(out, "capture refused") {

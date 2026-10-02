@@ -51,6 +51,10 @@ is left to the native CLI, and `hitch` says why on stderr.
 If the native CLI exits before `hitch` returns, `hitch` fails
 with the pane's last lines and, when tmux collected one, the exit status. It
 records them as the agent's failure reason and closes the pane.
+A startup blocked on a native prompt keeps holding its pane after `hitch`
+returns, so an answer that ends the native CLI fails the agent at the next
+tick or roster with its last lines and exit status, and the pane stays until
+`drop`.
 `drop` reports an observed native resume session, or says it is unknown.
 When Codex asks to trust a hitch directory, startup stays queued. After
 choosing the native trust option, run `gang tick` to deliver the retained

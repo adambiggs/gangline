@@ -193,8 +193,11 @@ func (run *runtime) release(l *store.LockedAgent) error {
 }
 func (run *runtime) checkDeadlines(l *store.LockedAgent, a *core.Agent) error {
 	// Trust can appear after AwaitStartup returns. Observe it before an
-	// expired boot budget converts an operator-owned prompt into failure.
-	if a.Status == core.Booting && a.Pane != "" && !a.BootDeadline.IsZero() && !run.cmd.now().Before(a.BootDeadline) {
+	// expired boot budget converts an operator-owned prompt into failure. A
+	// blocked startup keeps its pane held, so an exit at the prompt is read
+	// here too.
+	expired := !a.BootDeadline.IsZero() && !run.cmd.now().Before(a.BootDeadline)
+	if a.Status == core.Booting && a.Pane != "" && (expired || a.Activity == core.Blocked) {
 		c, err := loadCollar(a.Collar, run.settings)
 		if err != nil {
 			return err
@@ -216,7 +219,7 @@ func (run *runtime) checkDeadlines(l *store.LockedAgent, a *core.Agent) error {
 			if checkErr != nil || !gone {
 				return errors.Join(err, checkErr)
 			}
-		} else {
+		} else if expired {
 			startup, err := harness.InspectStartup(c, screen)
 			if err != nil {
 				return err

@@ -331,10 +331,13 @@ func (cmd command) hitchWithStaleClaim(args []string, supersede bool) (result er
 		return fail(err, why)
 	}
 	// Hitch releases the hold on every path that keeps the pane, so a later
-	// exit closes it. The release outlives an expired boot context, and an exit
-	// it finds still fails the hitch.
+	// exit closes it, except a startup blocked on a prompt: an answer there
+	// can end the native process, and tick reads that exit from the held pane
+	// or releases it once startup is ready. The release outlives an expired
+	// boot context, and an exit it finds still fails the hitch.
+	blocked := false
 	defer func() {
-		if registered {
+		if registered && !blocked {
 			release, cancel := context.WithTimeout(context.Background(), operationTimeout)
 			defer cancel()
 			result = errors.Join(result, nativeExit(b.ReleaseExit(release, pane.ID)))
@@ -374,6 +377,7 @@ func (cmd command) hitchWithStaleClaim(args []string, supersede bool) (result er
 		if err := run.apply(l, &a, core.Event{Type: "hitch_blocked", Reason: startup.Prompt}); err != nil {
 			return err
 		}
+		blocked = true
 		if err := run.mark(a); err != nil {
 			return err
 		}

@@ -99,6 +99,9 @@ gang tick
 gang status worker --why
 ```
 
+If the answer ends the native CLI, `gang tick` fails the agent and
+`gang roster` shows the CLI's last lines.
+
 If startup input was pasted but could not be verified, run
 `gang hitch worker --recover`. It submits the original startup envelope when
 its exact text is visible. For a lone collapsed paste, it clears the composer,

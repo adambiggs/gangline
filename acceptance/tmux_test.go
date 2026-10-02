@@ -206,6 +206,10 @@ func runFakeHarness() int {
 
 func runCommandHarness() int {
 	if failure := os.Getenv("GANGLINE_ACCEPTANCE_BOOT_EXIT"); failure != "" {
+		if os.Getenv("GANGLINE_ACCEPTANCE_BOOT_BLOCKED") != "" {
+			// A startup prompt the operator answers by ending the native CLI.
+			fmt.Println("BLOCKED ALLOW")
+		}
 		if channel := os.Getenv("GANGLINE_ACCEPTANCE_BOOT_EXIT_AFTER"); channel != "" {
 			// Bounded so a hitch that never signals cannot hold the pane forever.
 			ctx, cancel := context.WithTimeout(context.Background(), time.Minute)

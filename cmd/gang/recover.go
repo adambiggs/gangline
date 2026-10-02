@@ -117,6 +117,21 @@ func (run *runtime) tickAgent(id core.HitchID, notice hookNotice, wait bool) err
 			}
 			return nil
 		}
+		// Startup is observed, so the pane stops holding a native exit. An
+		// exit it already holds ends the agent with that output.
+		registry, err := run.registry()
+		if err != nil {
+			return err
+		}
+		if err := registry.ReleaseExit(ctx, substrate.PaneID(a.Pane)); err != nil {
+			if !errors.As(err, &exited) {
+				return err
+			}
+			if err := run.apply(l, &a, core.Event{Type: "hitch_failed", Reason: exited.Error()}); err != nil {
+				return err
+			}
+			return run.mark(a)
+		}
 		if err := run.apply(l, &a, core.Event{Type: "hitch_ready"}); err != nil {
 			return err
 		}
