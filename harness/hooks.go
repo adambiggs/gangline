@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"strings"
+	"unicode/utf8"
 )
 
 type HookEvent struct {
@@ -68,15 +69,16 @@ func DecodeHook(collar Collar, data []byte) (HookEvent, error) {
 }
 
 // SubmittedPromptMatches compares the text Gangline sent with the prompt a
-// native submit hook observed. Claude Code wraps bracketed pastes in a
-// pasted_content element before exposing them to UserPromptSubmit; the wrapper
-// identifier is harness-owned, but the wrapped bytes remain authoritative.
+// native submit hook observed. Claude Code wraps a long bracketed paste in a
+// pasted_content element before exposing it to UserPromptSubmit; the wrapper
+// identifier is harness-owned, but the pasted bytes remain authoritative,
+// wrapped or not, apart from the escape described at consumePastedBody.
 func SubmittedPromptMatches(primitive Invocation, sent, witnessed string) (bool, error) {
 	switch primitive.Name {
 	case "exact-prompt":
 		return witnessed == sent, nil
 	case "claude-pasted-content":
-		if witnessed == sent {
+		if rest, ok := consumePastedBody(witnessed, sent); ok && rest == "" {
 			return true, nil
 		}
 		framed := witnessed
@@ -98,7 +100,8 @@ func SubmittedPromptMatches(primitive Invocation, sent, witnessed string) (bool,
 		if !strings.HasSuffix(wrapped, suffix) {
 			return false, nil
 		}
-		return strings.TrimSuffix(wrapped, suffix) == sent, nil
+		rest, ok := consumePastedBody(strings.TrimSuffix(wrapped, suffix), sent)
+		return ok && rest == "", nil
 	default:
 		return false, fmt.Errorf("unknown submit-witness primitive %q", primitive.Name)
 	}
@@ -130,10 +133,32 @@ func SubmittedPromptStartsWith(primitive Invocation, sent, witnessed string) (bo
 			return false, nil
 		}
 		suffix := "\n</pasted_content id=\"" + identifier + "\">"
-		return strings.HasPrefix(wrapped, sent+suffix+"\n"), nil
+		rest, ok := consumePastedBody(wrapped, sent)
+		return ok && strings.HasPrefix(rest, suffix+"\n"), nil
 	default:
 		return false, fmt.Errorf("unknown submit-witness primitive %q", primitive.Name)
 	}
+}
+
+// consumePastedBody matches sent against the start of pasted text as Claude
+// Code reports it and returns the rest. Claude Code escapes pasted text that
+// could read as its own wrapper tag, whether or not it wraps the paste: it
+// replaces the tag's opener, an ASCII '<' or a non-ASCII lookalike, with an
+// ASCII `<\`. That pair may stand for one such sent opener; every other
+// byte must match.
+func consumePastedBody(body, sent string) (string, bool) {
+	for sent != "" {
+		r, size := utf8.DecodeRuneInString(sent)
+		if strings.HasPrefix(body, `<\`) && !strings.HasPrefix(sent, `<\`) && (r == '<' || r >= utf8.RuneSelf) {
+			body, sent = body[2:], sent[size:]
+			continue
+		}
+		if !strings.HasPrefix(body, sent[:size]) {
+			return "", false
+		}
+		body, sent = body[size:], sent[size:]
+	}
+	return body, true
 }
 
 func normalizeEventName(name string) string {

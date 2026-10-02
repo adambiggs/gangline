@@ -1,6 +1,9 @@
 package harness
 
-import "testing"
+import (
+	"strings"
+	"testing"
+)
 
 func TestDecodeHookMapsNativeBoundaryAndPayload(t *testing.T) {
 	collar, err := EmbeddedCollar("codex")
@@ -54,6 +57,50 @@ func TestSubmittedPromptMatchesClaudePastedContent(t *testing.T) {
 		matched, err := SubmittedPromptMatches(Invocation{Name: "claude-pasted-content"}, sent, witness)
 		if err != nil || !matched {
 			t.Fatalf("matched = %v, err = %v for %q", matched, err, witness)
+		}
+	}
+}
+
+// Claude Code 2.1.287 delivered briefs that quoted its own wrapper tag with a
+// backslash after each '<' that opened one, in a long wrapped paste and in a
+// short unwrapped one; the rest of the text was unchanged.
+func TestSubmittedPromptMatchesClaudeEscapedWrapperTag(t *testing.T) {
+	sent := "[gang:lead#message-1] wrapped in `<pasted_content>` and </pasted_content> [/gang:lead#message-1]"
+	body := "[gang:lead#message-1] wrapped in `<\\pasted_content>` and <\\/pasted_content> [/gang:lead#message-1]"
+	witness := "\n\n<pasted_content id=\"0c3d\">\n" + body + "\n</pasted_content id=\"0c3d\">\n"
+	primitive := Invocation{Name: "claude-pasted-content"}
+	if matched, err := SubmittedPromptMatches(primitive, sent, witness); err != nil || !matched {
+		t.Fatalf("escaped tag: matched = %v, err = %v", matched, err)
+	}
+	if matched, err := SubmittedPromptMatches(primitive, sent, body); err != nil || !matched {
+		t.Fatalf("escaped tag without wrapper: matched = %v, err = %v", matched, err)
+	}
+	// A lookalike opener is replaced by the same ASCII escape.
+	lookalike := "[gang:lead#message-1] quoting ‹pasted_content› and ＜/pasted_content＞ [/gang:lead#message-1]"
+	escaped := "[gang:lead#message-1] quoting <\\pasted_content› and <\\/pasted_content＞ [/gang:lead#message-1]"
+	if matched, err := SubmittedPromptMatches(primitive, lookalike, escaped); err != nil || !matched {
+		t.Fatalf("escaped lookalike opener: matched = %v, err = %v", matched, err)
+	}
+	// Only an opener may become the escape; an ASCII letter or bracket may not.
+	for _, other := range []string{"(", "a"} {
+		changed := strings.Replace(sent, "`<pasted_content>`", "`"+other+"pasted_content>`", 1)
+		if matched, err := SubmittedPromptMatches(primitive, changed, body); err != nil || matched {
+			t.Fatalf("escape stood for %q: matched = %v, err = %v", other, matched, err)
+		}
+	}
+	if matched, err := SubmittedPromptStartsWith(primitive, sent, witness+"later input"); err != nil || !matched {
+		t.Fatalf("escaped tag with later input: matched = %v, err = %v", matched, err)
+	}
+	for _, altered := range []string{
+		strings.Replace(body, "<\\pasted", "\\<pasted", 1),
+		strings.Replace(body, "and <", "and <\\\\", 1),
+		strings.Replace(body, "<\\pasted_content>", "<\\\\pasted_content>", 1),
+		strings.Replace(body, " [/gang", "\\ [/gang", 1),
+	} {
+		for _, witness := range []string{"\n\n<pasted_content id=\"0c3d\">\n" + altered + "\n</pasted_content id=\"0c3d\">\n", altered} {
+			if matched, err := SubmittedPromptMatches(primitive, sent, witness); err != nil || matched {
+				t.Fatalf("altered text matched = %v, err = %v: %q", matched, err, witness)
+			}
 		}
 	}
 }
