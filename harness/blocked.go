@@ -43,7 +43,10 @@ func nativeInputLines(composer Invocation, screen substrate.Screen) ([]string, b
 		// mark its selected row with the composer's ›, so a readable composer
 		// owns input only while it holds the cursor.
 		composer, err := readCodexComposer(screen)
-		return lines, err == nil && composer.holdsCursor(screen), nil
+		if err == nil && composer.holdsCursor(screen) {
+			return nil, true, nil
+		}
+		return codexInputLines(lines), false, nil
 	case "claude-composer":
 		// Claude Code draws a native prompt below the last rule line, or over
 		// the whole screen when the prompt leaves no rule visible. A readable
@@ -66,6 +69,29 @@ func nativeInputLines(composer Invocation, screen substrate.Screen) ([]string, b
 	default:
 		return nil, false, fmt.Errorf("unknown composer primitive %q", composer.Name)
 	}
+}
+
+// codexInputLines returns the lines below the conversation. Codex heads each
+// agent history cell with • at the first column and draws a prompt or picker
+// after two blank lines, while one blank line separates paragraphs within a
+// cell. The region starts after the first two blank lines below the last cell
+// head; with no cell head or no such lines, every line can hold a prompt.
+func codexInputLines(lines []string) []string {
+	head := -1
+	for index, line := range lines {
+		if strings.HasPrefix(line, "• ") {
+			head = index
+		}
+	}
+	if head < 0 {
+		return lines
+	}
+	for index := head + 1; index+1 < len(lines); index++ {
+		if strings.TrimSpace(lines[index]) == "" && strings.TrimSpace(lines[index+1]) == "" {
+			return lines[index+2:]
+		}
+	}
+	return lines
 }
 
 func blockedPattern(invocation Invocation, name string) (*regexp.Regexp, error) {

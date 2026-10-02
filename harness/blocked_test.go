@@ -136,6 +136,26 @@ func TestBlockedIgnoresPatternTextInACodexDraft(t *testing.T) {
 	}
 }
 
+// Codex draws a numbered picker in place of its composer, below a reply that
+// quotes prompt and choice text. One blank line separates paragraphs within
+// a reply.
+func TestBlockedIgnoresPatternTextAboveACodexPicker(t *testing.T) {
+	collar, err := EmbeddedCollar("codex")
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, file := range []string{"codex-0.160.0-model-picker.txt", "codex-0.160.0-model-picker-paragraphs.txt"} {
+		t.Run(file, func(t *testing.T) {
+			screen := fixtureScreen(t, file)
+			screen.Cursor = substrate.Cursor{Row: 23, Column: 80}
+			blocked, found, err := InputBlocked(collar, screen)
+			if err != nil || found {
+				t.Fatalf("blocked = %#v, found = %t, err = %v", blocked, found, err)
+			}
+		})
+	}
+}
+
 // A rule line in the conversation, of the same width as the permission
 // dialog's border and followed by a ❯ line, opens a frame that the dialog's
 // border closes, so the screen reads as a composer.
