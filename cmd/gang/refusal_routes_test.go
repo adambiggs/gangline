@@ -1,6 +1,7 @@
 package main
 
 import (
+	"os"
 	"strings"
 	"testing"
 
@@ -58,5 +59,39 @@ func TestInactiveRefusalsNameARoute(t *testing.T) {
 	f.cmd.stdin = strings.NewReader("hello")
 	if err := f.cmd.send([]string{"worker", "--from", "operator", "--supersede"}); err == nil || err.Error() != "recipient is busy with an input operation; retry" {
 		t.Errorf("send to a locked recipient = %v", err)
+	}
+}
+
+func TestIdentityRefusalsNameARoute(t *testing.T) {
+	f := newStateFixture(t)
+	f.add(t, "a", "worker", "codex")
+	f.add(t, "b", "caller", "codex")
+	send := func() error {
+		f.cmd.stdin = strings.NewReader("hello")
+		return f.cmd.send([]string{"worker"})
+	}
+	for _, test := range []struct{ id, want string }{
+		{"../x", `hitch identity "../x" is not registered in team unit; re-hitch this agent, or unset GANG_AGENT_ID to act as the operator`},
+		{"c", `hitch identity "c" is not registered in team unit; re-hitch this agent, or unset GANG_AGENT_ID to act as the operator`},
+	} {
+		f.env["GANG_AGENT_ID"] = test.id
+		if err := send(); err == nil || err.Error() != test.want {
+			t.Errorf("send as %q = %v; want %q", test.id, err, test.want)
+		}
+	}
+	f.env["GANG_AGENT_ID"] = "b"
+	f.env["TMUX_PANE"] = "%99"
+	if err := send(); err == nil || err.Error() != "hitch identity caller is registered to pane %1, not this pane %99; run gang from its pane, or unset GANG_AGENT_ID to act as the operator" {
+		t.Errorf("send from another pane = %v", err)
+	}
+	p, err := f.run.team.Agent("b")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(p.State, []byte("{"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := send(); err == nil || !strings.HasPrefix(err.Error(), "hitch identity b cannot be read: decode ") {
+		t.Errorf("send from an undecodable identity = %v", err)
 	}
 }

@@ -347,7 +347,7 @@ func TestFailedIdentityLookupDoesNotPublish(t *testing.T) {
 	}
 	f.env["GANG_AGENT_ID"] = "missing"
 	f.cmd.stdin = strings.NewReader("send once")
-	if err := f.cmd.send([]string{"worker"}); err == nil || !strings.Contains(err.Error(), "hitch identity is not registered") {
+	if err := f.cmd.send([]string{"worker"}); err == nil || !strings.Contains(err.Error(), `hitch identity "missing" is not registered`) {
 		t.Fatalf("identity error = %v", err)
 	}
 	pending, err := p.ListNew()

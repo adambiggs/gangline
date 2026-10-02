@@ -47,13 +47,19 @@ func (run *runtime) observedSender() (core.Sender, error) {
 
 func (run *runtime) observedAgent() (*core.Agent, error) {
 	if id := core.HitchID(run.cmd.environment("GANG_AGENT_ID")); id != "" {
+		unregistered := refuseError("hitch identity %q is not registered in team %s; re-hitch this agent, or unset GANG_AGENT_ID to act as the operator", id, run.settings.Session)
 		p, err := run.team.Agent(id)
 		if err != nil {
-			return nil, refuseError("hitch identity is not registered")
+			return nil, unregistered
 		}
 		a, err := p.Read()
+		if errors.Is(err, os.ErrNotExist) {
+			return nil, unregistered
+		}
 		if err != nil {
-			return nil, refuseError("hitch identity is not registered: %v", err)
+			// An unreadable record fails every command that reads the team,
+			// so no gang command is a route out of it.
+			return nil, refuseError("hitch identity %s cannot be read: %v", id, err)
 		}
 		if a.Pane == "" {
 			return nil, refuseError("hitch identity %s has no registered pane; re-hitch this agent", a.Name)
@@ -62,7 +68,7 @@ func (run *runtime) observedAgent() (*core.Agent, error) {
 			return nil, refuseError("hitch identity %s is %s, not active; re-hitch this agent", a.Name, a.Status)
 		}
 		if pane := run.cmd.environment("TMUX_PANE"); pane != "" && pane != a.Pane {
-			return nil, refuseError("hitch identity does not match the current pane")
+			return nil, refuseError("hitch identity %s is registered to pane %s, not this pane %s; run gang from its pane, or unset GANG_AGENT_ID to act as the operator", a.Name, a.Pane, pane)
 		}
 		if err := run.verifyCaller(a); err != nil {
 			return nil, err
