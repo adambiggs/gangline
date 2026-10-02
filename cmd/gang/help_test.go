@@ -5,6 +5,7 @@ import (
 	"reflect"
 	"strings"
 	"testing"
+	"unicode/utf8"
 )
 
 func helpOptionCounts(output string) map[string]int {
@@ -229,5 +230,27 @@ func TestUpRecoverUsesHitchRecoveryArguments(t *testing.T) {
 		if err != nil || !options.Recover {
 			t.Errorf("%s: arguments=%v options=%+v err=%v", recoverFlag, arguments, options, err)
 		}
+	}
+}
+
+const helpWidthLimit = 78
+
+func TestHelpFitsWidth(t *testing.T) {
+	check := func(label string, args []string) {
+		var stdout, stderr bytes.Buffer
+		run(args, strings.NewReader(""), &stdout, &stderr)
+		for _, out := range []string{stdout.String(), stderr.String()} {
+			for _, line := range strings.Split(out, "\n") {
+				if width := utf8.RuneCountInString(line); width > helpWidthLimit {
+					t.Errorf("%s: %d columns, limit %d: %q", label, width, helpWidthLimit, line)
+				}
+			}
+		}
+	}
+	check("bare", nil)
+	check("--help", []string{"--help"})
+	for name := range commandUsage {
+		check("help "+name, []string{"help", name})
+		check(name+" --help", []string{name, "--help"})
 	}
 }
