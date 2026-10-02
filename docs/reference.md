@@ -341,7 +341,8 @@ finish hook closes the turn. A queued turn's finish also clears a native turn
 failure when the transcript records the queued prompt after the failed one. A
 queued turn's failure is recorded against the queued prompt's id when the
 transcript records that prompt after the witnessed one, and a later submit
-clears it.
+clears it. A failure with no prompt id clears when the witnessed turn, or a
+turn the transcript records after it, finishes.
 A wake typed while a turn runs is judged by the turn the transcript records
 running it, under the prompt id of the wake or of any prompt dequeued into
 that turn with it. No finish hook judges the wake while it waits in the

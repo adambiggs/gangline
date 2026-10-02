@@ -332,10 +332,14 @@ func (run *runtime) reconcileNativeBoundary(l *store.LockedAgent, a *core.Agent,
 		if err := l.Save(*a); err != nil {
 			return err
 		}
-	} else if notice.Kind == "turn-finished" && a.Native.TurnFailure != "" && a.Native.FailedTurn == "" && notice.TurnID != "" && witnessErr == nil && notice.TurnID == witness.TurnID {
-		a.Native.TurnFailure = ""
-		if err := l.Save(*a); err != nil {
-			return err
+	} else if notice.Kind == "turn-finished" && a.Native.TurnFailure != "" && a.Native.FailedTurn == "" && notice.TurnID != "" && witnessErr == nil {
+		// The witnessed turn's finish, or that of a turn the transcript
+		// shows ran from the queue after it, is a success after the failure.
+		if queuedAfter, _ := harness.TurnRanAfter(c.Primitives.TurnBoundary, transcript, witness.TurnID, notice.TurnID); notice.TurnID == witness.TurnID || queuedAfter {
+			a.Native.TurnFailure = ""
+			if err := l.Save(*a); err != nil {
+				return err
+			}
 		}
 	} else if notice.Kind == "turn-finished" && a.Native.FailedTurn != "" {
 		// A turn that ran from the queue fires no submit hook, so only the

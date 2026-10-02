@@ -426,9 +426,11 @@ func TestWakeQueuedBehindARunningTurnIsJudgedByItsOwnTurn(t *testing.T) {
 			{"p2", "wake", "", "", hookNotice{Kind: "turn-failed", TurnID: "p2", Failure: "Login expired"}, "snooze_failed queued-wake"},
 			{"p3", "later", "", "", hookNotice{Kind: "turn-finished", TurnID: "p3"}, "snooze_failed queued-wake"},
 		}},
+		// A failure with no prompt id belongs to no turn, and the wake's own
+		// finish after it clears it, as the witnessed turn's finish does.
 		{"unattributed failure", false, false, false, []step{
 			{"p2", "wake", "", "", hookNotice{Kind: "turn-failed", Failure: "Login expired"}, ""},
-			{"", "", "", "", hookNotice{Kind: "turn-finished", TurnID: "p2"}, "snooze_failed queued-wake"},
+			{"", "", "", "", hookNotice{Kind: "turn-finished", TurnID: "p2"}, "snooze_completed queued-wake"},
 		}},
 		{"prompt queued ahead", false, false, true, []step{
 			{"p2", "ahead", "", "", hookNotice{Kind: "turn-finished", TurnID: "p2"}, ""},

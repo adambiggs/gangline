@@ -275,6 +275,47 @@ func TestQueuedTurnFailureRecordedAgainstQueuedTurn(t *testing.T) {
 	}
 }
 
+// A failure with no prompt id cannot be tied to a turn, so only a finish
+// after it clears it. A queued turn's finish carries an id no submit hook
+// announced; the transcript ordering that turn after the witnessed one makes
+// it a later turn's success, and a finish ordered before it does not.
+func TestUnidentifiedFailureClearedByQueuedTurnFinish(t *testing.T) {
+	f, a, call := nativeFailureFixture(t)
+	transcript := filepath.Join(t.TempDir(), "transcript.jsonl")
+	appendLines(t, transcript,
+		`{"type":"user","promptId":"old","timestamp":"2026-10-02T09:12:00Z"}`,
+		`{"type":"user","promptId":"running","timestamp":"2026-10-02T09:12:42Z"}`,
+		`{"type":"queue-operation","operation":"enqueue","timestamp":"2026-10-02T09:12:43Z","content":"next"}`)
+	call(map[string]string{"hook_event_name": "UserPromptSubmit", "session_id": "s", "prompt_id": "running", "prompt": "first", "transcript_path": transcript})
+	call(map[string]string{"hook_event_name": "UserPromptSubmit", "session_id": "s", "prompt_id": "running", "prompt": "next", "transcript_path": transcript})
+	appendLines(t, transcript,
+		`{"type":"queue-operation","operation":"dequeue","timestamp":"2026-10-02T09:13:22Z"}`,
+		`{"type":"user","promptId":"queued","timestamp":"2026-10-02T09:13:23Z"}`)
+	if err := f.run.tickAgent(a.ID, call(map[string]string{"hook_event_name": "Stop", "session_id": "s", "prompt_id": "running", "transcript_path": transcript}), true); err != nil {
+		t.Fatal(err)
+	}
+	failure := call(map[string]string{"hook_event_name": "StopFailure", "session_id": "s", "error": "unknown", "transcript_path": transcript})
+	if err := f.run.tickAgent(a.ID, failure, true); err != nil {
+		t.Fatal(err)
+	}
+	stale := call(map[string]string{"hook_event_name": "Stop", "session_id": "s", "prompt_id": "old", "transcript_path": transcript})
+	if err := f.run.tickAgent(a.ID, stale, true); err != nil {
+		t.Fatal(err)
+	}
+	got := readAgent(t, f, a.ID)
+	if got.Native.TurnFailure != "native failure without turn identity: unknown" || got.Activity != core.Unknown {
+		t.Fatalf("an earlier turn's finish cleared the failure: activity=%s native=%+v", got.Activity, got.Native)
+	}
+	success := call(map[string]string{"hook_event_name": "Stop", "session_id": "s", "prompt_id": "queued", "transcript_path": transcript})
+	if err := f.run.tickAgent(a.ID, success, true); err != nil {
+		t.Fatal(err)
+	}
+	got = readAgent(t, f, a.ID)
+	if got.Native.TurnFailure != "" || got.Activity != core.Idle {
+		t.Fatalf("queued turn's finish left the failure: activity=%s native=%+v", got.Activity, got.Native)
+	}
+}
+
 // Async finish hooks are not processed in the order they fired, so a turn's
 // Stop can arrive after a later turn's failure. The transcript orders the two
 // prompts, and an earlier turn's finish leaves the failure in place.
