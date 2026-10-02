@@ -72,6 +72,34 @@ func TestQueuedTurnPending(t *testing.T) {
 	}
 }
 
+func TestTurnRanAfter(t *testing.T) {
+	// A turn writes many user records, tool results among them, and Claude
+	// Code writes them out of time order; the first record dates the prompt.
+	transcript := claudeTranscript(t, "0 user p1", "1 queue enqueue", "4 user p2", "3.5 user p2", "4.5 user p1", "5 user p0")
+	for _, test := range []struct {
+		earlier, later string
+		want           bool
+	}{
+		{"p1", "p2", true},
+		{"p2", "p1", false},
+		{"p1", "p1", false},
+		{"p2", "p0", true},
+		{"p1", "missing", false},
+		{"missing", "p2", false},
+	} {
+		got, err := TurnRanAfter(claudeQueuedTurns, transcript, test.earlier, test.later)
+		if err != nil || got != test.want {
+			t.Fatalf("%s before %s = %v err=%v, want %v", test.earlier, test.later, got, err, test.want)
+		}
+	}
+	if got, err := TurnRanAfter(Invocation{Name: "hook-boundary"}, transcript, "p1", "p2"); err != nil || got {
+		t.Fatalf("ordered=%v err=%v without queued_turns", got, err)
+	}
+	if _, err := TurnRanAfter(claudeQueuedTurns, filepath.Join(t.TempDir(), "missing.jsonl"), "p1", "p2"); err == nil {
+		t.Fatal("missing transcript read as unordered")
+	}
+}
+
 func TestQueuedTurnPendingReadsOnlyWhenTheCollarAsks(t *testing.T) {
 	transcript := claudeTranscript(t, "0 user p1", "1 queue enqueue")
 	if got, err := QueuedTurnPending(Invocation{Name: "hook-boundary"}, transcript, "p1"); err != nil || got {

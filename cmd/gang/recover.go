@@ -288,12 +288,12 @@ func (run *runtime) reconcileNativeBoundary(l *store.LockedAgent, a *core.Agent,
 	}
 	// A prompt queued behind the finished turn runs next with no submit hook,
 	// so the turn stays open for it. An unreadable queue closes the turn.
+	transcript := notice.Transcript
+	if transcript == "" {
+		transcript = a.Native.Transcript
+	}
 	queued := false
 	if notice.Kind == "turn-finished" {
-		transcript := notice.Transcript
-		if transcript == "" {
-			transcript = a.Native.Transcript
-		}
 		queued, _ = harness.QueuedTurnPending(c.Primitives.TurnBoundary, transcript, notice.TurnID)
 	}
 	if (notice.Kind == "turn-finished" || notice.Kind == "turn-failed") && !queued {
@@ -331,6 +331,16 @@ func (run *runtime) reconcileNativeBoundary(l *store.LockedAgent, a *core.Agent,
 		a.Native.TurnFailure = ""
 		if err := l.Save(*a); err != nil {
 			return false, err
+		}
+	} else if notice.Kind == "turn-finished" && a.Native.FailedTurn != "" {
+		// A turn that ran from the queue fires no submit hook, so only the
+		// transcript shows it started after the failed turn. A finish that
+		// the transcript cannot order may be a stale hook from an older turn.
+		if after, _ := harness.TurnRanAfter(c.Primitives.TurnBoundary, transcript, a.Native.FailedTurn, notice.TurnID); after {
+			a.Native.TurnFailure, a.Native.FailedTurn = "", ""
+			if err := l.Save(*a); err != nil {
+				return false, err
+			}
 		}
 	}
 	return queued, nil

@@ -329,7 +329,8 @@ own turn, with no submit hook, once that turn ends. When the turn boundary
 sets `queued_turns: "claude-transcript"`, a finish hook leaves the turn open
 while the Claude Code transcript still holds a queued prompt or records one
 leaving the queue for the next turn. If the transcript cannot be read, the
-finish hook closes the turn.
+finish hook closes the turn. A queued turn's finish also clears a native turn
+failure when the transcript records the queued prompt after the failed one.
 
 Each context band has a `name`, threshold `at` (a fraction from 0 to 1), and
 optional `message`. A nonfinal band without a message advises saving state and

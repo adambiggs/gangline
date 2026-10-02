@@ -72,6 +72,30 @@ func QueuedTurnPending(invocation Invocation, transcript, turnID string) (bool, 
 	return queued > 0 || (!turnSeen.IsZero() && dequeued.After(turnSeen)), nil
 }
 
+// TurnRanAfter reports whether the transcript records prompt later after
+// prompt earlier. A queued prompt's turn fires no submit hook, so its finish
+// hook carries a prompt id the witness never saw; only the transcript orders
+// it against the turns before it. An id the transcript does not hold orders
+// nothing.
+func TurnRanAfter(invocation Invocation, transcript, earlier, later string) (bool, error) {
+	source, err := queuedTurnSource(invocation)
+	if err != nil || source == "" || transcript == "" {
+		return false, err
+	}
+	records, err := claudeQueueRecords(transcript)
+	if err != nil {
+		return false, err
+	}
+	first := map[string]time.Time{}
+	for _, r := range records {
+		if _, seen := first[r.PromptID]; r.Type == "user" && r.PromptID != "" && !seen {
+			first[r.PromptID] = r.Timestamp
+		}
+	}
+	earlierAt, seen := first[earlier]
+	return seen && first[later].After(earlierAt), nil
+}
+
 type claudeQueueRecord struct {
 	Type      string    `json:"type"`
 	Subtype   string    `json:"subtype"`
