@@ -161,3 +161,16 @@ func TestSnoozeRefusesPastePlaceholderInNote(t *testing.T) {
 		t.Fatalf("refused snooze recorded: %s", id)
 	}
 }
+
+// A wake goes to the lead when its caller is gone, and the lead may run any
+// harness, so a Codex caller's note is held to Claude Code's rule too.
+func TestSnoozeRefusesPastePlaceholderForAnyHarness(t *testing.T) {
+	f := newStateFixture(t)
+	a := f.add(t, "a", "worker", "codex")
+	f.env["GANG_AGENT_ID"] = string(a.ID)
+	f.env["TMUX_PANE"] = a.Pane
+	requirePlaceholderRefusal(t, f.cmd.snooze([]string{"--at", "2h", "--note", placeholderQuote}))
+	if id := usageSnapshot(t, f.run).Snoozes[string(a.ID)].ID; id != "" {
+		t.Fatalf("refused snooze recorded: %s", id)
+	}
+}

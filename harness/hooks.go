@@ -153,6 +153,20 @@ func PasteHazard(primitive Invocation, text string) (string, error) {
 	}
 }
 
+// submitWitnessPrimitives names every submit-witness primitive a collar may use.
+var submitWitnessPrimitives = []string{"exact-prompt", "claude-pasted-content"}
+
+// AnyPasteHazard returns why text cannot be typed unchanged into every
+// harness, for text whose recipient is chosen only when it is delivered.
+func AnyPasteHazard(text string) (string, error) {
+	for _, name := range submitWitnessPrimitives {
+		if reason, err := PasteHazard(Invocation{Name: name}, text); err != nil || reason != "" {
+			return reason, err
+		}
+	}
+	return "", nil
+}
+
 // SubmittedPromptStartsWith accepts a continuation followed by native-merged
 // steers. A newline is the boundary Codex inserts between submitted messages.
 func SubmittedPromptStartsWith(primitive Invocation, sent, witnessed string) (bool, error) {

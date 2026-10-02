@@ -364,12 +364,11 @@ func (cmd command) snooze(args []string) error {
 	if strings.TrimSpace(note) == "" {
 		note = defaultSnoozeNote
 	}
-	c, err := loadCollar(a.Collar, run.settings)
-	if err != nil {
+	// An overdue wake goes to the lead when the caller is gone.
+	if reason, err := harness.AnyPasteHazard(note); err != nil {
 		return err
-	}
-	if err := refusePasteHazard(c, note); err != nil {
-		return err
+	} else if reason != "" {
+		return refuseError("%s", reason)
 	}
 	id, err := randomID("snooze")
 	if err != nil {

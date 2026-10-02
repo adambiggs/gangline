@@ -260,7 +260,7 @@ func validateCollar(collar Collar) error {
 		{"model catalog", collar.Models.Catalog, []string{"claude-help-models", "codex-debug-models"}},
 		{"composer", collar.Primitives.Composer, []string{"claude-composer", "codex-composer"}},
 		{"submit", collar.Primitives.Submit, []string{"enter-submit"}},
-		{"submit witness", collar.Primitives.SubmitWitness, []string{"exact-prompt", "claude-pasted-content"}},
+		{"submit witness", collar.Primitives.SubmitWitness, submitWitnessPrimitives},
 		{"turn boundary", collar.Primitives.TurnBoundary, []string{"hook-boundary"}},
 		{"blocked", collar.Primitives.Blocked, []string{"screen-blocked"}},
 		{"context", collar.Primitives.Context, []string{"claude-screen-context", "codex-screen-context"}},

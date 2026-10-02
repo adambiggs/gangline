@@ -131,12 +131,13 @@ A send prints the message ID and `delivered`, `accepted`, `queued`, or
 Oversized rendered messages are refused without splitting; put details in a
 file and send its path.
 For a Claude Code recipient, a message, hitch task, `compact --resume` note,
-`interrupt -m` reason, or `snooze --note` that contains one of Claude Code's
+or `interrupt -m` reason that contains one of Claude Code's
 numbered placeholders in brackets, for pasted text, an image, or truncated
 text, is refused: Claude Code can replace that token with the content of an
 earlier paste, so the prompt it submits is no longer the message. Describe the
-placeholder in words. A snooze note is checked against the snoozing agent's
-harness. A queued message that still carries one fails before it is typed.
+placeholder in words. A `snooze --note` that contains one is refused whatever
+the snoozing agent's harness, since an overdue wake whose caller is gone goes
+to the lead. A queued message that still carries one fails before it is typed.
 `--source watchdog --watchdog UNIT` is the internal watchdog invocation.
 
 ## Inspect
