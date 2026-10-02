@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"regexp"
 	"strings"
 	"time"
 	"unicode/utf8"
@@ -123,6 +124,30 @@ func SubmittedPromptMatches(primitive Invocation, sent, witnessed string) (bool,
 		return ok && rest == "", nil
 	default:
 		return false, fmt.Errorf("unknown submit-witness primitive %q", primitive.Name)
+	}
+}
+
+// pastePlaceholder is the shape of Claude Code's placeholder for a collapsed
+// paste: a bracketed label, a hash, the paste number, and an optional line
+// count.
+var pastePlaceholder = regexp.MustCompile(`\[Pasted text #[0-9]+[^\]]*\]`)
+
+// PasteHazard returns why text cannot be typed into a harness unchanged.
+// Claude Code replaces a placeholder-shaped token with the text of a live
+// earlier paste carrying that number, and a paste stays live after its
+// composer is cleared. Gangline cannot see which numbers are live, so every
+// such token is refused.
+func PasteHazard(primitive Invocation, text string) (string, error) {
+	switch primitive.Name {
+	case "exact-prompt":
+		return "", nil
+	case "claude-pasted-content":
+		if pastePlaceholder.MatchString(text) {
+			return "text contains a bracketed paste placeholder with a number; Claude Code can replace it with the text of an earlier paste, so describe it in words", nil
+		}
+		return "", nil
+	default:
+		return "", fmt.Errorf("unknown submit-witness primitive %q", primitive.Name)
 	}
 }
 

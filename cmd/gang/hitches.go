@@ -125,7 +125,11 @@ func (cmd command) hitchWithStaleClaim(args []string, supersede bool) (result er
 	if c.Options.RolePrompt == nil {
 		e.Startup = startupSections(o.Name, brief)
 	}
-	if _, err := envelopeText(e); err != nil {
+	wire, err := envelopeText(e)
+	if err != nil {
+		return err
+	}
+	if err := refusePasteHazard(c, wire); err != nil {
 		return err
 	}
 	exe, err := os.Executable()

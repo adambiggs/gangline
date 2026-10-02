@@ -120,6 +120,12 @@ A send prints the message ID and `delivered`, `accepted`, `queued`, or
 `unverified`. See [message receipts](concepts.md#messages-and-envelopes).
 Oversized rendered messages are refused without splitting; put details in a
 file and send its path.
+For a Claude Code recipient, a message, hitch task, `compact --resume` note,
+or `interrupt -m` reason that contains a bracketed paste placeholder with a
+number is refused: Claude Code can replace that token with the text of an
+earlier paste, so the prompt it submits is no longer the message. Describe the
+placeholder in words. A queued message that still carries one fails before it
+is typed.
 `--source watchdog --watchdog UNIT` is the internal watchdog invocation.
 
 ## Inspect

@@ -215,6 +215,9 @@ func (cmd command) send(args []string) (result error) {
 	if err != nil {
 		return err
 	}
+	if err := refusePasteHazard(c, e.Message.Text); err != nil {
+		return err
+	}
 	if err := requireHarnessForeground(context.Background(), b, substrate.PaneID(a.Pane), c); err != nil {
 		return err
 	}
@@ -472,6 +475,9 @@ func (cmd command) interrupt(args []string) (result error) {
 	if err != nil {
 		return err
 	}
+	if err := refusePasteHazard(c, reason); err != nil {
+		return err
+	}
 	b = run.registeredInput(a, b)
 	if err := run.apply(l, &a, core.Event{Type: "interrupt_requested", Deadline: cmd.now().Add(operationTimeout)}); err != nil {
 		return err
@@ -558,6 +564,9 @@ func (cmd command) compact(args []string) (result error) {
 		if resumeFrom.Kind == "" {
 			resumeFrom = core.Sender{Kind: core.SenderSelfDeclared, Name: "compact"}
 		}
+	}
+	if err := refusePasteHazard(c, o.Resume); err != nil {
+		return err
 	}
 	resume := o.Resume
 	if resume == "" {

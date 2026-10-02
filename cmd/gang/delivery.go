@@ -38,6 +38,20 @@ func sendHarnessKeys(ctx context.Context, b harnessInput, pane substrate.PaneID,
 	}
 	return b.SendKeys(ctx, pane, keys)
 }
+
+// refusePasteHazard refuses text that the recipient's harness could rewrite
+// before submitting it.
+func refusePasteHazard(c harness.Collar, text string) error {
+	reason, err := harness.PasteHazard(c.Primitives.SubmitWitness, text)
+	if err != nil {
+		return err
+	}
+	if reason != "" {
+		return refuseError("%s", reason)
+	}
+	return nil
+}
+
 func startupPasteSafe(input substrate.Keys, wire string) bool {
 	return !input.Submit && len(input.Names) == 0 && input.Text == "\x1b[200~"+wire+"\x1b[201~"
 }
@@ -218,6 +232,15 @@ func (run *runtime) deliver(l *store.LockedAgent, a *core.Agent, e core.Envelope
 	}
 	if err := run.apply(l, a, core.Event{Type: "input_started", ID: string(e.ID), Status: "envelope"}); err != nil {
 		return "", err
+	}
+	if reason, err := harness.PasteHazard(c.Primitives.SubmitWitness, wire); err != nil || reason != "" {
+		if err != nil {
+			reason = err.Error()
+		}
+		if err := run.finishInput(l, a, e, "failed", reason); err != nil {
+			return "failed", err
+		}
+		return "failed", run.mark(*a)
 	}
 	if isStartupEnvelope(e) && startupPasteSafe(input, wire) {
 		e.PasteOnly = &core.StartupPaste{WitnessID: old.ID}
