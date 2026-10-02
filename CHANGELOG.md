@@ -1,5 +1,17 @@
 # Changelog
 
+## [1.12.5](https://github.com/adambiggs/gangline/compare/gangline-v1.12.4...gangline-v1.12.5) (2026-10-02)
+
+
+### Bug Fixes
+
+* **activity:** keep a turn open while Claude Code holds a queued prompt ([f1f83e0](https://github.com/adambiggs/gangline/commit/f1f83e0a2d419eac1c7e34adf9c7535c53825de3))
+* **cli:** resolve --version before help and usage errors read the command ([7b7553f](https://github.com/adambiggs/gangline/commit/7b7553f6cc67a4d5103303702e590cbc186f991f))
+* **compact:** refuse a locked agent with the retry ([db0ec90](https://github.com/adambiggs/gangline/commit/db0ec90085fa03ba5213aaaf52709a904d9a4006))
+* **compact:** refuse while an unverified compaction still holds its note ([4e66276](https://github.com/adambiggs/gangline/commit/4e66276c07ed75e28e9abf50e47b3815357c97cb))
+* **delivery:** tell the sender when a held message is not delivered ([72b5521](https://github.com/adambiggs/gangline/commit/72b55219fc19820ed37fcba55d23dc95bb2a9c01))
+* **snooze:** judge a wake queued behind a running turn by its own turn ([e871140](https://github.com/adambiggs/gangline/commit/e8711408ebeb905ad66ce694c0bf0c1f440da87d))
+
 ## [1.12.4](https://github.com/adambiggs/gangline/compare/gangline-v1.12.3...gangline-v1.12.4) (2026-10-02)
 
 
