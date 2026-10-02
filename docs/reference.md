@@ -316,6 +316,13 @@ unchanged for that long. A turn that ends without its hook, as after a
 keyboard Escape, reads busy for that window; a shorter window lets a pause
 in streamed text read as idle.
 
+A harness can also queue a prompt typed while a turn runs and start it as its
+own turn, with no submit hook, once that turn ends. When the turn boundary
+sets `queued_turns: "claude-transcript"`, a finish hook leaves the turn open
+while the Claude Code transcript still holds a queued prompt or records one
+leaving the queue for the next turn. If the transcript cannot be read, the
+finish hook closes the turn.
+
 Each context band has a `name`, threshold `at` (a fraction from 0 to 1), and
 optional `message`. A nonfinal band without a message advises saving state and
 compacting at the next good stopping point; the last orders compaction now.

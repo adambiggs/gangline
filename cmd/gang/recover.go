@@ -63,11 +63,11 @@ func (run *runtime) tickAgent(id core.HitchID, notice hookNotice, wait bool) err
 	if a.Pane == "" {
 		return nil
 	}
-	if err := run.reconcileNativeBoundary(l, &a, notice); err != nil {
-		return err
-	}
 	c, err := loadCollar(a.Collar, run.settings)
 	if err != nil {
+		return err
+	}
+	if err := run.reconcileNativeBoundary(l, &a, c, notice); err != nil {
 		return err
 	}
 	b, err := run.input()
@@ -246,7 +246,7 @@ func (run *runtime) tickAgent(id core.HitchID, notice hookNotice, wait bool) err
 	_, err = run.drainFrom(l, a, "")
 	return err
 }
-func (run *runtime) reconcileNativeBoundary(l *store.LockedAgent, a *core.Agent, notice hookNotice) error {
+func (run *runtime) reconcileNativeBoundary(l *store.LockedAgent, a *core.Agent, c harness.Collar, notice hookNotice) error {
 	witness, witnessErr := l.Paths.ReadWitness()
 	if run.afterWitnessRead != nil {
 		run.afterWitnessRead()
@@ -281,7 +281,17 @@ func (run *runtime) reconcileNativeBoundary(l *store.LockedAgent, a *core.Agent,
 	if a.Native.Transcript == "" {
 		a.Native.Transcript = notice.Transcript
 	}
-	if notice.Kind == "turn-finished" || notice.Kind == "turn-failed" {
+	// A prompt queued behind the finished turn runs next with no submit hook,
+	// so the turn stays open for it. An unreadable queue closes the turn.
+	queued := false
+	if notice.Kind == "turn-finished" {
+		transcript := notice.Transcript
+		if transcript == "" {
+			transcript = a.Native.Transcript
+		}
+		queued, _ = harness.QueuedTurnPending(c.Primitives.TurnBoundary, transcript, notice.TurnID)
+	}
+	if (notice.Kind == "turn-finished" || notice.Kind == "turn-failed") && !queued {
 		// Gang records its own delivery after the submit hook ran, so the
 		// witnessed prompt's boundary closes the turn even when it ran first.
 		finished := notice.At

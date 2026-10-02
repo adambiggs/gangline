@@ -2,6 +2,7 @@ package main
 
 import (
 	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 	"time"
@@ -98,6 +99,40 @@ func TestBoundaryForWitnessedPromptClosesTurnRecordedLater(t *testing.T) {
 	got := f.tickAt(t, a, start.Add(time.Second), hookNotice{Kind: "turn-finished", TurnID: "p1", At: start.Add(50 * time.Millisecond)})
 	if got.Activity != core.Idle {
 		t.Fatalf("finished turn read %s: %s", got.Activity, got.Evidence)
+	}
+}
+
+// Claude Code answers a prompt typed mid-turn with the running turn's submit
+// hook and starts it as its own turn, with no submit hook, once that turn's
+// Stop has run. The transcript's queue records are the only sign of it.
+func TestQueuedPromptKeepsTurnOpenPastItsPredecessor(t *testing.T) {
+	f, a, start := openTurnFixture(t)
+	stamp := func(d time.Duration) string { return start.Add(d).UTC().Format(time.RFC3339Nano) }
+	transcript := filepath.Join(t.TempDir(), "transcript.jsonl")
+	write := func(lines ...string) {
+		file, err := os.OpenFile(transcript, os.O_CREATE|os.O_APPEND|os.O_WRONLY, 0o600)
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer file.Close()
+		for _, line := range lines {
+			if _, err := file.WriteString(line + "\n"); err != nil {
+				t.Fatal(err)
+			}
+		}
+	}
+	write(`{"type":"user","promptId":"p1","timestamp":"`+stamp(0)+`"}`,
+		`{"type":"queue-operation","operation":"enqueue","timestamp":"`+stamp(time.Second)+`","content":"next"}`)
+	got := f.tickAt(t, a, start.Add(3*time.Second), hookNotice{Kind: "turn-finished", TurnID: "p1", Transcript: transcript})
+	if got.Activity != core.Busy {
+		t.Fatalf("queued turn read %s: %s", got.Activity, got.Evidence)
+	}
+	write(`{"type":"queue-operation","operation":"dequeue","timestamp":"`+stamp(3*time.Second)+`"}`,
+		`{"type":"system","subtype":"stop_hook_summary","timestamp":"`+stamp(2900*time.Millisecond)+`"}`,
+		`{"type":"user","promptId":"p2","timestamp":"`+stamp(4*time.Second)+`"}`)
+	got = f.tickAt(t, a, start.Add(5*time.Second), hookNotice{Kind: "turn-finished", TurnID: "p2", Transcript: transcript})
+	if got.Activity != core.Idle {
+		t.Fatalf("finished queued turn read %s: %s", got.Activity, got.Evidence)
 	}
 }
 

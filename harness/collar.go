@@ -252,6 +252,9 @@ func validateCollar(collar Collar) error {
 	if _, err := OpenTurnQuiet(collar.Primitives.TurnBoundary); err != nil {
 		return err
 	}
+	if _, err := queuedTurnSource(collar.Primitives.TurnBoundary); err != nil {
+		return err
+	}
 	checks := []struct {
 		where   string
 		value   Invocation

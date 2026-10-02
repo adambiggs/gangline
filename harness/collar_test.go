@@ -87,3 +87,10 @@ collar: {
 		t.Fatal("unknown collar field passed validation")
 	}
 }
+
+func TestCollarRejectsUnknownQueuedTurnSource(t *testing.T) {
+	_, err := LoadCustomCollar("claude", "claude.cue", []byte(`collar: primitives: turn_boundary: params: queued_turns: "codex"`))
+	if err == nil {
+		t.Fatal("unknown queued_turns source passed validation")
+	}
+}
