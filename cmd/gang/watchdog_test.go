@@ -353,6 +353,40 @@ func TestWatchdogLastDropBoundsSchedulerLockWait(t *testing.T) {
 		})
 	}
 }
+func TestWatchdogSchedulerLockWaitRetriesInterrupt(t *testing.T) {
+	f, s := watchdogFixture(t)
+	if err := f.cmd.tick(nil); err != nil {
+		t.Fatal(err)
+	}
+	lock, err := os.OpenFile(filepath.Join(f.run.team.Directory, "watchdog.lock"), os.O_RDWR, 0600)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer lock.Close()
+	if err := syscall.Flock(int(lock.Fd()), syscall.LOCK_EX|syscall.LOCK_NB); err != nil {
+		t.Fatal(err)
+	}
+	f.cmd.schedulerLockWait = func() {
+		if err := syscall.Flock(int(lock.Fd()), syscall.LOCK_UN); err != nil {
+			t.Fatal(err)
+		}
+	}
+	// A signal can interrupt the blocking wait; it waits again.
+	calls := 0
+	f.cmd.flock = func(fd, how int) error {
+		calls++
+		if calls == 1 {
+			return syscall.EINTR
+		}
+		return syscall.Flock(fd, how)
+	}
+	if err := f.cmd.drop([]string{"worker"}); err != nil {
+		t.Fatal(err)
+	}
+	if calls != 2 || s.armed != "" || s.stops != 1 {
+		t.Fatalf("calls %d, timer %+v", calls, s)
+	}
+}
 func TestWatchdogUnavailableLogsOnceAndStillTicks(t *testing.T) {
 	f, _ := watchdogFixture(t)
 	f.cmd.newScheduler = func() watchdogScheduler { return nil }
