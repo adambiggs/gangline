@@ -8,6 +8,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"time"
 
 	"github.com/adambiggs/gangline/core"
 	"github.com/adambiggs/gangline/harness"
@@ -126,6 +127,16 @@ type inputVerdict struct {
 	Blocker, Reason string
 }
 
+// continuationQueued reports a resume note that the harness holds in its own
+// queue after a completed compaction and has not yet submitted. The note's
+// submit hook takes the agent lock, so input typed ahead of it would hold that
+// lock while waiting for its own hook, which the harness runs only after the
+// note's. Without an admission the hold ends after one operation's timeout.
+// A harness whose native queue witnesses accepted input needs no such hook.
+func continuationQueued(c core.Compaction, now time.Time) bool {
+	return c.Status == "completed" && c.Continuation && !c.ResumeAdmitted && now.Before(c.CompletedAt.Add(operationTimeout))
+}
+
 // inputState observes the composer even during a running turn. A permission
 // prompt or foreign foreground process never qualifies as a free composer.
 func (run *runtime) inputState(l *store.LockedAgent, a *core.Agent, b harnessInput, c harness.Collar) (inputVerdict, error) {
@@ -139,6 +150,8 @@ func (run *runtime) inputState(l *store.LockedAgent, a *core.Agent, b harnessInp
 		return inputVerdict{Reason: "recipient is being interrupted"}, nil
 	case a.Compaction != nil && a.Compaction.Status == "submitted":
 		return inputVerdict{Reason: "compaction request awaits the harness"}, nil
+	case c.Primitives.QueueWitness == nil && a.Compaction != nil && continuationQueued(*a.Compaction, run.cmd.now()):
+		return inputVerdict{Reason: "compaction continuation waits in the harness's queue ahead of this input"}, nil
 	}
 	screen, err := b.Capture(context.Background(), substrate.PaneID(a.Pane))
 	if err != nil {
