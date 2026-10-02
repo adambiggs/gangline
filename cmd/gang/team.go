@@ -328,7 +328,7 @@ func (cmd command) roster(args []string) error {
 		if watchdogLimited {
 			marker += " [watchdog-unavailable]"
 		}
-		if _, err := fmt.Fprintf(cmd.stdout, "%-16s %-10s %-14s %s%s\n", a.Name, a.Status, a.Activity, a.Collar, marker); err != nil {
+		if _, err := fmt.Fprintf(cmd.stdout, "%-16s %-10s %-14s %s%s%s\n", a.Name, a.Status, a.Activity, a.Collar, marker, rosterReason(a)); err != nil {
 			return err
 		}
 	}
@@ -336,6 +336,15 @@ func (cmd command) roster(args []string) error {
 		return writeJSON(cmd.stdout, out)
 	}
 	return nil
+}
+
+// rosterReason is the evidence of an agent that is failed or whose activity
+// is not known to be healthy, on one line.
+func rosterReason(a core.Agent) string {
+	if a.Evidence == "" || a.Status != core.Failed && a.Activity != core.Blocked && a.Activity != core.Unknown && a.Activity != core.Wedged {
+		return ""
+	}
+	return "  " + strings.Join(strings.Fields(a.Evidence), " ")
 }
 
 func (run *runtime) agentRow(a core.Agent) (agentJSON, error) {

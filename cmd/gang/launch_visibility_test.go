@@ -2,6 +2,7 @@ package main
 
 import (
 	"errors"
+	"strings"
 	"testing"
 
 	"github.com/adambiggs/gangline/core"
@@ -37,6 +38,34 @@ func (f *stateFixture) agent(t *testing.T, id core.HitchID) core.Agent {
 		t.Fatal(err)
 	}
 	return a
+}
+
+func TestRosterShowsWhyAnAgentIsUnhealthy(t *testing.T) {
+	f := newStateFixture(t)
+	f.setAgent(t, f.add(t, "a", "failed", "codex"), func(a *core.Agent) {
+		a.Status, a.Activity, a.Evidence = core.Failed, core.Unknown, "native process exited with status 1: error:\nunknown model"
+	})
+	f.setAgent(t, f.add(t, "b", "turnfail", "codex"), func(a *core.Agent) {
+		a.Native.TurnFailure = "model_not_found"
+	})
+	f.add(t, "c", "healthy", "codex")
+	if err := f.cmd.roster(nil); err != nil {
+		t.Fatal(err)
+	}
+	rows := map[string]string{}
+	for _, line := range strings.Split(strings.TrimSpace(f.out.String()), "\n") {
+		name, _, _ := strings.Cut(line, " ")
+		rows[name] = line
+	}
+	if row := rows["failed"]; !strings.HasSuffix(row, "native process exited with status 1: error: unknown model") {
+		t.Fatalf("failed row lacks its reason on one line: %q", row)
+	}
+	if row := rows["turnfail"]; !strings.Contains(row, " unknown ") || !strings.HasSuffix(row, "native turn failed: model_not_found") {
+		t.Fatalf("turn-failed row lacks its reason: %q", row)
+	}
+	if row := rows["healthy"]; !strings.HasSuffix(row, "codex") {
+		t.Fatalf("healthy row carries a reason: %q", row)
+	}
 }
 
 // A tick or roster that finds an agent's pane closed outside gang fails the

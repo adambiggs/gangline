@@ -101,7 +101,7 @@ file and send its path.
 
 | Command | Effect |
 | --- | --- |
-| `gang roster [--json]` | Show registered agents and current states. |
+| `gang roster [--json]` | Show registered agents and current states, with the recorded reason for a failed agent or a blocked, wedged, or unknown one. |
 | `gang status [NAME] [--why] [--json]` | Show state; `--why` includes activity and compaction evidence. |
 | `gang capture [NAME] [-n\|--lines LINES]` | Print the native pane, or only its last LINES lines. |
 | `gang capture --composer [NAME]` | Print draft input from the composer. |
