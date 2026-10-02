@@ -207,7 +207,7 @@ func TestCollarCheckTypesThroughGuardedInput(t *testing.T) {
 	printf '%s' "$name" > "$socket.session"
 	printf '%%1\n%s\t$1\t%%1\n' "$generation";;
 list-panes) printf '%s\t$1\t%%1\t%s\n' "$(cat "$socket.generation")" "$(cat "$socket.session")";;
-display-message) for format; do :; done; [ "$format" = '#{session_id}' ] && printf '$1\n' || printf 'codex\n';;
+display-message) printf 'codex\n';;
 has-session) exit 0;;
 kill-session) exit 0;;
 if-shell|send-keys) printf '%s\n' "$@" > "$socket.input"; echo "stub accepts no input" >&2; exit 1;;
