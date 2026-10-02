@@ -22,6 +22,7 @@ func TestVersionAndHelpDoNotLoadRuntimeConfiguration(t *testing.T) {
 		{args: []string{"--help", "--version"}, want: "usage: gang version"},
 		{args: []string{"-h", "--version"}, want: "usage: gang version"},
 		{args: []string{"help", "--version"}, want: "usage: gang version"},
+		{args: []string{"help", "--", "--version"}, want: "usage: gang version"},
 	} {
 		var stdout, stderr bytes.Buffer
 		status := run(test.args, strings.NewReader(""), &stdout, &stderr)
@@ -74,6 +75,17 @@ func TestCommandsRejectIgnoredArguments(t *testing.T) {
 		status := run(arguments, strings.NewReader(""), &stdout, &stderr)
 		if status != exitUsage {
 			t.Fatalf("run(%q) status = %d, want %d", arguments, status, exitUsage)
+		}
+	}
+}
+
+func TestVersionSpellingsPrintTheSameUsage(t *testing.T) {
+	for _, args := range [][]string{{"version", "extra"}, {"--version", "extra"}} {
+		var stdout, stderr bytes.Buffer
+		status := run(args, strings.NewReader(""), &stdout, &stderr)
+		want := "gang: version: unexpected argument \"extra\"\nusage: gang version\n"
+		if status != exitUsage || stderr.String() != want {
+			t.Errorf("run(%q) status=%d stderr=%q; want %q", args, status, stderr.String(), want)
 		}
 	}
 }

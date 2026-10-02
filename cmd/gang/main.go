@@ -75,6 +75,7 @@ func run(args []string, stdin io.Reader, stdout, stderr io.Writer) int {
 		getwd:       os.Getwd,
 		userHomeDir: os.UserHomeDir,
 	}
+	args = versionCommand(args)
 	if err := cmd.execute(args); err != nil {
 		var commandErr commandError
 		if errors.As(err, &commandErr) {
@@ -92,18 +93,34 @@ func run(args []string, stdin io.Reader, stdout, stderr io.Writer) int {
 	return exitOK
 }
 
+// versionCommand reads --version as the version command's spelling as a flag,
+// so help and usage errors resolve it as that command in every position help
+// accepts a command name.
+func versionCommand(args []string) []string {
+	if len(args) == 0 {
+		return args
+	}
+	if args[0] == "--version" {
+		return append([]string{"version"}, args[1:]...)
+	}
+	if args[0] != "help" && args[0] != "--help" && args[0] != "-h" {
+		return args
+	}
+	at := 1
+	if args[0] == "help" && len(args) > 2 && args[1] == "--" {
+		at = 2
+	}
+	if len(args) > at && args[at] == "--version" {
+		args = append([]string{}, args...)
+		args[at] = "version"
+	}
+	return args
+}
+
 func (cmd command) execute(args []string) error {
 	if len(args) == 0 {
 		_, err := io.WriteString(cmd.stdout, welcomeHelp)
 		return err
-	}
-	// --version is the version command's spelling as a flag, so help resolves
-	// it as that command in either position.
-	if args[0] == "--version" {
-		args = append([]string{"version"}, args[1:]...)
-	}
-	if (args[0] == "help" || args[0] == "--help" || args[0] == "-h") && len(args) > 1 && args[1] == "--version" {
-		args = append([]string{args[0], "version"}, args[2:]...)
 	}
 	if args[0] == "help" && len(args) > 1 && !strings.HasPrefix(args[1], "-") {
 		if _, ok := commandUsage[args[1]]; !ok {
