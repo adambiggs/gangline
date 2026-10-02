@@ -62,8 +62,8 @@ func awaitStart(t *testing.T, root string) *os.File {
 
 // releaseAndAwaitExit observes the exit as EOF on the exit pipe, which does not
 // depend on when tmux reaps the process. tmux can leave an exited pane child
-// unreaped, and then pane-died never fires; run-shell's own child makes the
-// server collect every exited child before the command returns.
+// unreaped, and then pane-died never fires; the reap makes the server collect
+// every exited child.
 func releaseAndAwaitExit(t *testing.T, binary, socket, root, release string) {
 	t.Helper()
 	awaitExit(t, binary, socket, awaitStart(t, root), release)
@@ -89,7 +89,7 @@ func awaitExit(t *testing.T, binary, socket string, pipe *os.File, release strin
 	case <-time.After(time.Minute):
 		t.Fatal("process did not exit")
 	}
-	runTmux(t, binary, socket, "run-shell", "true")
+	reapTmux(t, binary, socket)
 }
 
 func assertExited(t *testing.T, err error, status string) {
