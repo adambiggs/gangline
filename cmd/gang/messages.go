@@ -562,6 +562,10 @@ func (cmd command) compact(args []string) (result error) {
 	if failedStartup {
 		return refuseError("startup contract input is unverified; inspect the recipient and run gang hitch %s --recover before compacting", a.Name)
 	}
+	// Replacing the record would make the note the harness still holds stale.
+	if pending := a.Compaction; pending != nil && continuationQueued(*pending, cmd.now()) {
+		return refuseError("compaction %s resume note is queued in the harness and not yet admitted; compact again once it arrives, or after %s", pending.ID, pending.CompletedAt.Add(operationTimeout).UTC().Format(time.RFC3339))
+	}
 	requester, err := run.observedSender()
 	if err != nil {
 		if o.Resume != "" {

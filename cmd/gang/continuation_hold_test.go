@@ -3,6 +3,7 @@ package main
 import (
 	"bytes"
 	"encoding/json"
+	"errors"
 	"strings"
 	"testing"
 	"time"
@@ -218,5 +219,26 @@ func TestTypedResumeHeaderKeepsQueuedCompaction(t *testing.T) {
 	}
 	if got := f.agent(t, a.ID); got.Compaction.Status != "queued" {
 		t.Fatalf("typed resume header failed a queued compaction: %+v", got.Compaction)
+	}
+}
+
+// A second compaction would replace the record whose queued note the harness
+// still holds, so that note would arrive stale and be blocked.
+func TestCompactRefusedWhileContinuationQueued(t *testing.T) {
+	f, a := completedWithQueuedContinuation(t)
+	var refused commandError
+	err := f.cmd.compact([]string{"worker", "--resume", "second"})
+	if !errors.As(err, &refused) || refused.status != exitRefused || !strings.Contains(err.Error(), "compaction c") || !strings.Contains(err.Error(), a.Compaction.CompletedAt.Add(operationTimeout).UTC().Format(time.RFC3339)) {
+		t.Fatalf("compact during the hold: %v", err)
+	}
+	if got := f.agent(t, a.ID); got.Compaction.ID != "c" || got.Compaction.Status != "completed" {
+		t.Fatalf("record replaced: %+v", got.Compaction)
+	}
+	f.cmd.clock = func() time.Time { return a.Compaction.CompletedAt.Add(operationTimeout) }
+	if err := f.cmd.compact([]string{"worker", "--resume", "second"}); errors.As(err, &refused) && refused.status == exitRefused {
+		t.Fatalf("compact after the hold expired: %v", err)
+	}
+	if got := f.agent(t, a.ID); got.Compaction.ID == "c" {
+		t.Fatalf("expired hold kept the record: %+v", got.Compaction)
 	}
 }
