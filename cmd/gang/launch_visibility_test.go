@@ -113,21 +113,30 @@ func TestRosterShowsWhyAnAgentIsUnhealthy(t *testing.T) {
 // Startup observed by a tick ends the boot hold of the registered pane, and
 // an exit the hold kept fails the agent with its output. A pane id that now
 // names another pane is left alone; the record stays booting until its boot
-// deadline fails it.
+// deadline fails it. A ready agent whose record says its pane is held gets
+// the same release, and one whose pane is released gets none.
 func TestTickReleasesBootHoldAtReadiness(t *testing.T) {
 	replaced := fmt.Errorf("release exited pane: %w", tmux.ErrPaneReplaced)
+	exited := &substrate.ExitedError{Status: "1", Output: "Do you trust the files in this folder?\nNo, exit"}
 	for _, tc := range []struct {
-		name    string
-		exit    error
-		expired bool
-		blocked bool
-		status  core.Status
+		name     string
+		ready    bool
+		released bool
+		exit     error
+		expired  bool
+		blocked  bool
+		status   core.Status
 	}{
 		{name: "running", status: core.Active},
-		{name: "exited", exit: &substrate.ExitedError{Status: "1", Output: "Do you trust the files in this folder?\nNo, exit"}, status: core.Failed},
+		{name: "exited", exit: exited, status: core.Failed},
 		{name: "replaced", exit: replaced, status: core.Booting},
 		{name: "replaced expired", exit: replaced, expired: true, status: core.Failed},
 		{name: "replaced blocked", exit: replaced, blocked: true, status: core.Failed},
+		{name: "ready held", ready: true, status: core.Active},
+		{name: "ready held exited", ready: true, exit: exited, status: core.Failed},
+		{name: "ready held replaced", ready: true, exit: replaced, status: core.Active},
+		{name: "ready held replaced blocked", ready: true, exit: replaced, blocked: true, status: core.Active},
+		{name: "ready released", ready: true, released: true, exit: exited, status: core.Active},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			f := newStateFixture(t)
@@ -137,22 +146,37 @@ func TestTickReleasesBootHoldAtReadiness(t *testing.T) {
 			}
 			a := f.setAgent(t, f.add(t, "a", "worker", "codex"), func(a *core.Agent) {
 				a.Status, a.Activity, a.BootDeadline = core.Booting, core.Unknown, deadline
+				a.Registration.Held = !tc.released
+				if tc.ready {
+					a.Status, a.Activity, a.BootDeadline = core.Active, core.Idle, time.Time{}
+				}
 				if tc.blocked {
 					a.Activity, a.BootDeadline = core.Blocked, time.Time{}
 				}
 			})
 			f.input.releaseErr = tc.exit
-			if err := f.cmd.tick([]string{"--agent", "worker"}); !errors.Is(err, tmux.ErrPaneReplaced) && err != nil {
+			err := f.cmd.tick([]string{"--agent", "worker"})
+			if !errors.Is(err, tmux.ErrPaneReplaced) && err != nil {
 				t.Fatal(err)
-			} else if tc.status == core.Booting && err == nil {
+			} else if kept := tc.status != core.Failed && errors.Is(tc.exit, tmux.ErrPaneReplaced); kept && err == nil {
 				t.Fatal("tick ignored a replaced pane")
 			}
 			got := f.agent(t, a.ID)
+			if tc.released {
+				if f.input.releases != 0 || got.Status != tc.status {
+					t.Fatalf("releases = %d, status = %s; want 0, %s", f.input.releases, got.Status, tc.status)
+				}
+				return
+			}
 			if f.input.releases != 1 || got.Status != tc.status {
 				t.Fatalf("releases = %d, status = %s; want 1, %s", f.input.releases, got.Status, tc.status)
 			}
 			if f.input.released != paneIdentity(a) {
 				t.Fatalf("released %+v, want the registered pane %+v", f.input.released, paneIdentity(a))
+			}
+			// The record says held until a release succeeds.
+			if got.Registration.Held != (tc.exit != nil) {
+				t.Fatalf("record held = %v after a release that returned %v", got.Registration.Held, tc.exit)
 			}
 			if tc.status == core.Failed {
 				want := bootExit

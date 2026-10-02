@@ -291,7 +291,7 @@ func (cmd command) hitchWithStaleClaim(args []string, supersede bool) (result er
 		cancel()
 		return errors.Join(err, cleanupErr, run.apply(l, &a, core.Event{Type: "hitch_failed", Reason: err.Error()}))
 	}
-	a.Registration = core.PaneRegistration{Generation: registration.Generation, Session: registration.Session, TokenHash: tokenHash(agentToken)}
+	a.Registration = core.PaneRegistration{Generation: registration.Generation, Session: registration.Session, TokenHash: tokenHash(agentToken), Held: true}
 	defer func() {
 		if registered {
 			return
@@ -306,7 +306,7 @@ func (cmd command) hitchWithStaleClaim(args []string, supersede bool) (result er
 		// The record keeps a pane only while it exists, so tick and drop never
 		// address a removed one.
 		if a.Pane != "" {
-			a.Pane = ""
+			a.Pane, a.Registration.Held = "", false
 			result = errors.Join(result, l.Save(a))
 		}
 	}()
@@ -337,14 +337,50 @@ func (cmd command) hitchWithStaleClaim(args []string, supersede bool) (result er
 	// exit closes it, except a startup blocked on a prompt: an answer there
 	// can end the native process, and tick reads that exit from the held pane
 	// or releases it once startup is ready. The release outlives an expired
-	// boot context, and an exit it finds still fails the hitch.
+	// boot context, and an exit it finds still fails the hitch. The record
+	// says the pane is held until the release, so tick ends a hold that a
+	// hitch stopped short of.
 	blocked := false
+	var schedulerErr error
+	defer func() { result = errors.Join(result, schedulerErr) }()
 	defer func() {
-		if registered && !blocked {
-			release, cancel := context.WithTimeout(context.Background(), operationTimeout)
-			defer cancel()
-			result = errors.Join(result, nativeExit(b.ReleaseExit(release, pane.ID)))
+		if !registered || blocked {
+			return
 		}
+		// Startup delivery saves the record and closes its lock, so the
+		// release reads the record again under the lock. A record dropped
+		// since then took its pane with it.
+		if !l.Held() {
+			fresh, err := l.Paths.LockAgent()
+			if err == nil {
+				l = fresh
+				a, err = l.Paths.Read()
+			}
+			if errors.Is(err, os.ErrNotExist) {
+				return
+			}
+			if err != nil {
+				result = errors.Join(result, err)
+				return
+			}
+		}
+		if !a.Registration.Held || a.Pane != string(pane.ID) {
+			return
+		}
+		release, cancel := context.WithTimeout(context.Background(), operationTimeout)
+		defer cancel()
+		if err := nativeExit(b.ReleaseExit(release, pane.ID)); err != nil {
+			// A native exit is the hitch's result: whatever the hitch said of
+			// the pane before finding it describes a pane that is removed.
+			if errors.As(err, new(*substrate.ExitedError)) {
+				result = err
+				return
+			}
+			result = errors.Join(result, err)
+			return
+		}
+		a.Registration.Held = false
+		result = errors.Join(result, l.Save(a))
 	}()
 	visible, err := b.ProcessVisibility(ctx, pane.ID)
 	if err != nil {
@@ -363,8 +399,7 @@ func (cmd command) hitchWithStaleClaim(args []string, supersede bool) (result er
 		return unspawned(err)
 	}
 	registered = true
-	schedulerErr := run.ensureWatchdog()
-	defer func() { result = errors.Join(result, schedulerErr) }()
+	schedulerErr = run.ensureWatchdog()
 	if err := run.mark(a); err != nil {
 		return err
 	}

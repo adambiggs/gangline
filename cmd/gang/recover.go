@@ -118,8 +118,11 @@ func (run *runtime) tickAgent(id core.HitchID, notice hookNotice, wait bool) err
 			}
 			return nil
 		}
+	}
+	if a.Status == core.Booting || a.Registration.Held {
 		// Startup is observed, so the pane stops holding a native exit. An
-		// exit it already holds ends the agent with that output.
+		// exit it already holds ends the agent with that output. A ready agent
+		// whose hitch stopped before its release is still held.
 		registry, err := run.registry()
 		if err != nil {
 			return err
@@ -128,7 +131,7 @@ func (run *runtime) tickAgent(id core.HitchID, notice hookNotice, wait bool) err
 			// A pane id that names another pane shows nothing of this agent's
 			// startup, so the boot deadline fails the agent. A blocked startup
 			// has no deadline and waits only on its own pane.
-			if errors.Is(err, tmux.ErrPaneReplaced) && (a.Activity == core.Blocked || !a.BootDeadline.IsZero() && !run.cmd.now().Before(a.BootDeadline)) {
+			if a.Status == core.Booting && errors.Is(err, tmux.ErrPaneReplaced) && (a.Activity == core.Blocked || !a.BootDeadline.IsZero() && !run.cmd.now().Before(a.BootDeadline)) {
 				return run.apply(l, &a, core.Event{Type: "hitch_failed", Reason: tmux.ErrPaneReplaced.Error()})
 			}
 			if !errors.As(err, &exited) {
@@ -139,7 +142,12 @@ func (run *runtime) tickAgent(id core.HitchID, notice hookNotice, wait bool) err
 			}
 			return run.mark(a)
 		}
-		if err := run.apply(l, &a, core.Event{Type: "hitch_ready"}); err != nil {
+		a.Registration.Held = false
+		if a.Status != core.Booting {
+			if err := l.Save(a); err != nil {
+				return err
+			}
+		} else if err := run.apply(l, &a, core.Event{Type: "hitch_ready"}); err != nil {
 			return err
 		}
 	}

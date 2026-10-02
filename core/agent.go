@@ -233,4 +233,7 @@ type PaneRegistration struct {
 	Generation string `json:"generation"`
 	Session    string `json:"session"`
 	TokenHash  string `json:"token_hash,omitempty"`
+	// Held says the pane keeps a native exit open for gang to read. The hitch
+	// that spawns the pane sets it, and whoever ends the hold clears it.
+	Held bool `json:"held,omitempty"`
 }

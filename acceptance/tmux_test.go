@@ -272,6 +272,11 @@ func runCommandHarness() int {
 			fmt.Fprintln(os.Stderr, err)
 			return 1
 		}
+		if failure := os.Getenv("GANGLINE_ACCEPTANCE_INPUT_EXIT"); failure != "" {
+			// A native CLI that ends on the first input it is given.
+			fmt.Fprint(os.Stderr, "\r\n", failure, "\r\n")
+			return 7
+		}
 		if value == 2 {
 			fmt.Print("\x1b[HWORKING")
 			if err := signal("native-busy"); err != nil {
