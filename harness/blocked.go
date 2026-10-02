@@ -45,9 +45,11 @@ func nativeInputLines(composer Invocation, screen substrate.Screen) ([]string, b
 	case "claude-composer":
 		// Claude Code draws a native prompt below the last rule line, or over
 		// the whole screen when the prompt leaves no rule visible. A readable
-		// composer does not rule a prompt out: a rule line in the conversation
-		// can open a composer frame that the prompt's own border closes.
-		if _, err := readClaudeComposer(screen); errors.Is(err, ErrComposerClipped) {
+		// composer rules a prompt out only while it holds the cursor: a rule
+		// line in the conversation can open a composer frame that the prompt's
+		// own border closes.
+		composer, err := readClaudeComposer(screen)
+		if errors.Is(err, ErrComposerClipped) || err == nil && composer.holdsCursor(screen) {
 			return nil, true, nil
 		}
 		rule := lastRule(screenLines(screen, false))

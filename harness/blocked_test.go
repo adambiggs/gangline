@@ -101,6 +101,22 @@ func TestBlockedIgnoresPatternTextAboveADimRule(t *testing.T) {
 	}
 }
 
+// Claude Code lists command suggestions below the composer while the user
+// types a slash command, and a description can carry prompt and choice text.
+// The active cursor in the composer shows that the composer holds input.
+func TestBlockedIgnoresACommandSuggestionBelowTheComposer(t *testing.T) {
+	collar, err := EmbeddedCollar("claude")
+	if err != nil {
+		t.Fatal(err)
+	}
+	screen := fixtureScreen(t, "claude-code-2.1.287-command-suggestion.txt")
+	screen.Cursor = substrate.Cursor{Row: 5, Column: 6, Visible: true}
+	blocked, found, err := InputBlocked(collar, screen)
+	if err != nil || found {
+		t.Fatalf("blocked = %#v, found = %t, err = %v", blocked, found, err)
+	}
+}
+
 // A rule line in the conversation, of the same width as the permission
 // dialog's border and followed by a ❯ line, opens a frame that the dialog's
 // border closes, so the screen reads as a composer.
@@ -114,9 +130,20 @@ func TestBlockedFindsAClaudePromptBelowAComposerShapedFrame(t *testing.T) {
 	if _, err := ReadComposer(collar.Primitives.Composer, linesScreen(lines)); err != nil {
 		t.Fatalf("frame above the dialog does not read as a composer: %v", err)
 	}
-	blocked, found, err := InputBlocked(collar, linesScreen(lines))
-	if err != nil || !found {
-		t.Fatalf("blocked = %#v, found = %t, err = %v", blocked, found, err)
+	cursors := map[string]substrate.Cursor{
+		"no cursor":                       {},
+		"hidden cursor in the frame":      {Row: 1, Column: 2},
+		"cursor in a dialog's text field": {Row: 10, Column: 2, Visible: true},
+	}
+	for name, cursor := range cursors {
+		t.Run(name, func(t *testing.T) {
+			screen := linesScreen(lines)
+			screen.Cursor = cursor
+			blocked, found, err := InputBlocked(collar, screen)
+			if err != nil || !found {
+				t.Fatalf("blocked = %#v, found = %t, err = %v", blocked, found, err)
+			}
+		})
 	}
 }
 

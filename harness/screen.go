@@ -22,6 +22,14 @@ type Composer struct {
 	Text           string
 	CollapsedChars int
 	TailOccupied   bool
+	// first and end bound the screen rows that hold the input.
+	first, end int
+}
+
+// holdsCursor reports whether the screen's visible cursor is in the
+// composer's input rows. Native prompts and lists hide the cursor.
+func (composer Composer) holdsCursor(screen substrate.Screen) bool {
+	return screen.Cursor.Visible && screen.Cursor.Row >= composer.first && screen.Cursor.Row < composer.end
 }
 
 type StartupState string
@@ -178,9 +186,9 @@ func readClaudeComposer(screen substrate.Screen) (Composer, error) {
 		body[index] = strings.ReplaceAll(body[index], "\u00a0", "")
 	}
 	if !named && len(body) == 1 && screen.Cursor.Visible && screen.Cursor.Row == first && screen.Cursor.Column == 2 && strings.HasPrefix(body[0], "Try \"") && strings.HasSuffix(body[0], "\"") {
-		return Composer{}, nil
+		return Composer{first: first, end: closing}, nil
 	}
-	return Composer{Text: strings.TrimRight(strings.Join(body, "\n"), "\n")}, nil
+	return Composer{Text: strings.TrimRight(strings.Join(body, "\n"), "\n"), first: first, end: closing}, nil
 }
 
 func trustPrompt(name string, lines []string) (string, bool) {
