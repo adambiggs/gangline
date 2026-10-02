@@ -1,5 +1,29 @@
 # Changelog
 
+## [1.12.0](https://github.com/adambiggs/gangline/compare/gangline-v1.11.0...gangline-v1.12.0) (2026-10-02)
+
+
+### Features
+
+* **compact:** point the default resume note at queued messages ([b6fc6b0](https://github.com/adambiggs/gangline/commit/b6fc6b09f05c24a833dd6a9ae7a34114a98c5a58))
+
+
+### Bug Fixes
+
+* **cli:** name the next step in inactive and busy refusals ([792269b](https://github.com/adambiggs/gangline/commit/792269baddbfa3a36eb878fee4e29da8fea4e777))
+* **cli:** state the accepted form in option and value errors ([bff35f2](https://github.com/adambiggs/gangline/commit/bff35f2c290bc0af431c573b4409e359c37d6aba))
+* **drop:** do not warn of skipped cleanup for a native that exited at boot ([eaba1ce](https://github.com/adambiggs/gangline/commit/eaba1ceca46b52bab63495d9142eb672e9c13bf0))
+* **drop:** refuse an unregistered agent with exit status 3 ([843ec13](https://github.com/adambiggs/gangline/commit/843ec13d3805635c3da959366bc3b9f0e10808fb))
+* **help:** keep every option meaning in the Options column ([8e20ffb](https://github.com/adambiggs/gangline/commit/8e20ffbb547ac36704cdff9b761c9ee1c70094ea))
+* **help:** show collar check help for help collar check ([21dfd1f](https://github.com/adambiggs/gangline/commit/21dfd1f11cd6f501b2665aff3fb46cf2a935145a))
+* **help:** state option defaults ([d208a39](https://github.com/adambiggs/gangline/commit/d208a39682bb7850fb3191ad9ac457ed0fc11375))
+* **hitch:** name why a pane's hold failed ([3cd33d8](https://github.com/adambiggs/gangline/commit/3cd33d8cd03f6dbad861c90241c41998d084d3d7))
+* **roster:** keep a row's reason within the terminal's row ([6d39ec2](https://github.com/adambiggs/gangline/commit/6d39ec23a2b58c912ef61330da241fd86583f785))
+* **roster:** show the saved record of an agent whose state is locked ([b2496f1](https://github.com/adambiggs/gangline/commit/b2496f1860bf1077b8df86686c925b19681f8614))
+* **tick:** release the pane hold a killed hitch left on a ready agent ([c55c295](https://github.com/adambiggs/gangline/commit/c55c295c82f1812d3b8d5138fa3050239e35d967))
+* **tmux:** read an exited tmux server as its panes closed ([d5687cf](https://github.com/adambiggs/gangline/commit/d5687cf03b679d56ca6ac5938375d3290e2e8023))
+* **tmux:** reap before reading a dead pane's exit status ([9c2ba04](https://github.com/adambiggs/gangline/commit/9c2ba043e8c36ec9f528c9f316cd0e00e0a2d704))
+
 ## [1.11.0](https://github.com/adambiggs/gangline/compare/gangline-v1.10.3...gangline-v1.11.0) (2026-10-02)
 
 
