@@ -1,5 +1,22 @@
 # Changelog
 
+## [1.12.1](https://github.com/adambiggs/gangline/compare/gangline-v1.12.0...gangline-v1.12.1) (2026-10-02)
+
+
+### Bug Fixes
+
+* **activity:** read a witnessed turn as busy until its finish boundary ([4829dc7](https://github.com/adambiggs/gangline/commit/4829dc72c2ee432637cf71c241bc877cc53fe2ff))
+* **collar:** match a Claude compaction spinner past its first minute ([def4080](https://github.com/adambiggs/gangline/commit/def408037ab2578a329094fa25a6e58497ed0038))
+* **compact:** capture under the operation context during the start window ([9c8398c](https://github.com/adambiggs/gangline/commit/9c8398c1a78aa8aa48d443094e6d090438efcae7))
+* **compact:** fail a compaction abandoned before its submit key as not run ([640bbde](https://github.com/adambiggs/gangline/commit/640bbdee6a34993f1e4bea2743134644d94b7eec))
+* **compact:** fail a compaction with no start shown as possibly run ([e811ed1](https://github.com/adambiggs/gangline/commit/e811ed1025e6a9d47c79dc185da5e98ff95d0410))
+* **compact:** hold input while the pane shows a compaction running ([0d7bb07](https://github.com/adambiggs/gangline/commit/0d7bb07e08505fe9cbc1a83c5908e40425ec2af7))
+* **compact:** tell the requester when a queued compaction fails ([41cb8d8](https://github.com/adambiggs/gangline/commit/41cb8d823de9bc9f87259ce403897cebc86d1093))
+* **compact:** withhold the resume note until a compaction shows on screen ([6815485](https://github.com/adambiggs/gangline/commit/681548591e56e6304478f047184115306154271a))
+* **send:** hold input until a queued resume note is admitted ([02ed8c9](https://github.com/adambiggs/gangline/commit/02ed8c9ff3f5307825c8389f66ac06f69538c77b))
+* **send:** match Claude Code's own paste placeholder forms ([9d836a2](https://github.com/adambiggs/gangline/commit/9d836a241302d7e9b9fc264624c928fd4b473f74))
+* **send:** refuse a paste placeholder token for Claude Code recipients ([7211e13](https://github.com/adambiggs/gangline/commit/7211e1360ea6758d3c780260d6f37f670a60eb4e))
+
 ## [1.12.0](https://github.com/adambiggs/gangline/compare/gangline-v1.11.0...gangline-v1.12.0) (2026-10-02)
 
 
