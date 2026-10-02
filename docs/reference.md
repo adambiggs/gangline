@@ -338,7 +338,10 @@ sets `queued_turns: "claude-transcript"`, a finish hook leaves the turn open
 while the Claude Code transcript still holds a queued prompt or records one
 leaving the queue for the next turn. If the transcript cannot be read, the
 finish hook closes the turn. A queued turn's finish also clears a native turn
-failure when the transcript records the queued prompt after the failed one.
+failure when the transcript records the queued prompt after the failed one. A
+queued turn's failure is recorded against the queued prompt's id when the
+transcript records that prompt after the witnessed one, and a later submit
+clears it.
 A wake typed while a turn runs is judged by the turn the transcript records
 running it, under the prompt id of the wake or of any prompt dequeued into
 that turn with it. No finish hook judges the wake while it waits in the

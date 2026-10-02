@@ -265,11 +265,14 @@ func (run *runtime) reconcileNativeBoundary(l *store.LockedAgent, a *core.Agent,
 			}
 		}
 		// UserPromptSubmit is synchronous: a distinct native prompt ID proves
-		// the prior failure no longer describes the current turn.
+		// the prior failure no longer describes the current turn, unless the
+		// failed turn ran from the queue after the witnessed prompt.
 		if a.Native.TurnFailure != "" && a.Native.FailedTurn != "" && witness.TurnID != "" && witness.TurnID != a.Native.FailedTurn {
-			a.Native.TurnFailure, a.Native.FailedTurn = "", ""
-			if err := l.Save(*a); err != nil {
-				return err
+			if queuedAfter, _ := harness.TurnRanAfter(c.Primitives.TurnBoundary, a.Native.Transcript, witness.TurnID, a.Native.FailedTurn); !queuedAfter {
+				a.Native.TurnFailure, a.Native.FailedTurn = "", ""
+				if err := l.Save(*a); err != nil {
+					return err
+				}
 			}
 		}
 	} else if !errors.Is(witnessErr, os.ErrNotExist) {
@@ -311,11 +314,15 @@ func (run *runtime) reconcileNativeBoundary(l *store.LockedAgent, a *core.Agent,
 	if notice.Kind == "turn-failed" {
 		// A delayed async hook may start after the next synchronous submit.
 		// Only native prompt identity can attribute its reason to this turn.
+		// A turn that ran from the queue carries a prompt id no submit hook
+		// announced, so the transcript must order it after the witnessed one.
 		reason := notice.Failure
 		if reason == "" {
 			reason = "native turn failed"
 		}
-		if notice.TurnID != "" && witnessErr == nil && witness.TurnID != "" && notice.TurnID != witness.TurnID {
+		if queuedAfter, _ := harness.TurnRanAfter(c.Primitives.TurnBoundary, transcript, witness.TurnID, notice.TurnID); notice.TurnID != "" && witnessErr == nil && witness.TurnID != "" && notice.TurnID != witness.TurnID && queuedAfter {
+			a.Native.TurnFailure, a.Native.FailedTurn = reason, notice.TurnID
+		} else if notice.TurnID != "" && witnessErr == nil && witness.TurnID != "" && notice.TurnID != witness.TurnID {
 			// The old failure is still present in the raw native_hook audit event.
 		} else if notice.TurnID != "" && witnessErr == nil && witness.TurnID == notice.TurnID {
 			a.Native.TurnFailure, a.Native.FailedTurn = reason, notice.TurnID
