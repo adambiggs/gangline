@@ -1,0 +1,49 @@
+name: hunt
+
+on:
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  hunt:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest]
+        shard: [1, 2, 3]
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-go@v6
+        with:
+          go-version-file: go.mod
+          cache: true
+      - name: Install tmux
+        run: |
+          set -eu
+          command -v tmux >/dev/null && { tmux -V; exit 0; }
+          case "${{ runner.os }}" in
+            Linux) sudo apt-get install -y tmux ;;
+            macOS) brew install tmux ;;
+          esac
+          tmux -V
+      - name: Environment
+        run: |
+          tmux -V; go version; command -v strace || true
+          grep -E '^Sig' /proc/self/status || ps -o pid,blocked,pending,ignored -p $$
+      - name: Hunt
+        run: |
+          ci-hunt/watchdog.sh "$RUNNER_TEMP/diag/watch" &
+          status=0
+          ci-hunt/loop.sh "$RUNNER_TEMP/diag/tests" 1800 || status=$?
+          if ls "$RUNNER_TEMP"/diag/watch/hang-*.txt; then status=1; fi
+          exit "$status"
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: diag-${{ matrix.os }}-${{ matrix.shard }}
+          path: ${{ runner.temp }}/diag
+          include-hidden-files: false
