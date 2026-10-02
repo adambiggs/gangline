@@ -11,6 +11,7 @@ import (
 	"strings"
 	"sync"
 	"time"
+	"unicode/utf8"
 
 	"github.com/adambiggs/gangline/core"
 	"github.com/adambiggs/gangline/store"
@@ -326,7 +327,8 @@ func (cmd command) roster(args []string) error {
 		if watchdogLimited {
 			marker += " [watchdog-unavailable]"
 		}
-		if _, err := fmt.Fprintf(cmd.stdout, "%-16s %-10s %-14s %s%s%s\n", a.Name, a.Status, a.Activity, a.Collar, marker, rosterReason(a)); err != nil {
+		line := fmt.Sprintf("%-16s %-10s %-14s %s%s", a.Name, a.Status, a.Activity, a.Collar, marker)
+		if _, err := fmt.Fprintln(cmd.stdout, line+rosterReason(a, rosterReasonLimit(cmd.stdout, line))); err != nil {
 			return err
 		}
 	}
@@ -336,13 +338,51 @@ func (cmd command) roster(args []string) error {
 	return nil
 }
 
+// A long reason keeps its first rosterReasonHead characters, where a native
+// exit carries its status, and spends the rest of its room on its end, where
+// the native's last output is. The room is rosterReasonWidth where the output
+// has no width.
+const (
+	rosterReasonHead  = 40
+	rosterReasonWidth = 100
+	rosterReasonGap   = "  "
+)
+
+// rosterReasonLimit is the room a row leaves for its reason: on a terminal,
+// the rest of the terminal's row.
+func rosterReasonLimit(output io.Writer, row string) int {
+	file, ok := output.(*os.File)
+	if !ok {
+		return rosterReasonWidth
+	}
+	width, _, err := term.GetSize(int(file.Fd()))
+	if err != nil {
+		return rosterReasonWidth
+	}
+	return rosterReasonRoom(width, row)
+}
+
+// rosterReasonRoom counts characters, so a row with characters wider than one
+// cell wraps. The room always holds the reason's head and the mark of its cut;
+// a terminal too narrow for those wraps.
+func rosterReasonRoom(width int, row string) int {
+	return max(width-utf8.RuneCountInString(row)-len(rosterReasonGap), rosterReasonHead+1)
+}
+
 // rosterReason is the evidence of an agent that is failed or whose activity
-// is not known to be healthy, on one line.
-func rosterReason(a core.Agent) string {
+// is not known to be healthy, on one line of at most limit characters. A
+// longer one keeps its head and its end; `status --why` and `--json` carry
+// the whole text.
+func rosterReason(a core.Agent, limit int) string {
 	if a.Evidence == "" || a.Status != core.Failed && a.Activity != core.Blocked && a.Activity != core.Unknown && a.Activity != core.Wedged {
 		return ""
 	}
-	return "  " + strings.Join(strings.Fields(a.Evidence), " ")
+	reason := []rune(strings.Join(strings.Fields(a.Evidence), " "))
+	if len(reason) > limit {
+		head := min(rosterReasonHead, limit-1)
+		reason = append(append(reason[:head:head], '…'), reason[len(reason)-(limit-head-1):]...)
+	}
+	return rosterReasonGap + string(reason)
 }
 
 func (run *runtime) agentRow(a core.Agent) (agentJSON, error) {
