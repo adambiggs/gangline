@@ -12,7 +12,34 @@ import (
 	"syscall"
 	"testing"
 	"time"
+	"unsafe"
 )
+
+// proc_bsdshortinfo through PROC_PIDT_SHORTBSDINFO, which XNU answers for a
+// zombie too. Status 5 is SZOMB; flag 4 is PROC_FLAG_INEXIT.
+type huntShortInfo struct {
+	PID, PPID, PGID, Status uint32
+	Comm                    [16]byte
+	Flags                   uint32
+	IDs                     [6]uint32
+	Rfu                     uint32
+}
+
+func huntState(pid int) string {
+	var info huntShortInfo
+	count, _, errno := syscall.Syscall6(syscall.SYS_PROC_INFO, procInfoPIDInfo, uintptr(pid), 13, 0, uintptr(unsafe.Pointer(&info)), unsafe.Sizeof(info))
+	if errno != 0 {
+		return "short:" + errno.Error()
+	}
+	return "short:n=" + strconv.Itoa(int(count)) + ",stat=" + strconv.Itoa(int(info.Status)) + ",inexit=" + strconv.FormatBool(info.Flags&4 != 0)
+}
+
+func huntErr(err error) string {
+	if err == nil {
+		return "ok"
+	}
+	return err.Error()
+}
 
 // Hunt-only probe: signal a process SIGTERM then SIGKILL through its audit
 // token, as reapOwnedProcesses does, and count each error the kernel returns.
@@ -22,7 +49,7 @@ func TestHuntDarwinTokenSignalRace(t *testing.T) {
 	}
 	for _, orphan := range []bool{true, false} {
 		counts := map[string]int{}
-		for i := 0; i < 400; i++ {
+		for i := 0; i < 1500; i++ {
 			var pid int
 			var cmd *exec.Cmd
 			if orphan {
@@ -58,6 +85,17 @@ func TestHuntDarwinTokenSignalRace(t *testing.T) {
 					}
 				}
 				counts[key]++
+				if err != nil && strings.Contains(key, "not permitted") {
+					state := huntState(pid)
+					current, _, readErr := readDarwinProcess(pid)
+					identity := huntErr(readErr)
+					if readErr == nil {
+						identity = "same=" + strconv.FormatBool(current.started == handle.(*darwinProcessHandle).started)
+					}
+					retry := huntErr(handle.signal(sig))
+					later := huntState(pid)
+					t.Logf("EPERM orphan=%v i=%d sig=%v state=%s read=%s retry=%s state-after-retry=%s", orphan, i, sig, state, identity, retry, later)
+				}
 			}
 			ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 			if err := handle.wait(ctx); err != nil {
