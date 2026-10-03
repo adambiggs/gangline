@@ -255,6 +255,9 @@ func (cmd command) capture(args []string) error {
 		if err != nil {
 			return err
 		}
+		if a.Pane == "" {
+			return refuseError("capture: %s has no pane to capture: it is %s. gang status %s shows its record", a.Name, a.Status, a.Name)
+		}
 		pane, collar = a.Pane, a.Collar
 	}
 	if pane == "" {

@@ -203,3 +203,34 @@ func TestHelpSpellingsAndMistypedLongFlags(t *testing.T) {
 		t.Errorf("attached values with = = %+v, %v", options, err)
 	}
 }
+
+// A failed agent's record keeps its name but no longer its pane, so a capture
+// of it says that, rather than reading as a capture with no name.
+func TestCaptureOfAgentWithoutPaneNamesIt(t *testing.T) {
+	f := newStateFixture(t)
+	f.add(t, "a", "worker", "codex")
+	f.env["TMUX_PANE"] = "%1"
+	p, err := f.run.team.Agent("a")
+	if err != nil {
+		t.Fatal(err)
+	}
+	l, err := p.LockAgent()
+	if err != nil {
+		t.Fatal(err)
+	}
+	a, err := p.Read()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := f.run.forgetPane(l, &a); err != nil {
+		t.Fatal(err)
+	}
+	if err := f.run.unlock(l); err != nil {
+		t.Fatal(err)
+	}
+	f.out.Reset()
+	requireRefused(t, f.cmd.capture([]string{"worker", "-n", "25"}), "worker has no pane to capture: it is failed")
+	if f.out.Len() != 0 {
+		t.Fatalf("captured %q", f.out.String())
+	}
+}
