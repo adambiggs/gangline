@@ -411,7 +411,7 @@ func (b *Backend) mutateRegisteredPane(ctx context.Context, id PaneIdentity, com
 		condition = fmt.Sprintf("#{&&:%s,#{==:#{pane_current_command},%s}}", condition, foreground)
 		condition = fmt.Sprintf("#{&&:%s,#{||:#{==:#{pane_in_mode},0},#{&&:#{==:#{pane_in_mode},1},%s}}}", condition, viewingMode)
 	}
-	fallback := "display-message -p 'registered pane identity changed or input mode is unsupported (pane=#{pane_id}, session=#{session_id}, foreground=#{pane_current_command}, modes=#{pane_in_mode}, mode=#{pane_mode})'"
+	fallback := "display-message -p -t " + id.Pane + " 'registered pane identity changed or input mode is unsupported (pane=#{pane_id}, session=#{session_id}, foreground=#{pane_current_command}, modes=#{pane_in_mode}, mode=#{pane_mode})'"
 	var out string
 	if len(command) > maxInlineRegisteredCommandBytes {
 		script := tmuxCommand("if-shell", "-F", "-t", id.Pane, condition, command, fallback) + "\n"
