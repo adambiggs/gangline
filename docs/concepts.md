@@ -43,6 +43,15 @@ The receipt tells you who holds the input:
 | `accepted` | The native input queue owns it. Do not resend. |
 | `delivered` | The native submit hook confirmed the exact message. |
 | `unverified` | Input may have been typed, but its receipt could not be confirmed. Inspect the pane before acting. |
+| `failed` | The message was not delivered. |
+
+When a message from an agent or the operator is abandoned before its submit
+key, Gangline withdraws the paste from the composer with the collar's
+`compact_clear` keys, the message fails, and the rest of the queue waits for a
+later drain. Behind a native prompt, on a composer it cannot read, or for a
+collar without those keys, the paste may stay in the composer and the message
+stays unverified, as it does when something else emptied the composer first.
+Gangline's own input, such as startup and notices, is never withdrawn.
 
 None of these receipts means the agent read or acted on the message. A reply
 is separate evidence. Queued messages wait while a recipient is alive;

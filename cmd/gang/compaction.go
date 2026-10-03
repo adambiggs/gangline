@@ -429,7 +429,7 @@ func (run *runtime) notifyRequester(a core.Agent, phase compactionPhase, reason 
 // fails the compaction.
 func (run *runtime) abandonCompactDraft(ctx context.Context, l *store.LockedAgent, a *core.Agent, b harnessInput, c harness.Collar, draft string, phase compactionPhase, reason string) error {
 	if draft != "" {
-		if err := run.clearCompactDraft(ctx, b, substrate.PaneID(a.Pane), c, draft); err != nil {
+		if err := run.clearComposerDraft(ctx, b, substrate.PaneID(a.Pane), c, draft); err != nil {
 			reason += "; " + err.Error()
 		} else {
 			reason += "; composer cleared"
@@ -480,15 +480,15 @@ func (run *runtime) abortCompactInput(l *store.LockedAgent, a *core.Agent, b har
 	return run.abandonCompactDraft(ctx, l, a, b, c, composer.Text, notRun, reason)
 }
 
-// compactAbortTimeout bounds the clear after an abandoned compact paste. When
-// it runs out the draft stays, and the failure reason says the composer still
-// holds it.
+// compactAbortTimeout bounds the clear after an abandoned compact or message
+// paste. When it runs out the draft stays, and the failure reason says the
+// composer still holds it.
 const compactAbortTimeout = 10 * time.Second
 
-// clearCompactDraft removes unsubmitted compact input with the collar's clear
+// clearComposerDraft removes unsubmitted input with the collar's compact clear
 // keys, one press per attempt, until the composer reads empty. A press can
 // clear as little as one composer line.
-func (run *runtime) clearCompactDraft(ctx context.Context, b harnessInput, pane substrate.PaneID, c harness.Collar, draft string) error {
+func (run *runtime) clearComposerDraft(ctx context.Context, b harnessInput, pane substrate.PaneID, c harness.Collar, draft string) error {
 	if c.Actions.CompactClear == nil {
 		return fmt.Errorf("the collar declares no compact clear keys; the composer still holds the unsubmitted input")
 	}

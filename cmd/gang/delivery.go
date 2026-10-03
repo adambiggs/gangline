@@ -225,18 +225,18 @@ func (run *runtime) available(l *store.LockedAgent, a *core.Agent, b harnessInpu
 	v, err := run.inputState(l, a, b, c)
 	return v.Free, v.Blocker, err
 }
-func (run *runtime) deliver(l *store.LockedAgent, a *core.Agent, e core.Envelope, b harnessInput, c harness.Collar) (string, error) {
+func (run *runtime) deliver(l *store.LockedAgent, a *core.Agent, e core.Envelope, b harnessInput, c harness.Collar) (outcome string, withdrawn bool, err error) {
 	if err := run.checkRecipient(*a); err != nil {
-		return "", err
+		return "", false, err
 	}
 	b = run.registeredInput(*a, b)
 	wire, err := envelopeText(e)
 	if err != nil {
-		return "", err
+		return "", false, err
 	}
 	input, err := harness.SubmitInput(c.Primitives.Submit, wire)
 	if err != nil {
-		return "", err
+		return "", false, err
 	}
 	var queue func(context.Context) (bool, error)
 	// Startup needs its exact contract witness. Context notes likewise keep
@@ -256,32 +256,32 @@ func (run *runtime) deliver(l *store.LockedAgent, a *core.Agent, e core.Envelope
 		// A fresh one-time token must not already appear before this submission.
 		seen, err := queue(context.Background())
 		if err != nil {
-			return "", err
+			return "", false, err
 		}
 		if seen {
-			return "", fmt.Errorf("message already appears in native queue before input; inspect the recipient; do not resend")
+			return "", false, fmt.Errorf("message already appears in native queue before input; inspect the recipient; do not resend")
 		}
 	}
 	old, err := l.Paths.ReadWitness()
 	if err != nil && !errors.Is(err, os.ErrNotExist) {
-		return "", err
+		return "", false, err
 	}
 	if err := run.apply(l, a, core.Event{Type: "input_started", ID: string(e.ID), Status: "envelope"}); err != nil {
-		return "", err
+		return "", false, err
 	}
 	if reason, err := harness.PasteHazard(c.Primitives.SubmitWitness, wire); err != nil || reason != "" {
 		if err != nil {
 			reason = err.Error()
 		}
 		if err := run.finishInput(l, a, e, "failed", reason); err != nil {
-			return "failed", err
+			return "failed", false, err
 		}
-		return "failed", run.mark(*a)
+		return "failed", false, run.mark(*a)
 	}
 	if isStartupEnvelope(e) && startupPasteSafe(input, wire) {
 		e.PasteOnly = &core.StartupPaste{WitnessID: old.ID}
 		if err := l.Paths.Publish(e); err != nil {
-			return "", err
+			return "", false, err
 		}
 	}
 	outcome, reason := "delivered", ""
@@ -313,7 +313,9 @@ func (run *runtime) deliver(l *store.LockedAgent, a *core.Agent, e core.Envelope
 	if err == nil {
 		err = startupSubmitPossible(l.Paths, &e)
 	}
+	submitted := false
 	if err == nil {
+		submitted = true
 		err = sendHarnessKeys(ctx, b, pane, c, substrate.Keys{Submit: true})
 	}
 	var witness store.Witness
@@ -344,6 +346,15 @@ func (run *runtime) deliver(l *store.LockedAgent, a *core.Agent, e core.Envelope
 	}
 	if err != nil {
 		outcome, reason = "unverified", err.Error()
+		// Startup recovery resubmits a startup paste the composer still holds.
+		// A usage wake reads a failed receipt as never submitted yet cannot
+		// republish under the same ID, so Gangline's own input stays
+		// unverified. A composer emptied by something else may hold input
+		// that is not the paste.
+		if !submitted && withdrawable(e) && !errors.Is(err, harness.ErrComposerEmptied) {
+			outcome, reason = run.withdrawPaste(*a, b, c, reason)
+			withdrawn = outcome == "failed"
+		}
 	} else if accepted {
 		outcome, reason = "accepted", "native queue shows sender and one-time token; do not resend"
 	} else {
@@ -356,20 +367,69 @@ func (run *runtime) deliver(l *store.LockedAgent, a *core.Agent, e core.Envelope
 		}
 	}
 	if err := run.finishInput(l, a, e, outcome, reason, witness); err != nil {
-		return outcome, err
+		return outcome, withdrawn, err
 	}
 	if outcome == "unverified" {
 		if err := run.reconcileDelivery(l, a); err != nil {
-			return outcome, err
+			return outcome, withdrawn, err
 		}
 		if a.LastDelivered == e.ID {
 			outcome = "delivered"
 		}
 	}
 	if err := run.mark(*a); err != nil {
-		return outcome, err
+		return outcome, withdrawn, err
 	}
-	return outcome, nil
+	return outcome, withdrawn, nil
+}
+
+// withdrawable reports whether a paste of e abandoned before its submit key
+// is withdrawn: a message from an agent or the operator, not Gangline's own
+// startup, resume, or notice input.
+func withdrawable(e core.Envelope) bool {
+	return e.From.Kind != core.SenderGangline && !isStartupEnvelope(e) && !isResumeEnvelope(e)
+}
+
+// withdrawPaste clears a message paste abandoned before its submit key, so the
+// recipient is not left holding it in its composer, and returns the delivery's
+// outcome. A bracketed paste cannot submit itself, so once the composer reads
+// empty the message never reached the harness and the delivery fails. The
+// composer was empty before the paste, so what it holds now is the paste. It
+// works under a fresh deadline because the cause may be the operation's own.
+// Behind a native prompt the clear keys would answer the prompt, and on an
+// unreadable composer they could not be confirmed, so the paste stays and the
+// delivery remains unverified.
+func (run *runtime) withdrawPaste(a core.Agent, b harnessInput, c harness.Collar, reason string) (string, string) {
+	const remains = "; the pasted input may remain in the composer"
+	if !harness.BracketedPaste(c.Primitives.Submit) {
+		return "unverified", reason
+	}
+	ctx, cancel := run.cmd.timeout(compactAbortTimeout)
+	defer cancel()
+	pane := substrate.PaneID(a.Pane)
+	screen, err := b.Capture(ctx, pane)
+	if err != nil {
+		return "unverified", reason + remains + "; composer unread: " + err.Error()
+	}
+	if _, blocked, err := harness.InputBlocked(c, screen); err != nil {
+		return "unverified", reason + remains + "; composer unread: " + err.Error()
+	} else if blocked {
+		return "unverified", reason + remains + " behind a native prompt"
+	}
+	composer, err := harness.ReadComposer(c.Primitives.Composer, screen)
+	if err != nil {
+		return "unverified", reason + remains + "; composer unread: " + err.Error()
+	}
+	if composer.Text == "" {
+		return "unverified", reason
+	}
+	if c.Actions.CompactClear == nil {
+		return "unverified", reason + "; the pasted input remains in the composer and the collar declares no clear keys"
+	}
+	if err := run.clearComposerDraft(ctx, b, pane, c, composer.Text); err != nil {
+		return "unverified", reason + remains + "; " + err.Error()
+	}
+	return "failed", reason + "; the pasted input was withdrawn from the composer"
 }
 
 // drainLocked returns the queue it could not deliver. The owner uses those
@@ -441,7 +501,7 @@ func (run *runtime) drainLocked(l *store.LockedAgent, a *core.Agent, target core
 			}
 			return result, pending, nil
 		}
-		outcome, err := run.deliver(l, a, *next, b, c)
+		outcome, withdrawn, err := run.deliver(l, a, *next, b, c)
 		if next.ID == target {
 			result = outcome
 		}
@@ -452,6 +512,13 @@ func (run *runtime) drainLocked(l *store.LockedAgent, a *core.Agent, target core
 			if err := run.notifySender(*a, *next, outcome); err != nil {
 				return result, pending, err
 			}
+		}
+		if withdrawn {
+			// What failed this paste may fail the next one too, so a later
+			// drain retries the rest of the queue rather than withdrawing each
+			// message in turn.
+			pending, err := l.Paths.ListNew()
+			return result, pending, err
 		}
 	}
 }

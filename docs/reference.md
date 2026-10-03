@@ -151,8 +151,8 @@ Send options:
 `DURATION` uses Go duration syntax (for example, `1h30m` or `500ms`) for
 `--at`, `curfew`, and `--timeout`.
 
-A send prints the message ID and `delivered`, `accepted`, `queued`, or
-`unverified`. See [message receipts](concepts.md#messages-and-envelopes).
+A send prints the message ID and `delivered`, `accepted`, `queued`,
+`unverified`, or `failed`. See [message receipts](concepts.md#messages-and-envelopes).
 Oversized rendered messages are refused without splitting; put details in a
 file and send its path.
 For a Claude Code recipient, a message, hitch task, `compact --resume` note,
@@ -483,7 +483,7 @@ and [internals](internals.md#watchdog).
 
 | Status | Meaning |
 | --- | --- |
-| `0` | Successful command; a send may still be queued. |
+| `0` | Successful command; a send may still be queued, or may have failed when its paste was withdrawn. |
 | `1` | Execution or I/O error. |
 | `2` | Bad usage; the message names the problem and, for a bad value, the accepted form. A known command's usage follows. |
 | `3` | Refused operation. |
