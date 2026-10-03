@@ -40,7 +40,7 @@ func TestAttachStoppedTeamWithClaimedLeadAdvisesUp(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if listed.Status != core.Failed || listed.Pane != a.Pane || !strings.Contains(listed.Evidence, "the recorded process has exited") {
+	if listed.Status != core.Failed || listed.Pane != a.Pane || !strings.Contains(listed.Evidence, "the team did not survive a host reboot") {
 		t.Fatalf("roster left claim in unexpected state: %+v", listed)
 	}
 	err = f.cmd.attach(nil)

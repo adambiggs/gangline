@@ -165,10 +165,13 @@ func TestRosterWithoutTeamListingKeepsRecordOfLiveProcess(t *testing.T) {
 				t.Fatalf("%s row = %q", name, row)
 			}
 		}
-		for _, name := range []string{"rebooted", "gone", "reused"} {
+		for _, name := range []string{"gone", "reused"} {
 			if row := rows[name]; !strings.Contains(row, " failed ") || !strings.HasSuffix(row, "tmux lists no team session and the recorded process has exited") {
 				t.Fatalf("%s row = %q", name, row)
 			}
+		}
+		if row := rows["rebooted"]; !strings.Contains(row, " failed ") || !strings.HasSuffix(row, "the team did not survive a host reboot; gang down clears its records") {
+			t.Fatalf("rebooted row = %q", row)
 		}
 		if row := rows["failed"]; !strings.HasSuffix(row, "boot deadline elapsed") {
 			t.Fatalf("failed row = %q", row)

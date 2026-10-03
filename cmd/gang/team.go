@@ -252,7 +252,7 @@ func (run *runtime) observeRoster(agents []core.Agent) ([]core.Agent, error) {
 				if !recordedProcessExited(current) {
 					unlisted = true
 				} else if current.Status != core.Failed {
-					err = run.apply(l, &current, core.Event{Type: "hitch_failed", Reason: "tmux lists no team session and the recorded process has exited"})
+					err = run.apply(l, &current, core.Event{Type: "hitch_failed", Reason: exitedUnlistedReason(current)})
 				}
 			case current.Status != core.Failed:
 				err = run.apply(l, &current, core.Event{Type: "hitch_failed", Reason: "registered pane is absent from tmux"})

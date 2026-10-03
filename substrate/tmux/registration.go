@@ -287,6 +287,16 @@ func (b *Backend) RemoveRegisteredNativePane(ctx context.Context, id PaneIdentit
 	return b.mutateRegisteredPane(ctx, id, "kill-pane -t "+id.Pane, "", expected.PID, true)
 }
 
+// EarlierBoot reports whether the identity was recorded under an earlier boot
+// of this host, which ended every process it records.
+func EarlierBoot(expected Identity) (bool, error) {
+	if expected.BootID == "" {
+		return false, nil
+	}
+	boot, err := bootIdentity()
+	return err == nil && expected.BootID != boot, err
+}
+
 // SendRegisteredKeys keeps the final identity check and typing in one tmux
 // command queue, including when a server restarts between observation and send.
 func (b *Backend) SendRegisteredKeys(ctx context.Context, id PaneIdentity, command string, keys substrate.Keys) error {

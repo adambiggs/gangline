@@ -358,6 +358,17 @@ func recordedProcessExited(a core.Agent) bool {
 	exited := len(owned.Identities()) == 0
 	return owned.Close() == nil && exited
 }
+
+// exitedUnlistedReason says why an agent with no listed team session and an
+// exited process failed. A process recorded under an earlier boot ended with
+// it, so the team did not survive the restart and only its records remain.
+func exitedUnlistedReason(a core.Agent) string {
+	if earlier, err := tmux.EarlierBoot(nativeIdentity(a.Process)); err == nil && earlier {
+		return "the team did not survive a host reboot; gang down clears its records"
+	}
+	return "tmux lists no team session and the recorded process has exited"
+}
+
 func (run *runtime) recoverInput(l *store.LockedAgent, a *core.Agent) error {
 	if a.Input == nil {
 		return nil
