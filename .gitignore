@@ -1,6 +1,8 @@
 packaging/pypi/dist/
 packaging/pypi/build/
 packaging/pypi/*.egg-info/
+/bin/
+/.evidence/
 *.tgz
 .gang-briefs/
 # Linked worktrees for local development.
