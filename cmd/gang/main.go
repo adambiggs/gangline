@@ -117,20 +117,44 @@ func run(args []string, stdin io.Reader, stdout, stderr io.Writer) int {
 	}
 	args = versionCommand(args)
 	if err := cmd.execute(args); err != nil {
-		var commandErr commandError
-		if errors.As(err, &commandErr) {
-			fmt.Fprintf(stderr, "gang: %s\n", commandErr.text)
-			if commandErr.status == exitUsage && len(args) != 0 {
-				if usage, ok := commandUsage[args[0]]; ok {
-					fmt.Fprint(stderr, usage)
-				}
-			}
-			return commandErr.status
+		for _, line := range errorLines(err) {
+			fmt.Fprintf(stderr, "gang: %s\n", line)
 		}
-		fmt.Fprintf(stderr, "gang: %v\n", err)
-		return exitError
+		status := errorStatus(err)
+		if status == exitUsage && len(args) != 0 {
+			if usage, ok := commandUsage[args[0]]; ok {
+				fmt.Fprint(stderr, usage)
+			}
+		}
+		return status
 	}
 	return exitOK
+}
+
+// errorLines reads every failure an error joins, so each prints as its own
+// line and none is lost behind the first.
+func errorLines(err error) []string {
+	if joined, ok := err.(interface{ Unwrap() []error }); ok {
+		var lines []string
+		for _, e := range joined.Unwrap() {
+			lines = append(lines, errorLines(e)...)
+		}
+		return lines
+	}
+	text := err.Error()
+	var commandErr commandError
+	if errors.As(err, &commandErr) {
+		text = commandErr.text
+	}
+	return strings.Split(text, "\n")
+}
+
+func errorStatus(err error) int {
+	var commandErr commandError
+	if errors.As(err, &commandErr) {
+		return commandErr.status
+	}
+	return exitError
 }
 
 // versionCommand reads --version as the version command's spelling as a flag,

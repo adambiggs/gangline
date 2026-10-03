@@ -109,7 +109,7 @@ func (cmd command) down(args []string) error {
 	if err := run.recordDown(len(agents)); err != nil {
 		return err
 	}
-	if err := eachAgent(agents, func(a core.Agent) error { return run.dropAgent(a.ID, true) }); err != nil {
+	if err := eachAgent(agents, func(a core.Agent) error { return agentFailure(a.Name, run.dropAgent(a.ID, true)) }); err != nil {
 		return err
 	}
 	if err := run.disarmEmptyWatchdog(); err != nil {
@@ -137,6 +137,24 @@ func confirmDown(input io.Reader, output io.Writer, session string, agentCount i
 	}
 	return nil
 }
+
+// agentFailure names the agent on every line of its failure, so a command
+// acting on several agents says which one each line is about.
+func agentFailure(name core.AgentName, err error) error {
+	if err == nil {
+		return nil
+	}
+	lines := errorLines(err)
+	for i, line := range lines {
+		lines[i] = string(name) + ": " + line
+	}
+	text := strings.Join(lines, "\n")
+	if status := errorStatus(err); status != exitError {
+		return commandError{status: status, text: text}
+	}
+	return errors.New(text)
+}
+
 func eachAgent(agents []core.Agent, action func(core.Agent) error) error {
 	results := make([]error, len(agents))
 	var group sync.WaitGroup
