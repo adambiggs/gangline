@@ -1,5 +1,19 @@
 # Changelog
 
+## [1.15.7](https://github.com/adambiggs/gangline/compare/gangline-v1.15.6...gangline-v1.15.7) (2026-10-03)
+
+
+### Bug Fixes
+
+* **capture:** show a named agent's pane only under its registration ([930a147](https://github.com/adambiggs/gangline/commit/930a1472c2d851ab422eb50fe4326b4a8bef70a7))
+* **compact:** name the next step when an agent's pane was replaced ([6d76436](https://github.com/adambiggs/gangline/commit/6d76436831b081336eb81902cb1fbb5a2603f33c))
+* **compact:** recover a compaction only from the record's own pane ([71880d8](https://github.com/adambiggs/gangline/commit/71880d82cd4d802a3d980e6e3f5538ecdfe029ae))
+* **compact:** refuse an incomplete pane registration before reading the pane ([7572a3b](https://github.com/adambiggs/gangline/commit/7572a3b67d463b95cc3aaf70367d6ea62c47700d))
+* **compact:** start a compaction only from the record's own pane ([6154b77](https://github.com/adambiggs/gangline/commit/6154b776c160ff13d9f716d0cc9b4b93a63b9852))
+* **down:** finish peer teardown before ending the caller pane ([19fd654](https://github.com/adambiggs/gangline/commit/19fd654cc0660dd5a9f33ba0278658686c19635a))
+* **down:** retain teardown failures in the team audit ([b95fa3c](https://github.com/adambiggs/gangline/commit/b95fa3cc59a63db7305ce082927f66574a49a2fa))
+* **recover:** reopen a failed boot only from the record's own pane ([da48130](https://github.com/adambiggs/gangline/commit/da481301d4f90883e60387f2342c286d11c6d98f))
+
 ## [1.15.6](https://github.com/adambiggs/gangline/compare/gangline-v1.15.5...gangline-v1.15.6) (2026-10-03)
 
 
