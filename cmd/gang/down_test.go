@@ -2,20 +2,85 @@ package main
 
 import (
 	"bytes"
+	"context"
 	"errors"
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
+	"sync/atomic"
 	"testing"
 	"time"
 
 	"github.com/adambiggs/gangline/core"
 	"github.com/adambiggs/gangline/store"
+	"github.com/adambiggs/gangline/substrate/tmux"
 )
 
 type downPromptReader func([]byte) (int, error)
 
 func (read downPromptReader) Read(buffer []byte) (int, error) { return read(buffer) }
+
+type downOrderRegistry struct {
+	paneRegistry
+	remove func(tmux.PaneIdentity) error
+}
+
+func (b downOrderRegistry) RemoveRegisteredNativePane(_ context.Context, pane tmux.PaneIdentity, _ tmux.Identity) error {
+	return b.remove(pane)
+}
+
+func TestDownFinishesPeersBeforeEndingTheCallerDespiteFailures(t *testing.T) {
+	for _, key := range []string{"GANG_AGENT_ID", "TMUX_PANE"} {
+		t.Run(key, func(t *testing.T) {
+			f := newStateFixture(t)
+			caller := f.addHitched(t, "c", "caller", "lead", "")
+			f.setAgent(t, caller, func(a *core.Agent) { a.Pane = "%3" })
+			for i, name := range []string{"first", "second"} {
+				f.setAgent(t, f.add(t, name, name, "codex"), func(a *core.Agent) { a.Pane = fmt.Sprintf("%%%d", i+1) })
+			}
+			if key == "GANG_AGENT_ID" {
+				f.env[key] = string(caller.ID)
+			} else {
+				f.env[key] = "%3"
+			}
+			peersStarted := make(chan struct{})
+			var started, finished atomic.Int32
+			var called atomic.Bool
+			peerFailure := refuseError("peer teardown failed")
+			callerFailure := errors.New("caller teardown failed")
+			f.cmd.paneBackend = downOrderRegistry{paneRegistry: f.input, remove: func(pane tmux.PaneIdentity) error {
+				if pane.Pane == "%3" {
+					called.Store(true)
+					if got := finished.Load(); got != 2 {
+						return fmt.Errorf("caller ended with %d peers finished", got)
+					}
+					return callerFailure
+				}
+				// Peers must still run concurrently, so each can reach its
+				// completion barrier while the other operation is active.
+				if started.Add(1) == 2 {
+					close(peersStarted)
+				}
+				<-peersStarted
+				finished.Add(1)
+				return peerFailure
+			}}
+			err := f.cmd.down([]string{"--yes"})
+			if !called.Load() || finished.Load() != 2 || errorStatus(err) != exitRefused {
+				t.Fatalf("drop attempts: caller=%v peers=%d error=%v", called.Load(), finished.Load(), err)
+			}
+			if !strings.Contains(err.Error(), "caller: "+callerFailure.Error()) {
+				t.Fatalf("caller did not finish after peers: %v", err)
+			}
+			for _, name := range []string{"first", "second"} {
+				if !strings.Contains(err.Error(), name+": "+peerFailure.Error()) {
+					t.Fatalf("missing %s failure: %v", name, err)
+				}
+			}
+		})
+	}
+}
 
 func TestDownConfirmation(t *testing.T) {
 	for _, test := range []struct {

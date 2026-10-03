@@ -117,13 +117,31 @@ func (cmd command) down(args []string) (err error) {
 			err = errors.Join(err, run.team.Append(core.Event{Type: "down_failed", At: cmd.now(), Reason: err.Error()}))
 		}
 	}()
-	if err := eachAgent(agents, func(a core.Agent) error { return agentFailure(a.Name, run.dropAgent(a.ID, true)) }); err != nil {
+	if err := cmd.eachDownAgent(agents, func(a core.Agent) error { return agentFailure(a.Name, run.dropAgent(a.ID, true)) }); err != nil {
 		return err
 	}
 	if err := run.disarmEmptyWatchdog(); err != nil {
 		return err
 	}
 	return os.RemoveAll(run.team.Directory)
+}
+
+// Ending the caller's terminal can interrupt its in-flight tmux clients.
+// Finish other agents first, while still attempting every drop on failure.
+func (cmd command) eachDownAgent(agents []core.Agent, action func(core.Agent) error) error {
+	var peers, own []core.Agent
+	for _, a := range agents {
+		if cmd.dropEndsOwnPane(a) {
+			own = append(own, a)
+		} else {
+			peers = append(peers, a)
+		}
+	}
+	err := eachAgent(peers, action)
+	for _, a := range own {
+		err = errors.Join(err, action(a))
+	}
+	return err
 }
 
 func (cmd command) stdinIsTerminal() bool {
