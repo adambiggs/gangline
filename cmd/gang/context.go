@@ -266,7 +266,7 @@ func (cmd command) capture(args []string) error {
 	}
 	var screen substrate.Screen
 	if record != nil {
-		screen, err = run.captureRegistered(context.Background(), b, *record)
+		screen, err = run.captureAgentPane(context.Background(), b, *record)
 	} else {
 		screen, err = b.Capture(context.Background(), substrate.PaneID(pane))
 	}

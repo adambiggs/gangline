@@ -21,6 +21,16 @@ func staleOn(reg tmux.PaneIdentity, earlier string) func(*core.Agent) {
 	}
 }
 
+// requireReplacedPaneRefusal requires a refusal that names the replaced pane
+// and the step that frees the agent's name.
+func requireReplacedPaneRefusal(t *testing.T, err error) {
+	t.Helper()
+	var ce commandError
+	if !errors.As(err, &ce) || ce.status != exitRefused || !strings.Contains(ce.text, tmux.ErrPaneReplaced.Error()) || !strings.Contains(ce.text, "drop worker and hitch it again") {
+		t.Fatalf("err = %v, want a refusal naming the replaced pane and the next step", err)
+	}
+}
+
 func loggedEvents(t *testing.T, f *stateFixture, kind string) int {
 	t.Helper()
 	file, err := os.Open(f.run.team.Log)
@@ -72,10 +82,7 @@ func TestCompactRecoverDoesNotReadAPaneWhoseIdAStaleRecordReuses(t *testing.T) {
 	a := f.add(t, "a", "worker", "codex")
 	f.input.screen = compactRecoverScreens(t, f, "codex").busy
 	before := saveRecoverCompaction(t, f, a, "submitted", staleOn(reg, earlier))
-	err := f.cmd.compact([]string{"worker", "--recover"})
-	if !errors.Is(err, tmux.ErrPaneReplaced) {
-		t.Fatalf("recover err = %v, want the replaced pane", err)
-	}
+	requireReplacedPaneRefusal(t, f.cmd.compact([]string{"worker", "--recover"}))
 	p, _ := f.run.team.Agent(a.ID)
 	after, err := p.Read()
 	if err != nil {
@@ -126,9 +133,7 @@ func TestCaptureDoesNotReadAPaneWhoseIdAStaleRecordReuses(t *testing.T) {
 			f.setAgent(t, f.add(t, "a", "worker", "claude"), staleOn(reg, earlier))
 			f.input.command = "claude"
 			f.input.screen = screenWithText("────────", "❯ ", "────────")
-			if err := c.run(f.cmd); !errors.Is(err, tmux.ErrPaneReplaced) {
-				t.Fatalf("err = %v, want the replaced pane", err)
-			}
+			requireReplacedPaneRefusal(t, c.run(f.cmd))
 			if f.input.captures != 0 {
 				t.Fatalf("captured another record's pane %d times", f.input.captures)
 			}
