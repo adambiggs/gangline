@@ -94,6 +94,13 @@ on Linux or launchd on macOS, plus an awake host. For unattended operation,
 keep the user manager running across logout; Gangline does not configure
 login lingering. Repair the reported scheduler problem and run `gang tick`.
 
+## The roster lists agents after a reboot
+
+A team does not survive a host reboot. Its agents fail with `the team did not
+survive a host reboot`. `gang down` clears its records without signalling any
+process, since a process ID recorded under the earlier boot can now name another
+process, and prints each agent's native session to resume.
+
 ## Drop or shutdown refuses
 
 Gangline refuses teardown when it cannot safely identify the registered

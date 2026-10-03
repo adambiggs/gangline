@@ -266,6 +266,9 @@ func (b *Backend) RemoveRegisteredPane(ctx context.Context, id PaneIdentity) err
 
 // RemoveRegisteredNativePane retains native replacement protection alongside
 // the server generation guard when the saved process namespace is visible.
+// A process recorded under an earlier boot ended with that boot, and its PID
+// now names whatever holds it on this one, so it is never read. The pane went
+// with its server: the generation guard finds it absent and removes nothing.
 func (b *Backend) RemoveRegisteredNativePane(ctx context.Context, id PaneIdentity, expected Identity) error {
 	if !CanReadIdentity(expected) {
 		return fmt.Errorf("registered process namespace is not visible")
@@ -274,15 +277,14 @@ func (b *Backend) RemoveRegisteredNativePane(ctx context.Context, id PaneIdentit
 	if err != nil {
 		return err
 	}
-	if expected.BootID != boot {
-		return fmt.Errorf("refuse removal: registered process boot changed")
-	}
-	r, err := readCurrentProcess(expected.PID)
-	if err == nil && !sameIdentity(expected, r) {
-		return fmt.Errorf("refuse removal: pane process identity changed")
-	}
-	if err != nil && !errors.Is(err, os.ErrNotExist) && !errors.Is(err, syscall.ESRCH) {
-		return err
+	if expected.BootID == boot {
+		r, err := readCurrentProcess(expected.PID)
+		if err == nil && !sameIdentity(expected, r) {
+			return fmt.Errorf("refuse removal: pane process identity changed")
+		}
+		if err != nil && !errors.Is(err, os.ErrNotExist) && !errors.Is(err, syscall.ESRCH) {
+			return err
+		}
 	}
 	return b.mutateRegisteredPane(ctx, id, "kill-pane -t "+id.Pane, "", expected.PID, true)
 }
