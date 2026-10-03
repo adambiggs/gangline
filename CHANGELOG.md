@@ -1,5 +1,21 @@
 # Changelog
 
+## [1.13.1](https://github.com/adambiggs/gangline/compare/gangline-v1.13.0...gangline-v1.13.1) (2026-10-03)
+
+
+### Bug Fixes
+
+* **activity:** log blocked and wedged readings without screen text ([ddfac99](https://github.com/adambiggs/gangline/commit/ddfac99ae958dc830d03fc9fc750c180fa605572))
+* **compact:** name a capacity wait while the failed turn's screen reads busy ([4c548f9](https://github.com/adambiggs/gangline/commit/4c548f992da0aa393fcb87225e81e1f7b895bd56))
+* **compact:** start a queued compaction after a non-capacity turn failure ([29864e3](https://github.com/adambiggs/gangline/commit/29864e342f856422b1e7121b064cd8d4c63f4fcc))
+* **delivery:** tell the sender when an unverified message is later delivered ([0ab91a0](https://github.com/adambiggs/gangline/commit/0ab91a0d16fb7176ad3ed5450b282c435c5b1bf1))
+* **native:** clear an unattributed turn failure when a queued turn finishes ([f14ec36](https://github.com/adambiggs/gangline/commit/f14ec36baa6ab5c056d777fa90bc80b7c3e55fd4))
+* **native:** record a queued turn's failure against that turn ([905515f](https://github.com/adambiggs/gangline/commit/905515f01b9f62727b014a121beec75c320db52a))
+* **snooze:** fail a wake pulled out of the native queue ([e5f5144](https://github.com/adambiggs/gangline/commit/e5f5144cf668a5cc00d2139db358b38beaef4051))
+* **tmux:** reap a pane exit when the server lost its child signal ([b48ba09](https://github.com/adambiggs/gangline/commit/b48ba09107c63ec1ce112e5f9a4b59b9b8f36833))
+* **tmux:** treat a macOS signal refused to an exiting process as gone ([611c77c](https://github.com/adambiggs/gangline/commit/611c77cf13158d60cf39c2326d14a9ac14e1c34c))
+* **watchdog:** bound cleanup's wait for the scheduler lock ([19b4197](https://github.com/adambiggs/gangline/commit/19b4197796791f075cee5251cbd573e186d96238))
+
 ## [1.13.0](https://github.com/adambiggs/gangline/compare/gangline-v1.12.5...gangline-v1.13.0) (2026-10-02)
 
 
