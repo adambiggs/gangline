@@ -107,7 +107,7 @@ func TestAcquireTreeKeepsProcessReadFailureForLivePane(t *testing.T) {
 			wrapper := filepath.Join(dir, "tmux")
 			recheck := ""
 			if tc.failRecheck {
-				recheck = `case "$*" in *" list-panes "*) [ -e "$dir/failed" ] && { echo 'recheck refused' >&2; exit 1; };; esac`
+				recheck = `case "$*" in *" list-panes "*) [ -e "$dir/failed" ] && { : >"$dir/recheck-failed"; echo 'recheck refused' >&2; exit 1; };; esac`
 			}
 			script := fmt.Sprintf(`#!/bin/sh
 dir='%s'
@@ -123,6 +123,11 @@ exec '%s' "$@"
 				t.Fatal(err)
 			}
 			owned, err := b.AcquireTree(ctx, pane.ID, expected)
+			if tc.failRecheck {
+				if _, witnessErr := os.Stat(filepath.Join(dir, "recheck-failed")); witnessErr != nil {
+					t.Fatalf("wrapper did not refuse the registration recheck: %v", witnessErr)
+				}
+			}
 			if err == nil || !strings.Contains(err.Error(), "process read refused") {
 				t.Fatalf("AcquireTree = %+v, %v; want the process read failure", owned, err)
 			}

@@ -536,7 +536,7 @@ func TestLaunchStartsNativeWhateverTheHoldLog(t *testing.T) {
 			socket := filepath.Join(root, "tmux.sock")
 			noting := filepath.Join(root, "tmux")
 			// Notes the hold the pane sets on itself, then sets it.
-			script := "#!/bin/sh\n[ \"$3 $7 $8\" = \"set-option remain-on-exit on\" ] && echo 'hold noted' >&2\nexec '" + binary + "' \"$@\"\n"
+			script := "#!/bin/sh\n[ \"$3 $7 $8\" = \"set-option remain-on-exit on\" ] && { : >'" + filepath.Join(root, "noted") + "'; echo 'hold noted' >&2; }\nexec '" + binary + "' \"$@\"\n"
 			if err := os.WriteFile(noting, []byte(script), 0o700); err != nil {
 				t.Fatal(err)
 			}
@@ -554,6 +554,9 @@ func TestLaunchStartsNativeWhateverTheHoldLog(t *testing.T) {
 			releaseAndAwaitExit(t, binary, socket, root, pane.ID, "release")
 			_, err = backend.Capture(context.Background(), pane.ID)
 			assertExited(t, err, "8")
+			if _, err := os.Stat(filepath.Join(root, "noted")); err != nil {
+				t.Fatalf("wrapper did not print during the successful hold: %v", err)
+			}
 			if _, err := os.Stat(spec.HoldLog); !errors.Is(err, os.ErrNotExist) {
 				t.Fatalf("a hold that succeeded left a log: %v", err)
 			}

@@ -44,8 +44,8 @@ func TestReleaseExitReapsAfterAMissedChildSignal(t *testing.T) {
 	// FIFO read-write never blocks, so a kick with no reap waiting is dropped
 	// instead of holding its client.
 	script := "#!/bin/sh\ncase \"$4 $5\" in\n" +
-		"'run-shell true') read -r _ <'" + kicks + "' || exit 97;;\n" +
-		"'run-shell -b') '" + binary + "' \"$@\" || exit; printf 'kick\\n' 1<>'" + kicks + "'; exit;;\n" +
+		"'run-shell true') : >'" + filepath.Join(root, "held") + "'; read -r _ <'" + kicks + "' || exit 97; : >'" + filepath.Join(root, "released") + "';;\n" +
+		"'run-shell -b') '" + binary + "' \"$@\" || exit; : >'" + filepath.Join(root, "kicked") + "'; printf 'kick\\n' 1<>'" + kicks + "'; exit;;\n" +
 		"esac\nexec '" + binary + "' \"$@\"\n"
 	if err := os.WriteFile(wrapper, []byte(script), 0o700); err != nil {
 		t.Fatal(err)
@@ -65,4 +65,9 @@ func TestReleaseExitReapsAfterAMissedChildSignal(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), time.Minute)
 	defer cancel()
 	assertExited(t, backend.ReleaseExit(ctx, pane.ID), "3")
+	for _, witness := range []string{"held", "kicked", "released"} {
+		if _, err := os.Stat(filepath.Join(root, witness)); err != nil {
+			t.Fatalf("missed-child-signal wrapper did not record %s: %v", witness, err)
+		}
+	}
 }

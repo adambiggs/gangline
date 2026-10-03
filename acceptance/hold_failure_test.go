@@ -56,10 +56,12 @@ func TestHitchNamesWhyThePaneHoldFailed(t *testing.T) {
 			wrapper := filepath.Join(team, "tmux")
 			if err := os.WriteFile(wrapper, []byte(`#!/bin/sh
 # SPDX-License-Identifier: Apache-2.0
-order='`+refused+`' socket='`+socket+`' listed='`+filepath.Join(team, "listed")+`' bounded='`+exe+`'
+order='`+refused+`' socket='`+socket+`' listed='`+filepath.Join(team, "listed")+`' bounded='`+exe+`' ordered='`+filepath.Join(team, "ordered")+`'
 case " $* " in
 *" remain-on-exit on "*)
-	[ "$order" = after-registration ] && GANGLINE_ACCEPTANCE_BOUNDED_WAIT=registered "$bounded" "$socket"
+	if [ "$order" = after-registration ]; then
+		GANGLINE_ACCEPTANCE_BOUNDED_WAIT=registered "$bounded" "$socket" || exit
+	fi
 	echo "hold refused: wrapper sentinel" >&2
 	exit 1;;
 esac
@@ -67,10 +69,12 @@ case "$order $4 $5" in
 "before-registration list-panes -a")
 	if [ ! -e "$listed" ]; then
 		: >"$listed"
-		GANGLINE_ACCEPTANCE_BOUNDED_WAIT=closed "$bounded" "$socket"
+		GANGLINE_ACCEPTANCE_BOUNDED_WAIT=closed "$bounded" "$socket" || exit
+		: >"$ordered"
 	fi;;
 "after-registration display-message -p")
-	tmux -S "$socket" wait-for -S registered;;
+	tmux -S "$socket" wait-for -S registered || exit
+	: >"$ordered";;
 esac
 exec tmux "$@"
 `), 0o700); err != nil {
@@ -95,6 +99,9 @@ exec tmux "$@"
 				return string(out), err
 			}
 			out, err := gang("hitch", "worker")
+			if _, witnessErr := os.Stat(filepath.Join(team, "ordered")); witnessErr != nil {
+				t.Fatalf("%s wrapper did not order the hold refusal against registration: %v\n%s", refused, witnessErr, out)
+			}
 			if err == nil || !strings.Contains(out, failure) {
 				t.Fatalf("hitch with a refused hold: %v\n%s", err, out)
 			}
