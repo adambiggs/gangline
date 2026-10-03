@@ -109,7 +109,10 @@ func (cmd command) hitchWithStaleClaim(args []string, supersede bool) (result er
 	if err != nil {
 		return err
 	}
-	hitcher := sender.HitchID
+	hitcher, err := run.hitcherID()
+	if err != nil {
+		return err
+	}
 	if sender.Kind == "" {
 		sender = core.Sender{Kind: core.SenderGangline, Name: "hitch"}
 	}

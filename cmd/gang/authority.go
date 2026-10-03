@@ -89,6 +89,17 @@ func (run *runtime) refuseDrop(target core.Agent) error {
 	return refuseError("drop refused: this process carries the hitch identity of %s in team %q, and %s %s; this protects an agent from a teammate that did not start it. Ask that agent or the lead to drop %s", caller.Name, run.settings.Session, target.Name, hitcher, target.Name)
 }
 
+// hitcherID names the verified agent whose pane runs this command, or nothing
+// for the operator. A booting agent can already start others, and an agent it
+// starts must not read as started by the operator.
+func (run *runtime) hitcherID() (core.HitchID, error) {
+	a, err := run.observedAgent()
+	if err != nil || a == nil {
+		return "", err
+	}
+	return a.ID, nil
+}
+
 // notifyHitcher tells the agent that hitched a that a has failed, since
 // nothing else reaches it: the failure is usually observed by a tick, and the
 // failed agent can no longer report. A boot failure the hitch command returns

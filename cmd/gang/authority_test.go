@@ -104,6 +104,37 @@ func TestLeadAuthorityIsNotTakenByNameOrDelegatedRole(t *testing.T) {
 	}
 }
 
+// An agent still booting can run a hitch from its pane; the agent it starts
+// records it as hitcher, so the child gains no lead authority.
+func TestHitcherIsRecordedForBootingCaller(t *testing.T) {
+	for _, status := range []core.Status{core.Booting, core.Active} {
+		t.Run(string(status), func(t *testing.T) {
+			f := newStateFixture(t)
+			f.addHitched(t, "l", "lead", "lead", "")
+			b := f.addHitched(t, "b", "owner", "", "l")
+			p, err := f.run.team.Agent(b.ID)
+			if err != nil {
+				t.Fatal(err)
+			}
+			l, err := p.LockAgent()
+			if err != nil {
+				t.Fatal(err)
+			}
+			b.Status = status
+			if err := l.Save(b); err != nil {
+				t.Fatal(err)
+			}
+			if err := l.Close(); err != nil {
+				t.Fatal(err)
+			}
+			f.env["GANG_AGENT_ID"], f.env["TMUX_PANE"] = "b", b.Pane
+			if id, err := f.run.hitcherID(); err != nil || id != "b" {
+				t.Fatalf("hitcher = %q, %v", id, err)
+			}
+		})
+	}
+}
+
 func TestDownByLeadOperatorOrAnotherTeamIsRecorded(t *testing.T) {
 	for _, test := range []struct{ name, identity, caller string }{
 		{"lead", "l", "lead"},
