@@ -4,10 +4,10 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"io"
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"syscall"
 	"testing"
@@ -32,9 +32,10 @@ func exitingSpec(t *testing.T, binary, socket, root, release, status string) sub
 	}
 }
 
-// awaitStart returns once the process holds the write end of root's exit
-// pipe, which it opens only after its pane holds itself.
-func awaitStart(t *testing.T, root string) *os.File {
+// awaitStart returns a handle on the pane's process once the process holds
+// the write end of root's exit pipe, which it opens only after its pane holds
+// itself.
+func awaitStart(t *testing.T, binary, socket, root string, pane substrate.PaneID) processHandle {
 	t.Helper()
 	opened := make(chan *os.File, 1)
 	failed := make(chan error, 1)
@@ -51,43 +52,53 @@ func awaitStart(t *testing.T, root string) *os.File {
 	select {
 	case pipe := <-opened:
 		t.Cleanup(func() { pipe.Close() })
-		return pipe
 	case err := <-failed:
 		t.Fatalf("await process start: %v", err)
 	case <-time.After(time.Minute):
 		t.Fatal("process did not start")
 	}
-	return nil
+	// The process waits for its release, so the pane's process cannot exit
+	// before the handle is taken.
+	pid, err := strconv.Atoi(strings.TrimSpace(runTmux(t, binary, socket, "display-message", "-p", "-t", string(pane), "#{pane_pid}")))
+	if err != nil {
+		t.Fatal(err)
+	}
+	observation, err := observeProcess(pid)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer observation.close()
+	identity, err := pinObservedProcess(observation.record, observation.read, openProcessHandle)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = identity.handle.close() })
+	return identity.handle
 }
 
-// releaseAndAwaitExit observes the exit as EOF on the exit pipe, which does not
-// depend on when tmux reaps the process. tmux can leave an exited pane child
-// unreaped, and then pane-died never fires; the reap makes the server collect
-// every exited child.
-func releaseAndAwaitExit(t *testing.T, binary, socket, root, release string) {
+// releaseAndAwaitExit observes the exit through the pane process's own exit,
+// which does not depend on when tmux reaps the process. tmux can leave an
+// exited pane child unreaped, and then pane-died never fires; the reap makes
+// the server collect every exited child.
+func releaseAndAwaitExit(t *testing.T, binary, socket, root string, pane substrate.PaneID, release string) {
 	t.Helper()
-	awaitExit(t, binary, socket, awaitStart(t, root), release)
+	awaitExit(t, binary, socket, awaitStart(t, binary, socket, root, pane), release)
 }
 
-func awaitExit(t *testing.T, binary, socket string, pipe *os.File, release string) {
+// awaitExit releases the process and returns once tmux has reaped its pane's
+// process. EOF on the exit pipe is not the exit: a process closes its files
+// before it can be reaped, and a reap that runs between the two leaves the
+// pane's exit uncollected.
+func awaitExit(t *testing.T, binary, socket string, process processHandle, release string) {
 	t.Helper()
-	done := make(chan error, 1)
-	go func() {
-		if output, err := exec.Command(binary, "-S", socket, "wait-for", "-S", release).CombinedOutput(); err != nil {
-			done <- fmt.Errorf("release: %v: %s", err, output)
-			return
-		}
-		_, err := io.Copy(io.Discard, pipe)
-		done <- err
-	}()
 	// Bounded so a process that never exits cannot hold the test forever.
-	select {
-	case err := <-done:
-		if err != nil {
-			t.Fatalf("await process exit: %v", err)
-		}
-	case <-time.After(time.Minute):
-		t.Fatal("process did not exit")
+	ctx, cancel := context.WithTimeout(context.Background(), time.Minute)
+	defer cancel()
+	if output, err := exec.CommandContext(ctx, binary, "-S", socket, "wait-for", "-S", release).CombinedOutput(); err != nil {
+		t.Fatalf("release: %v: %s", err, output)
+	}
+	if err := process.wait(ctx); err != nil {
+		t.Fatalf("await process exit: %v", err)
 	}
 	reapTmux(t, binary, socket)
 }
@@ -119,7 +130,7 @@ func TestCreateSessionKeepsExitedPaneReadable(t *testing.T) {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { _, _ = runTmuxResult(binary, socket, "kill-session", "-t", "=exits") })
-	releaseAndAwaitExit(t, binary, socket, root, "release")
+	releaseAndAwaitExit(t, binary, socket, root, pane.ID, "release")
 	_, err = backend.Capture(context.Background(), pane.ID)
 	assertExited(t, err, "3")
 	_, err = backend.Identity(context.Background(), pane.ID)
@@ -157,7 +168,7 @@ func TestSpawnKeepsOnlyItsOwnExitedPane(t *testing.T) {
 	if hooks := runTmux(t, binary, socket, "show-hooks", "-t", "=spawns:"); strings.Contains(hooks, "after-new-window") {
 		t.Fatalf("spawn left a session hook: %q", hooks)
 	}
-	started := awaitStart(t, root)
+	started := awaitStart(t, binary, socket, root, pane.ID)
 	if held := runTmux(t, binary, socket, "show-options", "-p", "-v", "-t", string(first.ID), "remain-on-exit"); strings.TrimSpace(held) == "on" {
 		t.Fatal("spawn held the session's existing pane")
 	}
@@ -185,7 +196,7 @@ func TestReleaseExitLetsLivePaneClose(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	started := awaitStart(t, root)
+	started := awaitStart(t, binary, socket, root, pane.ID)
 	if held := runTmux(t, binary, socket, "show-options", "-p", "-v", "-t", string(pane.ID), "remain-on-exit"); strings.TrimSpace(held) != "on" {
 		t.Fatalf("spawned pane remain-on-exit = %q, want on", held)
 	}
@@ -224,7 +235,7 @@ func TestReleaseRegisteredExitChecksIdentity(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		started := awaitStart(t, dir)
+		started := awaitStart(t, binary, socket, dir, pane.ID)
 		id, err := backend.RegisterPane(context.Background(), pane.ID)
 		if err != nil {
 			t.Fatal(err)
@@ -293,7 +304,7 @@ func TestLaunchHoldsItsPaneUnderUserHooks(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			started := awaitStart(t, root)
+			started := awaitStart(t, binary, socket, root, pane.ID)
 			window := strings.TrimSpace(runTmux(t, binary, socket, "display-message", "-p", "-t", string(pane.ID), "#{window_id}"))
 			if panes := strings.Fields(runTmux(t, binary, socket, "list-panes", "-t", window, "-F", "#{pane_id}")); len(panes) != 2 {
 				t.Fatalf("user hook did not split the launched window: %q", panes)
@@ -396,7 +407,7 @@ func TestLaunchHoldsItsPaneOnRelativePaths(t *testing.T) {
 				t.Fatal(err)
 			}
 			t.Cleanup(func() { _, _ = runTmuxResult(binary, socket, "kill-session", "-t", "=relative") })
-			releaseAndAwaitExit(t, binary, socket, dir, "release")
+			releaseAndAwaitExit(t, binary, socket, dir, pane.ID, "release")
 			_, err = backend.Capture(context.Background(), pane.ID)
 			assertExited(t, err, "6")
 		})
@@ -433,7 +444,7 @@ func TestLaunchHoldsItsPaneUnderAnyDefaultShell(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	releaseAndAwaitExit(t, binary, socket, root, "release")
+	releaseAndAwaitExit(t, binary, socket, root, pane.ID, "release")
 	_, err = backend.Capture(context.Background(), pane.ID)
 	assertExited(t, err, "7")
 	if got, err := os.ReadFile(ran); err != nil || !strings.Contains(string(got), "boot failure") {
@@ -540,7 +551,7 @@ func TestLaunchStartsNativeWhateverTheHoldLog(t *testing.T) {
 				t.Fatal(err)
 			}
 			t.Cleanup(func() { _, _ = runTmuxResult(binary, socket, "kill-session", "-t", "=noted") })
-			releaseAndAwaitExit(t, binary, socket, root, "release")
+			releaseAndAwaitExit(t, binary, socket, root, pane.ID, "release")
 			_, err = backend.Capture(context.Background(), pane.ID)
 			assertExited(t, err, "8")
 			if _, err := os.Stat(spec.HoldLog); !errors.Is(err, os.ErrNotExist) {

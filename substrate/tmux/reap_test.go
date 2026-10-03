@@ -59,7 +59,7 @@ func TestReleaseExitReapsAfterAMissedChildSignal(t *testing.T) {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { _, _ = runTmuxResult(binary, socket, "kill-session", "-t", "=missed") })
-	releaseAndAwaitExit(t, binary, socket, root, "release")
+	releaseAndAwaitExit(t, binary, socket, root, pane.ID, "release")
 	// Bounded so a reap that waits for a child signal that never comes fails
 	// the test instead of holding it.
 	ctx, cancel := context.WithTimeout(context.Background(), time.Minute)

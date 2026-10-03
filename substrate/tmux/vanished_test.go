@@ -32,8 +32,8 @@ func vanishingPane(t *testing.T) (*Backend, substrate.PaneID, func()) {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { _, _ = runTmuxResult(binary, socket, "kill-session", "-t", "=vanishes") })
-	pipe := awaitStart(t, root)
-	return backend, pane.ID, func() { awaitExit(t, binary, socket, pipe, "release") }
+	process := awaitStart(t, binary, socket, root, pane.ID)
+	return backend, pane.ID, func() { awaitExit(t, binary, socket, process, "release") }
 }
 
 func TestIdentityReportsVanishedProcessAsExit(t *testing.T) {
