@@ -4,6 +4,7 @@ import (
 	"bufio"
 	"context"
 	"errors"
+	"flag"
 	"fmt"
 	"io"
 	"os"
@@ -36,6 +37,13 @@ func (cmd command) up(args []string) error {
 		return usageError("up: %v", err)
 	}
 	flagArguments, _ := partitionOptions(flags, args)
+	taskSupplied := false
+	flags.Visit(func(option *flag.Flag) {
+		taskSupplied = taskSupplied || option.Name == "t" || option.Name == "task"
+	})
+	if options.Resume != "" && !taskSupplied && !options.Stdin {
+		flagArguments = append(flagArguments, "--task", "This is a resumed session. Re-read your brief and durable state, then continue your work or report that you are waiting for an assignment.")
+	}
 	name := "lead"
 	if len(positionals) > 1 {
 		return usageError("up: unexpected argument %q", positionals[1])

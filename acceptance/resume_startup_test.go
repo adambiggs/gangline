@@ -222,6 +222,9 @@ func TestResumedLeadCopyModeStartupRecoveryAndSends(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	if !strings.Contains(string(wire), "This is a resumed session. Re-read your brief and durable state, then continue your work or report that you are waiting for an assignment.") || strings.Contains(string(wire), "No assignment was supplied.") {
+		t.Fatalf("resumed startup input = %q, want resume guidance", wire)
+	}
 	if err := os.WriteFile(filepath.Join(root, "draft"), wire, 0600); err != nil {
 		t.Fatal(err)
 	}
