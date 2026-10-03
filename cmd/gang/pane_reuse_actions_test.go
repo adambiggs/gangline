@@ -1,7 +1,9 @@
 package main
 
 import (
+	"errors"
 	"os"
+	"reflect"
 	"strings"
 	"testing"
 
@@ -58,5 +60,28 @@ func TestRecoverDoesNotReopenBootFromAPaneWhoseIdAStaleRecordReuses(t *testing.T
 	}
 	if n := loggedEvents(t, f, "boot_reopened"); n != 0 || f.input.captures != 0 || f.input.submits != 0 {
 		t.Fatalf("boot_reopened=%d captures=%d submits=%d", n, f.input.captures, f.input.submits)
+	}
+}
+
+// Compaction recovery reads only the record's own pane: another agent's busy
+// screen under a reused pane id is not the compaction, and no recovery is
+// recorded against it.
+func TestCompactRecoverDoesNotReadAPaneWhoseIdAStaleRecordReuses(t *testing.T) {
+	f := newStateFixture(t)
+	reg, earlier := reusedPane(t, f)
+	a := f.add(t, "a", "worker", "codex")
+	f.input.screen = compactRecoverScreens(t, f, "codex").busy
+	before := saveRecoverCompaction(t, f, a, "submitted", staleOn(reg, earlier))
+	err := f.cmd.compact([]string{"worker", "--recover"})
+	if !errors.Is(err, tmux.ErrPaneReplaced) {
+		t.Fatalf("recover err = %v, want the replaced pane", err)
+	}
+	p, _ := f.run.team.Agent(a.ID)
+	after, err := p.Read()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !reflect.DeepEqual(after.Compaction, before.Compaction) || after.Input != nil || f.input.captures != 0 || len(f.input.keys) != 0 {
+		t.Fatalf("compaction=%+v input=%+v captures=%d keys=%v", after.Compaction, after.Input, f.input.captures, f.input.keys)
 	}
 }

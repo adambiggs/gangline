@@ -622,7 +622,7 @@ func (run *runtime) recoverCompaction(l *store.LockedAgent, a *core.Agent, b har
 	ctx, cancel := run.cmd.timeout(operationTimeout)
 	defer cancel()
 	pane := substrate.PaneID(a.Pane)
-	screen, err := b.Capture(ctx, pane)
+	screen, err := run.captureRegistered(ctx, b, *a)
 	if err != nil {
 		return err
 	}
