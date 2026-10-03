@@ -132,18 +132,17 @@ release_relation() { # current latest -> relation and the changed semver compone
   printf '%s %s\n' "$relation" "$distance"
 }
 
-mode=""
-case "${1:-}" in
-  '') ;;
-  --check)
-    [ "$#" -eq 1 ] || die "--check takes no other arguments"
-    mode=check
-    ;;
-  *) die "unknown argument '$1'" ;;
-esac
+[ "$#" -eq 0 ] || die "unknown argument '$1'"
 
 case "${GANGLINE_UPGRADE:-0}" in 0|1) ;; *) die "GANGLINE_UPGRADE is internal and must be 0 or 1" ;; esac
 if [ "${GANGLINE_UPGRADE:-0}" -eq 1 ]; then
+  # gang upgrade decides how a newer release is confirmed: yes installs,
+  # ask prompts on stdin, refuse stops. Declining or refusing exits 3, which
+  # gang reports as its refusal.
+  case "${GANGLINE_UPGRADE_CONFIRM:-}" in
+    yes|ask|refuse) ;;
+    *) die "GANGLINE_UPGRADE_CONFIRM is internal and must be yes, ask or refuse" ;;
+  esac
   [ -e "$HOME_DIR/.git" ] \
     || die "gang upgrade requires an installer-managed release at $HOME_DIR"
   git -C "$HOME_DIR" rev-parse --verify HEAD >/dev/null 2>&1 \
@@ -151,50 +150,45 @@ if [ "${GANGLINE_UPGRADE:-0}" -eq 1 ]; then
   branch="$(git -C "$HOME_DIR" symbolic-ref --quiet --short HEAD 2>/dev/null)" || branch=""
   [ -z "$branch" ] \
     || die "gang upgrade refuses source checkout branch '$branch' at $HOME_DIR; update it with: git -C '$HOME_DIR' pull --ff-only"
-  if [ "$mode" != check ]; then
-    state="$(git -C "$HOME_DIR" status --porcelain)" \
-      || die "could not inspect the existing install at $HOME_DIR"
-    [ -z "$state" ] || die "$HOME_DIR has local changes; move them aside before upgrading"
-  fi
-fi
-
-if [ "${GANGLINE_UPGRADE:-0}" -eq 1 ] || [ "$mode" = check ]; then
+  state="$(git -C "$HOME_DIR" status --porcelain)" \
+    || die "could not inspect the existing install at $HOME_DIR"
+  [ -z "$state" ] || die "$HOME_DIR has local changes; move them aside before upgrading"
   current="$(installed_release_version)"
 fi
 
 tag="$(latest_release_tag)"
 latest="${tag#gangline-v}"
 
-if [ "${GANGLINE_UPGRADE:-0}" -eq 1 ] || [ "$mode" = check ]; then
+if [ "${GANGLINE_UPGRADE:-0}" -eq 1 ]; then
   comparison="$(release_relation "$current" "$latest")" \
     || die "installed version '$current' is malformed; expected MAJOR.MINOR.PATCH"
   relation="${comparison%% *}"
   distance="${comparison#* }"
-  case "$mode:$relation" in
-    check:0)
-      echo "gang is current: v$current -> v$latest (already at latest release)"
-      exit 0
-      ;;
-    check:-1)
-      echo "upgrade available: v$current -> v$latest ($distance update)"
-      exit 0
-      ;;
-    check:1)
-      echo "installed version is newer than latest: v$current -> v$latest; no changes made"
-      exit 0
-      ;;
-    :0)
+  case "$relation" in
+    0)
       echo "gang is current: v$current -> v$latest (already at latest release); no changes made"
       exit 0
       ;;
-    :-1)
-      echo "upgrading from v$current -> v$latest"
+    -1)
+      echo "upgrade available: v$current -> v$latest ($distance update)"
       ;;
-    :1)
+    1)
       die "refusing downgrade from installed v$current -> selected v$latest; no changes made"
       ;;
     *) die "could not compare installed version '$current' with release '$latest'" ;;
   esac
+  case "$GANGLINE_UPGRADE_CONFIRM" in
+    refuse) exit 3 ;;
+    ask)
+      printf 'Install v%s? [y/N] ' "$latest" >&2
+      read -r answer || answer=""
+      case "$answer" in
+        [Yy]|[Yy][Ee][Ss]) ;;
+        *) exit 3 ;;
+      esac
+      ;;
+  esac
+  echo "upgrading from v$current -> v$latest"
 fi
 
 need tmux

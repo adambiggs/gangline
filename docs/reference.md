@@ -199,7 +199,7 @@ reading names the collar's threshold. `gang capture NAME` prints the prompt.
 | `gang config` | Print effective settings and their sources. |
 | `gang statusline [--install]` | Render native status-line JSON; `--install` fills an absent `statusLine` in `settings.json` under `CLAUDE_CONFIG_DIR` (default `~/.claude`) and names that file. |
 | `gang --version` or `gang version` | Print the version. |
-| `gang upgrade [--check]` | Install or check a stable release in an installer-managed checkout. |
+| `gang upgrade [-y, --yes]` | Print the installed and latest stable versions, confirm on a terminal (`[y/N]`, default no), then install into the installer-managed checkout. Use `--yes` without a terminal. A current install exits 0 without asking. |
 | `gang help [COMMAND]` | Show command help. |
 | `gang hook` | Read native hook JSON from stdin; invoked by the collar integration. |
 

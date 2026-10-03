@@ -65,7 +65,7 @@ Settings and discovery:
 
 Installation:
   version   print the release version
-  upgrade   install or check the latest release
+  upgrade   install the latest release
 
 Help:
   help      show command help
@@ -105,7 +105,7 @@ var commandUsage = map[string]string{
 	"models":     "usage: gang models [-c COLLAR]\n",
 	"roles":      "usage: gang roles\n",
 	"config":     "usage: gang config\n",
-	"upgrade":    "usage: gang upgrade [--check]\n",
+	"upgrade":    "usage: gang upgrade [-y|--yes]\n",
 	"hook":       "usage: gang hook < native-hook.json\n",
 	"help":       "usage: gang help [COMMAND]\n",
 	"version":    "usage: gang version\n",
@@ -183,7 +183,7 @@ var commandOptions = map[string][]optionSpec{
 		{"collar", "COLLAR", "harness collar (default GANG_COLLAR)"},
 	},
 	"down":    {{"y", "", "skip confirmation"}, {"yes", "", "skip confirmation"}},
-	"upgrade": {{"check", "", "check for a release without installing"}},
+	"upgrade": {{"y", "", "skip confirmation"}, {"yes", "", "skip confirmation"}},
 }
 
 // upOptions are hitch's options with the role default up applies.
@@ -294,7 +294,7 @@ var commandDescription = map[string]string{
 	"models":     "Discover model and reasoning-effort identifiers through a collar's\nnative catalog.\n",
 	"roles":      "List embedded and operator-provided role briefs.\n",
 	"config":     "Print persistent settings, effective values, and their sources.\n",
-	"upgrade":    "Check or install the latest stable release into an installer-managed tree.\n",
+	"upgrade":    "Install the latest stable release into an installer-managed tree. On a\nterminal, confirm the installed and target versions; use the yes option for\nscripts and nonterminal calls. A current install exits without asking.\n",
 	"hook":       "Read native hook JSON on stdin and resolve the pane by GANGLINE_HITCH_ID.\n",
 	"help":       "Show the command inventory or detailed help for one command.\n",
 	"version":    "Print the release version.\n",

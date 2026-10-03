@@ -53,6 +53,17 @@ run_install() {
     /bin/sh "$ROOT/install.sh" >"$output"
 }
 
+run_upgrade() {
+  local install_root=$1 confirm=$2 output=$3
+    GANGLINE_UPGRADE=1 \
+    GANGLINE_UPGRADE_CONFIRM="$confirm" \
+    GANGLINE_REPO="file://$go_repo" \
+    GANGLINE_HOME="$install_root/.local/share/gangline" \
+    GANGLINE_BIN="$install_root/.local/bin" \
+    PATH="$scratch/shims:$PATH" \
+    /bin/sh "$ROOT/install.sh" >"$output"
+}
+
 go_repo="$scratch/go-repo"
 init_repo "$go_repo"
 mkdir -p "$go_repo/cmd/gang"
@@ -158,13 +169,31 @@ printf 'distribution: failed compiled upgrade preserves install; compiled upgrad
 
 large_version=99999999999999999999.0.0
 git -C "$go_repo" tag "gangline-v$large_version"
-  GANGLINE_REPO="file://$go_repo" \
-  GANGLINE_HOME="$go_home/.local/share/gangline" \
-  GANGLINE_BIN="$go_home/.local/bin" \
-  PATH="$scratch/shims:$PATH" \
-  /bin/sh "$ROOT/install.sh" --check >"$scratch/large-check.out"
-grep -F "upgrade available: v1.0.1 -> v$large_version (major update)" \
-  "$scratch/large-check.out" >/dev/null
+for case in refuse:none ask:no ask:empty ask:eof; do
+  confirm=${case%%:*}
+  case "${case#*:}" in
+    no) answer='n\n' ;;
+    empty) answer='\n' ;;
+    *) answer='' ;;
+  esac
+  status=0
+  printf '%b' "$answer" | run_upgrade "$go_home" "$confirm" "$scratch/declined.out" \
+    2>"$scratch/declined.err" || status=$?
+  [ "$status" -eq 3 ] || {
+    printf 'distribution: %s upgrade exited %s, want 3\n' "$case" "$status" >&2
+    exit 1
+  }
+  grep -F "upgrade available: v1.0.1 -> v$large_version (major update)" \
+    "$scratch/declined.out" >/dev/null
+  if [ "$confirm" = ask ]; then
+    grep -F "Install v$large_version? [y/N] " "$scratch/declined.err" >/dev/null
+  fi
+  [ "$("$go_home/.local/bin/gang" --version)" = 'gangline 1.0.1' ] || {
+    printf 'distribution: %s upgrade changed the install\n' "$case" >&2
+    exit 1
+  }
+done
+printf 'distribution: refused and declined upgrades left the install unchanged\n'
 large_home="$scratch/large-home"
 run_install "$go_repo" "$large_home" "$scratch/large-install.out"
 large_installed="$("$large_home/.local/bin/gang" --version)"
@@ -174,6 +203,25 @@ large_installed="$("$large_home/.local/bin/gang" --version)"
 }
 printf 'distribution: large SemVer comparison passed (%s)\n' "$large_version"
 git -C "$go_repo" tag -d "gangline-v$large_version" >/dev/null
+
+run_upgrade "$go_home" refuse "$scratch/current.out" </dev/null
+grep -Fx 'gang is current: v1.0.1 -> v1.0.1 (already at latest release); no changes made' \
+  "$scratch/current.out" >/dev/null
+git -C "$go_repo" tag gangline-v1.0.2
+run_upgrade "$go_home" yes "$scratch/upgrade-yes.out" </dev/null
+[ "$("$go_home/.local/bin/gang" --version)" = 'gangline 1.0.2' ] || {
+  echo 'distribution: confirmed upgrade did not install' >&2
+  exit 1
+}
+git -C "$go_repo" tag gangline-v1.0.3
+printf 'y\n' | run_upgrade "$go_home" ask "$scratch/upgrade-ask.out" 2>"$scratch/upgrade-ask.err"
+grep -F "Install v1.0.3? [y/N] " "$scratch/upgrade-ask.err" >/dev/null
+[ "$("$go_home/.local/bin/gang" --version)" = 'gangline 1.0.3' ] || {
+  echo 'distribution: accepted upgrade did not install' >&2
+  exit 1
+}
+git -C "$go_repo" tag -d gangline-v1.0.2 gangline-v1.0.3 >/dev/null
+printf 'distribution: current, --yes and accepted upgrades passed\n'
 
 unknown_repo="$scratch/unknown-repo"
 init_repo "$unknown_repo"

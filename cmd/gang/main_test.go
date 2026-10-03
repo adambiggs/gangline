@@ -99,6 +99,7 @@ func TestOptionErrorsStateTheAcceptedForm(t *testing.T) {
 		{[]string{"status", "--wat"}, "status: unknown option --wat\n"},
 		{[]string{"interrupt", "--wat"}, "interrupt: unknown option --wat\n"},
 		{[]string{"upgrade", "--wat"}, "upgrade: unknown option --wat\n"},
+		{[]string{"upgrade", "--check"}, "upgrade: unknown option --check\n"},
 		{[]string{"up", "--bogus"}, "up: unknown option --bogus\n"},
 		{[]string{"models", "--bogus"}, "models: unknown option --bogus\n"},
 		{[]string{"interrupt", "-m"}, "interrupt: -m needs a value (expected REASON)"},

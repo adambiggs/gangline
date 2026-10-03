@@ -99,4 +99,5 @@ retry `gang down` after the other operation finishes.
 
 `gang upgrade` expects an installer-managed release checkout without local
 changes. Follow its error message if the checkout is dirty or on a source
-branch. `gang upgrade --check` inspects release availability without installing.
+branch. Without a terminal on stdin it refuses before installing; pass `--yes`
+to install non-interactively. Declining the confirmation installs nothing.
