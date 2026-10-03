@@ -448,7 +448,7 @@ func (cmd command) hitchWithStaleClaim(args []string, supersede bool) (result er
 	if err := run.mark(a); err != nil {
 		return err
 	}
-	startup, _, err := harness.AwaitStartup(ctx, b.Capture, pane.ID, c)
+	startup, err := awaitHitchStartup(ctx, b.Capture, a, c)
 	if err != nil {
 		if err, why := reason(err); why != "" {
 			return fail(err, why)

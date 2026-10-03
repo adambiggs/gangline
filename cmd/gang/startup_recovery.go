@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"os"
@@ -14,6 +15,19 @@ import (
 
 func startupAttention(a core.Agent, route string) error {
 	return commandError{status: exitNative, text: fmt.Sprintf("%s startup is queued in %s; resolve native prompts, then run %s; the original contract and assignment are retained", a.Name, a.Pane, route)}
+}
+
+// awaitHitchStartup waits for a new agent's startup screen. A screen that
+// never reads as ready or as a recognized prompt leaves the agent registered,
+// its startup queued and its boot deadline running, so the error names the
+// pane and the command that resumes startup.
+func awaitHitchStartup(ctx context.Context, capture func(context.Context, substrate.PaneID) (substrate.Screen, error), a core.Agent, c harness.Collar) (harness.Startup, error) {
+	startup, _, err := harness.AwaitStartup(ctx, capture, substrate.PaneID(a.Pane), c)
+	var unobserved *harness.StartupUnobservedError
+	if errors.As(err, &unobserved) {
+		return startup, commandError{status: exitNative, text: fmt.Sprintf("%s startup is queued in %s, which shows no recognized startup screen (%v); answer any native prompt there, then run gang hitch %s --recover; the original contract and assignment are retained", a.Name, a.Pane, unobserved.Last, a.Name)}
+	}
+	return startup, err
 }
 
 func isStartupEnvelope(e core.Envelope) bool {

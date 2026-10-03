@@ -67,6 +67,18 @@ func AwaitComposerText(ctx context.Context, capture captureScreen, pane substrat
 	}
 }
 
+// StartupUnobservedError reports a startup wait that ended while the screen
+// read neither as ready nor as a recognized prompt. Last is the final reading.
+type StartupUnobservedError struct {
+	Last error
+}
+
+func (e *StartupUnobservedError) Error() string {
+	return fmt.Sprintf("native startup was not observable within 8s: %v", e.Last)
+}
+
+func (e *StartupUnobservedError) Unwrap() error { return e.Last }
+
 // AwaitStartup waits for an observable ready or trust-required startup state.
 func AwaitStartup(ctx context.Context, capture captureScreen, pane substrate.PaneID, collar Collar) (Startup, substrate.Screen, error) {
 	readySettle := 400 * time.Millisecond
@@ -109,7 +121,7 @@ func AwaitStartup(ctx context.Context, capture captureScreen, pane substrate.Pan
 		case <-ctx.Done():
 			return Startup{}, substrate.Screen{}, ctx.Err()
 		case <-deadline.C:
-			return Startup{}, substrate.Screen{}, fmt.Errorf("native startup was not observable within 8s: %w", lastErr)
+			return Startup{}, substrate.Screen{}, &StartupUnobservedError{Last: lastErr}
 		case <-ticker.C:
 		}
 	}

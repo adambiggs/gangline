@@ -51,6 +51,10 @@ is left to the native CLI, and `hitch` says why on stderr.
 If the native CLI exits before `hitch` returns, `hitch` fails
 with the pane's last lines and, when tmux collected one, the exit status. It
 records them as the agent's failure reason and closes the pane.
+A pane that shows no recognized startup screen within the startup wait
+leaves the agent registered with its startup queued; `hitch` exits with
+status 4, naming the pane and `gang hitch NAME --recover`, and the boot
+deadline still fails the agent if startup is not resumed.
 A startup blocked on a native prompt keeps holding its pane after `hitch`
 returns, so an answer that ends the native CLI fails the agent at the next
 tick or roster with its last lines and exit status, and the pane stays until

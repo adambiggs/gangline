@@ -8,6 +8,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"testing/synctest"
 	"time"
 
 	"github.com/adambiggs/gangline/core"
@@ -215,6 +216,32 @@ func TestUnknownCodexMenuDoesNotHoldBootDeadline(t *testing.T) {
 	if err != nil || got.Status != core.Failed || f.input.submits != 0 {
 		t.Fatalf("unknown menu state: %+v err=%v submits=%d", got, err, f.input.submits)
 	}
+}
+
+// A hitch whose pane never shows a recognized startup screen has registered
+// the agent and queued its startup, so its error names the pane and the route
+// that resumes startup under the status for a native harness that needs
+// attention.
+func TestHitchNamesRecoverRouteForUnrecognizedStartup(t *testing.T) {
+	synctest.Test(t, func(t *testing.T) {
+		c, err := harness.EmbeddedCollar("claude")
+		if err != nil {
+			t.Fatal(err)
+		}
+		a := core.Agent{Name: "worker", Pane: "%7"}
+		screen := screenWithText("Choose a display mode", "› 1. Compact")
+		start := time.Now()
+		_, err = awaitHitchStartup(context.Background(), func(context.Context, substrate.PaneID) (substrate.Screen, error) {
+			return screen, nil
+		}, a, c)
+		var ce commandError
+		if !errors.As(err, &ce) || ce.status != exitNative || !strings.Contains(ce.text, "startup is queued in %7") || !strings.Contains(ce.text, "then run gang hitch worker --recover") {
+			t.Fatalf("unrecognized startup err=%v", err)
+		}
+		if waited := time.Since(start); waited != 8*time.Second {
+			t.Fatalf("startup wait = %v, want the 8s deadline", waited)
+		}
+	})
 }
 
 // failAtBootDeadline queues a startup and lets the boot deadline fail its
