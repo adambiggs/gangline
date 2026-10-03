@@ -61,7 +61,9 @@ A command run from an agent's pane, including any script its native CLI
 starts, carries that agent's identity and team. Within that team, `down` and
 a change to `curfew` are refused unless the caller is the lead, and `drop
 NAME` is refused unless the caller is the lead or the agent that hitched
-`NAME`; an agent with no recorded hitcher is the lead's to drop. The operator
+`NAME`; an agent with no recorded hitcher is the lead's to drop. The lead is
+the agent started in the `lead` role by `gang up` or the operator; neither its
+name nor a `--role lead` given by another agent confers that authority. The operator
 outside any agent pane is not restricted. A hitch run from an agent's pane
 records that agent as the hitcher. When a hitched agent later fails, its
 hitcher, if active, gets a `[gang:hitch#…]` notice naming the agent and the

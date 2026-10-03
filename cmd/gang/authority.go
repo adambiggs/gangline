@@ -43,7 +43,10 @@ func (run *runtime) holdsToken(a core.Agent) bool {
 	return token != "" && a.Registration.TokenHash != "" && tokenHash(token) == a.Registration.TokenHash
 }
 
-func isLead(a core.Agent) bool { return a.Role == "lead" || a.Name == "lead" }
+// isLead reports whether a holds the lead's authority: the lead role, given by
+// the operator rather than by an agent that hitched it. A name confers nothing,
+// since any agent may rename itself.
+func isLead(a core.Agent) bool { return a.Role == "lead" && a.HitchedBy == "" }
 
 // leadCaller reports whether caller is the selected team's lead, proven by its
 // pane token. A nil caller is not an agent of the team.

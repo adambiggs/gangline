@@ -84,6 +84,25 @@ func TestDownRefusesTeammateThatIsNotLead(t *testing.T) {
 	}
 }
 
+// Lead authority belongs to the agent the operator started in the lead role. A
+// teammate cannot take it by renaming itself lead or by hitching a child in
+// that role.
+func TestLeadAuthorityIsNotTakenByNameOrDelegatedRole(t *testing.T) {
+	for _, caller := range []string{"w", "c"} {
+		t.Run(caller, func(t *testing.T) {
+			f := newStateFixture(t)
+			f.addHitched(t, "l", "boss", "lead", "")
+			f.addHitched(t, "w", "lead", "worker", "l")
+			f.addHitched(t, "c", "child", "lead", "w")
+			f.env["GANG_AGENT_ID"] = caller
+			requireRefused(t, f.cmd.down([]string{"--yes"}), "protects every agent in the team")
+			requireRefused(t, f.cmd.execute([]string{"curfew", "2h"}), "curfew refused")
+			f.env["GANG_AGENT_ID"] = "c"
+			requireRefused(t, f.cmd.drop([]string{"boss"}), "drop refused")
+		})
+	}
+}
+
 func TestDownByLeadOperatorOrAnotherTeamIsRecorded(t *testing.T) {
 	for _, test := range []struct{ name, identity, caller string }{
 		{"lead", "l", "lead"},

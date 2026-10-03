@@ -144,6 +144,7 @@ gang teams
 
 `down` confirms the selected team and agent count on a terminal. Use
 `gang down --yes` in scripts or without a terminal. It stops registered agents
-and deletes the team's state and history. The team should disappear
+and deletes the team's state and history. From an agent's pane, including any
+script that agent starts, only the lead may run it. The team should disappear
 from `gang teams`. To stop just one agent, use `gang drop NAME`, then verify
 that it is absent from `gang roster`.

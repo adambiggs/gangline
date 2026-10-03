@@ -287,7 +287,7 @@ var commandDescription = map[string]string{
 	"roster":     "List the team's registered agents and conservative current states.\n",
 	"attach":     "Attach this terminal to the selected team's tmux session.\n",
 	"teams":      "List teams found in the teams directory.\n",
-	"drop":       "NAME is the registered agent to stop in the selected team.\nCancel its pending work; report an observed native resume ID or unknown.\nIn an agent's pane only the lead or the agent that hitched NAME may drop it.\n",
+	"drop":       "NAME is the registered agent to stop in the selected team.\nCancel its pending work; report an observed native resume ID or unknown.\nIn an agent's pane only the lead or the agent that hitched NAME may drop it;\nan agent with no recorded hitcher is the lead's to drop.\n",
 	"down":       "Stop the selected team and remove its state. On a terminal, confirm the\nteam and agent count; use the yes option for scripts and nonterminal calls.\nIn an agent's pane only the lead may run it. Who ran it is appended to\ndowns.jsonl in the state root first.\n",
 	"collars":    "List embedded and operator-provided CUE collars. In 'collar check\nNAME', NAME identifies a collar, not an agent or team.\n",
 	"collar":     "NAME is an installed harness collar, not an agent or team.\nProbe it in a throwaway private tmux session.\n",
