@@ -64,6 +64,9 @@ import "time"
  watchdog_failed: {reason: #ID}
  process_verification_unavailable: {reason: #ID}
  tick: {source: "hook" | "command" | "watchdog"}
+ input_pending: {hitch_id: #ID, reason: #ID}
+ input_observation_outage: {hitch_id: #ID, reason: #ID}
+ input_observation_recovered: {hitch_id: #ID, reason: #ID}
  tick_failed: {source: "hook" | "command" | "watchdog", reason: #ID}
  compaction_requested: {compaction: #Compaction}
 }

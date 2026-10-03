@@ -51,6 +51,7 @@ type Agent struct {
 	Evidence          string            `json:"evidence,omitempty"`
 	ScreenFingerprint string            `json:"screen_fingerprint,omitempty"`
 	ScreenSince       time.Time         `json:"screen_since,omitzero"`
+	InputOutage       *InputOutage      `json:"input_outage,omitempty"`
 	Input             *InputIntent      `json:"input,omitempty"`
 	Compaction        *Compaction       `json:"compaction,omitempty"`
 	Capacity          Capacity          `json:"capacity,omitzero"`
@@ -65,6 +66,13 @@ type Agent struct {
 	LastDelivered     EnvelopeID        `json:"last_delivered,omitempty"`
 	LastFailed        EnvelopeID        `json:"last_failed,omitempty"`
 	Cleanup           *ResultRef        `json:"cleanup,omitempty"`
+}
+
+// InputOutage retains an observation warning across ticks until the registered
+// native composer is observed again. It never authorizes input.
+type InputOutage struct {
+	Since     time.Time `json:"since"`
+	Escalated bool      `json:"escalated,omitempty"`
 }
 
 // ContextBandState keeps the last known reading and publication intents under

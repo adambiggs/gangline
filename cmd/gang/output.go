@@ -35,15 +35,16 @@ type rosterJSON struct {
 }
 
 type agentJSON struct {
-	Name             core.AgentName  `json:"name"`
-	HitchID          core.HitchID    `json:"hitch_id"`
-	Status           core.Status     `json:"status"`
-	Activity         core.Activity   `json:"activity"`
-	Collar           string          `json:"collar"`
-	Pane             string          `json:"pane"`
-	ProcessAvailable bool            `json:"process_available"`
-	Evidence         string          `json:"evidence"`
-	Compaction       *compactionJSON `json:"compaction,omitempty"`
+	InputOutage      *core.InputOutage `json:"input_outage,omitempty"`
+	Name             core.AgentName    `json:"name"`
+	HitchID          core.HitchID      `json:"hitch_id"`
+	Status           core.Status       `json:"status"`
+	Activity         core.Activity     `json:"activity"`
+	Collar           string            `json:"collar"`
+	Pane             string            `json:"pane"`
+	ProcessAvailable bool              `json:"process_available"`
+	Evidence         string            `json:"evidence"`
+	Compaction       *compactionJSON   `json:"compaction,omitempty"`
 	// BackgroundTasks qualifies idle with the native background tasks the
 	// last turn left pending. It never marks the agent busy.
 	BackgroundTasks int `json:"background_tasks,omitempty"`

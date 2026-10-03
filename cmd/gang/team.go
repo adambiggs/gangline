@@ -461,7 +461,7 @@ func (run *runtime) agentRow(a core.Agent) (agentJSON, error) {
 	if err != nil {
 		return agentJSON{}, err
 	}
-	row := agentJSON{Name: a.Name, HitchID: a.ID, Status: a.Status, Activity: a.Activity, Collar: a.Collar, Pane: a.Pane, ProcessAvailable: !limited, Evidence: a.Evidence}
+	row := agentJSON{InputOutage: a.InputOutage, Name: a.Name, HitchID: a.ID, Status: a.Status, Activity: a.Activity, Collar: a.Collar, Pane: a.Pane, ProcessAvailable: !limited, Evidence: a.Evidence}
 	if a.Compaction != nil {
 		row.Compaction = &compactionJSON{ID: a.Compaction.ID, Status: a.Compaction.Status, Reason: a.Compaction.Reason}
 	}
@@ -541,6 +541,11 @@ func (cmd command) status(args []string) error {
 	}
 	if why && a.Evidence != "" {
 		if _, err := fmt.Fprintln(cmd.stdout, a.Evidence); err != nil {
+			return err
+		}
+	}
+	if why && a.InputOutage != nil {
+		if _, err := fmt.Fprintf(cmd.stdout, "pending input could not be observed since %s; inspect the native pane (persistent outage: %t)\n", a.InputOutage.Since.UTC().Format(time.RFC3339), a.InputOutage.Escalated); err != nil {
 			return err
 		}
 	}

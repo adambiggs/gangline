@@ -520,7 +520,12 @@ func (run *runtime) drainLocked(l *store.LockedAgent, a *core.Agent, target core
 		}
 		v, err := run.inputState(l, a, b, c)
 		if err != nil {
-			return result, pending, err
+			return result, pending, run.pendingInput(l, a, b, c, err)
+		}
+		if v.Free {
+			if err := run.clearInputOutage(l, a); err != nil {
+				return result, pending, err
+			}
 		}
 		if !v.Free {
 			if v.Blocker != "" && target != "" && run.cmd.stderr != nil {
@@ -637,6 +642,9 @@ func (run *runtime) drainFrom(l *store.LockedAgent, a core.Agent, target core.En
 		}
 		closeErr := run.unlock(l)
 		if err != nil {
+			if _, pending := err.(*pendingInputError); pending && closeErr != nil {
+				return result, errors.Join(err, closeErr)
+			}
 			return result, err
 		}
 		if closeErr != nil {

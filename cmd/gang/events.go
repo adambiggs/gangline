@@ -334,6 +334,9 @@ func (run *runtime) tickFailed(source string, id core.HitchID, err error) error 
 	if err == nil {
 		return nil
 	}
+	if pending, ok := err.(*pendingInputError); ok {
+		return commandError{status: exitUnknown, text: pending.Error()}
+	}
 	e := core.Event{Type: "tick_failed", At: run.cmd.now(), Source: source, HitchID: id, Reason: boundedFailureReason(err.Error())}
 	if id != "" {
 		if p, pathErr := run.team.Agent(id); pathErr == nil {

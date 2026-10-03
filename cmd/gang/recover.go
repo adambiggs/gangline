@@ -13,7 +13,7 @@ import (
 	"github.com/adambiggs/gangline/substrate/tmux"
 )
 
-func (run *runtime) tickAgent(id core.HitchID, notice hookNotice, wait bool) error {
+func (run *runtime) tickAgent(id core.HitchID, notice hookNotice, wait bool) (result error) {
 	team, err := run.team.ReadTeam()
 	if err != nil {
 		return err
@@ -46,7 +46,12 @@ func (run *runtime) tickAgent(id core.HitchID, notice hookNotice, wait bool) err
 	if err != nil {
 		return err
 	}
-	defer run.unlock(l)
+	defer func() {
+		closeErr := run.unlock(l)
+		if _, pending := result.(*pendingInputError); pending && closeErr != nil {
+			result = errors.Join(result, closeErr)
+		}
+	}()
 	if err := run.checkDeadlines(l, &a); err != nil {
 		return err
 	}
@@ -203,7 +208,19 @@ func (run *runtime) tickAgent(id core.HitchID, notice hookNotice, wait bool) err
 	}
 	capacity, found, err := harness.DetectCapacity(c, screen)
 	if err != nil {
-		return err
+		return run.pendingInput(l, &a, b, c, err)
+	}
+	if a.InputOutage != nil {
+		if _, composerErr := harness.ReadComposer(c.Primitives.Composer, screen); composerErr == nil {
+			if err := requireHarnessForeground(ctx, b, substrate.PaneID(a.Pane), c); err != nil {
+				return err
+			}
+			if err := run.clearInputOutage(l, &a); err != nil {
+				return err
+			}
+		} else if composerErr != harness.ErrNoComposer {
+			return composerErr
+		}
 	}
 	if err := run.observeSnoozeTurn(a, c.Primitives.TurnBoundary, notice, found); err != nil {
 		return err
