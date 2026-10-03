@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.15.4](https://github.com/adambiggs/gangline/compare/gangline-v1.15.3...gangline-v1.15.4) (2026-10-03)
+
+
+### Bug Fixes
+
+* **harness:** deliver a wrapped message whose footer a short pane clips ([e1f039b](https://github.com/adambiggs/gangline/commit/e1f039b3523c97c3ae3d2a1dee55bc5cf3faa628))
+
 ## [1.15.3](https://github.com/adambiggs/gangline/compare/gangline-v1.15.2...gangline-v1.15.3) (2026-10-03)
 
 
