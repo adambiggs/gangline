@@ -96,6 +96,7 @@ func (cmd command) hitchWithStaleClaim(args []string, supersede bool) (result er
 	if err != nil {
 		return err
 	}
+	run.hitching = core.HitchID(id)
 	eid, err := randomID("startup")
 	if err != nil {
 		return err

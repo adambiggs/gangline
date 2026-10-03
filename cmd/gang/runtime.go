@@ -29,6 +29,9 @@ type runtime struct {
 	// reported names the compaction whose outcome this command returns to
 	// its requester directly.
 	reported string
+	// hitching names the agent this hitch command is starting; the command
+	// returns that agent's boot failure to its caller directly.
+	hitching core.HitchID
 	// wake holds agents given a message while another agent's lock was held;
 	// unlock starts their ticks once that lock is gone.
 	wake []core.HitchID
@@ -76,6 +79,7 @@ func (run *runtime) apply(l *store.LockedAgent, a *core.Agent, e core.Event) err
 		e.At = run.cmd.now()
 	}
 	e.HitchID, e.Name = a.ID, a.Name
+	failed := e.Type == "hitch_failed" && a.Status != core.Failed
 	next, effects := core.Step(*a, e)
 	for _, effect := range effects {
 		if effect.Kind == "reject" {
@@ -86,7 +90,13 @@ func (run *runtime) apply(l *store.LockedAgent, a *core.Agent, e core.Event) err
 		return err
 	}
 	*a = next
-	return run.team.Append(e)
+	if err := run.team.Append(e); err != nil {
+		return err
+	}
+	if failed {
+		return run.notifyHitcher(*a, e.Reason)
+	}
+	return nil
 }
 
 // inactiveRecipient refuses input to an agent that is not active and names

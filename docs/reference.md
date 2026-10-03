@@ -63,7 +63,9 @@ a change to `curfew` are refused unless the caller is the lead, and `drop
 NAME` is refused unless the caller is the lead or the agent that hitched
 `NAME`; an agent with no recorded hitcher is the lead's to drop. The operator
 outside any agent pane is not restricted. A hitch run from an agent's pane
-records that agent as the hitcher.
+records that agent as the hitcher. When a hitched agent later fails, its
+hitcher, if active, gets a `[gang:hitch#…]` notice naming the agent and the
+reason.
 
 When Codex asks to trust a hitch directory, startup stays queued. After
 choosing the native trust option, run `gang tick` to deliver the retained

@@ -146,3 +146,93 @@ func TestCurfewChangeRefusesTeammateThatIsNotLead(t *testing.T) {
 		t.Fatal(err)
 	}
 }
+
+func TestHitchFailureNotifiesHitcher(t *testing.T) {
+	for _, test := range []struct {
+		name     string
+		hitcher  core.HitchID
+		hitching core.HitchID
+		inactive bool
+		notified bool
+	}{
+		{name: "hitched by an agent", hitcher: "l", notified: true},
+		{name: "hitched by the operator", hitcher: ""},
+		{name: "failed inside its own hitch command", hitcher: "l", hitching: "o"},
+		{name: "hitcher no longer active", hitcher: "l", inactive: true},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			f := newStateFixture(t)
+			lead := f.addHitched(t, "l", "lead", "lead", "")
+			f.addHitched(t, "o", "owner", "", test.hitcher)
+			lp, err := f.run.team.Agent(lead.ID)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if test.inactive {
+				l, err := lp.LockAgent()
+				if err != nil {
+					t.Fatal(err)
+				}
+				lead.Status = core.Failed
+				if err := l.Save(lead); err != nil {
+					t.Fatal(err)
+				}
+				if err := l.Close(); err != nil {
+					t.Fatal(err)
+				}
+			}
+			f.run.hitching = test.hitching
+			var woken []string
+			f.cmd.detach = func(id string, _ hookNotice) error { woken = append(woken, id); return nil }
+			f.run.cmd = f.cmd
+			op, err := f.run.team.Agent("o")
+			if err != nil {
+				t.Fatal(err)
+			}
+			l, err := op.LockAgent()
+			if err != nil {
+				t.Fatal(err)
+			}
+			owner, err := op.Read()
+			if err != nil {
+				t.Fatal(err)
+			}
+			if err := f.run.apply(l, &owner, core.Event{Type: "hitch_failed", Reason: "registered pane is absent from tmux"}); err != nil {
+				t.Fatal(err)
+			}
+			if err := f.run.unlock(l); err != nil {
+				t.Fatal(err)
+			}
+			e, err := lp.ReadEnvelope("new", "failed-o")
+			if !test.notified {
+				if !errors.Is(err, os.ErrNotExist) || len(woken) != 0 {
+					t.Fatalf("unexpected notice: %+v %v woken=%v", e, err, woken)
+				}
+				return
+			}
+			if err != nil {
+				t.Fatal(err)
+			}
+			if e.From.Kind != core.SenderGangline || e.Recipient != lead.ID || !strings.Contains(e.Message.Text, "owner, which you hitched, failed: registered pane is absent from tmux") {
+				t.Fatalf("notice = %+v", e)
+			}
+			if len(woken) != 1 || woken[0] != "l" {
+				t.Fatalf("woken = %v", woken)
+			}
+			// A second observation of the same failure adds nothing.
+			l, err = op.LockAgent()
+			if err != nil {
+				t.Fatal(err)
+			}
+			if err := f.run.apply(l, &owner, core.Event{Type: "hitch_failed", Reason: "again"}); err != nil {
+				t.Fatal(err)
+			}
+			if err := l.Close(); err != nil {
+				t.Fatal(err)
+			}
+			if e2, err := lp.ReadEnvelope("new", "failed-o"); err != nil || e2.Message.Text != e.Message.Text {
+				t.Fatalf("repeat notice = %+v %v", e2, err)
+			}
+		})
+	}
+}
