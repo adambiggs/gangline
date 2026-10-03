@@ -24,6 +24,32 @@ func TestDecodeHookMapsNativeBoundaryAndPayload(t *testing.T) {
 	}
 }
 
+func TestDecodeHookCountsDeclaredArrays(t *testing.T) {
+	collar, err := EmbeddedCollar("claude")
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, c := range []struct {
+		body  string
+		count int
+		known bool
+	}{
+		{`{"hook_event_name":"Stop","background_tasks":[{"type":"shell","status":"running"},{"type":"workflow","status":"running"}]}`, 2, true},
+		{`{"hook_event_name":"Stop","background_tasks":[]}`, 0, true},
+		{`{"hook_event_name":"Stop"}`, 0, false},
+		{`{"hook_event_name":"Stop","background_tasks":"two"}`, 0, false},
+	} {
+		event, err := DecodeHook(collar, []byte(c.body))
+		if err != nil {
+			t.Fatal(err)
+		}
+		count, known := event.Counts["background_tasks"]
+		if count != c.count || known != c.known {
+			t.Fatalf("%s: count = %d, known = %v", c.body, count, known)
+		}
+	}
+}
+
 func TestDecodeHookRefusesUnknownNativeEvent(t *testing.T) {
 	collar, err := EmbeddedCollar("claude")
 	if err != nil {

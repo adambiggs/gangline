@@ -51,6 +51,7 @@ type Hooks struct {
 type Hook struct {
 	Event   string            `json:"event"`
 	Payload map[string]string `json:"payload,omitempty"`
+	Counts  map[string]string `json:"counts,omitempty"`
 }
 
 type Option struct {

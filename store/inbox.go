@@ -235,3 +235,31 @@ func (p AgentPaths) ReadCompactionWitness() (CompactionWitness, error) {
 	err := readJSON(p.CompactionWitness, &w)
 	return w, err
 }
+
+// Background is the number of background tasks the native harness reported
+// pending when its last turn ended. Hooks replace it without the agent lock.
+type Background struct {
+	At    time.Time `json:"at"`
+	Tasks int       `json:"tasks"`
+}
+
+func (p AgentPaths) WriteBackground(b Background) error { return atomicJSON(p.Background, b) }
+
+// ReadBackground reports whether a count is recorded.
+func (p AgentPaths) ReadBackground() (Background, bool, error) {
+	var b Background
+	err := readJSON(p.Background, &b)
+	if errors.Is(err, os.ErrNotExist) {
+		return Background{}, false, nil
+	}
+	return b, err == nil, err
+}
+
+func (p AgentPaths) RemoveBackground() error { return removeIfPresent(p.Background) }
+
+func removeIfPresent(path string) error {
+	if err := os.Remove(path); err != nil && !errors.Is(err, os.ErrNotExist) {
+		return err
+	}
+	return nil
+}

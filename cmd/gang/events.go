@@ -96,6 +96,9 @@ func (cmd command) handleHook(args []string) (result error) {
 	if resumeCandidate && event.Kind != "turn-started" {
 		return fmt.Errorf("compaction continuation did not map to a submit boundary")
 	}
+	if err := recordBackground(p, event, cmd.now()); err != nil {
+		return err
+	}
 	if event.Kind == "turn-started" {
 		for _, value := range []string{event.Payload["session_id"], event.Payload["turn_id"], event.Payload["transcript_path"], event.NativeEvent} {
 			if len(value) > 4096 {
@@ -174,6 +177,21 @@ func (cmd command) handleHook(args []string) (result error) {
 		return cmd.detachTick(string(id), n, run.settings)
 	}
 	return nil
+}
+
+// recordBackground keeps the background-task count from the last turn's end.
+// A turn boundary without a count leaves none, so a stale count is never shown.
+func recordBackground(p store.AgentPaths, event harness.HookEvent, now time.Time) error {
+	switch event.Kind {
+	case "turn-finished":
+		if tasks, ok := event.Counts["background_tasks"]; ok && tasks > 0 {
+			return p.WriteBackground(store.Background{At: now, Tasks: tasks})
+		}
+	case "turn-started", "turn-failed":
+	default:
+		return nil
+	}
+	return p.RemoveBackground()
 }
 
 func boundedFailureReason(reason string) string {

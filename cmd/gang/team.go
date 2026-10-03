@@ -352,7 +352,7 @@ func (cmd command) roster(args []string) error {
 		if watchdogLimited {
 			marker += " [watchdog-unavailable]"
 		}
-		line := fmt.Sprintf("%-16s %-10s %-14s %s%s", a.Name, a.Status, a.Activity, a.Collar, marker)
+		line := fmt.Sprintf("%-16s %-10s %-14s %s%s", a.Name, a.Status, activityLabel(row.Activity, row.BackgroundTasks), a.Collar, marker)
 		if _, err := fmt.Fprintln(cmd.stdout, line+rosterReason(a, rosterReasonLimit(cmd.stdout, line))); err != nil {
 			return err
 		}
@@ -419,7 +419,38 @@ func (run *runtime) agentRow(a core.Agent) (agentJSON, error) {
 	if a.Compaction != nil {
 		row.Compaction = &compactionJSON{ID: a.Compaction.ID, Status: a.Compaction.Status, Reason: a.Compaction.Reason}
 	}
+	tasks, err := run.backgroundTasks(a)
+	if err != nil {
+		return agentJSON{}, err
+	}
+	row.BackgroundTasks = tasks
 	return row, nil
+}
+
+// backgroundTasks is the count of native background tasks an idle agent's
+// last turn left pending; a busy agent shows none.
+func (run *runtime) backgroundTasks(a core.Agent) (int, error) {
+	if a.Activity != core.Idle {
+		return 0, nil
+	}
+	p, err := run.team.Agent(a.ID)
+	if err != nil {
+		return 0, err
+	}
+	background, ok, err := p.ReadBackground()
+	if err != nil || !ok {
+		return 0, err
+	}
+	return background.Tasks, nil
+}
+
+// activityLabel is an activity with the background tasks the agent left
+// pending, as in "idle (2 bg)".
+func activityLabel(activity core.Activity, tasks int) string {
+	if tasks > 0 {
+		return fmt.Sprintf("%s (%d bg)", activity, tasks)
+	}
+	return string(activity)
 }
 func (cmd command) status(args []string) error {
 	why, machine := false, false
@@ -455,7 +486,11 @@ func (cmd command) status(args []string) error {
 		}
 		return writeJSON(cmd.stdout, row)
 	}
-	if _, err := fmt.Fprintf(cmd.stdout, "%s\t%s\t%s\n", a.Name, a.Status, a.Activity); err != nil {
+	tasks, err := run.backgroundTasks(a)
+	if err != nil {
+		return err
+	}
+	if _, err := fmt.Fprintf(cmd.stdout, "%s\t%s\t%s\n", a.Name, a.Status, activityLabel(a.Activity, tasks)); err != nil {
 		return err
 	}
 	if why && a.Evidence != "" {

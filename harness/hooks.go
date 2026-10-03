@@ -10,10 +10,13 @@ import (
 	"unicode/utf8"
 )
 
+// HookEvent is a decoded native callback. Counts holds the length of each
+// array the collar names; a target is absent when its array is.
 type HookEvent struct {
 	NativeEvent string
 	Kind        string
 	Payload     map[string]string
+	Counts      map[string]int
 }
 
 type TurnBoundary string
@@ -85,7 +88,18 @@ func DecodeHook(collar Collar, data []byte) (HookEvent, error) {
 			payload[target] = value
 		}
 	}
-	return HookEvent{NativeEvent: native, Kind: wiring.Event, Payload: payload}, nil
+	var counts map[string]int
+	for target, source := range wiring.Counts {
+		if value, ok := nestedValue(body, strings.Split(source, ".")); ok {
+			if list, ok := value.([]any); ok {
+				if counts == nil {
+					counts = make(map[string]int, len(wiring.Counts))
+				}
+				counts[target] = len(list)
+			}
+		}
+	}
+	return HookEvent{NativeEvent: native, Kind: wiring.Event, Payload: payload, Counts: counts}, nil
 }
 
 // SubmittedPromptMatches compares the text Gangline sent with the prompt a
@@ -236,21 +250,30 @@ func stringField(body map[string]any, field string) (string, bool) {
 }
 
 func nestedString(value any, path []string) (string, bool) {
+	value, ok := nestedValue(value, path)
+	if !ok {
+		return "", false
+	}
+	result, ok := value.(string)
+	return result, ok
+}
+
+func nestedValue(value any, path []string) (any, bool) {
 	for len(path) > 1 {
 		object, ok := value.(map[string]any)
 		if !ok {
-			return "", false
+			return nil, false
 		}
 		value, ok = object[path[0]]
 		if !ok {
-			return "", false
+			return nil, false
 		}
 		path = path[1:]
 	}
 	object, ok := value.(map[string]any)
 	if !ok || len(path) == 0 {
-		return "", false
+		return nil, false
 	}
-	result, ok := object[path[0]].(string)
+	result, ok := object[path[0]]
 	return result, ok
 }

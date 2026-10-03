@@ -11,6 +11,7 @@ package harness
 #Hook: close({
 	event: "turn-started" | "turn-finished" | "permission-requested" | "compaction-started" | "compaction-finished" | "activity" | "turn-failed"
 	payload?: [string]: string
+	counts?: [string]: string
 })
 
 #Hooks: close({
