@@ -196,7 +196,9 @@ func (run *runtime) recoverStartup(name string) (result error) {
 		if replaceCollapsed {
 			reason = "startup draft replacement incomplete; if the composer is empty, re-hitch with the retained assignment: " + reason
 		}
-	} else if a.Native.SessionID != "" && a.Native.SessionID != witness.SessionID {
+	} else if same, err := followNativeSession(c, &a, witness.SessionID, witness.Transcript); err != nil {
+		outcome, reason = "unverified", err.Error()
+	} else if !same {
 		outcome, reason = "unverified", "submit witness belongs to another native session"
 	} else {
 		a.Native.SessionID = witness.SessionID

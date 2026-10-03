@@ -119,3 +119,10 @@ func TestCollarRejectsUnknownQueuedTurnSource(t *testing.T) {
 		t.Fatal("unknown queued_turns source passed validation")
 	}
 }
+
+func TestCollarRejectsUnknownSessionMoveSource(t *testing.T) {
+	_, err := LoadCustomCollar("claude", "claude.cue", []byte(`collar: primitives: turn_boundary: params: session_moves: "codex"`))
+	if err == nil {
+		t.Fatal("unknown session_moves source passed validation")
+	}
+}

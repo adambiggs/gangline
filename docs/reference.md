@@ -383,6 +383,19 @@ that turn with it. No finish hook judges the wake while it waits in the
 queue, a wake the running turn absorbs is judged by that turn, and if the
 transcript cannot be read the wake is judged by the turn it was typed into.
 
+A harness can move a conversation to a new native session, as Claude Code
+does when its conversation moves to the background, and keep submitting from
+the same pane into the new session. When the turn boundary sets
+`session_moves: "claude-transcript"`, gang follows a submit witness into a new
+session only when the new session's transcript sits beside the old one and the
+old transcript ends with Claude Code's record that the conversation continued
+in that session, with no prompt or reply after it. Moves are followed record by
+record. A witness from any other session is never followed: the agent fails
+once, and its hitcher is told both session ids and to drop the agent and
+re-hitch it with `--resume` for the session to continue, in the agent's own
+directory, collar, and role. Drop tells the sender of each message still queued
+for the agent. A message submitted into such a session stays unverified.
+
 Each context band has a `name`, threshold `at` (a fraction from 0 to 1), and
 optional `message`. A nonfinal band without a message advises saving state and
 compacting at the next good stopping point; the last orders compaction now.

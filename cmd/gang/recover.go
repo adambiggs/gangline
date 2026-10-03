@@ -70,6 +70,9 @@ func (run *runtime) tickAgent(id core.HitchID, notice hookNotice, wait bool) err
 	if err := run.reconcileNativeBoundary(l, &a, c, notice); err != nil {
 		return err
 	}
+	if a.Status == core.Failed {
+		return run.mark(a)
+	}
 	b, err := run.input()
 	if err != nil {
 		return err
@@ -258,8 +261,23 @@ func (run *runtime) reconcileNativeBoundary(l *store.LockedAgent, a *core.Agent,
 		run.afterWitnessRead()
 	}
 	if witnessErr == nil {
-		if a.Native.SessionID != "" && witness.SessionID != a.Native.SessionID {
-			return fmt.Errorf("native witness changed session identity")
+		session := a.Native.SessionID
+		same, err := followNativeSession(c, a, witness.SessionID, witness.Transcript)
+		if err != nil || !same {
+			// The witness persists, so the agent fails once and its hitcher
+			// learns both sessions instead of every tick failing unseen.
+			reason := fmt.Sprintf("its native session changed from %s to %s, and no harness record shows that %s continues the conversation", session, witness.SessionID, witness.SessionID)
+			if err != nil {
+				reason += fmt.Sprintf(" (%v)", err)
+			}
+			// Hitch takes its directory from the caller and its role from
+			// flags, so the route names the agent's own.
+			role := ""
+			if a.Role != "" {
+				role = " -r " + a.Role
+			}
+			reason += fmt.Sprintf("; to continue either session, gang drop %s, then gang hitch %s -c %s -d %q%s --resume SESSION", a.Name, a.Name, a.Collar, a.Directory, role)
+			return run.apply(l, a, core.Event{Type: "hitch_failed", Reason: reason})
 		}
 		if witness.At.After(a.Native.SubmittedAt) {
 			a.Native.SessionID, a.Native.TurnID, a.Native.Transcript, a.Native.SubmittedAt = witness.SessionID, witness.TurnID, witness.Transcript, witness.At

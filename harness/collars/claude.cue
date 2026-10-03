@@ -39,7 +39,7 @@ collar: {
 		composer: {name: "claude-composer"}
 		submit: {name: "enter-submit", params: {paste: "bracketed", settle: "400ms"}}
 		submit_witness: {name: "claude-pasted-content"}
-		turn_boundary: {name: "hook-boundary", params: {open_turn_quiet: "60s", queued_turns: "claude-transcript"}}
+		turn_boundary: {name: "hook-boundary", params: {open_turn_quiet: "60s", queued_turns: "claude-transcript", session_moves: "claude-transcript"}}
 		blocked: {name: "screen-blocked", params: {
 			prompt: "Do you want to proceed\\?|Allow .*\\?|needs your permission|Permission required|(?m)^Enter to select · .*Esc to cancel$|Ready to submit your answers\\?|[0-9]+ new MCP servers found in this project|New MCP server found in this project:"
 			choice: "(?m)^[[:space:]❯>]*1\\. Yes|Yes, and don't ask again|Allow|(?m)^[[:space:]]*[0-9]+\\. Chat about this$|❯ [0-9]+\\. Submit answers|Esc to reject all|Use this MCP server"

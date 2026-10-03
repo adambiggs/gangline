@@ -342,8 +342,12 @@ func (run *runtime) deliver(l *store.LockedAgent, a *core.Agent, e core.Envelope
 		var matched bool
 		matched, err = harness.SubmittedPromptMatches(c.Primitives.SubmitWitness, wire, witness.Prompt)
 		if err == nil && !matched {
-			if queue != nil && (a.Native.SessionID == "" || witness.SessionID == a.Native.SessionID) {
-				accepted, err = queue(ctx)
+			if queue != nil {
+				var same bool
+				same, err = followNativeSession(c, a, witness.SessionID, witness.Transcript)
+				if err == nil && same {
+					accepted, err = queue(ctx)
+				}
 			}
 			if err == nil && !accepted {
 				err = fmt.Errorf("submit witness does not match the message text and one-time token")
@@ -364,7 +368,9 @@ func (run *runtime) deliver(l *store.LockedAgent, a *core.Agent, e core.Envelope
 	} else if accepted {
 		outcome, reason = "accepted", "native queue shows sender and one-time token; do not resend"
 	} else {
-		if a.Native.SessionID != "" && a.Native.SessionID != witness.SessionID {
+		if same, err := followNativeSession(c, a, witness.SessionID, witness.Transcript); err != nil {
+			outcome, reason = "unverified", err.Error()
+		} else if !same {
 			outcome, reason = "unverified", "submit witness belongs to another native session"
 		} else {
 			a.Native.SessionID = witness.SessionID

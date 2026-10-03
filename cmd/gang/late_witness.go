@@ -22,12 +22,14 @@ func (run *runtime) reconcileDelivery(l *store.LockedAgent, a *core.Agent) error
 	if err != nil {
 		return err
 	}
-	if a.Native.SessionID != "" && w.SessionID != a.Native.SessionID {
-		return nil
-	}
 	c, err := loadCollar(a.Collar, run.settings)
 	if err != nil {
 		return err
+	}
+	// A witness from another session proves nothing about these receipts; the
+	// tick's boundary reconciliation reports it.
+	if same, err := followNativeSession(c, a, w.SessionID, w.Transcript); err != nil || !same {
+		return nil
 	}
 	for _, receipt := range []core.ResultRef{{ID: a.LastFailed, Directory: "failed"}, {ID: a.LastAccepted, Directory: "cur"}} {
 		if receipt.ID == "" {
