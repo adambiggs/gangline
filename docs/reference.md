@@ -253,17 +253,25 @@ override file values. Run `gang config` to see effective values and defaults.
 
 Set `GANG_CODEX_PERMISSION_PROFILE=gangline` in the config file or environment
 to select that profile for Codex hitches. The named profile must exist in
-Codex's own config. When the hitch directory is a linked Git worktree, Gangline
-also grants its exact worktree gitdir writable access in that profile. An unset
-value adds no Codex permission arguments. Conflicting sandbox or profile
-arguments supplied through Gangline are refused. Codex may load other config
-layers that override the selected permission mode.
+Codex's own config. An unset value leaves profile selection to Codex's own
+config. Conflicting sandbox or profile arguments supplied through Gangline are
+refused. Codex may load other config layers that override the selected
+permission mode.
 
-Granting a worktree gitdir lets the agent edit Git metadata, including files
-that can make later host Git commands execute code. Commits also need write
-access to the common Git directory, which carries the same trust cost. Enable
-this only for agents trusted with that access. The grant has not yet been
-verified by a native commit in a sandboxed linked worktree.
+When a Codex hitch directory is a linked Git worktree, Gangline passes its
+exact worktree gitdir to Codex with `--add-dir`, whatever the profile setting.
+Codex marks that gitdir read-only with an exact-path rule that a pattern grant
+in a profile does not override, so without it the agent cannot stage, fetch
+or commit in its own worktree. This lets the agent edit that worktree's Git
+metadata, including files that can make later host Git commands execute code.
+Staging, fetching and committing also write objects and refs in the common Git
+directory, which Gangline does not grant; Codex's own config decides that
+access, and it carries the same trust cost.
+
+Codex refuses to start when given `--add-dir` under its read-only sandbox.
+Gangline omits the grant when its launch arguments select that sandbox, but
+cannot see one selected in Codex's own config: such a hitch into a linked
+worktree fails at launch with Codex's error.
 
 These variables are environment-only:
 

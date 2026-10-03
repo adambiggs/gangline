@@ -8,10 +8,10 @@ import (
 	"path/filepath"
 	"strings"
 	"time"
-	"unicode/utf8"
 
 	"github.com/adambiggs/gangline/harness"
 	"github.com/adambiggs/gangline/substrate/tmux"
+	"github.com/pelletier/go-toml/v2"
 )
 
 type settings struct {
@@ -307,7 +307,71 @@ func codexProfileName(profile string) bool {
 	}) < 0
 }
 
-func codexProfileLaunch(args []string, profile, gitdir string) ([]string, error) {
+// codexLaunch selects the configured permission profile and makes a linked
+// worktree's own gitdir writable. Codex marks the working directory's resolved
+// gitdir read-only with an exact-path rule that only an exact grant overrides,
+// so without one a profile's pattern grant over the repository's worktrees
+// still refuses index and fetch writes. Codex refuses to start when given a
+// writable directory under its read-only sandbox, so arguments that select
+// that sandbox get no grant.
+func codexLaunch(args []string, profile, gitdir string) ([]string, error) {
+	result, err := codexProfileLaunch(args, profile)
+	if err != nil || gitdir == "" || codexSandbox(result) == "read-only" {
+		return result, err
+	}
+	return append(append([]string(nil), result...), "--add-dir", gitdir), nil
+}
+
+// codexSandbox returns the sandbox mode args select, or "" when they select
+// none. Codex lets a sandbox flag win over a sandbox_mode config override.
+func codexSandbox(args []string) string {
+	flag, config := "", ""
+	for index, arg := range args {
+		switch {
+		case arg == "-s" || arg == "--sandbox":
+			if index+1 < len(args) {
+				flag = args[index+1]
+			}
+		case strings.HasPrefix(arg, "--sandbox="):
+			flag = strings.TrimPrefix(arg, "--sandbox=")
+		case strings.HasPrefix(arg, "-s"):
+			flag = strings.TrimPrefix(strings.TrimPrefix(arg, "-s"), "=")
+		case arg == "-c" || arg == "--config" || strings.HasPrefix(arg, "--config=") || strings.HasPrefix(arg, "-c"):
+			setting := arg
+			if arg == "-c" || arg == "--config" {
+				if index+1 == len(args) {
+					continue
+				}
+				setting = args[index+1]
+			} else {
+				setting = strings.TrimPrefix(strings.TrimPrefix(strings.TrimPrefix(setting, "--config="), "-c"), "=")
+			}
+			key, value, _ := strings.Cut(setting, "=")
+			if strings.TrimSpace(key) == "sandbox_mode" {
+				config = codexConfigString(value)
+			}
+		}
+	}
+	if flag != "" {
+		return flag
+	}
+	return config
+}
+
+// codexConfigString reads a -c value the way Codex does: as a TOML value, or
+// as a literal string when it does not parse.
+func codexConfigString(value string) string {
+	var parsed struct {
+		Value any `toml:"value"`
+	}
+	if toml.Unmarshal([]byte("value = "+value), &parsed) == nil {
+		text, _ := parsed.Value.(string)
+		return text
+	}
+	return strings.Trim(strings.TrimSpace(value), `"'`)
+}
+
+func codexProfileLaunch(args []string, profile string) ([]string, error) {
 	if profile == "" {
 		return args, nil
 	}
@@ -339,19 +403,7 @@ func codexProfileLaunch(args []string, profile, gitdir string) ([]string, error)
 		}
 	}
 	quoted, _ := json.Marshal(profile)
-	result := append(append([]string(nil), args...), "-c", "default_permissions="+string(quoted))
-	if grant := codexGitdirGrant(profile, gitdir); grant != "" {
-		result = append(result, "-c", grant)
-	}
-	return result, nil
-}
-
-func codexGitdirGrant(profile, gitdir string) string {
-	if profile == "" || gitdir == "" || !utf8.ValidString(gitdir) {
-		return ""
-	}
-	path, _ := json.Marshal(gitdir)
-	return "permissions." + profile + ".filesystem={" + string(path) + `="write"}`
+	return append(append([]string(nil), args...), "-c", "default_permissions="+string(quoted)), nil
 }
 
 func (cmd command) tmux(settings settings) (*tmux.Backend, error) {

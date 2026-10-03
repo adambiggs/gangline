@@ -151,7 +151,7 @@ func (cmd command) hitchWithStaleClaim(args []string, supersede bool) (result er
 	}
 	launch = applyLaunchPolicy(launch, o.Collar, run.settings)
 	if filepath.Base(launch.Name) == "codex" {
-		launch.Args, err = codexProfileLaunch(launch.Args, run.settings.CodexPermissionProfile, linkedWorktreeGitdir(dir))
+		launch.Args, err = codexLaunch(launch.Args, run.settings.CodexPermissionProfile, linkedWorktreeGitdir(dir))
 		if err != nil {
 			return refuseError("%v", err)
 		}

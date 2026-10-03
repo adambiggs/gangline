@@ -4,6 +4,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"slices"
 	"testing"
 
 	"github.com/adambiggs/gangline/harness"
@@ -94,37 +95,61 @@ func TestLinkedWorktreeGitdirGrant(t *testing.T) {
 	if _, err := os.Stat(got); err != nil {
 		t.Fatal(err)
 	}
-	if grant := codexGitdirGrant("gangline", got); grant != `permissions.gangline.filesystem={"`+want+`"="write"}` {
-		t.Fatalf("grant = %q", grant)
+	if grant, err := codexLaunch(nil, "", got); err != nil || !slices.Equal(grant, []string{"--add-dir", want}) {
+		t.Fatalf("grant = %q, %v", grant, err)
 	}
 }
 
-func TestCodexProfileLaunch(t *testing.T) {
+func TestCodexLaunch(t *testing.T) {
 	gitdir := "/repo/.git/worktrees/worker"
 	base := []string{"-c", `approval_policy="on-request"`}
-	unchanged, err := codexProfileLaunch(base, "", gitdir)
-	if err != nil || len(unchanged) != len(base) {
-		t.Fatalf("unset profile changed arguments: %q, %v", unchanged, err)
-	}
-	got, err := codexProfileLaunch(base, "gangline", gitdir)
-	if err != nil {
-		t.Fatal(err)
-	}
-	want := []string{"-c", `approval_policy="on-request"`, "-c", `default_permissions="gangline"`, "-c", `permissions.gangline.filesystem={"/repo/.git/worktrees/worker"="write"}`}
-	if len(got) != len(want) {
-		t.Fatalf("args = %q, want %q", got, want)
-	}
-	for index := range want {
-		if got[index] != want[index] {
-			t.Fatalf("args = %q, want %q", got, want)
+	for _, tc := range []struct {
+		profile, gitdir string
+		want            []string
+	}{
+		{"", "", base},
+		{"", gitdir, append(slices.Clone(base), "--add-dir", gitdir)},
+		{"gangline", "", append(slices.Clone(base), "-c", `default_permissions="gangline"`)},
+		{"gangline", gitdir, append(slices.Clone(base), "-c", `default_permissions="gangline"`, "--add-dir", gitdir)},
+	} {
+		got, err := codexLaunch(base, tc.profile, tc.gitdir)
+		if err != nil || !slices.Equal(got, tc.want) {
+			t.Fatalf("profile %q gitdir %q: args = %q, %v; want %q", tc.profile, tc.gitdir, got, err, tc.want)
 		}
 	}
 	if len(base) != 2 {
 		t.Fatalf("input arguments mutated: %q", base)
 	}
-	got, err = codexProfileLaunch(nil, "gangline", "")
-	if err != nil || len(got) != 2 {
-		t.Fatalf("ordinary checkout args = %q, %v", got, err)
+	for _, args := range [][]string{
+		{"-s", "read-only"},
+		{"--sandbox", "read-only"},
+		{"--sandbox=read-only"},
+		{"-sread-only"},
+		{"-s=read-only"},
+		{"-c", `sandbox_mode="read-only"`},
+		{"--config", `sandbox_mode = "read-only"`},
+		{`-csandbox_mode="read-only"`},
+		{`--config=sandbox_mode="read-only"`},
+		{"-s", "read-only", "-c", `sandbox_mode="workspace-write"`},
+		{"-c", `sandbox_mode="workspace-write"`, "-c", `sandbox_mode="read-only"`},
+		{"-c", `sandbox_mode="read-only" # comment`},
+		{"-c", `sandbox_mode='read-only'`},
+		{"-c", `sandbox_mode=read-only`},
+	} {
+		if got, err := codexLaunch(args, "", gitdir); err != nil || !slices.Equal(got, args) {
+			t.Fatalf("read-only sandbox %q: args = %q, %v", args, got, err)
+		}
+	}
+	for _, args := range [][]string{
+		{"-s", "workspace-write"},
+		{"-s", "workspace-write", "-c", `sandbox_mode="read-only"`},
+		{"-c", `sandbox_mode="read-only"`, "-c", `sandbox_mode="workspace-write"`},
+		{"-c", `model="read-only"`},
+	} {
+		want := append(slices.Clone(args), "--add-dir", gitdir)
+		if got, err := codexLaunch(args, "", gitdir); err != nil || !slices.Equal(got, want) {
+			t.Fatalf("writable sandbox %q: args = %q, %v; want %q", args, got, err, want)
+		}
 	}
 
 	for _, tc := range []struct {
@@ -146,7 +171,7 @@ func TestCodexProfileLaunch(t *testing.T) {
 		{"config profile override", []string{"-c", `profile="other"`}},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			if _, err := codexProfileLaunch(tc.args, "gangline", gitdir); err == nil {
+			if _, err := codexLaunch(tc.args, "gangline", gitdir); err == nil {
 				t.Fatalf("expected refusal for %q", tc.args)
 			}
 		})
