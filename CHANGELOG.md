@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.14.0](https://github.com/adambiggs/gangline/compare/gangline-v1.13.1...gangline-v1.14.0) (2026-10-03)
+
+
+### Features
+
+* **upgrade:** confirm before installing, with --yes to skip ([8f43b76](https://github.com/adambiggs/gangline/commit/8f43b76bc1d2d5584327ef81156ba6f7ef2c7fa5))
+
 ## [1.13.1](https://github.com/adambiggs/gangline/compare/gangline-v1.13.0...gangline-v1.13.1) (2026-10-03)
 
 
