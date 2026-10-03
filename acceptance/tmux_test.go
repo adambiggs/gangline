@@ -217,11 +217,11 @@ func (runner tmuxRunner) serverPID(t *testing.T) int {
 const nativeExitProbe = 5 * time.Second
 
 // awaitNativeExit releases a native CLI waiting on channel, then waits for it
-// to exit and for tmux to reap it. The pipe's EOF is the exit barrier: the
-// native CLI holds its write end until it exits. The wait ends within a
+// to exit and for tmux to reap it. A connected socket's EOF is the exit
+// barrier: the native CLI holds its descriptor until it exits. The wait ends within a
 // minute, and early enough before the test deadline for the diagnosis and the
 // cleanup to finish, since the timeout panic discards the failure.
-func awaitNativeExit(t *testing.T, runner tmuxRunner, server int, channel, pipe, trace string) {
+func awaitNativeExit(t *testing.T, runner tmuxRunner, server int, channel string, witness *nativeExitWitness, trace string) {
 	t.Helper()
 	bound := time.Minute
 	if deadline, ok := t.Deadline(); ok {
@@ -230,16 +230,7 @@ func awaitNativeExit(t *testing.T, runner tmuxRunner, server int, channel, pipe,
 	ctx, cancel := context.WithTimeout(context.Background(), bound)
 	defer cancel()
 	exited := make(chan error, 1)
-	go func() {
-		reader, err := os.Open(pipe)
-		if err != nil {
-			exited <- err
-			return
-		}
-		defer reader.Close()
-		_, err = io.Copy(io.Discard, reader)
-		exited <- err
-	}()
+	go func() { exited <- witness.wait(ctx) }()
 	fail := func(format string, arguments ...any) {
 		t.Helper()
 		t.Fatalf(format+"\n%s", append(arguments, nativeExitDiagnosis(runner, server, trace))...)
@@ -383,6 +374,14 @@ func runCommandHarness() int {
 				return 1
 			}
 			traceNative("exit pipe open")
+		}
+		if address := os.Getenv("GANGLINE_ACCEPTANCE_EXIT_SOCKET"); address != "" {
+			if _, err := openNativeExitWitness(address); err != nil {
+				traceNative("connect exit witness: %v", err)
+				fmt.Fprintln(os.Stderr, err)
+				return 1
+			}
+			traceNative("exit witness connected")
 		}
 		traceNative("exit 7")
 		fmt.Fprintln(os.Stderr, failure)

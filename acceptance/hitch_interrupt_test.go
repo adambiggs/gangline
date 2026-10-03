@@ -97,19 +97,18 @@ exec tmux "$@"
 			if err := os.Mkdir(team, 0o700); err != nil {
 				t.Fatal(err)
 			}
-			environment := append(withoutEnvironment(os.Environ(), "TMUX", "TMUX_PANE", "GANG_CONFIG_DIR", "GANG_SESSION", "GANG_STATE_ROOT", "GANG_TMUX_SOCKET", "GANG_COLLARS", "GANG_COLLAR", "GANGLINE_HITCH_ID", "GANG_AGENT_ID", "GANG_AGENT_NONCE", "GANG_AGENT_TOKEN"),
+			environment := append(withoutEnvironment(os.Environ(), "TMUX", "TMUX_PANE", "GANG_CONFIG_DIR", "GANG_SESSION", "GANG_STATE_ROOT", "GANG_TMUX_SOCKET", "GANG_COLLARS", "GANG_COLLAR", "GANGLINE_HITCH_ID", "GANG_AGENT_ID", "GANG_AGENT_NONCE", "GANG_AGENT_TOKEN", "GANGLINE_ACCEPTANCE_EXIT_SOCKET", "GANGLINE_ACCEPTANCE_EXIT_PIPE"),
 				"GANG_SESSION="+session, "GANG_CONFIG_DIR="+filepath.Join(team, "config"), "GANG_STATE_ROOT="+filepath.Join(team, "state"), "GANG_TMUX_SOCKET="+socket, "GANG_COLLARS="+collars, "GANG_COLLAR=acceptance",
 				"GANGLINE_ACCEPTANCE_CMD_HARNESS=1", "GANG_TMUX="+wrapper)
 			hitchEnvironment := append(append([]string(nil), environment...),
 				"GANGLINE_ACCEPTANCE_INTERRUPT="+tc.steps, "GANGLINE_ACCEPTANCE_INTERRUPT_SIGNAL="+strings.TrimPrefix(signalName(tc.signal), "SIG"), "GANGLINE_ACCEPTANCE_INTERRUPT_ONCE="+filepath.Join(team, "interrupted"))
 			// The native CLI takes its mode from the tmux server's environment.
 			var native []string
-			pipe, trace := filepath.Join(team, "exit-pipe"), filepath.Join(team, "native-trace")
+			trace := filepath.Join(team, "native-trace")
+			var exitWitness *nativeExitWitness
 			if tc.exits {
-				if err := syscall.Mkfifo(pipe, 0o600); err != nil {
-					t.Fatal(err)
-				}
-				native = append(native, "GANGLINE_ACCEPTANCE_BOOT_EXIT="+failure, "GANGLINE_ACCEPTANCE_BOOT_EXIT_AFTER=boot-exit", "GANGLINE_ACCEPTANCE_EXIT_PIPE="+pipe, "GANGLINE_ACCEPTANCE_NATIVE_TRACE="+trace)
+				exitWitness = newNativeExitWitness(t)
+				native = append(native, "GANGLINE_ACCEPTANCE_BOOT_EXIT="+failure, "GANGLINE_ACCEPTANCE_BOOT_EXIT_AFTER=boot-exit", "GANGLINE_ACCEPTANCE_EXIT_SOCKET="+exitWitness.address(), "GANGLINE_ACCEPTANCE_NATIVE_TRACE="+trace)
 			} else {
 				// The native CLI never renders its composer, so startup cannot
 				// finish before the signal is handled.
@@ -177,7 +176,7 @@ exec tmux "$@"
 			if tc.exits {
 				// The native CLI exits once released, and tmux reaps it while
 				// the pane is held.
-				awaitNativeExit(t, runner, server, "boot-exit", pipe, trace)
+				awaitNativeExit(t, runner, server, "boot-exit", exitWitness, trace)
 			}
 			// The targeted tick waits for the agent's lock and probes its
 			// record; the bare tick then covers the whole team.
@@ -213,7 +212,7 @@ exec tmux "$@"
 			}
 			// A later hitch is not refused: it spawns, and its native CLI's
 			// boot exit is the failure it reports.
-			for _, name := range []string{"GANGLINE_ACCEPTANCE_BOOT_EXIT_AFTER", "GANGLINE_ACCEPTANCE_EXIT_PIPE", "GANGLINE_ACCEPTANCE_RELEASE_FIFO"} {
+			for _, name := range []string{"GANGLINE_ACCEPTANCE_BOOT_EXIT_AFTER", "GANGLINE_ACCEPTANCE_EXIT_SOCKET", "GANGLINE_ACCEPTANCE_EXIT_PIPE", "GANGLINE_ACCEPTANCE_RELEASE_FIFO"} {
 				if out, err := runner.run("set-environment", "-gu", name); err != nil {
 					t.Fatalf("unset %s: %v %s", name, err, out)
 				}

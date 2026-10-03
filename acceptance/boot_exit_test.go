@@ -97,9 +97,10 @@ exec tmux "$@"
 			if err := os.Mkdir(team, 0o700); err != nil {
 				t.Fatal(err)
 			}
-			environment := append(withoutEnvironment(os.Environ(), "TMUX", "TMUX_PANE", "GANG_CONFIG_DIR", "GANG_SESSION", "GANG_STATE_ROOT", "GANG_TMUX_SOCKET", "GANG_COLLARS", "GANG_COLLAR", "GANGLINE_HITCH_ID", "GANG_AGENT_ID", "GANG_AGENT_NONCE", "GANG_AGENT_TOKEN"),
+			environment := append(withoutEnvironment(os.Environ(), "TMUX", "TMUX_PANE", "GANG_CONFIG_DIR", "GANG_SESSION", "GANG_STATE_ROOT", "GANG_TMUX_SOCKET", "GANG_COLLARS", "GANG_COLLAR", "GANGLINE_HITCH_ID", "GANG_AGENT_ID", "GANG_AGENT_NONCE", "GANG_AGENT_TOKEN", "GANGLINE_ACCEPTANCE_EXIT_SOCKET", "GANGLINE_ACCEPTANCE_EXIT_PIPE"),
 				"GANG_SESSION="+session, "GANG_CONFIG_DIR="+filepath.Join(team, "config"), "GANG_STATE_ROOT="+filepath.Join(team, "state"), "GANG_TMUX_SOCKET="+socket, "GANG_COLLARS="+collars, "GANG_COLLAR=acceptance",
 				"GANGLINE_ACCEPTANCE_CMD_HARNESS=1", "GANG_TMUX="+wrapper, "GANGLINE_ACCEPTANCE_CAPTURE="+tc.capture)
+			var exitWitness *nativeExitWitness
 			if tc.exits {
 				environment = append(environment, "GANGLINE_ACCEPTANCE_BOOT_EXIT="+failure)
 			}
@@ -119,11 +120,8 @@ exec tmux "$@"
 				t.Cleanup(func() { bound.Stop() })
 				environment = append(environment, "GANGLINE_ACCEPTANCE_BOOT_EXIT_AFTER=boot-exit", "GANGLINE_ACCEPTANCE_EXIT_PIPE="+pipe)
 			} else if tc.blocked {
-				pipe := filepath.Join(team, "exit-pipe")
-				if err := syscall.Mkfifo(pipe, 0o600); err != nil {
-					t.Fatal(err)
-				}
-				environment = append(environment, "GANGLINE_ACCEPTANCE_BOOT_BLOCKED=1", "GANGLINE_ACCEPTANCE_BOOT_EXIT_AFTER=boot-exit", "GANGLINE_ACCEPTANCE_EXIT_PIPE="+pipe, "GANGLINE_ACCEPTANCE_NATIVE_TRACE="+filepath.Join(team, "native-trace"))
+				exitWitness = newNativeExitWitness(t)
+				environment = append(environment, "GANGLINE_ACCEPTANCE_BOOT_BLOCKED=1", "GANGLINE_ACCEPTANCE_BOOT_EXIT_AFTER=boot-exit", "GANGLINE_ACCEPTANCE_EXIT_SOCKET="+exitWitness.address(), "GANGLINE_ACCEPTANCE_NATIVE_TRACE="+filepath.Join(team, "native-trace"))
 			} else if tc.capture == "exit" {
 				environment = append(environment, "GANGLINE_ACCEPTANCE_BOOT_EXIT_AFTER=boot-exit")
 			} else {
@@ -153,7 +151,7 @@ exec tmux "$@"
 				}
 				// The operator's answer ends the native CLI after the hitch
 				// returned.
-				awaitNativeExit(t, runner, runner.serverPID(t), "boot-exit", filepath.Join(team, "exit-pipe"), filepath.Join(team, "native-trace"))
+				awaitNativeExit(t, runner, runner.serverPID(t), "boot-exit", exitWitness, filepath.Join(team, "native-trace"))
 				if out, err := gang("tick", "--agent", "worker"); err != nil {
 					t.Fatalf("tick after native exit: %v\n%s", err, out)
 				}
