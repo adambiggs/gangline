@@ -24,14 +24,36 @@ type harnessInput interface {
 }
 
 func requireHarnessForeground(ctx context.Context, b harnessInput, pane substrate.PaneID, c harness.Collar) error {
-	command, commandErr := b.ForegroundCommand(ctx, pane)
-	if commandErr == nil && filepath.Base(command) == filepath.Base(c.Launch.Command) {
-		return nil
+	_, err := harnessForeground(ctx, b, pane, filepath.Base(c.Launch.Command))
+	return err
+}
+
+// harnessForeground returns the name tmux reports for the pane's foreground
+// process while that process is the harness launched as launch, and refuses
+// otherwise. tmux on macOS names a process by its executable file, so a
+// harness launched through a symlink (claude -> versions/<version>) is reported
+// under the link target's name. The process table then identifies it: the
+// leader of the foreground process group, which is the process tmux names,
+// carries that name and was invoked as launch.
+func harnessForeground(ctx context.Context, b harnessInput, pane substrate.PaneID, launch string) (string, error) {
+	command, err := b.ForegroundCommand(ctx, pane)
+	if err != nil {
+		return "", err
 	}
-	if commandErr != nil {
-		return commandErr
+	if filepath.Base(command) == launch {
+		return launch, nil
 	}
-	return fmt.Errorf("refuse input: harness %q is not in the pane foreground", c.Launch.Command)
+	processes, err := b.ForegroundProcesses(ctx, pane)
+	for _, p := range processes {
+		if p.PID == p.GroupID && p.Name == command && filepath.Base(p.Command) == launch {
+			return command, nil
+		}
+	}
+	refusal := fmt.Errorf("refuse input: harness %q is not in the pane foreground; tmux reports %q", launch, command)
+	if err != nil {
+		return "", errors.Join(refusal, err)
+	}
+	return "", refusal
 }
 func sendHarnessKeys(ctx context.Context, b harnessInput, pane substrate.PaneID, c harness.Collar, keys substrate.Keys) error {
 	if err := requireHarnessForeground(ctx, b, pane, c); err != nil {

@@ -46,10 +46,24 @@ type processHandle interface {
 
 // ForegroundProcesses returns the descendants of tmux's pane process that
 // belong to the terminal's foreground process group. A background child is
-// deliberately excluded even when it descends from the harness.
+// deliberately excluded even when it descends from the harness. A caller in
+// another PID namespace would read unrelated processes under tmux's PIDs, so
+// it is refused.
 func (backend *Backend) ForegroundProcesses(ctx context.Context, pane substrate.PaneID) ([]substrate.Process, error) {
+	return backend.foregroundProcesses(ctx, pane, readCurrentProcess)
+}
+
+// foregroundProcesses is ForegroundProcesses with visibility decided by read.
+func (backend *Backend) foregroundProcesses(ctx context.Context, pane substrate.PaneID, read func(int) (processRecord, error)) ([]substrate.Process, error) {
 	if err := validPaneID(pane); err != nil {
 		return nil, err
+	}
+	visible, err := backend.processVisibility(ctx, pane, read)
+	if err != nil {
+		return nil, err
+	}
+	if !visible {
+		return nil, fmt.Errorf("read process tree: tmux's processes are not visible to this caller")
 	}
 	root, err := backend.paneProcess(ctx, pane)
 	if err != nil {
@@ -75,6 +89,7 @@ func selectForegroundProcesses(root int, records map[int]processRecord, command 
 	for pid, record := range records {
 		if record.GroupID == rootRecord.foregroundGroup && descendsFrom(pid, root, records) {
 			process := record.Process
+			process.Name = record.Command
 			process.Command = command(process)
 			result = append(result, process)
 		}

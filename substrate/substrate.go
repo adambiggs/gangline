@@ -22,12 +22,15 @@ type Pane struct {
 	ID PaneID
 }
 
-// Process is one member of a pane's foreground process group.
+// Process is one member of a pane's foreground process group. Command is the
+// name the process was invoked as; Name is the kernel's short name for it,
+// which is the name tmux reports for a foreground process on macOS.
 type Process struct {
 	PID       int
 	ParentPID int
 	GroupID   int
 	Command   string
+	Name      string
 }
 
 type SpawnSpec struct {

@@ -262,7 +262,11 @@ These variables are environment-only:
 | `GANG_AGENT_ID` | Set on a hitched pane; identifies its registration together with `GANG_AGENT_NONCE` and the tmux server generation, session and pane. |
 
 Identity and delivery use tmux's pane registration and foreground command,
-so they work when the caller cannot see host PIDs. Native ancestry checks and
+so they work when the caller cannot see host PIDs. tmux on macOS names the
+foreground process after its executable file, so a harness launched through a
+symlink, such as a native Claude Code install, is recognised from the process
+table by the name it was invoked as; that needs the host process namespace
+visible. Native ancestry checks and
 detached-descendant cleanup remain enabled when the host process namespace is
 visible. Otherwise `process_verification_unavailable` records the skipped
 checks, and `roster` shows `[process-unavailable]` until the agent's own command

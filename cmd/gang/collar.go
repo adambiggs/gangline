@@ -257,7 +257,7 @@ func (cmd command) probeActive(ctx context.Context, backend *tmux.Backend, colla
 	}
 	// Type through the guarded input real delivery uses, which also dismisses
 	// an output viewer that tmux opens over the pane.
-	typing := paneInput{harnessInput: backend, registry: backend, identity: registration, command: filepath.Base(collar.Launch.Command)}
+	typing := paneInput{harnessInput: backend, registry: backend, identity: registration, launch: filepath.Base(collar.Launch.Command)}
 	action, _ := harness.Submit(collar.Primitives.Submit, "Reply with exactly READY.")
 	settle, _ := harness.SubmitSettle(collar.Primitives.Submit)
 	input, _ := harness.SubmitInput(collar.Primitives.Submit, action.Text)

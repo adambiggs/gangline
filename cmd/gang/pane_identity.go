@@ -180,14 +180,18 @@ type paneInput struct {
 	harnessInput
 	registry paneRegistry
 	identity tmux.PaneIdentity
-	command  string
+	launch   string
 }
 
 func (b paneInput) SendKeys(ctx context.Context, pane substrate.PaneID, keys substrate.Keys) error {
 	if string(pane) != b.identity.Pane {
 		return refuseError("input pane differs from registered pane")
 	}
-	return b.registry.SendRegisteredKeys(ctx, b.identity, b.command, keys)
+	command, err := harnessForeground(ctx, b.harnessInput, pane, b.launch)
+	if err != nil {
+		return err
+	}
+	return b.registry.SendRegisteredKeys(ctx, b.identity, command, keys)
 }
 func (run *runtime) registeredInput(a core.Agent, input harnessInput) harnessInput {
 	if err := requirePaneRegistration(a); err != nil {
