@@ -633,9 +633,6 @@ func (run *runtime) recoverCompaction(l *store.LockedAgent, a *core.Agent, b har
 	if surface.kind != "busy" {
 		return refuseError("%s; recovery interrupts only an active native task; no keys sent", surface.evidence)
 	}
-	if err := requirePaneRegistration(*a); err != nil {
-		return err
-	}
 	if err := requireHarnessForeground(ctx, b, pane, c); err != nil {
 		var ce commandError
 		if errors.As(err, &ce) {

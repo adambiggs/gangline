@@ -140,3 +140,30 @@ func TestCaptureDoesNotReadAPaneWhoseIdAStaleRecordReuses(t *testing.T) {
 		})
 	}
 }
+
+// A record with a pane but an incomplete registration is refused as such
+// before any read, rather than as an invalid pane identity.
+func TestOperatorReadsRefuseAnIncompleteRegistration(t *testing.T) {
+	for _, c := range []struct {
+		name string
+		run  func(command) error
+	}{
+		{"compact recover", func(cmd command) error { return cmd.compact([]string{"worker", "--recover"}) }},
+		{"capture", func(cmd command) error { return cmd.capture([]string{"worker"}) }},
+	} {
+		t.Run(c.name, func(t *testing.T) {
+			f := newStateFixture(t)
+			a := f.add(t, "a", "worker", "codex")
+			f.input.screen = compactRecoverScreens(t, f, "codex").busy
+			saveRecoverCompaction(t, f, a, "submitted", func(a *core.Agent) { a.Registration.Generation = "" })
+			err := c.run(f.cmd)
+			var ce commandError
+			if !errors.As(err, &ce) || ce.status != exitRefused || !strings.Contains(ce.text, "incomplete pane registration") {
+				t.Fatalf("err = %v, want the incomplete registration refusal", err)
+			}
+			if f.input.captures != 0 || len(f.input.keys) != 0 {
+				t.Fatalf("captures=%d keys=%v", f.input.captures, f.input.keys)
+			}
+		})
+	}
+}

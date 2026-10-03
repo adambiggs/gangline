@@ -362,8 +362,12 @@ func (run *runtime) captureRegistered(ctx context.Context, b harnessInput, a cor
 // captureAgentPane captures the record's pane for a command run on the
 // agent. A pane id that names another server's or session's pane refuses with
 // the step that frees the agent's name: the pane it registered ended with its
-// server, unless the team session was only renamed.
+// server, unless the team session was only renamed. A record with no complete
+// registration is refused as such before any read.
 func (run *runtime) captureAgentPane(ctx context.Context, b harnessInput, a core.Agent) (substrate.Screen, error) {
+	if err := requirePaneRegistration(a); err != nil {
+		return substrate.Screen{}, err
+	}
 	screen, err := run.captureRegistered(ctx, b, a)
 	if errors.Is(err, tmux.ErrPaneReplaced) {
 		return screen, refuseError("%s cannot be read in %s: %v; if the team session was renamed, restore its name; otherwise drop %s and hitch it again", a.Name, a.Pane, err, a.Name)
