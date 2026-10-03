@@ -3,6 +3,8 @@ package harness
 import (
 	"context"
 	"errors"
+	"fmt"
+	"strings"
 	"testing"
 	"testing/synctest"
 	"time"
@@ -69,13 +71,51 @@ func TestComposerSettleStopsOnUnsafeSurfaceOrCaptureFailure(t *testing.T) {
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			ctx, cancel := context.WithCancel(context.Background())
-			cancel()
+			if test.capture == nil {
+				cancel()
+			}
+			defer cancel()
 			err := AwaitComposerSettle(ctx, func(context.Context, substrate.PaneID) (substrate.Screen, error) {
 				return test.screen, test.capture
 			}, "%1", collar, 400*time.Millisecond)
 			if !errors.Is(err, test.want) {
 				t.Fatalf("got %v, want %v", err, test.want)
 			}
+		})
+	}
+}
+
+// A capture that fails because the operation deadline expired mid-read is a
+// composer that did not settle, not a pane-read failure, whether the capture
+// reports the context or the tmux process the deadline killed.
+func TestComposerSettleDeadlineDuringCaptureReportsNoSettle(t *testing.T) {
+	for name, captureFailure := range map[string]func(context.Context) error{
+		"context":     func(ctx context.Context) error { return fmt.Errorf("read cursor: %w: 46,40,1,0,", ctx.Err()) },
+		"killed tmux": func(context.Context) error { return errors.New("read cursor: signal: killed") },
+	} {
+		t.Run(name, func(t *testing.T) {
+			synctest.Test(t, func(t *testing.T) {
+				collar, _ := EmbeddedCollar("codex")
+				ctx, cancel := context.WithTimeout(context.Background(), time.Second)
+				defer cancel()
+				var paints int
+				err := AwaitComposerSettle(ctx, func(ctx context.Context, _ substrate.PaneID) (substrate.Screen, error) {
+					// The last read is in flight when the deadline expires.
+					if paints == 10 {
+						<-ctx.Done()
+						return substrate.Screen{}, captureFailure(ctx)
+					}
+					// Each frame differs, so the composer never settles.
+					paints++
+					return testScreen(testCells(fmt.Sprintf("› message %d", paints), false)), nil
+				}, "%1", collar, 400*time.Millisecond)
+				if !errors.Is(err, context.DeadlineExceeded) {
+					t.Fatalf("deadline not reported: %v", err)
+				}
+				if got := err.Error(); !strings.HasPrefix(got, "native composer did not settle before submission") || strings.Contains(got, "read cursor") {
+					t.Fatalf("reason names the capture, not the settle: %q", got)
+				}
+			})
 		})
 	}
 }

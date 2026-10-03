@@ -125,6 +125,12 @@ func AwaitComposerSettle(ctx context.Context, capture captureScreen, pane substr
 	for {
 		screen, err := capture(ctx, pane)
 		if err != nil {
+			// A capture cut short by the operation deadline, whether it
+			// reports the context or the killed tmux, says nothing about
+			// the pane; the composer never settled in time.
+			if ctxErr := ctx.Err(); ctxErr != nil {
+				return fmt.Errorf("native composer did not settle before submission: %w", errors.Join(ctxErr, lastErr))
+			}
 			return err
 		}
 		composer, err := ReadComposer(collar.Primitives.Composer, screen)
