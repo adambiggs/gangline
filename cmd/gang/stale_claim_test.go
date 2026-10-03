@@ -105,7 +105,7 @@ func TestUpKeepsRunningTeamClaim(t *testing.T) {
 	fakeCodexOnPath(t)
 	old := f.add(t, "old-hitch", "lead", "codex")
 	err := f.cmd.up([]string{"-c", "codex"})
-	if err == nil || !strings.Contains(err.Error(), "already claimed") {
+	if err == nil || err.Error() != `agent name "lead" is already claimed; choose another name, or free it with 'gang drop lead'` {
 		t.Fatalf("up = %v", err)
 	}
 	id, err := f.run.team.ResolveName("lead")

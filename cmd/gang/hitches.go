@@ -223,7 +223,7 @@ func (cmd command) hitchWithStaleClaim(args []string, supersede bool) (result er
 		if !supersede && !exists {
 			return refuseError("agent name %q is already claimed; restart the stopped team with 'gang up %s'", o.Name, o.Name)
 		}
-		return refuseError("agent name %q is already claimed", o.Name)
+		return refuseError("agent name %q is already claimed; choose another name, or free it with 'gang drop %s'", o.Name, o.Name)
 	}
 	if err != nil {
 		return err
