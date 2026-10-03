@@ -24,6 +24,9 @@ func TestEmbeddedCollarsDetectRuntimeApprovalSurfaces(t *testing.T) {
 		{name: "claude question in tabs", collar: "claude", file: "claude-code-2.1.287-ask-user-question-tabs.txt"},
 		{name: "claude question submit tab", collar: "claude", file: "claude-code-2.1.287-ask-user-question-submit.txt"},
 		{name: "claude question taller than the screen", collar: "claude", file: "claude-code-2.1.287-ask-user-question-tall.txt"},
+		{name: "claude project MCP servers", collar: "claude", file: "claude-code-2.1.288-mcp-servers.txt"},
+		{name: "claude project MCP server", collar: "claude", file: "claude-code-2.1.288-mcp-server.txt"},
+		{name: "claude project MCP server with a wrapped name", collar: "claude", lines: []string{"New MCP server found in this project:", "a-server-name-too-long-for-the-row", "  Use this MCP server", "❯ Continue without using this MCP server", "Enter to confirm · Esc to cancel"}},
 	}
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
