@@ -2,6 +2,7 @@ package core
 
 import (
 	"reflect"
+	"strings"
 	"testing"
 	"time"
 )
@@ -68,6 +69,13 @@ func TestEventValidationBeforeAppend(t *testing.T) {
 		if _, err := DecodeEvent([]byte(data)); err == nil {
 			t.Fatalf("accepted invalid event %s", data)
 		}
+	}
+}
+
+func TestUnknownEventTypeRejectionNamesTheType(t *testing.T) {
+	_, err := DecodeEvent([]byte(`{"type":"invented","at":"2026-09-22T00:00:00Z"}`))
+	if err == nil || !strings.Contains(err.Error(), "invented") {
+		t.Fatalf("rejection = %v, want it to name the type", err)
 	}
 }
 

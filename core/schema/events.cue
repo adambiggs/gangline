@@ -32,14 +32,7 @@ import "time"
  compaction?: "queued" | "submitted" | "completed" | "failed" | "unverified"
 })
 #Fields: close({
- type: "hitch_claimed" | "hitch_spawned" | "hitch_ready" | "hitch_blocked" | "hitch_failed" |
-  "renamed" | "send_queued" | "send_cancelled" |
-  "input_started" | "input_finished" | "delivery_accepted" | "delivery_succeeded" | "delivery_failed" | "delivery_unverified" |
-  "activity_observed" | "observation" | "native_hook" | "hook_failed" | "context_band_crossed" |
-  "compaction_requested" | "compaction_waiting" | "compaction_submitted" | "compaction_completed" | "compaction_failed" | "compaction_unverified" |
-  "interrupt_requested" | "interrupt_completed" | "deadline_checked" |
-  "drop_started" | "drop_finished" | "curfew_set" | "curfew_cleared" |
-  "capacity_detected" | "capacity_submitted" | "capacity_cleared" | "snooze_scheduled" | "snooze_cleared" | "snooze_completed" | "snooze_failed" | "snooze_cap_rejected" | "snooze_rearmed" | "notice_failed" | "tick" | "tick_failed" | "watchdog_unavailable" | "watchdog_available" | "watchdog_failed" | "process_verification_unavailable" | "process_verification_available"
+ type: string
  at: #Time
  source?: "hook" | "command" | "watchdog"
  hitch_id?: #ID, name?: #ID, pane?: #ID, id?: #ID, reason?: string, status?: string
@@ -47,17 +40,30 @@ import "time"
  readings?: [...#Reading], native_event?: string, fingerprint?: #ID, basis?: #Basis
 })
 
-#Event: #Fields & (
- {type: "hitch_claimed" | "hitch_spawned" | "hitch_ready" | "hitch_blocked" | "hitch_failed" | "renamed" | "send_cancelled" | "delivery_accepted" | "delivery_succeeded" | "delivery_failed" | "delivery_unverified" | "activity_observed" | "observation" | "native_hook" | "compaction_waiting" | "compaction_submitted" | "compaction_completed" | "compaction_failed" | "compaction_unverified" | "interrupt_requested" | "interrupt_completed" | "deadline_checked" | "drop_started" | "drop_finished" | "curfew_set" | "curfew_cleared" | "capacity_detected" | "capacity_submitted" | "capacity_cleared" | "watchdog_available" | "process_verification_available"} |
- {type: "send_queued", envelope: #Envelope} |
- {type: "context_band_crossed", id: #ID, hitch_id: #ID, status: #ID, envelope: #Envelope, readings: [#Reading]} |
- {type: "snooze_scheduled" | "snooze_cleared" | "snooze_failed", id: #ID, hitch_id: #ID, reason: #ID} |
- {type: "snooze_completed", id: #ID, hitch_id: #ID} |
- {type: "notice_failed", id: #ID, hitch_id: #ID, reason: #ID} |
- {type: "snooze_cap_rejected", id: #ID, hitch_id: #ID, reason: #ID} |
- {type: "snooze_rearmed", id: #ID, hitch_id: #ID, deadline: #Time, reason: #ID} |
- {type: "input_started" | "input_finished", id: #ID, status: #ID, hitch_id: #ID} |
- {type: "hook_failed" | "watchdog_unavailable" | "watchdog_failed" | "process_verification_unavailable", reason: #ID} |
- {type: "tick", source: "hook" | "command" | "watchdog"} |
- {type: "tick_failed", source: "hook" | "command" | "watchdog", reason: #ID} |
- {type: "compaction_requested", compaction: #Compaction})
+// Indexed by type, so validating an event is one lookup rather than a trial
+// of every type's branch.
+#Types: {
+ hitch_claimed: {}, hitch_spawned: {}, hitch_ready: {}, hitch_blocked: {}, hitch_failed: {}, renamed: {}, send_cancelled: {}, delivery_accepted: {}
+ delivery_succeeded: {}, delivery_failed: {}, delivery_unverified: {}, activity_observed: {}, observation: {}, native_hook: {}, compaction_waiting: {}, compaction_submitted: {}
+ compaction_completed: {}, compaction_failed: {}, compaction_unverified: {}, interrupt_requested: {}, interrupt_completed: {}, deadline_checked: {}, drop_started: {}, drop_finished: {}
+ curfew_set: {}, curfew_cleared: {}, capacity_detected: {}, capacity_submitted: {}, capacity_cleared: {}, watchdog_available: {}, process_verification_available: {}
+ send_queued: {envelope: #Envelope}
+ context_band_crossed: {id: #ID, hitch_id: #ID, status: #ID, envelope: #Envelope, readings: [#Reading]}
+ snooze_scheduled: {id: #ID, hitch_id: #ID, reason: #ID}
+ snooze_cleared: {id: #ID, hitch_id: #ID, reason: #ID}
+ snooze_failed: {id: #ID, hitch_id: #ID, reason: #ID}
+ snooze_completed: {id: #ID, hitch_id: #ID}
+ notice_failed: {id: #ID, hitch_id: #ID, reason: #ID}
+ snooze_cap_rejected: {id: #ID, hitch_id: #ID, reason: #ID}
+ snooze_rearmed: {id: #ID, hitch_id: #ID, deadline: #Time, reason: #ID}
+ input_started: {id: #ID, status: #ID, hitch_id: #ID}
+ input_finished: {id: #ID, status: #ID, hitch_id: #ID}
+ hook_failed: {reason: #ID}
+ watchdog_unavailable: {reason: #ID}
+ watchdog_failed: {reason: #ID}
+ process_verification_unavailable: {reason: #ID}
+ tick: {source: "hook" | "command" | "watchdog"}
+ tick_failed: {source: "hook" | "command" | "watchdog", reason: #ID}
+ compaction_requested: {compaction: #Compaction}
+}
+#Event: #Fields & {type: _, #Types[type]}
