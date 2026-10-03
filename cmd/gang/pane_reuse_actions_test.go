@@ -109,3 +109,29 @@ func TestCompactDoesNotReadAPaneWhoseIdAStaleRecordReuses(t *testing.T) {
 		t.Fatalf("activity=%s compaction=%+v captures=%d keys=%v", got.Activity, got.Compaction, f.input.captures, f.input.keys)
 	}
 }
+
+// Capture shows only the record's own pane: a stale record whose pane id
+// another agent's pane reuses has no screen to show.
+func TestCaptureDoesNotReadAPaneWhoseIdAStaleRecordReuses(t *testing.T) {
+	for _, c := range []struct {
+		name string
+		run  func(command) error
+	}{
+		{"capture", func(cmd command) error { return cmd.capture([]string{"worker"}) }},
+		{"composer", func(cmd command) error { return cmd.capture([]string{"worker", "--composer"}) }},
+	} {
+		t.Run(c.name, func(t *testing.T) {
+			f := newStateFixture(t)
+			reg, earlier := reusedPane(t, f)
+			f.setAgent(t, f.add(t, "a", "worker", "claude"), staleOn(reg, earlier))
+			f.input.command = "claude"
+			f.input.screen = screenWithText("────────", "❯ ", "────────")
+			if err := c.run(f.cmd); !errors.Is(err, tmux.ErrPaneReplaced) {
+				t.Fatalf("err = %v, want the replaced pane", err)
+			}
+			if f.input.captures != 0 {
+				t.Fatalf("captured another record's pane %d times", f.input.captures)
+			}
+		})
+	}
+}

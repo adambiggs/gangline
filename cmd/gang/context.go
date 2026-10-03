@@ -7,6 +7,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/adambiggs/gangline/core"
 	"github.com/adambiggs/gangline/harness"
 	"github.com/adambiggs/gangline/substrate"
 )
@@ -249,7 +250,7 @@ func (cmd command) capture(args []string) error {
 		return err
 	}
 	pane := cmd.environment("TMUX_PANE")
-	collar := ""
+	var record *core.Agent
 	if name != "" || composer {
 		a, err := run.resolve(name)
 		if err != nil {
@@ -258,18 +259,23 @@ func (cmd command) capture(args []string) error {
 		if a.Pane == "" {
 			return refuseError("capture: %s has no pane to capture: it is %s. gang status %s shows its record", a.Name, a.Status, a.Name)
 		}
-		pane, collar = a.Pane, a.Collar
+		record = &a
 	}
-	if pane == "" {
+	if record == nil && pane == "" {
 		return refuseError("capture without a name requires a tmux pane")
 	}
-	screen, err := b.Capture(context.Background(), substrate.PaneID(pane))
+	var screen substrate.Screen
+	if record != nil {
+		screen, err = run.captureRegistered(context.Background(), b, *record)
+	} else {
+		screen, err = b.Capture(context.Background(), substrate.PaneID(pane))
+	}
 	if err != nil {
 		return err
 	}
 	text := screen.Text(lines)
 	if composer {
-		c, err := loadCollar(collar, run.settings)
+		c, err := loadCollar(record.Collar, run.settings)
 		if err != nil {
 			return err
 		}
