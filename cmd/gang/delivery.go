@@ -642,7 +642,7 @@ func (run *runtime) drainFrom(l *store.LockedAgent, a core.Agent, target core.En
 		}
 		closeErr := run.unlock(l)
 		if err != nil {
-			if _, pending := err.(*pendingInputError); pending && closeErr != nil {
+			if closeErr != nil {
 				return result, errors.Join(err, closeErr)
 			}
 			return result, err

@@ -48,7 +48,7 @@ func (run *runtime) tickAgent(id core.HitchID, notice hookNotice, wait bool) (re
 	}
 	defer func() {
 		closeErr := run.unlock(l)
-		if _, pending := result.(*pendingInputError); pending && closeErr != nil {
+		if closeErr != nil {
 			result = errors.Join(result, closeErr)
 		}
 	}()
