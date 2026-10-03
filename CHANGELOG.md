@@ -1,5 +1,20 @@
 # Changelog
 
+## [1.15.0](https://github.com/adambiggs/gangline/compare/gangline-v1.14.2...gangline-v1.15.0) (2026-10-03)
+
+
+### Features
+
+* **activity:** read a pending permission request as blocked ([f7a4622](https://github.com/adambiggs/gangline/commit/f7a4622d2c402c91f91c81a3fdf0077604d1ef74))
+* **hitch:** guard configured costly models at usage thresholds ([6555639](https://github.com/adambiggs/gangline/commit/6555639c223aae81c7c7d4366338d9b1b7331615))
+* **roster:** qualify idle with pending background tasks ([b1efc2f](https://github.com/adambiggs/gangline/commit/b1efc2f65f9d20f4914d7bf88609e2de15b46488))
+
+
+### Bug Fixes
+
+* **team:** let a lead's down from its own pane finish ([c75c3fd](https://github.com/adambiggs/gangline/commit/c75c3fd60942ca45c8a7ecee471f556b5bfeff9c))
+* **tmux:** describe the registered pane when registered input is refused ([7a12b38](https://github.com/adambiggs/gangline/commit/7a12b38fe279f29216a981a950705ea6168bf81c))
+
 ## [1.14.2](https://github.com/adambiggs/gangline/compare/gangline-v1.14.1...gangline-v1.14.2) (2026-10-03)
 
 
