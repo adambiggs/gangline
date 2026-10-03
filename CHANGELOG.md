@@ -1,5 +1,13 @@
 # Changelog
 
+## [1.15.2](https://github.com/adambiggs/gangline/compare/gangline-v1.15.1...gangline-v1.15.2) (2026-10-03)
+
+
+### Bug Fixes
+
+* **harness:** judge a Claude composer's owner after the paste hint expires ([6d06547](https://github.com/adambiggs/gangline/commit/6d06547d7759f773abda14bdd11ee0b455904e4d))
+* **harness:** report an unsettled composer when the deadline cuts a capture short ([4ead6da](https://github.com/adambiggs/gangline/commit/4ead6da5b50cff3b44373112cbca48b385122c98)), closes [#111](https://github.com/adambiggs/gangline/issues/111)
+
 ## [1.15.1](https://github.com/adambiggs/gangline/compare/gangline-v1.15.0...gangline-v1.15.1) (2026-10-03)
 
 
