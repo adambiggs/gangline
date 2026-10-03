@@ -28,7 +28,7 @@ func TestPaneReadIsRepeatedOnceWhenItsServerIsLost(t *testing.T) {
 	ctx := context.Background()
 	fixture := func(second string) {
 		t.Helper()
-		script := "#!/bin/sh\n# SPDX-License-Identifier: Apache-2.0\necho \"$1\" >>'" + calls + "'\n" +
+		script := "#!/bin/sh\n# SPDX-License-Identifier: Apache-2.0\n" + fakeTmuxUTF8 + "echo \"$1\" >>'" + calls + "'\n" +
 			"if [ \"$(wc -l <'" + calls + "')\" -eq 1 ]; then echo 'server exited unexpectedly' >&2; exit 1; fi\n" + second + "\n"
 		if err := os.WriteFile(binary, []byte(script), 0o700); err != nil {
 			t.Fatal(err)
@@ -302,7 +302,7 @@ func TestServerIdentityRefusesAServerThatChangedMidRead(t *testing.T) {
 	}
 	fixture := func(second int) {
 		t.Helper()
-		script := fmt.Sprintf("#!/bin/sh\n# SPDX-License-Identifier: Apache-2.0\necho \"$1\" >>'%s'\npid=%d\n[ \"$(wc -l <'%s')\" -eq 1 ] || pid=%d\nprintf '%s\\t%s\\t%%s\\n' \"$pid\"\n", calls, os.Getpid(), calls, second, id.Generation, socket)
+		script := fmt.Sprintf("#!/bin/sh\n# SPDX-License-Identifier: Apache-2.0\n"+fakeTmuxUTF8+"echo \"$1\" >>'%s'\npid=%d\n[ \"$(wc -l <'%s')\" -eq 1 ] || pid=%d\nprintf '%s\\t%s\\t%%s\\n' \"$pid\"\n", calls, os.Getpid(), calls, second, id.Generation, socket)
 		if err := os.WriteFile(binary, []byte(script), 0o700); err != nil {
 			t.Fatal(err)
 		}

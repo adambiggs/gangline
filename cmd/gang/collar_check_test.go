@@ -45,7 +45,7 @@ func fakeCollarCheckTmux(t *testing.T, arms string) *stateFixture {
 	fakeCodexOnPath(t)
 	f := newStateFixture(t)
 	fakeTmux := filepath.Join(t.TempDir(), "tmux")
-	script := "#!/bin/sh\n# SPDX-License-Identifier: Apache-2.0\nsocket=$2\nshift 2\ncase \"$1\" in\n" + arms + "*) exit 91;;\nesac\n"
+	script := "#!/bin/sh\n# SPDX-License-Identifier: Apache-2.0\n" + fakeTmuxUTF8 + "socket=$2\nshift 2\ncase \"$1\" in\n" + arms + "*) exit 91;;\nesac\n"
 	if err := os.WriteFile(fakeTmux, []byte(script), 0o700); err != nil {
 		t.Fatal(err)
 	}

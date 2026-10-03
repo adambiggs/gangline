@@ -111,7 +111,7 @@ func TestBackendKillClosesHandlesWhenTmuxRefuses(t *testing.T) {
 	}
 	before := countHandles()
 	binary := t.TempDir() + "/fake-tmux"
-	script := fmt.Sprintf("#!/bin/sh\ncase \"$1\" in\ndisplay-message) echo %d 0;;\nkill-window) echo fixture-refusal >&2; exit 1;;\n*) exit 2;;\nesac\n", pid)
+	script := fmt.Sprintf("#!/bin/sh\n"+fakeTmuxUTF8+"case \"$1\" in\ndisplay-message) echo %d 0;;\nkill-window) echo fixture-refusal >&2; exit 1;;\n*) exit 2;;\nesac\n", pid)
 	if err := os.WriteFile(binary, []byte(script), 0o700); err != nil {
 		t.Fatal(err)
 	}

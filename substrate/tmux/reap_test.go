@@ -43,7 +43,7 @@ func TestReleaseExitReapsAfterAMissedChildSignal(t *testing.T) {
 	// A kick releases the hold only once the server accepted it. Opening the
 	// FIFO read-write never blocks, so a kick with no reap waiting is dropped
 	// instead of holding its client.
-	script := "#!/bin/sh\ncase \"$3 $4\" in\n" +
+	script := "#!/bin/sh\ncase \"$4 $5\" in\n" +
 		"'run-shell true') read -r _ <'" + kicks + "' || exit 97;;\n" +
 		"'run-shell -b') '" + binary + "' \"$@\" || exit; printf 'kick\\n' 1<>'" + kicks + "'; exit;;\n" +
 		"esac\nexec '" + binary + "' \"$@\"\n"

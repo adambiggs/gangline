@@ -501,6 +501,10 @@ func (backend *Backend) runWithInput(ctx context.Context, input io.Reader, argum
 	if backend.config.Socket != "" {
 		arguments = append([]string{"-S", backend.config.Socket}, arguments...)
 	}
+	// A client outside tmux whose locale does not name UTF-8 prints tabs and
+	// non-ASCII bytes as underscores, and gang parses what it prints. -u
+	// keeps the output intact whatever locale gang's caller has.
+	arguments = append([]string{"-u"}, arguments...)
 	command := exec.CommandContext(ctx, backend.config.Binary, arguments...)
 	command.Stdin = input
 	output, err := command.CombinedOutput()

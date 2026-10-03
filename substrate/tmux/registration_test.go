@@ -138,7 +138,7 @@ func TestPaneRegistrationPrivateServer(t *testing.T) {
 	// Change the generation only after the ordinary read-side identity check.
 	// The final tmux guard must reject both typing and removal.
 	wrapper := filepath.Join(root, "replace-before-mutation")
-	fixture := "#!/bin/sh\nif [ \"$3\" = if-shell ] || [ \"$3\" = source-file ]; then\n" +
+	fixture := "#!/bin/sh\nif [ \"$4\" = if-shell ] || [ \"$4\" = source-file ]; then\n" +
 		strings.TrimPrefix(shellCommand(binary, []string{"-S", socket, "set-option", "-s", generationOption, strings.Repeat("b", 64)}), "exec ") +
 		"\nfi\nexec " + "'" + strings.ReplaceAll(binary, "'", "'\\''") + "' \"$@\"\n"
 	if err := os.WriteFile(wrapper, []byte(fixture), 0o700); err != nil {
@@ -173,7 +173,7 @@ func TestPaneRegistrationPrivateServer(t *testing.T) {
 	changedShell := shellCommand("sh", []string{"-c", strings.TrimPrefix(shellCommand(binary, []string{"-S", socket, "wait-for", "-S", "foreground-changed"}), "exec ") + "; read line"})
 	changeForeground := strings.TrimPrefix(shellCommand(binary, []string{"-S", socket, "respawn-pane", "-k", "-t", id.Pane, changedShell}), "exec ")
 	changedBarrier := strings.TrimPrefix(shellCommand(binary, []string{"-S", socket, "wait-for", "foreground-changed"}), "exec ")
-	foregroundScript := "#!/bin/sh\nif [ \"$3\" = if-shell ]; then\n" + changeForeground + "\n" + changedBarrier + "\nfi\nexec '" + strings.ReplaceAll(binary, "'", "'\\''") + "' \"$@\"\n"
+	foregroundScript := "#!/bin/sh\nif [ \"$4\" = if-shell ]; then\n" + changeForeground + "\n" + changedBarrier + "\nfi\nexec '" + strings.ReplaceAll(binary, "'", "'\\''") + "' \"$@\"\n"
 	if err := os.WriteFile(foregroundWrapper, []byte(foregroundScript), 0o700); err != nil {
 		t.Fatal(err)
 	}

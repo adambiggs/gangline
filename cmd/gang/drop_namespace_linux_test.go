@@ -28,7 +28,7 @@ func TestDropMissingPaneFinishesRecordedTeardown(t *testing.T) {
 	}
 	defer func() { _ = stdin.Close(); _ = child.Process.Kill(); _ = child.Wait() }()
 	fake := f.env["GANG_TMUX"]
-	script := fmt.Sprintf("#!/bin/sh\n# SPDX-License-Identifier: Apache-2.0\ncase \"$1\" in display-message) printf '%%s\\n' '%d 0';; *) printf 'no server running on fixture\\n' >&2; exit 1;; esac\n", child.Process.Pid)
+	script := fmt.Sprintf("#!/bin/sh\n# SPDX-License-Identifier: Apache-2.0\n"+fakeTmuxUTF8+"case \"$1\" in display-message) printf '%%s\\n' '%d 0';; *) printf 'no server running on fixture\\n' >&2; exit 1;; esac\n", child.Process.Pid)
 	if err := os.WriteFile(fake, []byte(script), 0700); err != nil {
 		t.Fatal(err)
 	}

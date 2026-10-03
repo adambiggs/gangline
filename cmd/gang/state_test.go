@@ -124,6 +124,10 @@ func screenWithText(lines ...string) substrate.Screen {
 	return substrate.Screen{Rows: rows}
 }
 
+// gang starts every tmux client whose output it reads with -u, so a fake tmux
+// requires that flag and then dispatches on the arguments after it.
+const fakeTmuxUTF8 = "[ \"$1\" = -u ] || exit 89\nshift\n"
+
 type stateFixture struct {
 	cmd         command
 	run         *runtime
@@ -181,7 +185,7 @@ func newStateFixture(t *testing.T) *stateFixture {
 	}
 	// This executable supplies a listing only. Tests never contact a tmux server.
 	fakeTmux := filepath.Join(root, "tmux")
-	if err := os.WriteFile(fakeTmux, []byte("#!/bin/sh\n# SPDX-License-Identifier: Apache-2.0\ncase \"$1\" in list-panes) printf '%%1\\tworker\\n';; has-session) exit 0;; *) exit 91;; esac\n"), 0700); err != nil {
+	if err := os.WriteFile(fakeTmux, []byte("#!/bin/sh\n# SPDX-License-Identifier: Apache-2.0\n"+fakeTmuxUTF8+"case \"$1\" in list-panes) printf '%%1\\tworker\\n';; has-session) exit 0;; *) exit 91;; esac\n"), 0700); err != nil {
 		t.Fatal(err)
 	}
 	env["GANG_TMUX"] = fakeTmux
@@ -546,7 +550,7 @@ func TestHitchRefusesPaneOnlyAStaleRecordNames(t *testing.T) {
 			f := newStateFixture(t)
 			fakeCodexOnPath(t)
 			f.add(t, "a", "worker", "codex")
-			script := "#!/bin/sh\n# SPDX-License-Identifier: Apache-2.0\ncase \"$1 $2\" in\n'list-panes -a') printf '" + tc.generation + "\\t$1\\t%%1\\tunit\\n';;\nlist-panes*) printf '%%1\\t?worker?\\n';;\ndisplay-message*) printf '$1\\n';;\nhas-session*) exit 0;;\n*) exit 91;;\nesac\n"
+			script := "#!/bin/sh\n# SPDX-License-Identifier: Apache-2.0\n" + fakeTmuxUTF8 + "case \"$1 $2\" in\n'list-panes -a') printf '" + tc.generation + "\\t$1\\t%%1\\tunit\\n';;\nlist-panes*) printf '%%1\\t?worker?\\n';;\ndisplay-message*) printf '$1\\n';;\nhas-session*) exit 0;;\n*) exit 91;;\nesac\n"
 			if err := os.WriteFile(f.env["GANG_TMUX"], []byte(script), 0700); err != nil {
 				t.Fatal(err)
 			}
@@ -567,7 +571,7 @@ func TestHitchRefusesUnregisteredPaneBeforeClaim(t *testing.T) {
 	f := newStateFixture(t)
 	fakeCodexOnPath(t)
 	fakeTmux := f.env["GANG_TMUX"]
-	if err := os.WriteFile(fakeTmux, []byte("#!/bin/sh\n# SPDX-License-Identifier: Apache-2.0\ncase \"$1\" in list-panes) printf '%%1\\t?lead?\\n';; has-session) exit 0;; *) exit 91;; esac\n"), 0700); err != nil {
+	if err := os.WriteFile(fakeTmux, []byte("#!/bin/sh\n# SPDX-License-Identifier: Apache-2.0\n"+fakeTmuxUTF8+"case \"$1\" in list-panes) printf '%%1\\t?lead?\\n';; has-session) exit 0;; *) exit 91;; esac\n"), 0700); err != nil {
 		t.Fatal(err)
 	}
 	err := f.cmd.hitch([]string{"lead", "-c", "codex"})

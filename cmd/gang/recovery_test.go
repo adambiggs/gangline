@@ -511,7 +511,7 @@ func TestStatusMarksExpiredDeadlineFromTheObservedWindowTitle(t *testing.T) {
 	fake := f.env["GANG_TMUX"]
 	script := `#!/bin/sh
 # SPDX-License-Identifier: Apache-2.0
-case "$1" in
+` + fakeTmuxUTF8 + `case "$1" in
  list-panes) case "$*" in
   *gangline_generation*) printf '%s\t$1\t%%1\tunit\n' ` + strings.Repeat("a", 64) + `;;
   *) printf '%%1\t?worker?\n'; printf 'listed\n' >> "$(dirname "$0")/listed";;

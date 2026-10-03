@@ -108,6 +108,10 @@ func runDetachedHelper() int {
 	return 0
 }
 
+// The backend starts every tmux client with -u, so a fake tmux requires that
+// flag and then dispatches on the arguments after it.
+const fakeTmuxUTF8 = "[ \"$1\" = -u ] || exit 89\nshift\n"
+
 // Keep the socket path below the Unix socket limit even when the OS uses a
 // long temporary root. t.TempDir adds the full test name to that path.
 func privateTmuxRoot(t *testing.T) string {

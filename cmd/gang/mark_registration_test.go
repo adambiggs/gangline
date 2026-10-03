@@ -15,7 +15,7 @@ func TestRosterLeavesWindowOfUnregisteredPaneUnmarked(t *testing.T) {
 	f := newStateFixture(t)
 	f.cmd.inputBackend = nil
 	calls := filepath.Join(t.TempDir(), "calls")
-	script := "#!/bin/sh\n# SPDX-License-Identifier: Apache-2.0\nprintf '%s\\n' \"$*\" >>'" + calls + "'\ncase \"$1\" in list-panes) printf '%%1\\tworker\\n';; has-session) exit 0;; *) exit 91;; esac\n"
+	script := "#!/bin/sh\n# SPDX-License-Identifier: Apache-2.0\n" + fakeTmuxUTF8 + "printf '%s\\n' \"$*\" >>'" + calls + "'\ncase \"$1\" in list-panes) printf '%%1\\tworker\\n';; has-session) exit 0;; *) exit 91;; esac\n"
 	if err := os.WriteFile(f.env["GANG_TMUX"], []byte(script), 0700); err != nil {
 		t.Fatal(err)
 	}

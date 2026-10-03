@@ -28,7 +28,7 @@ func TestPaneOfExitedServerIsForgotten(t *testing.T) {
 	absent := "printf 'no server running on fixture\\n' >&2; exit 1"
 	identity := func(pid int) core.ProcessIdentity {
 		t.Helper()
-		script := fmt.Sprintf("#!/bin/sh\n# SPDX-License-Identifier: Apache-2.0\ncase \"$1\" in display-message) printf '%%s\\n' '%d 0';; *) %s;; esac\n", pid, absent)
+		script := fmt.Sprintf("#!/bin/sh\n# SPDX-License-Identifier: Apache-2.0\n"+fakeTmuxUTF8+"case \"$1\" in display-message) printf '%%s\\n' '%d 0';; *) %s;; esac\n", pid, absent)
 		if err := os.WriteFile(fake, []byte(script), 0700); err != nil {
 			t.Fatal(err)
 		}

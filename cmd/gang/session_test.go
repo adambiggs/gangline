@@ -26,7 +26,7 @@ func TestAttachStoppedTeamWithClaimedLeadAdvisesUp(t *testing.T) {
 	f := newStateFixture(t)
 	f.env["GANG_TMUX_SOCKET"] = filepath.Join(t.TempDir(), "absent.sock")
 	fakeTmux := f.env["GANG_TMUX"]
-	program := "#!/bin/sh\n# SPDX-License-Identifier: Apache-2.0\n" +
+	program := "#!/bin/sh\n# SPDX-License-Identifier: Apache-2.0\n" + fakeTmuxUTF8 +
 		"if [ \"$1\" = -S ]; then [ ! -e \"$2\" ] || exit 92; shift 2; fi\n" +
 		"case \"$1\" in list-panes|has-session) exit 1;; *) exit 91;; esac\n"
 	if err := os.WriteFile(fakeTmux, []byte(program), 0700); err != nil {

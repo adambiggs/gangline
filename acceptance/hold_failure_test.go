@@ -63,7 +63,7 @@ case " $* " in
 	echo "hold refused: wrapper sentinel" >&2
 	exit 1;;
 esac
-case "$order $3 $4" in
+case "$order $4 $5" in
 "before-registration list-panes -a")
 	if [ ! -e "$listed" ]; then
 		: >"$listed"

@@ -20,7 +20,7 @@ func stoppedClaimFixture(t *testing.T, name string) (*stateFixture, core.Agent) 
 	f := newStateFixture(t)
 	fakeCodexOnPath(t)
 	f.env["GANG_TMUX_SOCKET"] = filepath.Join(t.TempDir(), "absent.sock")
-	program := "#!/bin/sh\n# SPDX-License-Identifier: Apache-2.0\n" +
+	program := "#!/bin/sh\n# SPDX-License-Identifier: Apache-2.0\n" + fakeTmuxUTF8 +
 		"if [ \"$1\" = -S ]; then [ ! -e \"$2\" ] || exit 92; shift 2; fi\n" +
 		"case \"$1\" in has-session) exit 1;; new-session) echo fixture-reached-new-session >&2; exit 91;; *) exit 92;; esac\n"
 	if err := os.WriteFile(f.env["GANG_TMUX"], []byte(program), 0700); err != nil {
@@ -135,7 +135,7 @@ func TestUpRechecksStoppedTeamBeforeSuperseding(t *testing.T) {
 				t.Fatal(err)
 			}
 			marker := filepath.Join(f.env["GANG_STATE_ROOT"], "first-probe")
-			program := "#!/bin/sh\n# SPDX-License-Identifier: Apache-2.0\n" +
+			program := "#!/bin/sh\n# SPDX-License-Identifier: Apache-2.0\n" + fakeTmuxUTF8 +
 				"if [ \"$1\" = -S ]; then shift 2; fi\n" +
 				"case \"$1\" in has-session) if [ -e '" + marker + "' ]; then " + response + "; else touch '" + marker + "'; exit 1; fi;; *) exit 92;; esac\n"
 			if err := os.WriteFile(f.env["GANG_TMUX"], []byte(program), 0700); err != nil {
@@ -171,7 +171,7 @@ func saveStoppedClaim(t *testing.T, f *stateFixture, a core.Agent) {
 
 func TestUpKeepsLiveProcessOnAbsentSocket(t *testing.T) {
 	f, old := stoppedClaimFixture(t, "lead")
-	program := fmt.Sprintf("#!/bin/sh\n# SPDX-License-Identifier: Apache-2.0\nif [ \"$1\" = -S ]; then shift 2; fi\ncase \"$1\" in has-session) exit 1;; display-message) echo '%d 0';; *) exit 92;; esac\n", os.Getpid())
+	program := fmt.Sprintf("#!/bin/sh\n# SPDX-License-Identifier: Apache-2.0\n"+fakeTmuxUTF8+"if [ \"$1\" = -S ]; then shift 2; fi\ncase \"$1\" in has-session) exit 1;; display-message) echo '%d 0';; *) exit 92;; esac\n", os.Getpid())
 	if err := os.WriteFile(f.env["GANG_TMUX"], []byte(program), 0700); err != nil {
 		t.Fatal(err)
 	}
