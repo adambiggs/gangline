@@ -1,5 +1,13 @@
 # Changelog
 
+## [1.15.1](https://github.com/adambiggs/gangline/compare/gangline-v1.15.0...gangline-v1.15.1) (2026-10-03)
+
+
+### Bug Fixes
+
+* **delivery:** withdraw a message paste abandoned before its submit key ([e8f7a4e](https://github.com/adambiggs/gangline/commit/e8f7a4ef1f7f02232baecbc721c048b72dd43ee0))
+* **hitch:** tell the hitcher when an agent's composer holds input ([18d5bc9](https://github.com/adambiggs/gangline/commit/18d5bc987af1b28fc0da13753931daa4d008b792))
+
 ## [1.15.0](https://github.com/adambiggs/gangline/compare/gangline-v1.14.2...gangline-v1.15.0) (2026-10-03)
 
 
