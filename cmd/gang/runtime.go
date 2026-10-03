@@ -79,7 +79,7 @@ func (run *runtime) apply(l *store.LockedAgent, a *core.Agent, e core.Event) err
 		e.At = run.cmd.now()
 	}
 	e.HitchID, e.Name = a.ID, a.Name
-	failed := e.Type == "hitch_failed" && a.Status != core.Failed
+	wasFailed := a.Status == core.Failed
 	next, effects := core.Step(*a, e)
 	for _, effect := range effects {
 		if effect.Kind == "reject" {
@@ -93,8 +93,12 @@ func (run *runtime) apply(l *store.LockedAgent, a *core.Agent, e core.Event) err
 	if err := run.team.Append(e); err != nil {
 		return err
 	}
-	if failed {
-		return run.notifyHitcher(*a, e.Reason)
+	if !wasFailed && a.Status == core.Failed {
+		reason := e.Reason
+		if reason == "" {
+			reason = a.Evidence
+		}
+		return run.notifyHitcher(*a, reason)
 	}
 	return nil
 }

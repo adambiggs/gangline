@@ -7,6 +7,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/adambiggs/gangline/core"
 )
@@ -203,12 +204,14 @@ func TestCurfewChangeRefusesTeammateThatIsNotLead(t *testing.T) {
 func TestHitchFailureNotifiesHitcher(t *testing.T) {
 	for _, test := range []struct {
 		name     string
+		boot     bool
 		hitcher  core.HitchID
 		hitching core.HitchID
 		inactive bool
 		notified bool
 	}{
 		{name: "hitched by an agent", hitcher: "l", notified: true},
+		{name: "boot deadline elapsed", boot: true, hitcher: "l", notified: true},
 		{name: "hitched by the operator", hitcher: ""},
 		{name: "failed inside its own hitch command", hitcher: "l", hitching: "o"},
 		{name: "hitcher no longer active", hitcher: "l", inactive: true},
@@ -250,41 +253,78 @@ func TestHitchFailureNotifiesHitcher(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			if err := f.run.apply(l, &owner, core.Event{Type: "hitch_failed", Reason: "registered pane is absent from tmux"}); err != nil {
+			event, reason := core.Event{Type: "hitch_failed", Reason: "registered pane is absent from tmux"}, "registered pane is absent from tmux"
+			if test.boot {
+				owner.Status, owner.BootDeadline = core.Booting, f.cmd.now()
+				event, reason = core.Event{Type: "deadline_checked"}, "boot deadline elapsed"
+			}
+			if err := f.run.apply(l, &owner, event); err != nil {
 				t.Fatal(err)
 			}
 			if err := f.run.unlock(l); err != nil {
 				t.Fatal(err)
 			}
-			e, err := lp.ReadEnvelope("new", "failed-o")
+			notices := func() []core.Envelope {
+				t.Helper()
+				entries, err := os.ReadDir(filepath.Join(lp.Inbox, "new"))
+				if errors.Is(err, os.ErrNotExist) {
+					return nil
+				}
+				if err != nil {
+					t.Fatal(err)
+				}
+				var found []core.Envelope
+				for _, entry := range entries {
+					e, err := lp.ReadEnvelope("new", core.EnvelopeID(strings.TrimSuffix(entry.Name(), ".json")))
+					if err != nil {
+						t.Fatal(err)
+					}
+					if strings.HasPrefix(string(e.ID), "hitch-failed-o-") {
+						found = append(found, e)
+					}
+				}
+				return found
+			}
+			got := notices()
 			if !test.notified {
-				if !errors.Is(err, os.ErrNotExist) || len(woken) != 0 {
-					t.Fatalf("unexpected notice: %+v %v woken=%v", e, err, woken)
+				if len(got) != 0 || len(woken) != 0 {
+					t.Fatalf("unexpected notice: %+v woken=%v", got, woken)
 				}
 				return
 			}
-			if err != nil {
-				t.Fatal(err)
+			if len(got) != 1 {
+				t.Fatalf("notices = %+v", got)
 			}
-			if e.From.Kind != core.SenderGangline || e.Recipient != lead.ID || !strings.Contains(e.Message.Text, "owner, which you hitched, failed: registered pane is absent from tmux") {
+			e := got[0]
+			if e.From.Kind != core.SenderGangline || e.Recipient != lead.ID || !strings.Contains(e.Message.Text, "owner, which you hitched, failed: "+reason) {
 				t.Fatalf("notice = %+v", e)
 			}
 			if len(woken) != 1 || woken[0] != "l" {
 				t.Fatalf("woken = %v", woken)
 			}
-			// A second observation of the same failure adds nothing.
-			l, err = op.LockAgent()
-			if err != nil {
-				t.Fatal(err)
-			}
-			if err := f.run.apply(l, &owner, core.Event{Type: "hitch_failed", Reason: "again"}); err != nil {
-				t.Fatal(err)
-			}
-			if err := l.Close(); err != nil {
-				t.Fatal(err)
-			}
-			if e2, err := lp.ReadEnvelope("new", "failed-o"); err != nil || e2.Message.Text != e.Message.Text {
-				t.Fatalf("repeat notice = %+v %v", e2, err)
+			// The same failure observed again adds nothing; a failure after a
+			// recovery is a new one.
+			for _, again := range []struct {
+				recovered bool
+				want      int
+			}{{false, 1}, {true, 2}} {
+				at := f.cmd.now().Add(time.Duration(again.want) * time.Second)
+				if again.recovered {
+					owner.Status = core.Active
+				}
+				l, err = op.LockAgent()
+				if err != nil {
+					t.Fatal(err)
+				}
+				if err := f.run.apply(l, &owner, core.Event{Type: "hitch_failed", Reason: "again", At: at}); err != nil {
+					t.Fatal(err)
+				}
+				if err := l.Close(); err != nil {
+					t.Fatal(err)
+				}
+				if got := notices(); len(got) != again.want {
+					t.Fatalf("recovered=%v: notices = %+v", again.recovered, got)
+				}
 			}
 		})
 	}

@@ -98,7 +98,9 @@ func (run *runtime) notifyHitcher(a core.Agent, reason string) error {
 	if a.HitchedBy == "" || a.HitchedBy == a.ID || a.ID == run.hitching {
 		return nil
 	}
-	id := core.EnvelopeID("failed-" + a.ID)
+	// One notice per failure: an agent recovered under the same hitch ID and
+	// failed again is a new failure.
+	id := core.EnvelopeID(fmt.Sprintf("hitch-failed-%s-%d", a.ID, a.ChangedAt.UnixNano()))
 	err := run.sendHitcherNotice(a, id, reason)
 	if err == nil {
 		return nil
