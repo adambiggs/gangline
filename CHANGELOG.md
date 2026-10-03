@@ -1,5 +1,18 @@
 # Changelog
 
+## [1.14.2](https://github.com/adambiggs/gangline/compare/gangline-v1.14.1...gangline-v1.14.2) (2026-10-03)
+
+
+### Bug Fixes
+
+* **delivery:** recognise a harness launched through a symlink on macOS ([6342566](https://github.com/adambiggs/gangline/commit/6342566937e86f2db062e8cd1aca45ba106f9407))
+
+
+### Performance Improvements
+
+* **log:** validate only the events gang log prints ([3c51f09](https://github.com/adambiggs/gangline/commit/3c51f09567cc7fc617984bc9a4a9cf4080b18821))
+* **schema:** select an event's required fields by its type ([41e4e0f](https://github.com/adambiggs/gangline/commit/41e4e0fa2565bb42ee0a35cc48b0d0ae9cdaaa76))
+
 ## [1.14.1](https://github.com/adambiggs/gangline/compare/gangline-v1.14.0...gangline-v1.14.1) (2026-10-03)
 
 
