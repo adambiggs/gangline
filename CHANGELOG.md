@@ -1,5 +1,13 @@
 # Changelog
 
+## [1.15.9](https://github.com/adambiggs/gangline/compare/gangline-v1.15.8...gangline-v1.15.9) (2026-10-03)
+
+
+### Bug Fixes
+
+* retain unlock failures alongside tick and drain results ([64a32df](https://github.com/adambiggs/gangline/commit/64a32dff669f4aa2e9d7ab832b14160a98cafc01)), closes [#139](https://github.com/adambiggs/gangline/issues/139)
+* supply continuation guidance on taskless resume ([6a1762f](https://github.com/adambiggs/gangline/commit/6a1762f84a80232d5e507a018ff8c3f5493d962d)), closes [#141](https://github.com/adambiggs/gangline/issues/141)
+
 ## [1.15.8](https://github.com/adambiggs/gangline/compare/gangline-v1.15.7...gangline-v1.15.8) (2026-10-03)
 
 
