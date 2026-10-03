@@ -85,3 +85,27 @@ func TestCompactRecoverDoesNotReadAPaneWhoseIdAStaleRecordReuses(t *testing.T) {
 		t.Fatalf("compaction=%+v input=%+v captures=%d keys=%v", after.Compaction, after.Input, f.input.captures, f.input.keys)
 	}
 }
+
+// A compaction starts only from the record's own pane: another agent's idle
+// screen under a reused pane id is not this agent's activity.
+func TestCompactDoesNotReadAPaneWhoseIdAStaleRecordReuses(t *testing.T) {
+	f := newStateFixture(t)
+	reg, earlier := reusedPane(t, f)
+	a := f.setAgent(t, f.add(t, "a", "worker", "codex"), func(a *core.Agent) {
+		staleOn(reg, earlier)(a)
+		a.Activity = core.Busy
+	})
+	f.input.screen = screenWithText("READY", "› ")
+	err := f.cmd.compact([]string{"worker"})
+	if !errors.Is(err, tmux.ErrPaneReplaced) {
+		t.Fatalf("compact err = %v, want the replaced pane", err)
+	}
+	p, _ := f.run.team.Agent(a.ID)
+	got, err := p.Read()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.Activity == core.Idle || got.Compaction == nil || got.Compaction.Status != "queued" || f.input.captures != 0 || len(f.input.keys) != 0 {
+		t.Fatalf("activity=%s compaction=%+v captures=%d keys=%v", got.Activity, got.Compaction, f.input.captures, f.input.keys)
+	}
+}

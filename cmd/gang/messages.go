@@ -695,7 +695,7 @@ func (run *runtime) startCompaction(l *store.LockedAgent, a *core.Agent) (result
 	ctx, cancel := run.cmd.timeout(operationTimeout)
 	defer cancel()
 	pane := substrate.PaneID(a.Pane)
-	screen, err := b.Capture(ctx, pane)
+	screen, err := run.captureRegistered(ctx, b, *a)
 	if err != nil {
 		return errors.Join(err, run.observeProbeFailure(l, a, err))
 	}
