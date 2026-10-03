@@ -40,6 +40,10 @@ type Backend struct {
 type Window struct {
 	Pane substrate.Pane
 	Name string
+	// Registration is the pane as RegisterPane names it. A pane id is unique
+	// only within one server lifetime, so a record that names this pane id
+	// holds this pane only when its registration is equal.
+	Registration PaneIdentity
 }
 
 func New(config Config) (*Backend, error) {
@@ -305,7 +309,7 @@ func (backend *Backend) launch(ctx context.Context, action string, arguments []s
 }
 
 func (backend *Backend) Windows(ctx context.Context) ([]Window, error) {
-	output, err := backend.run(ctx, "list-panes", "-s", "-t", "="+backend.config.Session+":", "-F", "#{pane_id}\t#{window_name}")
+	output, err := backend.run(ctx, "list-panes", "-s", "-t", "="+backend.config.Session+":", "-F", "#{pane_id}\t#{"+generationOption+"}\t#{session_id}\t#{window_name}")
 	if err != nil {
 		return nil, tmuxError("list panes", err, output)
 	}
@@ -314,15 +318,19 @@ func (backend *Backend) Windows(ctx context.Context) ([]Window, error) {
 		if line == "" {
 			continue
 		}
-		id, name, ok := strings.Cut(line, "\t")
-		if !ok {
+		fields := strings.SplitN(line, "\t", 4)
+		if len(fields) != 4 {
 			return nil, fmt.Errorf("list panes: malformed record %q", line)
 		}
-		pane := substrate.PaneID(id)
+		pane := substrate.PaneID(fields[0])
 		if err := validPaneID(pane); err != nil {
 			return nil, err
 		}
-		windows = append(windows, Window{Pane: substrate.Pane{ID: pane}, Name: name})
+		windows = append(windows, Window{
+			Pane:         substrate.Pane{ID: pane},
+			Name:         fields[3],
+			Registration: PaneIdentity{Generation: fields[1], Session: fields[2], Pane: fields[0]},
+		})
 	}
 	return windows, nil
 }

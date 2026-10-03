@@ -16,6 +16,7 @@ import (
 	"github.com/adambiggs/gangline/core"
 	"github.com/adambiggs/gangline/store"
 	"github.com/adambiggs/gangline/substrate"
+	"github.com/adambiggs/gangline/substrate/tmux"
 	"golang.org/x/term"
 )
 
@@ -234,11 +235,9 @@ func (run *runtime) observeRoster(agents []core.Agent) ([]core.Agent, error) {
 			return nil, err
 		}
 	}
-	present := map[string]bool{}
-	titles := map[string]string{}
+	panes := map[string]tmux.Window{}
 	for _, w := range windows {
-		present[string(w.Pane.ID)] = true
-		titles[string(w.Pane.ID)] = w.Name
+		panes[string(w.Pane.ID)] = w
 	}
 	for i, a := range agents {
 		l, current, err := run.acquire(a.ID, false)
@@ -255,8 +254,12 @@ func (run *runtime) observeRoster(agents []core.Agent) ([]core.Agent, error) {
 			_ = run.unlock(l)
 			return nil, err
 		}
+		// A new server reuses pane ids, so a listed id is the record's pane
+		// only under the record's registration.
+		window, present := panes[current.Pane]
+		present = present && window.Registration == paneIdentity(current)
 		unlisted := false
-		if current.Pane != "" && !present[current.Pane] && current.Status != core.Dropping {
+		if current.Pane != "" && !present && current.Status != core.Dropping {
 			// A listing is enough to fail the agent. With no session to list,
 			// an unreachable socket hides a pane that may still run, so the
 			// record stands unless its recorded process has exited. Only a
@@ -280,7 +283,7 @@ func (run *runtime) observeRoster(agents []core.Agent) ([]core.Agent, error) {
 				return nil, err
 			}
 		}
-		if present[current.Pane] && current.Status == core.Active {
+		if present && current.Status == core.Active {
 			c, err := loadCollar(current.Collar, run.settings)
 			if err != nil {
 				_ = run.unlock(l)
@@ -313,7 +316,7 @@ func (run *runtime) observeRoster(agents []core.Agent) ([]core.Agent, error) {
 		if unlisted && current.Status != core.Failed {
 			agents[i].Activity, agents[i].Evidence = core.Unknown, "tmux lists no team session"
 		}
-		if present[current.Pane] && titles[current.Pane] != windowTitle(current) {
+		if present && window.Name != windowTitle(current) {
 			if err := run.mark(current); err != nil {
 				_ = run.unlock(l)
 				return nil, err
