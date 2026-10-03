@@ -320,3 +320,54 @@ func testCells(text string, dim bool) []substrate.Cell {
 	}
 	return cells
 }
+
+// A short pane clips the session list and leaves a child session's footer
+// showing a mode line, so only the dim placeholder in the empty prompt row
+// tells a child's composer from the main one.
+func TestClaudeComposerChildPlaceholderInShortPane(t *testing.T) {
+	rule := "──── Read the harness sources ────────────────────────────────────────────"
+	closing := "─────────────────────────────────────────────────────────────────────────"
+	prompt := func(typed, placeholder string) []substrate.Cell {
+		return append(testCells("❯ "+typed, false), testCells(placeholder, true)...)
+	}
+	screen := func(row []substrate.Cell, footer string) substrate.Screen {
+		return testScreen(
+			testCells("● Explore agent launched in background.", false),
+			testCells("", false),
+			testCells(rule, false),
+			row,
+			testCells(closing, false),
+			testCells("", false),
+			testCells("  "+footer, false),
+			testCells("", false),
+		)
+	}
+	tests := []struct {
+		name   string
+		screen substrate.Screen
+		want   string
+		err    error
+	}{
+		{name: "child with agent count", screen: screen(prompt("", "Message @Explore…"), "⏸ manual mode on · ← 1 agent"), err: ErrForeignComposer},
+		{name: "child with agents hint", screen: screen(prompt("", "Message @Explore…"), "⏸ manual mode on · ← for agents"), err: ErrForeignComposer},
+		{name: "main with agent count", screen: screen(prompt("", ""), "⏸ manual mode on · ← 1 agent"), want: ""},
+		{name: "main holding typed placeholder text", screen: screen(prompt("Message @Explore…", ""), "⏸ manual mode on · ← 1 agent"), want: "Message @Explore…"},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			composer, err := ReadComposer(Invocation{Name: "claude-composer"}, test.screen)
+			if test.err != nil {
+				if !errors.Is(err, test.err) {
+					t.Fatalf("error = %v, want %v", err, test.err)
+				}
+				return
+			}
+			if err != nil {
+				t.Fatal(err)
+			}
+			if composer.Text != test.want {
+				t.Fatalf("text = %q, want %q", composer.Text, test.want)
+			}
+		})
+	}
+}

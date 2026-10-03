@@ -170,6 +170,10 @@ func readClaudeComposer(screen substrate.Screen) (Composer, error) {
 	if opening < 0 {
 		return Composer{}, ErrNoComposer
 	}
+	first := firstNonblank(lines, opening+1, closing)
+	if first >= 0 && childPlaceholder(lines[first], screenLines(screen, true)[first]) {
+		return Composer{}, ErrForeignComposer
+	}
 	if named {
 		mode, main := parentConversation(lines[closing+1:])
 		switch {
@@ -180,7 +184,6 @@ func readClaudeComposer(screen substrate.Screen) (Composer, error) {
 		}
 	}
 
-	first := firstNonblank(lines, opening+1, closing)
 	if first < 0 || !strings.HasPrefix(lines[first], "❯") {
 		return Composer{}, ErrNoComposer
 	}
@@ -332,6 +335,19 @@ func parentConversation(lines []string) (mode, main bool) {
 		}
 	}
 	return mode, main
+}
+
+// childPlaceholder reports whether an empty prompt row shows the dim
+// placeholder Claude Code draws only in a child session's composer, which
+// names the child it messages. A short pane can clip the footer and session
+// list that otherwise tell a child's composer from the main one. The row
+// arrives once without its dim cells and once with them, so text a user typed
+// cannot pass for the placeholder.
+func childPlaceholder(row, withDim string) bool {
+	if !strings.HasPrefix(row, "❯") || strings.TrimSpace(strings.TrimPrefix(row, "❯")) != "" {
+		return false
+	}
+	return strings.HasPrefix(strings.TrimSpace(strings.TrimPrefix(withDim, "❯")), "Message @")
 }
 
 func pasteHint(lines []string) bool {
