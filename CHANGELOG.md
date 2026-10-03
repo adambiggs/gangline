@@ -1,5 +1,14 @@
 # Changelog
 
+## [1.15.5](https://github.com/adambiggs/gangline/compare/gangline-v1.15.4...gangline-v1.15.5) (2026-10-03)
+
+
+### Bug Fixes
+
+* **harness:** recognize Claude's project MCP server approval as a prompt ([47804f2](https://github.com/adambiggs/gangline/commit/47804f2692644d8b3c31aaa030f700ef74bd8ec9)), closes [#117](https://github.com/adambiggs/gangline/issues/117)
+* **recover:** resume a startup its boot deadline failed once the pane is ready ([a644e33](https://github.com/adambiggs/gangline/commit/a644e33492938d892f18bacffbe7fe1a29d7daa0)), closes [#117](https://github.com/adambiggs/gangline/issues/117)
+* **tmux:** read tmux records intact whatever the caller's locale ([e118b7c](https://github.com/adambiggs/gangline/commit/e118b7c3f840d9d23e8870ee72ed800c1be4825e))
+
 ## [1.15.4](https://github.com/adambiggs/gangline/compare/gangline-v1.15.3...gangline-v1.15.4) (2026-10-03)
 
 
