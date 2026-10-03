@@ -1,5 +1,14 @@
 # Changelog
 
+## [1.15.8](https://github.com/adambiggs/gangline/compare/gangline-v1.15.7...gangline-v1.15.8) (2026-10-03)
+
+
+### Bug Fixes
+
+* absorb brief pre-effect agent lock contention ([27f84eb](https://github.com/adambiggs/gangline/commit/27f84eb5d201adec75ed775cb5efa6f658a51916)), closes [#137](https://github.com/adambiggs/gangline/issues/137)
+* report queued input observation outages as pending ([0c44369](https://github.com/adambiggs/gangline/commit/0c443696a5c3c1f8e099dc05c1cbbab9991d29d0)), closes [#138](https://github.com/adambiggs/gangline/issues/138)
+* **tmux:** use boot session UUID for macOS process ownership ([758a9e9](https://github.com/adambiggs/gangline/commit/758a9e9478fa4944efba6975abbe48d4a2ae34ac))
+
 ## [1.15.7](https://github.com/adambiggs/gangline/compare/gangline-v1.15.6...gangline-v1.15.7) (2026-10-03)
 
 
