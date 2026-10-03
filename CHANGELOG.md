@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.15.3](https://github.com/adambiggs/gangline/compare/gangline-v1.15.2...gangline-v1.15.3) (2026-10-03)
+
+
+### Bug Fixes
+
+* **harness:** refuse a Claude child composer whose footer a short pane clips ([b86f735](https://github.com/adambiggs/gangline/commit/b86f735ab48c577bc0e00cdc63ceb17036584ae3))
+
 ## [1.15.2](https://github.com/adambiggs/gangline/compare/gangline-v1.15.1...gangline-v1.15.2) (2026-10-03)
 
 
