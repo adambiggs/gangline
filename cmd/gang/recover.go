@@ -79,7 +79,7 @@ func (run *runtime) tickAgent(id core.HitchID, notice hookNotice, wait bool) err
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), operationTimeout)
 	defer cancel()
-	screen, err := b.Capture(ctx, substrate.PaneID(a.Pane))
+	screen, err := run.captureRegistered(ctx, b, a)
 	// A held pane reports its native exit instead of a screen, and that exit
 	// ends the agent.
 	var exited *substrate.ExitedError

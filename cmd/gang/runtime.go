@@ -254,7 +254,7 @@ func (run *runtime) checkDeadlines(l *store.LockedAgent, a *core.Agent) error {
 		if err != nil {
 			return err
 		}
-		screen, err := b.Capture(context.Background(), substrate.PaneID(a.Pane))
+		screen, err := run.captureRegistered(context.Background(), b, *a)
 		// A held pane shows no prompt, only its native exit.
 		var exited *substrate.ExitedError
 		if errors.As(err, &exited) {
@@ -342,6 +342,21 @@ func (run *runtime) paneGone(a core.Agent) (gone, closed bool, err error) {
 	}
 	closed, err = registry.PaneClosed(context.Background(), id, nativeIdentity(a.Registration.Server))
 	return true, closed, err
+}
+
+// captureRegistered captures the record's pane unless its id names a pane of
+// another server or session. A new server reuses pane ids, so a stale record
+// would otherwise read another agent's screen as its own. An absent pane or
+// server is left to the capture, whose error says which.
+func (run *runtime) captureRegistered(ctx context.Context, b harnessInput, a core.Agent) (substrate.Screen, error) {
+	registry, err := run.registry()
+	if err != nil {
+		return substrate.Screen{}, err
+	}
+	if _, err := registry.CheckPane(ctx, paneIdentity(a)); err != nil {
+		return substrate.Screen{}, err
+	}
+	return b.Capture(ctx, substrate.PaneID(a.Pane))
 }
 
 // recordedProcessExited reports whether the record's native process is
