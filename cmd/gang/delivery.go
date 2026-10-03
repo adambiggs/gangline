@@ -147,6 +147,9 @@ func startupEnvelopeText(sections *core.StartupSections, sender, token, purpose,
 type inputVerdict struct {
 	Free            bool
 	Blocker, Reason string
+	// Owner is the label on the free composer's rule, which input typed into
+	// it must still carry once the composer has grown.
+	Owner string
 }
 
 // continuationQueued reports a resume note that the harness holds in its own
@@ -218,14 +221,17 @@ func (run *runtime) inputState(l *store.LockedAgent, a *core.Agent, b harnessInp
 	if err := requireHarnessForeground(context.Background(), b, substrate.PaneID(a.Pane), c); err != nil {
 		return inputVerdict{}, err
 	}
-	return inputVerdict{Free: true}, nil
+	return inputVerdict{Free: true, Owner: composer.Owner}, nil
 }
 
 func (run *runtime) available(l *store.LockedAgent, a *core.Agent, b harnessInput, c harness.Collar) (bool, string, error) {
 	v, err := run.inputState(l, a, b, c)
 	return v.Free, v.Blocker, err
 }
-func (run *runtime) deliver(l *store.LockedAgent, a *core.Agent, e core.Envelope, b harnessInput, c harness.Collar) (outcome string, withdrawn bool, err error) {
+
+// deliver types e into a composer that inputState found free and owned by
+// owner.
+func (run *runtime) deliver(l *store.LockedAgent, a *core.Agent, e core.Envelope, b harnessInput, c harness.Collar, owner string) (outcome string, withdrawn bool, err error) {
 	if err := run.checkRecipient(*a); err != nil {
 		return "", false, err
 	}
@@ -295,7 +301,7 @@ func (run *runtime) deliver(l *store.LockedAgent, a *core.Agent, e core.Envelope
 		} else if run.cmd.settleInput != nil {
 			err = run.cmd.settleInput(ctx, b, pane, c, settle)
 		} else {
-			err = harness.AwaitComposerSettle(ctx, b.Capture, pane, c, settle)
+			err = harness.AwaitOwnedComposerSettle(ctx, b.Capture, pane, c, owner, settle)
 		}
 	}
 	if err == nil {
@@ -506,19 +512,19 @@ func (run *runtime) drainLocked(l *store.LockedAgent, a *core.Agent, target core
 		if failedStartup {
 			return result, pending, nil
 		}
-		free, reason, err := run.available(l, a, b, c)
+		v, err := run.inputState(l, a, b, c)
 		if err != nil {
 			return result, pending, err
 		}
-		if !free {
-			if reason != "" && target != "" && run.cmd.stderr != nil {
-				if _, err := fmt.Fprintf(run.cmd.stderr, "%s input blocked: %s; message remains queued\n", a.Name, reason); err != nil {
+		if !v.Free {
+			if v.Blocker != "" && target != "" && run.cmd.stderr != nil {
+				if _, err := fmt.Fprintf(run.cmd.stderr, "%s input blocked: %s; message remains queued\n", a.Name, v.Blocker); err != nil {
 					return result, pending, err
 				}
 			}
 			return result, pending, nil
 		}
-		outcome, withdrawn, err := run.deliver(l, a, *next, b, c)
+		outcome, withdrawn, err := run.deliver(l, a, *next, b, c, v.Owner)
 		if next.ID == target {
 			result = outcome
 		}

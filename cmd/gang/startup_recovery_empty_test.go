@@ -44,7 +44,7 @@ func TestStartupRetryProofRequiresBracketedPaste(t *testing.T) {
 			}
 			c.Primitives.Submit.Params["paste"] = mode
 			f.input.registeredSender = failedStartupPasteInput{f.input}
-			outcome, _, err := f.run.deliver(l, &a, e, f.input, c)
+			outcome, _, err := f.run.deliver(l, &a, e, f.input, c, "")
 			if err != nil || outcome != "unverified" {
 				t.Fatalf("delivery %q: %v", outcome, err)
 			}

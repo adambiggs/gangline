@@ -21,12 +21,23 @@ var (
 	// expires.
 	ErrComposerOwnerHidden = errors.New("paste hint hides which session owns the composer")
 	ErrBackgroundComposer  = errors.New("composer creates a background session")
+	// ErrComposerOwnerClipped reports a named composer whose input pushed the
+	// session footer past the bottom of a short pane. A main session's
+	// composer and a child session's look alike without that footer, so only
+	// the label on the composer's rule, matched against the one the main
+	// session showed before the input, tells them apart. ReadComposer returns
+	// the composer it read along with this error.
+	ErrComposerOwnerClipped = errors.New("a short pane clips the footer that shows which session owns the composer")
 )
 
 type Composer struct {
 	Text           string
 	CollapsedChars int
 	TailOccupied   bool
+	// Owner is the label on the rule above a named Claude Code composer: the
+	// session's name in the main conversation and a child session's task in
+	// its view.
+	Owner string
 	// first and end bound the screen rows that hold the input.
 	first, end int
 }
@@ -174,11 +185,14 @@ func readClaudeComposer(screen substrate.Screen) (Composer, error) {
 	if first >= 0 && childPlaceholder(lines[first], screenLines(screen, true)[first]) {
 		return Composer{}, ErrForeignComposer
 	}
+	var clipped error
 	if named {
 		mode, main := parentConversation(lines[closing+1:])
 		switch {
 		case main && !mode && pasteHint(lines[closing+1:]):
 			return Composer{}, ErrComposerOwnerHidden
+		case main && !mode && footerClipped(lines, closing):
+			clipped = ErrComposerOwnerClipped
 		case !main || !mode:
 			return Composer{}, ErrForeignComposer
 		}
@@ -186,6 +200,10 @@ func readClaudeComposer(screen substrate.Screen) (Composer, error) {
 
 	if first < 0 || !strings.HasPrefix(lines[first], "❯") {
 		return Composer{}, ErrNoComposer
+	}
+	owner := ""
+	if named {
+		owner = strings.Trim(strings.TrimSpace(lines[opening]), "─ ")
 	}
 	// Pasting a wrapped message expands the input frame. A tall frame needs
 	// the active cursor inside its body to distinguish it from conversation
@@ -202,7 +220,7 @@ func readClaudeComposer(screen substrate.Screen) (Composer, error) {
 	if !named && len(body) == 1 && screen.Cursor.Visible && screen.Cursor.Row == first && screen.Cursor.Column == 2 && strings.HasPrefix(body[0], "Try \"") && strings.HasSuffix(body[0], "\"") {
 		return Composer{first: first, end: closing}, nil
 	}
-	return Composer{Text: strings.TrimRight(strings.Join(body, "\n"), "\n"), first: first, end: closing}, nil
+	return Composer{Text: strings.TrimRight(strings.Join(body, "\n"), "\n"), Owner: owner, first: first, end: closing}, clipped
 }
 
 func trustPrompt(name string, lines []string) (string, bool) {
@@ -335,6 +353,14 @@ func parentConversation(lines []string) (mode, main bool) {
 		}
 	}
 	return mode, main
+}
+
+// footerClipped reports whether the footer below a composer's closing rule
+// runs into the bottom row of the screen, or the closing rule is that row, so
+// rows of the footer may lie below the pane.
+func footerClipped(lines []string, closing int) bool {
+	last := len(lines) - 1
+	return last == closing || last > closing && strings.TrimSpace(lines[last]) != ""
 }
 
 // childPlaceholder reports whether an empty prompt row shows the dim

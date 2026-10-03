@@ -118,6 +118,14 @@ func AwaitStartup(ctx context.Context, capture captureScreen, pane substrate.Pan
 // AwaitComposerSettle observes only input paint; native work may keep animating
 // the rest of the pane. The submit hook remains the authoritative byte witness.
 func AwaitComposerSettle(ctx context.Context, capture captureScreen, pane substrate.PaneID, collar Collar, settle time.Duration) error {
+	return AwaitOwnedComposerSettle(ctx, capture, pane, collar, "", settle)
+}
+
+// AwaitOwnedComposerSettle is AwaitComposerSettle for input typed into a
+// composer that a read before typing found owned by owner. A frame whose
+// footer the input pushed off a short pane is that composer's while its rule
+// still carries owner; an empty owner accepts no such frame.
+func AwaitOwnedComposerSettle(ctx context.Context, capture captureScreen, pane substrate.PaneID, collar Collar, owner string, settle time.Duration) error {
 	ticker := time.NewTicker(25 * time.Millisecond)
 	defer ticker.Stop()
 	observed := composerStability{}
@@ -134,6 +142,9 @@ func AwaitComposerSettle(ctx context.Context, capture captureScreen, pane substr
 			return err
 		}
 		composer, err := ReadComposer(collar.Primitives.Composer, screen)
+		if errors.Is(err, ErrComposerOwnerClipped) && owner != "" && composer.Owner == owner {
+			err = nil
+		}
 		if err != nil && !errors.Is(err, ErrNoComposer) && !errors.Is(err, ErrComposerOwnerHidden) {
 			return err
 		}

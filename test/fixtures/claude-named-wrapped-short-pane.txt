@@ -1,0 +1,14 @@
+  Line 11 of a multi-line probe for a named main session in a 90x14 fullscreen pane.
+  Line 12 of a multi-line probe for a named main session in a 90x14 fullscreen pane.
+  Reply with the single word: received. [/gang:self-declared:operator#0528895335b8bd1e]
+
+● received
+
+✻ Sautéed for 2s · done 11:58 p.m.
+
+──────────────────────────────────────────────────────────────────────── i112 probe main ─
+❯ [gang:self-declared:operator#e85f6ef9d930c633] This is a short single-paragraph probe
+  that is long enough to wrap across more than one row of a ninety-column pane. Reply
+  with: ok. [/gang:self-declared:operator#e85f6ef9d930c633]
+──────────────────────────────────────────────────────────────────────────────────────────
+  40k/200k (20%)
