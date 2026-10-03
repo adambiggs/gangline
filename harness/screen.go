@@ -11,11 +11,16 @@ import (
 )
 
 var (
-	ErrNoComposer         = errors.New("no composer on screen")
-	ErrComposerClipped    = errors.New("composer is clipped by the screen")
-	ErrComposerOccupied   = errors.New("another surface owns input")
-	ErrForeignComposer    = errors.New("composer belongs to a child session")
-	ErrBackgroundComposer = errors.New("composer creates a background session")
+	ErrNoComposer       = errors.New("no composer on screen")
+	ErrComposerClipped  = errors.New("composer is clipped by the screen")
+	ErrComposerOccupied = errors.New("another surface owns input")
+	ErrForeignComposer  = errors.New("composer belongs to a child session")
+	// ErrComposerOwnerHidden reports a named composer whose session footer is
+	// replaced by Claude Code's paste hint, which a main session's composer
+	// and a child session's show alike. The footer returns when the hint
+	// expires.
+	ErrComposerOwnerHidden = errors.New("paste hint hides which session owns the composer")
+	ErrBackgroundComposer  = errors.New("composer creates a background session")
 )
 
 type Composer struct {
@@ -165,8 +170,14 @@ func readClaudeComposer(screen substrate.Screen) (Composer, error) {
 	if opening < 0 {
 		return Composer{}, ErrNoComposer
 	}
-	if named && !parentConversation(lines[closing+1:]) {
-		return Composer{}, ErrForeignComposer
+	if named {
+		mode, main := parentConversation(lines[closing+1:])
+		switch {
+		case main && !mode && pasteHint(lines[closing+1:]):
+			return Composer{}, ErrComposerOwnerHidden
+		case !main || !mode:
+			return Composer{}, ErrForeignComposer
+		}
 	}
 
 	first := firstNonblank(lines, opening+1, closing)
@@ -307,9 +318,11 @@ func firstNonblank(lines []string, start, end int) int {
 	return -1
 }
 
-func parentConversation(lines []string) bool {
-	mode := false
-	main := true
+// parentConversation reports whether the footer below a named composer shows
+// the main conversation's mode line, and whether no session list selects
+// another session.
+func parentConversation(lines []string) (mode, main bool) {
+	main = true
 	for _, line := range lines {
 		mode = mode || strings.Contains(line, " mode on")
 		line = strings.TrimSpace(strings.TrimPrefix(line, "❯"))
@@ -318,7 +331,16 @@ func parentConversation(lines []string) bool {
 			main = len(name) != 0 && name[0] == "main"
 		}
 	}
-	return mode && main
+	return mode, main
+}
+
+func pasteHint(lines []string) bool {
+	for _, line := range lines {
+		if strings.TrimSpace(line) == "paste again to expand" {
+			return true
+		}
+	}
+	return false
 }
 
 var contextPattern = regexp.MustCompile(`(?:ctx )?([0-9]+(?:\.[0-9]+)?)([kKmM]?)/([0-9]+(?:\.[0-9]+)?)([kKmM]?)\s+([0-9]+)%`)

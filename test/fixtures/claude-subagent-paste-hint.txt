@@ -1,0 +1,13 @@
+❯ Count from 1 to 400 slowly, one number per Bash call using echo, then reply done.
+
+  Ran 90 shell commands
+
+· Gallivanting… (35s · ↑ 37.9k tokens · thought for 1s)
+  ⎿  Tip: Run tasks in the cloud while you keep coding locally · clau.de/web
+
+──────────────────────────────────────────────────────────────────── Count slowly to 400 ─
+❯ [Pasted text #2 +9 lines]
+──────────────────────────────────────────────────────────────────────────────────────────
+  43k/200k (21%)
+  paste again to expand
+

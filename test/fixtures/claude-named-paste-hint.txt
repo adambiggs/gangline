@@ -1,0 +1,8 @@
+❯ /rename Test agent assignment
+  ⎿  Session renamed to: Test agent assignment
+                                                            Ctrl+Y to paste deleted text
+────────────────────────────────────────────────────────────────── Test agent assignment ─
+❯ [Pasted text #2 +9 lines]
+──────────────────────────────────────────────────────────────────────────────────────────
+  unknown: native status-line has no current_usage yet
+  paste again to expand

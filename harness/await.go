@@ -128,13 +128,15 @@ func AwaitComposerSettle(ctx context.Context, capture captureScreen, pane substr
 			return err
 		}
 		composer, err := ReadComposer(collar.Primitives.Composer, screen)
-		if err != nil && !errors.Is(err, ErrNoComposer) {
+		if err != nil && !errors.Is(err, ErrNoComposer) && !errors.Is(err, ErrComposerOwnerHidden) {
 			return err
 		}
 		lastErr = err
 		// A missing frame need not mean the pasted input was lost. Require
 		// a fresh stability window when it returns; never submit a missing
-		// composer or retry input that has already been pasted.
+		// composer or retry input that has already been pasted. A paste hint
+		// hides the composer's owner until it expires, and the owner is
+		// checked again on the frame that follows.
 		if err != nil {
 			observed.text, observed.since, observed.emptySince = "", time.Time{}, time.Time{}
 		} else if observed.ready(composer.Text, time.Now(), settle) {

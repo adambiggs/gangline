@@ -245,6 +245,7 @@ func TestClaudeComposerAgainstCapturedFixtures(t *testing.T) {
 		err  error
 	}{
 		{name: "named parent", file: "claude-named-composer-parent.txt", want: ""},
+		{name: "named parent after paste hint", file: "claude-named-paste-hint-cleared.txt", want: "[Pasted text #2 +9 lines]"},
 		{name: "selected child", file: "claude-selected-subagent.txt", err: ErrForeignComposer},
 		{name: "child cursor on main", file: "claude-subagent-cursor-on-main.txt", err: ErrForeignComposer},
 		{name: "background sessions", file: "claude-background-sessions.txt", err: ErrBackgroundComposer},
