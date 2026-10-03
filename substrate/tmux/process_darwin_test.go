@@ -11,11 +11,23 @@ import (
 	"os/exec"
 	"path/filepath"
 	"strings"
+	"syscall"
 	"testing"
 	"unsafe"
 
 	"github.com/adambiggs/gangline/substrate"
 )
+
+func TestDarwinBootIdentityMatchesBootSessionUUID(t *testing.T) {
+	want, err := syscall.Sysctl("kern.bootsessionuuid")
+	if err != nil || want == "" {
+		t.Fatalf("native boot session UUID = %q, %v", want, err)
+	}
+	got, err := bootIdentity()
+	if err != nil || got != want {
+		t.Fatalf("native boot identity = %q, %v; want boot session UUID %q", got, err, want)
+	}
+}
 
 func TestDarwinArgvHelper(t *testing.T) {
 	if os.Getenv("GANGLINE_ARGV_HELPER") != "1" {

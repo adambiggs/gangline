@@ -35,8 +35,7 @@ type darwinProcessHandle struct {
 }
 
 func bootIdentity() (string, error) {
-	value, err := syscall.Sysctl("kern.boottime")
-	return fmt.Sprintf("%x", value), err
+	return darwinBootIdentity(syscall.Sysctl)
 }
 
 func readDarwinProcess(pid int) (processRecord, uint32, error) {
