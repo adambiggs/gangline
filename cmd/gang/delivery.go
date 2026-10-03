@@ -319,7 +319,7 @@ func (run *runtime) deliver(l *store.LockedAgent, a *core.Agent, e core.Envelope
 		err = sendHarnessKeys(ctx, b, pane, c, substrate.Keys{Submit: true})
 	}
 	var witness store.Witness
-	var accepted bool
+	var accepted, held bool
 	if err == nil {
 		if isContextBandNotice(e) {
 			// Context notes use exact hook proof. Leave a queued note for a
@@ -352,7 +352,7 @@ func (run *runtime) deliver(l *store.LockedAgent, a *core.Agent, e core.Envelope
 		// unverified. A composer emptied by something else may hold input
 		// that is not the paste.
 		if !submitted && withdrawable(e) && !errors.Is(err, harness.ErrComposerEmptied) {
-			outcome, reason = run.withdrawPaste(*a, b, c, reason)
+			outcome, reason, held = run.withdrawPaste(*a, b, c, reason)
 			withdrawn = outcome == "failed"
 		}
 	} else if accepted {
@@ -377,6 +377,22 @@ func (run *runtime) deliver(l *store.LockedAgent, a *core.Agent, e core.Envelope
 			outcome = "delivered"
 		}
 	}
+	switch {
+	case withdrawn:
+		// A sender that is not an agent gets no notice of its own, and a
+		// composer that keeps refusing pastes withdraws one message per drain.
+		text := fmt.Sprintf("A message from %s to %s, which you hitched, was withdrawn from its composer and not delivered: %s.", e.From.Name, a.Name, reason)
+		if err := run.notifyHitcher(*a, core.EnvelopeID("withdrawn-"+e.ID), text); err != nil {
+			return outcome, withdrawn, err
+		}
+	case held && outcome == "unverified":
+		// Later messages wait behind the paste, and neither the recipient nor
+		// the sender can clear it.
+		text := fmt.Sprintf("A message to %s, which you hitched, is unverified: %s. Messages to %s wait while its composer holds input; gang capture --composer %s shows it.", a.Name, reason, a.Name, a.Name)
+		if err := run.notifyHitcher(*a, core.EnvelopeID("held-input-"+e.ID), text); err != nil {
+			return outcome, withdrawn, err
+		}
+	}
 	if err := run.mark(*a); err != nil {
 		return outcome, withdrawn, err
 	}
@@ -397,39 +413,40 @@ func withdrawable(e core.Envelope) bool {
 // composer was empty before the paste, so what it holds now is the paste. It
 // works under a fresh deadline because the cause may be the operation's own.
 // Behind a native prompt the clear keys would answer the prompt, and on an
-// unreadable composer they could not be confirmed, so the paste stays and the
-// delivery remains unverified.
-func (run *runtime) withdrawPaste(a core.Agent, b harnessInput, c harness.Collar, reason string) (string, string) {
+// unreadable composer they could not be confirmed, so the paste stays, the
+// delivery remains unverified, and held reports that the composer may still
+// hold it.
+func (run *runtime) withdrawPaste(a core.Agent, b harnessInput, c harness.Collar, reason string) (outcome, why string, held bool) {
 	const remains = "; the pasted input may remain in the composer"
 	if !harness.BracketedPaste(c.Primitives.Submit) {
-		return "unverified", reason
+		return "unverified", reason, false
 	}
 	ctx, cancel := run.cmd.timeout(compactAbortTimeout)
 	defer cancel()
 	pane := substrate.PaneID(a.Pane)
 	screen, err := b.Capture(ctx, pane)
 	if err != nil {
-		return "unverified", reason + remains + "; composer unread: " + err.Error()
+		return "unverified", reason + remains + "; composer unread: " + err.Error(), true
 	}
 	if _, blocked, err := harness.InputBlocked(c, screen); err != nil {
-		return "unverified", reason + remains + "; composer unread: " + err.Error()
+		return "unverified", reason + remains + "; composer unread: " + err.Error(), true
 	} else if blocked {
-		return "unverified", reason + remains + " behind a native prompt"
+		return "unverified", reason + remains + " behind a native prompt", true
 	}
 	composer, err := harness.ReadComposer(c.Primitives.Composer, screen)
 	if err != nil {
-		return "unverified", reason + remains + "; composer unread: " + err.Error()
+		return "unverified", reason + remains + "; composer unread: " + err.Error(), true
 	}
 	if composer.Text == "" {
-		return "unverified", reason
+		return "unverified", reason, false
 	}
 	if c.Actions.CompactClear == nil {
-		return "unverified", reason + "; the pasted input remains in the composer and the collar declares no clear keys"
+		return "unverified", reason + "; the pasted input remains in the composer and the collar declares no clear keys", true
 	}
 	if err := run.clearComposerDraft(ctx, b, pane, c, composer.Text); err != nil {
-		return "unverified", reason + remains + "; " + err.Error()
+		return "unverified", reason + remains + "; " + err.Error(), true
 	}
-	return "failed", reason + "; the pasted input was withdrawn from the composer"
+	return "failed", reason + "; the pasted input was withdrawn from the composer", false
 }
 
 // drainLocked returns the queue it could not deliver. The owner uses those

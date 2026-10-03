@@ -100,19 +100,17 @@ func (run *runtime) hitcherID() (core.HitchID, error) {
 	return a.ID, nil
 }
 
-// notifyHitcher tells the agent that hitched a that a has failed, since
-// nothing else reaches it: the failure is usually observed by a tick, and the
-// failed agent can no longer report. A boot failure the hitch command returns
-// to its caller is not repeated. A notice that cannot be sent is logged and
-// warned about rather than failing the operation that observed the failure.
-func (run *runtime) notifyHitcher(a core.Agent, reason string) error {
+// notifyHitcher tells the agent that hitched a what has become of a, since
+// nothing else reaches it: a failure or a held composer is usually observed by
+// a tick or another agent's delivery, and a cannot report either. A boot
+// failure the hitch command returns to its caller is not repeated. A notice is
+// published once per ID. A notice that cannot be sent is logged and warned
+// about rather than failing the operation that observed the condition.
+func (run *runtime) notifyHitcher(a core.Agent, id core.EnvelopeID, text string) error {
 	if a.HitchedBy == "" || a.HitchedBy == a.ID || a.ID == run.hitching {
 		return nil
 	}
-	// One notice per failure: an agent recovered under the same hitch ID and
-	// failed again is a new failure.
-	id := core.EnvelopeID(fmt.Sprintf("hitch-failed-%s-%d", a.ID, a.ChangedAt.UnixNano()))
-	err := run.sendHitcherNotice(a, id, reason)
+	err := run.sendHitcherNotice(a, id, text)
 	if err == nil {
 		return nil
 	}
@@ -120,16 +118,42 @@ func (run *runtime) notifyHitcher(a core.Agent, reason string) error {
 		return err
 	}
 	if run.cmd.stderr != nil {
-		if _, err := fmt.Fprintf(run.cmd.stderr, "warning: could not tell the agent that hitched %s about its failure: %v\n", a.Name, err); err != nil {
+		if _, err := fmt.Fprintf(run.cmd.stderr, "warning: could not tell the agent that hitched %s: %v\n", a.Name, err); err != nil {
 			return err
 		}
 	}
 	return nil
 }
 
-func (run *runtime) sendHitcherNotice(a core.Agent, id core.EnvelopeID, reason string) error {
+// notifyHitcherFailed tells a's hitcher that a has failed. One notice per
+// failure: an agent recovered under the same hitch ID and failed again is a
+// new failure.
+func (run *runtime) notifyHitcherFailed(a core.Agent, reason string) error {
+	id := core.EnvelopeID(fmt.Sprintf("hitch-failed-%s-%d", a.ID, a.ChangedAt.UnixNano()))
+	return run.notifyHitcher(a, id, fmt.Sprintf("%s, which you hitched, failed: %s. gang status %s shows its record.", a.Name, reason, a.Name))
+}
+
+// notifyHeldInput tells a's hitcher once a has read as holding unsubmitted
+// composer input for a watchdog period, so across at least two ticks. Messages
+// to a wait behind that input, and a cannot report it. The record's last change
+// names the reading, so a reading is announced once unless another event
+// changes the record while it lasts.
+func (run *runtime) notifyHeldInput(a core.Agent) error {
+	if a.Status != core.Active || a.Activity != core.Blocked || a.Evidence != heldInputEvidence || run.cmd.now().Before(a.ChangedAt.Add(watchdogTimeout)) {
+		return nil
+	}
+	id := core.EnvelopeID(fmt.Sprintf("held-input-%s-%d", a.ID, a.ChangedAt.UnixNano()))
+	return run.notifyHitcher(a, id, fmt.Sprintf("%s, which you hitched, has held unsubmitted input in its composer since %s; messages to %s wait behind it. gang capture --composer %s shows it.", a.Name, a.ChangedAt.UTC().Format(time.RFC3339), a.Name, a.Name))
+}
+
+// sendHitcherNotice wakes the hitcher only for a notice it publishes, since a
+// condition observed on every tick asks for its notice on every tick.
+func (run *runtime) sendHitcherNotice(a core.Agent, id core.EnvelopeID, text string) error {
 	p, err := run.team.Agent(a.HitchedBy)
 	if err != nil {
+		return err
+	}
+	if published, err := envelopePublished(p, id); published || err != nil {
 		return err
 	}
 	hitcher, err := p.Read()
@@ -146,7 +170,6 @@ func (run *runtime) sendHitcherNotice(a core.Agent, id core.EnvelopeID, reason s
 	if err != nil {
 		return err
 	}
-	text := fmt.Sprintf("%s, which you hitched, failed: %s. gang status %s shows its record.", a.Name, reason, a.Name)
 	if err := run.publishOnceTo(p, hitcher, core.Envelope{ID: id, Token: token, Recipient: hitcher.ID, To: hitcher.Name, From: core.Sender{Kind: core.SenderGangline, Name: "hitch"}, Message: core.Message{Text: text}, CreatedAt: run.cmd.now()}); err != nil {
 		return err
 	}

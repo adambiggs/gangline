@@ -98,7 +98,7 @@ func (run *runtime) apply(l *store.LockedAgent, a *core.Agent, e core.Event) err
 		if reason == "" {
 			reason = a.Evidence
 		}
-		return run.notifyHitcher(*a, reason)
+		return run.notifyHitcherFailed(*a, reason)
 	}
 	return nil
 }

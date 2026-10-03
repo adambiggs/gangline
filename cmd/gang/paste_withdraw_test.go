@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"os"
 	"slices"
 	"strings"
 	"testing"
@@ -19,7 +20,9 @@ import (
 // unverified in front of the recipient. A paste behind a native prompt, a
 // composer the paste already left, and a paste whose submit key was sent are
 // left alone, as is a composer something else emptied, since what it holds
-// then may not be the paste.
+// then may not be the paste. The recipient's hitcher is told of a withdrawn
+// message, which is lost, and of a paste that may remain, since later messages
+// wait behind it.
 func TestDeliveryWithdrawsPasteAbandonedBeforeSubmit(t *testing.T) {
 	empty := screenWithText("────────", "❯ ", "────────")
 	draft := screenWithText("────────", "❯ operator draft", "────────")
@@ -36,24 +39,39 @@ func TestDeliveryWithdrawsPasteAbandonedBeforeSubmit(t *testing.T) {
 		wantOutcome string
 		wantReason  string
 		wantClear   bool
+		wantNotice  string
 	}{
-		{name: "composer never settled", settle: neverSettled, after: pasteShown, wantOutcome: "failed", wantReason: "the pasted input was withdrawn from the composer", wantClear: true},
+		{name: "composer never settled", settle: neverSettled, after: pasteShown, wantOutcome: "failed", wantReason: "the pasted input was withdrawn from the composer", wantClear: true, wantNotice: "withdrawn-"},
 		{name: "submit key failed", after: pasteShown, submitErr: errors.New("send-keys failed"), wantStatus: exitUnknown, wantOutcome: "unverified", wantReason: "send-keys failed"},
-		{name: "input blocked", after: func(string) substrate.Screen { return trust }, wantStatus: exitUnknown, wantOutcome: "unverified", wantReason: "the pasted input may remain in the composer behind a native prompt"},
+		{name: "input blocked", after: func(string) substrate.Screen { return trust }, wantStatus: exitUnknown, wantOutcome: "unverified", wantReason: "the pasted input may remain in the composer behind a native prompt", wantNotice: "held-input-"},
 		{name: "composer emptied then refilled", settle: harness.ErrComposerEmptied, after: func(string) substrate.Screen { return draft }, wantStatus: exitUnknown, wantOutcome: "unverified", wantReason: "emptied before submission"},
 		{name: "collar without clear keys", collar: "codex", settle: neverSettled, after: func(pasted string) substrate.Screen {
 			return screenWithText("READY", "› "+strings.ReplaceAll(pasted, "\n", " "))
-		}, wantStatus: exitUnknown, wantOutcome: "unverified", wantReason: "the pasted input remains in the composer and the collar declares no clear keys"},
-		{name: "composer clipped", settle: neverSettled, after: func(string) substrate.Screen { return clipped }, wantStatus: exitUnknown, wantOutcome: "unverified", wantReason: "the pasted input may remain in the composer; composer unread: "},
+		}, wantStatus: exitUnknown, wantOutcome: "unverified", wantReason: "the pasted input remains in the composer and the collar declares no clear keys", wantNotice: "held-input-"},
+		{name: "composer clipped", settle: neverSettled, after: func(string) substrate.Screen { return clipped }, wantStatus: exitUnknown, wantOutcome: "unverified", wantReason: "the pasted input may remain in the composer; composer unread: ", wantNotice: "held-input-"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			f := newStateFixture(t)
+			lead := f.addHitched(t, "l", "lead", "lead", "")
 			collar := tc.collar
 			if collar == "" {
 				collar = "claude"
 			}
 			a := f.add(t, "a", "worker", collar)
 			p, _ := f.run.team.Agent(a.ID)
+			l, err := p.LockAgent()
+			if err != nil {
+				t.Fatal(err)
+			}
+			a.HitchedBy = lead.ID
+			if err := l.Save(a); err != nil {
+				t.Fatal(err)
+			}
+			if err := l.Close(); err != nil {
+				t.Fatal(err)
+			}
+			var woken []string
+			f.cmd.detach = func(id string, _ hookNotice) error { woken = append(woken, id); return nil }
 			f.input.command = collar
 			f.input.screen = empty
 			if collar == "codex" {
@@ -80,7 +98,7 @@ func TestDeliveryWithdrawsPasteAbandonedBeforeSubmit(t *testing.T) {
 			}
 			f.run.cmd = f.cmd
 			f.cmd.stdin = strings.NewReader("hello")
-			err := f.cmd.send([]string{"worker", "--from", "operator"})
+			err = f.cmd.send([]string{"worker", "--from", "operator"})
 			if ce := (commandError{}); tc.wantStatus == 0 && err != nil || tc.wantStatus != 0 && (!errors.As(err, &ce) || ce.status != tc.wantStatus) {
 				t.Fatalf("send result: %v out=%q keys=%v", err, f.out, f.input.keys)
 			}
@@ -97,6 +115,23 @@ func TestDeliveryWithdrawsPasteAbandonedBeforeSubmit(t *testing.T) {
 			}
 			if tc.submitErr == nil && f.input.submits != 0 {
 				t.Fatalf("Enter reached the pane %d times", f.input.submits)
+			}
+			lp, _ := f.run.team.Agent(lead.ID)
+			notice, err := lp.ReadEnvelope("new", core.EnvelopeID(tc.wantNotice+string(id)))
+			if tc.wantNotice == "" {
+				if !errors.Is(err, os.ErrNotExist) || len(woken) != 0 {
+					t.Fatalf("unexpected hitcher notice: %+v %v woken=%v", notice, err, woken)
+				}
+				return
+			}
+			if err != nil {
+				t.Fatalf("hitcher notice: %v", err)
+			}
+			if notice.From.Kind != core.SenderGangline || !strings.Contains(notice.Message.Text, map[string]string{"held-input-": "A message to worker, which you hitched, is unverified: ", "withdrawn-": "to worker, which you hitched, was withdrawn from its composer and not delivered: "}[tc.wantNotice]) || !strings.Contains(notice.Message.Text, tc.wantReason) {
+				t.Fatalf("hitcher notice = %+v", notice)
+			}
+			if len(woken) != 1 || woken[0] != "l" {
+				t.Fatalf("woken = %v", woken)
 			}
 		})
 	}

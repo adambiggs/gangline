@@ -184,6 +184,9 @@ func (run *runtime) tickAgent(id core.HitchID, notice hookNotice, wait bool) err
 	if err := run.observeActivity(l, &a, c, screen); err != nil {
 		return err
 	}
+	if err := run.notifyHeldInput(a); err != nil {
+		return err
+	}
 	if a.Activity == core.Idle && !a.InterruptDeadline.IsZero() {
 		if err := run.apply(l, &a, core.Event{Type: "interrupt_completed"}); err != nil {
 			return err
@@ -359,20 +362,30 @@ func (run *runtime) publishOnce(l *store.LockedAgent, a *core.Agent, e core.Enve
 	return run.publishOnceTo(l.Paths, *a, e)
 }
 func (run *runtime) publishOnceTo(p store.AgentPaths, a core.Agent, e core.Envelope) error {
-	for _, dir := range []string{"new", "cur", "failed"} {
-		_, err := p.ReadEnvelope(dir, e.ID)
-		if err == nil {
-			return nil
-		}
-		if !errors.Is(err, os.ErrNotExist) {
-			return err
-		}
+	if published, err := envelopePublished(p, e.ID); published || err != nil {
+		return err
 	}
 	if err := p.Publish(e); err != nil {
 		return err
 	}
 	return run.record(a, core.Event{Type: "send_queued", Envelope: &e})
 }
+
+// envelopePublished reports whether an envelope with id was ever published to
+// p: queued, delivered, or failed.
+func envelopePublished(p store.AgentPaths, id core.EnvelopeID) (bool, error) {
+	for _, dir := range []string{"new", "cur", "failed"} {
+		_, err := p.ReadEnvelope(dir, id)
+		if err == nil {
+			return true, nil
+		}
+		if !errors.Is(err, os.ErrNotExist) {
+			return false, err
+		}
+	}
+	return false, nil
+}
+
 func (run *runtime) continueCompaction(l *store.LockedAgent, a *core.Agent) error {
 	c := a.Compaction
 	if c == nil {

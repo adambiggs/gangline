@@ -17,6 +17,10 @@ func (run *runtime) observeActivity(l *store.LockedAgent, a *core.Agent, c harne
 	return err
 }
 
+// heldInputEvidence is the reading of a composer that holds input no submit key
+// sent. Messages to the agent wait behind it.
+const heldInputEvidence = "native composer contains unsubmitted input"
+
 // observeScreen is observeActivity that also reports whether the screen alone
 // reads idle with no open turn, before a recorded turn failure or pending
 // compaction overrides the activity.
@@ -57,7 +61,7 @@ func (run *runtime) observeScreen(l *store.LockedAgent, a *core.Agent, c harness
 		} else if busy, err := harness.Busy(c, screen); err != nil {
 			activity, evidence, basis.Screen = core.Unknown, err.Error(), "unreadable"
 		} else if !busy {
-			activity, evidence, basis.Screen = core.Blocked, "native composer contains unsubmitted input", "unsubmitted"
+			activity, evidence, basis.Screen = core.Blocked, heldInputEvidence, "unsubmitted"
 		} else {
 			basis.Screen = "busy"
 			if a.InterruptDeadline.IsZero() {
