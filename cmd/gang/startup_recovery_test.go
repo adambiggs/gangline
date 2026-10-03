@@ -245,8 +245,9 @@ func TestHitchNamesRecoverRouteForUnrecognizedStartup(t *testing.T) {
 }
 
 // failAtBootDeadline queues a startup and lets the boot deadline fail its
-// agent while the pane shows a screen startup does not recognize.
-func failAtBootDeadline(t *testing.T, f *stateFixture) (core.Agent, store.AgentPaths, core.Envelope) {
+// agent while the pane shows a screen startup does not recognize. hitcher,
+// when set, names the agent that hitched it.
+func failAtBootDeadline(t *testing.T, f *stateFixture, hitcher core.HitchID) (core.Agent, store.AgentPaths, core.Envelope) {
 	t.Helper()
 	a := f.add(t, "a", "worker", "codex")
 	p, err := f.run.team.Agent(a.ID)
@@ -255,6 +256,7 @@ func failAtBootDeadline(t *testing.T, f *stateFixture) (core.Agent, store.AgentP
 	}
 	a.Status = core.Booting
 	a.BootDeadline = f.cmd.now().Add(time.Second)
+	a.HitchedBy = hitcher
 	l, err := p.TryLock()
 	if err != nil {
 		t.Fatal(err)
@@ -284,7 +286,7 @@ func failAtBootDeadline(t *testing.T, f *stateFixture) (core.Agent, store.AgentP
 func TestRecoverResumesStartupFailedAtBootDeadline(t *testing.T) {
 	t.Run("ready composer", func(t *testing.T) {
 		f := newStateFixture(t)
-		_, p, e := failAtBootDeadline(t, f)
+		_, p, e := failAtBootDeadline(t, f, "")
 		f.input.screen = screenWithText("READY", "› ")
 		if err := f.cmd.hitch([]string{"worker", "--recover"}); err != nil {
 			t.Fatal(err)
@@ -316,7 +318,7 @@ func TestRecoverResumesStartupFailedAtBootDeadline(t *testing.T) {
 	})
 	t.Run("recognized prompt", func(t *testing.T) {
 		f := newStateFixture(t)
-		_, p, e := failAtBootDeadline(t, f)
+		_, p, e := failAtBootDeadline(t, f, "")
 		f.input.screen = screenWithText("Hooks need review", "› 1. Review hooks", "Press enter to confirm or esc to go back")
 		err := f.cmd.hitch([]string{"worker", "--recover"})
 		var ce commandError
@@ -338,7 +340,7 @@ func TestRecoverResumesStartupFailedAtBootDeadline(t *testing.T) {
 	})
 	t.Run("unrecognized screen", func(t *testing.T) {
 		f := newStateFixture(t)
-		_, p, _ := failAtBootDeadline(t, f)
+		_, p, _ := failAtBootDeadline(t, f, "")
 		err := f.cmd.hitch([]string{"worker", "--recover"})
 		var ce commandError
 		if !errors.As(err, &ce) || ce.status != exitNative || !strings.Contains(ce.text, "gang hitch worker --recover") || f.input.submits != 0 {
@@ -350,9 +352,81 @@ func TestRecoverResumesStartupFailedAtBootDeadline(t *testing.T) {
 	})
 }
 
+// The failure notice is a hitcher's last word on an agent until recovery
+// returns that agent to startup, so recovery tells the hitcher once.
+func TestRecoverTellsHitcherOnce(t *testing.T) {
+	f := newStateFixture(t)
+	lead := f.addHitched(t, "l", "lead", "lead", "")
+	failAtBootDeadline(t, f, lead.ID)
+	lp, err := f.run.team.Agent(lead.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	notices := func(prefix string) []core.Envelope {
+		t.Helper()
+		entries, err := os.ReadDir(filepath.Join(lp.Inbox, "new"))
+		if err != nil {
+			t.Fatal(err)
+		}
+		var found []core.Envelope
+		for _, entry := range entries {
+			e, err := lp.ReadEnvelope("new", core.EnvelopeID(strings.TrimSuffix(entry.Name(), ".json")))
+			if err != nil {
+				t.Fatal(err)
+			}
+			if strings.HasPrefix(string(e.ID), prefix) {
+				found = append(found, e)
+			}
+		}
+		return found
+	}
+	if failed := notices("hitch-failed-a-"); len(failed) != 1 {
+		t.Fatalf("failure notices = %+v", failed)
+	}
+	f.input.screen = screenWithText("READY", "› ")
+	for range 2 {
+		if err := f.cmd.hitch([]string{"worker", "--recover"}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	got := notices("hitch-recovered-a-")
+	if len(got) != 1 || got[0].From.Kind != core.SenderGangline || got[0].Recipient != lead.ID || !strings.Contains(got[0].Message.Text, "worker, which you hitched, recovered from its failure (boot deadline elapsed)") {
+		t.Fatalf("recovery notices = %+v", got)
+	}
+}
+
+func TestRecoverRunByHitcherSendsNoRecoveryNotice(t *testing.T) {
+	f := newStateFixture(t)
+	lead := f.addHitched(t, "l", "lead", "lead", "")
+	failAtBootDeadline(t, f, lead.ID)
+	lp, err := f.run.team.Agent(lead.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	f.env["GANG_AGENT_ID"] = string(lead.ID)
+	f.input.screen = screenWithText("READY", "› ")
+	if err := f.cmd.hitch([]string{"worker", "--recover"}); err != nil {
+		t.Fatal(err)
+	}
+	entries, err := os.ReadDir(filepath.Join(lp.Inbox, "new"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, entry := range entries {
+		if strings.HasPrefix(entry.Name(), "hitch-recovered-") {
+			t.Fatalf("hitcher that ran the recovery was notified: %s", entry.Name())
+		}
+	}
+	if p, err := f.run.team.Agent("a"); err != nil {
+		t.Fatal(err)
+	} else if a, err := p.Read(); err != nil || a.Status == core.Failed {
+		t.Fatalf("worker not recovered: %+v err=%v", a, err)
+	}
+}
+
 func TestRecoverDoesNotReopenOtherStartupFailures(t *testing.T) {
 	f := newStateFixture(t)
-	a, p, _ := failAtBootDeadline(t, f)
+	a, p, _ := failAtBootDeadline(t, f, "")
 	l, err := p.TryLock()
 	if err != nil {
 		t.Fatal(err)

@@ -71,8 +71,10 @@ name nor a `--role lead` given by another agent confers that authority. The oper
 outside any agent pane is not restricted. A hitch run from an agent's pane
 records that agent as the hitcher. When a hitched agent later fails, its
 hitcher, if active, gets a `[gang:hitch#…]` notice naming the agent and the
-reason. The hitcher gets one too when a message to the agent is withdrawn
-from its composer and not delivered, when a message paste may remain in the
+reason. When `gang hitch NAME --recover` resumes the startup of an agent whose
+boot deadline failed it, the hitcher gets a notice that the agent recovered,
+unless the hitcher ran the recovery itself. The hitcher gets one too when a
+message to the agent is withdrawn from its composer and not delivered, when a message paste may remain in the
 agent's composer, and when the agent has read as holding unsubmitted composer
 input for a watchdog period, across at least two ticks, since messages to it
 wait behind that input. The period is `watchdogTimeout` in

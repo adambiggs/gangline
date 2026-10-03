@@ -75,7 +75,10 @@ func (run *runtime) reopenBoot(l *store.LockedAgent, a *core.Agent) error {
 	if startup.State == harness.StartupOccupied {
 		return commandError{status: exitNative, text: fmt.Sprintf("%s failed when its boot deadline elapsed and %s still shows no recognized startup screen (%s); answer any native prompt there, then run gang hitch %s --recover; the original contract and assignment are retained", a.Name, a.Pane, startup.Prompt, a.Name)}
 	}
-	return run.apply(l, a, core.Event{Type: "boot_reopened", Deadline: run.cmd.now().Add(bootTimeout)})
+	if err := run.apply(l, a, core.Event{Type: "boot_reopened", Deadline: run.cmd.now().Add(bootTimeout)}); err != nil {
+		return err
+	}
+	return run.notifyHitcherRecovered(*a)
 }
 
 // Recovery never reconstructs startup from today's prose or from an ordinary send.

@@ -133,6 +133,19 @@ func (run *runtime) notifyHitcherFailed(a core.Agent, reason string) error {
 	return run.notifyHitcher(a, id, fmt.Sprintf("%s, which you hitched, failed: %s. gang status %s shows its record.", a.Name, reason, a.Name))
 }
 
+// notifyHitcherRecovered tells a's hitcher that recovery returned a to
+// startup after its boot deadline failed it, superseding the failure notice.
+// One notice per recovery. A hitcher that ran the recovery itself has the
+// command's result instead.
+func (run *runtime) notifyHitcherRecovered(a core.Agent) error {
+	caller, err := run.hitcherID()
+	if err != nil || caller == a.HitchedBy {
+		return err
+	}
+	id := core.EnvelopeID(fmt.Sprintf("hitch-recovered-%s-%d", a.ID, a.ChangedAt.UnixNano()))
+	return run.notifyHitcher(a, id, fmt.Sprintf("%s, which you hitched, recovered from its failure (%s) and resumed startup; its original contract and assignment are retained. gang status %s shows its record.", a.Name, core.BootDeadlineElapsed, a.Name))
+}
+
 // notifyHeldInput tells a's hitcher once a has read as holding unsubmitted
 // composer input for a watchdog period, so across at least two ticks. Messages
 // to a wait behind that input, and a cannot report it. The record's last change
