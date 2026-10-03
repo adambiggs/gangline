@@ -29,10 +29,17 @@ func TestAcquireTreeTakesRecordedRootWhenSessionEnds(t *testing.T) {
 					t.Fatal(err)
 				}
 				ctx := context.Background()
-				pane, err := real.Spawn(ctx, substrate.SpawnSpec{Name: "registered", Directory: t.TempDir(), Command: "sh", Args: []string{"-c", "trap '' HUP; exec sleep 600"}})
+				root := t.TempDir()
+				if err := syscall.Mkfifo(filepath.Join(root, "exit-pipe"), 0o600); err != nil {
+					t.Fatal(err)
+				}
+				// The process opens its pipe only once it ignores the hangup
+				// that ending the session sends.
+				pane, err := real.Spawn(ctx, substrate.SpawnSpec{Name: "registered", Directory: root, Command: "sh", Args: []string{"-c", `trap '' HUP; exec 3>"$1"; exec sleep 600`, "sh", filepath.Join(root, "exit-pipe")}})
 				if err != nil {
 					t.Fatal(err)
 				}
+				awaitStart(t, binary, socket, root, pane.ID)
 				if _, err := real.RegisterPane(ctx, pane.ID); err != nil {
 					t.Fatal(err)
 				}

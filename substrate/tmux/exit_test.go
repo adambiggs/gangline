@@ -33,8 +33,8 @@ func exitingSpec(t *testing.T, binary, socket, root, release, status string) sub
 }
 
 // awaitStart returns a handle on the pane's process once the process holds
-// the write end of root's exit pipe, which it opens only after its pane holds
-// itself.
+// the write end of root's exit pipe, which it opens once it is ready to be
+// read: after its pane holds itself, or after whatever setup its caller needs.
 func awaitStart(t *testing.T, binary, socket, root string, pane substrate.PaneID) processHandle {
 	t.Helper()
 	opened := make(chan *os.File, 1)
@@ -57,8 +57,8 @@ func awaitStart(t *testing.T, binary, socket, root string, pane substrate.PaneID
 	case <-time.After(time.Minute):
 		t.Fatal("process did not start")
 	}
-	// The process waits for its release, so the pane's process cannot exit
-	// before the handle is taken.
+	// Every caller's process lives until the test ends it, so the pane's
+	// process cannot exit before the handle is taken.
 	pid, err := strconv.Atoi(strings.TrimSpace(runTmux(t, binary, socket, "display-message", "-p", "-t", string(pane), "#{pane_pid}")))
 	if err != nil {
 		t.Fatal(err)
