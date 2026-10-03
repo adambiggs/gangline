@@ -60,6 +60,7 @@ import "time"
  input_finished: {id: #ID, status: #ID, hitch_id: #ID}
  hook_failed: {reason: #ID}
  watchdog_unavailable: {reason: #ID}
+ down_failed: {reason: #ID}
  watchdog_failed: {reason: #ID}
  process_verification_unavailable: {reason: #ID}
  tick: {source: "hook" | "command" | "watchdog"}

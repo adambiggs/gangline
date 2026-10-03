@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/adambiggs/gangline/core"
+	"github.com/adambiggs/gangline/store"
 )
 
 type downPromptReader func([]byte) (int, error)
@@ -139,6 +140,40 @@ func TestDownNamesEachAgentItCannotRemove(t *testing.T) {
 	for i, name := range []string{"first", "second"} {
 		if !strings.HasPrefix(lines[i], name+": refuse teardown: incomplete pane registration; inspect retained state at ") {
 			t.Fatalf("line %d = %q", i, lines[i])
+		}
+	}
+}
+
+func TestDownFailureRetainsItsDiagnosticInTheAudit(t *testing.T) {
+	f := newStateFixture(t)
+	for _, name := range []string{"first", "second"} {
+		f.setAgent(t, f.add(t, name, name, "codex"), func(a *core.Agent) {
+			a.Registration = core.PaneRegistration{}
+		})
+	}
+	err := f.cmd.down([]string{"--yes"})
+	if err == nil || errorStatus(err) != exitRefused {
+		t.Fatalf("down error = %v", err)
+	}
+	log, readErr := os.ReadFile(f.run.team.Log)
+	if readErr != nil {
+		t.Fatal(readErr)
+	}
+	var failures []core.Event
+	if readErr := store.ReadLog(bytes.NewReader(log), func(event core.Event) error {
+		if event.Type == "down_failed" {
+			failures = append(failures, event)
+		}
+		return nil
+	}); readErr != nil {
+		t.Fatal(readErr)
+	}
+	if len(failures) != 1 || failures[0].Reason != err.Error() || !failures[0].At.Equal(f.cmd.now()) {
+		t.Fatalf("down failure audit = %+v; want diagnostic %q", failures, err)
+	}
+	for _, name := range []string{"first", "second"} {
+		if !strings.Contains(failures[0].Reason, name+": refuse teardown:") {
+			t.Fatalf("down failure does not name %s: %+v", name, failures)
 		}
 	}
 }

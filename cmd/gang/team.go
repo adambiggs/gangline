@@ -73,7 +73,7 @@ func upHitchArguments(name string, args []string) []string {
 	}
 	return append([]string{name, "--role", "lead"}, args...)
 }
-func (cmd command) down(args []string) error {
+func (cmd command) down(args []string) (err error) {
 	var yes bool
 	flags := boundFlagSet("down", map[string]any{"y": &yes, "yes": &yes})
 	positionals, err := parseOptions(flags, args)
@@ -110,6 +110,13 @@ func (cmd command) down(args []string) error {
 	if err := run.recordDown(len(agents)); err != nil {
 		return err
 	}
+	// Self-teardown can lose the output reader; retain returned failures in
+	// the team's audit so they remain observable after the pane ends.
+	defer func() {
+		if err != nil {
+			err = errors.Join(err, run.team.Append(core.Event{Type: "down_failed", At: cmd.now(), Reason: err.Error()}))
+		}
+	}()
 	if err := eachAgent(agents, func(a core.Agent) error { return agentFailure(a.Name, run.dropAgent(a.ID, true)) }); err != nil {
 		return err
 	}

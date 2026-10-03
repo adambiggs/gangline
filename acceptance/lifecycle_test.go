@@ -342,7 +342,9 @@ func TestCommandLifecycleOnPrivateTmux(t *testing.T) {
 	if _, err := os.Stat(team.Directory); !errors.Is(err, os.ErrNotExist) {
 		left, _ := team.ListAgents()
 		panes, _ := runner.run("list-panes", "-s", "-t", session, "-F", "#{pane_id}")
-		t.Fatalf("team state remains after the lead's down: %v; agents %+v; panes %q", err, left, panes)
+		log, logErr := os.ReadFile(team.Log)
+		downs, downErr := os.ReadFile(filepath.Join(root, "state", "downs.jsonl"))
+		t.Fatalf("team state remains after the lead's down: %v; agents %+v; panes %q; audit (%v):\n%s\ndown callers (%v):\n%s", err, left, panes, logErr, log, downErr, downs)
 	}
 	if out, err := runner.run("list-panes", "-s", "-t", session, "-F", "#{pane_id}"); err != nil || strings.Contains(out, lead.Pane+"\n") || strings.Contains(out, second.Pane+"\n") {
 		t.Fatalf("lead's down left agent panes alive: %q %v", out, err)
