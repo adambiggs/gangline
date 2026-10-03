@@ -31,6 +31,18 @@ func (p TeamPaths) Append(event core.Event) error {
 	return closeErr
 }
 func ReadLog(reader io.Reader, visit func(core.Event) error) error {
+	return ScanLog(reader, func(line int, data []byte) error {
+		e, err := core.DecodeEvent(data)
+		if err != nil {
+			return fmt.Errorf("audit line %d: %w", line, err)
+		}
+		return visit(e)
+	})
+}
+
+// ScanLog visits each complete line of a log, numbered from 1, without
+// decoding it.
+func ScanLog(reader io.Reader, visit func(line int, data []byte) error) error {
 	r := bufio.NewReader(reader)
 	for line := 1; ; line++ {
 		data, err := r.ReadBytes('\n')
@@ -38,11 +50,7 @@ func ReadLog(reader io.Reader, visit func(core.Event) error) error {
 			if data[len(data)-1] != '\n' {
 				return fmt.Errorf("audit line %d is incomplete", line)
 			}
-			e, eventErr := core.DecodeEvent(data)
-			if eventErr != nil {
-				return fmt.Errorf("audit line %d: %w", line, eventErr)
-			}
-			if err := visit(e); err != nil {
+			if err := visit(line, data); err != nil {
 				return err
 			}
 		}
