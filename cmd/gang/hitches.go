@@ -464,7 +464,7 @@ func (cmd command) hitchWithStaleClaim(args []string, supersede bool) (result er
 		if err := run.mark(a); err != nil {
 			return err
 		}
-		return startupAttention(a)
+		return startupAttention(a, "gang tick")
 	}
 	if err := run.apply(l, &a, core.Event{Type: "hitch_ready"}); err != nil {
 		return err
@@ -477,7 +477,7 @@ func (cmd command) hitchWithStaleClaim(args []string, supersede bool) (result er
 		return err
 	}
 	if outcome == "queued" {
-		return startupAttention(a)
+		return startupAttention(a, "gang tick")
 	}
 	if err := deliveryResult(outcome); err != nil {
 		return commandError{status: exitUnknown, text: fmt.Sprintf("startup input is unverified; inspect %s, resolve native prompts, then run gang hitch %s --recover; do not replace the contract with plain send", a.Pane, a.Name)}

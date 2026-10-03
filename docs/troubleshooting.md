@@ -16,6 +16,12 @@ Attach with `gang attach`, switch to the named pane, and answer its native
 prompt. Detach and run `gang tick`, then `gang status NAME --why`. Gangline
 leaves login, trust, permission, and choice prompts to you.
 
+A hitch that fails with `native startup was not observable` leaves the
+startup queued; the pane may show a prompt Gangline does not recognize. If
+`gang status NAME --why` then shows the agent failed with `boot deadline
+elapsed`, answer the prompt and run `gang hitch NAME --recover` instead;
+`gang tick` does not resume a failed agent.
+
 If the error says startup input is unverified, follow the next entry.
 
 ## Startup input is unverified

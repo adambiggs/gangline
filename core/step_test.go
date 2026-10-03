@@ -43,6 +43,29 @@ func TestDeadlinesAreAgentLocalAndDoNotStopDrop(t *testing.T) {
 		t.Fatalf("expired boot: %+v", got)
 	}
 }
+func TestOnlyABootDeadlineFailureResumesStartup(t *testing.T) {
+	now := time.Date(2026, 9, 22, 0, 0, 0, 0, time.UTC)
+	booting := Agent{ID: "a", Status: Booting, Activity: Unknown, BootDeadline: now.Add(-time.Second)}
+	failed, _ := Step(booting, Event{Type: "deadline_checked", HitchID: "a", At: now})
+	reopen := Event{Type: "boot_reopened", HitchID: "a", At: now, Deadline: now.Add(time.Minute)}
+	got, effects := Step(failed, reopen)
+	if len(effects) != 0 || got.Status != Booting || got.Activity != Unknown || got.Evidence != "" || !got.BootDeadline.Equal(reopen.Deadline) {
+		t.Fatalf("boot deadline failure did not resume startup: %+v %+v", got, effects)
+	}
+	for _, a := range []Agent{
+		{ID: "a", Status: Failed, Activity: Unknown, Evidence: "pane exited"},
+		{ID: "a", Status: Booting, Activity: Blocked, Evidence: BootDeadlineElapsed},
+		{ID: "a", Status: Active, Activity: Idle},
+	} {
+		got, effects := Step(a, reopen)
+		if len(effects) != 1 || effects[0].Kind != "reject" || !reflect.DeepEqual(got, a) {
+			t.Fatalf("reopened %+v: %+v %+v", a, got, effects)
+		}
+	}
+	if _, effects := Step(failed, Event{Type: "boot_reopened", HitchID: "a", At: now}); len(effects) != 1 {
+		t.Fatal("reopened startup without a new boot deadline")
+	}
+}
 func TestCompactionStepDoesNotMutateInput(t *testing.T) {
 	now := time.Date(2026, 9, 22, 0, 0, 0, 0, time.UTC)
 	a := Agent{ID: "a", Status: Active, Activity: Compacting, Compaction: &Compaction{ID: "c", Status: "submitted", Deadline: now.Add(-time.Second)}}

@@ -217,6 +217,135 @@ func TestUnknownCodexMenuDoesNotHoldBootDeadline(t *testing.T) {
 	}
 }
 
+// failAtBootDeadline queues a startup and lets the boot deadline fail its
+// agent while the pane shows a screen startup does not recognize.
+func failAtBootDeadline(t *testing.T, f *stateFixture) (core.Agent, store.AgentPaths, core.Envelope) {
+	t.Helper()
+	a := f.add(t, "a", "worker", "codex")
+	p, err := f.run.team.Agent(a.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	a.Status = core.Booting
+	a.BootDeadline = f.cmd.now().Add(time.Second)
+	l, err := p.TryLock()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := l.Save(a); err != nil {
+		t.Fatal(err)
+	}
+	l.Close()
+	e := core.Envelope{ID: "original", Token: "0123456789abcdef", Recipient: a.ID, To: a.Name, From: core.Sender{Kind: core.SenderGangline, Name: "hitch"}, Purpose: "assignment", Message: core.Message{Text: "Standing contract: report completion.\nAssignment: fix it."}, CreatedAt: f.cmd.now()}
+	if err := p.Publish(e); err != nil {
+		t.Fatal(err)
+	}
+	f.env["GANGLINE_HITCH_ID"] = string(a.ID)
+	f.input.screen = screenWithText("Choose a display mode", "› 1. Compact")
+	start := f.cmd.now()
+	f.run.cmd.clock = func() time.Time { return start.Add(time.Hour) }
+	f.cmd.clock = f.run.cmd.clock
+	if err := f.run.tickAgent(a.ID, hookNotice{}, false); err != nil {
+		t.Fatal(err)
+	}
+	if a, err = p.Read(); err != nil || a.Status != core.Failed || a.Evidence != core.BootDeadlineElapsed {
+		t.Fatalf("boot deadline did not fail the agent: %+v err=%v", a, err)
+	}
+	return a, p, e
+}
+
+func TestRecoverResumesStartupFailedAtBootDeadline(t *testing.T) {
+	t.Run("ready composer", func(t *testing.T) {
+		f := newStateFixture(t)
+		_, p, e := failAtBootDeadline(t, f)
+		f.input.screen = screenWithText("READY", "› ")
+		if err := f.cmd.hitch([]string{"worker", "--recover"}); err != nil {
+			t.Fatal(err)
+		}
+		got, err := p.ReadEnvelope("cur", e.ID)
+		if err != nil || got.Message.Text != e.Message.Text || f.input.submits != 1 {
+			t.Fatalf("startup not delivered: %+v err=%v submits=%d", got, err, f.input.submits)
+		}
+		if a, err := p.Read(); err != nil || a.Status != core.Active {
+			t.Fatalf("recovered agent: %+v err=%v", a, err)
+		}
+		file, err := os.Open(f.run.team.Log)
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer file.Close()
+		var reopened []core.Event
+		if err := store.ReadLog(file, func(e core.Event) error {
+			if e.Type == "boot_reopened" {
+				reopened = append(reopened, e)
+			}
+			return nil
+		}); err != nil {
+			t.Fatal(err)
+		}
+		if len(reopened) != 1 || !reopened[0].Deadline.Equal(f.cmd.now().Add(bootTimeout)) {
+			t.Fatalf("reopened boot deadline: %+v", reopened)
+		}
+	})
+	t.Run("recognized prompt", func(t *testing.T) {
+		f := newStateFixture(t)
+		_, p, e := failAtBootDeadline(t, f)
+		f.input.screen = screenWithText("Hooks need review", "› 1. Review hooks", "Press enter to confirm or esc to go back")
+		err := f.cmd.hitch([]string{"worker", "--recover"})
+		var ce commandError
+		if !errors.As(err, &ce) || ce.status != exitNative || !strings.Contains(ce.text, "gang hitch worker --recover") || f.input.submits != 0 {
+			t.Fatalf("prompt recovery err=%v submits=%d", err, f.input.submits)
+		}
+		a, err := p.Read()
+		if err != nil || a.Status != core.Booting || a.Activity != core.Blocked || !a.BootDeadline.IsZero() {
+			t.Fatalf("prompt left agent %+v err=%v", a, err)
+		}
+		// The route the refusal names delivers once the prompt is answered.
+		f.input.screen = screenWithText("READY", "› ")
+		if err := f.cmd.hitch([]string{"worker", "--recover"}); err != nil {
+			t.Fatal(err)
+		}
+		if _, err := p.ReadEnvelope("cur", e.ID); err != nil || f.input.submits != 1 {
+			t.Fatalf("tick after answer: err=%v submits=%d", err, f.input.submits)
+		}
+	})
+	t.Run("unrecognized screen", func(t *testing.T) {
+		f := newStateFixture(t)
+		_, p, _ := failAtBootDeadline(t, f)
+		err := f.cmd.hitch([]string{"worker", "--recover"})
+		var ce commandError
+		if !errors.As(err, &ce) || ce.status != exitNative || !strings.Contains(ce.text, "gang hitch worker --recover") || f.input.submits != 0 {
+			t.Fatalf("unknown screen recovery err=%v submits=%d", err, f.input.submits)
+		}
+		if a, err := p.Read(); err != nil || a.Status != core.Failed || a.Evidence != core.BootDeadlineElapsed {
+			t.Fatalf("unknown screen reopened agent: %+v err=%v", a, err)
+		}
+	})
+}
+
+func TestRecoverDoesNotReopenOtherStartupFailures(t *testing.T) {
+	f := newStateFixture(t)
+	a, p, _ := failAtBootDeadline(t, f)
+	l, err := p.TryLock()
+	if err != nil {
+		t.Fatal(err)
+	}
+	a.Evidence = "native harness exited"
+	if err := l.Save(a); err != nil {
+		t.Fatal(err)
+	}
+	l.Close()
+	f.input.screen = screenWithText("READY", "› ")
+	err = f.cmd.hitch([]string{"worker", "--recover"})
+	var ce commandError
+	if !errors.As(err, &ce) || ce.status != exitRefused || f.input.submits != 0 {
+		t.Fatalf("other failure recovery err=%v submits=%d", err, f.input.submits)
+	}
+	if got, err := p.Read(); err != nil || got.Status != core.Failed {
+		t.Fatalf("other failure reopened: %+v err=%v", got, err)
+	}
+}
+
 type submitOnlyFixture struct{ *inputFixture }
 
 func (b submitOnlyFixture) SendKeys(ctx context.Context, pane substrate.PaneID, k substrate.Keys) error {

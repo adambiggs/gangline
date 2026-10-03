@@ -162,6 +162,10 @@ type Envelope struct {
 // deadline passes with no native completion.
 const CompactionUnconfirmed = "native compaction completion unconfirmed; queued continuation may run"
 
+// BootDeadlineElapsed is the reason a starting agent fails with when its boot
+// deadline passes before startup is observed.
+const BootDeadlineElapsed = "boot deadline elapsed"
+
 type Compaction struct {
 	ID             string    `json:"id"`
 	Resume         Message   `json:"resume"`

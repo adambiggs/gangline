@@ -17,6 +17,13 @@ func Step(agent Agent, event Event) (Agent, []Effect) {
 		agent.Status, agent.Activity, agent.BootDeadline = Active, Idle, time.Time{}
 	case "hitch_blocked":
 		agent.Activity, agent.Evidence, agent.BootDeadline = Blocked, event.Reason, time.Time{}
+	case "boot_reopened":
+		// Only the boot deadline's verdict is revisited: the pane may have been
+		// at a native prompt that is now answered. Every other failure stands.
+		if agent.Status != Failed || agent.Evidence != BootDeadlineElapsed || event.Deadline.IsZero() {
+			return agent, []Effect{{Kind: "reject", Reason: "only an agent failed by its boot deadline can resume startup"}}
+		}
+		agent.Status, agent.Activity, agent.Evidence, agent.BootDeadline = Booting, Unknown, "", event.Deadline
 	case "hitch_failed":
 		agent.Status, agent.Activity, agent.Evidence = Failed, Unknown, event.Reason
 	case "activity_observed":
@@ -105,7 +112,7 @@ func Step(agent Agent, event Event) (Agent, []Effect) {
 			return agent, nil
 		}
 		if !agent.BootDeadline.IsZero() && !event.At.Before(agent.BootDeadline) && (agent.Status == Starting || agent.Status == Booting) {
-			agent.Status, agent.Evidence = Failed, "boot deadline elapsed"
+			agent.Status, agent.Evidence = Failed, BootDeadlineElapsed
 		}
 		if agent.Activity == Interrupting && !agent.InterruptDeadline.IsZero() && !event.At.Before(agent.InterruptDeadline) {
 			agent.Activity, agent.Evidence = Wedged, "interrupt deadline elapsed"

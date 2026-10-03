@@ -23,7 +23,7 @@ there. `log` refuses `--team` together with a `LOG.jsonl` operand. `teams`, `col
 | --- | --- |
 | `gang up [NAME] [AGENT OPTIONS]` | Start the selected team with its lead agent named `NAME` (default `lead`), then attach when stdin is a terminal. |
 | `gang hitch NAME [OPTIONS]` | Launch an agent and deliver startup instructions and any task. |
-| `gang hitch NAME --recover` | Recover retained startup from its visible draft or a lone collapsed paste. |
+| `gang hitch NAME --recover` | Recover retained startup from its visible draft or a lone collapsed paste, or resume a queued startup its boot deadline failed once the pane shows an idle composer or a recognized prompt. |
 | `gang rename OLD NEW` | Change a registered name and window title. |
 | `gang drop NAME` | Stop an agent and fail its pending messages. An unregistered `NAME` is refused. |
 | `gang down [-y, --yes]` | Confirm on a terminal (`[y/N]`, default no), then drop the selected team's agents and delete its runtime state and history. Before dropping any agent, it appends who ran it to `downs.jsonl` in the state root. Use `--yes` without a terminal. |

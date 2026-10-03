@@ -12,8 +12,8 @@ import (
 	"github.com/adambiggs/gangline/substrate"
 )
 
-func startupAttention(a core.Agent) error {
-	return commandError{status: exitNative, text: fmt.Sprintf("%s startup is queued in %s; resolve native prompts, then run gang tick; the original contract and assignment are retained", a.Name, a.Pane)}
+func startupAttention(a core.Agent, route string) error {
+	return commandError{status: exitNative, text: fmt.Sprintf("%s startup is queued in %s; resolve native prompts, then run %s; the original contract and assignment are retained", a.Name, a.Pane, route)}
 }
 
 func isStartupEnvelope(e core.Envelope) bool {
@@ -29,6 +29,39 @@ func retainedStartup(p store.AgentPaths, dir string, id core.EnvelopeID) (core.E
 		return core.Envelope{}, false, nil
 	}
 	return e, err == nil && isStartupEnvelope(e), err
+}
+
+// reopenBoot resumes the startup of an agent that its boot deadline failed
+// while the pane showed a screen startup did not recognize, typically a native
+// prompt. Once the pane shows a ready composer or a recognized prompt, the
+// ordinary startup path takes over in the same pane. Any other failure, or a
+// screen still unrecognized, leaves the agent failed.
+func (run *runtime) reopenBoot(l *store.LockedAgent, a *core.Agent) error {
+	if a.Evidence != core.BootDeadlineElapsed || a.Pane == "" {
+		return inactiveRecipient(*a)
+	}
+	c, err := loadCollar(a.Collar, run.settings)
+	if err != nil {
+		return err
+	}
+	b, err := run.input()
+	if err != nil {
+		return err
+	}
+	ctx, cancel := run.cmd.timeout(operationTimeout)
+	defer cancel()
+	screen, err := b.Capture(ctx, substrate.PaneID(a.Pane))
+	if err != nil {
+		return refuseError("%s failed when its boot deadline elapsed and %s cannot be read: %v; drop it and hitch it again", a.Name, a.Pane, err)
+	}
+	startup, err := harness.InspectStartup(c, screen)
+	if err != nil {
+		return err
+	}
+	if startup.State == harness.StartupOccupied {
+		return commandError{status: exitNative, text: fmt.Sprintf("%s failed when its boot deadline elapsed and %s still shows no recognized startup screen (%s); answer any native prompt there, then run gang hitch %s --recover; the original contract and assignment are retained", a.Name, a.Pane, startup.Prompt, a.Name)}
+	}
+	return run.apply(l, a, core.Event{Type: "boot_reopened", Deadline: run.cmd.now().Add(bootTimeout)})
 }
 
 // Recovery never reconstructs startup from today's prose or from an ordinary send.
@@ -48,6 +81,11 @@ func (run *runtime) recoverStartup(name string) (result error) {
 	}
 	for _, e := range pending {
 		if isStartupEnvelope(e) {
+			if a.Status == core.Failed {
+				if err := run.reopenBoot(l, &a); err != nil {
+					return err
+				}
+			}
 			if err := run.unlock(l); err != nil {
 				return err
 			}
@@ -56,7 +94,8 @@ func (run *runtime) recoverStartup(name string) (result error) {
 			}
 			got, err := l.Paths.ReadEnvelope("cur", e.ID)
 			if errors.Is(err, os.ErrNotExist) {
-				return startupAttention(a)
+				// A boot deadline can still fail the agent, which only recovery resumes.
+				return startupAttention(a, "gang hitch "+string(a.Name)+" --recover")
 			}
 			if err != nil {
 				return err

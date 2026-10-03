@@ -102,6 +102,14 @@ gang status worker --why
 If the answer ends the native CLI, `gang tick` fails the agent and
 `gang roster` shows the CLI's last lines.
 
+A startup screen Gangline does not recognize, such as a prompt the collar does
+not declare, fails the agent when its boot deadline elapses, and its startup
+stays queued. Answer the prompt, then run `gang hitch worker --recover`. When
+the pane shows an idle composer, startup resumes there and delivers the
+retained contract and assignment; a recognized prompt still on screen returns
+it to the steps above. A screen still unrecognized, or any other failure, stays
+failed.
+
 If startup input was pasted but could not be verified, run
 `gang hitch worker --recover`. It submits the original startup envelope when
 its exact text is visible. For a lone collapsed paste, it clears the composer,
