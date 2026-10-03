@@ -28,7 +28,7 @@ import "time"
 })
 #Basis: close({
  screen: "blocked" | "compacting" | "idle" | "busy" | "unsubmitted" | "unreadable" | "unread"
- rule: "screen" | "open-turn" | "interrupt-pending" | "compaction-record" | "turn-failure" | "wedge" | "probe-failure"
+ rule: "screen" | "open-turn" | "interrupt-pending" | "compaction-record" | "turn-failure" | "wedge" | "probe-failure" | "permission-request"
  compaction?: "queued" | "submitted" | "completed" | "failed" | "unverified"
 })
 #Fields: close({

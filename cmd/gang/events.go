@@ -96,9 +96,10 @@ func (cmd command) handleHook(args []string) (result error) {
 	if resumeCandidate && event.Kind != "turn-started" {
 		return fmt.Errorf("compaction continuation did not map to a submit boundary")
 	}
-	if err := recordBackground(p, event, cmd.now()); err != nil {
-		return err
-	}
+	// Display state never gates the hook's own handling: a failure to keep it
+	// is reported once the hook has done its work.
+	displayErr := errors.Join(recordPermission(p, event, cmd.now()), recordBackground(p, event, cmd.now()))
+	defer func() { result = errors.Join(result, displayErr) }()
 	if event.Kind == "turn-started" {
 		for _, value := range []string{event.Payload["session_id"], event.Payload["turn_id"], event.Payload["transcript_path"], event.NativeEvent} {
 			if len(value) > 4096 {
@@ -192,6 +193,17 @@ func recordBackground(p store.AgentPaths, event harness.HookEvent, now time.Time
 		return nil
 	}
 	return p.RemoveBackground()
+}
+
+// recordPermission keeps a native permission request until any later hook or
+// an idle screen. Answering a request fires a hook only when its tool
+// finishes, and dismissing it fires none, so the witness cannot wait for a
+// closing hook.
+func recordPermission(p store.AgentPaths, event harness.HookEvent, now time.Time) error {
+	if event.Kind == "permission-requested" {
+		return p.WritePermissionWitness(store.PermissionWitness{At: now, SessionID: event.Payload["session_id"]})
+	}
+	return p.RemovePermissionWitness()
 }
 
 func boundedFailureReason(reason string) string {

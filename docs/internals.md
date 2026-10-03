@@ -20,8 +20,9 @@ Team files live under `STATE_ROOT/teams/TEAM/`. `team.json` holds the curfew;
 immutable hitch IDs. Each `agents/ID/` contains `agent.json`, a `lock`,
 a submit `witness`, and `inbox/{tmp,new,cur,failed}/`. A turn-end hook
 leaves a `background` count when native background tasks are still pending,
-and the next turn boundary removes it. State and witnesses are
-replaced atomically. Pending messages live in `new/`; settled receipts retain
+and the next turn boundary removes it. A permission-request hook leaves a
+`permission` witness that any later hook or an idle screen removes. State
+and witnesses are replaced atomically. Pending messages live in `new/`; settled receipts retain
 their latest outcome, while the audit log retains history.
 
 Commands work over requested agents and pending work, independently of settled

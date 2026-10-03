@@ -197,8 +197,12 @@ Each `activity_observed` event records what its reading was derived from.
 `basis.screen` is the collar's reading of the pane: `blocked`, `compacting`,
 `idle`, `busy`, `unsubmitted`, `unreadable`, or `unread` when the capture
 failed. `basis.rule` is the rule that set the activity: `screen`, `open-turn`,
-`interrupt-pending`, `compaction-record`, `turn-failure`, `wedge`, or
-`probe-failure`. `basis.compaction` is the compaction record's status, and
+`interrupt-pending`, `compaction-record`, `turn-failure`, `wedge`,
+`probe-failure`, or `permission-request`: a native permission request whose
+hook arrived reads blocked on an unreadable screen until any later hook or an
+idle screen. A screen that reads idle or busy wins, since dismissing the
+prompt fires no hook and answering it fires one only when the tool finishes.
+`basis.compaction` is the compaction record's status, and
 `fingerprint` is a hash of the screen. Neither carries screen text, and
 neither does the reason: a blocked reading names the native prompt by a hash
 of the text the collar matched, so a prompt whose matched text differs logs a

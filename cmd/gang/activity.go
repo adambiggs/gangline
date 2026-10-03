@@ -67,6 +67,19 @@ func (run *runtime) observeScreen(l *store.LockedAgent, a *core.Agent, c harness
 			}
 		}
 	}
+	if basis.Screen == "unreadable" || basis.Screen == "idle" {
+		if _, pending, err := l.Paths.ReadPermissionWitness(); err != nil {
+			return false, err
+		} else if pending && basis.Screen == "unreadable" {
+			activity, evidence, basis.Rule = core.Blocked, "native permission request awaits an answer", "permission-request"
+		} else if pending {
+			// An idle composer shows the request was dismissed, which fires no
+			// hook. A busy screen does not: it can precede the prompt's render.
+			if err := l.Paths.RemovePermissionWitness(); err != nil {
+				return false, err
+			}
+		}
+	}
 	screenIdle = activity == core.Idle
 	if a.Compaction != nil && a.Compaction.Status == "submitted" && activity != core.Blocked {
 		activity, evidence, basis.Rule = core.Compacting, "native compaction completion unconfirmed; queued resume awaits confirmation", "compaction-record"

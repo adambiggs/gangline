@@ -257,6 +257,29 @@ func (p AgentPaths) ReadBackground() (Background, bool, error) {
 
 func (p AgentPaths) RemoveBackground() error { return removeIfPresent(p.Background) }
 
+// PermissionWitness records a native permission request that no later hook
+// has followed. Hooks replace it without the agent lock.
+type PermissionWitness struct {
+	At        time.Time `json:"at"`
+	SessionID string    `json:"session_id,omitempty"`
+}
+
+func (p AgentPaths) WritePermissionWitness(w PermissionWitness) error {
+	return atomicJSON(p.Permission, w)
+}
+
+// ReadPermissionWitness reports whether a request awaits an answer.
+func (p AgentPaths) ReadPermissionWitness() (PermissionWitness, bool, error) {
+	var w PermissionWitness
+	err := readJSON(p.Permission, &w)
+	if errors.Is(err, os.ErrNotExist) {
+		return PermissionWitness{}, false, nil
+	}
+	return w, err == nil, err
+}
+
+func (p AgentPaths) RemovePermissionWitness() error { return removeIfPresent(p.Permission) }
+
 func removeIfPresent(path string) error {
 	if err := os.Remove(path); err != nil && !errors.Is(err, os.ErrNotExist) {
 		return err
