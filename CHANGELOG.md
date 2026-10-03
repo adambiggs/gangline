@@ -1,5 +1,21 @@
 # Changelog
 
+## [1.15.6](https://github.com/adambiggs/gangline/compare/gangline-v1.15.5...gangline-v1.15.6) (2026-10-03)
+
+
+### Bug Fixes
+
+* **down:** name each agent down cannot remove, one line each ([19b2fed](https://github.com/adambiggs/gangline/commit/19b2fed32fdb5fdf17cb3fbe92c3b452ad2f5409))
+* **drop:** clear the records of a team that did not survive a reboot ([b675701](https://github.com/adambiggs/gangline/commit/b675701884fd01df64b6713f918238688c5300e6))
+* **hitch:** grant a Codex agent its linked worktree's gitdir ([5df86fa](https://github.com/adambiggs/gangline/commit/5df86faf5bf151948f2a97c446bf27a17f9c9cc2)), closes [#125](https://github.com/adambiggs/gangline/issues/125)
+* **hitch:** name the pane and recover route for an unrecognized startup screen ([3de7efd](https://github.com/adambiggs/gangline/commit/3de7efde2cca0063eebf8956e2359d2df07588c3))
+* **hitch:** name the route when an agent name is already claimed ([6d413bc](https://github.com/adambiggs/gangline/commit/6d413bcdd6c8350e31908d5069fe1293077b1214))
+* **recover:** tell the hitcher when recovery resumes an agent its boot deadline failed ([d004336](https://github.com/adambiggs/gangline/commit/d004336d27733c773441891e256e02c0bfc4d00d))
+* **roster:** read a listed pane only for the record that registered it ([0525a25](https://github.com/adambiggs/gangline/commit/0525a259b1608f662852f68bcc7c209ecc2b19bb))
+* **roster:** say plainly that a team did not survive a host reboot ([fa3ab89](https://github.com/adambiggs/gangline/commit/fa3ab893740fc2fc3557de0da45609f4d8c9117b))
+* **tick:** follow a conversation Claude Code moves to a new session ([874d470](https://github.com/adambiggs/gangline/commit/874d470ea382d8cfb2e2fa3f8e058afeda83dc6f))
+* **tick:** probe a pane only for the record that registered it ([3b13b1f](https://github.com/adambiggs/gangline/commit/3b13b1f51101682d374e4d47b48ac6c7d72e4492))
+
 ## [1.15.5](https://github.com/adambiggs/gangline/compare/gangline-v1.15.4...gangline-v1.15.5) (2026-10-03)
 
 
