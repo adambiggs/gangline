@@ -1,5 +1,18 @@
 # Changelog
 
+## [1.14.1](https://github.com/adambiggs/gangline/compare/gangline-v1.14.0...gangline-v1.14.1) (2026-10-03)
+
+
+### Bug Fixes
+
+* **capture:** name the agent when its record has no pane ([aa332a1](https://github.com/adambiggs/gangline/commit/aa332a18a492c68b6b845a49c34e17b402e43fe3))
+* **down:** record who ran a down before any agent is dropped ([8d833a8](https://github.com/adambiggs/gangline/commit/8d833a8c71ff603f307a38578fe00fe2ecc344bb))
+* **hitch:** record a booting agent as the hitcher of agents it starts ([434be17](https://github.com/adambiggs/gangline/commit/434be17c4c0b99e2705df96d1504211d32408aea))
+* **hitch:** tell the hitcher of every failure, boot deadline included ([ac88bf6](https://github.com/adambiggs/gangline/commit/ac88bf686584b1d0515e721e2ddd07f2d73f1f56))
+* **hitch:** tell the hitcher when its agent fails ([abf5435](https://github.com/adambiggs/gangline/commit/abf54355550666a26d6b0e4535c35f076adf5a9a))
+* **team:** grant lead authority only to the lead the operator started ([a692496](https://github.com/adambiggs/gangline/commit/a69249672866ac4cb4a6ec99a1014bebe72b86a2))
+* **team:** refuse ending teammates from an agent pane that did not start them ([fb3849f](https://github.com/adambiggs/gangline/commit/fb3849fc9c2bf1017062528311b260f3cfb57bab))
+
 ## [1.14.0](https://github.com/adambiggs/gangline/compare/gangline-v1.13.1...gangline-v1.14.0) (2026-10-03)
 
 
