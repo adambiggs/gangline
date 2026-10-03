@@ -82,6 +82,9 @@ func (cmd command) hitchWithStaleClaim(args []string, supersede bool) (result er
 			return refuseError("effort %q is not listed for model %q (%s)", o.Effort, o.Model, strings.Join(harness.ModelEfforts(catalog, o.Model), ", "))
 		}
 	}
+	if err := run.checkHitchGuard(c, o.Model); err != nil {
+		return err
+	}
 	assignment := o.Task
 	if o.Stdin {
 		assignment, err = readBody(cmd.stdin)

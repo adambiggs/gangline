@@ -41,6 +41,13 @@ package harness
 	note?: string
 })
 
+#HitchGuard: close({
+	models: [...string & !=""] & [_, ...]
+	five_hour?: number & >=0 & <=1
+	weekly?: number & >=0 & <=1
+	refuse?: bool
+})
+
 #Action: close({
  refusal?: string
 	active?: string
@@ -92,4 +99,5 @@ package harness
 		five_hour?: [...#UsageBand]
 		weekly?: [...#UsageBand]
 	}
+	hitch_guard?: #HitchGuard
 })

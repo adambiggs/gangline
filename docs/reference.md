@@ -36,7 +36,7 @@ there. `log` refuses `--team` together with a `LOG.jsonl` operand. `teams`, `col
 | --- | --- |
 | `-c`, `--collar COLLAR` | Harness collar; defaults to `GANG_COLLAR`. |
 | `-d`, `--dir DIR` | Working directory; defaults to the current directory. |
-| `-m`, `--model MODEL` | Native model identifier; the native CLI judges it. |
+| `-m`, `--model MODEL` | Native model identifier; the native CLI judges it. A collar's `hitch_guard` can warn or refuse at usage thresholds. |
 | `-e`, `--effort EFFORT` | Native reasoning effort; requires `--model`. Refused when `gang models` lists the model without this effort. |
 | `-t`, `--task TASK` | Startup assignment. |
 | `-r`, `--role ROLE` | Role brief; `up` defaults to `lead`. |
@@ -416,6 +416,31 @@ from its native session log. `gang limits -c codex` queries account limits
 through a private native app server without creating a conversation or turn.
 The Claude Code collar has no standalone limits query; use `gang limits NAME`
 for readings observed from an agent.
+
+A collar overlay can name costly models in `hitch_guard`. `up` and `hitch`
+check a `--model` the guard names against the collar's provider usage before
+anything starts; a hitch without `--model`, or with another model, is not
+checked. Thresholds are fractions from 0 to 1 for `five_hour`, `weekly`, or
+both, and a guard needs at least one:
+
+```cue
+collar: {
+	hitch_guard: {models: ["costly-model"], five_hour: 0.8, weekly: 0.9}
+}
+```
+
+The reading is the freshest one an agent on the same collar recorded in the
+last five minutes, or else the collar's limits query, as in
+`gang limits -c codex`. Every five-hour or weekly window in that reading
+counts, whichever limit bucket reports it, as for usage bands. A window at or
+past its threshold that has not reset makes
+`hitch` warn on stderr with the window, used percent, the reading's age and
+source, and the reset time (UTC RFC3339), then launch. With `refuse: true`,
+`hitch` refuses instead. When no fresh reading exists or the query fails,
+`hitch` says so and launches; a stale or missing reading never refuses. The
+five-minute window keeps an old reading from refusing a launch the account
+would accept, at the cost of an unchecked launch when no agent reported
+recently and the collar has no query. Bundled collars set no guard.
 
 `gang snooze` is a manual override for an active agent. On an attributable
 provider cap refusal, Gangline automatically schedules a wake at the observed

@@ -32,6 +32,7 @@ type Collar struct {
 	Actions      Actions                  `json:"actions"`
 	ContextBands map[string][]ContextBand `json:"context_bands"`
 	UsageBands   map[string][]UsageBand   `json:"usage_bands,omitempty"`
+	HitchGuard   *HitchGuard              `json:"hitch_guard,omitempty"`
 }
 
 type Launch struct {
@@ -116,6 +117,15 @@ type UsageBand struct {
 	At      float64 `json:"at"`
 	Message string  `json:"message,omitempty"`
 	Note    string  `json:"note,omitempty"`
+}
+
+// HitchGuard names models the operator wants checked against a fresh provider
+// reading before a hitch launches them. Thresholds are used fractions.
+type HitchGuard struct {
+	Models   []string `json:"models"`
+	FiveHour *float64 `json:"five_hour,omitempty"`
+	Weekly   *float64 `json:"weekly,omitempty"`
+	Refuse   bool     `json:"refuse,omitempty"`
 }
 
 func LoadCollar(filename string, data []byte) (Collar, error) {
@@ -349,6 +359,9 @@ func validateCollar(collar Collar) error {
 			seen[band.Name] = true
 			previous = band.At
 		}
+	}
+	if g := collar.HitchGuard; g != nil && g.FiveHour == nil && g.Weekly == nil {
+		return fmt.Errorf("hitch guard declares no five_hour or weekly threshold")
 	}
 	for name, action := range map[string]Action{
 		"interrupt": collar.Actions.Interrupt,

@@ -39,6 +39,28 @@ func TestUsageBandRejectsInvalidNoteToken(t *testing.T) {
 	}
 }
 
+func TestHitchGuardOverlayLoads(t *testing.T) {
+	collar, err := LoadCustomCollar("codex", "codex.cue", []byte(`collar: {
+		hitch_guard: {models: ["costly"], weekly: 0.9, refuse: true}
+	}`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	g := collar.HitchGuard
+	if g == nil || len(g.Models) != 1 || g.Models[0] != "costly" || g.Weekly == nil || *g.Weekly != 0.9 || g.FiveHour != nil || !g.Refuse {
+		t.Fatalf("hitch guard = %+v", g)
+	}
+}
+
+func TestHitchGuardRejectsMissingThreshold(t *testing.T) {
+	_, err := LoadCustomCollar("codex", "codex.cue", []byte(`collar: {
+		hitch_guard: {models: ["costly"]}
+	}`))
+	if err == nil {
+		t.Fatal("hitch guard without a threshold passed validation")
+	}
+}
+
 func TestEmbeddedCollarsValidate(t *testing.T) {
 	want := []string{"claude", "codex"}
 	names, err := EmbeddedCollarNames()
@@ -58,6 +80,9 @@ func TestEmbeddedCollarsValidate(t *testing.T) {
 		}
 		if collar.Name != names[index] {
 			t.Fatalf("collar name = %q, want %q", collar.Name, names[index])
+		}
+		if collar.HitchGuard != nil {
+			t.Fatalf("%s ships a hitch guard; guards are operator opt-in", collar.Name)
 		}
 	}
 }
