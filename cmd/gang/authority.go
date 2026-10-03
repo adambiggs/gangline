@@ -1,9 +1,13 @@
 package main
 
 import (
+	"encoding/json"
 	"errors"
 	"fmt"
 	"os"
+	"path/filepath"
+	"strings"
+	"time"
 
 	"github.com/adambiggs/gangline/core"
 )
@@ -132,4 +136,44 @@ func (run *runtime) sendHitcherNotice(a core.Agent, id core.EnvelopeID, reason s
 	}
 	run.wake = append(run.wake, hitcher.ID)
 	return nil
+}
+
+// downRecord names who ended a team and from where. Down deletes the team's
+// directory and its event log, and its own drops can end the process running
+// it, so the record is written to the state root before any agent is dropped.
+type downRecord struct {
+	At            time.Time `json:"at"`
+	Team          string    `json:"team"`
+	Agents        int       `json:"agents"`
+	Caller        string    `json:"caller,omitempty"`
+	HitchIdentity string    `json:"hitch_identity,omitempty"`
+	PID           int       `json:"pid"`
+	ParentPID     int       `json:"parent_pid"`
+	ParentCommand string    `json:"parent_command,omitempty"`
+	Directory     string    `json:"directory,omitempty"`
+	TmuxPane      string    `json:"tmux_pane,omitempty"`
+}
+
+func (run *runtime) recordDown(agents int) error {
+	r := downRecord{At: run.cmd.now(), Team: run.settings.Session, Agents: agents, HitchIdentity: run.cmd.environment("GANG_AGENT_ID"), PID: os.Getpid(), ParentPID: os.Getppid(), TmuxPane: run.cmd.environment("TMUX_PANE")}
+	if caller, err := run.callerInTeam(); err == nil && caller != nil {
+		r.Caller = string(caller.Name)
+	}
+	// Linux names the parent's command line; elsewhere the record keeps its pid.
+	if argv, err := os.ReadFile(fmt.Sprintf("/proc/%d/cmdline", r.ParentPID)); err == nil {
+		r.ParentCommand = strings.TrimSpace(strings.ReplaceAll(string(argv), "\x00", " "))
+	}
+	if dir, err := run.cmd.getwd(); err == nil {
+		r.Directory = dir
+	}
+	line, err := json.Marshal(r)
+	if err != nil {
+		return err
+	}
+	f, err := os.OpenFile(filepath.Join(run.settings.StateRoot, "downs.jsonl"), os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0600)
+	if err != nil {
+		return fmt.Errorf("record down: %w", err)
+	}
+	_, err = f.Write(append(line, '\n'))
+	return errors.Join(err, f.Sync(), f.Close())
 }

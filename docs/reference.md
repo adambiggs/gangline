@@ -26,7 +26,7 @@ there. `log` refuses `--team` together with a `LOG.jsonl` operand. `teams`, `col
 | `gang hitch NAME --recover` | Recover retained startup from its visible draft or a lone collapsed paste. |
 | `gang rename OLD NEW` | Change a registered name and window title. |
 | `gang drop NAME` | Stop an agent and fail its pending messages. An unregistered `NAME` is refused. |
-| `gang down [-y, --yes]` | Confirm on a terminal (`[y/N]`, default no), then drop the selected team's agents and delete its runtime state and history. Use `--yes` without a terminal. |
+| `gang down [-y, --yes]` | Confirm on a terminal (`[y/N]`, default no), then drop the selected team's agents and delete its runtime state and history. Before dropping any agent, it appends who ran it to `downs.jsonl` in the state root. Use `--yes` without a terminal. |
 | `gang attach` | Attach to the selected team's tmux session. |
 | `gang teams` | List teams in the configured state root. |
 
@@ -67,6 +67,10 @@ records that agent as the hitcher. When a hitched agent later fails, its
 hitcher, if active, gets a `[gang:hitch#…]` notice naming the agent and the
 reason.
 
+Each line of `downs.jsonl` records the time, team, agent count, the caller's
+agent name and inherited `GANG_AGENT_ID`, its process and parent process IDs,
+the parent's command line where `/proc` shows it, the working directory, and
+`TMUX_PANE`.
 When Codex asks to trust a hitch directory, startup stays queued. After
 choosing the native trust option, run `gang tick` to deliver the retained
 contract and assignment.

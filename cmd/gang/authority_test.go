@@ -1,8 +1,10 @@
 package main
 
 import (
+	"encoding/json"
 	"errors"
 	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 
@@ -38,6 +40,26 @@ func requireRefused(t *testing.T, err error, text string) {
 	}
 }
 
+func downRecords(t *testing.T, f *stateFixture) []downRecord {
+	t.Helper()
+	data, err := os.ReadFile(filepath.Join(f.env["GANG_STATE_ROOT"], "downs.jsonl"))
+	if errors.Is(err, os.ErrNotExist) {
+		return nil
+	}
+	if err != nil {
+		t.Fatal(err)
+	}
+	var records []downRecord
+	for _, line := range strings.Split(strings.TrimSpace(string(data)), "\n") {
+		var r downRecord
+		if err := json.Unmarshal([]byte(line), &r); err != nil {
+			t.Fatalf("down record %q: %v", line, err)
+		}
+		records = append(records, r)
+	}
+	return records
+}
+
 // A shell an owner starts inherits its pane's team and state root, so a
 // script it runs that downs "its" team ends the lead and every teammate.
 func TestDownRefusesTeammateThatIsNotLead(t *testing.T) {
@@ -55,26 +77,38 @@ func TestDownRefusesTeammateThatIsNotLead(t *testing.T) {
 			if agents, err := f.run.team.ListAgents(); err != nil || len(agents) != 2 {
 				t.Fatalf("team changed: agents=%v, error=%v", agents, err)
 			}
+			if records := downRecords(t, f); len(records) != 0 {
+				t.Fatalf("refused down was recorded: %+v", records)
+			}
 		})
 	}
 }
 
-func TestDownByLeadOperatorOrAnotherTeam(t *testing.T) {
-	for _, test := range []struct{ name, identity string }{
-		{"lead", "l"},
-		{"operator", ""},
-		{"agent of another team", "elsewhere"},
+func TestDownByLeadOperatorOrAnotherTeamIsRecorded(t *testing.T) {
+	for _, test := range []struct{ name, identity, caller string }{
+		{"lead", "l", "lead"},
+		{"operator", "", ""},
+		{"agent of another team", "elsewhere", ""},
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			f := newStateFixture(t)
 			f.addHitched(t, "l", "lead", "lead", "")
 			f.addHitched(t, "w", "worker", "worker", "l")
 			f.env["GANG_AGENT_ID"] = test.identity
+			f.env["TMUX_PANE"] = "%9"
 			if err := f.cmd.down([]string{"--yes"}); err != nil {
 				t.Fatal(err)
 			}
 			if _, err := os.Stat(f.run.team.Directory); !errors.Is(err, os.ErrNotExist) {
 				t.Fatalf("team directory remains or cannot be checked: %v", err)
+			}
+			records := downRecords(t, f)
+			if len(records) != 1 {
+				t.Fatalf("down records = %+v", records)
+			}
+			r := records[0]
+			if r.Team != "unit" || r.Agents != 2 || r.Caller != test.caller || r.HitchIdentity != test.identity || r.PID != os.Getpid() || r.ParentPID != os.Getppid() || r.TmuxPane != "%9" || r.Directory != f.env["GANG_STATE_ROOT"] || !r.At.Equal(f.cmd.now()) {
+				t.Fatalf("down record = %+v", r)
 			}
 		})
 	}

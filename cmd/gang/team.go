@@ -106,6 +106,9 @@ func (cmd command) down(args []string) error {
 			return err
 		}
 	}
+	if err := run.recordDown(len(agents)); err != nil {
+		return err
+	}
 	if err := eachAgent(agents, func(a core.Agent) error { return run.dropAgent(a.ID, true) }); err != nil {
 		return err
 	}
