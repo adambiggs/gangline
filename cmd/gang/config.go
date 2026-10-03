@@ -357,8 +357,8 @@ func codexGitdirGrant(profile, gitdir string) string {
 func (cmd command) tmux(settings settings) (*tmux.Backend, error) {
 	config := cmd.tmuxConfig(settings.Socket, settings.Session)
 	config.Stdin, _ = cmd.stdin.(*os.File)
-	config.Stdout, _ = cmd.stdout.(*os.File)
-	config.Stderr, _ = cmd.stderr.(*os.File)
+	config.Stdout, _ = outputFile(cmd.stdout)
+	config.Stderr, _ = outputFile(cmd.stderr)
 	return tmux.New(config)
 }
 

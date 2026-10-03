@@ -119,8 +119,8 @@ func (cmd command) upgrade(arguments []string) error {
 	}
 	process := exec.Command("sh", installer)
 	process.Stdin = cmd.stdin
-	process.Stdout = cmd.stdout
-	process.Stderr = cmd.stderr
+	process.Stdout = childOutput(cmd.stdout)
+	process.Stderr = childOutput(cmd.stderr)
 	process.Env = append(os.Environ(), "GANGLINE_UPGRADE=1", "GANGLINE_UPGRADE_CONFIRM="+confirm, "GANGLINE_HOME="+installRoot)
 	err = process.Run()
 	var exitErr *exec.ExitError

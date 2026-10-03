@@ -376,7 +376,7 @@ const (
 // rosterReasonLimit is the room a row leaves for its reason: on a terminal,
 // the rest of the terminal's row.
 func rosterReasonLimit(output io.Writer, row string) int {
-	file, ok := output.(*os.File)
+	file, ok := outputFile(output)
 	if !ok {
 		return rosterReasonWidth
 	}

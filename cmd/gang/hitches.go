@@ -10,6 +10,7 @@ import (
 	"path/filepath"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"syscall"
 	"unicode/utf8"
 
@@ -743,6 +744,11 @@ func (run *runtime) dropAgent(id core.HitchID, wait bool) error {
 			return err
 		}
 	}
+	// A command dropping its own agent ends its own pane on every teardown
+	// path, including those that never acquire the pane's processes.
+	if !replaced && run.cmd.dropEndsOwnPane(a) {
+		endOwnPane()
+	}
 	// Cleanup is skipped when gang cannot see into a registered pane, open or
 	// closed, or read its recorded process. A claim without a registration
 	// either started no native process or saw it exit at boot, and leaves
@@ -875,4 +881,21 @@ func (run *runtime) dropAgent(id core.HitchID, wait bool) error {
 	}
 	_, err = fmt.Fprintf(run.cmd.stdout, "%s dropped; resume session: %s\n", a.Name, session)
 	return err
+}
+
+// dropEndsOwnPane reports whether dropping a ends the pane this command runs
+// in. The pane names that agent even when the caller has unset its identity.
+func (cmd command) dropEndsOwnPane(a core.Agent) bool {
+	return core.HitchID(cmd.environment("GANG_AGENT_ID")) == a.ID || a.Pane != "" && cmd.environment("TMUX_PANE") == a.Pane
+}
+
+// ownPaneEnding is set when a drop begins ending the pane this command runs in.
+var ownPaneEnding atomic.Bool
+
+// endOwnPane keeps this command alive past the end of the pane it runs in:
+// that pane's hangup and a closed output pipe must not end it before it
+// completes, and its output may have lost its reader.
+func endOwnPane() {
+	signal.Ignore(syscall.SIGHUP, syscall.SIGPIPE)
+	ownPaneEnding.Store(true)
 }

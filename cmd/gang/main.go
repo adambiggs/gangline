@@ -68,7 +68,41 @@ type command struct {
 }
 
 func main() {
-	os.Exit(run(os.Args[1:], os.Stdin, os.Stdout, os.Stderr))
+	os.Exit(run(os.Args[1:], os.Stdin, paneOutput{os.Stdout}, paneOutput{os.Stderr}))
+}
+
+// paneOutput is the command's own output. Once a drop ends the pane this
+// command runs in, the output's reader can be gone; a write that fails then
+// has no one to tell, so it reports success rather than failing work that
+// completed.
+type paneOutput struct{ file *os.File }
+
+func (o paneOutput) Write(p []byte) (int, error) {
+	n, err := o.file.Write(p)
+	if err != nil && ownPaneEnding.Load() {
+		return len(p), nil
+	}
+	return n, err
+}
+
+// outputFile returns the file behind a command output, if there is one.
+func outputFile(w io.Writer) (*os.File, bool) {
+	switch o := w.(type) {
+	case *os.File:
+		return o, true
+	case paneOutput:
+		return o.file, true
+	}
+	return nil, false
+}
+
+// childOutput is a command output as a child process takes it: the file
+// behind it when there is one, so the child writes to it directly.
+func childOutput(w io.Writer) io.Writer {
+	if file, ok := outputFile(w); ok {
+		return file
+	}
+	return w
 }
 
 func run(args []string, stdin io.Reader, stdout, stderr io.Writer) int {

@@ -3,6 +3,7 @@ package acceptance
 import (
 	"errors"
 	"fmt"
+	"io"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -44,12 +45,15 @@ func TestCommandLifecycleOnPrivateTmux(t *testing.T) {
 	const session = "gangline-rebuild-acceptance"
 	socket := filepath.Join(root, "tmux.sock")
 	paneReady := filepath.Join(root, "pane-ready")
-	if output, err := exec.Command("mkfifo", paneReady).CombinedOutput(); err != nil {
-		t.Fatalf("create pane ready pipe: %v\n%s", err, output)
+	paneExit := filepath.Join(root, "pane-exit")
+	for _, fifo := range []string{paneReady, paneExit} {
+		if output, err := exec.Command("mkfifo", fifo).CombinedOutput(); err != nil {
+			t.Fatalf("create pane pipe: %v\n%s", err, output)
+		}
 	}
 	environment := append(withoutEnvironment(os.Environ(), "TMUX", "TMUX_PANE", "GANG_CONFIG_DIR", "GANG_SESSION", "GANG_STATE_ROOT", "GANG_TMUX_SOCKET", "GANG_COLLARS", "GANG_COLLAR", "GANGLINE_HITCH_ID", "GANG_AGENT_ID", "GANG_AGENT_NONCE", "GANG_AGENT_TOKEN"),
 		"GANG_SESSION="+session, "GANG_CONFIG_DIR="+filepath.Join(root, "config"), "GANG_STATE_ROOT="+filepath.Join(root, "state"), "GANG_TMUX_SOCKET="+socket, "GANG_COLLARS="+collars, "GANG_COLLAR=acceptance",
-		"GANGLINE_ACCEPTANCE_CMD_HARNESS=1", "GANGLINE_ACCEPTANCE_TMUX=tmux", "GANGLINE_ACCEPTANCE_TMUX_SOCKET="+socket, "GANGLINE_ACCEPTANCE_LEDGER="+filepath.Join(root, "received"), "GANGLINE_ACCEPTANCE_ARGV_LEDGER="+filepath.Join(root, "argv"), "GANGLINE_ACCEPTANCE_GANG="+binary, "GANGLINE_ACCEPTANCE_PANE_RESULT="+filepath.Join(root, "pane-result"), "GANGLINE_ACCEPTANCE_PANE_READY="+paneReady)
+		"GANGLINE_ACCEPTANCE_CMD_HARNESS=1", "GANGLINE_ACCEPTANCE_TMUX=tmux", "GANGLINE_ACCEPTANCE_TMUX_SOCKET="+socket, "GANGLINE_ACCEPTANCE_LEDGER="+filepath.Join(root, "received"), "GANGLINE_ACCEPTANCE_ARGV_LEDGER="+filepath.Join(root, "argv"), "GANGLINE_ACCEPTANCE_GANG="+binary, "GANGLINE_ACCEPTANCE_PANE_RESULT="+filepath.Join(root, "pane-result"), "GANGLINE_ACCEPTANCE_PANE_READY="+paneReady, "GANGLINE_ACCEPTANCE_PANE_EXIT="+paneExit)
 	runner := tmuxRunner{binary: "tmux", socket: socket, env: environment}
 	if out, err := runner.run("new-session", "-d", "-s", session, "-n", "control"); err != nil {
 		t.Fatalf("private session: %v %s", err, out)
@@ -298,8 +302,49 @@ func TestCommandLifecycleOnPrivateTmux(t *testing.T) {
 	}
 	check("", "rename", "second", "renamed")
 	check("", "roster")
-	check("", "down", "--yes")
+	check("", "hitch", "lead", "--role", "lead")
+	lid, err := team.ResolveName("lead")
+	if err != nil {
+		t.Fatal(err)
+	}
+	lp, err := team.Agent(lid)
+	if err != nil {
+		t.Fatal(err)
+	}
+	lead, err := lp.Read()
+	if err != nil {
+		t.Fatal(err)
+	}
+	// The lead's down ends the lead's own pane, so its exit is the barrier.
+	exited := make(chan error, 1)
+	go func() {
+		exit, err := os.Open(paneExit)
+		if err == nil {
+			_, err = io.Copy(io.Discard, exit)
+			err = errors.Join(err, exit.Close())
+		}
+		exited <- err
+	}()
+	if output, err := runner.run("send-keys", "-t", lead.Pane, "-l", "__GANG_ENDS_PANE__ down --yes"); err != nil {
+		t.Fatalf("enter pane command: %v\n%s", err, output)
+	}
+	if output, err := runner.run("send-keys", "-t", lead.Pane, "Enter"); err != nil {
+		t.Fatalf("submit pane command: %v\n%s", err, output)
+	}
+	select {
+	case err := <-exited:
+		if err != nil {
+			t.Fatal(err)
+		}
+	case <-time.After(time.Minute):
+		t.Fatal("down in the lead's pane never exited")
+	}
 	if _, err := os.Stat(team.Directory); !errors.Is(err, os.ErrNotExist) {
-		t.Fatalf("team state remains: %v", err)
+		left, _ := team.ListAgents()
+		panes, _ := runner.run("list-panes", "-s", "-t", session, "-F", "#{pane_id}")
+		t.Fatalf("team state remains after the lead's down: %v; agents %+v; panes %q", err, left, panes)
+	}
+	if out, err := runner.run("list-panes", "-s", "-t", session, "-F", "#{pane_id}"); err != nil || strings.Contains(out, lead.Pane+"\n") || strings.Contains(out, second.Pane+"\n") {
+		t.Fatalf("lead's down left agent panes alive: %q %v", out, err)
 	}
 }

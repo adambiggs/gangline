@@ -170,7 +170,7 @@ func (backend *Backend) ownedProcesses(ctx context.Context, pane substrate.PaneI
 	if err := observeProcessCandidates(root, enumerated, observations, observeProcess); err != nil {
 		return nil, err
 	}
-	owned, err = pinOwnedProcesses(root, nativeAncestry(observations), func(record processRecord) (processIdentity, error) {
+	owned, err = pinOwnedProcesses(root, spareCaller(nativeAncestry(observations), os.Getpid()), func(record processRecord) (processIdentity, error) {
 		observation := observations[record.PID]
 		return pinObservedProcess(observation.record, observation.read, openProcessHandle)
 	})
@@ -256,6 +256,22 @@ func nativeAncestry(observations map[int]processObservation) map[int]processReco
 		records[pid] = record
 	}
 	return records
+}
+
+// spareCaller removes this process and its descendants from a pane's process
+// tree. A command run inside the pane it tears down, such as the lead's own
+// down, must outlive the pane to finish its work.
+func spareCaller(records map[int]processRecord, self int) map[int]processRecord {
+	if _, ok := records[self]; !ok {
+		return records
+	}
+	kept := make(map[int]processRecord, len(records))
+	for pid, record := range records {
+		if !descendsFrom(pid, self, records) {
+			kept[pid] = record
+		}
+	}
+	return kept
 }
 
 func pinOwnedProcesses(root int, records map[int]processRecord, open func(processRecord) (processIdentity, error)) ([]processIdentity, error) {

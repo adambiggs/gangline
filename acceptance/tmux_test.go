@@ -2,6 +2,7 @@ package acceptance
 
 import (
 	"bufio"
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
@@ -451,8 +452,38 @@ func runCommandHarness() int {
 		}
 		// A gang command typed into the pane runs with the pane's environment,
 		// as a native CLI's shell tool would.
-		if arguments, ok := strings.CutPrefix(input.String(), "__GANG__ "); ok {
+		arguments, ok := strings.CutPrefix(input.String(), "__GANG__ ")
+		ending, ends := strings.CutPrefix(input.String(), "__GANG_ENDS_PANE__ ")
+		if ends {
+			arguments = ending
+		}
+		if ok || ends {
 			command := exec.Command(os.Getenv("GANGLINE_ACCEPTANCE_GANG"), strings.Fields(arguments)...)
+			if ends {
+				// A command that can end this pane hands its exit to a pipe
+				// only it and its children hold, so the test sees the exit
+				// with the pane gone.
+				// Its output goes to a pipe this process reads, as a native
+				// CLI reads a command's output, and loses its reader with the pane.
+				exit, err := os.OpenFile(os.Getenv("GANGLINE_ACCEPTANCE_PANE_EXIT"), os.O_WRONLY, 0)
+				if err != nil {
+					fmt.Fprintln(os.Stderr, err)
+					return 1
+				}
+				var output bytes.Buffer
+				command.Stdout, command.Stderr = &output, &output
+				command.ExtraFiles = []*os.File{exit}
+				err = command.Start()
+				if closeErr := exit.Close(); err != nil || closeErr != nil {
+					fmt.Fprintln(os.Stderr, err, closeErr)
+					return 1
+				}
+				_ = command.Wait()
+				fmt.Print(output.String())
+				input.Reset()
+				renderCommandComposer("")
+				continue
+			}
 			output, err := command.CombinedOutput()
 			status := 0
 			if err != nil {

@@ -200,6 +200,23 @@ func TestPinOwnedProcessesReleasesEarlierHandlesOnFailure(t *testing.T) {
 	}
 }
 
+func TestSpareCallerLeavesCallerAndItsDescendantsOutOfThePaneTree(t *testing.T) {
+	records := map[int]processRecord{
+		100: {Process: substrate.Process{PID: 100, ParentPID: 1}},
+		200: {Process: substrate.Process{PID: 200, ParentPID: 100}},
+		250: {Process: substrate.Process{PID: 250, ParentPID: 100}},
+		300: {Process: substrate.Process{PID: 300, ParentPID: 200}},
+		400: {Process: substrate.Process{PID: 400, ParentPID: 300}},
+	}
+	kept := spareCaller(records, 300)
+	if len(kept) != 3 || kept[100].PID != 100 || kept[200].PID != 200 || kept[250].PID != 250 {
+		t.Fatalf("spareCaller(300) = %v; want the root, the caller's parent and its sibling", kept)
+	}
+	if kept := spareCaller(records, 999); len(kept) != len(records) {
+		t.Fatalf("spareCaller outside the tree = %v; want the tree unchanged", kept)
+	}
+}
+
 func TestPinOwnedProcessesSkipsVanishedChild(t *testing.T) {
 	root := processRecord{Process: substrate.Process{PID: 100}, started: "root"}
 	child := processRecord{Process: substrate.Process{PID: 200, ParentPID: 100}, started: "child"}
