@@ -66,11 +66,17 @@ func testLiveProvider(t *testing.T, collar, cli, cheapest string) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	stateHome, err := os.UserHomeDir()
+	home, err := os.UserHomeDir()
 	if err != nil {
 		t.Fatal(err)
 	}
-	scratch := filepath.Join(stateHome, ".local", "state", "gangline-provider-acceptance")
+	stateHome := os.Getenv("XDG_STATE_HOME")
+	if stateHome == "" {
+		stateHome = filepath.Join(home, ".local", "state")
+	}
+	// Gangline's own state directory, so an agent allowed to write Gangline
+	// state can run this lane.
+	scratch := filepath.Join(stateHome, "gangline", "provider-acceptance")
 	if err := os.MkdirAll(scratch, 0700); err != nil {
 		t.Fatal(err)
 	}
@@ -79,7 +85,7 @@ func testLiveProvider(t *testing.T, collar, cli, cheapest string) {
 		if err := os.MkdirAll(profile, 0700); err != nil {
 			t.Fatal(err)
 		}
-		originalAuth := filepath.Join(stateHome, ".codex", "auth.json")
+		originalAuth := filepath.Join(home, ".codex", "auth.json")
 		isolatedAuth := filepath.Join(profile, "auth.json")
 		if _, err := os.Lstat(isolatedAuth); errors.Is(err, os.ErrNotExist) {
 			if _, err := os.Stat(originalAuth); err == nil {
@@ -127,7 +133,7 @@ func testLiveProvider(t *testing.T, collar, cli, cheapest string) {
 		canonical = filepath.Dir(strings.TrimSpace(string(out)))
 	}
 	if cli == "codex" {
-		if err := seedCodexTrust(filepath.Join(stateHome, ".codex"), filepath.Join(scratch, "codex-home"), canonical); err != nil {
+		if err := seedCodexTrust(filepath.Join(home, ".codex"), filepath.Join(scratch, "codex-home"), canonical); err != nil {
 			t.Fatalf("prepare private Codex trust for %s: %v", canonical, err)
 		}
 	}
