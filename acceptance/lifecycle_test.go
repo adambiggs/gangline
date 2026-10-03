@@ -43,13 +43,13 @@ func TestCommandLifecycleOnPrivateTmux(t *testing.T) {
 	}
 	const session = "gangline-rebuild-acceptance"
 	socket := filepath.Join(root, "tmux.sock")
-	hitchReady := filepath.Join(root, "hitch-ready")
-	if output, err := exec.Command("mkfifo", hitchReady).CombinedOutput(); err != nil {
-		t.Fatalf("create hitch ready pipe: %v\n%s", err, output)
+	paneReady := filepath.Join(root, "pane-ready")
+	if output, err := exec.Command("mkfifo", paneReady).CombinedOutput(); err != nil {
+		t.Fatalf("create pane ready pipe: %v\n%s", err, output)
 	}
 	environment := append(withoutEnvironment(os.Environ(), "TMUX", "TMUX_PANE", "GANG_CONFIG_DIR", "GANG_SESSION", "GANG_STATE_ROOT", "GANG_TMUX_SOCKET", "GANG_COLLARS", "GANG_COLLAR", "GANGLINE_HITCH_ID", "GANG_AGENT_ID", "GANG_AGENT_NONCE", "GANG_AGENT_TOKEN"),
 		"GANG_SESSION="+session, "GANG_CONFIG_DIR="+filepath.Join(root, "config"), "GANG_STATE_ROOT="+filepath.Join(root, "state"), "GANG_TMUX_SOCKET="+socket, "GANG_COLLARS="+collars, "GANG_COLLAR=acceptance",
-		"GANGLINE_ACCEPTANCE_CMD_HARNESS=1", "GANGLINE_ACCEPTANCE_TMUX=tmux", "GANGLINE_ACCEPTANCE_TMUX_SOCKET="+socket, "GANGLINE_ACCEPTANCE_LEDGER="+filepath.Join(root, "received"), "GANGLINE_ACCEPTANCE_ARGV_LEDGER="+filepath.Join(root, "argv"), "GANGLINE_ACCEPTANCE_GANG="+binary, "GANGLINE_ACCEPTANCE_HITCH_RESULT="+filepath.Join(root, "hitch-result"), "GANGLINE_ACCEPTANCE_HITCH_READY="+hitchReady)
+		"GANGLINE_ACCEPTANCE_CMD_HARNESS=1", "GANGLINE_ACCEPTANCE_TMUX=tmux", "GANGLINE_ACCEPTANCE_TMUX_SOCKET="+socket, "GANGLINE_ACCEPTANCE_LEDGER="+filepath.Join(root, "received"), "GANGLINE_ACCEPTANCE_ARGV_LEDGER="+filepath.Join(root, "argv"), "GANGLINE_ACCEPTANCE_GANG="+binary, "GANGLINE_ACCEPTANCE_PANE_RESULT="+filepath.Join(root, "pane-result"), "GANGLINE_ACCEPTANCE_PANE_READY="+paneReady)
 	runner := tmuxRunner{binary: "tmux", socket: socket, env: environment}
 	if out, err := runner.run("new-session", "-d", "-s", session, "-n", "control"); err != nil {
 		t.Fatalf("private session: %v %s", err, out)
@@ -141,18 +141,48 @@ func TestCommandLifecycleOnPrivateTmux(t *testing.T) {
 	if !regexp.MustCompile(`^\[gang:hitch#[0-9a-f]{16} assignment\]`).Match(received) || !strings.Contains(string(received), "Assignment:\n\nacceptance assignment") {
 		t.Fatalf("startup lacks Gangline attribution or assignment: %q", received)
 	}
-	if output, err := runner.run("send-keys", "-t", worker.Pane, "-l", "__GANG_HITCH_SECOND__"); err != nil {
-		t.Fatalf("enter worker command: %v\n%s", err, output)
+	// runInPane has the agent in pane run gang with its own environment, as a
+	// script started from the native CLI's shell tool would.
+	runInPane := func(pane string, args ...string) result {
+		t.Helper()
+		if output, err := runner.run("send-keys", "-t", pane, "-l", "__GANG__ "+strings.Join(args, " ")); err != nil {
+			t.Fatalf("enter pane command: %v\n%s", err, output)
+		}
+		if output, err := runner.run("send-keys", "-t", pane, "Enter"); err != nil {
+			t.Fatalf("submit pane command: %v\n%s", err, output)
+		}
+		ready := make(chan error, 1)
+		go func() {
+			got, err := os.ReadFile(paneReady)
+			if err == nil && string(got) != "x" {
+				err = fmt.Errorf("pane ready pipe=%q", got)
+			}
+			ready <- err
+		}()
+		// A command that ends the pane's own agent never reports; the bound
+		// turns that into a failure instead of a suite that never ends.
+		select {
+		case err := <-ready:
+			if err != nil {
+				t.Fatal(err)
+			}
+		case <-time.After(time.Minute):
+			panes, _ := runner.run("list-panes", "-a", "-F", "#{pane_id}")
+			t.Fatalf("gang %v in pane %s gave no result; live panes: %q", args, pane, panes)
+		}
+		output, err := os.ReadFile(filepath.Join(root, "pane-result"))
+		if err != nil {
+			t.Fatal(err)
+		}
+		var r result
+		if _, err := fmt.Sscanf(string(output), "status=%d\n", &r.status); err != nil {
+			t.Fatalf("pane result %q: %v", output, err)
+		}
+		_, r.out, _ = strings.Cut(string(output), "\n")
+		return r
 	}
-	if output, err := runner.run("send-keys", "-t", worker.Pane, "Enter"); err != nil {
-		t.Fatalf("submit worker command: %v\n%s", err, output)
-	}
-	if got, err := os.ReadFile(hitchReady); err != nil || string(got) != "x" {
-		t.Fatalf("worker ready pipe=%q: %v", got, err)
-	}
-	hitchResult, err := os.ReadFile(filepath.Join(root, "hitch-result"))
-	if err != nil || !strings.HasPrefix(string(hitchResult), "status=0\n") {
-		t.Fatalf("worker hitch result=%q: %v", hitchResult, err)
+	if r := runInPane(worker.Pane, "hitch", "second"); r.status != 0 {
+		t.Fatalf("worker hitch status=%d\n%s", r.status, r.out)
 	}
 	sid, err := team.ResolveName("second")
 	if err != nil {
@@ -165,6 +195,26 @@ func TestCommandLifecycleOnPrivateTmux(t *testing.T) {
 	second, err := sp.Read()
 	if err != nil {
 		t.Fatal(err)
+	}
+	if second.HitchedBy != worker.ID || worker.HitchedBy != "" {
+		t.Fatalf("hitchers: second=%q worker=%q, want %q and none", second.HitchedBy, worker.HitchedBy, worker.ID)
+	}
+	// An agent's shell carries its team, so these would end teammates it did
+	// not start.
+	for _, refused := range []struct {
+		args []string
+		text string
+	}{
+		{[]string{"down", "--yes"}, "down refused"},
+		{[]string{"drop", "worker"}, "worker records no hitcher, so only the lead may drop it"},
+		{[]string{"curfew", "1h"}, "curfew refused"},
+	} {
+		if r := runInPane(second.Pane, refused.args...); r.status != 3 || !strings.Contains(r.out, refused.text) {
+			t.Fatalf("gang %v from second's pane: status=%d\n%s", refused.args, r.status, r.out)
+		}
+	}
+	if agents, err := team.ListAgents(); err != nil || len(agents) != 2 {
+		t.Fatalf("refused commands changed the team: %+v %v", agents, err)
 	}
 	received, err = os.ReadFile(filepath.Join(root, "received"))
 	if err != nil {

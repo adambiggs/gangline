@@ -449,8 +449,10 @@ func runCommandHarness() int {
 			}
 			continue
 		}
-		if input.String() == "__GANG_HITCH_SECOND__" {
-			command := exec.Command(os.Getenv("GANGLINE_ACCEPTANCE_GANG"), "hitch", "second")
+		// A gang command typed into the pane runs with the pane's environment,
+		// as a native CLI's shell tool would.
+		if arguments, ok := strings.CutPrefix(input.String(), "__GANG__ "); ok {
+			command := exec.Command(os.Getenv("GANGLINE_ACCEPTANCE_GANG"), strings.Fields(arguments)...)
 			output, err := command.CombinedOutput()
 			status := 0
 			if err != nil {
@@ -461,11 +463,11 @@ func runCommandHarness() int {
 					status = -1
 				}
 			}
-			if err := os.WriteFile(os.Getenv("GANGLINE_ACCEPTANCE_HITCH_RESULT"), []byte(fmt.Sprintf("status=%d\n%s", status, output)), 0o600); err != nil {
+			if err := os.WriteFile(os.Getenv("GANGLINE_ACCEPTANCE_PANE_RESULT"), []byte(fmt.Sprintf("status=%d\n%s", status, output)), 0o600); err != nil {
 				fmt.Fprintln(os.Stderr, err)
 				return 1
 			}
-			ready, err := os.OpenFile(os.Getenv("GANGLINE_ACCEPTANCE_HITCH_READY"), os.O_WRONLY, 0)
+			ready, err := os.OpenFile(os.Getenv("GANGLINE_ACCEPTANCE_PANE_READY"), os.O_WRONLY, 0)
 			if err != nil {
 				fmt.Fprintln(os.Stderr, err)
 				return 1

@@ -56,6 +56,15 @@ returns, so an answer that ends the native CLI fails the agent at the next
 tick or roster with its last lines and exit status, and the pane stays until
 `drop`.
 `drop` reports an observed native resume session, or says it is unknown.
+
+A command run from an agent's pane, including any script its native CLI
+starts, carries that agent's identity and team. Within that team, `down` and
+a change to `curfew` are refused unless the caller is the lead, and `drop
+NAME` is refused unless the caller is the lead or the agent that hitched
+`NAME`; an agent with no recorded hitcher is the lead's to drop. The operator
+outside any agent pane is not restricted. A hitch run from an agent's pane
+records that agent as the hitcher.
+
 When Codex asks to trust a hitch directory, startup stays queued. After
 choosing the native trust option, run `gang tick` to deliver the retained
 contract and assignment.

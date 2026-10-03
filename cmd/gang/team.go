@@ -86,6 +86,9 @@ func (cmd command) down(args []string) error {
 	if err != nil {
 		return err
 	}
+	if err := run.refuseTeamWide("down"); err != nil {
+		return err
+	}
 	lock, err := run.lockTeam()
 	if err != nil {
 		return err
@@ -158,6 +161,9 @@ func (cmd command) curfew(args []string) error {
 		} else {
 			_, err = fmt.Fprintln(cmd.stdout, team.Curfew.Format(time.RFC3339))
 		}
+		return err
+	}
+	if err := run.refuseTeamWide("curfew"); err != nil {
 		return err
 	}
 	event := core.Event{Type: "curfew_set", At: cmd.now()}

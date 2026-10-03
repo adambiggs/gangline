@@ -38,6 +38,7 @@ type Agent struct {
 	Name              AgentName         `json:"name"`
 	Collar            string            `json:"collar"`
 	Role              string            `json:"role,omitempty"`
+	HitchedBy         HitchID           `json:"hitched_by,omitempty"`
 	Directory         string            `json:"directory"`
 	Pane              string            `json:"pane,omitempty"`
 	Status            Status            `json:"status"`

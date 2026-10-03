@@ -108,6 +108,7 @@ func (cmd command) hitchWithStaleClaim(args []string, supersede bool) (result er
 	if err != nil {
 		return err
 	}
+	hitcher := sender.HitchID
 	if sender.Kind == "" {
 		sender = core.Sender{Kind: core.SenderGangline, Name: "hitch"}
 	}
@@ -119,7 +120,7 @@ func (cmd command) hitchWithStaleClaim(args []string, supersede bool) (result er
 		sender = core.Sender{Kind: core.SenderGangline, Name: "startup"}
 	}
 	now := cmd.now()
-	a := core.Agent{ID: core.HitchID(id), Name: core.AgentName(o.Name), Collar: o.Collar, Role: o.Role, Directory: dir, Status: core.Starting, Activity: core.Unknown, CreatedAt: now, ChangedAt: now, BootDeadline: now.Add(bootTimeout)}
+	a := core.Agent{ID: core.HitchID(id), Name: core.AgentName(o.Name), Collar: o.Collar, Role: o.Role, HitchedBy: hitcher, Directory: dir, Status: core.Starting, Activity: core.Unknown, CreatedAt: now, ChangedAt: now, BootDeadline: now.Add(bootTimeout)}
 	a.Native.SessionID = o.Resume
 	e := core.Envelope{ID: core.EnvelopeID(eid), Token: token, Recipient: a.ID, To: a.Name, From: sender, Purpose: purpose, Message: core.Message{Text: message}, CreatedAt: now}
 	if c.Options.RolePrompt == nil {
@@ -659,7 +660,8 @@ func (cmd command) drop(args []string) error {
 	if err != nil {
 		return err
 	}
-	if _, err := p.Read(); errors.Is(err, os.ErrNotExist) {
+	target, err := p.Read()
+	if errors.Is(err, os.ErrNotExist) {
 		if err := run.team.RemoveName(core.AgentName(name), id); err != nil {
 			return err
 		}
@@ -669,6 +671,9 @@ func (cmd command) drop(args []string) error {
 		_, err := fmt.Fprintf(cmd.stdout, "%s registration removed; native state missing; resume session: unknown\n", name)
 		return err
 	} else if err != nil {
+		return err
+	}
+	if err := run.refuseDrop(target); err != nil {
 		return err
 	}
 	return run.drop(id)
