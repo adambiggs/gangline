@@ -50,6 +50,8 @@ type command struct {
 	lookupEnv     func(string) (string, bool)
 	getwd         func() (string, error)
 	userHomeDir   func() (string, error)
+	lockClock     func() time.Time
+	lockWait      func(time.Duration)
 	clock         func() time.Time
 	newWatch      func(string) (changeWait, error)
 	newTimeout    func(context.Context, time.Duration) (context.Context, context.CancelFunc)

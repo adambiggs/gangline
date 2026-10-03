@@ -163,7 +163,11 @@ func (cmd command) send(args []string) (result error) {
 	}
 	var l *store.LockedAgent
 	if o.Supersede || o.Clear || o.LiveOnly {
-		l, a, err = run.acquire(a.ID, false)
+		if (o.Clear || o.Supersede) && !o.LiveOnly {
+			l, a, err = run.acquireBounded(a.ID)
+		} else {
+			l, a, err = run.acquire(a.ID, false)
+		}
 		if errors.Is(err, store.ErrLocked) {
 			return refuseError("recipient is busy with an input operation; retry")
 		}
@@ -173,6 +177,16 @@ func (cmd command) send(args []string) (result error) {
 		defer func() { result = errors.Join(result, run.release(l)) }()
 	}
 	if o.Supersede || o.Clear {
+		if a.Status != core.Active && a.Status != core.Booting {
+			return inactiveRecipient(a)
+		}
+		_, failedStartup, err := retainedStartup(l.Paths, "failed", a.LastFailed)
+		if err != nil {
+			return err
+		}
+		if failedStartup && !o.Clear {
+			return refuseError("startup contract input is unverified; inspect the recipient and run gang hitch %s --recover before sending another message", a.Name)
+		}
 		removed, err := l.ClearScheduled(sender)
 		if err != nil {
 			return err
@@ -536,7 +550,7 @@ func (cmd command) compact(args []string) (result error) {
 		return err
 	}
 	name := a.Name
-	l, a, err := run.acquire(a.ID, false)
+	l, a, err := run.acquireBounded(a.ID)
 	if errors.Is(err, store.ErrLocked) {
 		retry := "gang compact " + name
 		if o.Recover {

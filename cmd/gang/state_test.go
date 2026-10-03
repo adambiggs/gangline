@@ -172,6 +172,9 @@ func newStateFixture(t *testing.T) *stateFixture {
 	env := map[string]string{"GANG_STATE_ROOT": root, "GANG_CONFIG_DIR": filepath.Join(root, "config"), "GANG_SESSION": "unit", "GANG_AGENT_NONCE": "fixture-nonce"}
 	backend := &inputFixture{screen: screenWithText("READY", "› "), command: "codex"}
 	cmd := command{newScheduler: func() watchdogScheduler { return nil }, stdin: strings.NewReader(""), stdout: out, stderr: errOut, getenv: func(k string) string { return env[k] }, getwd: func() (string, error) { return root, nil }, userHomeDir: func() (string, error) { return root, nil }, clock: func() time.Time { return time.Date(2026, 9, 22, 10, 0, 0, 0, time.UTC) }, paneBackend: backend, inputBackend: backend, settleInput: func(context.Context, harnessInput, substrate.PaneID, harness.Collar, time.Duration) error { return nil }, detach: func(string, hookNotice) error { return nil }}
+	lockNow := cmd.now()
+	cmd.lockClock = func() time.Time { return lockNow }
+	cmd.lockWait = func(d time.Duration) { lockNow = lockNow.Add(d) }
 	cmd.awaitStartup = func(_ context.Context, _ substrate.PaneID, c harness.Collar) (harness.Startup, substrate.Screen, error) {
 		startup, err := harness.InspectStartup(c, backend.screen)
 		return startup, backend.screen, err

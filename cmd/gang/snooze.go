@@ -136,7 +136,7 @@ func (run *runtime) withQueuedWake(recipient func(*usageState) core.HitchID, cha
 		if _, err := os.Stat(p.State); err != nil && !errors.Is(err, os.ErrNotExist) {
 			return err
 		} else if err == nil {
-			l, a, err = run.acquire(id, false)
+			l, a, err = run.acquireBounded(id)
 			if errors.Is(err, store.ErrLocked) {
 				return refuseError("wake recipient is busy with an input operation; retry")
 			}

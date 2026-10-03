@@ -144,16 +144,50 @@ func (run *runtime) resolve(name string) (core.Agent, error) {
 	return a, nil
 }
 func (run *runtime) acquire(id core.HitchID, wait bool) (*store.LockedAgent, core.Agent, error) {
+	return run.acquireAgent(id, func(p store.AgentPaths) (*store.LockedAgent, error) {
+		if wait {
+			return p.LockAgent()
+		}
+		return p.TryLock()
+	})
+}
+
+const agentLockBudget = 500 * time.Millisecond
+
+// acquireBounded retries only flock. Reconciliation and command preconditions
+// run once, after the same hitch's lock is held.
+func (run *runtime) acquireBounded(id core.HitchID) (*store.LockedAgent, core.Agent, error) {
+	clock, pause := run.cmd.lockClock, run.cmd.lockWait
+	if clock == nil {
+		clock = time.Now
+	}
+	if pause == nil {
+		pause = time.Sleep
+	}
+	return run.acquireAgent(id, func(p store.AgentPaths) (*store.LockedAgent, error) {
+		deadline := clock().Add(agentLockBudget)
+		delay := 10 * time.Millisecond
+		for {
+			l, err := p.TryLock()
+			if !errors.Is(err, store.ErrLocked) {
+				return l, err
+			}
+			remaining := deadline.Sub(clock())
+			if remaining <= 0 {
+				return nil, err
+			}
+			pause(min(delay, remaining))
+			delay = min(delay*2, 100*time.Millisecond)
+		}
+	})
+}
+
+func (run *runtime) acquireAgent(id core.HitchID, lock func(store.AgentPaths) (*store.LockedAgent, error)) (*store.LockedAgent, core.Agent, error) {
 	p, err := run.team.Agent(id)
 	if err != nil {
 		return nil, core.Agent{}, err
 	}
-	var l *store.LockedAgent
-	if wait {
-		l, err = p.LockAgent()
-	} else {
-		l, err = p.TryLock()
-	}
+	l, err := lock(p)
 	if err != nil {
 		return nil, core.Agent{}, err
 	}
