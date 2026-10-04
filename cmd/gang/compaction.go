@@ -202,7 +202,7 @@ func (run *runtime) queueCompactionResume(l *store.LockedAgent, a *core.Agent, b
 	defer cancel()
 	window, cancelWindow := run.cmd.timeout(compactStartWindow)
 	defer cancelWindow()
-	screen, err := awaitCompactionComposer(ctx, window, b, pane, c, compactText)
+	screen, err := awaitCompactionComposer(ctx, window, b, pane, c, compactText, a.Compaction.RefusalBefore)
 	if err != nil {
 		return err
 	}
@@ -267,17 +267,26 @@ const compactStartWindow = 2 * time.Second
 // looks idle, or still be running its pre-compaction hooks.
 var errCompactionNotStarted = errors.New("compact command left the composer but no compaction showed")
 
+var errCompactionRefused = errors.New("native compaction refused")
+
 // awaitCompactionComposer waits until the compact command has left the
 // composer and, for a collar that can show a compaction running, the pane
-// shows one or a native task. An empty composer alone is not evidence that the
+// shows one. A busy native task or empty composer alone is not evidence that the
 // command started anything. Captures run under ctx; window ends the wait.
-func awaitCompactionComposer(ctx, window context.Context, b harnessInput, pane substrate.PaneID, c harness.Collar, compactText string) (substrate.Screen, error) {
+func awaitCompactionComposer(ctx, window context.Context, b harnessInput, pane substrate.PaneID, c harness.Collar, compactText string, refusalBefore int) (substrate.Screen, error) {
 	ticker := time.NewTicker(25 * time.Millisecond)
 	defer ticker.Stop()
 	for {
 		screen, err := b.Capture(ctx, pane)
 		if err != nil {
 			return substrate.Screen{}, err
+		}
+		refusals, err := harness.ActionRefusals(c.Actions.Compact, screen)
+		if err != nil {
+			return substrate.Screen{}, err
+		}
+		if len(refusals) > refusalBefore {
+			return substrate.Screen{}, fmt.Errorf("%w: %s", errCompactionRefused, strings.TrimSpace(refusals[len(refusals)-1]))
 		}
 		if blocker, blocked, err := harness.InputBlocked(c, screen); err != nil {
 			return substrate.Screen{}, err
@@ -293,7 +302,7 @@ func awaitCompactionComposer(ctx, window context.Context, b harnessInput, pane s
 			return substrate.Screen{}, fmt.Errorf("native composer occupied before continuation input; resume retained")
 		}
 		if left {
-			started, err := compactionShown(c, screen)
+			started, err := harness.CompactionActive(c, screen)
 			if err != nil {
 				return substrate.Screen{}, err
 			}

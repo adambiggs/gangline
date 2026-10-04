@@ -1,0 +1,2 @@
+◦ Compacting context (13s • esc to interrupt)
+  └ Making room to continue.

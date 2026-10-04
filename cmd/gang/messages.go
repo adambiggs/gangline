@@ -706,6 +706,15 @@ func (run *runtime) startCompaction(l *store.LockedAgent, a *core.Agent) (result
 		return err
 	}
 	b = run.registeredInput(*a, b)
+	// A quiet composer can appear before the native turn's final boundary.
+	// Compaction must wait for that boundary rather than racing the reply.
+	if a.Native.TurnFailure == "" && a.Native.SubmittedAt.After(a.Native.FinishedAt) {
+		const reason = "waiting for native turn completion"
+		if a.Compaction.Reason != reason {
+			return run.apply(l, a, core.Event{Type: "compaction_waiting", ID: a.Compaction.ID, Reason: reason})
+		}
+		return nil
+	}
 	ctx, cancel := run.cmd.timeout(operationTimeout)
 	defer cancel()
 	pane := substrate.PaneID(a.Pane)
@@ -831,7 +840,9 @@ func (run *runtime) startCompaction(l *store.LockedAgent, a *core.Agent) (result
 	if err := run.apply(l, a, core.Event{Type: "compaction_submitted", ID: a.Compaction.ID}); err != nil {
 		return err
 	}
-	if err := run.queueCompactionResume(l, a, b, c, action.Text); errors.Is(err, errCompactionNotStarted) {
+	if err := run.queueCompactionResume(l, a, b, c, action.Text); errors.Is(err, errCompactionRefused) {
+		return run.failCompaction(l, a, compactionNotRun, err.Error()+"; resume withheld")
+	} else if errors.Is(err, errCompactionNotStarted) {
 		return run.failCompaction(l, a, compactionMayHaveRun, err.Error()+"; resume withheld")
 	} else if err != nil {
 		return run.failCompaction(l, a, compactionMayHaveRun, "resume submission failed; continuation withheld: "+err.Error())

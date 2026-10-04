@@ -92,11 +92,14 @@ reset crossings. A lower reading or model change permits later crossings.
 After a notice and completed compaction, the next reading establishes a new
 baseline.
 
-Compaction waits for freshly observed native idle. Gangline submits the resume
+Compaction waits for freshly observed native idle and a recorded finish for
+any witnessed native turn. Gangline submits the resume
 to the native queue as compaction starts, ahead of later input. If native work
 restarts before the compaction submit key, a collar's `compact_defer_clear`
 action withdraws the exact staged command and retains the request and resume
-for the next idle boundary. A changed composer is left untouched.
+for the next idle boundary. A changed composer is left untouched. A collar's
+compaction spinner confirms the command started before Gangline submits the
+resume; a fresh refusal withholds it before it enters native pending input.
 A native completion hook records that compaction finished in the same native
 session.
 The submit hook admits the exact queued resume even if that evidence is still

@@ -247,7 +247,13 @@ func TestCompactRecoverReportsSurfaceAfterEscape(t *testing.T) {
 				if err != nil {
 					t.Fatal(err)
 				}
-				if got.Compaction.Status != "unverified" || !strings.Contains(got.Compaction.Reason, "Escape") || got.Input != nil || got.Activity != tc.activity {
+				wantActivity := tc.activity
+				// A visible compaction used to count only as busy; its dedicated
+				// active pattern now preserves the compaction activity.
+				if collar == "codex" && tc.surface == "busy" {
+					wantActivity = core.Compacting
+				}
+				if got.Compaction.Status != "unverified" || !strings.Contains(got.Compaction.Reason, "Escape") || got.Input != nil || got.Activity != wantActivity {
 					t.Fatalf("after recovery: compaction=%+v input=%+v activity=%s", got.Compaction, got.Input, got.Activity)
 				}
 			})

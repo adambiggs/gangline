@@ -98,10 +98,33 @@ func TestClaudeCompactionActiveMatchesOnlyTheLiveSpinner(t *testing.T) {
 		t.Fatal(err)
 	}
 	if active, err := CompactionActive(codex, fixtureScreen(t, "claude-code-2.1.287-compacting.txt")); err != nil || active {
-		t.Fatalf("collar without an active pattern: active=%v err=%v", active, err)
+		t.Fatalf("other compaction spinner: active=%v err=%v", active, err)
 	}
 	collar.Actions.Compact.Active = "("
 	if err := validateCollar(collar); err == nil {
 		t.Fatal("invalid compact active pattern accepted")
+	}
+}
+
+func TestCodexCompactionActiveRequiresTheCompactionSpinner(t *testing.T) {
+	c, err := EmbeddedCollar("codex")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if active, err := CompactionActive(c, fixtureScreen(t, "codex-compacting.txt")); err != nil || !active {
+		t.Fatalf("captured compaction: active=%v err=%v", active, err)
+	}
+	if active, err := CompactionActive(c, testScreen(testCells("◦ Compacting context (1m 5s • esc to interrupt)", false))); err != nil || !active {
+		t.Fatalf("longer compaction: active=%v err=%v", active, err)
+	}
+	for _, line := range []string{
+		"Working (12s • esc to interrupt)",
+		"• Context compacted · 23s",
+		"› ◦ Compacting context (13s • esc to interrupt)",
+		"  ◦ Compacting context was quoted here",
+	} {
+		if active, err := CompactionActive(c, testScreen(testCells(line, false))); err != nil || active {
+			t.Fatalf("ordinary screen %q: active=%v err=%v", line, active, err)
+		}
 	}
 }

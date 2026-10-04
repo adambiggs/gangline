@@ -56,6 +56,7 @@ func TestRepaintDeliveryAllowsQueuedCompactionAndMessages(t *testing.T) {
 			prompts = append(prompts, prompt)
 			f.input.screen = screenWithText("› ")
 			if prompt == "/compact" {
+				f.input.screen = screenWithText("◦ Compacting context (0s • esc to interrupt)", "› ")
 				return nil
 			}
 			return p.WriteWitness(store.Witness{ID: fmt.Sprint(len(prompts)), At: f.cmd.now(), Prompt: prompt, SessionID: "s"})

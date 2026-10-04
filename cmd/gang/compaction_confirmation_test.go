@@ -194,6 +194,13 @@ func TestCompactionSurfacesNativeRefusalWithoutResume(t *testing.T) {
 	for _, delayed := range []bool{false, true} {
 		t.Run(map[bool]string{false: "immediate", true: "later tick"}[delayed], func(t *testing.T) {
 			f, a, p := compactionFixture(t)
+			f.cmd.newTimeout = func(ctx context.Context, d time.Duration) (context.Context, context.CancelFunc) {
+				window, cancel := context.WithCancel(ctx)
+				if d == compactStartWindow {
+					cancel()
+				}
+				return window, cancel
+			}
 			refusal := "'/compact' is disabled while a task is in progress."
 			submit := f.input.submit
 			f.input.submit = func(prompt string) error {
@@ -224,7 +231,9 @@ func TestCompactionSurfacesNativeRefusalWithoutResume(t *testing.T) {
 			}
 			// The command reports the refusal itself; a later tick reports it
 			// only through the queued notice.
-			dir, submits := "new", 2
+			// The old immediate-refusal guard allowed the resume submit before
+			// withholding it. Refusal must now stop that submit entirely.
+			dir, submits := "new", 1
 			if delayed {
 				dir, submits = "cur", 3
 			}

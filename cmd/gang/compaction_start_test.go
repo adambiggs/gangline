@@ -155,8 +155,7 @@ func TestCompactionResumeNeedsStartEvidence(t *testing.T) {
 }
 
 // echoCompactInput makes the fake pane show pasted compact input in its
-// composer, as both shipped harnesses do, and once the command is submitted
-// show a Claude compaction running, which the claude collar requires before
+// composer, and on submit show the corresponding compaction spinner before
 // the resume. A key hook the test installed earlier still runs after it.
 func echoCompactInput(f *stateFixture) {
 	next := f.input.onKeys
@@ -169,6 +168,8 @@ func echoCompactInput(f *stateFixture) {
 			f.input.screen = withComposerText(f.input.screen, "")
 			if f.input.command == "claude" {
 				f.input.screen.Rows = append(screenWithText("✻ Compacting conversation… (0s)").Rows, f.input.screen.Rows...)
+			} else {
+				f.input.screen.Rows = append(screenWithText("◦ Compacting context (0s • esc to interrupt)").Rows, f.input.screen.Rows...)
 			}
 		}
 		if next != nil {
