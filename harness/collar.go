@@ -92,11 +92,12 @@ type Primitives struct {
 }
 
 type Actions struct {
-	Interrupt      Action   `json:"interrupt"`
-	Compact        Action   `json:"compact"`
-	CompactRecover []Action `json:"compact_recover"`
-	CompactClear   *Action  `json:"compact_clear,omitempty"`
-	StartupReplace *Action  `json:"startup_replace,omitempty"`
+	Interrupt         Action   `json:"interrupt"`
+	Compact           Action   `json:"compact"`
+	CompactRecover    []Action `json:"compact_recover"`
+	CompactClear      *Action  `json:"compact_clear,omitempty"`
+	CompactDeferClear *Action  `json:"compact_defer_clear,omitempty"`
+	StartupReplace    *Action  `json:"startup_replace,omitempty"`
 }
 
 type Action struct {
@@ -383,6 +384,9 @@ func validateCollar(collar Collar) error {
 	}
 	if action := collar.Actions.CompactClear; action != nil && (len(action.Keys) == 0 || action.Text != "" || action.Submit) {
 		return fmt.Errorf("compact clear must declare keys without text or submit")
+	}
+	if action := collar.Actions.CompactDeferClear; action != nil && (len(action.Keys) == 0 || action.Text != "" || action.Submit) {
+		return fmt.Errorf("compact defer clear must declare keys without text or submit")
 	}
 	return nil
 }

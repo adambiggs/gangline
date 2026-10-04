@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -151,25 +152,41 @@ func TestCompactionRequiresFreshSameSessionCompletion(t *testing.T) {
 
 func TestCompactionRechecksBusyBeforeSubmit(t *testing.T) {
 	f, _, p := compactionFixture(t)
+	raced := false
 	f.cmd.settleInput = func(context.Context, harnessInput, substrate.PaneID, harness.Collar, time.Duration) error {
-		f.input.screen = screenWithText("Working (esc to interrupt)", "› /compact")
+		if !raced {
+			f.input.screen = screenWithText("Working (esc to interrupt)", "› /compact")
+			raced = true
+		}
 		return nil
 	}
-	var ce commandError
-	err := f.cmd.compact([]string{"worker"})
-	if !errors.As(err, &ce) || ce.status != exitNative || !strings.Contains(err.Error(), "became active") {
-		t.Fatalf("race not surfaced: %v", err)
+	next := f.input.onKeys
+	f.input.onKeys = func(k substrate.Keys) error {
+		if slices.Contains(k.Names, "C-u") {
+			f.input.screen = screenWithText("Working (esc to interrupt)", "› ")
+		}
+		return next(k)
+	}
+	if err := f.cmd.compact([]string{"worker", "--resume", "saved original note"}); err != nil {
+		t.Fatal(err)
 	}
 	a, err := p.Read()
 	if err != nil {
 		t.Fatal(err)
 	}
-	// Codex declares no clear keys, so the draft stays and the reason says so.
-	if f.input.submits != 0 || a.Compaction.Status != "failed" || a.Compaction.Continuation || a.Input != nil || !strings.Contains(a.Compaction.Reason, "still holds the unsubmitted input") {
-		t.Fatalf("unsafe submission: %+v submits=%d", a.Compaction, f.input.submits)
+	// Leaving the command staged stranded the resume and later messages. A
+	// busy recheck must withdraw that command and retain the original request.
+	if f.input.submits != 0 || !slices.Equal(f.input.keys, []string{"C-u"}) || a.Compaction.Status != "queued" || a.Compaction.Resume.Text != "saved original note" || a.Input != nil || a.Activity != core.Busy {
+		t.Fatalf("deferred compaction: %+v input=%+v activity=%s submits=%d keys=%v", a.Compaction, a.Input, a.Activity, f.input.submits, f.input.keys)
 	}
-	if notice := failureNotice(t, p, "new", a.Compaction.ID); !strings.Contains(notice.Message.Text, "Your context was not compacted") {
-		t.Fatalf("notice: %q", notice.Message.Text)
+	f.input.screen = screenWithText("› ")
+	f.run.cmd = f.cmd
+	if err := f.run.tickAgent(a.ID, hookNotice{Kind: "turn-finished", SessionID: "s", At: f.cmd.now()}, false); err != nil {
+		t.Fatal(err)
+	}
+	got, err := p.Read()
+	if err != nil || got.Compaction.Status != "submitted" || got.Compaction.ID != a.Compaction.ID || got.Compaction.Resume.Text != "saved original note" || f.input.submits != 2 {
+		t.Fatalf("retry: compaction=%+v submits=%d err=%v", got.Compaction, f.input.submits, err)
 	}
 }
 

@@ -101,6 +101,11 @@ contract and assignment.
 | `gang tick [--agent NAME\|HITCH_ID]` | Check deadlines, recover native failures, and drain due messages, for every agent or the one `--agent` names. |
 | `gang wait NAME [--timeout DURATION]` | Wait up to DURATION (default 30s) for a recorded idle boundary; a zero timeout checks once. |
 
+If native work starts after the idle check but before compaction submission,
+`actions.compact_defer_clear` withdraws the exact staged command and keeps its
+resume note queued for the next idle boundary. Gangline leaves changed input
+untouched and reports a withdrawal it cannot confirm as a failure.
+
 The resume note enters native input when compaction starts and runs when the
 harness takes it. Gangline admits that exact note once; until a completion hook
 confirms that compaction finished, the compaction stays unconfirmed.

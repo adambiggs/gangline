@@ -822,7 +822,7 @@ func (run *runtime) startCompaction(l *store.LockedAgent, a *core.Agent) (result
 	if busy, err := harness.Busy(c, screen); err != nil {
 		return err
 	} else if busy {
-		return run.abandonCompactDraft(ctx, l, a, b, c, composer.Text, compactionNotRun, "compaction not submitted: native task became active before compaction submit")
+		return run.deferCompactDraft(l, a, b, c, action.Text)
 	}
 	entered = true
 	if err := sendHarnessKeys(ctx, b, pane, c, substrate.Keys{Names: action.Keys, Submit: action.Submit}); err != nil {

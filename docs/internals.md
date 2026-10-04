@@ -93,8 +93,12 @@ After a notice and completed compaction, the next reading establishes a new
 baseline.
 
 Compaction waits for freshly observed native idle. Gangline submits the resume
-to the native queue as compaction starts, ahead of later input. A native
-completion hook records that compaction finished in the same native session.
+to the native queue as compaction starts, ahead of later input. If native work
+restarts before the compaction submit key, a collar's `compact_defer_clear`
+action withdraws the exact staged command and retains the request and resume
+for the next idle boundary. A changed composer is left untouched.
+A native completion hook records that compaction finished in the same native
+session.
 The submit hook admits the exact queued resume even if that evidence is still
 missing, so the continuation cannot be stranded. Missing completion remains
 unconfirmed. Refusal is failure. Uncertain native input is

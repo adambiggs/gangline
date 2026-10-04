@@ -425,6 +425,55 @@ func (run *runtime) notifyRequester(a core.Agent, phase compactionPhase, reason 
 	return nil
 }
 
+// deferCompactDraft withdraws an exact staged command when native work starts
+// after the idle check. The request and its resume remain queued for the next
+// idle boundary. A changed composer is left alone.
+func (run *runtime) deferCompactDraft(l *store.LockedAgent, a *core.Agent, b harnessInput, c harness.Collar, command string) error {
+	const reason = "compaction not submitted: native task became active before compaction submit"
+	ctx, cancel := run.cmd.timeout(compactAbortTimeout)
+	defer cancel()
+	if c.Actions.CompactDeferClear == nil {
+		return run.abandonCompactDraft(ctx, l, a, b, c, command, compactionNotRun, reason)
+	}
+	pane := substrate.PaneID(a.Pane)
+	screen, err := b.Capture(ctx, pane)
+	if err != nil {
+		return run.failCompaction(l, a, compactionNotRun, reason+"; composer unread: "+err.Error())
+	}
+	if _, blocked, err := harness.InputBlocked(c, screen); err != nil || blocked {
+		return run.failCompaction(l, a, compactionNotRun, reason+"; native input blocked; staged command left alone")
+	}
+	composer, err := harness.ReadComposer(c.Primitives.Composer, screen)
+	if err != nil || composer.TailOccupied || composer.Text != command {
+		return run.failCompaction(l, a, compactionNotRun, reason+"; staged command no longer identified in composer; input left alone")
+	}
+	if err := sendHarnessKeys(ctx, b, pane, c, c.Actions.CompactDeferClear.Input()); err != nil {
+		return run.failCompaction(l, a, compactionNotRun, reason+"; withdraw staged command: "+err.Error())
+	}
+	if run.cmd.settleInput != nil {
+		err = run.cmd.settleInput(ctx, b, pane, c, compactClearSettle)
+	} else {
+		err = awaitComposerChange(ctx, b, pane, c, composer.Text, compactClearSettle)
+	}
+	if err == nil {
+		screen, err = b.Capture(ctx, pane)
+	}
+	if err == nil {
+		composer, err = harness.ReadComposer(c.Primitives.Composer, screen)
+	}
+	if err != nil || composer.TailOccupied || composer.Text != "" {
+		return run.failCompaction(l, a, compactionNotRun, reason+"; staged command withdrawal unconfirmed; inspect the composer")
+	}
+	if err := run.apply(l, a, core.Event{Type: "input_finished", ID: a.Compaction.ID, Status: "withdrawn"}); err != nil {
+		return err
+	}
+	if err := run.apply(l, a, core.Event{Type: "compaction_waiting", ID: a.Compaction.ID, Reason: "staged command withdrawn; waiting for native idle"}); err != nil {
+		return err
+	}
+	_, err = run.observeScreen(l, a, c, screen)
+	return err
+}
+
 // abandonCompactDraft clears compact input that must not be submitted and
 // fails the compaction.
 func (run *runtime) abandonCompactDraft(ctx context.Context, l *store.LockedAgent, a *core.Agent, b harnessInput, c harness.Collar, draft string, phase compactionPhase, reason string) error {
