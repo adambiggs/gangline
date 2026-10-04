@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.15.10](https://github.com/adambiggs/gangline/compare/gangline-v1.15.9...gangline-v1.15.10) (2026-10-04)
+
+
+### Bug Fixes
+
+* **compact:** withdraw staged commands when native work restarts ([a39acbe](https://github.com/adambiggs/gangline/commit/a39acbe2c30a5ac4ec676e573e27208919bbf0bc))
+
 ## [1.15.9](https://github.com/adambiggs/gangline/compare/gangline-v1.15.8...gangline-v1.15.9) (2026-10-03)
 
 
