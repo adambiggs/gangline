@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.15.11](https://github.com/adambiggs/gangline/compare/gangline-v1.15.10...gangline-v1.15.11) (2026-10-04)
+
+
+### Bug Fixes
+
+* **compact:** wait for native completion before retrying ([c499e63](https://github.com/adambiggs/gangline/commit/c499e63924148aa61b258579d8b3cd47c556500a))
+
 ## [1.15.10](https://github.com/adambiggs/gangline/compare/gangline-v1.15.9...gangline-v1.15.10) (2026-10-04)
 
 
