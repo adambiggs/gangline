@@ -167,7 +167,7 @@ func TestStartupRechecksCurfewBeforeClaim(t *testing.T) {
 		now = deadline
 		return f.env["GANG_STATE_ROOT"], nil
 	}
-	requireRefused(t, f.cmd.execute([]string{"up"}), "gang curfew clear")
+	requireRefused(t, f.cmd.execute([]string{"up", "-c", "codex"}), "gang curfew clear")
 	agents, err := f.run.team.ListAgents()
 	if err != nil || len(agents) != 0 {
 		t.Fatalf("expired startup claimed an agent: %+v %v", agents, err)
