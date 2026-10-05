@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.15.12](https://github.com/adambiggs/gangline/compare/gangline-v1.15.11...gangline-v1.15.12) (2026-10-05)
+
+
+### Bug Fixes
+
+* refuse startup after expired team curfews ([2d76848](https://github.com/adambiggs/gangline/commit/2d768483d87097fd2d0aa854972c87ec2124d141))
+
 ## [1.15.11](https://github.com/adambiggs/gangline/compare/gangline-v1.15.10...gangline-v1.15.11) (2026-10-04)
 
 
