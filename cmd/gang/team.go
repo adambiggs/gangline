@@ -125,7 +125,7 @@ func (cmd command) down(args []string) (err error) {
 			err = errors.Join(err, run.team.Append(core.Event{Type: "down_failed", At: cmd.now(), Reason: err.Error()}))
 		}
 	}()
-	if err := cmd.eachDownAgent(agents, func(a core.Agent) error { return agentFailure(a.Name, run.dropAgent(a.ID, true)) }); err != nil {
+	if err := cmd.eachDownAgent(agents, func(a core.Agent) error { return agentFailure(a.Name, run.dropAgent(a.ID, true, "")) }); err != nil {
 		return err
 	}
 	if err := run.disarmEmptyWatchdog(); err != nil {
@@ -236,6 +236,20 @@ func (cmd command) curfew(args []string) error {
 		return err
 	}
 	return run.team.Append(event)
+}
+
+func (run *runtime) refusePassedCurfew() error {
+	team, err := run.team.ReadTeam()
+	if errors.Is(err, os.ErrNotExist) {
+		return nil
+	}
+	if err != nil {
+		return err
+	}
+	if !team.Curfew.IsZero() && !run.cmd.now().Before(team.Curfew) {
+		return refuseError("team %q curfew %s has passed; clear it with 'gang curfew clear' or set a future deadline before starting agents", run.settings.Session, team.Curfew.Format(time.RFC3339))
+	}
+	return nil
 }
 func (cmd command) whoami(args []string) error {
 	if err := noArguments(args, "whoami"); err != nil {

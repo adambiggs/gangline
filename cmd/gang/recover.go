@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"os"
+	"time"
 
 	"github.com/adambiggs/gangline/core"
 	"github.com/adambiggs/gangline/harness"
@@ -37,7 +38,7 @@ func (run *runtime) tickAgent(id core.HitchID, notice hookNotice, wait bool) (re
 		if team.Curfew.IsZero() || run.cmd.now().Before(team.Curfew) {
 			return nil
 		}
-		return run.dropWithLock(id, wait)
+		return run.dropWithLock(id, wait, fmt.Sprintf("team curfew %s has passed", team.Curfew.Format(time.RFC3339)))
 	}
 	l, a, err := run.acquire(id, wait)
 	if errors.Is(err, store.ErrLocked) || errors.Is(err, os.ErrNotExist) {

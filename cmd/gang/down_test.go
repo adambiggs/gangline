@@ -163,6 +163,12 @@ func TestDownRefusesRegistrationWhileConfirming(t *testing.T) {
 		if err := f.run.tickAgent("a", hookNotice{}, false); err != nil {
 			t.Fatalf("curfew tick during confirmation: %v", err)
 		}
+		// Expiry refuses hitch independently; clear it so the following
+		// operations exercise the confirmation's team lock.
+		team.Curfew = time.Time{}
+		if err := f.run.team.WriteTeam(team); err != nil {
+			t.Fatal(err)
+		}
 		for _, operation := range []func() error{
 			func() error { return f.cmd.hitch([]string{"late"}) },
 			func() error { return f.cmd.drop([]string{"worker"}) },

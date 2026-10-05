@@ -30,6 +30,9 @@ func (cmd command) hitchWithStaleClaim(args []string, supersede bool) (result er
 	if err != nil {
 		return err
 	}
+	if err := run.refusePassedCurfew(); err != nil {
+		return err
+	}
 	dir, err := cmd.getwd()
 	if err != nil {
 		return err
@@ -168,6 +171,9 @@ func (cmd command) hitchWithStaleClaim(args []string, supersede bool) (result er
 	}
 	defer lock.Close()
 	if err := run.team.Create(); err != nil {
+		return err
+	}
+	if err := run.refusePassedCurfew(); err != nil {
 		return err
 	}
 	b, err := cmd.tmux(run.settings)
@@ -687,15 +693,15 @@ func (cmd command) drop(args []string) error {
 	return run.drop(id)
 }
 func (run *runtime) drop(id core.HitchID) error {
-	return run.dropWithLock(id, true)
+	return run.dropWithLock(id, true, "")
 }
-func (run *runtime) dropWithLock(id core.HitchID, wait bool) error {
-	if err := run.dropAgent(id, wait); err != nil {
+func (run *runtime) dropWithLock(id core.HitchID, wait bool, reason string) error {
+	if err := run.dropAgent(id, wait, reason); err != nil {
 		return err
 	}
 	return run.disarmEmptyWatchdog()
 }
-func (run *runtime) dropAgent(id core.HitchID, wait bool) error {
+func (run *runtime) dropAgent(id core.HitchID, wait bool, reason string) error {
 	p, err := run.team.Agent(id)
 	if err != nil {
 		return err
@@ -834,7 +840,7 @@ func (run *runtime) dropAgent(id core.HitchID, wait bool) error {
 			return err
 		}
 	}
-	if err := run.apply(l, &a, core.Event{Type: "drop_started"}); err != nil {
+	if err := run.apply(l, &a, core.Event{Type: "drop_started", Reason: reason}); err != nil {
 		return err
 	}
 	pending, err := l.SealInbox()
@@ -882,7 +888,11 @@ func (run *runtime) dropAgent(id core.HitchID, wait bool) error {
 	if err := run.team.RemoveName(a.Name, a.ID); err != nil {
 		return err
 	}
-	_, err = fmt.Fprintf(run.cmd.stdout, "%s dropped; resume session: %s\n", a.Name, session)
+	if reason != "" {
+		_, err = fmt.Fprintf(run.cmd.stdout, "%s dropped: %s; resume session: %s\n", a.Name, reason, session)
+	} else {
+		_, err = fmt.Fprintf(run.cmd.stdout, "%s dropped; resume session: %s\n", a.Name, session)
+	}
 	return err
 }
 

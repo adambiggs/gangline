@@ -101,6 +101,12 @@ contract and assignment.
 | `gang tick [--agent NAME\|HITCH_ID]` | Check deadlines, recover native failures, and drain due messages, for every agent or the one `--agent` names. |
 | `gang wait NAME [--timeout DURATION]` | Wait up to DURATION (default 30s) for a recorded idle boundary; a zero timeout checks once. |
 
+A curfew drops agents on ticks at or after the deadline. Drop output and the
+audit log name the passed curfew as the reason. The deadline remains set;
+`up` and `hitch` refuse to start agents until you run `gang curfew clear` or
+set a future deadline. `attach` explains the passed curfew when no session
+remains.
+
 If native work starts after the idle check but before compaction submission,
 `actions.compact_defer_clear` withdraws the exact staged command and keeps its
 resume note queued for the next idle boundary. Gangline leaves changed input
