@@ -1,5 +1,13 @@
 # Changelog
 
+## [1.15.13](https://github.com/adambiggs/gangline/compare/gangline-v1.15.12...gangline-v1.15.13) (2026-10-06)
+
+
+### Bug Fixes
+
+* **curfew:** report expired deadlines without stopping work ([c1a47c5](https://github.com/adambiggs/gangline/commit/c1a47c5c1f6898c704e889ce5072cd7cfa9e2c45))
+* **snooze:** identify manual wakes and clarify failure status ([46d67af](https://github.com/adambiggs/gangline/commit/46d67af954a6fffaddf622843433de1f8aa45177))
+
 ## [1.15.12](https://github.com/adambiggs/gangline/compare/gangline-v1.15.11...gangline-v1.15.12) (2026-10-05)
 
 
