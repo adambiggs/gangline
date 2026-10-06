@@ -181,17 +181,25 @@ func AnyPasteHazard(text string) (string, error) {
 	return "", nil
 }
 
-// SubmittedPromptStartsWith accepts a continuation followed by native-merged
-// steers. A newline is the boundary Codex inserts between submitted messages.
+// SubmittedPromptStartsWith compares the queued envelope alone. Bytes after
+// its closing tag are session keyboard input, including without a newline.
 func SubmittedPromptStartsWith(primitive Invocation, sent, witnessed string) (bool, error) {
-	matched, err := SubmittedPromptMatches(primitive, sent, witnessed)
-	if err != nil || matched {
-		return matched, err
-	}
+	matched, _, err := SubmittedEnvelopeMatches(primitive, sent, witnessed)
+	return matched, err
+}
+
+// SubmittedEnvelopeMatches also returns the bytes outside the queued envelope,
+// excluding native paste framing. The entire rendered envelope must match;
+// this includes all sections of a startup paste.
+func SubmittedEnvelopeMatches(primitive Invocation, sent, witnessed string) (bool, string, error) {
 	switch primitive.Name {
 	case "exact-prompt":
-		return strings.HasPrefix(witnessed, sent+"\n"), nil
+		rest, ok := strings.CutPrefix(witnessed, sent)
+		return ok, rest, nil
 	case "claude-pasted-content":
+		if rest, ok := consumePastedBody(witnessed, sent); ok {
+			return true, rest, nil
+		}
 		framed := witnessed
 		if strings.HasPrefix(framed, "\n\n") {
 			framed = strings.TrimPrefix(framed, "\n\n")
@@ -200,17 +208,26 @@ func SubmittedPromptStartsWith(primitive Invocation, sent, witnessed string) (bo
 		}
 		const prefix = "<pasted_content id=\""
 		if !strings.HasPrefix(framed, prefix) {
-			return false, nil
+			return false, "", nil
 		}
 		identifier, wrapped, found := strings.Cut(strings.TrimPrefix(framed, prefix), "\">\n")
 		if !found || identifier == "" || strings.ContainsAny(identifier, "\"\r\n<>") {
-			return false, nil
+			return false, "", nil
 		}
 		suffix := "\n</pasted_content id=\"" + identifier + "\">"
 		rest, ok := consumePastedBody(wrapped, sent)
-		return ok && strings.HasPrefix(rest, suffix+"\n"), nil
+		if !ok {
+			return false, "", nil
+		}
+		inside, after, closed := strings.Cut(rest, suffix)
+		if !closed {
+			return false, "", nil
+		}
+		// Claude's one trailing newline belongs to the paste wrapper.
+		after = strings.TrimPrefix(after, "\n")
+		return true, inside + after, nil
 	default:
-		return false, fmt.Errorf("unknown submit-witness primitive %q", primitive.Name)
+		return false, "", fmt.Errorf("unknown submit-witness primitive %q", primitive.Name)
 	}
 }
 

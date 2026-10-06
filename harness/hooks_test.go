@@ -148,7 +148,7 @@ func TestSubmittedPromptMatchRejectsChangedContentOrWrapper(t *testing.T) {
 	}
 }
 
-func TestSubmittedPromptStartsWithPreservesContinuationBoundary(t *testing.T) {
+func TestSubmittedPromptStartsWithPreservesEnvelopeBoundary(t *testing.T) {
 	sent := "[gang:compact#token resume] state [/gang:compact#token]"
 	for _, tc := range []struct {
 		name, witness string
@@ -156,9 +156,12 @@ func TestSubmittedPromptStartsWithPreservesContinuationBoundary(t *testing.T) {
 	}{
 		{"codex merged", sent + "\nlater input", true},
 		{"codex reordered", "later input\n" + sent, false},
-		{"codex altered", sent + " altered", false},
+		{"codex keyboard suffix", sent + " altered", true},
+		{"codex altered envelope", strings.Replace(sent, " state ", " changed ", 1) + "s", false},
+		{"claude unwrapped suffix", sent + "s", true},
+		{"claude altered envelope", strings.Replace(sent, " state ", " changed ", 1) + "s", false},
 		{"claude merged", "<pasted_content id=\"p\">\n" + sent + "\n</pasted_content id=\"p\">\nlater input", true},
-		{"claude altered", "<pasted_content id=\"p\">\n" + sent + " altered\n</pasted_content id=\"p\">\nlater input", false},
+		{"claude keyboard suffix", "<pasted_content id=\"p\">\n" + sent + " altered\n</pasted_content id=\"p\">\nlater input", true},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			primitive := Invocation{Name: "exact-prompt"}
@@ -168,6 +171,26 @@ func TestSubmittedPromptStartsWithPreservesContinuationBoundary(t *testing.T) {
 			got, err := SubmittedPromptStartsWith(primitive, sent, tc.witness)
 			if err != nil || got != tc.want {
 				t.Fatalf("got %v, %v; want %v", got, err, tc.want)
+			}
+		})
+	}
+}
+
+func TestSubmittedEnvelopeMatchesRecordsOutsideBytes(t *testing.T) {
+	sent := "[gang:compact#token resume] state [/gang:compact#token]"
+	for _, tc := range []struct {
+		name, primitive, prompt, outside string
+	}{
+		{"exact", "exact-prompt", sent, ""},
+		{"suffix", "exact-prompt", sent + "s\n\x00", "s\n\x00"},
+		{"bare paste", "claude-pasted-content", sent + "s", "s"},
+		{"wrapped paste", "claude-pasted-content", "\n\n<pasted_content id=\"p\">\n" + sent + "s\n</pasted_content id=\"p\">\nmore", "smore"},
+		{"empty wrapper suffix", "claude-pasted-content", "<pasted_content id=\"p\">\n" + sent + "\n</pasted_content id=\"p\">\n", ""},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			matched, outside, err := SubmittedEnvelopeMatches(Invocation{Name: tc.primitive}, sent, tc.prompt)
+			if err != nil || !matched || outside != tc.outside {
+				t.Fatalf("matched=%t outside=%q err=%v; want outside=%q", matched, outside, err, tc.outside)
 			}
 		})
 	}

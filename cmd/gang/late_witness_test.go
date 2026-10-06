@@ -12,7 +12,7 @@ import (
 )
 
 func TestLateSubmitWitnessReconcilesWithoutRetyping(t *testing.T) {
-	for _, kind := range []string{"exact", "accepted", "different text", "different session"} {
+	for _, kind := range []string{"exact", "suffix", "accepted", "different text", "different session"} {
 		t.Run(kind, func(t *testing.T) {
 			f := newStateFixture(t)
 			a := f.add(t, "a", "worker", "codex")
@@ -47,6 +47,9 @@ func TestLateSubmitWitnessReconcilesWithoutRetyping(t *testing.T) {
 				t.Fatal(err)
 			}
 			w := store.Witness{ID: "late-hook", SessionID: "s", Prompt: wire, At: f.cmd.now().Add(time.Hour)}
+			if kind == "suffix" {
+				w.Prompt += "s"
+			}
 			if kind == "different text" {
 				w.Prompt = "some other message"
 			}
@@ -62,7 +65,7 @@ func TestLateSubmitWitnessReconcilesWithoutRetyping(t *testing.T) {
 				t.Fatal(err)
 			}
 			l.Close()
-			if kind == "exact" || kind == "accepted" {
+			if kind == "exact" || kind == "suffix" || kind == "accepted" {
 				got, err := p.ReadEnvelope("cur", e.ID)
 				if err != nil {
 					t.Fatal(err)
@@ -76,8 +79,11 @@ func TestLateSubmitWitnessReconcilesWithoutRetyping(t *testing.T) {
 			// Only a sender that was told the message was unverified needs
 			// word that it was delivered after all.
 			switch kind {
-			case "exact":
-				deliveredNotice(t, f, lead, e.ID)
+			case "exact", "suffix":
+				note := deliveredNotice(t, f, lead, e.ID)
+				if kind == "suffix" && !strings.Contains(note.Message.Text, `session keyboard input outside gang envelope: "s"`) {
+					t.Fatalf("delivery note omitted outside bytes: %+v", note)
+				}
 			case "accepted":
 				requireNoNotices(t, f)
 			default:

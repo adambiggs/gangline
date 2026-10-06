@@ -490,6 +490,26 @@ func (run *runtime) recoverInput(l *store.LockedAgent, a *core.Agent) error {
 	return run.notifySender(*a, e, "unverified")
 }
 func (run *runtime) finishInput(l *store.LockedAgent, a *core.Agent, e core.Envelope, outcome, reason string, witnessed ...store.Witness) error {
+	if outcome == "delivered" && len(witnessed) > 0 && witnessed[0].Prompt != "" {
+		c, err := loadCollar(a.Collar, run.settings)
+		if err != nil {
+			return err
+		}
+		wire, err := envelopeText(e)
+		if err != nil {
+			return err
+		}
+		matched, outside, err := harness.SubmittedEnvelopeMatches(c.Primitives.SubmitWitness, wire, witnessed[0].Prompt)
+		if err != nil {
+			return err
+		}
+		if matched && outside != "" {
+			if reason != "" {
+				reason += "; "
+			}
+			reason += outsideEnvelopeObservation(outside)
+		}
+	}
 	if err := run.acknowledgeUsageDelivery(l, *a, e, outcome, witnessed...); err != nil {
 		return err
 	}
@@ -500,6 +520,10 @@ func (run *runtime) finishInput(l *store.LockedAgent, a *core.Agent, e core.Enve
 		return err
 	}
 	return run.apply(l, a, core.Event{Type: "input_finished", ID: string(e.ID), Status: outcome, Reason: reason})
+}
+
+func outsideEnvelopeObservation(outside string) string {
+	return fmt.Sprintf("session keyboard input outside gang envelope: %q", outside)
 }
 func (run *runtime) input() (harnessInput, error) {
 	if run.cmd.inputBackend != nil {

@@ -190,11 +190,16 @@ func (run *runtime) reconcileUsageSubmission(l *store.LockedAgent, a *core.Agent
 		if err != nil {
 			return err
 		}
-		matched, err := harness.SubmittedPromptStartsWith(c.Primitives.SubmitWitness, wire, w.Prompt)
+		matched, outside, err := harness.SubmittedEnvelopeMatches(c.Primitives.SubmitWitness, wire, w.Prompt)
 		if err != nil {
 			return err
 		}
 		if matched {
+			if outside != "" {
+				if err := run.record(*a, core.Event{Type: "native_hook", NativeEvent: "UserPromptSubmit", Status: "usage-submission", ID: string(n.ID), Reason: outsideEnvelopeObservation(outside)}); err != nil {
+					return err
+				}
+			}
 			state.Notices = append(state.Notices[:i], state.Notices[i+1:]...)
 			changed = true
 		}
@@ -208,12 +213,17 @@ func (run *runtime) reconcileUsageSubmission(l *store.LockedAgent, a *core.Agent
 		if err != nil {
 			return err
 		}
-		matched, err := harness.SubmittedPromptStartsWith(c.Primitives.SubmitWitness, wire, w.Prompt)
+		matched, outside, err := harness.SubmittedEnvelopeMatches(c.Primitives.SubmitWitness, wire, w.Prompt)
 		if err != nil {
 			return err
 		}
 		if !matched {
 			continue
+		}
+		if outside != "" {
+			if err := run.record(*a, core.Event{Type: "native_hook", NativeEvent: "UserPromptSubmit", Status: "usage-submission", ID: string(s.ID), Reason: outsideEnvelopeObservation(outside)}); err != nil {
+				return err
+			}
 		}
 		s.Submission, s.InputText = "", ""
 		s.TurnID, s.SubmittedAt = w.TurnID, w.At

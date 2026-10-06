@@ -202,7 +202,7 @@ func (run *runtime) recoverStartup(name string) (result error) {
 	}
 	if err == nil {
 		var matched bool
-		matched, err = harness.SubmittedPromptMatches(c.Primitives.SubmitWitness, wire, witness.Prompt)
+		matched, err = harness.SubmittedPromptStartsWith(c.Primitives.SubmitWitness, wire, witness.Prompt)
 		if err == nil && !matched {
 			err = fmt.Errorf("submit witness does not match the original startup message")
 		}
@@ -222,7 +222,7 @@ func (run *runtime) recoverStartup(name string) (result error) {
 		a.Native.TurnID = witness.TurnID
 		a.Native.Transcript = witness.Transcript
 	}
-	if err := run.finishInput(l, &a, e, outcome, reason); err != nil {
+	if err := run.finishInput(l, &a, e, outcome, reason, witness); err != nil {
 		return err
 	}
 	if outcome == "delivered" {

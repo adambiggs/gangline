@@ -350,7 +350,7 @@ func (run *runtime) deliver(l *store.LockedAgent, a *core.Agent, e core.Envelope
 	}
 	if err == nil && !accepted {
 		var matched bool
-		matched, err = harness.SubmittedPromptMatches(c.Primitives.SubmitWitness, wire, witness.Prompt)
+		matched, err = harness.SubmittedPromptStartsWith(c.Primitives.SubmitWitness, wire, witness.Prompt)
 		if err == nil && !matched {
 			if queue != nil {
 				var same bool
@@ -631,6 +631,13 @@ func (run *runtime) sendNotice(a core.Agent, e core.Envelope, outcome string) er
 		// holds "outcome-" for this message.
 		id = core.EnvelopeID("delivered-" + e.ID)
 		text += "is delivered: Gangline confirmed delivery after recording it unverified; do not send it again."
+		if receipt, err := run.team.Agent(a.ID); err != nil {
+			return err
+		} else if settled, err := receipt.ReadEnvelope("cur", e.ID); err != nil {
+			return err
+		} else if settled.Reason != "" {
+			text += " " + settled.Reason
+		}
 	case "unverified":
 		text += fmt.Sprintf("is unverified: Gangline could not confirm delivery and may still confirm it later. Inspect %s before sending again; gang log has the reason.", a.Name)
 	case "dropped":

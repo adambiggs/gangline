@@ -74,6 +74,19 @@ func (run *runtime) admitCompactionResume(id core.HitchID, c harness.Collar, pro
 		}
 		return reason, run.failCompaction(l, &a, phase, "resume note blocked: "+reason)
 	}
+	wire, err := envelopeText(core.Envelope{Token: a.Compaction.ResumeToken, From: a.Compaction.ResumeFrom, Message: a.Compaction.Resume, Purpose: "resume"})
+	if err != nil {
+		return "", err
+	}
+	_, outside, err := harness.SubmittedEnvelopeMatches(c.Primitives.SubmitWitness, wire, prompt)
+	if err != nil {
+		return "", err
+	}
+	if outside != "" {
+		if err := run.record(a, core.Event{Type: "native_hook", NativeEvent: "UserPromptSubmit", Status: "resume-admitted", Reason: outsideEnvelopeObservation(outside)}); err != nil {
+			return "", err
+		}
+	}
 	a.Compaction.ResumeAdmitted = true
 	if a.Compaction.Status == "submitted" && !a.Compaction.CompletedAt.After(a.Compaction.StartedAt) {
 		a.Compaction.Status = "unverified"
