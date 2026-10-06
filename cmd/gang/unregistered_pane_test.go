@@ -20,7 +20,14 @@ func TestHitchAllowsUnregisteredOperatorPane(t *testing.T) {
 			fakeCodexOnPath(t)
 			// The listener establishes that tmux's reported server PID is in
 			// this namespace. The test process supplies a real non-agent tree.
-			socket := filepath.Join(t.TempDir(), "s")
+			// macOS's temporary root plus t.TempDir's full test name can
+			// exceed the Unix socket address limit. Keep this component short.
+			root, err := os.MkdirTemp(os.TempDir(), "pane-")
+			if err != nil {
+				t.Fatal(err)
+			}
+			t.Cleanup(func() { os.RemoveAll(root) })
+			socket := filepath.Join(root, "s")
 			listener, err := net.Listen("unix", socket)
 			if err != nil {
 				t.Fatal(err)
