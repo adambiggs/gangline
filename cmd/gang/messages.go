@@ -279,7 +279,11 @@ func (cmd command) send(args []string) (result error) {
 		}
 	}
 	if postPublishErr != nil {
-		if _, err := fmt.Fprintf(cmd.stderr, "warning: message %s was retained with %s status; %s failed: %v; do not resend\n", e.ID, outcome, step, postPublishErr); err != nil {
+		warning := "; do not resend"
+		if outcome == "failed" {
+			warning = ""
+		}
+		if _, err := fmt.Fprintf(cmd.stderr, "warning: message %s was retained with %s status; %s failed: %v%s\n", e.ID, outcome, step, postPublishErr, warning); err != nil {
 			return err
 		}
 	}
