@@ -80,9 +80,9 @@ func TestCompactRecoverDoesNotReadAPaneWhoseIdAStaleRecordReuses(t *testing.T) {
 	f := newStateFixture(t)
 	reg, earlier := reusedPane(t, f)
 	a := f.add(t, "a", "worker", "codex")
-	f.input.screen = compactRecoverScreens(t, f, "codex").busy
+	f.input.screen = compactInterruptScreens(t, f, "codex").busy
 	before := saveRecoverCompaction(t, f, a, "submitted", staleOn(reg, earlier))
-	requireReplacedPaneRefusal(t, f.cmd.compact([]string{"worker", "--recover"}))
+	requireReplacedPaneRefusal(t, f.cmd.compact([]string{"worker", "--interrupt"}))
 	p, _ := f.run.team.Agent(a.ID)
 	after, err := p.Read()
 	if err != nil {
@@ -148,13 +148,13 @@ func TestOperatorReadsRefuseAnIncompleteRegistration(t *testing.T) {
 		name string
 		run  func(command) error
 	}{
-		{"compact recover", func(cmd command) error { return cmd.compact([]string{"worker", "--recover"}) }},
+		{"compact interrupt", func(cmd command) error { return cmd.compact([]string{"worker", "--interrupt"}) }},
 		{"capture", func(cmd command) error { return cmd.capture([]string{"worker"}) }},
 	} {
 		t.Run(c.name, func(t *testing.T) {
 			f := newStateFixture(t)
 			a := f.add(t, "a", "worker", "codex")
-			f.input.screen = compactRecoverScreens(t, f, "codex").busy
+			f.input.screen = compactInterruptScreens(t, f, "codex").busy
 			saveRecoverCompaction(t, f, a, "submitted", func(a *core.Agent) { a.Registration.Generation = "" })
 			err := c.run(f.cmd)
 			var ce commandError

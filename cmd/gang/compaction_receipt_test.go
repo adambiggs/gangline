@@ -90,7 +90,7 @@ func TestCompactRefusesALockedAgentWithItsRetry(t *testing.T) {
 	}{
 		{[]string{"worker"}, "gang compact worker"},
 		{[]string{"worker", "--resume", "continue"}, "gang compact worker --resume with the same note"},
-		{[]string{"worker", "--recover"}, "gang compact worker --recover"},
+		{[]string{"worker", "--interrupt"}, "gang compact worker --interrupt"},
 	} {
 		err = f.cmd.compact(c.args)
 		var ce commandError

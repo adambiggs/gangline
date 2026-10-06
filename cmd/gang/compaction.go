@@ -648,11 +648,11 @@ func classifyRecoverSurface(c harness.Collar, screen substrate.Screen) (recoverS
 	return recoverSurface{"busy", "native task still active"}, nil
 }
 
-// recoverCompaction interrupts a submitted or unverified compaction that the
+// interruptCompaction interrupts a submitted or unverified compaction that the
 // native harness still shows as running. It sends nothing unless the screen
 // is a recognized busy surface with an empty composer, and records every key
 // it sends as an unverified compaction before returning.
-func (run *runtime) recoverCompaction(l *store.LockedAgent, a *core.Agent, b harnessInput, c harness.Collar) (result error) {
+func (run *runtime) interruptCompaction(l *store.LockedAgent, a *core.Agent, b harnessInput, c harness.Collar) (result error) {
 	pending := a.Compaction
 	switch {
 	case pending == nil:

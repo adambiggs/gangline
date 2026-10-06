@@ -257,7 +257,7 @@ func TestCompactRefusedWhileUnverifiedCompactionHoldsItsNote(t *testing.T) {
 	f.input.screen = screenWithText("✻ Compacting conversation… (40s)", "────────", "❯ ", "────────")
 	var refused commandError
 	err := f.cmd.compact([]string{"worker", "--resume", "second"})
-	if !errors.As(err, &refused) || refused.status != exitRefused || !strings.Contains(err.Error(), "compaction c") || !strings.Contains(err.Error(), "--recover") {
+	if !errors.As(err, &refused) || refused.status != exitRefused || !strings.Contains(err.Error(), "compaction c") || !strings.Contains(err.Error(), "--interrupt") {
 		t.Fatalf("compact while the unverified compaction runs: %v", err)
 	}
 	if got := f.agent(t, a.ID); got.Compaction.ID != "c" || got.Compaction.Status != "unverified" {

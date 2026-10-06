@@ -96,7 +96,7 @@ contract and assignment.
 | `gang queue [NAME] [--json]` | List pending messages with ID, recipient, sender, kind, a text excerpt, and state: `ready`, `scheduled` with its due time, `blocked` with the reason, or `unknown` with the reason. |
 | `gang interrupt [NAME] [-m\|--message REASON]` | Interrupt the turn; deliver an optional reason after it stops. |
 | `gang compact [NAME] [--resume TEXT]` | Compact at native idle; submit the continuation behind compaction, ahead of later input. Refuses, asking for a retry, while another gang operation holds the agent. Refuses while startup input is unverified, or while the previous compaction's resume note waits in the harness, until it is admitted, until one operation's timeout after that compaction completed, or, for a compaction past its deadline, until the pane stops showing it; a queued compaction waits until startup input is verified (`gang hitch NAME --recover`). |
-| `gang compact NAME --recover` | Interrupt a submitted or unconfirmed compaction with the collar's recovery keys while the pane shows it running. Refuses without sending on an approval, trust, draft, idle, or unrecognized screen; when the resume note was never queued or the harness has taken it; and after an earlier recovery of the same compaction. Records the compaction as unconfirmed and reports the screen it left. |
+| `gang compact NAME --interrupt` | Interrupt a submitted or unconfirmed compaction with the collar's recovery keys while the pane shows it running. Refuses without sending on an approval, trust, draft, idle, or unrecognized screen; when the resume note was never queued or the harness has taken it; and after an earlier recovery of the same compaction. Records the compaction as unconfirmed and reports the screen it left. |
 | `gang curfew [DURATION\|HH:MM\|RFC3339\|clear]` | Show, set, or clear the team deadline. |
 | `gang tick [--agent NAME\|HITCH_ID]` | Check deadlines, recover native failures, and drain due messages, for every agent or the one `--agent` names. |
 | `gang wait NAME [--timeout DURATION]` | Wait up to DURATION (default 30s) for a recorded idle boundary; a zero timeout checks once. |
@@ -123,7 +123,7 @@ ahead of later messages. An altered or unknown continuation is withheld.
 
 While the collar's `actions.compact.active` pattern matches the pane, the agent
 reads as compacting: sends wait in Gangline's queue, a queued compaction waits,
-and `gang compact NAME --recover` treats the pane as running. A harness that
+and `gang compact NAME --interrupt` treats the pane as running. A harness that
 queues input typed during compaction witnesses it only when compaction ends,
 so a send typed then could not be confirmed. For such a collar the resume note
 also waits for the pattern, or a busy screen, after the compact Enter: a

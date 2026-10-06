@@ -22,11 +22,11 @@ func TestInactiveRefusalsNameARoute(t *testing.T) {
 		{"interrupt", func() error { return f.cmd.interrupt([]string{"worker"}) }},
 		{"compact", func() error { return f.cmd.compact([]string{"worker"}) }},
 		{"startup recovery", func() error { return f.run.recoverStartup("worker") }},
-		{"compact --recover", func() error {
+		{"compact --interrupt", func() error {
 			f.setAgent(t, a, func(a *core.Agent) {
 				a.Compaction = &core.Compaction{ID: "c", Status: "submitted", Continuation: true}
 			})
-			return f.cmd.compact([]string{"worker", "--recover"})
+			return f.cmd.compact([]string{"worker", "--interrupt"})
 		}},
 	} {
 		if err := test.call(); err == nil || err.Error() != want {

@@ -73,7 +73,7 @@ The resume note enters the harness's own input queue when compaction starts,
 so the harness runs it once compaction ends.
 `gang status worker --why` shows whether compaction is queued, completed,
 refused, or unconfirmed. If the pane still shows it running, inspect the pane
-before `gang compact worker --recover`, which interrupts it and records it as
+before `gang compact worker --interrupt`, which interrupts it and records it as
 unconfirmed. Recovery sends nothing when the pane shows an approval, a draft,
 or an idle composer. Interrupting can return the queued resume note to the
 composer, or the harness can submit it at once; either way the compaction may

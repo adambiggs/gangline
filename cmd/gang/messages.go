@@ -557,8 +557,8 @@ func (cmd command) compact(args []string) (result error) {
 	l, a, err := run.acquireBounded(a.ID)
 	if errors.Is(err, store.ErrLocked) {
 		retry := "gang compact " + name
-		if o.Recover {
-			retry += " --recover"
+		if o.Interrupt {
+			retry += " --interrupt"
 		} else if o.Resume != "" {
 			retry += " --resume with the same note"
 		}
@@ -577,8 +577,8 @@ func (cmd command) compact(args []string) (result error) {
 		return err
 	}
 	b = run.registeredInput(a, b)
-	if o.Recover {
-		return run.recoverCompaction(l, &a, b, c)
+	if o.Interrupt {
+		return run.interruptCompaction(l, &a, b, c)
 	}
 	if a.Status != core.Active {
 		return inactiveRecipient(a)
@@ -617,7 +617,7 @@ func (cmd command) compact(args []string) (result error) {
 			return err
 		}
 		if running {
-			return refuseError("compaction %s is unverified and the harness is still running it with the resume note queued; compact again once it finishes, or stop it with gang compact %s --recover", pending.ID, a.Name)
+			return refuseError("compaction %s is unverified and the harness is still running it with the resume note queued; compact again once it finishes, or stop it with gang compact %s --interrupt", pending.ID, a.Name)
 		}
 	}
 	requester, err := run.observedSender()

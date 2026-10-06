@@ -133,15 +133,15 @@ func parseSend(arguments []string) (sendOptions, error) {
 }
 
 type compactOptions struct {
-	Name    string
-	Resume  string
-	Recover bool
+	Name      string
+	Resume    string
+	Interrupt bool
 }
 
 func parseCompact(arguments []string) (compactOptions, error) {
 	options := compactOptions{}
 	flags := boundFlagSet("compact", map[string]any{
-		"resume": &options.Resume, "recover": &options.Recover,
+		"resume": &options.Resume, "interrupt": &options.Interrupt,
 	})
 	positionals, err := parseOptions(flags, arguments)
 	if err != nil {
@@ -158,8 +158,8 @@ func parseCompact(arguments []string) (compactOptions, error) {
 			return compactOptions{}, err
 		}
 	}
-	if options.Recover && options.Resume != "" {
-		return compactOptions{}, usageError("compact: --recover and --resume cannot be combined")
+	if options.Interrupt && options.Resume != "" {
+		return compactOptions{}, usageError("compact: --interrupt and --resume cannot be combined")
 	}
 	return options, nil
 }

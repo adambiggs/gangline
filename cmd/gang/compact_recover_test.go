@@ -17,7 +17,7 @@ type recoverScreens struct {
 	idle, busy, blocked, draft, restored, unknown substrate.Screen
 }
 
-func compactRecoverScreens(t *testing.T, f *stateFixture, collar string) recoverScreens {
+func compactInterruptScreens(t *testing.T, f *stateFixture, collar string) recoverScreens {
 	t.Helper()
 	s := recoverScreens{
 		idle:     screenWithText("READY", "› "),
@@ -98,7 +98,7 @@ func saveRecoverCompaction(t *testing.T, f *stateFixture, a core.Agent, status s
 	return got
 }
 
-func TestCompactRecoverRefusesBeforeAnyKey(t *testing.T) {
+func TestCompactInterruptRefusesBeforeAnyKey(t *testing.T) {
 	for _, collar := range []string{"codex", "claude"} {
 		for _, tc := range []struct {
 			name, status, surface, want string
@@ -127,7 +127,7 @@ func TestCompactRecoverRefusesBeforeAnyKey(t *testing.T) {
 			t.Run(collar+"/"+tc.name, func(t *testing.T) {
 				f := newStateFixture(t)
 				a := f.add(t, "a", "worker", collar)
-				screens := compactRecoverScreens(t, f, collar)
+				screens := compactInterruptScreens(t, f, collar)
 				f.input.screen = map[string]substrate.Screen{"idle": screens.idle, "busy": screens.busy, "blocked": screens.blocked, "draft": screens.draft, "unknown": screens.unknown}[tc.surface]
 				var setup []func(*core.Agent)
 				if tc.setup != nil {
@@ -135,7 +135,7 @@ func TestCompactRecoverRefusesBeforeAnyKey(t *testing.T) {
 				}
 				before := saveRecoverCompaction(t, f, a, tc.status, setup...)
 				f.input.tmuxCommand = tc.foreground
-				err := f.cmd.compact([]string{"worker", "--recover"})
+				err := f.cmd.compact([]string{"worker", "--interrupt"})
 				var ce commandError
 				if !errors.As(err, &ce) || ce.status != exitRefused || !strings.Contains(err.Error(), tc.want) {
 					t.Fatalf("recover: %v, want refusal containing %q", err, tc.want)
@@ -165,13 +165,13 @@ func TestCompactRecoverRefusesBeforeAnyKey(t *testing.T) {
 	}
 }
 
-func TestCompactRecoverSendsOnlyEscapeAndReclassifies(t *testing.T) {
+func TestCompactInterruptSendsOnlyEscapeAndReclassifies(t *testing.T) {
 	for _, collar := range []string{"codex", "claude"} {
 		for _, status := range []string{"submitted", "unverified"} {
 			t.Run(collar+"/"+status, func(t *testing.T) {
 				f := newStateFixture(t)
 				a := f.add(t, "a", "worker", collar)
-				screens := compactRecoverScreens(t, f, collar)
+				screens := compactInterruptScreens(t, f, collar)
 				f.input.screen = screens.busy
 				saveRecoverCompaction(t, f, a, status)
 				p, _ := f.run.team.Agent(a.ID)
@@ -186,7 +186,7 @@ func TestCompactRecoverSendsOnlyEscapeAndReclassifies(t *testing.T) {
 					f.input.screen = screens.idle
 					return nil
 				}
-				if err := f.cmd.compact([]string{"worker", "--recover"}); err != nil {
+				if err := f.cmd.compact([]string{"worker", "--interrupt"}); err != nil {
 					t.Fatal(err)
 				}
 				if !reflect.DeepEqual(f.input.keys, []string{"Escape"}) || f.input.submits != 0 || f.input.captures != 2 {
@@ -204,7 +204,7 @@ func TestCompactRecoverSendsOnlyEscapeAndReclassifies(t *testing.T) {
 	}
 }
 
-func TestCompactRecoverReportsSurfaceAfterEscape(t *testing.T) {
+func TestCompactInterruptReportsSurfaceAfterEscape(t *testing.T) {
 	for _, collar := range []string{"codex", "claude"} {
 		for _, tc := range []struct {
 			name, surface, want string
@@ -218,7 +218,7 @@ func TestCompactRecoverReportsSurfaceAfterEscape(t *testing.T) {
 			t.Run(collar+"/"+tc.name, func(t *testing.T) {
 				f := newStateFixture(t)
 				a := f.add(t, "a", "worker", collar)
-				screens := compactRecoverScreens(t, f, collar)
+				screens := compactInterruptScreens(t, f, collar)
 				f.input.screen = screens.busy
 				saveRecoverCompaction(t, f, a, "submitted")
 				f.input.onKeys = func(substrate.Keys) error {
@@ -234,7 +234,7 @@ func TestCompactRecoverReportsSurfaceAfterEscape(t *testing.T) {
 					}
 					return context.WithTimeout(ctx, d)
 				}
-				err := f.cmd.compact([]string{"worker", "--recover"})
+				err := f.cmd.compact([]string{"worker", "--interrupt"})
 				var ce commandError
 				if !errors.As(err, &ce) || ce.status != exitNative || !strings.Contains(err.Error(), tc.want) || !strings.Contains(err.Error(), "Escape") {
 					t.Fatalf("recover: %v, want native error containing %q", err, tc.want)
@@ -261,16 +261,16 @@ func TestCompactRecoverReportsSurfaceAfterEscape(t *testing.T) {
 	}
 }
 
-func TestCompactRecoverKeyFailureLeavesReceipt(t *testing.T) {
+func TestCompactInterruptKeyFailureLeavesReceipt(t *testing.T) {
 	for _, collar := range []string{"codex", "claude"} {
 		t.Run(collar, func(t *testing.T) {
 			f := newStateFixture(t)
 			a := f.add(t, "a", "worker", collar)
-			screens := compactRecoverScreens(t, f, collar)
+			screens := compactInterruptScreens(t, f, collar)
 			f.input.screen = screens.busy
 			saveRecoverCompaction(t, f, a, "submitted")
 			f.input.onKeys = func(substrate.Keys) error { return errors.New("pane write failed") }
-			err := f.cmd.compact([]string{"worker", "--recover"})
+			err := f.cmd.compact([]string{"worker", "--interrupt"})
 			var ce commandError
 			if !errors.As(err, &ce) || ce.status != exitUnknown || !strings.Contains(err.Error(), "pane write failed") {
 				t.Fatalf("recover: %v", err)
@@ -287,12 +287,12 @@ func TestCompactRecoverKeyFailureLeavesReceipt(t *testing.T) {
 	}
 }
 
-func TestCompactRecoverStopsWhenThePaneLeavesBusy(t *testing.T) {
+func TestCompactInterruptStopsWhenThePaneLeavesBusy(t *testing.T) {
 	for _, collar := range []string{"codex", "claude"} {
 		t.Run(collar, func(t *testing.T) {
 			f := newStateFixture(t)
 			a := f.add(t, "a", "worker", collar)
-			screens := compactRecoverScreens(t, f, collar)
+			screens := compactInterruptScreens(t, f, collar)
 			f.input.screen = screens.busy
 			saveRecoverCompaction(t, f, a, "submitted")
 			f.input.onKeys = func(substrate.Keys) error {
@@ -314,7 +314,7 @@ func TestCompactRecoverStopsWhenThePaneLeavesBusy(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			err = f.run.recoverCompaction(l, &got, f.run.registeredInput(got, b), c)
+			err = f.run.interruptCompaction(l, &got, f.run.registeredInput(got, b), c)
 			if releaseErr := f.run.release(l); releaseErr != nil {
 				t.Fatal(releaseErr)
 			}
@@ -329,13 +329,13 @@ func TestCompactRecoverStopsWhenThePaneLeavesBusy(t *testing.T) {
 	}
 }
 
-func TestCompactRecoverRunsOncePerCompaction(t *testing.T) {
+func TestCompactInterruptRunsOncePerCompaction(t *testing.T) {
 	for _, collar := range []string{"codex", "claude"} {
 		for _, crashed := range []bool{false, true} {
 			t.Run(collar+"/"+map[bool]string{false: "recovered", true: "recovery-owner-exited"}[crashed], func(t *testing.T) {
 				f := newStateFixture(t)
 				a := f.add(t, "a", "worker", collar)
-				screens := compactRecoverScreens(t, f, collar)
+				screens := compactInterruptScreens(t, f, collar)
 				f.input.screen = screens.busy
 				saveRecoverCompaction(t, f, a, "unverified", func(a *core.Agent) {
 					if crashed {
@@ -347,13 +347,13 @@ func TestCompactRecoverRunsOncePerCompaction(t *testing.T) {
 						f.input.screen = screens.idle
 						return nil
 					}
-					if err := f.cmd.compact([]string{"worker", "--recover"}); err != nil {
+					if err := f.cmd.compact([]string{"worker", "--interrupt"}); err != nil {
 						t.Fatal(err)
 					}
 					// The agent resumes ordinary work under the same record.
 					f.input.screen, f.input.keys = screens.busy, nil
 				}
-				err := f.cmd.compact([]string{"worker", "--recover"})
+				err := f.cmd.compact([]string{"worker", "--interrupt"})
 				var ce commandError
 				if !errors.As(err, &ce) || ce.status != exitRefused || !strings.Contains(err.Error(), "already recovered") {
 					t.Fatalf("second recovery: %v", err)
@@ -366,7 +366,7 @@ func TestCompactRecoverRunsOncePerCompaction(t *testing.T) {
 	}
 }
 
-func TestCompactRecoverUnknownAfterKey(t *testing.T) {
+func TestCompactInterruptUnknownAfterKey(t *testing.T) {
 	for _, collar := range []string{"codex", "claude"} {
 		for _, tc := range []struct {
 			name, want string
@@ -379,7 +379,7 @@ func TestCompactRecoverUnknownAfterKey(t *testing.T) {
 			t.Run(collar+"/"+tc.name, func(t *testing.T) {
 				f := newStateFixture(t)
 				a := f.add(t, "a", "worker", collar)
-				screens := compactRecoverScreens(t, f, collar)
+				screens := compactInterruptScreens(t, f, collar)
 				f.input.screen = screens.busy
 				saveRecoverCompaction(t, f, a, "submitted")
 				f.input.onKeys = func(substrate.Keys) error {
@@ -407,7 +407,7 @@ func TestCompactRecoverUnknownAfterKey(t *testing.T) {
 				if err != nil {
 					t.Fatal(err)
 				}
-				err = f.run.recoverCompaction(l, &got, f.run.registeredInput(got, b), c)
+				err = f.run.interruptCompaction(l, &got, f.run.registeredInput(got, b), c)
 				if releaseErr := f.run.release(l); releaseErr != nil {
 					t.Fatal(releaseErr)
 				}

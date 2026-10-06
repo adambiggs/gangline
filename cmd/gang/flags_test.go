@@ -113,3 +113,16 @@ func TestWaitTimeoutUsesGoDurationSyntax(t *testing.T) {
 		}
 	}
 }
+
+func TestCompactInterruptFlag(t *testing.T) {
+	got, err := parseCompact([]string{"worker", "--interrupt"})
+	if err != nil || !got.Interrupt || got.Name != "worker" {
+		t.Fatalf("interrupt option: %+v %v", got, err)
+	}
+	if _, err := parseCompact([]string{"worker", "--recover"}); err == nil {
+		t.Fatal("removed recovery flag accepted")
+	}
+	if _, err := parseCompact([]string{"worker", "--interrupt", "--resume", "note"}); err == nil {
+		t.Fatal("interrupt and resume accepted together")
+	}
+}

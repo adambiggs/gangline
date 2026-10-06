@@ -83,7 +83,7 @@ var commandUsage = map[string]string{
 	"send":       "usage: gang send NAME [--from SENDER] [--live-only] [--supersede]\n       [--at DURATION|HH:MM|RFC3339] [--team TEAM] [BODY]\n       gang send NAME --clear [--team TEAM]\n       Without BODY, read stdin. Use -- before BODY when it begins with -.\n",
 	"queue":      "usage: gang queue [NAME] [--json] [--team TEAM]\n",
 	"interrupt":  "usage: gang interrupt [NAME] [-m|--message REASON] [--team TEAM]\n",
-	"compact":    "usage: gang compact [NAME] [--resume TEXT] [--team TEAM]\n       gang compact [NAME] --recover [--team TEAM]\n",
+	"compact":    "usage: gang compact [NAME] [--resume TEXT] [--team TEAM]\n       gang compact [NAME] --interrupt [--team TEAM]\n",
 	"statusline": "usage: gang statusline [--install]\n",
 	"context":    "usage: gang context [NAME] [--json] [--team TEAM]\n       gang context --widget NAME | --clear [--team TEAM]\n",
 	"log":        "usage: gang log [--agent NAME|HITCH_ID] [--type TYPE|KIND] [--team TEAM]\n       [LOG.jsonl]\n",
@@ -142,7 +142,7 @@ var commandOptions = map[string][]optionSpec{
 	},
 	"compact": {
 		{"resume", "TEXT", "resume note (default a re-read note)"},
-		{"recover", "", "interrupt an unconfirmed compaction while busy"},
+		{"interrupt", "", "interrupt an unconfirmed compaction while busy"},
 	},
 	"statusline": {{"install", "", "install the native status line"}},
 	"context": {
