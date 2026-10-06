@@ -58,7 +58,7 @@ func TestLaunchdWatchdogPlist(t *testing.T) {
 			args = value.Strings
 		}
 	}
-	for key, want := range map[string]string{"Label": "string:" + unit, "WorkingDirectory": "string:/", "LimitLoadToSessionType": "string:Background", "StartInterval": "integer:60", "LaunchOnlyOnce": "true:", "AbandonProcessGroup": "true:"} {
+	for key, want := range map[string]string{"Label": "string:" + unit, "WorkingDirectory": "string:/", "LimitLoadToSessionType": "string:Background", "StartInterval": "integer:5", "LaunchOnlyOnce": "true:", "AbandonProcessGroup": "true:"} {
 		if values[key] != want {
 			t.Errorf("%s: got %q, want %q", key, values[key], want)
 		}

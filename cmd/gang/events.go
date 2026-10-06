@@ -160,7 +160,7 @@ func (cmd command) handleHook(args []string) (result error) {
 			return cmd.detach(string(id), n)
 		}
 		return cmd.detachTick(string(id), n, run.settings)
-	case "turn-finished", "turn-failed", "compaction-finished":
+	case "turn-finished", "turn-failed", "compaction-finished", "activity", "permission-requested", "compaction-started":
 		n := hookNotice{Kind: event.Kind, NativeEvent: event.NativeEvent, At: cmd.now(), SessionID: event.Payload["session_id"], TurnID: event.Payload["turn_id"], Transcript: event.Payload["transcript_path"], Failure: failure}
 		for _, value := range []string{n.SessionID, n.TurnID, n.Transcript, n.NativeEvent} {
 			if len(value) > 4096 {
@@ -295,7 +295,11 @@ func (cmd command) tick(args []string) (result error) {
 		return run.tickFailed(source, core.HitchID(id), err)
 	}
 	if id != "" {
-		return errors.Join(run.tickFailed(source, core.HitchID(id), run.tickAgent(core.HitchID(id), notice, true)), run.tickFailed(source, "", run.flushUsageWork()))
+		// Frequent display hooks can skip occupied agents: their screen or
+		// permission witness remains available to the independent watchdog.
+		// Native boundaries still wait so their turn outcomes are reconciled.
+		wait := notice.Kind != "activity" && notice.Kind != "permission-requested" && notice.Kind != "compaction-started"
+		return errors.Join(run.tickFailed(source, core.HitchID(id), run.tickAgent(core.HitchID(id), notice, wait)), run.tickFailed(source, "", run.flushUsageWork()))
 	}
 	agents, err := run.team.ListAgents()
 	if err != nil {

@@ -20,6 +20,7 @@ func (run *runtime) observeActivity(l *store.LockedAgent, a *core.Agent, c harne
 // heldInputEvidence is the reading of a composer that holds input no submit key
 // sent. Messages to the agent wait behind it.
 const heldInputEvidence = "native composer contains unsubmitted input"
+const submitPaintWindow = time.Second
 
 // observeScreen is observeActivity that also reports whether the screen alone
 // reads idle with no open turn, before a recorded turn failure or pending
@@ -62,6 +63,13 @@ func (run *runtime) observeScreen(l *store.LockedAgent, a *core.Agent, c harness
 			activity, evidence, basis.Screen = core.Unknown, err.Error(), "unreadable"
 		} else if !busy {
 			activity, evidence, basis.Screen = core.Blocked, heldInputEvidence, "unsubmitted"
+			// A draft holds delivery while a spinnerless reply can still run.
+			// Reconcile its turn too, so the display does not keep old work open.
+			if open, err := run.openTurn(l, a, c, fingerprint); err != nil {
+				return false, err
+			} else if open {
+				activity, basis.Rule = core.Busy, "open-turn"
+			}
 		} else {
 			basis.Screen = "busy"
 			if a.InterruptDeadline.IsZero() {
@@ -130,10 +138,19 @@ func activityBasis(a core.Agent, screen, rule string) core.ActivityBasis {
 // pending interrupt is excluded so that its completion can be observed.
 func (run *runtime) openTurn(l *store.LockedAgent, a *core.Agent, c harness.Collar, fingerprint string) (bool, error) {
 	quiet, err := harness.OpenTurnQuiet(c.Primitives.TurnBoundary)
-	if err != nil || quiet == 0 || !a.InterruptDeadline.IsZero() || !a.Native.SubmittedAt.After(a.Native.FinishedAt) {
+	if err != nil || !a.InterruptDeadline.IsZero() || !a.Native.SubmittedAt.After(a.Native.FinishedAt) {
 		return false, err
 	}
-	if a.ScreenFingerprint != fingerprint || run.cmd.now().Before(a.ScreenSince.Add(quiet)) {
+	if quiet == 0 {
+		// The submit hook precedes native UI paint. A short display grace
+		// bridges that frame without inferring a native finish boundary.
+		return run.cmd.now().Before(a.Native.SubmittedAt.Add(submitPaintWindow)), nil
+	}
+	quietSince := a.ScreenSince
+	if a.Native.SubmittedAt.After(quietSince) {
+		quietSince = a.Native.SubmittedAt
+	}
+	if a.ScreenFingerprint != fingerprint || run.cmd.now().Before(quietSince.Add(quiet)) {
 		return true, nil
 	}
 	a.Native.FinishedAt = run.cmd.now()

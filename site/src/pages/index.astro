@@ -321,6 +321,11 @@ const description = 'Give a lead a task, let it recruit Claude Code and Codex te
         <p class="soft">Check context use and provider limits, save working
         state before compaction, and resume from a note when compaction finishes.</p>
 
+        <p class="soft">Native hooks refresh agent status as work changes.
+        A five-second watchdog sweeps the team on an awake host with a working
+        user scheduler; it also handles pending recovery and scheduled wakes.
+        See the <a href="docs/guides.html#keep-an-unattended-team-moving">watchdog guide</a>.</p>
+
         <p class="soft"><code>gang roster</code>, <code>gang capture</code>, and{' '}
         <code>gang status</code> show the evidence needed to decide whether to
         resume or remove an agent. The{' '}

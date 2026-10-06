@@ -12,6 +12,8 @@ import (
 	"github.com/adambiggs/gangline/core"
 )
 
+const heldInputNoticeAfter = time.Minute
+
 // callerInTeam returns the agent of the selected team whose hitch identity
 // this process inherited, or nil when it carries none there: the operator at
 // a keyboard, or an agent of another team acting on a team it selected.
@@ -147,12 +149,12 @@ func (run *runtime) notifyHitcherRecovered(a core.Agent) error {
 }
 
 // notifyHeldInput tells a's hitcher once a has read as holding unsubmitted
-// composer input for a watchdog period, so across at least two ticks. Messages
+// composer input for the notice threshold. Messages
 // to a wait behind that input, and a cannot report it. The record's last change
 // names the reading, so a reading is announced once unless another event
 // changes the record while it lasts.
 func (run *runtime) notifyHeldInput(a core.Agent) error {
-	if a.Status != core.Active || a.Activity != core.Blocked || a.Evidence != heldInputEvidence || run.cmd.now().Before(a.ChangedAt.Add(watchdogTimeout)) {
+	if a.Status != core.Active || a.Activity != core.Blocked || a.Evidence != heldInputEvidence || run.cmd.now().Before(a.ChangedAt.Add(heldInputNoticeAfter)) {
 		return nil
 	}
 	id := core.EnvelopeID(fmt.Sprintf("held-input-%s-%d", a.ID, a.ChangedAt.UnixNano()))

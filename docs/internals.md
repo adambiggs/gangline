@@ -59,8 +59,10 @@ blocks an altered compaction resume and admits the exact queued continuation
 once; a compaction-end hook records completion durably. Blocking the current
 compaction's own note fails that compaction, since input waits behind a note
 that will not arrive. The next agent access cancels stale context-band notices
-before delivery. Turn-end, compaction-end, and blocked submit hooks also
-schedule a detached tick for other work.
+before delivery. Submit, activity, permission-request, turn-end,
+compaction-start, compaction-end, and blocked submit hooks schedule detached
+scoped ticks. These ticks observe the pane and refresh its status without
+making the native hook wait for observation or an agent lock.
 
 Claude Code's native prompt ID ties asynchronous failure or success to the
 submit witness. A late callback cannot change a newer identified turn. Missing
@@ -71,8 +73,9 @@ probe error cannot consume the boundary notice.
 An observation failure reports unknown with its reason. It breaks continuous
 screen observation; a later successful probe can establish busy or idle again.
 A roster or status read of an agent whose state another operation holds
-reports the saved record without probing the pane. A draft without native
-busy evidence is blocked on unsubmitted input; observation never submits it.
+reports the saved record without probing the pane. A draft holds message
+delivery; its pane symbol remains idle unless a witnessed turn is open.
+Observation never submits it.
 
 ## Context and compaction
 
@@ -115,11 +118,24 @@ resume that has no recorded native submission.
 ## Watchdog
 
 A whole-team tick replaces a transient user-scheduler timer and re-arms it
-before observing agents. Gangline arms the initial timer when you hitch
+before observing agents. The timer supplies a five-second fallback between
+native hook refreshes; scheduling and observation work can delay it.
+Gangline arms the initial timer when you hitch
 an agent. A scoped hook tick preserves an existing deadline so activity in one agent cannot postpone
 idle peers, except while `[watchdog-unavailable]` is shown, when it replaces the
 recorded timer because that timer may have elapsed. Whole-team ticks skip occupied agent locks; detached scoped ticks
-can wait for a lock so native boundary notices survive contention.
+wait for a lock so native boundary notices survive contention. Activity,
+permission-request, and compaction-start ticks skip an occupied agent rather
+than accumulate waiting refreshes.
+
+The next timer counts from arming before the sweep, not from its completion
+or a fixed clock grid. A scoped hook tick preserves the pending deadline
+unless it must repair an unavailable timer. Hook ticks and watchdog sweeps
+can overlap; each agent lock serializes work on that agent, and the separate
+scheduler lock serializes timer replacement. Sweeps skip occupied agents.
+The cadence is neither a minimum refresh interval nor a maximum staleness:
+hooks can refresh sooner, while scheduler delay, contention, an unreadable
+pane, and the collar's open-turn quiet fallback can delay a conclusive state.
 
 Linux uses systemd user timers. macOS uses a transient launchd job and a plist
 in the team directory, outside login-loaded LaunchAgents. The expiry shell

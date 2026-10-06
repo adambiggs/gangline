@@ -15,6 +15,9 @@ func paneTitle(a core.Agent) string {
 			mark = "-"
 		case core.Blocked, core.Wedged:
 			mark = "!"
+			if a.Activity == core.Blocked && a.Evidence == heldInputEvidence {
+				mark = "~"
+			}
 		}
 	}
 	return mark + string(a.Name) + mark

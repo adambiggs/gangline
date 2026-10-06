@@ -17,7 +17,7 @@ import (
 	"github.com/adambiggs/gangline/substrate"
 )
 
-const watchdogTimeout = time.Minute
+const watchdogTimeout = 5 * time.Second
 
 var watchdogEnvironmentKeys = []string{"GANG_SESSION", "GANG_STATE_ROOT", "GANG_CONFIG_DIR", "GANG_TMUX_SOCKET", "GANG_COLLARS", "GANG_TMUX", "GANG_CAPACITY_TIMEOUT", "PATH"}
 var watchdogUnsetEnvironment = []string{"TMUX", "TMUX_PANE", "TMUX_TMPDIR", "GANGLINE_BOUNDARY", "GANGLINE_HITCH_ID", "GANG_AGENT_ID", "GANG_AGENT_NONCE", "GANG_AGENT_TOKEN", "GANG_COLLAR", "GANG_LAUNCH_ARGS"}

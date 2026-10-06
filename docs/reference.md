@@ -93,9 +93,9 @@ boot deadline failed it, the hitcher gets a notice that the agent recovered,
 unless the hitcher ran the recovery itself. The hitcher gets one too when a
 message to the agent is withdrawn from its composer and not delivered, when a message paste may remain in the
 agent's composer, and when the agent has read as holding unsubmitted composer
-input for a watchdog period, across at least two ticks, since messages to it
-wait behind that input. The period is `watchdogTimeout` in
-[`watchdog.go`](../cmd/gang/watchdog.go).
+input past the notice threshold, since messages to it wait behind that input.
+The threshold is `heldInputNoticeAfter` in
+[`authority.go`](../cmd/gang/authority.go).
 
 Each line of `downs.jsonl` records the time, team, agent count, the caller's
 agent name and inherited `GANG_AGENT_ID`, its process and parent process IDs,
@@ -228,8 +228,16 @@ timestamps and context token counts. Availability conditions such as
 reading prints `status` `unknown` with its `reason` and null counts, and the
 command still exits unknown. The human forms may change layout.
 
-Window titles use `?name?` for changing or unknown state, `~name~` for idle,
-`-name-` for work, and `!name!` for blocked, wedged, or failed agents.
+Pane borders use `?name?` for changing or unknown state, `~name~` for idle,
+`-name-` for work, and `!name!` for native decisions, wedges, or failures.
+An unsubmitted operator draft holds message delivery but keeps the idle
+symbol, or the work symbol while a witnessed turn is still open.
+Native submit, activity, permission, turn-end, and compaction hooks refresh
+the affected agent through a detached tick. The watchdog supplies a
+five-second whole-team fallback on an awake host with a working user scheduler.
+Scheduler delays, occupied agent locks, and slow captures can delay a reading;
+an unreadable capture remains unknown. `gang status` and `gang roster` also
+observe and refresh the symbols.
 Use a hitch ID in log filters to follow a registration across renames.
 
 Each `activity_observed` event records what its reading was derived from.
@@ -411,11 +419,16 @@ What a collar renders into the launch command (`launch`, `models.option`,
 `options`, and hook `install_args`) takes effect when an agent is hitched. Gangline reads the collar again for each later operation, so edits to
 its other fields apply to agents already running.
 
+A native submit precedes UI paint. Gangline bridges an idle-looking frame
+with a brief busy display grace when the collar leaves open turns to the
+screen. That grace never records a native finish. Its duration is
+`submitPaintWindow` in [`activity.go`](../cmd/gang/activity.go).
+
 A harness can stream a reply with no busy marker on screen. When the
 `hook-boundary` turn boundary sets `open_turn_quiet`, a turn whose submit was
 witnessed reads busy on an idle-looking screen until its finish or failure
 hook arrives, an interrupt brings the composer back, or the screen stays
-unchanged for that long. A turn that ends without its hook, as after a
+unchanged for that long after the current submit. A turn that ends without its hook, as after a
 keyboard Escape, reads busy for that window; a shorter window lets a pause
 in streamed text read as idle.
 

@@ -10,7 +10,7 @@ import (
 	"github.com/adambiggs/gangline/core"
 )
 
-// An agent whose composer holds unsubmitted input for a watchdog period is
+// An agent whose composer holds unsubmitted input for the notice threshold is
 // reported to its hitcher once per reading, since messages to it wait behind
 // that input and it cannot report it.
 func TestHeldComposerInputNotifiesHitcher(t *testing.T) {
@@ -60,12 +60,12 @@ func TestHeldComposerInputNotifiesHitcher(t *testing.T) {
 		want   int
 	}{
 		{0, nil, 0},
-		{watchdogTimeout - time.Millisecond, nil, 0},
-		{watchdogTimeout, nil, 1},
-		{2 * watchdogTimeout, nil, 1},
-		{3 * watchdogTimeout, []string{"empty"}, 1},
-		{4 * watchdogTimeout, nil, 1},
-		{5 * watchdogTimeout, nil, 2},
+		{heldInputNoticeAfter - time.Millisecond, nil, 0},
+		{heldInputNoticeAfter, nil, 1},
+		{2 * heldInputNoticeAfter, nil, 1},
+		{3 * heldInputNoticeAfter, []string{"empty"}, 1},
+		{4 * heldInputNoticeAfter, nil, 1},
+		{5 * heldInputNoticeAfter, nil, 2},
 	} {
 		f.input.screen = held
 		if step.screen != nil {
