@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.16.0](https://github.com/adambiggs/gangline/compare/gangline-v1.15.14...gangline-v1.16.0) (2026-10-06)
+
+
+### Features
+
+* manage named agents independently in tmux panes ([c6747a0](https://github.com/adambiggs/gangline/commit/c6747a041b91adee9d9fe6a6aafcdc3aeb78b786))
+
 ## [1.15.14](https://github.com/adambiggs/gangline/compare/gangline-v1.15.13...gangline-v1.15.14) (2026-10-06)
 
 
