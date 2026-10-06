@@ -30,9 +30,6 @@ func (cmd command) hitchWithStaleClaim(args []string, supersede bool) (result er
 	if err != nil {
 		return err
 	}
-	if err := run.refusePassedCurfew(); err != nil {
-		return err
-	}
 	dir, err := cmd.getwd()
 	if err != nil {
 		return err
@@ -171,9 +168,6 @@ func (cmd command) hitchWithStaleClaim(args []string, supersede bool) (result er
 	}
 	defer lock.Close()
 	if err := run.team.Create(); err != nil {
-		return err
-	}
-	if err := run.refusePassedCurfew(); err != nil {
 		return err
 	}
 	b, err := cmd.tmux(run.settings)

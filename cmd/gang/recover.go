@@ -5,7 +5,6 @@ import (
 	"errors"
 	"fmt"
 	"os"
-	"time"
 
 	"github.com/adambiggs/gangline/core"
 	"github.com/adambiggs/gangline/harness"
@@ -15,31 +14,6 @@ import (
 )
 
 func (run *runtime) tickAgent(id core.HitchID, notice hookNotice, wait bool) (result error) {
-	team, err := run.team.ReadTeam()
-	if err != nil {
-		return err
-	}
-	if !team.Curfew.IsZero() && !run.cmd.now().Before(team.Curfew) {
-		lock, err := (store.Paths{Root: run.settings.StateRoot}).LockTeam(run.settings.Session)
-		if errors.Is(err, store.ErrLocked) {
-			return nil
-		}
-		if err != nil {
-			return err
-		}
-		defer lock.Close()
-		team, err = run.team.ReadTeam()
-		if errors.Is(err, os.ErrNotExist) {
-			return nil
-		}
-		if err != nil {
-			return err
-		}
-		if team.Curfew.IsZero() || run.cmd.now().Before(team.Curfew) {
-			return nil
-		}
-		return run.dropWithLock(id, wait, fmt.Sprintf("team curfew %s has passed", team.Curfew.Format(time.RFC3339)))
-	}
 	l, a, err := run.acquire(id, wait)
 	if errors.Is(err, store.ErrLocked) || errors.Is(err, os.ErrNotExist) {
 		return nil
@@ -60,6 +34,9 @@ func (run *runtime) tickAgent(id core.HitchID, notice hookNotice, wait bool) (re
 		if _, err := run.forgetClosedPane(l, &a); err != nil {
 			return err
 		}
+	}
+	if err := run.noteCurfew(l, &a); err != nil {
+		return err
 	}
 	if a.Status == core.Dropping || a.Status == core.Failed {
 		return run.mark(a)

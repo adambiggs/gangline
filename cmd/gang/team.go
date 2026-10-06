@@ -238,19 +238,35 @@ func (cmd command) curfew(args []string) error {
 	return run.team.Append(event)
 }
 
-func (run *runtime) refusePassedCurfew() error {
-	team, err := run.team.ReadTeam()
-	if errors.Is(err, os.ErrNotExist) {
+// The agent record retains the notified deadline after inbox receipts expire.
+func (run *runtime) noteCurfew(l *store.LockedAgent, a *core.Agent) error {
+	if a.Status != core.Active {
 		return nil
 	}
+	team, err := run.team.ReadTeam()
 	if err != nil {
 		return err
 	}
-	if !team.Curfew.IsZero() && !run.cmd.now().Before(team.Curfew) {
-		return refuseError("team %q curfew %s has passed; clear it with 'gang curfew clear' or set a future deadline before starting agents", run.settings.Session, team.Curfew.Format(time.RFC3339))
+	now := run.cmd.now()
+	if team.Curfew.IsZero() || now.Before(team.Curfew) || a.CurfewNoticeDeadline.Equal(team.Curfew) {
+		return nil
 	}
-	return nil
+	id := core.EnvelopeID(fmt.Sprintf("curfew-%d", team.Curfew.UnixNano()))
+	token, err := randomEnvelopeToken()
+	if err != nil {
+		return err
+	}
+	if err := run.publishOnce(l, a, core.Envelope{
+		ID: id, Token: token, Recipient: a.ID, To: a.Name,
+		From: core.Sender{Kind: core.SenderGangline, Name: "curfew"}, CreatedAt: now,
+		Message: core.Message{Text: fmt.Sprintf("Team %s curfew %s has passed. Observed %s.", run.settings.Session, team.Curfew.UTC().Format(time.RFC3339), now.UTC().Format(time.RFC3339))},
+	}); err != nil {
+		return err
+	}
+	a.CurfewNoticeDeadline = team.Curfew
+	return l.Save(*a)
 }
+
 func (cmd command) whoami(args []string) error {
 	if err := noArguments(args, "whoami"); err != nil {
 		return err

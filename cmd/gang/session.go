@@ -42,9 +42,6 @@ func (cmd command) attach(arguments []string) error {
 }
 
 func (run *runtime) stoppedTeamError() error {
-	if err := run.refusePassedCurfew(); err != nil {
-		return err
-	}
 	return refuseError("no team %q is running; start it with 'gang up'", run.settings.Session)
 }
 

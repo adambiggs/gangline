@@ -66,6 +66,8 @@ type Agent struct {
 	LastDelivered     EnvelopeID        `json:"last_delivered,omitempty"`
 	LastFailed        EnvelopeID        `json:"last_failed,omitempty"`
 	Cleanup           *ResultRef        `json:"cleanup,omitempty"`
+
+	CurfewNoticeDeadline time.Time `json:"curfew_notice_deadline,omitzero"`
 }
 
 // InputOutage retains an observation warning across ticks until the registered
