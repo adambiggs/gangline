@@ -74,6 +74,11 @@ redirect later host Git commands to executable configuration. Use mutually
 trusted teammates and review changes before executing or publishing them;
 these grants do not make hostile repository content safe for host Git.
 
+With the scoped `gangline` profile, operations that rewrite common-root
+`packed-refs` require host-side execution. These include `git branch -d` for
+packed branches, `git pack-refs`, `git gc`, and large fetches that trigger ref
+packing or garbage collection.
+
 The following is a starting profile for a dedicated team, using the
 [Codex permission profile syntax](https://learn.chatgpt.com/docs/permissions).
 Replace the example home and runtime paths with absolute paths on your host,
