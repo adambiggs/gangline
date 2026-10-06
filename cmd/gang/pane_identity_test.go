@@ -37,7 +37,7 @@ func TestPaneTokenIdentityInPrivateNamespace(t *testing.T) {
 		{name: "missing token", pane: "%1", present: true, want: "token"},
 		{name: "visible missing token", pane: "%1", present: true, visible: true, want: "token"},
 		{name: "wrong token", token: "other", pane: "%1", present: true, want: "token"},
-		{name: "wrong pane", token: "secret", pane: "%2", present: true, want: "not this pane %2"},
+		{name: "wrong pane", token: "secret", pane: "%2", present: true, want: "belongs to another pane"},
 		{name: "pane absent", token: "secret", pane: "%1", want: "absent"},
 		{name: "server replaced", token: "secret", pane: "%1", checkErr: errors.New("server generation differs"), want: "generation"},
 		{name: "visible ancestor", token: "secret", pane: "%1", present: true, visible: true},

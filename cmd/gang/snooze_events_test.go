@@ -24,7 +24,7 @@ func wakeEvents(t *testing.T, f *stateFixture, name string) []core.Event {
 	}
 	defer file.Close()
 	var filtered bytes.Buffer
-	if err := writeFilteredLog(&filtered, file, logFilter{Agent: name}); err != nil {
+	if err := writeFilteredLog(&filtered, file, logFilter{Agent: name}, func(s string) string { return s }); err != nil {
 		t.Fatal(err)
 	}
 	var events []core.Event

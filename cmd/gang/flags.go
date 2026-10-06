@@ -22,6 +22,8 @@ type hitchOptions struct {
 	Resume    string
 	Recover   bool
 	Stdin     bool
+	Split     string
+	Vertical  bool
 }
 
 func parseHitch(arguments []string, defaultCollar, defaultDirectory string) (hitchOptions, error) {
@@ -34,6 +36,7 @@ func parseHitch(arguments []string, defaultCollar, defaultDirectory string) (hit
 		"t": &options.Task, "task": &options.Task,
 		"r": &options.Role, "role": &options.Role,
 		"resume": &options.Resume, "recover": &options.Recover, "stdin": &options.Stdin,
+		"split": &options.Split, "vertical": &options.Vertical,
 	})
 	positionals, err := parseOptions(flags, arguments)
 	if err != nil {
@@ -54,6 +57,14 @@ func parseHitch(arguments []string, defaultCollar, defaultDirectory string) (hit
 	}
 	if options.Recover && !onlyFlagSet(flags, "recover") {
 		return hitchOptions{}, usageError("hitch: --recover takes only NAME")
+	}
+	if options.Split != "" {
+		if err := validateAgentName(options.Split); err != nil {
+			return hitchOptions{}, err
+		}
+	}
+	if options.Vertical && options.Split == "" {
+		return hitchOptions{}, usageError("hitch: --vertical requires --split NAME")
 	}
 	return options, nil
 }

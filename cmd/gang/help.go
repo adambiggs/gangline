@@ -52,7 +52,7 @@ Observe and control:
   limits    read current provider limits
   snooze    schedule a provider-reset or explicit wake
   whoami    read this pane's identity
-  attach    join the team in tmux
+  attach    join an agent's pane in tmux
   teams     list known teams
 
 Settings and discovery:
@@ -78,7 +78,7 @@ Commands that act on a team take --team TEAM (default GANG_SESSION).
 
 var commandUsage = map[string]string{
 	"up":         "usage: gang up [NAME] [HITCH OPTIONS] [--team TEAM]\n",
-	"hitch":      "usage: gang hitch NAME [-c COLLAR] [-d DIR] [-m MODEL] [-e EFFORT]\n       [-t TASK] [-r ROLE] [--resume SESSION] [--stdin] [--team TEAM]\n       gang hitch NAME --recover [--team TEAM]\n",
+	"hitch":      "usage: gang hitch NAME [-c COLLAR] [-d DIR] [-m MODEL] [-e EFFORT]\n       [-t TASK] [-r ROLE] [--resume SESSION] [--stdin]\n       [--split NAME] [--vertical] [--team TEAM]\n       gang hitch NAME --recover [--team TEAM]\n",
 	"rename":     "usage: gang rename OLD NEW [--team TEAM]\n",
 	"send":       "usage: gang send NAME [--from SENDER] [--live-only] [--supersede]\n       [--at DURATION|HH:MM|RFC3339] [--team TEAM] [BODY]\n       gang send NAME --clear [--team TEAM]\n       Without BODY, read stdin. Use -- before BODY when it begins with -.\n",
 	"queue":      "usage: gang queue [NAME] [--json] [--team TEAM]\n",
@@ -96,7 +96,7 @@ var commandUsage = map[string]string{
 	"capture":    "usage: gang capture [NAME] [-n|--lines LINES] [--team TEAM]\n       gang capture --composer [NAME] [--team TEAM]\n",
 	"whoami":     "usage: gang whoami [--team TEAM]\n",
 	"roster":     "usage: gang roster [--json] [--team TEAM]\n",
-	"attach":     "usage: gang attach [--team TEAM]\n",
+	"attach":     "usage: gang attach [NAME] [--team TEAM]\n",
 	"teams":      "usage: gang teams\n",
 	"drop":       "usage: gang drop NAME [--team TEAM]\n",
 	"down":       "usage: gang down [-y|--yes] [--team TEAM]\n",
@@ -128,6 +128,8 @@ var commandOptions = map[string][]optionSpec{
 		{"resume", "SESSION", "resume a native conversation, not a team"},
 		{"recover", "", "recover the original startup message"},
 		{"stdin", "", "read the assignment from stdin"},
+		{"split", "NAME", "split the named agent's pane side by side"},
+		{"vertical", "", "split top/bottom; requires --split NAME"},
 	},
 	"send": {
 		{"from", "SENDER", "outside sender identity"},
@@ -267,7 +269,7 @@ func optionArgument(option optionSpec) string {
 
 var commandDescription = map[string]string{
 	"up":         "NAME names the lead agent (default lead). Start the selected team and attach,\nor use --recover to recover that existing agent's startup.\n",
-	"hitch":      "NAME is an agent's registered name in the selected team.\nLaunch a new agent and deliver its startup, or use --recover to recover\nretained startup input for an existing agent.\n",
+	"hitch":      "NAME is an agent's registered name in the selected team.\nLaunch in a new window by default. --split NAME places a sibling beside\nthat agent; --vertical splits top/bottom. Use --recover for retained startup.\n",
 	"rename":     "OLD and NEW are registered agent names in the selected team.\nRename the agent without restarting its harness.\n",
 	"send":       "NAME is the recipient agent's registered name in the selected team.\nSend BODY or read stdin. An exact native hook proves delivery; a native\nqueue receipt proves acceptance. Otherwise input stays queued or unverified.\n",
 	"queue":      "NAME filters pending work to one registered agent. Omit it to list\npending work for every agent in the selected team. Each message shows\nwhether it is ready, scheduled, blocked, or unknown, with its due time or\nthe reason it waits.\n",
@@ -285,7 +287,7 @@ var commandDescription = map[string]string{
 	"capture":    "NAME is a registered agent whose pane to capture. Without NAME,\ncapture the current tmux pane, even if unregistered. With --composer,\nomitting NAME selects the current pane's registered agent.\n",
 	"whoami":     "Print the registered identity of the calling Gangline pane.\n",
 	"roster":     "List the team's registered agents and conservative current states.\n",
-	"attach":     "Attach this terminal to the selected team's tmux session.\n",
+	"attach":     "Attach this terminal to NAME's pane, or the lead's pane by default.\n",
 	"teams":      "List teams found in the teams directory.\n",
 	"drop":       "NAME is the registered agent to stop in the selected team.\nCancel its pending work; report an observed native resume ID or unknown.\nIn an agent's pane only the lead or the agent that hitched NAME may drop it;\nan agent with no recorded hitcher is the lead's to drop.\n",
 	"down":       "Stop the selected team and remove its state. On a terminal, confirm the\nteam and agent count; use the yes option for scripts and nonterminal calls.\nIn an agent's pane only the lead may run it. Who ran it is appended to\ndowns.jsonl in the state root first.\n",

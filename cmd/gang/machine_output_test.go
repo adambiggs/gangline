@@ -34,7 +34,7 @@ func TestRosterJSONCarriesAvailabilityAsFields(t *testing.T) {
 	for _, a := range got.Agents {
 		byName[a.Name] = a
 	}
-	if a := byName["worker"]; a.HitchID != "a" || a.Collar != "claude" || a.Status != core.Active || a.Pane != "%1" || a.ProcessAvailable {
+	if a := byName["worker"]; a.HitchID != "a" || a.Collar != "claude" || a.Status != core.Active || a.Pane != "worker" || a.ProcessAvailable {
 		t.Fatalf("worker = %+v", a)
 	}
 	if a := byName["other"]; a.Collar != "codex" || !a.ProcessAvailable {

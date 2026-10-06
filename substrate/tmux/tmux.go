@@ -26,8 +26,8 @@ type Config struct {
 	Socket  string
 	Session string
 	Stdin   *os.File
-	Stdout  *os.File
-	Stderr  *os.File
+	Stdout  io.Writer
+	Stderr  io.Writer
 }
 
 // Backend is a tmux implementation of substrate.Substrate.
@@ -37,9 +37,9 @@ type Backend struct {
 	birth   map[substrate.PaneID]PaneIdentity
 }
 
-type Window struct {
-	Pane substrate.Pane
-	Name string
+type PaneInfo struct {
+	Pane  substrate.Pane
+	Title string
 	// Registration is the pane as RegisterPane names it. A pane id is unique
 	// only within one server lifetime, so a record that names this pane id
 	// holds this pane only when its registration is equal.
@@ -83,6 +83,39 @@ func (backend *Backend) Spawn(ctx context.Context, spec substrate.SpawnSpec) (su
 	}
 	arguments = append(append(arguments, "-t", "="+backend.config.Session+":"), command...)
 	return backend.launch(ctx, "spawn pane", arguments)
+}
+
+// Split creates a sibling only while the target still has its registered
+// identity. The condition and allocation run in one tmux command list.
+func (backend *Backend) Split(ctx context.Context, target PaneIdentity, spec substrate.SpawnSpec, vertical bool) (substrate.Pane, error) {
+	panes, err := backend.Panes(ctx)
+	if err != nil {
+		return substrate.Pane{}, err
+	}
+	member := false
+	for _, pane := range panes {
+		member = member || pane.Registration == target
+	}
+	if !member {
+		return substrate.Pane{}, fmt.Errorf("split target is not in the selected team")
+	}
+	present, err := backend.CheckPane(ctx, target)
+	if err != nil {
+		return substrate.Pane{}, err
+	}
+	if !present {
+		return substrate.Pane{}, fmt.Errorf("split target is absent")
+	}
+	arguments, command, err := backend.launchArguments("split-window", spec)
+	if err != nil {
+		return substrate.Pane{}, err
+	}
+	orientation := "-h"
+	if vertical {
+		orientation = "-v"
+	}
+	arguments = append(append(arguments, orientation, "-t", target.Pane), command...)
+	return backend.launch(ctx, "split pane", []string{"if-shell", "-F", "-t", target.Pane, registeredCondition(target), tmuxCommand(arguments[0], arguments[1:]...), tmuxCommand("display-message", "-p", "split target was replaced")})
 }
 
 // ReleaseExit restores the default close-on-exit behaviour for a pane spawned
@@ -168,7 +201,7 @@ func exited(status, history string) *substrate.ExitedError {
 // launchArguments returns the arguments that create a pane for spec and,
 // separately, the command the pane runs, which ends the tmux command.
 func (backend *Backend) launchArguments(command string, spec substrate.SpawnSpec) ([]string, []string, error) {
-	if err := validWindowName(spec.Name); err != nil {
+	if err := validPaneTitle(spec.Name); err != nil {
 		return nil, nil, err
 	}
 	if spec.Directory == "" {
@@ -179,8 +212,10 @@ func (backend *Backend) launchArguments(command string, spec substrate.SpawnSpec
 	}
 	arguments := []string{
 		command, "-d", "-P", "-F", "#{pane_id}",
-		"-n", escapeFormat(spec.Name),
 		"-c", spec.Directory,
+	}
+	if command != "split-window" {
+		arguments = append(arguments, "-n", escapeFormat(spec.Name))
 	}
 	names := make([]string, 0, len(spec.Env))
 	for name := range spec.Env {
@@ -279,7 +314,23 @@ func (backend *Backend) launch(ctx context.Context, action string, arguments []s
 		}
 	}
 	arguments = append(arguments, ";", "list-panes", "-s", "-t", "="+backend.config.Session+":", "-F", "#{"+generationOption+"}\t#{session_id}\t#{pane_id}")
-	output, err := backend.run(ctx, arguments...)
+	var output string
+	if arguments[0] == "if-shell" {
+		// Quoting a native launch inside the registered condition can exceed
+		// tmux's IPC message limit. Stream the command list without that limit.
+		var commands []string
+		start := 0
+		for i, argument := range arguments {
+			if argument == ";" {
+				commands = append(commands, tmuxCommand(arguments[start], arguments[start+1:i]...))
+				start = i + 1
+			}
+		}
+		commands = append(commands, tmuxCommand(arguments[start], arguments[start+1:]...))
+		output, err = backend.runWithInput(ctx, strings.NewReader(strings.Join(commands, " ; ")+"\n"), "source-file", "-")
+	} else {
+		output, err = backend.run(ctx, arguments...)
+	}
 	if err != nil {
 		return substrate.Pane{}, tmuxError(action, err, output)
 	}
@@ -308,12 +359,12 @@ func (backend *Backend) launch(ctx context.Context, action string, arguments []s
 	return substrate.Pane{}, fmt.Errorf("%s: tmux did not return the created pane's identity", action)
 }
 
-func (backend *Backend) Windows(ctx context.Context) ([]Window, error) {
-	output, err := backend.run(ctx, "list-panes", "-s", "-t", "="+backend.config.Session+":", "-F", "#{pane_id}\t#{"+generationOption+"}\t#{session_id}\t#{window_name}")
+func (backend *Backend) Panes(ctx context.Context) ([]PaneInfo, error) {
+	output, err := backend.run(ctx, "list-panes", "-s", "-t", "="+backend.config.Session+":", "-F", "#{pane_id}\t#{"+generationOption+"}\t#{session_id}\t#{@gangline_title}")
 	if err != nil {
 		return nil, tmuxError("list panes", err, output)
 	}
-	var windows []Window
+	var panes []PaneInfo
 	for _, line := range strings.Split(strings.TrimSuffix(output, "\n"), "\n") {
 		if line == "" {
 			continue
@@ -326,34 +377,13 @@ func (backend *Backend) Windows(ctx context.Context) ([]Window, error) {
 		if err := validPaneID(pane); err != nil {
 			return nil, err
 		}
-		windows = append(windows, Window{
+		panes = append(panes, PaneInfo{
 			Pane:         substrate.Pane{ID: pane},
-			Name:         fields[3],
+			Title:        fields[3],
 			Registration: PaneIdentity{Generation: fields[1], Session: fields[2], Pane: fields[0]},
 		})
 	}
-	return windows, nil
-}
-
-func (backend *Backend) PaneNamed(ctx context.Context, name string) (substrate.Pane, error) {
-	windows, err := backend.Windows(ctx)
-	if err != nil {
-		return substrate.Pane{}, err
-	}
-	var match substrate.Pane
-	for _, window := range windows {
-		if window.Name != name {
-			continue
-		}
-		if match.ID != "" {
-			return substrate.Pane{}, fmt.Errorf("window name %q is ambiguous", name)
-		}
-		match = window.Pane
-	}
-	if match.ID == "" {
-		return substrate.Pane{}, fmt.Errorf("window name %q was not found", name)
-	}
-	return match, nil
+	return panes, nil
 }
 
 // ForegroundCommand asks the tmux server, which can inspect its pane even when
@@ -450,7 +480,7 @@ func (backend *Backend) Kill(ctx context.Context, pane substrate.PaneID) (result
 		return fmt.Errorf("record pane descendants: %w", err)
 	}
 	defer func() { result = errors.Join(result, closeOwnedProcesses(owned)) }()
-	output, err := backend.run(ctx, "kill-window", "-t", string(pane))
+	output, err := backend.run(ctx, "kill-pane", "-t", string(pane))
 	if err != nil {
 		return tmuxError("kill pane", err, output)
 	}
@@ -469,7 +499,7 @@ func (backend *Backend) Attach(ctx context.Context, pane substrate.PaneID) error
 	if err := validPaneID(pane); err != nil {
 		return err
 	}
-	arguments := []string{"attach-session", "-t", backend.config.Session, ";", "select-window", "-t", string(pane)}
+	arguments := []string{"attach-session", "-t", backend.config.Session, ";", "select-window", "-t", string(pane), ";", "select-pane", "-t", string(pane)}
 	if backend.config.Socket != "" {
 		arguments = append([]string{"-S", backend.config.Socket}, arguments...)
 	}
@@ -547,12 +577,12 @@ func validPaneID(pane substrate.PaneID) error {
 	return nil
 }
 
-func validWindowName(name string) error {
+func validPaneTitle(name string) error {
 	if name == "" {
-		return fmt.Errorf("window name is required")
+		return fmt.Errorf("pane title is required")
 	}
 	if strings.IndexFunc(name, unicode.IsControl) >= 0 {
-		return fmt.Errorf("window name contains a control character")
+		return fmt.Errorf("pane title contains a control character")
 	}
 	return nil
 }

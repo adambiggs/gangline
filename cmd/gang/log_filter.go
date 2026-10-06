@@ -48,10 +48,14 @@ func (filter logFilter) apply(e core.Event) (core.Event, bool) {
 // writeFilteredLog validates each event it prints, as stored and as printed.
 // A line the filter rejects on a plain JSON decode is skipped unvalidated, so
 // a filtered read costs schema validation only for the events it prints.
-func writeFilteredLog(out io.Writer, in io.Reader, filter logFilter) error {
+func writeFilteredLog(out io.Writer, in io.Reader, filter logFilter, present func(string) string) error {
+	names := make(map[core.HitchID]core.AgentName)
 	return store.ScanLog(in, func(line int, data []byte) error {
 		var peek core.Event
 		if json.Unmarshal(data, &peek) == nil {
+			if peek.Name != "" {
+				names[peek.HitchID] = peek.Name
+			}
 			if _, ok := filter.apply(peek); !ok {
 				return nil
 			}
@@ -63,6 +67,23 @@ func writeFilteredLog(out io.Writer, in io.Reader, filter logFilter) error {
 		e, ok := filter.apply(e)
 		if !ok {
 			return nil
+		}
+		if e.Pane != "" {
+			name := e.Name
+			if name == "" {
+				name = names[e.HitchID]
+			}
+			e.Pane = string(name)
+		}
+		e.Reason = present(e.Reason)
+		if e.Envelope != nil {
+			e.Envelope.Reason = present(e.Envelope.Reason)
+		}
+		if e.Compaction != nil {
+			e.Compaction.Reason = present(e.Compaction.Reason)
+		}
+		for i := range e.Readings {
+			e.Readings[i].Reason = present(e.Readings[i].Reason)
 		}
 		data, err = core.EncodeEvent(e)
 		if err != nil {

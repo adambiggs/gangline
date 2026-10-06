@@ -81,7 +81,7 @@ func TestIdentityRefusalsNameARoute(t *testing.T) {
 	}
 	f.env["GANG_AGENT_ID"] = "b"
 	f.env["TMUX_PANE"] = "%99"
-	if err := send(); err == nil || err.Error() != "hitch identity caller is registered to pane %1, not this pane %99; run gang from its pane, or unset GANG_AGENT_ID to act as the operator" {
+	if err := send(); err == nil || err.Error() != "hitch identity caller belongs to another pane; run gang from its pane, or unset GANG_AGENT_ID to act as the operator" {
 		t.Errorf("send from another pane = %v", err)
 	}
 	p, err := f.run.team.Agent("b")

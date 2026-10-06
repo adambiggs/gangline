@@ -2,6 +2,8 @@ package main
 
 import (
 	"encoding/json"
+	"errors"
+	"fmt"
 	"strings"
 	"testing"
 	"time"
@@ -203,5 +205,30 @@ func TestQueueCommandNamesInactiveRecipientBeforeExpiry(t *testing.T) {
 	saveAgent(t, f, worker.ID, func(a *core.Agent) { a.Status = core.Failed })
 	if row := queueJSONRows(t, f, "worker")["expired"]; row.State != "blocked" || !strings.Contains(row.Reason, "failed") {
 		t.Fatalf("expired message for a failed recipient: %+v", row)
+	}
+}
+
+func TestQueuePreservesLiteralMessageText(t *testing.T) {
+	for _, machine := range []bool{false, true} {
+		t.Run(fmt.Sprintf("json=%v", machine), func(t *testing.T) {
+			f := newStateFixture(t)
+			worker := f.add(t, "a", "worker", "codex")
+			const text = "budget $100 and pane %1 are literal input"
+			f.input.captureErr = errors.New("pane %1 unavailable")
+			publishPending(t, f, worker, core.Envelope{ID: "literal", Message: core.Message{Text: text}})
+			args := []string{"queue", "worker"}
+			if machine {
+				args = append(args, "--json")
+			}
+			if err := f.cmd.execute(args); err != nil {
+				t.Fatal(err)
+			}
+			if !strings.Contains(f.out.String(), "pane worker unavailable") {
+				t.Fatalf("diagnostic has no agent name: %q", f.out.String())
+			}
+			if !strings.Contains(f.out.String(), text) {
+				t.Fatalf("message changed: %q", f.out.String())
+			}
+		})
 	}
 }

@@ -11,7 +11,7 @@ const filterTestEvent = `{"type":"native_hook","at":"2026-09-22T00:00:00Z","hitc
 func TestFilteredLogSkipsUnselectedEventsWithoutValidating(t *testing.T) {
 	log := `{"type":"invented","at":"2026-09-22T00:00:00Z","hitch_id":"b"}` + "\n" + filterTestEvent + "\n"
 	var out bytes.Buffer
-	if err := writeFilteredLog(&out, strings.NewReader(log), logFilter{Agent: "a"}); err != nil {
+	if err := writeFilteredLog(&out, strings.NewReader(log), logFilter{Agent: "a"}, func(s string) string { return s }); err != nil {
 		t.Fatal(err)
 	}
 	if out.String() != filterTestEvent+"\n" {
@@ -30,7 +30,7 @@ func TestFilteredLogValidatesEverySelectedEvent(t *testing.T) {
 		{logFilter{Agent: "a"}, `{"type":"native_hook",`},
 	} {
 		log := filterTestEvent + "\n" + c.line + "\n"
-		err := writeFilteredLog(&bytes.Buffer{}, strings.NewReader(log), c.filter)
+		err := writeFilteredLog(&bytes.Buffer{}, strings.NewReader(log), c.filter, func(s string) string { return s })
 		if err == nil || !strings.Contains(err.Error(), "audit line 2") {
 			t.Fatalf("%+v %s: err = %v", c.filter, c.line, err)
 		}

@@ -58,7 +58,7 @@ func TestDropAndDownClearATeamFromAnEarlierBoot(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	windows, err := holderBackend.Windows(ctx)
+	windows, err := holderBackend.Panes(ctx)
 	if err != nil || len(windows) != 1 {
 		t.Fatalf("holder windows = %v, %v", windows, err)
 	}

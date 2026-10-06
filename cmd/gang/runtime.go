@@ -404,7 +404,7 @@ func (run *runtime) captureAgentPane(ctx context.Context, b harnessInput, a core
 	}
 	screen, err := run.captureRegistered(ctx, b, a)
 	if errors.Is(err, tmux.ErrPaneReplaced) {
-		return screen, refuseError("%s cannot be read in %s: %v; if the team session was renamed, restore its name; otherwise drop %s and hitch it again", a.Name, a.Pane, err, a.Name)
+		return screen, refuseError("%s cannot be read: %v; if the team session was renamed, restore its name; otherwise drop %s and hitch it again", a.Name, err, a.Name)
 	}
 	return screen, err
 }
@@ -508,7 +508,7 @@ func (run *runtime) input() (harnessInput, error) {
 	return run.cmd.tmux(run.settings)
 }
 
-// mark titles the agent's window through its registration, so a pane id that
+// mark titles the agent's pane through its registration, so a pane id that
 // now names another pane keeps that pane's title.
 func (run *runtime) mark(a core.Agent) error {
 	if requirePaneRegistration(a) != nil {
@@ -521,5 +521,5 @@ func (run *runtime) mark(a core.Agent) error {
 	if err != nil {
 		return err
 	}
-	return b.RenameRegisteredWindow(context.Background(), paneIdentity(a), windowTitle(a))
+	return b.TitleRegisteredPane(context.Background(), paneIdentity(a), paneTitle(a))
 }

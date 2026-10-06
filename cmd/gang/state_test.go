@@ -188,7 +188,7 @@ func newStateFixture(t *testing.T) *stateFixture {
 	}
 	// This executable supplies a listing only. Tests never contact a tmux server.
 	fakeTmux := filepath.Join(root, "tmux")
-	if err := os.WriteFile(fakeTmux, []byte("#!/bin/sh\n# SPDX-License-Identifier: Apache-2.0\n"+fakeTmuxUTF8+"case \"$1\" in list-panes) printf '%%1\\t"+strings.Repeat("a", 64)+"\\t$1\\tworker\\n';; has-session) exit 0;; *) exit 91;; esac\n"), 0700); err != nil {
+	if err := os.WriteFile(fakeTmux, []byte("#!/bin/sh\n# SPDX-License-Identifier: Apache-2.0\n"+fakeTmuxUTF8+"case \"$1 $2\" in 'list-panes -a') printf '"+strings.Repeat("a", 64)+"\\t$1\\t%%1\\tunit\\n';; list-panes*) printf '%%1\\t"+strings.Repeat("a", 64)+"\\t$1\\tworker\\n';; has-session*) exit 0;; *) exit 91;; esac\n"), 0700); err != nil {
 		t.Fatal(err)
 	}
 	env["GANG_TMUX"] = fakeTmux

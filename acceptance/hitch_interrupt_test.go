@@ -59,6 +59,13 @@ for argument; do
 	esac
 done
 [ "$capture$color" = 11 ] && point=startup
+# Operator panes are inspected before allocation; registration is later.
+if [ "$point" = create ] && [ -n "$GANGLINE_ACCEPTANCE_INTERRUPT" ]; then
+ mkdir -p "$GANGLINE_ACCEPTANCE_INTERRUPT_ONCE.created" || exit 1
+fi
+if [ "$point" = visibility ] && [ ! -d "$GANGLINE_ACCEPTANCE_INTERRUPT_ONCE.created" ]; then
+ point=
+fi
 for step in $GANGLINE_ACCEPTANCE_INTERRUPT; do
 	[ "${step%%:*}" = "$point" ] || continue
 	[ -e "$GANGLINE_ACCEPTANCE_INTERRUPT_ONCE.$point" ] && break

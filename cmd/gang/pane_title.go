@@ -2,7 +2,7 @@ package main
 
 import "github.com/adambiggs/gangline/core"
 
-func windowTitle(a core.Agent) string {
+func paneTitle(a core.Agent) string {
 	mark := "?"
 	switch a.Status {
 	case core.Failed:

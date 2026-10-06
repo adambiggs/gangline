@@ -66,7 +66,8 @@ type command struct {
 	schedulerLockWait func()
 	// flock takes the watchdog scheduler lock in cleanup's blocking wait;
 	// nil means syscall.Flock.
-	flock func(fd int, how int) error
+	flock        func(fd int, how int) error
+	presentation *operatorNames
 }
 
 func main() {
@@ -94,6 +95,8 @@ func outputFile(w io.Writer) (*os.File, bool) {
 		return o, true
 	case paneOutput:
 		return o.file, true
+	case operatorOutput:
+		return outputFile(o.writer)
 	}
 	return nil, false
 }
@@ -120,7 +123,7 @@ func run(args []string, stdin io.Reader, stdout, stderr io.Writer) int {
 	args = versionCommand(args)
 	if err := cmd.execute(args); err != nil {
 		for _, line := range errorLines(err) {
-			fmt.Fprintf(stderr, "gang: %s\n", line)
+			fmt.Fprintf(stderr, "gang: %s\n", cmd.operatorText(line))
 		}
 		status := errorStatus(err)
 		if status == exitUsage && len(args) != 0 {
@@ -136,6 +139,13 @@ func run(args []string, stdin io.Reader, stdout, stderr io.Writer) int {
 // errorLines reads every failure an error joins, so each prints as its own
 // line and none is lost behind the first.
 func errorLines(err error) []string {
+	if presented, ok := err.(operatorError); ok {
+		lines := errorLines(presented.error)
+		for i := range lines {
+			lines[i] = presented.names.text(lines[i])
+		}
+		return lines
+	}
 	if joined, ok := err.(interface{ Unwrap() []error }); ok {
 		var lines []string
 		for _, e := range joined.Unwrap() {
@@ -183,7 +193,7 @@ func versionCommand(args []string) []string {
 	return args
 }
 
-func (cmd command) execute(args []string) error {
+func (cmd command) execute(args []string) (result error) {
 	if len(args) == 0 {
 		_, err := io.WriteString(cmd.stdout, welcomeHelp)
 		return err
@@ -227,6 +237,15 @@ func (cmd command) execute(args []string) error {
 		return err
 	}
 	cmd.team = team
+	cmd.presentation = newOperatorNames(cmd)
+	defer func() {
+		if result != nil {
+			result = operatorError{error: result, names: cmd.presentation}
+		}
+	}()
+	if cmd.stderr != nil {
+		cmd.stderr = operatorOutput{writer: cmd.stderr, names: cmd.presentation}
+	}
 	if len(optionsFor(name)) == 0 {
 		for i, argument := range arguments {
 			if argument == "--" {

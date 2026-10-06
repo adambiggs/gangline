@@ -122,6 +122,7 @@ func (cmd command) writeContext(machine bool, r contextJSON) error {
 // unknownContext reports a reading that could not be observed. The JSON form
 // still prints, and the command exits unknown either way.
 func (cmd command) unknownContext(machine bool, r contextJSON) error {
+	r.Reason = cmd.operatorText(r.Reason)
 	if machine {
 		r.Status = "unknown"
 		if err := writeJSON(cmd.stdout, r); err != nil {

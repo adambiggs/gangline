@@ -42,7 +42,7 @@ func TestHitchKilledAtReadinessLeavesNoHeldPane(t *testing.T) {
 		t.Fatal(err)
 	}
 	// The wrapper names two tmux calls: a release of the pane hold, by the hitch
-	// or by a tick, and the window rename that follows the ready record. It
+	// or by a tick, and the pane title that follows the ready record. It
 	// lists each one it sees, and kills gang, its parent, at the chosen one,
 	// failing the call. Its files sit beside the state root, so the native
 	// CLI's hooks reach them as the hitch does.
@@ -52,7 +52,7 @@ func TestHitchKilledAtReadinessLeavesNoHeldPane(t *testing.T) {
 point= unset=0 hold=0
 for argument; do
 	case "$argument" in
-	*rename-window*'\~worker\~'*) point=ready;;
+	*@gangline_title*'\~worker\~'*) point=ready;;
 	*'"-u"'*'"remain-on-exit"'*) point=release;;
 	-u) unset=1;;
 	remain-on-exit) hold=1;;

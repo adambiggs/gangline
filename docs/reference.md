@@ -24,11 +24,26 @@ there. `log` refuses `--team` together with a `LOG.jsonl` operand. `teams`, `col
 | `gang up [NAME] [AGENT OPTIONS]` | Start the selected team with its lead agent named `NAME` (default `lead`), then attach when stdin is a terminal. |
 | `gang hitch NAME [OPTIONS]` | Launch an agent and deliver startup instructions and any task. |
 | `gang hitch NAME --recover` | Recover retained startup from its visible draft or a lone collapsed paste, or resume a queued startup its boot deadline failed once the pane shows an idle composer or a recognized prompt. |
-| `gang rename OLD NEW` | Change a registered name and window title. |
+| `gang rename OLD NEW` | Change a registered name and its pane's display title. |
 | `gang drop NAME` | Stop an agent and fail its pending messages. An unregistered `NAME` is refused. |
 | `gang down [-y, --yes]` | Confirm on a terminal (`[y/N]`, default no), then drop the selected team's agents and delete its runtime state and history. Before dropping any agent, it appends who ran it to `downs.jsonl` in the state root. Use `--yes` without a terminal. |
-| `gang attach` | Attach to the selected team's tmux session. |
+| `gang attach [NAME]` | Attach to the named agent's pane in the selected team. Without `NAME`, select the lead, or the first registered agent if there is no lead. |
 | `gang teams` | List teams in the configured state root. |
+
+Agents are independent panes. Their names and status appear on their own
+borders, so they can share a window without overwriting each other's titles.
+Window names and layout remain the operator's presentation. For example:
+
+```sh
+gang hitch worker --split lead
+gang hitch helper --split worker --vertical
+gang attach helper
+```
+
+Capture, delivery, status and individual drops address the named agent's pane
+in either layout. An operator shell split is allowed. A pane running a
+configured agent without registration refuses hitching and is identified by
+its window and pane position; it is not adopted or removed automatically.
 
 `up` and `hitch` accept:
 
@@ -41,6 +56,8 @@ there. `log` refuses `--team` together with a `LOG.jsonl` operand. `teams`, `col
 | `-t`, `--task TASK` | Startup assignment. |
 | `-r`, `--role ROLE` | Role brief; `up` defaults to `lead`. |
 | `--stdin` | Read the assignment from stdin. |
+| `--split NAME` | Place the new agent beside the named agent in its window; the target must already have a registered pane in the selected team. Without this option, create a new window. |
+| `--vertical` | Split top/bottom instead of side by side; requires `--split NAME`. |
 | `--resume SESSION` | Resume a native conversation by its native session ID. |
 | `--recover` | Recover an agent's retained startup input. |
 
@@ -53,7 +70,7 @@ with the pane's last lines and, when tmux collected one, the exit status. It
 records them as the agent's failure reason and closes the pane.
 A pane that shows no recognized startup screen within the startup wait
 leaves the agent registered with its startup queued; `hitch` exits with
-status 4, naming the pane and `gang hitch NAME --recover`, and the boot
+status 4, naming the agent and `gang hitch NAME --recover`, and the boot
 deadline still fails the agent if startup is not resumed.
 A startup blocked on a native prompt keeps holding its pane after `hitch`
 returns, so an answer that ends the native CLI fails the agent at the next
@@ -312,7 +329,7 @@ the team. The next armed timer clears the marker and logs `watchdog_available`. 
 prove that detached descendants exited. Every registered pane requires a server
 generation, session, pane ID, and inherited capability. Missing registration or
 capability is refused; launch a fresh hitch to establish them. Later ordinary
-windows do not inherit that per-hitch capability.
+panes do not inherit that per-hitch capability.
 
 `--team TEAM` selects another team in the same state root and tmux server for
 one command. For a separate team, keep its selection in the shell environment

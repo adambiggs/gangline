@@ -182,7 +182,7 @@ resume identities to their native CLI.
 Read these before changing behavior. A conflicting change needs an explicit
 decision about the principle or implementation.
 
-- Use universal surfaces: tmux windows, keystrokes, pane capture, and a CLI.
+- Use universal surfaces: tmux panes, keystrokes, pane capture, and a CLI.
 - Name every message's sender, distinguishing observed and declared identity.
 - Reserve `delivered` for verified submission; preserve uncertainty.
 - Describe native differences in collars so the CLI stays harness-neutral.

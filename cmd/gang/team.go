@@ -31,6 +31,7 @@ func (cmd command) up(args []string) error {
 		"t": &options.Task, "task": &options.Task,
 		"r": &options.Role, "role": &options.Role,
 		"resume": &options.Resume, "recover": &options.Recover, "stdin": &options.Stdin,
+		"split": &options.Split, "vertical": &options.Vertical,
 	})
 	positionals, err := parseOptions(flags, args)
 	if err != nil {
@@ -287,7 +288,7 @@ func (run *runtime) observeRoster(agents []core.Agent) ([]core.Agent, error) {
 	if err != nil {
 		return nil, err
 	}
-	windows, err := b.Windows(context.Background())
+	listedPanes, err := b.Panes(context.Background())
 	listed := err == nil
 	if err != nil {
 		exists, checkErr := b.SessionExists(context.Background())
@@ -298,8 +299,8 @@ func (run *runtime) observeRoster(agents []core.Agent) ([]core.Agent, error) {
 			return nil, err
 		}
 	}
-	panes := map[string]tmux.Window{}
-	for _, w := range windows {
+	panes := map[string]tmux.PaneInfo{}
+	for _, w := range listedPanes {
 		panes[string(w.Pane.ID)] = w
 	}
 	for i, a := range agents {
@@ -319,8 +320,8 @@ func (run *runtime) observeRoster(agents []core.Agent) ([]core.Agent, error) {
 		}
 		// A new server reuses pane ids, so a listed id is the record's pane
 		// only under the record's registration.
-		window, present := panes[current.Pane]
-		present = present && window.Registration == paneIdentity(current)
+		pane, present := panes[current.Pane]
+		present = present && pane.Registration == paneIdentity(current)
 		unlisted := false
 		if current.Pane != "" && !present && current.Status != core.Dropping {
 			// A listing is enough to fail the agent. With no session to list,
@@ -379,7 +380,7 @@ func (run *runtime) observeRoster(agents []core.Agent) ([]core.Agent, error) {
 		if unlisted && current.Status != core.Failed {
 			agents[i].Activity, agents[i].Evidence = core.Unknown, "tmux lists no team session"
 		}
-		if present && window.Name != windowTitle(current) {
+		if present && pane.Title != paneTitle(current) {
 			if err := run.mark(current); err != nil {
 				_ = run.unlock(l)
 				return nil, err
@@ -437,7 +438,7 @@ func (cmd command) roster(args []string) error {
 			marker += " [watchdog-unavailable]"
 		}
 		line := fmt.Sprintf("%-16s %-10s %-14s %s%s", a.Name, a.Status, activityLabel(row.Activity, row.BackgroundTasks), a.Collar, marker)
-		if _, err := fmt.Fprintln(cmd.stdout, line+rosterReason(a, rosterReasonLimit(cmd.stdout, line))); err != nil {
+		if _, err := fmt.Fprintln(cmd.stdout, line+cmd.operatorText(rosterReason(a, rosterReasonLimit(cmd.stdout, line)))); err != nil {
 			return err
 		}
 	}
@@ -499,9 +500,13 @@ func (run *runtime) agentRow(a core.Agent) (agentJSON, error) {
 	if err != nil {
 		return agentJSON{}, err
 	}
-	row := agentJSON{InputOutage: a.InputOutage, Name: a.Name, HitchID: a.ID, Status: a.Status, Activity: a.Activity, Collar: a.Collar, Pane: a.Pane, ProcessAvailable: !limited, Evidence: a.Evidence}
+	paneName := ""
+	if a.Pane != "" {
+		paneName = string(a.Name)
+	}
+	row := agentJSON{InputOutage: a.InputOutage, Name: a.Name, HitchID: a.ID, Status: a.Status, Activity: a.Activity, Collar: a.Collar, Pane: paneName, ProcessAvailable: !limited, Evidence: run.cmd.operatorText(a.Evidence)}
 	if a.Compaction != nil {
-		row.Compaction = &compactionJSON{ID: a.Compaction.ID, Status: a.Compaction.Status, Reason: a.Compaction.Reason}
+		row.Compaction = &compactionJSON{ID: a.Compaction.ID, Status: a.Compaction.Status, Reason: run.cmd.operatorText(a.Compaction.Reason)}
 	}
 	tasks, err := run.backgroundTasks(a)
 	if err != nil {
@@ -578,7 +583,7 @@ func (cmd command) status(args []string) error {
 		return err
 	}
 	if why && a.Evidence != "" {
-		if _, err := fmt.Fprintln(cmd.stdout, a.Evidence); err != nil {
+		if _, err := fmt.Fprintln(cmd.stdout, cmd.operatorText(a.Evidence)); err != nil {
 			return err
 		}
 	}
@@ -588,7 +593,7 @@ func (cmd command) status(args []string) error {
 		}
 	}
 	if why && a.Compaction != nil {
-		_, err = fmt.Fprintf(cmd.stdout, "compaction %s: %s\n", a.Compaction.Status, a.Compaction.Reason)
+		_, err = fmt.Fprintf(cmd.stdout, "compaction %s: %s\n", a.Compaction.Status, cmd.operatorText(a.Compaction.Reason))
 	}
 	return err
 }

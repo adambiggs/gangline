@@ -10,11 +10,17 @@ import (
 	"path/filepath"
 
 	"github.com/adambiggs/gangline/store"
+	"github.com/adambiggs/gangline/substrate"
 )
 
 func (cmd command) attach(arguments []string) error {
-	if err := noArguments(arguments, "attach"); err != nil {
-		return err
+	if len(arguments) > 1 {
+		return usageError("attach: expected at most one agent name")
+	}
+	if len(arguments) == 1 {
+		if err := validateAgentName(arguments[0]); err != nil {
+			return err
+		}
 	}
 	run, err := cmd.runtime()
 	if err != nil {
@@ -31,14 +37,38 @@ func (cmd command) attach(arguments []string) error {
 	if !exists {
 		return run.stoppedTeamError()
 	}
-	windows, err := backend.Windows(context.Background())
+	agents, err := run.team.ListAgents()
 	if err != nil {
 		return err
 	}
-	if len(windows) == 0 {
-		return fmt.Errorf("team %q has no panes", run.settings.Session)
+	if len(agents) == 0 {
+		return refuseError("team %q has no registered agents", run.settings.Session)
 	}
-	return backend.Attach(context.Background(), windows[0].Pane.ID)
+	name := string(agents[0].Name)
+	for _, agent := range agents {
+		if agent.Role == "lead" {
+			name = string(agent.Name)
+			break
+		}
+	}
+	if len(arguments) == 1 {
+		name = arguments[0]
+	}
+	agent, err := run.resolve(name)
+	if err != nil {
+		return err
+	}
+	if err := requirePaneRegistration(agent); err != nil {
+		return err
+	}
+	present, err := backend.CheckPane(context.Background(), paneIdentity(agent))
+	if err != nil {
+		return err
+	}
+	if !present {
+		return refuseError("%s has no running pane", agent.Name)
+	}
+	return backend.Attach(context.Background(), substrate.PaneID(agent.Pane))
 }
 
 func (run *runtime) stoppedTeamError() error {

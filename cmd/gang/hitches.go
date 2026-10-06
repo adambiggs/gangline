@@ -180,8 +180,26 @@ func (cmd command) hitchWithStaleClaim(args []string, supersede bool) (result er
 	if err != nil {
 		return err
 	}
+	var splitTarget tmux.PaneIdentity
+	if o.Split != "" {
+		target, err := run.resolve(o.Split)
+		if err != nil {
+			return err
+		}
+		if err := requirePaneRegistration(target); err != nil {
+			return err
+		}
+		present, err := b.CheckPane(boot, paneIdentity(target))
+		if err != nil {
+			return fmt.Errorf("split %s: %w", target.Name, err)
+		}
+		if !exists || !present {
+			return refuseError("split target %s has no running pane", target.Name)
+		}
+		splitTarget = paneIdentity(target)
+	}
 	if exists {
-		windows, err := b.Windows(boot)
+		listedPanes, err := b.Panes(boot)
 		if err != nil {
 			return err
 		}
@@ -196,11 +214,8 @@ func (cmd command) hitchWithStaleClaim(args []string, supersede bool) (result er
 			}
 		}
 		var commands map[string]bool
-		for _, window := range windows {
-			if !gangWindowTitle(window.Name) {
-				continue
-			}
-			owned, err := ownedPane(boot, b, owners[string(window.Pane.ID)])
+		for _, pane := range listedPanes {
+			owned, err := ownedPane(boot, b, owners[string(pane.Pane.ID)])
 			if err != nil {
 				return err
 			}
@@ -211,12 +226,12 @@ func (cmd command) hitchWithStaleClaim(args []string, supersede bool) (result er
 						return err
 					}
 				}
-				running, err := unregisteredAgent(boot, b, window.Pane.ID, commands)
+				running, err := unregisteredAgent(boot, b, pane.Pane.ID, commands)
 				if err != nil {
 					return err
 				}
 				if running {
-					position, err := b.DescribePane(boot, window.Pane.ID)
+					position, err := b.DescribePane(boot, pane.Pane.ID)
 					if err != nil {
 						return err
 					}
@@ -259,7 +274,7 @@ func (cmd command) hitchWithStaleClaim(args []string, supersede bool) (result er
 	if err != nil {
 		return err
 	}
-	spec := launch.SpawnSpec(windowTitle(a), dir)
+	spec := launch.SpawnSpec(string(a.Name), dir)
 	spec.Env["GANG_AGENT_NONCE"] = agentToken
 	// Hold the pane open until startup is observed, so a native CLI that
 	// exits at boot leaves its status and final output for the hitch error.
@@ -318,7 +333,9 @@ func (cmd command) hitchWithStaleClaim(args []string, supersede bool) (result er
 	// Creation and registration ignore the interrupt: a tmux client killed
 	// mid-command can leave a window whose pane id gang never learns.
 	var pane substrate.Pane
-	if exists {
+	if o.Split != "" {
+		pane, err = b.Split(boot, splitTarget, spec, o.Vertical)
+	} else if exists {
 		pane, err = b.Spawn(boot, spec)
 	} else {
 		pane, err = b.CreateSession(boot, spec)
@@ -328,6 +345,11 @@ func (cmd command) hitchWithStaleClaim(args []string, supersede bool) (result er
 		return err
 	}
 	registration, err := b.RegisterPane(boot, pane.ID)
+	if pane.ID != "" && cmd.presentation != nil {
+		cmd.presentation.mu.Lock()
+		cmd.presentation.names[string(pane.ID)] = string(a.Name)
+		cmd.presentation.mu.Unlock()
+	}
 	if err != nil {
 		err, _ = holdFailed(err)
 		// Signals stay absorbed until this removal returns, so it is bounded.
@@ -497,9 +519,9 @@ func (cmd command) hitchWithStaleClaim(args []string, supersede bool) (result er
 		return startupAttention(a, "gang tick")
 	}
 	if err := deliveryResult(outcome); err != nil {
-		return commandError{status: exitUnknown, text: fmt.Sprintf("startup input is unverified; inspect %s, resolve native prompts, then run gang hitch %s --recover; do not replace the contract with plain send", a.Pane, a.Name)}
+		return commandError{status: exitUnknown, text: fmt.Sprintf("startup input is unverified; inspect %s, resolve native prompts, then run gang hitch %s --recover; do not replace the contract with plain send", a.Name, a.Name)}
 	}
-	if _, err := fmt.Fprintf(cmd.stdout, "%s\t%s\n", a.Name, a.Pane); err != nil {
+	if _, err := fmt.Fprintln(cmd.stdout, a.Name); err != nil {
 		return err
 	}
 	return nil
@@ -602,16 +624,6 @@ func ownedPane(ctx context.Context, b paneRegistry, records []core.Agent) (bool,
 	return false, nil
 }
 
-func gangWindowTitle(name string) bool {
-	if len(name) < 3 || name[0] != name[len(name)-1] {
-		return false
-	}
-	switch name[0] {
-	case '?', '~', '-', '!':
-		return true
-	}
-	return false
-}
 func storedIdentity(i tmux.Identity) core.ProcessIdentity {
 	return core.ProcessIdentity{PID: i.PID, Started: i.Started, Version: i.Version, UniqueID: i.UniqueID, BootID: i.BootID, Namespace: i.Namespace}
 }

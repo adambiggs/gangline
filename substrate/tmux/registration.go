@@ -390,14 +390,16 @@ func (b *Backend) ReleaseRegisteredExit(ctx context.Context, id PaneIdentity) er
 	return releasedExit(out)
 }
 
-// RenameRegisteredWindow names the window of a registered pane. A pane that is
-// absent, or whose id now names another server's or session's pane, keeps its
-// name: that window is not the registration's.
-func (b *Backend) RenameRegisteredWindow(ctx context.Context, id PaneIdentity, name string) error {
-	if err := validWindowName(name); err != nil {
+// TitleRegisteredPane displays a registered agent's name and status on its
+// own border. Native terminal titles and sibling borders remain independent.
+func (b *Backend) TitleRegisteredPane(ctx context.Context, id PaneIdentity, name string) error {
+	if err := validPaneTitle(name); err != nil {
 		return err
 	}
-	err := b.mutateRegisteredPane(ctx, id, tmuxCommand("rename-window", "-t", id.Pane, "--", escapeFormat(name)), "", 0, true)
+	command := tmuxCommand("set-option", "-p", "-t", id.Pane, "@gangline_title", name) + " ; " +
+		tmuxCommand("set-option", "-w", "-t", id.Pane, "pane-border-status", "top") + " ; " +
+		tmuxCommand("set-option", "-w", "-t", id.Pane, "pane-border-format", "#{?@gangline_title,#{@gangline_title},#{pane_title}}")
+	err := b.mutateRegisteredPane(ctx, id, command, "", 0, true)
 	if errors.Is(err, ErrPaneReplaced) {
 		return nil
 	}

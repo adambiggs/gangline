@@ -99,12 +99,12 @@ func TestPaneRegistrationPrivateServer(t *testing.T) {
 	if _, err := prefix.Spawn(ctx, substrate.SpawnSpec{Name: "wrong-session", Directory: root, Command: "cat"}); err == nil {
 		t.Fatal("spawn accepted session name prefix")
 	}
-	windows, err := b.Windows(ctx)
+	windows, err := b.Panes(ctx)
 	if err != nil {
 		t.Fatal(err)
 	}
 	for _, window := range windows {
-		if window.Name == "wrong-session" {
+		if window.Title == "wrong-session" {
 			t.Fatal("failed prefix spawn created a pane in the longer session")
 		}
 	}
@@ -378,7 +378,7 @@ func TestPaneClosedOnlyOnTheRegisteringServer(t *testing.T) {
 
 // A registration names only its own pane's window: a pane id that now names
 // another server's pane, or a pane gang cannot see, keeps its name.
-func TestRenameRegisteredWindowNamesOnlyItsPane(t *testing.T) {
+func TestTitleRegisteredPaneNamesOnlyItsPane(t *testing.T) {
 	t.Setenv("TMUX", "")
 	t.Setenv("TMUX_PANE", "")
 	binary, err := exec.LookPath("tmux")
@@ -405,21 +405,21 @@ func TestRenameRegisteredWindowNamesOnlyItsPane(t *testing.T) {
 	}
 	name := func() string {
 		t.Helper()
-		return strings.TrimSpace(runTmux(t, binary, socket, "display-message", "-p", "-t", id.Pane, "#{window_name}"))
+		return strings.TrimSpace(runTmux(t, binary, socket, "display-message", "-p", "-t", id.Pane, "#{@gangline_title}"))
 	}
 	other := id
 	other.Generation = strings.Repeat("a", 64)
-	if err := b.RenameRegisteredWindow(ctx, other, "stale"); err != nil {
+	if err := b.TitleRegisteredPane(ctx, other, "stale"); err != nil {
 		t.Fatal(err)
 	}
-	if got := name(); got != "registered" {
+	if got := name(); got != "" {
 		t.Fatalf("pane of another server generation renamed to %q", got)
 	}
 	elsewhere, _ := New(Config{Binary: binary, Socket: filepath.Join(root, "absent.sock"), Session: session})
-	if err := elsewhere.RenameRegisteredWindow(ctx, id, "unreachable"); err != nil {
+	if err := elsewhere.TitleRegisteredPane(ctx, id, "unreachable"); err != nil {
 		t.Fatalf("rename on an unreachable server: %v", err)
 	}
-	if err := b.RenameRegisteredWindow(ctx, id, "renamed#S"); err != nil {
+	if err := b.TitleRegisteredPane(ctx, id, "renamed#S"); err != nil {
 		t.Fatal(err)
 	}
 	if got := name(); got != "renamed#S" {
@@ -472,11 +472,11 @@ func TestRegisteredPaneActsWhileItsWindowIsInOtherSessions(t *testing.T) {
 			if got := strings.TrimSpace(runTmux(t, binary, socket, "display-message", "-p", "-t", id.Pane, "#{session_id}")); got == id.Session {
 				t.Fatalf("pane %s resolves to its registered session %s; the view does not exercise another session", id.Pane, got)
 			}
-			if err := b.RenameRegisteredWindow(ctx, id, "renamed"); err != nil {
+			if err := b.TitleRegisteredPane(ctx, id, "renamed"); err != nil {
 				t.Fatalf("rename: %v", err)
 			}
-			if got := strings.TrimSpace(runTmux(t, binary, socket, "display-message", "-p", "-t", id.Pane, "#{window_name}")); got != "renamed" {
-				t.Fatalf("window named %q, want renamed", got)
+			if got := strings.TrimSpace(runTmux(t, binary, socket, "display-message", "-p", "-t", id.Pane, "#{@gangline_title}")); got != "renamed" {
+				t.Fatalf("pane title %q, want renamed", got)
 			}
 			if err := b.ReleaseRegisteredExit(ctx, id); err != nil {
 				t.Fatalf("release: %v", err)
@@ -524,7 +524,7 @@ func TestRegisteredPaneRefusedOutsideItsSession(t *testing.T) {
 		t.Fatal(err)
 	}
 	runTmux(t, binary, socket, "move-window", "-s", id.Pane, "-t", "="+session+"-other:")
-	if err := b.RenameRegisteredWindow(ctx, id, "renamed"); err != nil {
+	if err := b.TitleRegisteredPane(ctx, id, "renamed"); err != nil {
 		t.Fatalf("rename: %v", err)
 	}
 	if got := strings.TrimSpace(runTmux(t, binary, socket, "display-message", "-p", "-t", id.Pane, "#{window_name}")); got != "registered" {

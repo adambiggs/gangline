@@ -31,7 +31,7 @@ Then tell the lead what you want:
 > you the command and supporting file paths, then summarize the answer for me.
 
 The lead can brief a worker, receive its report, and bring the result back.
-Switch between their tmux windows to watch the work. Your instructions decide
+Watch their tmux panes in separate windows or a shared split layout. Your instructions decide
 their assignments and staffing.
 
 <picture>

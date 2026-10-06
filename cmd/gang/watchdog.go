@@ -209,7 +209,7 @@ func (run *runtime) updateWatchdog(generation string, cleanup, reset bool) (proc
 		if err != nil {
 			return false, err
 		}
-		windows, err := backend.Windows(context.Background())
+		windows, err := backend.Panes(context.Background())
 		if err != nil {
 			exists, checkErr := backend.SessionExists(context.Background())
 			if checkErr != nil {

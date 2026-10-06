@@ -638,7 +638,7 @@ func (run *runtime) sendNotice(a core.Agent, e core.Envelope, outcome string) er
 	default:
 		text += "failed and was not delivered; gang log has the reason."
 	}
-	if err := run.publishOnceTo(p, sender, core.Envelope{ID: id, Token: token, Recipient: sender.ID, To: sender.Name, From: core.Sender{Kind: core.SenderGangline, Name: "delivery"}, Message: core.Message{Text: text}, CreatedAt: run.cmd.now()}); err != nil {
+	if err := run.publishOnceTo(p, sender, core.Envelope{ID: id, Token: token, Recipient: sender.ID, To: sender.Name, From: core.Sender{Kind: core.SenderGangline, Name: "delivery"}, Message: core.Message{Text: run.cmd.operatorText(text)}, CreatedAt: run.cmd.now()}); err != nil {
 		return err
 	}
 	run.wake = append(run.wake, sender.ID)

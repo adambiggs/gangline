@@ -18,6 +18,7 @@ import (
 	"time"
 
 	"github.com/adambiggs/gangline/substrate/tmux"
+	"golang.org/x/term"
 )
 
 const fakeHarnessEnvironment = "GANGLINE_ACCEPTANCE_FAKE_HARNESS"
@@ -561,7 +562,11 @@ func commandHarnessHook(prompt string) error {
 }
 
 func renderCommandComposer(input string) {
-	const rule = "────────────────────────────────────────────────────────────"
+	width := 60
+	if columns, _, err := term.GetSize(int(os.Stdout.Fd())); err == nil && columns < width {
+		width = columns
+	}
+	rule := strings.Repeat("─", width)
 	if len(input) > 120 {
 		input = "[Pasted text]"
 	}
@@ -569,7 +574,14 @@ func renderCommandComposer(input string) {
 	if len(lines) == 0 {
 		lines = []string{""}
 	}
-	fmt.Print("\x1b[2J\x1b[HREADY\r\n", rule, "\r\n❯ ", lines[0], "\r\n")
+	label := ""
+	if os.Getenv("GANGLINE_ACCEPTANCE_SCREEN_LABEL") == "1" {
+		id := os.Getenv("GANGLINE_HITCH_ID")
+		if len(id) > 8 {
+			label = " " + id[len(id)-8:] + " literal %1 $100 @2"
+		}
+	}
+	fmt.Print("\x1b[2J\x1b[HREADY", label, "\r\n", rule, "\r\n❯ ", lines[0], "\r\n")
 	for _, line := range lines[1:] {
 		fmt.Print(line, "\r\n")
 	}

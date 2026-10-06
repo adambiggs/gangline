@@ -66,7 +66,7 @@ func (run *runtime) reopenBoot(l *store.LockedAgent, a *core.Agent) error {
 	defer cancel()
 	screen, err := run.captureRegistered(ctx, b, *a)
 	if err != nil {
-		return refuseError("%s failed when its boot deadline elapsed and %s cannot be read: %v; drop it and hitch it again", a.Name, a.Pane, err)
+		return refuseError("%s failed when its boot deadline elapsed and its pane cannot be read: %v; drop it and hitch it again", a.Name, err)
 	}
 	startup, err := harness.InspectStartup(c, screen)
 	if err != nil {

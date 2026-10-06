@@ -231,7 +231,7 @@ func testLiveProvider(t *testing.T, collar, cli, cheapest string) {
 		t.Fatalf("private agents: %+v: %v", agents, err)
 	}
 	pane := agents[0].Pane
-	if hitch != "" && strings.TrimSpace(hitch) != "worker\t"+pane {
+	if hitch != "" && strings.TrimSpace(hitch) != "worker" {
 		t.Fatalf("unexpected hitch result: stdout=%q stderr=%q pane=%q", hitch, hitchDiagnostic, pane)
 	}
 	paths, err := team.Agent(agents[0].ID)

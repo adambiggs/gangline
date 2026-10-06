@@ -415,9 +415,13 @@ func (cmd command) tmux(settings settings) (*tmux.Backend, error) {
 }
 
 func (cmd command) tmuxConfig(socket, session string) tmux.Config {
+	stdin, _ := cmd.stdin.(*os.File)
 	return tmux.Config{
 		Binary:  valueOr(cmd.environment("GANG_TMUX"), "tmux"),
 		Socket:  socket,
 		Session: session,
+		Stdin:   stdin,
+		Stdout:  childOutput(cmd.stdout),
+		Stderr:  cmd.stderr,
 	}
 }

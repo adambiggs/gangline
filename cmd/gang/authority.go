@@ -162,6 +162,7 @@ func (run *runtime) notifyHeldInput(a core.Agent) error {
 // sendHitcherNotice wakes the hitcher only for a notice it publishes, since a
 // condition observed on every tick asks for its notice on every tick.
 func (run *runtime) sendHitcherNotice(a core.Agent, id core.EnvelopeID, text string) error {
+	text = run.cmd.operatorText(text)
 	p, err := run.team.Agent(a.HitchedBy)
 	if err != nil {
 		return err

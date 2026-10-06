@@ -35,7 +35,7 @@ func (cmd command) hook(args []string) error {
 	err := cmd.handleHook(args)
 	if err != nil {
 		if cmd.stderr != nil {
-			_, _ = fmt.Fprintf(cmd.stderr, "gang hook: %v\n", err)
+			_, _ = fmt.Fprintf(cmd.stderr, "gang hook: %s\n", cmd.operatorText(err.Error()))
 		}
 		if run, setupErr := cmd.runtime(); setupErr == nil {
 			_ = run.team.Append(core.Event{Type: "hook_failed", At: cmd.now(), HitchID: core.HitchID(cmd.environment("GANGLINE_HITCH_ID")), Pane: cmd.environment("TMUX_PANE"), Reason: err.Error()})
@@ -370,7 +370,7 @@ func (cmd command) log(args []string) error {
 		return err
 	}
 	defer f.Close()
-	return writeFilteredLog(cmd.stdout, f, filter)
+	return writeFilteredLog(cmd.stdout, f, filter, cmd.operatorText)
 }
 func (cmd command) wait(args []string) error {
 	o, err := parseWait(args)

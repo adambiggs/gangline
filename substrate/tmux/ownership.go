@@ -226,11 +226,11 @@ func (b *Backend) RemovePane(ctx context.Context, pane substrate.PaneID, expecte
 	if !exists {
 		return nil
 	}
-	windows, err := b.Windows(ctx)
+	listedPanes, err := b.Panes(ctx)
 	if err != nil {
 		return err
 	}
-	for _, w := range windows {
+	for _, w := range listedPanes {
 		if w.Pane.ID == pane {
 			out, err := b.run(ctx, "display-message", "-p", "-t", string(pane), "#{pane_pid}")
 			if err != nil {

@@ -543,7 +543,7 @@ func TestRenameReleaseHandsOffConcurrentSend(t *testing.T) {
 	}
 }
 
-func TestStatusMarksExpiredDeadlineFromTheObservedWindowTitle(t *testing.T) {
+func TestStatusMarksExpiredDeadlineFromTheObservedPaneTitle(t *testing.T) {
 	f := newStateFixture(t)
 	a := f.add(t, "a", "worker", "codex")
 	p, _ := f.run.team.Agent(a.ID)
@@ -562,9 +562,10 @@ func TestStatusMarksExpiredDeadlineFromTheObservedWindowTitle(t *testing.T) {
 # SPDX-License-Identifier: Apache-2.0
 ` + fakeTmuxUTF8 + `case "$1" in
  list-panes) case "$*" in
-  *window_name*) printf '%%1\t%s\t$1\t?worker?\n' ` + strings.Repeat("a", 64) + `; printf 'listed\n' >> "$(dirname "$0")/listed";;
+  *@gangline_title*) printf '%%1\t%s\t$1\t?worker?\n' ` + strings.Repeat("a", 64) + `; printf 'listed\n' >> "$(dirname "$0")/listed";;
   *) printf '%s\t$1\t%%1\tunit\n' ` + strings.Repeat("a", 64) + `;;
   esac;;
+ has-session) exit 0;;
  capture-pane) printf 'still launching\n';;
  display-message) case "$*" in
   *session_id*) printf '$1\n';;
@@ -587,7 +588,7 @@ esac
 		t.Fatal(err)
 	}
 	if !strings.Contains(string(marked), "!worker!") {
-		t.Fatalf("expired window title: %s", marked)
+		t.Fatalf("expired pane title: %s", marked)
 	}
 	listed, err := os.ReadFile(filepath.Join(filepath.Dir(fake), "listed"))
 	if err != nil {

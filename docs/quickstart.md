@@ -83,7 +83,7 @@ choices depend on the agent and your repository's policy.
 
 Use tmux's `Ctrl-b w` window chooser to visit `scout` and return to `lead`.
 Either agent may ask you to approve a command; answer in that agent's window.
-A window title marked `!name!` signals an agent that needs attention.
+A pane title marked `!name!` signals an agent that needs attention.
 To inspect from your shell, detach with `Ctrl-b d` and run:
 
 ```sh

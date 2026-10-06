@@ -168,18 +168,16 @@ func TestBackendDrivesPrivateTmuxServer(t *testing.T) {
 	if name := strings.TrimSpace(runTmux(t, binary, socket, "display-message", "-p", "-t", string(pane.ID), "#{window_name}")); name != "worker#S" {
 		t.Fatalf("window name = %q, want literal format marker", name)
 	}
-	if found, err := backend.PaneNamed(context.Background(), "worker#S"); err != nil || found.ID != pane.ID {
-		t.Fatalf("named pane = %#v, %v; want %q", found, err, pane.ID)
-	}
 	id, err := backend.RegisterPane(context.Background(), pane.ID)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := backend.RenameRegisteredWindow(context.Background(), id, "renamed#S"); err != nil {
+	if err := backend.TitleRegisteredPane(context.Background(), id, "renamed#S"); err != nil {
 		t.Fatal(err)
 	}
-	if found, err := backend.PaneNamed(context.Background(), "renamed#S"); err != nil || found.ID != pane.ID {
-		t.Fatalf("renamed pane = %#v, %v; want %q", found, err, pane.ID)
+	panes, err := backend.Panes(context.Background())
+	if err != nil || len(panes) != 2 || panes[1].Title != "renamed#S" {
+		t.Fatalf("pane titles = %+v, %v", panes, err)
 	}
 	runTmux(t, binary, socket, "wait-for", ready)
 	if err := backend.SendKeys(context.Background(), pane.ID, substrate.Keys{Text: "hello from backend", Submit: true}); err != nil {

@@ -63,3 +63,47 @@ func TestAttachWithoutLeadClaimKeepsStartAdvice(t *testing.T) {
 		t.Fatalf("attach error = %v, want start advice", err)
 	}
 }
+
+func TestAttachSelectsNamedPaneAndDefaultsToLead(t *testing.T) {
+	f := newStateFixture(t)
+	f.add(t, "worker-id", "worker", "codex")
+	lead := f.add(t, "lead-id", "lead", "codex")
+	saveAgent(t, f, lead.ID, func(a *core.Agent) { a.Pane = "%2"; a.Role = "lead" })
+	fake := f.env["GANG_TMUX"]
+	calls := filepath.Join(filepath.Dir(fake), "attached")
+	script := "#!/bin/sh\n# SPDX-License-Identifier: Apache-2.0\n" +
+		"if [ \"$1\" = attach-session ]; then printf '%s\\n' \"$@\" > '" + calls + "'; exit 0; fi\n" + fakeTmuxUTF8 +
+		"case \"$1\" in has-session) exit 0;; list-panes) printf '" + strings.Repeat("a", 64) + "\\t$1\\t%%1\\tunit\\n" + strings.Repeat("a", 64) + "\\t$1\\t%%2\\tunit\\n';; *) exit 91;; esac\n"
+	if err := os.WriteFile(fake, []byte(script), 0700); err != nil {
+		t.Fatal(err)
+	}
+	for _, c := range []struct {
+		args []string
+		pane string
+	}{{[]string{"worker"}, "%1"}, {nil, "%2"}} {
+		if err := f.cmd.attach(c.args); err != nil {
+			t.Fatal(err)
+		}
+		got, err := os.ReadFile(calls)
+		if err != nil {
+			t.Fatal(err)
+		}
+		want := "attach-session\n-t\nunit\n;\nselect-window\n-t\n" + c.pane + "\n;\nselect-pane\n-t\n" + c.pane + "\n"
+		if string(got) != want {
+			t.Fatalf("attach %v targeted %q, want %q", c.args, got, want)
+		}
+	}
+	if err := os.Remove(calls); err != nil {
+		t.Fatal(err)
+	}
+	saveAgent(t, f, lead.ID, func(a *core.Agent) { a.Registration.Session = "$9" })
+	if err := f.cmd.attach([]string{"lead"}); err == nil {
+		t.Fatal("foreign registration attached")
+	}
+	if _, err := os.Stat(calls); !os.IsNotExist(err) {
+		t.Fatalf("refused attach reached tmux: %v", err)
+	}
+	if err := f.cmd.attach([]string{"missing"}); err == nil {
+		t.Fatal("absent name attached")
+	}
+}

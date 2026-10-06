@@ -68,7 +68,7 @@ func (run *runtime) observedAgent() (*core.Agent, error) {
 			return nil, refuseError("hitch identity %s is %s, not active; re-hitch this agent", a.Name, a.Status)
 		}
 		if pane := run.cmd.environment("TMUX_PANE"); pane != "" && pane != a.Pane {
-			return nil, refuseError("hitch identity %s is registered to pane %s, not this pane %s; run gang from its pane, or unset GANG_AGENT_ID to act as the operator", a.Name, a.Pane, pane)
+			return nil, refuseError("hitch identity %s belongs to another pane; run gang from its pane, or unset GANG_AGENT_ID to act as the operator", a.Name)
 		}
 		if err := run.verifyCaller(a); err != nil {
 			return nil, err
@@ -321,6 +321,9 @@ func (cmd command) queue(args []string) error {
 		pending, err := run.pendingRows(a)
 		if err != nil {
 			return err
+		}
+		for i := range pending {
+			pending[i].Reason = cmd.operatorText(pending[i].Reason)
 		}
 		rows = append(rows, pending...)
 	}
@@ -660,7 +663,7 @@ func (cmd command) compact(args []string) (result error) {
 	if a.Compaction.Status == "queued" {
 		wait := "waiting for native idle"
 		if a.Compaction.Reason != "" {
-			wait = a.Compaction.Reason
+			wait = cmd.operatorText(a.Compaction.Reason)
 		}
 		_, err := fmt.Fprintf(cmd.stdout, "%s\tqueued; %s; resume enters native queue when compaction starts\n", id, wait)
 		return err

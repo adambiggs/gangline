@@ -60,8 +60,11 @@ func TestRecordsSurviveCallerWithoutUTF8Locale(t *testing.T) {
 	if _, err := b.ServerIdentity(ctx, id); err != nil {
 		t.Fatal(err)
 	}
-	named, err := b.PaneNamed(ctx, name)
-	if err != nil || named.ID != pane.ID {
-		t.Fatalf("pane named %q = %+v, %v; want %s", name, named, err, pane.ID)
+	if err := b.TitleRegisteredPane(ctx, id, name); err != nil {
+		t.Fatal(err)
+	}
+	panes, err := b.Panes(ctx)
+	if err != nil || len(panes) != 2 || panes[1].Title != name || panes[1].Pane.ID != pane.ID {
+		t.Fatalf("pane title %q = %+v, %v", name, panes, err)
 	}
 }
