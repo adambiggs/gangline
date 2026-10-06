@@ -1,5 +1,13 @@
 # Changelog
 
+## [1.16.1](https://github.com/adambiggs/gangline/compare/gangline-v1.16.0...gangline-v1.16.1) (2026-10-06)
+
+
+### Bug Fixes
+
+* compare queued continuations by their gang envelope ([f3fc7d1](https://github.com/adambiggs/gangline/commit/f3fc7d11e5a8f65962794b07a31dd10cd1062d35))
+* wait through brief agent lock contention during rename ([c1f6fcb](https://github.com/adambiggs/gangline/commit/c1f6fcb99ec3d0c4246521bd3d4b462192e42f33))
+
 ## [1.16.0](https://github.com/adambiggs/gangline/compare/gangline-v1.15.14...gangline-v1.16.0) (2026-10-06)
 
 
