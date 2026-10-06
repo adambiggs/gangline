@@ -142,7 +142,7 @@ func TestCommandLifecycleOnPrivateTmux(t *testing.T) {
 	if strings.Count(string(argv), "# Gangline delivery contract") != 1 || strings.Contains(string(received), "# Gangline delivery contract") || strings.Contains(string(argv), "acceptance assignment") {
 		t.Fatalf("standing prose or task duplicated across launch and startup: argv=%q received=%q", argv, received)
 	}
-	if !regexp.MustCompile(`^\[gang:hitch#[0-9a-f]{16} assignment\]`).Match(received) || !strings.Contains(string(received), "Assignment:\n\nacceptance assignment") {
+	if !regexp.MustCompile(`^\[gang:hitch#[0-9a-f]{16} assignment\]`).Match(received) || !strings.Contains(string(received), "Assignment: acceptance assignment") {
 		t.Fatalf("startup lacks Gangline attribution or assignment: %q", received)
 	}
 	// runInPane has the agent in pane run gang with its own environment, as a

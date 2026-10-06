@@ -50,7 +50,7 @@ func TestUpStartupTaskForResumedLead(t *testing.T) {
 			want := test.want
 			purpose := "startup"
 			if test.want != "No assignment was supplied." {
-				want = "Assignment:\n\n" + want
+				want = "Assignment: " + want
 				purpose = "assignment"
 			}
 			if e.Message.Text != want || e.Purpose != purpose || a.Role != "lead" {

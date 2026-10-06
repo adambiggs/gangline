@@ -40,7 +40,7 @@ func TestStartupDeliversStandingProseOnce(t *testing.T) {
 			if strings.Contains(prompt, "build the result") {
 				t.Fatal("assignment went into system prompt")
 			}
-			if collar.Options.RolePrompt != nil && message != "Assignment:\n\nbuild the result" {
+			if collar.Options.RolePrompt != nil && message != "Assignment: build the result" {
 				t.Fatalf("system-prompt collar also delivered standing prose: %q", message)
 			}
 		})

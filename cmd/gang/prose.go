@@ -106,7 +106,7 @@ func validateProse(label string, data []byte) error {
 func startupMessages(name string, prose startupProse, assignment string, systemPrompt bool) (prompt, message string) {
 	message = "No assignment was supplied."
 	if assignment != "" {
-		message = "Assignment:\n\n" + assignment
+		message = "Assignment: " + assignment
 	}
 	if systemPrompt {
 		return composeStartup(name, prose), message
