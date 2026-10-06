@@ -553,7 +553,7 @@ func TestHitchRefusesPaneOnlyAStaleRecordNames(t *testing.T) {
 			f := newStateFixture(t)
 			fakeCodexOnPath(t)
 			f.add(t, "a", "worker", "codex")
-			script := "#!/bin/sh\n# SPDX-License-Identifier: Apache-2.0\n" + fakeTmuxUTF8 + "case \"$1 $2\" in\n'list-panes -a') printf '" + tc.generation + "\\t$1\\t%%1\\tunit\\n';;\nlist-panes*) printf '%%1\\t" + strings.Repeat("a", 64) + "\\t$1\\t?worker?\\n';;\ndisplay-message*) printf '$1\\n';;\nhas-session*) exit 0;;\n*) exit 91;;\nesac\n"
+			script := "#!/bin/sh\n# SPDX-License-Identifier: Apache-2.0\n" + fakeTmuxUTF8 + "case \"$1 $2\" in\n'list-panes -a') printf '" + tc.generation + "\\t$1\\t%%1\\tunit\\n';;\nlist-panes*) printf '%%1\\t" + strings.Repeat("a", 64) + "\\t$1\\t?worker?\\n';;\ndisplay-message*) case \"$5\" in '#{window_name}\t#{pane_index}') printf 'lead\\t0\\n';; *) printf 'codex\\n';; esac;;\nhas-session*) exit 0;;\n*) exit 91;;\nesac\n"
 			if err := os.WriteFile(f.env["GANG_TMUX"], []byte(script), 0700); err != nil {
 				t.Fatal(err)
 			}
@@ -561,7 +561,7 @@ func TestHitchRefusesPaneOnlyAStaleRecordNames(t *testing.T) {
 			// The fake tmux refuses new-window, so an exempted pane ends at spawn.
 			want := "spawn pane"
 			if tc.refused {
-				want = "unregistered pane %1"
+				want = "unregistered agent pane in window"
 			}
 			if err == nil || !strings.Contains(err.Error(), want) {
 				t.Fatalf("hitch error = %v, want %q", err, want)
@@ -574,12 +574,15 @@ func TestHitchRefusesUnregisteredPaneBeforeClaim(t *testing.T) {
 	f := newStateFixture(t)
 	fakeCodexOnPath(t)
 	fakeTmux := f.env["GANG_TMUX"]
-	if err := os.WriteFile(fakeTmux, []byte("#!/bin/sh\n# SPDX-License-Identifier: Apache-2.0\n"+fakeTmuxUTF8+"case \"$1\" in list-panes) printf '%%1\\t"+strings.Repeat("a", 64)+"\\t$1\\t?lead?\\n';; has-session) exit 0;; *) exit 91;; esac\n"), 0700); err != nil {
+	if err := os.WriteFile(fakeTmux, []byte("#!/bin/sh\n# SPDX-License-Identifier: Apache-2.0\n"+fakeTmuxUTF8+"case \"$1\" in list-panes) printf '%%1\\t"+strings.Repeat("a", 64)+"\\t$1\\t?lead?\\n';; has-session) exit 0;; display-message) case \"$5\" in '#{window_name}\t#{pane_index}') printf 'lead\\t0\\n';; *) printf 'codex\\n';; esac;; *) exit 91;; esac\n"), 0700); err != nil {
 		t.Fatal(err)
 	}
 	err := f.cmd.hitch([]string{"lead", "-c", "codex"})
-	if err == nil || !strings.Contains(err.Error(), "unregistered pane %1") {
+	if err == nil || !strings.Contains(err.Error(), "unregistered agent pane in window") {
 		t.Fatalf("hitch error = %v, want unregistered pane refusal", err)
+	}
+	if !strings.Contains(err.Error(), `window "lead" at pane position 0`) || strings.Contains(err.Error(), "%1") {
+		t.Fatalf("refusal must locate the pane without a handle: %v", err)
 	}
 	agents, err := f.run.team.ListAgents()
 	if err != nil {

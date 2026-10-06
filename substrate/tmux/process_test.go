@@ -35,6 +35,23 @@ func TestSelectForegroundProcessesExcludesBackgroundAndUnrelatedGroups(t *testin
 	}
 }
 
+func TestSelectPaneProcessesIncludesBackgroundButNotOtherPanes(t *testing.T) {
+	records := map[int]processRecord{
+		100: {Process: substrate.Process{PID: 100, ParentPID: 1, GroupID: 100, Command: "zsh"}, foregroundGroup: 100},
+		200: {Process: substrate.Process{PID: 200, ParentPID: 100, GroupID: 200, Command: "codex"}},
+		201: {Process: substrate.Process{PID: 201, ParentPID: 200, GroupID: 200, Command: "helper"}},
+		300: {Process: substrate.Process{PID: 300, ParentPID: 1, GroupID: 300, Command: "claude"}},
+	}
+	got, err := selectPaneProcesses(100, records, func(p substrate.Process) string { return p.Command })
+	if err != nil || len(got) != 3 || got[0].Command != "zsh" || got[1].Command != "codex" || got[2].Command != "helper" {
+		t.Fatalf("pane selection = %+v, %v", got, err)
+	}
+	delete(records, 100)
+	if _, err := selectPaneProcesses(100, records, func(p substrate.Process) string { return p.Command }); err == nil {
+		t.Fatal("absent root accepted")
+	}
+}
+
 type fakeProcessHandle struct {
 	signals       []syscall.Signal
 	waits, closes int

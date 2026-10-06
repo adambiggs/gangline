@@ -195,6 +195,7 @@ func (cmd command) hitchWithStaleClaim(args []string, supersede bool) (result er
 				owners[agent.Pane] = append(owners[agent.Pane], agent)
 			}
 		}
+		var commands map[string]bool
 		for _, window := range windows {
 			if !gangWindowTitle(window.Name) {
 				continue
@@ -204,7 +205,23 @@ func (cmd command) hitchWithStaleClaim(args []string, supersede bool) (result er
 				return err
 			}
 			if !owned {
-				return refuseError("unregistered pane %s (%s) in team %q; inspect it and close that exact pane before hitching", window.Pane.ID, window.Name, run.settings.Session)
+				if commands == nil {
+					commands, err = run.agentCommands()
+					if err != nil {
+						return err
+					}
+				}
+				running, err := unregisteredAgent(boot, b, window.Pane.ID, commands)
+				if err != nil {
+					return err
+				}
+				if running {
+					position, err := b.DescribePane(boot, window.Pane.ID)
+					if err != nil {
+						return err
+					}
+					return refuseError("unregistered agent pane in %s in team %q; inspect it and close that exact pane before hitching", position, run.settings.Session)
+				}
 			}
 		}
 	}

@@ -373,6 +373,27 @@ func (backend *Backend) ForegroundCommand(ctx context.Context, pane substrate.Pa
 	return command, nil
 }
 
+// DescribePane locates a pane for an operator who has no registered agent
+// name for it. Pane indexes are positions within a window, not pane handles.
+func (backend *Backend) DescribePane(ctx context.Context, pane substrate.PaneID) (string, error) {
+	if err := validPaneID(pane); err != nil {
+		return "", err
+	}
+	output, err := backend.run(ctx, "display-message", "-p", "-t", string(pane), "#{window_name}\t#{pane_index}")
+	if err != nil {
+		return "", tmuxError("locate pane", err, output)
+	}
+	fields := strings.Split(strings.TrimSuffix(output, "\n"), "\t")
+	if len(fields) != 2 {
+		return "", fmt.Errorf("locate pane: malformed position")
+	}
+	position, err := nonNegative(fields[1])
+	if err != nil {
+		return "", fmt.Errorf("locate pane: invalid position")
+	}
+	return fmt.Sprintf("window %q at pane position %d", fields[0], position), nil
+}
+
 func (backend *Backend) SendKeys(ctx context.Context, pane substrate.PaneID, keys substrate.Keys) error {
 	if err := validPaneID(pane); err != nil {
 		return err

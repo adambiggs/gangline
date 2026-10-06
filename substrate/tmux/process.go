@@ -53,6 +53,44 @@ func (backend *Backend) ForegroundProcesses(ctx context.Context, pane substrate.
 	return backend.foregroundProcesses(ctx, pane, readCurrentProcess)
 }
 
+// PaneProcesses reports the pane process and its descendants, including jobs
+// in the background. It refuses a process table outside tmux's PID namespace.
+func (backend *Backend) PaneProcesses(ctx context.Context, pane substrate.PaneID) ([]substrate.Process, error) {
+	visible, err := backend.ProcessVisibility(ctx, pane)
+	if err != nil {
+		return nil, err
+	}
+	if !visible {
+		return nil, fmt.Errorf("read process tree: tmux's processes are not visible to this caller")
+	}
+	root, err := backend.paneProcess(ctx, pane)
+	if err != nil {
+		return nil, err
+	}
+	records, err := readProcessTable(ctx, root)
+	if err != nil {
+		return nil, err
+	}
+	return selectPaneProcesses(root, records, foregroundCommand)
+}
+
+func selectPaneProcesses(root int, records map[int]processRecord, command func(substrate.Process) string) ([]substrate.Process, error) {
+	if _, ok := records[root]; !ok {
+		return nil, fmt.Errorf("read process tree: pane process %d was not present", root)
+	}
+	var result []substrate.Process
+	for pid, record := range records {
+		if descendsFrom(pid, root, records) {
+			process := record.Process
+			process.Name = record.Command
+			process.Command = command(process)
+			result = append(result, process)
+		}
+	}
+	sort.Slice(result, func(i, j int) bool { return result[i].PID < result[j].PID })
+	return result, nil
+}
+
 // foregroundProcesses is ForegroundProcesses with visibility decided by read.
 func (backend *Backend) foregroundProcesses(ctx context.Context, pane substrate.PaneID, read func(int) (processRecord, error)) ([]substrate.Process, error) {
 	if err := validPaneID(pane); err != nil {
