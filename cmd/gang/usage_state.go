@@ -166,10 +166,6 @@ func (run *runtime) reconcileUsageSubmission(l *store.LockedAgent, a *core.Agent
 	if a.Native.SessionID != "" && w.SessionID != "" && w.SessionID != a.Native.SessionID {
 		return nil
 	}
-	c, err := loadCollar(a.Collar, run.settings)
-	if err != nil {
-		return err
-	}
 	usage, err := run.team.LockUsage()
 	if err != nil {
 		return err
@@ -177,6 +173,13 @@ func (run *runtime) reconcileUsageSubmission(l *store.LockedAgent, a *core.Agent
 	defer func() { result = errors.Join(result, usage.Close()) }()
 	var state usageState
 	if err := usage.Read(&state); err != nil {
+		return err
+	}
+	if len(state.Notices) == 0 && len(state.Snoozes) == 0 {
+		return nil
+	}
+	c, err := loadCollar(a.Collar, run.settings)
+	if err != nil {
 		return err
 	}
 	changed := false

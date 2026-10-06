@@ -485,14 +485,8 @@ func (run *runtime) drainLocked(l *store.LockedAgent, a *core.Agent, target core
 		pending, err := l.Paths.ListNew()
 		return result, pending, err
 	}
-	c, err := loadCollar(a.Collar, run.settings)
-	if err != nil {
-		return result, nil, err
-	}
-	b, err := run.input()
-	if err != nil {
-		return result, nil, err
-	}
+	var c harness.Collar
+	var b harnessInput
 	for {
 		pending, err := l.Paths.ListNew()
 		if err != nil {
@@ -528,6 +522,16 @@ func (run *runtime) drainLocked(l *store.LockedAgent, a *core.Agent, target core
 		}
 		if next == nil {
 			return result, pending, nil
+		}
+		if b == nil {
+			c, err = loadCollar(a.Collar, run.settings)
+			if err != nil {
+				return result, pending, err
+			}
+			b, err = run.input()
+			if err != nil {
+				return result, pending, err
+			}
 		}
 		if isResumeEnvelope(*next) && !completedResume(*a, *next) {
 			return result, pending, nil
