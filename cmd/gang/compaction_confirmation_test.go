@@ -256,7 +256,7 @@ func TestCompactionConfirmationDeadlineIsExplicit(t *testing.T) {
 	}
 }
 
-func TestWithheldResumeKeepsRetainedStartupReceipt(t *testing.T) {
+func TestRetainedStartupKeepsCompletedResumeQueued(t *testing.T) {
 	f, a, p := compactionFixture(t)
 	at := f.cmd.now()
 	retained := core.Envelope{ID: "startup-1", Token: "00112233445566ff", From: core.Sender{Kind: core.SenderGangline, Name: "startup"}, Recipient: a.ID, To: a.Name, Message: core.Message{Text: "contract"}, Purpose: "startup", CreatedAt: at}
@@ -283,16 +283,19 @@ func TestWithheldResumeKeepsRetainedStartupReceipt(t *testing.T) {
 	if err := f.run.confirmCompactionHook(a.ID, hookNotice{Kind: "compaction-finished", SessionID: "s", At: at.Add(time.Second)}); err != nil {
 		t.Fatal(err)
 	}
-	resume, err := p.ReadEnvelope("failed", "resume-compact")
-	if err != nil || resume.Outcome != "cancelled" {
-		t.Fatalf("withheld resume: %+v, %v", resume, err)
+	resume, err := p.ReadEnvelope("new", "resume-compact")
+	if err != nil || resume.Outcome != "" {
+		t.Fatalf("queued resume: %+v, %v", resume, err)
 	}
 	got, err := p.Read()
 	if err != nil {
 		t.Fatal(err)
 	}
+	if got.Compaction.Status != "completed" || f.input.submits != 0 {
+		t.Fatalf("held continuation submitted: %+v", got.Compaction)
+	}
 	if _, held, err := retainedStartup(p, "failed", got.LastFailed); err != nil || !held {
-		t.Fatalf("withheld resume released the startup hold: LastFailed=%q, %v", got.LastFailed, err)
+		t.Fatalf("queued resume released the startup hold: LastFailed=%q, %v", got.LastFailed, err)
 	}
 }
 

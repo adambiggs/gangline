@@ -228,37 +228,86 @@ func TestCompactionPublicationRecoveryCancelsUnsubmittedContinuation(t *testing.
 	}
 }
 
-func TestCompactionPublicationAcknowledgedBeforeInputIsCancelled(t *testing.T) {
-	f := newStateFixture(t)
-	a := f.add(t, "a", "worker", "codex")
-	p, _ := f.run.team.Agent(a.ID)
-	a.Compaction = &core.Compaction{ID: "c", Resume: core.Message{Text: "continue"}, ResumeToken: "aaaaaaaaaaaaaaaa", StartedAt: f.cmd.now(), Deadline: f.cmd.now().Add(time.Minute), CompletedAt: f.cmd.now().Add(time.Second), Status: "completed", Continuation: true}
-	l, err := p.TryLock()
-	if err != nil {
-		t.Fatal(err)
-	}
-	if err := l.Save(a); err != nil {
-		t.Fatal(err)
-	}
-	e := core.Envelope{ID: "resume-c", Token: a.Compaction.ResumeToken, Recipient: a.ID, To: a.Name, From: core.Sender{Kind: core.SenderGangline, Name: "compact"}, Message: a.Compaction.Resume, Purpose: "resume", CreatedAt: f.cmd.now()}
-	if err := p.Publish(e); err != nil {
-		t.Fatal(err)
-	}
-	l.Close()
-	witnessFailureNotices(f, p)
-	if err := f.run.tickAgent(a.ID, hookNotice{}, false); err != nil {
-		t.Fatal(err)
-	}
-	got, err := p.Read()
-	if err != nil {
-		t.Fatal(err)
-	}
-	resume, err := p.ReadEnvelope("failed", e.ID)
-	if err != nil || got.Compaction.Status != "failed" || resume.Outcome != "cancelled" || f.input.submits != 1 {
-		t.Fatalf("recovery submitted an unqueued resume: %+v, %v; status=%s submits=%d", resume, err, got.Compaction.Status, f.input.submits)
-	}
-	if notice := failureNotice(t, p, "cur", "c"); notice.Outcome != "delivered" || f.input.pasted != mustEnvelopeText(t, notice) {
-		t.Fatalf("only submit was not the failure notice: %+v; pasted=%q", notice, f.input.pasted)
+func TestCompactionPublicationAcknowledgedBeforeInputIsDelivered(t *testing.T) {
+	for _, collar := range []string{"codex", "claude"} {
+		t.Run(collar, func(t *testing.T) {
+			f := newStateFixture(t)
+			a := f.add(t, "a", "worker", collar)
+			if collar == "claude" {
+				f.input.command = "claude"
+			}
+			f.env["GANGLINE_HITCH_ID"] = string(a.ID)
+			p, _ := f.run.team.Agent(a.ID)
+			a = f.setAgent(t, a, func(a *core.Agent) {
+				a.Native.SessionID = "s"
+				a.Compaction = &core.Compaction{ID: "c", Resume: core.Message{Text: "continue"}, ResumeToken: "aaaaaaaaaaaaaaaa", ResumeFrom: core.Sender{Kind: core.SenderGangline, Name: "compact"}, StartedAt: f.cmd.now(), Deadline: f.cmd.now().Add(time.Minute), CompletedAt: f.cmd.now().Add(time.Second), Status: "completed", Continuation: true}
+			})
+			e := core.Envelope{ID: "resume-c", Token: a.Compaction.ResumeToken, Recipient: a.ID, To: a.Name, From: a.Compaction.ResumeFrom, Message: a.Compaction.Resume, Purpose: "resume", CreatedAt: f.cmd.now()}
+			if err := p.Publish(e); err != nil {
+				t.Fatal(err)
+			}
+			// An occupied composer holds the resume and all later messages.
+			if collar == "claude" {
+				f.input.screen = screenWithText("────────", "❯ draft", "────────")
+			} else {
+				f.input.screen = screenWithText("READY", "› draft")
+			}
+			if err := f.cmd.send([]string{"worker", "--from", "operator", "later"}); err != nil {
+				t.Fatal(err)
+			}
+			if err := f.run.tickAgent(a.ID, hookNotice{}, false); err != nil {
+				t.Fatal(err)
+			}
+			queued, err := p.ReadEnvelope("new", e.ID)
+			if err != nil || queued.Token != e.Token || queued.Message != e.Message || queued.Outcome != "" || f.input.submits != 0 {
+				t.Fatalf("resume lost while blocked: %+v %v submits=%d", queued, err, f.input.submits)
+			}
+			setClock(f, a.Compaction.CompletedAt.Add(operationTimeout))
+			err = f.cmd.compact([]string{"worker", "--resume", "second"})
+			var refused commandError
+			if !errors.As(err, &refused) || refused.status != exitRefused {
+				t.Fatalf("preserved resume replaced: %v", err)
+			}
+			if got, err := p.Read(); err != nil || got.Compaction.ID != "c" {
+				t.Fatalf("preserved compaction replaced: %+v %v", got.Compaction, err)
+			}
+			if collar == "claude" {
+				f.input.screen = screenWithText("────────", "❯ ", "────────")
+			} else {
+				f.input.screen = screenWithText("READY", "› ")
+			}
+			submit := f.input.submit
+			var prompts []string
+			f.input.submit = func(prompt string) error { prompts = append(prompts, prompt); return nil }
+			if err := f.run.tickAgent(a.ID, hookNotice{}, false); err != nil {
+				t.Fatal(err)
+			}
+			if len(prompts) != 1 || prompts[0] != mustEnvelopeText(t, e) {
+				t.Fatalf("resume not first: %q", prompts)
+			}
+			// The submit hook acquires the released input lock before admitting
+			// the resume; ordinary later input may then follow it.
+			if err := submit(prompts[0]); err != nil {
+				t.Fatal(err)
+			}
+			f.input.submit = func(prompt string) error { prompts = append(prompts, prompt); return submit(prompt) }
+			if err := f.run.tickAgent(a.ID, hookNotice{}, false); err != nil {
+				t.Fatal(err)
+			}
+			got, err := p.Read()
+			if err != nil {
+				t.Fatal(err)
+			}
+			if got.Compaction.Status != "completed" || !got.Compaction.ResumeAdmitted || len(prompts) != 2 || prompts[0] != mustEnvelopeText(t, e) || !strings.Contains(prompts[1], "later") {
+				t.Fatalf("resume delivery order: %+v prompts=%q", got.Compaction, prompts)
+			}
+			if err := f.run.tickAgent(a.ID, hookNotice{}, false); err != nil {
+				t.Fatal(err)
+			}
+			if f.input.submits != 2 {
+				t.Fatalf("resume submitted twice: %d", f.input.submits)
+			}
+		})
 	}
 }
 
@@ -546,5 +595,64 @@ esac
 	}
 	if string(listed) != "listed\n" {
 		t.Fatalf("expected one listing, got %q", listed)
+	}
+}
+
+func TestCompletedCompactionRejectsAlteredQueuedResume(t *testing.T) {
+	for name, alter := range map[string]func(*core.Envelope){
+		"text":      func(e *core.Envelope) { e.Message.Text += " edited" },
+		"token":     func(e *core.Envelope) { e.Token = "bbbbbbbbbbbbbbbb" },
+		"sender":    func(e *core.Envelope) { e.From.Name = "other" },
+		"recipient": func(e *core.Envelope) { e.Recipient = "other" },
+		"schedule":  func(e *core.Envelope) { e.NotBefore = e.CreatedAt.Add(time.Hour) },
+		"startup":   func(e *core.Envelope) { e.Startup = &core.StartupSections{Contract: "altered"} },
+	} {
+		t.Run(name, func(t *testing.T) {
+			f, a := completedWithQueuedContinuation(t)
+			a = f.setAgent(t, a, func(a *core.Agent) { a.Compaction.ResumeFrom = core.Sender{Kind: core.SenderGangline, Name: "compact"} })
+			p, _ := f.run.team.Agent(a.ID)
+			e := core.Envelope{ID: "resume-c", Token: a.Compaction.ResumeToken, Recipient: a.ID, To: a.Name, From: a.Compaction.ResumeFrom, Message: a.Compaction.Resume, Purpose: "resume", CreatedAt: f.cmd.now()}
+			alter(&e)
+			if err := p.Publish(e); err != nil {
+				t.Fatal(err)
+			}
+			l, got, err := f.run.acquire(a.ID, false)
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer l.Close()
+			if err := f.run.continueCompaction(l, &got); err != nil {
+				t.Fatal(err)
+			}
+			cancelled, err := p.ReadEnvelope("failed", e.ID)
+			if err != nil || cancelled.Outcome != "cancelled" || got.Compaction.Status != "failed" || f.input.submits != 0 {
+				t.Fatalf("altered resume retained: %+v %v compaction=%+v", cancelled, err, got.Compaction)
+			}
+		})
+	}
+}
+
+func TestCompletedCompactionResumeRejectsWrongSession(t *testing.T) {
+	f, a := completedWithQueuedContinuation(t)
+	a = f.setAgent(t, a, func(a *core.Agent) {
+		a.Native.SessionID = "expected"
+		a.Compaction.ResumeFrom = core.Sender{Kind: core.SenderGangline, Name: "compact"}
+	})
+	c, err := loadCollar("claude", f.run.settings)
+	if err != nil {
+		t.Fatal(err)
+	}
+	e := core.Envelope{ID: "resume-c", Token: a.Compaction.ResumeToken, Recipient: a.ID, To: a.Name, From: a.Compaction.ResumeFrom, Message: a.Compaction.Resume, Purpose: "resume", CreatedAt: f.cmd.now()}
+	p, _ := f.run.team.Agent(a.ID)
+	if err := p.Publish(e); err != nil {
+		t.Fatal(err)
+	}
+	reason, err := f.run.admitCompactionResume(a.ID, c, mustEnvelopeText(t, e), "other")
+	if err != nil || !strings.Contains(reason, "another native session") {
+		t.Fatalf("wrong session admitted: %q %v", reason, err)
+	}
+	got, err := p.Read()
+	if err != nil || got.Compaction.ResumeAdmitted || got.Compaction.Status != "failed" {
+		t.Fatalf("wrong-session state: %+v %v", got.Compaction, err)
 	}
 }

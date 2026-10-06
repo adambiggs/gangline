@@ -83,8 +83,8 @@ func isContextBandNotice(e core.Envelope) bool {
 	return e.From.Kind == core.SenderGangline && e.From.Name == "context-band"
 }
 
-// isResumeEnvelope reports a compaction resume, which is delivered only when
-// its compaction starts and holds every later message behind it.
+// isResumeEnvelope reports a compaction resume, which holds every later
+// message behind it until its compaction permits delivery.
 func isResumeEnvelope(e core.Envelope) bool {
 	return e.Purpose == "resume" || e.From.Name == "compact" && strings.HasPrefix(string(e.ID), "resume-")
 }
@@ -176,7 +176,13 @@ func (run *runtime) inputState(l *store.LockedAgent, a *core.Agent, b harnessInp
 	case a.Compaction != nil && a.Compaction.Status == "submitted":
 		return inputVerdict{Reason: "compaction request awaits the harness"}, nil
 	case c.Primitives.QueueWitness == nil && a.Compaction != nil && continuationQueued(*a.Compaction, run.cmd.now()):
-		return inputVerdict{Reason: "compaction continuation waits in the harness's queue ahead of this input"}, nil
+		e, err := l.Paths.ReadEnvelope("new", core.EnvelopeID("resume-"+a.Compaction.ID))
+		if err != nil && !errors.Is(err, os.ErrNotExist) {
+			return inputVerdict{}, err
+		}
+		if err != nil || !completedResume(*a, e) {
+			return inputVerdict{Reason: "compaction continuation waits in the harness's queue ahead of this input"}, nil
+		}
 	}
 	screen, err := b.Capture(context.Background(), substrate.PaneID(a.Pane))
 	if err != nil {
@@ -327,12 +333,16 @@ func (run *runtime) deliver(l *store.LockedAgent, a *core.Agent, e core.Envelope
 	var witness store.Witness
 	var accepted, held bool
 	if err == nil {
-		if isContextBandNotice(e) {
+		if isContextBandNotice(e) || isResumeEnvelope(e) {
 			// Context notes use exact hook proof. Leave a queued note for a
 			// later hook instead of holding the agent lock waiting for its turn.
 			witness, err = l.Paths.ReadWitness()
 			if errors.Is(err, os.ErrNotExist) || err == nil && witness.ID == old.ID {
-				err = fmt.Errorf("context-band submit hook is not yet available")
+				if isResumeEnvelope(e) {
+					err = fmt.Errorf("native continuation submitted; awaiting exact hook proof")
+				} else {
+					err = fmt.Errorf("context-band submit hook is not yet available")
+				}
 			}
 		} else {
 			witness, accepted, err = run.cmd.awaitReceipt(ctx, l.Paths, old.ID, queue)
@@ -489,7 +499,18 @@ func (run *runtime) drainLocked(l *store.LockedAgent, a *core.Agent, target core
 			return result, nil, err
 		}
 		var next *core.Envelope
+		// The continuation was reserved ahead of later native input when
+		// compaction started, including messages with the same queue timestamp.
+		for i := range pending {
+			if completedResume(*a, pending[i]) {
+				next = &pending[i]
+				break
+			}
+		}
 		for i := 0; i < len(pending); i++ {
+			if next != nil {
+				break
+			}
 			if e := pending[i]; !e.NotAfter.IsZero() && !e.NotAfter.After(run.cmd.now()) {
 				const reason = "expired before delivery"
 				if err := l.Withdraw(e.ID); err != nil {
@@ -508,7 +529,7 @@ func (run *runtime) drainLocked(l *store.LockedAgent, a *core.Agent, target core
 		if next == nil {
 			return result, pending, nil
 		}
-		if isResumeEnvelope(*next) {
+		if isResumeEnvelope(*next) && !completedResume(*a, *next) {
 			return result, pending, nil
 		}
 		_, failedStartup, err := retainedStartup(l.Paths, "failed", a.LastFailed)
@@ -547,7 +568,7 @@ func (run *runtime) drainLocked(l *store.LockedAgent, a *core.Agent, target core
 				return result, pending, err
 			}
 		}
-		if withdrawn {
+		if withdrawn || isResumeEnvelope(*next) && outcome == "unverified" {
 			// What failed this paste may fail the next one too, so a later
 			// drain retries the rest of the queue rather than withdrawing each
 			// message in turn.

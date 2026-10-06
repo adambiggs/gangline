@@ -414,14 +414,30 @@ func (run *runtime) continueCompaction(l *store.LockedAgent, a *core.Agent) erro
 		return nil
 	}
 	id := core.EnvelopeID("resume-" + c.ID)
-	_, err := l.Paths.ReadEnvelope("new", id)
+	e, err := l.Paths.ReadEnvelope("new", id)
 	if err != nil && !errors.Is(err, os.ErrNotExist) {
 		return err
 	}
 	if c.Continuation && errors.Is(err, os.ErrNotExist) {
 		return nil
 	}
+	if err == nil && completedResume(*a, e) {
+		return nil
+	}
 	return run.failCompaction(l, a, compactionRan, "resume was not entered when compaction started; continuation withheld")
+}
+
+// completedResume identifies the untouched, unsubmitted continuation whose
+// compaction has finished. Receipt recovery handles uncertain input separately.
+func completedResume(a core.Agent, e core.Envelope) bool {
+	c := a.Compaction
+	return c != nil && c.Status == "completed" && c.CompletedAt.After(c.StartedAt) &&
+		c.Continuation && !c.ResumeAdmitted && c.ResumeToken != "" &&
+		e.ID == core.EnvelopeID("resume-"+c.ID) && e.Token == c.ResumeToken &&
+		e.Recipient == a.ID && e.To == a.Name && e.From == c.ResumeFrom &&
+		e.Message == c.Resume && e.Purpose == "resume" && e.Outcome == "" && e.Reason == "" &&
+		e.Startup == nil && e.PasteOnly == nil && e.MeasuredAt == nil &&
+		e.NotBefore.IsZero() && e.NotAfter.IsZero()
 }
 
 func (run *runtime) publishCompactionResume(l *store.LockedAgent, a *core.Agent) (core.Envelope, error) {

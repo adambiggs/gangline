@@ -117,8 +117,9 @@ confirms that compaction finished, the compaction stays unconfirmed.
 Codex may merge later Enter steers into the same prompt, with the resume note
 first; Tab queues separate follow-up turns. If the note cannot enter ahead of
 an occupied composer, the command fails and withholds the note rather than
-delivering it out of order. Recovery also cancels a continuation that was
-published but never submitted to native input.
+delivering it out of order. After confirmed completion, an unchanged continuation
+that was published but never submitted stays queued for the next free composer,
+ahead of later messages. An altered or unknown continuation is withheld.
 
 While the collar's `actions.compact.active` pattern matches the pane, the agent
 reads as compacting: sends wait in Gangline's queue, a queued compaction waits,
