@@ -280,8 +280,12 @@ func (run *runtime) reconcileNativeBoundary(l *store.LockedAgent, a *core.Agent,
 		session := a.Native.SessionID
 		same, err := followNativeSession(c, a, witness.SessionID, witness.Transcript)
 		if err != nil || !same {
-			// The witness persists, so the agent fails once and its hitcher
-			// learns both sessions instead of every tick failing unseen.
+			// Hooks can replace the witness while this boundary is reconciled.
+			// Preserve the one rejected here without letting a diagnostic write
+			// failure prevent the identity guard from failing the hitch.
+			retentionErr := l.Paths.WriteSessionConflict(store.SessionConflict{
+				SessionID: session, Transcript: a.Native.Transcript, Witness: witness,
+			})
 			reason := fmt.Sprintf("its native session changed from %s to %s, and no harness record shows that %s continues the conversation", session, witness.SessionID, witness.SessionID)
 			if err != nil {
 				reason += fmt.Sprintf(" (%v)", err)
@@ -293,7 +297,7 @@ func (run *runtime) reconcileNativeBoundary(l *store.LockedAgent, a *core.Agent,
 				role = " -r " + a.Role
 			}
 			reason += fmt.Sprintf("; to continue either session, gang drop %s, then gang hitch %s -c %s -d %q%s --resume SESSION", a.Name, a.Name, a.Collar, a.Directory, role)
-			return run.apply(l, a, core.Event{Type: "hitch_failed", Reason: reason})
+			return errors.Join(retentionErr, run.apply(l, a, core.Event{Type: "hitch_failed", Reason: reason}))
 		}
 		if witness.At.After(a.Native.SubmittedAt) {
 			a.Native.SessionID, a.Native.TurnID, a.Native.Transcript, a.Native.SubmittedAt = witness.SessionID, witness.TurnID, witness.Transcript, witness.At

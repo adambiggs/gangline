@@ -22,6 +22,11 @@ a submit `witness`, and `inbox/{tmp,new,cur,failed}/`. A turn-end hook
 leaves a `background` count when native background tasks are still pending,
 and the next turn boundary removes it. A permission-request hook leaves a
 `permission` witness that any later hook or an idle screen removes.
+An unverified native session change fails the hitch and saves the rejected
+normalized witness and registered session in `native-session-conflict`.
+Later submit hooks cannot overwrite this private diagnostic snapshot; another
+rejected boundary can replace it. It is not the raw hook payload. Copy it
+before dropping the agent, which removes it with the registration.
 `status-hooks` coalesces auxiliary display observations under its own short
 writer lock. Terminal boundaries remain pending until a sweep handles their
 native outcomes and acknowledges the sequence. Roster reads cannot consume

@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"reflect"
 	"strings"
 	"testing"
 	"time"
@@ -91,6 +92,78 @@ func TestTickFollowsRecordedSessionMove(t *testing.T) {
 	}
 	if got := f.agent(t, a.ID); got.Activity != core.Idle {
 		t.Fatalf("finished moved turn read %s: %s", got.Activity, got.Evidence)
+	}
+	p, err := f.run.team.Agent(a.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := os.Stat(filepath.Join(p.Directory, "native-session-conflict")); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("recorded move left a conflict snapshot: %v", err)
+	}
+}
+
+func TestNativeSessionConflictSurvivesWitnessReplacement(t *testing.T) {
+	f, a, _ := movedSessionFixture(t, "unexpected")
+	p, err := f.run.team.Agent(a.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	rejected, err := p.ReadWitness()
+	if err != nil {
+		t.Fatal(err)
+	}
+	rejected.Prompt = "retained\n\nexact prompt"
+	if err := p.WriteWitness(rejected); err != nil {
+		t.Fatal(err)
+	}
+	// A later hook replaces the mutable witness before rejection is saved.
+	f.run.afterWitnessRead = func() {
+		f.run.afterWitnessRead = nil
+		if err := p.WriteWitness(store.Witness{ID: "later", SessionID: "s", Prompt: "later prompt"}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := f.run.tickAgent(a.ID, hookNotice{}, false); err != nil {
+		t.Fatal(err)
+	}
+	if got := f.agent(t, a.ID); got.Status != core.Failed || got.Native.SessionID != "s" {
+		t.Fatalf("rejected session changed registration: %+v", got)
+	}
+	if err := f.run.tickAgent(a.ID, hookNotice{}, false); err != nil {
+		t.Fatal(err)
+	}
+	data, err := os.ReadFile(filepath.Join(p.Directory, "native-session-conflict"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var got store.SessionConflict
+	if err := json.Unmarshal(data, &got); err != nil {
+		t.Fatal(err)
+	}
+	want := store.SessionConflict{SessionID: "s", Transcript: a.Native.Transcript, Witness: rejected}
+	if !reflect.DeepEqual(got, want) {
+		t.Fatalf("snapshot = %#v, want %#v", got, want)
+	}
+}
+
+func TestNativeSessionConflictWriteFailureStillFailsHitch(t *testing.T) {
+	f, a, _ := movedSessionFixture(t, "unexpected")
+	p, err := f.run.team.Agent(a.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	path := filepath.Join(p.Directory, "native-session-conflict")
+	if err := os.Mkdir(path, 0700); err != nil {
+		t.Fatal(err)
+	}
+	if err := f.run.tickAgent(a.ID, hookNotice{}, false); err == nil || !strings.Contains(err.Error(), path) {
+		t.Fatalf("missing retention failure: %v", err)
+	}
+	if got := f.agent(t, a.ID); got.Status != core.Failed || got.Native.SessionID != "s" {
+		t.Fatalf("retention failure bypassed identity guard: %+v", got)
+	}
+	if notices := failureNotices(t, f); len(notices) != 1 {
+		t.Fatalf("failure notices = %+v", notices)
 	}
 }
 
