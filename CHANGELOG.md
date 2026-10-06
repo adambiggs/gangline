@@ -1,5 +1,14 @@
 # Changelog
 
+## [1.16.2](https://github.com/adambiggs/gangline/compare/gangline-v1.16.1...gangline-v1.16.2) (2026-10-06)
+
+
+### Bug Fixes
+
+* grant shared history storage to linked worktrees ([3da9f13](https://github.com/adambiggs/gangline/commit/3da9f1353311dc5eb031bca9f1830d279cd7777c))
+* **status:** display active pane symbols in window tabs ([280d46a](https://github.com/adambiggs/gangline/commit/280d46ae4f844046d6dc571c0feb67645604e270))
+* **status:** refresh native activity and distinguish operator drafts ([77220be](https://github.com/adambiggs/gangline/commit/77220be194d85e0aa56876cd0fa5274554489c86))
+
 ## [1.16.1](https://github.com/adambiggs/gangline/compare/gangline-v1.16.0...gangline-v1.16.1) (2026-10-06)
 
 
