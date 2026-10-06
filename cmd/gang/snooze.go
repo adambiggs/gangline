@@ -17,7 +17,7 @@ const defaultSnoozeNote = "Re-read your assignment and durable state, then conti
 
 func snoozeWakeText(s usageSnooze, now time.Time) string {
 	when := s.At.UTC().Format(time.RFC3339)
-	message := fmt.Sprintf("Your scheduled wake was due at %s.", when)
+	message := fmt.Sprintf("Scheduled wake %s for %s was due at %s.", s.ID, s.CallerName, when)
 	if s.Auto {
 		message = fmt.Sprintf("Provider cap reset was due at %s. Resume the interrupted work.", when)
 	}
@@ -64,9 +64,9 @@ func snoozeStatusText(s usageSnooze, submitted bool) string {
 	case s.CapRejected:
 		return "waiting for native reset after cap rejection"
 	case s.TurnFailed:
-		return "native turn failed; manual action needed"
+		return "native turn failed"
 	case s.TurnID == "":
-		return "native turn identity unavailable; manual action needed"
+		return "native turn identity unavailable"
 	default:
 		return "awaiting successful native turn"
 	}

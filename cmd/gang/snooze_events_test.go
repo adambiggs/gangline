@@ -72,6 +72,8 @@ func TestLeadStatusShowsEveryTeammateWake(t *testing.T) {
 		state.Snoozes["capped-id"] = usageSnooze{ID: "auto-wake", CallerID: "capped-id", CallerName: "capped", Auto: true}
 		state.Recent["limited-id"] = usageSnooze{ID: "limited-wake", CallerID: "limited-id", CallerName: "limited", RecipientID: "limited-id", RecipientName: "limited", TurnID: "t", CapCandidate: true, At: now.Add(-time.Minute)}
 		state.Recent["left-id"] = usageSnooze{ID: "left-wake", CallerID: "left-id", CallerName: "left", RecipientID: lead.ID, RecipientName: lead.Name, TurnID: "t", CapCandidate: true, At: now.Add(-time.Minute)}
+		state.Recent["failed-id"] = usageSnooze{ID: "failed-wake", CallerName: "failed", TurnID: "t", TurnFailed: true, At: now}
+		state.Recent["unknown-id"] = usageSnooze{ID: "unknown-wake", CallerName: "unknown", At: now}
 		return nil
 	}); err != nil {
 		t.Fatal(err)
@@ -93,6 +95,8 @@ func TestLeadStatusShowsEveryTeammateWake(t *testing.T) {
 		"routed-wake\twake for gone; queued for lead, not yet submitted; due 2026-09-22T09:59:00Z; --clear ID withdraws it\n",
 		"sent-wake\twake for tester; accepted in native queue; awaiting turn success; due 2026-09-22T09:59:00Z\n",
 		"auto-wake\twake for capped; provider cap confirmed; awaiting native reset time\n",
+		"failed-wake\twake for failed; native turn failed; due 2026-09-22T10:00:00Z\n",
+		"unknown-wake\twake for unknown; native turn identity unavailable; due 2026-09-22T10:00:00Z\n",
 		"limited-wake\twake for limited; rate limit unconfirmed by native usage; due 2026-09-22T09:59:00Z\n",
 		"left-wake\twake for left; rate limit unconfirmed by native usage; inspect or clear; due 2026-09-22T09:59:00Z\n",
 	} {

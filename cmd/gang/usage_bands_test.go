@@ -571,7 +571,7 @@ func TestSnoozeDurableDueAndCallerFallback(t *testing.T) {
 	if err := f.run.flushUsageWork(); err != nil {
 		t.Fatal(err)
 	}
-	if f.input.submits != 1 || !strings.Contains(f.input.pasted, "overdue by 1h0m0s") || !strings.Contains(f.input.pasted, "worker is no longer active") || !strings.Contains(f.input.pasted, "Continue the saved task") {
+	if f.input.submits != 1 || !strings.Contains(f.input.pasted, "Scheduled wake "+string(s.ID)+" for worker was due at "+s.At.UTC().Format(time.RFC3339)+".") || !strings.Contains(f.input.pasted, "overdue by 1h0m0s") || !strings.Contains(f.input.pasted, "worker is no longer active") || !strings.Contains(f.input.pasted, "Continue the saved task") {
 		t.Fatalf("fallback wake: submits=%d text=%q", f.input.submits, f.input.pasted)
 	}
 	if state := usageSnapshot(t, f.run); len(state.Snoozes) != 0 || len(state.Recent) != 1 {

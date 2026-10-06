@@ -493,7 +493,8 @@ provider cap refusal, Gangline automatically schedules a wake at the observed
 native reset. With no `--at`, `gang snooze` uses a recent
 native five-hour or weekly reset from that agent's collar, selecting the
 most-used window. `--at` accepts a duration, local `HH:MM`, or RFC3339
-timestamp. `--note` is delivered with the wake. A pending wake is durable;
+timestamp. `--note` is delivered with the wake. A manual wake notice names
+its ID, original caller and due time. A pending wake is durable;
 repeating the command replaces it until it is submitted. The due wake is sent
 to the caller, or the active lead if the caller is gone. `--status` shows
 scheduled, queued, submitted, or failed wakes. For the lead it also lists
