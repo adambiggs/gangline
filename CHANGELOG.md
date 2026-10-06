@@ -1,5 +1,15 @@
 # Changelog
 
+## [1.15.14](https://github.com/adambiggs/gangline/compare/gangline-v1.15.13...gangline-v1.15.14) (2026-10-06)
+
+
+### Bug Fixes
+
+* allow operator panes beside registered agents ([1a1a983](https://github.com/adambiggs/gangline/commit/1a1a9831b96a9feb21ea50b14803cd7c579c0fcd))
+* **compact:** deliver preserved continuations after completion ([01c7ed3](https://github.com/adambiggs/gangline/commit/01c7ed37ac9953d7fb0679b045bb23d461dc7ec9))
+* **compact:** name the interruption flag accurately ([5f3b2c3](https://github.com/adambiggs/gangline/commit/5f3b2c35ec9392c99a6d8225ca3b57ccbcb1bc23))
+* **send:** omit resend warning for confirmed failed input ([0980461](https://github.com/adambiggs/gangline/commit/0980461d0cce232b26d50723da8fe3b989afd85b))
+
 ## [1.15.13](https://github.com/adambiggs/gangline/compare/gangline-v1.15.12...gangline-v1.15.13) (2026-10-06)
 
 
