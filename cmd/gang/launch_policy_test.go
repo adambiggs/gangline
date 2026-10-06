@@ -98,6 +98,48 @@ func TestLinkedWorktreeGitdirGrant(t *testing.T) {
 	if grant, err := codexLaunch(nil, "", got); err != nil || !slices.Equal(grant, []string{"--add-dir", want}) {
 		t.Fatalf("grant = %q, %v", grant, err)
 	}
+	common := filepath.Dir(filepath.Dir(want))
+	alias := filepath.Join(root, "alias")
+	if err := os.Symlink(worktree, alias); err != nil {
+		t.Fatal(err)
+	}
+	for _, directory := range []string{worktree, nested, alias} {
+		// A grant for the per-worktree index alone leaves shared refs and
+		// objects read-only when the profile does not list this repository.
+		args, err := codexRepositoryLaunch(nil, "", directory)
+		if err != nil || !slices.Equal(args, []string{"--add-dir", want, "--add-dir", filepath.Join(common, "objects"), "--add-dir", filepath.Join(common, "refs"), "--add-dir", filepath.Join(common, "logs")}) {
+			t.Fatalf("repository launch for %s = %q, %v", directory, args, err)
+		}
+		readOnly := []string{"--sandbox", "read-only"}
+		args, err = codexRepositoryLaunch(readOnly, "", directory)
+		if err != nil || !slices.Equal(args, readOnly) {
+			t.Fatalf("read-only repository launch = %q, %v", args, err)
+		}
+	}
+	if args, err := codexRepositoryLaunch(nil, "", repo); err != nil || len(args) != 0 {
+		t.Fatalf("primary checkout launch = %q, %v", args, err)
+	}
+	for _, directory := range []string{root, forged} {
+		if args, err := codexRepositoryLaunch(nil, "", directory); err != nil || len(args) != 0 {
+			t.Fatalf("non-repository launch for %s = %q, %v", directory, args, err)
+		}
+	}
+	// A missing log directory is not created, and storage symlinks cannot
+	// turn a repository grant into write access elsewhere on the host.
+	if err := os.Rename(filepath.Join(common, "logs"), filepath.Join(root, "saved-logs")); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Rename(filepath.Join(common, "objects"), filepath.Join(root, "saved-objects")); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(filepath.Join(root, "saved-objects"), filepath.Join(common, "objects")); err != nil {
+		t.Fatal(err)
+	}
+	args, err := codexRepositoryLaunch(nil, "", worktree)
+	if err != nil || !slices.Equal(args, []string{"--add-dir", want, "--add-dir", filepath.Join(common, "refs")}) {
+		t.Fatalf("missing/symlinked storage launch = %q, %v", args, err)
+	}
+
 }
 
 func TestCodexLaunch(t *testing.T) {

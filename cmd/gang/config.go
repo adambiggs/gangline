@@ -222,6 +222,30 @@ func applyLaunchPolicy(command harness.Command, collar string, settings settings
 	return result
 }
 
+func repositoryGitdirs(dir string) []string {
+	gitdir := linkedWorktreeGitdir(dir)
+	if gitdir == "" {
+		return nil
+	}
+	// The verified backlink and layout bind these paths to this worktree's
+	// common directory. Grant storage, not shared config or executable hooks.
+	common := filepath.Dir(filepath.Dir(gitdir))
+	paths := []string{gitdir}
+	for _, name := range []string{"objects", "refs", "logs"} {
+		path := filepath.Join(common, name)
+		// Do not follow a storage symlink into an unrelated host directory or
+		// create missing metadata merely to extend the sandbox's write roots.
+		if info, err := os.Lstat(path); err == nil && info.IsDir() {
+			paths = append(paths, path)
+		}
+	}
+	return paths
+}
+
+func codexRepositoryLaunch(args []string, profile, dir string) ([]string, error) {
+	return codexLaunch(args, profile, repositoryGitdirs(dir)...)
+}
+
 func linkedWorktreeGitdir(dir string) string {
 	for {
 		file := filepath.Join(dir, ".git")
@@ -307,19 +331,25 @@ func codexProfileName(profile string) bool {
 	}) < 0
 }
 
-// codexLaunch selects the configured permission profile and makes a linked
-// worktree's own gitdir writable. Codex marks the working directory's resolved
-// gitdir read-only with an exact-path rule that only an exact grant overrides,
+// codexLaunch selects the configured permission profile and makes the
+// linked worktree's private Git directory and common storage writable. Codex
+// marks the working directory's resolved gitdir read-only with an exact-path rule that only an exact grant overrides,
 // so without one a profile's pattern grant over the repository's worktrees
 // still refuses index and fetch writes. Codex refuses to start when given a
 // writable directory under its read-only sandbox, so arguments that select
 // that sandbox get no grant.
-func codexLaunch(args []string, profile, gitdir string) ([]string, error) {
+func codexLaunch(args []string, profile string, gitdirs ...string) ([]string, error) {
 	result, err := codexProfileLaunch(args, profile)
-	if err != nil || gitdir == "" || codexSandbox(result) == "read-only" {
+	if err != nil || codexSandbox(result) == "read-only" {
 		return result, err
 	}
-	return append(append([]string(nil), result...), "--add-dir", gitdir), nil
+	result = append([]string(nil), result...)
+	for _, gitdir := range gitdirs {
+		if gitdir != "" {
+			result = append(result, "--add-dir", gitdir)
+		}
+	}
+	return result, nil
 }
 
 // codexSandbox returns the sandbox mode args select, or "" when they select
