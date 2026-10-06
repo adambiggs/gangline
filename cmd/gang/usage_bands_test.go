@@ -320,7 +320,7 @@ func TestUsageBandWaitsForLead(t *testing.T) {
 	if err := f.run.flushUsageWork(); err != nil {
 		t.Fatal(err)
 	}
-	if f.input.submits != 0 || len(usageSnapshot(t, f.run).Notices) != 2 {
+	if f.input.submits != 0 || len(usageSnapshot(t, f.run).Notices) != 1 {
 		t.Fatal("missing lead consumed or misrouted notices")
 	}
 }

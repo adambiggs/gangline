@@ -486,7 +486,9 @@ Messages use these tokens; token counts are integers and percents are rounded:
 Usage bands use the same named fraction thresholds under `usage_bands.five_hour`
 and `usage_bands.weekly`. They read native provider usage for the collar's
 account and notify the active lead once per band and reset window. A collar
-overlay can replace either window independently:
+overlay can replace either window independently. When one reading crosses
+several bands in a window, identical messages are sent once; every crossed
+band is recorded, and distinct operator guidance is preserved:
 
 ```cue
 collar: {

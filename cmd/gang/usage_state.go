@@ -501,8 +501,17 @@ func (run *runtime) observeUsageBands(a core.Agent, c harness.Collar) error {
 			for _, name := range previous.Fired {
 				fired[name] = true
 			}
+			// One reading can cross several bands with identical measurement
+			// text. Record every crossing, but publish each distinct message once.
+			messages := make(map[string]bool)
 			for _, band := range c.UsageBands[kind] {
 				if w.UsedPercent < band.At*100 || fired[band.Name] {
+					continue
+				}
+				previous.Fired = append(previous.Fired, band.Name)
+				fired[band.Name] = true
+				message := renderUsageBand(band, c.Name, kind, w.UsedPercent, w.ResetAt)
+				if messages[message] {
 					continue
 				}
 				id, err := randomID("usage-band")
@@ -513,9 +522,8 @@ func (run *runtime) observeUsageBands(a core.Agent, c harness.Collar) error {
 				if err != nil {
 					return err
 				}
-				state.Notices = append(state.Notices, usageNotice{ID: core.EnvelopeID(id), Token: token, Collar: c.Name, Window: kind, Band: band.Name, ResetAt: w.ResetAt, Text: renderUsageBand(band, c.Name, kind, w.UsedPercent, w.ResetAt), CreatedAt: now})
-				previous.Fired = append(previous.Fired, band.Name)
-				fired[band.Name] = true
+				state.Notices = append(state.Notices, usageNotice{ID: core.EnvelopeID(id), Token: token, Collar: c.Name, Window: kind, Band: band.Name, ResetAt: w.ResetAt, Text: message, CreatedAt: now})
+				messages[message] = true
 			}
 			previous.ObservedAt, previous.Percent = *r.At, w.UsedPercent
 			state.Windows[key] = previous
