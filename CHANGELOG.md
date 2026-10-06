@@ -1,5 +1,17 @@
 # Changelog
 
+## [1.16.3](https://github.com/adambiggs/gangline/compare/gangline-v1.16.2...gangline-v1.16.3) (2026-10-06)
+
+
+### Bug Fixes
+
+* derive status from native hooks and bound fallback probes ([f2fc784](https://github.com/adambiggs/gangline/commit/f2fc7847793697f98f786f62a367dadb83ee47b6))
+
+
+### Performance Improvements
+
+* skip collar loading when delivery and usage work are empty ([b34ff23](https://github.com/adambiggs/gangline/commit/b34ff2338ed742247570d139b86b2bf1f14f78d5))
+
 ## [1.16.2](https://github.com/adambiggs/gangline/compare/gangline-v1.16.1...gangline-v1.16.2) (2026-10-06)
 
 
