@@ -566,6 +566,7 @@ func TestStatusMarksExpiredDeadlineFromTheObservedPaneTitle(t *testing.T) {
   *) printf '%s\t$1\t%%1\tunit\n' ` + strings.Repeat("a", 64) + `;;
   esac;;
  has-session) exit 0;;
+ show-options) printf '#I:#W\n';;
  capture-pane) printf 'still launching\n';;
  display-message) case "$*" in
   *session_id*) printf '$1\n';;

@@ -32,6 +32,12 @@ there. `log` refuses `--team` together with a `LOG.jsonl` operand. `teams`, `col
 
 Agents are independent panes. Their names and status appear on their own
 borders, so they can share a window without overwriting each other's titles.
+Window tabs display the active pane's status and keep the current tab styling.
+Selecting an unregistered pane shows the window name.
+Gangline copies the effective tab formats into window-local options. Later
+global styling changes take effect after unsetting that window's
+`window-status-format` and `window-status-current-format` options; the next
+refresh adapts the inherited formats again.
 Window names and layout remain the operator's presentation. For example:
 
 ```sh

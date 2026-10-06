@@ -396,14 +396,61 @@ func (b *Backend) TitleRegisteredPane(ctx context.Context, id PaneIdentity, name
 	if err := validPaneTitle(name); err != nil {
 		return err
 	}
+	exists, err := b.CheckPane(ctx, id)
+	if errors.Is(err, ErrPaneReplaced) || err == nil && !exists {
+		return nil
+	}
+	if err != nil {
+		return err
+	}
 	command := tmuxCommand("set-option", "-p", "-t", id.Pane, "@gangline_title", name) + " ; " +
 		tmuxCommand("set-option", "-w", "-t", id.Pane, "pane-border-status", "top") + " ; " +
 		tmuxCommand("set-option", "-w", "-t", id.Pane, "pane-border-format", "#{?@gangline_title,#{@gangline_title},#{pane_title}}")
-	err := b.mutateRegisteredPane(ctx, id, command, "", 0, true)
+	for _, option := range []string{"window-status-format", "window-status-current-format"} {
+		format, err := b.run(ctx, "show-options", "-A", "-w", "-v", "-t", id.Pane, option)
+		if err != nil {
+			return tmuxError("read window status format", err, format)
+		}
+		format = strings.TrimSuffix(format, "\n")
+		if updated := paneStatusFormat(format); updated != format {
+			command += " ; " + tmuxCommand("set-option", "-w", "-t", id.Pane, option, updated)
+		}
+	}
+	err = b.mutateRegisteredPane(ctx, id, command, "", 0, true)
 	if errors.Is(err, ErrPaneReplaced) {
 		return nil
 	}
 	return err
+}
+
+// Window status formats expand in the active pane's context. Keep the
+// placement label and operator styling while displaying that pane's status.
+func paneStatusFormat(format string) string {
+	const title = "#{?@gangline_title,#{@gangline_title},#{window_name}}"
+	var out strings.Builder
+	for len(format) > 0 {
+		switch {
+		case strings.HasPrefix(format, "#"+title):
+			out.WriteString("#" + title)
+			format = format[len(title)+1:]
+		case strings.HasPrefix(format, "##"):
+			out.WriteString("##")
+			format = format[2:]
+		case strings.HasPrefix(format, title):
+			out.WriteString(title)
+			format = format[len(title):]
+		case strings.HasPrefix(format, "#W"):
+			out.WriteString(title)
+			format = format[2:]
+		case strings.HasPrefix(format, "#{window_name}"):
+			out.WriteString(title)
+			format = format[len("#{window_name}"):]
+		default:
+			out.WriteByte(format[0])
+			format = format[1:]
+		}
+	}
+	return out.String()
 }
 
 func (b *Backend) mutateRegisteredPane(ctx context.Context, id PaneIdentity, command, foreground string, nativePID int, absentOK bool) error {
