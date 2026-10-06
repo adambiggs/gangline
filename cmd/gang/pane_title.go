@@ -8,6 +8,9 @@ func paneTitle(a core.Agent) string {
 	case core.Failed:
 		mark = "!"
 	case core.Active:
+		if a.Native.TurnFailure != "" {
+			return "!" + string(a.Name) + "!"
+		}
 		switch a.Activity {
 		case core.Idle:
 			mark = "~"

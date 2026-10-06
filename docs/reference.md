@@ -238,8 +238,18 @@ Pane borders use `?name?` for changing or unknown state, `~name~` for idle,
 `-name-` for work, and `!name!` for native decisions, wedges, or failures.
 An unsubmitted operator draft holds message delivery but keeps the idle
 symbol, or the work symbol while a witnessed turn is still open.
-Native submit, activity, permission, turn-end, and compaction hooks refresh
-the affected agent through a detached tick. The watchdog supplies a
+Hook-first as much as possible; pane scraping only for additional validation
+or telemetry, or where hooks leave a gap. Native submit, activity, permission,
+turn-end, failure, and compaction hooks persist pending status records and
+refresh the affected agent through a detached tick. Fresh records drive the
+symbol without a pane capture, including after a skipped detached refresh.
+See `statusHookFreshness` in `cmd/gang/status_hooks.go` for the freshness and
+stale-probe interval. After expiry, a pane observation supplies the symbol
+until a newer hook or another probe is due. Capture reasons appear in the log.
+Hooks do not report every permission dismissal, native prompt, process exit,
+capacity error, or wedge; those remain bounded fallback observations. Startup,
+input recovery, compaction, interrupts, and wake outcomes can need additional
+validation sooner. Delivery still checks the composer and native receipts. The watchdog supplies a
 five-second whole-team fallback on an awake host with a working user scheduler.
 Scheduler delays, occupied agent locks, and slow captures can delay a reading;
 an unreadable capture remains unknown. `gang status` and `gang roster` also
@@ -248,13 +258,13 @@ Use a hitch ID in log filters to follow a registration across renames.
 
 Each `activity_observed` event records what its reading was derived from.
 `basis.screen` is the collar's reading of the pane: `blocked`, `compacting`,
-`idle`, `busy`, `unsubmitted`, `unreadable`, or `unread` when the capture
-failed. `basis.rule` is the rule that set the activity: `screen`, `open-turn`,
+`idle`, `busy`, `unsubmitted`, `unreadable`, or `unread` when no screen was
+read successfully. `basis.rule` is the rule that set the activity: `screen`, `open-turn`,
 `interrupt-pending`, `compaction-record`, `turn-failure`, `wedge`,
-`probe-failure`, or `permission-request`: a native permission request whose
-hook arrived reads blocked on an unreadable screen until any later hook or an
-idle screen. A screen that reads idle or busy wins, since dismissing the
-prompt fires no hook and answering it fires one only when the tool finishes.
+`probe-failure`, `native-hook`, or `permission-request`. A fresh native
+permission request reads blocked until a later hook. After its evidence
+expires, an idle screen can confirm dismissal; dismissal itself fires no
+hook. Hook-derived readings carry no screen fingerprint.
 `basis.compaction` is the compaction record's status, and
 `fingerprint` is a hash of the screen. Neither carries screen text, and
 neither does the reason: a blocked reading names the native prompt by a hash

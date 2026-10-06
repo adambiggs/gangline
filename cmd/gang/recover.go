@@ -50,11 +50,28 @@ func (run *runtime) tickAgent(id core.HitchID, notice hookNotice, wait bool) (re
 	if err != nil {
 		return err
 	}
-	if err := run.reconcileNativeBoundary(l, &a, c, notice); err != nil {
+	hooks, err := run.reconcileStatusHooks(l, &a, c, notice)
+	if err != nil {
 		return err
 	}
 	if a.Status == core.Failed {
 		return run.mark(a)
+	}
+	gap := run.statusCaptureGap(a, c)
+	if gap == "" {
+		needed, err := run.wakeNeedsScreen(a, hooks)
+		if err != nil {
+			return err
+		}
+		if needed {
+			gap = "terminal capacity validation before judging a wake turn"
+		}
+	}
+	if gap == "" {
+		return run.tickHookStatus(l, &a, c, notice, hooks)
+	}
+	if err := run.record(a, core.Event{Type: "observation", Reason: "status pane capture: " + gap}); err != nil {
+		return err
 	}
 	b, err := run.input()
 	if err != nil {
@@ -79,6 +96,10 @@ func (run *runtime) tickAgent(id core.HitchID, notice hookNotice, wait bool) (re
 			return errors.Join(err, checkErr, run.observeProbeFailure(l, &a, err))
 		}
 		return nil
+	}
+	a.StatusProbeAt = run.cmd.now()
+	if err := l.Save(a); err != nil {
+		return err
 	}
 	if a.Status == core.Booting {
 		startup, err := harness.InspectStartup(c, screen)
@@ -200,10 +221,7 @@ func (run *runtime) tickAgent(id core.HitchID, notice hookNotice, wait bool) (re
 			return composerErr
 		}
 	}
-	if err := run.observeSnoozeTurn(a, c.Primitives.TurnBoundary, notice, found); err != nil {
-		return err
-	}
-	if err := run.observeAutoCap(a, notice); err != nil {
+	if err := run.observeStatusOutcomes(a, c, hooks, found); err != nil {
 		return err
 	}
 	if found {
@@ -240,6 +258,9 @@ func (run *runtime) tickAgent(id core.HitchID, notice hookNotice, wait bool) (re
 		if err := run.apply(l, &a, core.Event{Type: "capacity_cleared"}); err != nil {
 			return err
 		}
+	}
+	if err := acknowledgeStatusHooks(l, &a, hooks); err != nil {
+		return err
 	}
 	if err := run.mark(a); err != nil {
 		return err
@@ -313,7 +334,16 @@ func (run *runtime) reconcileNativeBoundary(l *store.LockedAgent, a *core.Agent,
 	if notice.Kind == "turn-finished" {
 		queued, _ = harness.QueuedTurnPending(c.Primitives.TurnBoundary, transcript, notice.TurnID)
 	}
-	if (notice.Kind == "turn-finished" || notice.Kind == "turn-failed") && !queued {
+	if (notice.Kind == "turn-failed" || notice.Kind == "turn-finished") && a.Native.FailedTurn != "" && notice.TurnID != "" && a.Native.FailedTurn != notice.TurnID {
+		if older, _ := harness.TurnRanAfter(c.Primitives.TurnBoundary, transcript, notice.TurnID, a.Native.FailedTurn); older {
+			return nil
+		}
+	}
+	currentBoundary := true
+	if witnessErr == nil && notice.TurnID != "" && witness.TurnID != "" && notice.TurnID != witness.TurnID {
+		currentBoundary, _ = harness.TurnRanAfter(c.Primitives.TurnBoundary, transcript, witness.TurnID, notice.TurnID)
+	}
+	if (notice.Kind == "turn-finished" || notice.Kind == "turn-failed") && !queued && currentBoundary {
 		// Gang records its own delivery after the submit hook ran, so the
 		// witnessed prompt's boundary closes the turn even when it ran first.
 		finished := notice.At
@@ -327,6 +357,7 @@ func (run *runtime) reconcileNativeBoundary(l *store.LockedAgent, a *core.Agent,
 			}
 		}
 	}
+
 	if notice.Kind == "turn-failed" {
 		// A delayed async hook may start after the next synchronous submit.
 		// Only native prompt identity can attribute its reason to this turn.

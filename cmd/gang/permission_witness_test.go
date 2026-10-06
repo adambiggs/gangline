@@ -6,6 +6,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/adambiggs/gangline/core"
 	"github.com/adambiggs/gangline/harness"
@@ -13,7 +14,7 @@ import (
 	"github.com/adambiggs/gangline/substrate"
 )
 
-// A native permission request reads blocked on a screen the collar cannot
+// After hook freshness expires, a native permission request reads blocked on a screen the collar cannot
 // read until any later hook arrives or the screen reads idle. A screen that
 // reads idle or busy shows the request was dismissed or answered, so it wins
 // over the witness; only an idle one ends it, since a busy screen can precede
@@ -61,7 +62,10 @@ func TestPermissionRequestHoldsBlockedUntilALaterHook(t *testing.T) {
 					t.Fatal(err)
 				}
 			}
+			now := f.cmd.now()
 			for _, screen := range append(tc.before, tc.screen) {
+				now = now.Add(statusHookFreshness + time.Second)
+				f.cmd.clock = func() time.Time { return now }
 				f.input.screen = screen
 				if err := f.cmd.tick([]string{"--agent", "worker"}); err != nil {
 					t.Fatal(err)

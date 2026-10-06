@@ -21,7 +21,13 @@ immutable hitch IDs. Each `agents/ID/` contains `agent.json`, a `lock`,
 a submit `witness`, and `inbox/{tmp,new,cur,failed}/`. A turn-end hook
 leaves a `background` count when native background tasks are still pending,
 and the next turn boundary removes it. A permission-request hook leaves a
-`permission` witness that any later hook or an idle screen removes. State
+`permission` witness that any later hook or an idle screen removes.
+`status-hooks` coalesces auxiliary display observations under its own short
+writer lock. Terminal boundaries remain pending until a sweep handles their
+native outcomes and acknowledges the sequence. Roster reads cannot consume
+that recovery work. Acknowledgment prunes older observations, so storage
+grows with pending boundaries rather than settled history. Both files are
+removed with the agent. State
 and witnesses are replaced atomically. Pending messages live in `new/`; settled receipts retain
 their latest outcome, while the audit log retains history.
 
@@ -61,8 +67,23 @@ compaction's own note fails that compaction, since input waits behind a note
 that will not arrive. The next agent access cancels stale context-band notices
 before delivery. Submit, activity, permission-request, turn-end,
 compaction-start, compaction-end, and blocked submit hooks schedule detached
-scoped ticks. These ticks observe the pane and refresh its status without
-making the native hook wait for observation or an agent lock.
+scoped ticks. Hook-first as much as possible; pane scraping only for additional
+validation or telemetry, or where hooks leave a gap. These ticks reconcile
+retained native boundaries and repaint status without capturing a pane while
+hook evidence is fresh. Native prompt identity rejects a delayed finish from
+an older turn; receipt time alone cannot order turns.
+
+The freshness and stale-probe interval are defined by `statusHookFreshness` in
+`cmd/gang/status_hooks.go`. Expired evidence triggers a pane check, whose
+result remains authoritative until another hook or the next probe deadline.
+The log names each status capture's gap: missing or expired hooks, startup,
+input recovery, interrupt completion, compaction validation, capacity recovery,
+terminal capacity before judging a wake, or a collar requiring screen telemetry.
+The stale check catches permission dismissal without a hook, terminal-only
+prompts and capacity errors, native exits, and stable-screen wedges. Codex has
+no mapped failure hook; its transcript telemetry and these gap checks remain.
+Delivery separately validates composer contents, foreground ownership and
+receipts before sending input. A hook cannot authorize typing over a draft.
 
 Claude Code's native prompt ID ties asynchronous failure or success to the
 submit witness. A late callback cannot change a newer identified turn. Missing

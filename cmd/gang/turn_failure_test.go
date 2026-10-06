@@ -136,8 +136,10 @@ func TestSubmitDuringFailureTickReconcilesAfterSave(t *testing.T) {
 	}
 	p, _ := f.run.team.Agent(a.ID)
 	got, _ := p.Read()
-	if got.Native.FailedTurn != "old" {
-		t.Fatalf("failure tick did not finish after submit: %+v", got.Native)
+	// Replaying retained hooks re-reads the submission witness. A failure
+	// from the prior prompt must not close the prompt that arrived during it.
+	if !got.Native.SubmittedAt.After(got.Native.FinishedAt) {
+		t.Fatalf("old failure closed concurrent submit: %+v", got.Native)
 	}
 	if err := f.run.tickAgent(a.ID, newStart, true); err != nil {
 		t.Fatal(err)
@@ -152,6 +154,9 @@ func TestNativeFailureSurvivesProbeError(t *testing.T) {
 	f, a, call := nativeFailureFixture(t)
 	call(map[string]string{"hook_event_name": "UserPromptSubmit", "session_id": "s", "prompt_id": "turn", "prompt": "prompt"})
 	failure := call(map[string]string{"hook_event_name": "StopFailure", "session_id": "s", "prompt_id": "turn", "error": "Login expired"})
+	// Fresh failure hooks need no screen. Exercise the expired-hook fallback.
+	now := f.run.cmd.now().Add(statusHookFreshness + time.Second)
+	f.run.cmd.clock = func() time.Time { return now }
 	probe := &failingActivityProbe{f.input, context.DeadlineExceeded}
 	f.run.cmd.inputBackend = probe
 	if err := f.run.tickAgent(a.ID, failure, true); !errors.Is(err, context.DeadlineExceeded) {

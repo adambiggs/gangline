@@ -156,6 +156,9 @@ func (cmd command) handleHook(args []string) (result error) {
 		// Always reconcile: a concurrent failure tick may have read the old
 		// witness before this write and save its result after our state read.
 		n := hookNotice{Kind: "turn-started", NativeEvent: event.NativeEvent, At: cmd.now(), SessionID: event.Payload["session_id"], TurnID: event.Payload["turn_id"], Transcript: event.Payload["transcript_path"]}
+		if err := p.WriteStatusHook(statusHook(n)); err != nil {
+			return err
+		}
 		if cmd.detach != nil {
 			return cmd.detach(string(id), n)
 		}
@@ -171,6 +174,9 @@ func (cmd command) handleHook(args []string) (result error) {
 			if err := run.confirmCompactionHook(id, n); err != nil {
 				return err
 			}
+		}
+		if err := p.WriteStatusHook(statusHook(n)); err != nil {
+			return err
 		}
 		if cmd.detach != nil {
 			return cmd.detach(string(id), n)

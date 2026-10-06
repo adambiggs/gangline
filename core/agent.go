@@ -49,6 +49,7 @@ type Agent struct {
 	InterruptDeadline time.Time         `json:"interrupt_deadline,omitzero"`
 	DropDeadline      time.Time         `json:"drop_deadline,omitzero"`
 	Evidence          string            `json:"evidence,omitempty"`
+	StatusProbeAt     time.Time         `json:"status_probe_at,omitzero"`
 	ScreenFingerprint string            `json:"screen_fingerprint,omitempty"`
 	ScreenSince       time.Time         `json:"screen_since,omitzero"`
 	InputOutage       *InputOutage      `json:"input_outage,omitempty"`
@@ -203,6 +204,9 @@ type Capacity struct {
 }
 
 type NativeState struct {
+	HookSequence         uint64    `json:"hook_sequence,omitempty"`
+	HookAt               time.Time `json:"hook_at,omitzero"`
+	HookKind             string    `json:"hook_kind,omitempty"`
 	SessionID            string    `json:"session_id,omitempty"`
 	TurnID               string    `json:"turn_id,omitempty"`
 	Transcript           string    `json:"transcript,omitempty"`

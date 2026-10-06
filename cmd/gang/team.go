@@ -16,7 +16,6 @@ import (
 
 	"github.com/adambiggs/gangline/core"
 	"github.com/adambiggs/gangline/store"
-	"github.com/adambiggs/gangline/substrate"
 	"github.com/adambiggs/gangline/substrate/tmux"
 	"golang.org/x/term"
 )
@@ -353,25 +352,7 @@ func (run *runtime) observeRoster(agents []core.Agent) ([]core.Agent, error) {
 				_ = run.unlock(l)
 				return nil, err
 			}
-			input, err := run.input()
-			if err != nil {
-				_ = run.unlock(l)
-				return nil, err
-			}
-			screen, err := input.Capture(context.Background(), substrate.PaneID(current.Pane))
-			if err != nil {
-				cause := err
-				err = run.observeProbeFailure(l, &current, cause)
-				if err == nil && run.cmd.stderr != nil {
-					_, err = fmt.Fprintf(run.cmd.stderr, "%s: %s\n", current.Name, current.Evidence)
-				}
-			} else {
-				err = run.observeCompaction(l, &current, c, screen)
-				if err == nil {
-					err = run.observeActivity(l, &current, c, screen)
-				}
-			}
-			if err != nil {
+			if err := run.observeRosterStatus(l, &current, c); err != nil {
 				_ = run.unlock(l)
 				return nil, err
 			}
