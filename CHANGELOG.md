@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.16.4](https://github.com/adambiggs/gangline/compare/gangline-v1.16.3...gangline-v1.16.4) (2026-10-06)
+
+
+### Bug Fixes
+
+* coalesce identical usage notices from one reading ([a70fa59](https://github.com/adambiggs/gangline/commit/a70fa594cebe2dc6d5372ff89f45f61733808a3a))
+
 ## [1.16.3](https://github.com/adambiggs/gangline/compare/gangline-v1.16.2...gangline-v1.16.3) (2026-10-06)
 
 
