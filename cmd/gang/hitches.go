@@ -645,7 +645,7 @@ func (cmd command) rename(args []string) (result error) {
 	if err != nil {
 		return err
 	}
-	l, a, err := run.acquire(a.ID, false)
+	l, a, err := run.acquireBounded(a.ID)
 	if err != nil {
 		return err
 	}
