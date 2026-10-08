@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.17.0](https://github.com/adambiggs/gangline/compare/gangline-v1.16.5...gangline-v1.17.0) (2026-10-08)
+
+
+### Features
+
+* **context:** set context band thresholds per hitch ([0405225](https://github.com/adambiggs/gangline/commit/04052250b2e9af393dda58fa77224d2e653a7487))
+
 ## [1.16.5](https://github.com/adambiggs/gangline/compare/gangline-v1.16.4...gangline-v1.16.5) (2026-10-08)
 
 
