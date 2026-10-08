@@ -70,6 +70,13 @@ agent.
 An `assignment` envelope contains work to begin; a `startup` envelope without
 a task supplies context only.
 
+For collars that receive standing instructions as messages, the `contract`,
+`doctrine`, and `role` senders each supply a separate startup envelope. The
+assignment comes last under the hitcher's sender. These envelopes arrive as
+one native submission, with their text retained for delivery recovery. A
+collar with a role-prompt option receives standing instructions through that
+option instead, keeping the assignment in its own envelope.
+
 These instructions are read when the agent is hitched. Editing them does not
 change an agent that is already running. The [reference](reference.md#startup-instructions)
 lists their override files.

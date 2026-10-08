@@ -48,7 +48,7 @@ func testStartupPromptSurvivesDeadlineAndKeepsContract(t *testing.T, prompt []st
 		t.Fatal(err)
 	}
 	l.Close()
-	e := core.Envelope{ID: "original", Token: "0123456789abcdef", Recipient: a.ID, To: a.Name, From: core.Sender{Kind: core.SenderAgent, Name: "lead", HitchID: "lead-id"}, Purpose: "assignment", Message: core.Message{Text: "Standing contract: report completion.\nAssignment: fix it."}, CreatedAt: f.cmd.now()}
+	e := core.Envelope{ID: "original", Token: "0123456789abcdef", Recipient: a.ID, To: a.Name, From: core.Sender{Kind: core.SenderAgent, Name: "lead", HitchID: "lead-id"}, Purpose: "assignment", Message: core.Message{Text: "Assignment: fix it."}, Startup: startupSections("worker", startupProse{Contract: []byte("Report completion."), Doctrine: []byte("Preserve evidence."), Role: []byte("Own the result.")}), CreatedAt: f.cmd.now()}
 	if err := p.Publish(e); err != nil {
 		t.Fatal(err)
 	}
@@ -81,7 +81,7 @@ func testStartupPromptSurvivesDeadlineAndKeepsContract(t *testing.T, prompt []st
 	if err != nil {
 		t.Fatal(err)
 	}
-	if got.Message.Text != e.Message.Text || f.input.submits != 1 {
+	if got.Message.Text != e.Message.Text || got.Startup == nil || *got.Startup != *e.Startup || f.input.submits != 1 {
 		t.Fatalf("startup changed: %+v submits=%d", got, f.input.submits)
 	}
 	if err := f.run.recoverStartup("worker"); err != nil || !strings.Contains(f.out.String(), "delivered") || f.input.submits != 1 {
@@ -463,7 +463,7 @@ func TestRecoverStartupSubmitsOriginalComposerWithoutRepaste(t *testing.T) {
 			a := f.add(t, "a", "worker", "codex")
 			lead := f.add(t, "b", "lead", "codex")
 			p, _ := f.run.team.Agent(a.ID)
-			e := core.Envelope{ID: "original", Token: "0123456789abcdef", Recipient: a.ID, To: a.Name, From: agentSender(lead), Purpose: "assignment", Message: core.Message{Text: "Standing contract: report completion. Assignment: fix it."}, CreatedAt: f.cmd.now()}
+			e := core.Envelope{ID: "original", Token: "0123456789abcdef", Recipient: a.ID, To: a.Name, From: agentSender(lead), Purpose: "assignment", Message: core.Message{Text: "Assignment: fix it."}, Startup: startupSections("worker", startupProse{Contract: []byte("Report completion.")}), CreatedAt: f.cmd.now()}
 			if err := p.Publish(e); err != nil {
 				t.Fatal(err)
 			}

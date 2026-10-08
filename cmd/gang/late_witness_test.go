@@ -12,7 +12,7 @@ import (
 )
 
 func TestLateSubmitWitnessReconcilesWithoutRetyping(t *testing.T) {
-	for _, kind := range []string{"exact", "suffix", "accepted", "different text", "different session"} {
+	for _, kind := range []string{"exact", "suffix", "accepted", "different text", "different session", "startup exact", "startup suffix", "startup different text", "startup different session"} {
 		t.Run(kind, func(t *testing.T) {
 			f := newStateFixture(t)
 			a := f.add(t, "a", "worker", "codex")
@@ -20,6 +20,12 @@ func TestLateSubmitWitnessReconcilesWithoutRetyping(t *testing.T) {
 			p, _ := f.run.team.Agent(a.ID)
 			a.Native.SessionID = "s"
 			e := core.Envelope{ID: "late", Token: "0123456789abcdef", Recipient: a.ID, To: a.Name, From: agentSender(lead), Message: core.Message{Text: "queued during native work"}, CreatedAt: f.cmd.now()}
+			if strings.HasPrefix(kind, "startup ") {
+				kind = strings.TrimPrefix(kind, "startup ")
+				e.Purpose = "assignment"
+				e.Message.Text = "Assignment: fix it."
+				e.Startup = startupSections("worker", startupProse{Contract: []byte("Report completion."), Doctrine: []byte("Preserve evidence."), Role: []byte("Own the result.")})
+			}
 			if err := p.Publish(e); err != nil {
 				t.Fatal(err)
 			}
