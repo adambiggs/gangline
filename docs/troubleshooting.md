@@ -71,13 +71,19 @@ configured `GANG_CAPACITY_TIMEOUT` budget. Check `gang config` and
 Run `gang status NAME --why` and inspect the pane. A request can be waiting for
 idle, refused by the harness, or unconfirmed. An admitted resume note does not
 confirm completion. When the pane still shows the compaction running, run
-`gang compact NAME --interrupt` after inspection. It interrupts only a busy pane
-with an empty composer and refuses an approval, a draft, an idle composer, or
-an unrecognized screen without sending a key. It runs once per compaction and
+`gang compact NAME --interrupt` after inspection. For a submitted or unconfirmed
+compaction, it interrupts only a busy pane with an empty composer and refuses
+an approval, a draft, an idle composer, or an unrecognized screen without
+sending a key. It runs once per compaction and
 refuses once the harness has taken the resume note, since a busy pane is then
 later work; use `gang interrupt NAME` for that. Interrupting can leave the
 resume note in the composer; clear it if the compaction did not finish. Do not
 treat missing resume text as proof that compaction finished.
+
+If a deferred compaction failed and left its exact command in an idle composer,
+`gang compact NAME --interrupt` can clear that command and retry queued input.
+It refuses changed input or a native prompt without sending a key. The failed
+compaction remains failed; its withheld resume note is not delivered.
 
 ## A hook or tick failed
 

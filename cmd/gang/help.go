@@ -144,7 +144,7 @@ var commandOptions = map[string][]optionSpec{
 	},
 	"compact": {
 		{"resume", "TEXT", "resume note (default a re-read note)"},
-		{"interrupt", "", "interrupt an unconfirmed compaction while busy"},
+		{"interrupt", "", "interrupt busy compaction or clear failed draft"},
 	},
 	"statusline": {{"install", "", "install the native status line"}},
 	"context": {

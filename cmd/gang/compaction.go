@@ -661,10 +661,78 @@ func classifyRecoverSurface(c harness.Collar, screen substrate.Screen) (recoverS
 	return recoverSurface{"busy", "native task still active"}, nil
 }
 
-// interruptCompaction interrupts a submitted or unverified compaction that the
-// native harness still shows as running. It sends nothing unless the screen
-// is a recognized busy surface with an empty composer, and records every key
-// it sends as an unverified compaction before returning.
+// clearFailedCompactDraft removes an exact command left after a deferred
+// compaction failed. The failure-time composer was not identified, so recovery
+// requires a fresh exact read and an explicit caller request.
+func (run *runtime) clearFailedCompactDraft(l *store.LockedAgent, a *core.Agent, b harnessInput, c harness.Collar) error {
+	pending := a.Compaction
+	if !strings.Contains(pending.Reason, "staged command no longer identified in composer; input left alone") || c.Actions.CompactDeferClear == nil {
+		return refuseError("compaction %s already failed: %s; no recoverable staged command identified", pending.ID, pending.Reason)
+	}
+	if a.Status != core.Active {
+		return inactiveRecipient(*a)
+	}
+	action, err := harness.RenderAction(c.Actions.Compact, map[string]string{"instructions": pending.Resume.Text})
+	if err != nil {
+		return err
+	}
+	ctx, cancel := run.cmd.timeout(compactAbortTimeout)
+	defer cancel()
+	pane := substrate.PaneID(a.Pane)
+	screen, err := run.captureAgentPane(ctx, b, *a)
+	if err != nil {
+		return err
+	}
+	if blocker, blocked, err := harness.InputBlocked(c, screen); err != nil {
+		return err
+	} else if blocked {
+		return refuseError("native input blocked: %s; no keys sent", blocker.Evidence)
+	}
+	composer, err := harness.ReadComposer(c.Primitives.Composer, screen)
+	if err != nil {
+		return err
+	}
+	if composer.TailOccupied || composer.Text != action.Text {
+		return refuseError("native composer does not hold the exact failed compact command; no keys sent")
+	}
+	if busy, err := harness.Busy(c, screen); err != nil {
+		return err
+	} else if busy {
+		return refuseError("native task still active; no keys sent")
+	}
+	if err := sendHarnessKeys(ctx, b, pane, c, c.Actions.CompactDeferClear.Input()); err != nil {
+		return err
+	}
+	if run.cmd.settleInput != nil {
+		err = run.cmd.settleInput(ctx, b, pane, c, compactClearSettle)
+	} else {
+		err = awaitComposerChange(ctx, b, pane, c, composer.Text, compactClearSettle)
+	}
+	if err != nil {
+		return commandError{status: exitUnknown, text: fmt.Sprintf("compact clear sent; composer outcome unconfirmed: %v", err)}
+	}
+	screen, err = run.captureAgentPane(ctx, b, *a)
+	if err != nil {
+		return commandError{status: exitUnknown, text: fmt.Sprintf("compact clear sent; composer outcome unconfirmed: %v", err)}
+	}
+	composer, err = harness.ReadComposer(c.Primitives.Composer, screen)
+	if err != nil || composer.TailOccupied || composer.Text != "" {
+		return commandError{status: exitUnknown, text: "compact clear sent; composer is not confirmed empty"}
+	}
+	if _, err := run.observeScreen(l, a, c, screen); err != nil {
+		return err
+	}
+	if _, err := fmt.Fprintf(run.cmd.stdout, "%s\tfailed compact draft cleared; queued input reconsidered\n", pending.ID); err != nil {
+		return err
+	}
+	_, err = run.drainFrom(l, *a, "")
+	return err
+}
+
+// interruptCompaction clears an exact draft left by a failed deferred
+// compaction, or interrupts a submitted or unverified compaction that the
+// native harness still shows as running. Busy recovery sends nothing unless
+// the screen has an empty composer and records its keys as unverified.
 func (run *runtime) interruptCompaction(l *store.LockedAgent, a *core.Agent, b harnessInput, c harness.Collar) (result error) {
 	pending := a.Compaction
 	switch {
@@ -673,7 +741,7 @@ func (run *runtime) interruptCompaction(l *store.LockedAgent, a *core.Agent, b h
 	case pending.Status == "queued":
 		return refuseError("compaction %s is queued and not submitted; nothing to recover", pending.ID)
 	case pending.Status == "failed":
-		return refuseError("compaction %s already failed: %s; nothing to recover", pending.ID, pending.Reason)
+		return run.clearFailedCompactDraft(l, a, b, c)
 	case pending.Status == "completed":
 		return refuseError("compaction %s already completed; nothing to recover", pending.ID)
 	case pending.Status != "submitted" && pending.Status != "unverified":
