@@ -1,5 +1,13 @@
 # Changelog
 
+## [1.16.5](https://github.com/adambiggs/gangline/compare/gangline-v1.16.4...gangline-v1.16.5) (2026-10-08)
+
+
+### Bug Fixes
+
+* clear failed compact draft before queued delivery ([702aa8b](https://github.com/adambiggs/gangline/commit/702aa8be9148cfa0129bb3e886b0dcbe47807e94))
+* preserve rejected native session witnesses ([e431db4](https://github.com/adambiggs/gangline/commit/e431db4bad959d1134b9c6ed28a98bf12f45b394))
+
 ## [1.16.4](https://github.com/adambiggs/gangline/compare/gangline-v1.16.3...gangline-v1.16.4) (2026-10-06)
 
 
