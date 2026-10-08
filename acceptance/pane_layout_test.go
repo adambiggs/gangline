@@ -97,26 +97,46 @@ func TestNamedPaneLayouts(t *testing.T) {
 			byName := map[string]core.Agent{}
 			for _, a := range agents {
 				byName[string(a.Name)] = a
-				if got := gang("send", string(a.Name), "--from", "operator", "target "+string(a.Name)); !strings.Contains(got, "\tdelivered\n") {
-					t.Fatalf("delivery was not confirmed: %q", got)
+				p, err := team.Agent(a.ID)
+				if err != nil {
+					t.Fatal(err)
 				}
+				// A valid send can queue behind another input operation. Hold
+				// that lock explicitly so delivery proof never depends on whether
+				// a background tick happened to finish before send returned.
+				result := func() string {
+					held, err := p.LockAgent()
+					if err != nil {
+						t.Fatal(err)
+					}
+					defer func() {
+						if err := held.Close(); err != nil {
+							t.Fatal(err)
+						}
+					}()
+					return gang("send", string(a.Name), "--from", "operator", "target "+string(a.Name))
+				}()
+				id, outcome, ok := strings.Cut(strings.TrimSpace(result), "\t")
+				if !ok || id == "" || outcome != "queued" {
+					t.Fatalf("send under recipient lock = %q, want message ID and queued", result)
+				}
+				gang("tick", "--agent", string(a.ID))
 				if out, err := runner.run("wait-for", fmt.Sprintf("received-%s-2", a.ID)); err != nil {
 					t.Fatalf("delivery barrier: %v %s", err, out)
 				}
 				captured := gang("capture", string(a.Name))
-				id := string(a.ID)
-				if !strings.Contains(captured, "READY "+id[len(id)-8:]+" literal %1 $100 @2") {
+				hitchID := string(a.ID)
+				if !strings.Contains(captured, "READY "+hitchID[len(hitchID)-8:]+" literal %1 $100 @2") {
 					t.Fatalf("capture %s reached another pane: %q", a.Name, captured)
 				}
 				if out, err := runner.run("display-message", "-p", "-t", a.Pane, "#{@gangline_title}"); err != nil || !strings.Contains(out, string(a.Name)) {
 					t.Fatalf("independent title %s = %q %v", a.Name, out, err)
 				}
-				p, _ := team.Agent(a.ID)
 				current, err := p.Read()
-				if err != nil || current.LastDelivered == "" {
-					t.Fatalf("delivery %s has no receipt: %+v %v", a.Name, current, err)
+				if err != nil || current.LastDelivered != core.EnvelopeID(id) {
+					t.Fatalf("delivery %s lacks receipt %s: %+v %v", a.Name, id, current, err)
 				}
-				e, err := p.ReadEnvelope("cur", current.LastDelivered)
+				e, err := p.ReadEnvelope("cur", core.EnvelopeID(id))
 				if err != nil || e.Outcome != "delivered" || e.Message.Text != "target "+string(a.Name) {
 					t.Fatalf("delivery %s = %+v %v", a.Name, e, err)
 				}
