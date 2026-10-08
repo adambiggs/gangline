@@ -33,8 +33,8 @@ func helpOptionNames(output string) map[string]bool {
 
 func TestHelpGroupsAliases(t *testing.T) {
 	aliases := map[string][]string{
-		"up":     {"-c, --collar COLLAR", "-d, --dir DIR", "-m, --model MODEL", "-e, --effort EFFORT", "-t, --task TASK", "-r, --role ROLE"},
-		"hitch":  {"-c, --collar COLLAR", "-d, --dir DIR", "-m, --model MODEL", "-e, --effort EFFORT", "-t, --task TASK", "-r, --role ROLE"},
+		"up":     {"-c, --collar COLLAR", "-d, --dir DIR", "-m, --model MODEL", "-e, --effort EFFORT", "--context-bands EARLY,LATE", "-t, --task TASK", "-r, --role ROLE"},
+		"hitch":  {"-c, --collar COLLAR", "-d, --dir DIR", "-m, --model MODEL", "-e, --effort EFFORT", "--context-bands EARLY,LATE", "-t, --task TASK", "-r, --role ROLE"},
 		"models": {"-c, --collar COLLAR"},
 	}
 	for name := range commandUsage {

@@ -34,41 +34,47 @@ const (
 
 // Agent contains only the facts needed to operate one harness.
 type Agent struct {
-	ID                HitchID           `json:"id"`
-	Name              AgentName         `json:"name"`
-	Collar            string            `json:"collar"`
-	Role              string            `json:"role,omitempty"`
-	HitchedBy         HitchID           `json:"hitched_by,omitempty"`
-	Directory         string            `json:"directory"`
-	Pane              string            `json:"pane,omitempty"`
-	Status            Status            `json:"status"`
-	Activity          Activity          `json:"activity"`
-	CreatedAt         time.Time         `json:"created_at"`
-	ChangedAt         time.Time         `json:"changed_at"`
-	BootDeadline      time.Time         `json:"boot_deadline,omitzero"`
-	InterruptDeadline time.Time         `json:"interrupt_deadline,omitzero"`
-	DropDeadline      time.Time         `json:"drop_deadline,omitzero"`
-	Evidence          string            `json:"evidence,omitempty"`
-	StatusProbeAt     time.Time         `json:"status_probe_at,omitzero"`
-	ScreenFingerprint string            `json:"screen_fingerprint,omitempty"`
-	ScreenSince       time.Time         `json:"screen_since,omitzero"`
-	InputOutage       *InputOutage      `json:"input_outage,omitempty"`
-	Input             *InputIntent      `json:"input,omitempty"`
-	Compaction        *Compaction       `json:"compaction,omitempty"`
-	Capacity          Capacity          `json:"capacity,omitzero"`
-	Native            NativeState       `json:"native,omitzero"`
-	ContextBands      ContextBandState  `json:"context_bands,omitzero"`
-	Registration      PaneRegistration  `json:"registration,omitzero"`
-	Process           ProcessIdentity   `json:"process,omitzero"`
-	Teardown          []ProcessIdentity `json:"teardown,omitempty"`
-	RenameFrom        AgentName         `json:"rename_from,omitempty"`
-	RenameTo          AgentName         `json:"rename_to,omitempty"`
-	LastAccepted      EnvelopeID        `json:"last_accepted,omitempty"`
-	LastDelivered     EnvelopeID        `json:"last_delivered,omitempty"`
-	LastFailed        EnvelopeID        `json:"last_failed,omitempty"`
-	Cleanup           *ResultRef        `json:"cleanup,omitempty"`
+	ID                    HitchID                `json:"id"`
+	Name                  AgentName              `json:"name"`
+	Collar                string                 `json:"collar"`
+	Role                  string                 `json:"role,omitempty"`
+	HitchedBy             HitchID                `json:"hitched_by,omitempty"`
+	Directory             string                 `json:"directory"`
+	Pane                  string                 `json:"pane,omitempty"`
+	Status                Status                 `json:"status"`
+	Activity              Activity               `json:"activity"`
+	CreatedAt             time.Time              `json:"created_at"`
+	ChangedAt             time.Time              `json:"changed_at"`
+	BootDeadline          time.Time              `json:"boot_deadline,omitzero"`
+	InterruptDeadline     time.Time              `json:"interrupt_deadline,omitzero"`
+	DropDeadline          time.Time              `json:"drop_deadline,omitzero"`
+	Evidence              string                 `json:"evidence,omitempty"`
+	StatusProbeAt         time.Time              `json:"status_probe_at,omitzero"`
+	ScreenFingerprint     string                 `json:"screen_fingerprint,omitempty"`
+	ScreenSince           time.Time              `json:"screen_since,omitzero"`
+	InputOutage           *InputOutage           `json:"input_outage,omitempty"`
+	Input                 *InputIntent           `json:"input,omitempty"`
+	Compaction            *Compaction            `json:"compaction,omitempty"`
+	Capacity              Capacity               `json:"capacity,omitzero"`
+	Native                NativeState            `json:"native,omitzero"`
+	ContextBandThresholds *ContextBandThresholds `json:"context_band_thresholds,omitempty"`
+	ContextBands          ContextBandState       `json:"context_bands,omitzero"`
+	Registration          PaneRegistration       `json:"registration,omitzero"`
+	Process               ProcessIdentity        `json:"process,omitzero"`
+	Teardown              []ProcessIdentity      `json:"teardown,omitempty"`
+	RenameFrom            AgentName              `json:"rename_from,omitempty"`
+	RenameTo              AgentName              `json:"rename_to,omitempty"`
+	LastAccepted          EnvelopeID             `json:"last_accepted,omitempty"`
+	LastDelivered         EnvelopeID             `json:"last_delivered,omitempty"`
+	LastFailed            EnvelopeID             `json:"last_failed,omitempty"`
+	Cleanup               *ResultRef             `json:"cleanup,omitempty"`
 
 	CurfewNoticeDeadline time.Time `json:"curfew_notice_deadline,omitzero"`
+}
+
+type ContextBandThresholds struct {
+	Early float64 `json:"early"`
+	Late  float64 `json:"late"`
 }
 
 // InputOutage retains an observation warning across ticks until the registered

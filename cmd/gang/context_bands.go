@@ -63,6 +63,7 @@ func (run *runtime) noteContextBands(a *core.Agent, c harness.Collar) error {
 		return nil
 	}
 	state := &a.ContextBands
+	c = agentContextCollar(*a, c)
 	if a.Native.CompactedAt.After(state.CompactedAt) {
 		state.Model, state.Percent, state.CompactedAt = "", 0, a.Native.CompactedAt
 	}

@@ -12,18 +12,19 @@ import (
 var agentNamePattern = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9._-]*$`)
 
 type hitchOptions struct {
-	Name      string
-	Collar    string
-	Directory string
-	Model     string
-	Effort    string
-	Task      string
-	Role      string
-	Resume    string
-	Recover   bool
-	Stdin     bool
-	Split     string
-	Vertical  bool
+	Name         string
+	Collar       string
+	Directory    string
+	Model        string
+	Effort       string
+	ContextBands string
+	Task         string
+	Role         string
+	Resume       string
+	Recover      bool
+	Stdin        bool
+	Split        string
+	Vertical     bool
 }
 
 func parseHitch(arguments []string, defaultCollar, defaultDirectory string) (hitchOptions, error) {
@@ -33,7 +34,8 @@ func parseHitch(arguments []string, defaultCollar, defaultDirectory string) (hit
 		"d": &options.Directory, "dir": &options.Directory,
 		"m": &options.Model, "model": &options.Model,
 		"e": &options.Effort, "effort": &options.Effort,
-		"t": &options.Task, "task": &options.Task,
+		"context-bands": &options.ContextBands,
+		"t":             &options.Task, "task": &options.Task,
 		"r": &options.Role, "role": &options.Role,
 		"resume": &options.Resume, "recover": &options.Recover, "stdin": &options.Stdin,
 		"split": &options.Split, "vertical": &options.Vertical,
@@ -54,6 +56,9 @@ func parseHitch(arguments []string, defaultCollar, defaultDirectory string) (hit
 	}
 	if options.Collar == "" || options.Directory == "" {
 		return hitchOptions{}, usageError("hitch: collar and directory must not be empty")
+	}
+	if options.ContextBands == "" && flagWasSet(flags, "context-bands") {
+		return hitchOptions{}, usageError("hitch: --context-bands requires EARLY,LATE percentages")
 	}
 	if options.Recover && !onlyFlagSet(flags, "recover") {
 		return hitchOptions{}, usageError("hitch: --recover takes only NAME")

@@ -123,6 +123,7 @@ var commandOptions = map[string][]optionSpec{
 		{"d", "DIR", "working directory (default current)"}, {"dir", "DIR", "working directory (default current)"},
 		{"m", "MODEL", "native model"}, {"model", "MODEL", "native model"},
 		{"e", "EFFORT", "reasoning effort"}, {"effort", "EFFORT", "reasoning effort"},
+		{"context-bands", "EARLY,LATE", "context band thresholds in percent"},
 		{"t", "TASK", "startup assignment"}, {"task", "TASK", "startup assignment"},
 		{"r", "ROLE", "role brief"}, {"role", "ROLE", "role brief"},
 		{"resume", "SESSION", "resume a native conversation, not a team"},

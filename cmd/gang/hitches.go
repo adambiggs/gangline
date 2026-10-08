@@ -54,6 +54,10 @@ func (cmd command) hitchWithStaleClaim(args []string, supersede bool) (result er
 		return err
 	}
 	o.Collar = c.Name
+	bandThresholds, err := contextBandOverride(c, o.ContextBands)
+	if err != nil {
+		return err
+	}
 	if o.Resume != "" {
 		unverified, err := harness.ValidateResume(c, o.Resume)
 		if err != nil {
@@ -128,7 +132,7 @@ func (cmd command) hitchWithStaleClaim(args []string, supersede bool) (result er
 		sender = core.Sender{Kind: core.SenderGangline, Name: "startup"}
 	}
 	now := cmd.now()
-	a := core.Agent{ID: core.HitchID(id), Name: core.AgentName(o.Name), Collar: o.Collar, Role: o.Role, HitchedBy: hitcher, Directory: dir, Status: core.Starting, Activity: core.Unknown, CreatedAt: now, ChangedAt: now, BootDeadline: now.Add(bootTimeout)}
+	a := core.Agent{ID: core.HitchID(id), Name: core.AgentName(o.Name), Collar: o.Collar, Role: o.Role, HitchedBy: hitcher, Directory: dir, Status: core.Starting, Activity: core.Unknown, CreatedAt: now, ChangedAt: now, BootDeadline: now.Add(bootTimeout), ContextBandThresholds: bandThresholds}
 	a.Native.SessionID = o.Resume
 	e := core.Envelope{ID: core.EnvelopeID(eid), Token: token, Recipient: a.ID, To: a.Name, From: sender, Purpose: purpose, Message: core.Message{Text: message}, CreatedAt: now}
 	if c.Options.RolePrompt == nil {

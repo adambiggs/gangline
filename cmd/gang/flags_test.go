@@ -6,12 +6,15 @@ import (
 )
 
 func TestParseHitchUsesNameBeforeStdlibFlags(t *testing.T) {
-	got, err := parseHitch([]string{"worker", "-c", "codex", "-d", "/work", "-m", "gpt", "--stdin"}, "claude", "/default")
+	got, err := parseHitch([]string{"worker", "-c", "codex", "-d", "/work", "-m", "gpt", "--context-bands", "10,20", "--stdin"}, "claude", "/default")
 	if err != nil {
 		t.Fatal(err)
 	}
-	if got.Name != "worker" || got.Collar != "codex" || got.Directory != "/work" || got.Model != "gpt" || !got.Stdin {
+	if got.Name != "worker" || got.Collar != "codex" || got.Directory != "/work" || got.Model != "gpt" || got.ContextBands != "10,20" || !got.Stdin {
 		t.Fatalf("options = %#v", got)
+	}
+	if _, err := parseHitch([]string{"worker", "--context-bands", ""}, "claude", "/work"); err == nil {
+		t.Fatal("empty context bands passed")
 	}
 }
 

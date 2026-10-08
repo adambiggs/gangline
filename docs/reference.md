@@ -59,6 +59,7 @@ its window and pane position; it is not adopted or removed automatically.
 | `-d`, `--dir DIR` | Working directory; defaults to the current directory. |
 | `-m`, `--model MODEL` | Native model identifier; the native CLI judges it. A collar's `hitch_guard` can warn or refuse at usage thresholds. |
 | `-e`, `--effort EFFORT` | Native reasoning effort; requires `--model`. Refused when `gang models` lists the model without this effort. |
+| `--context-bands EARLY,LATE` | Set this agent's context-band thresholds as percentages, for example `--context-bands 10,20`. Requires a collar with an early and late band for every model selector. |
 | `-t`, `--task TASK` | Startup assignment. |
 | `-r`, `--role ROLE` | Role brief; `up` defaults to `lead`. |
 | `--stdin` | Read the assignment from stdin. |
@@ -66,6 +67,10 @@ its window and pane position; it is not adopted or removed automatically.
 | `--vertical` | Split top/bottom instead of side by side; requires `--split NAME`. |
 | `--resume SESSION` | Resume a native conversation by its native session ID. |
 | `--recover` | Recover an agent's retained startup input. |
+
+For example, `gang up --context-bands 10,20` gives the lead earlier notices,
+while `gang hitch worker --context-bands 20,30` sets the worker's thresholds
+independently.
 
 For collars whose transcripts Gangline reads, a resume is refused when the
 native transcript stored under that session ID names a different session, or
@@ -432,8 +437,12 @@ collar: {
 ```
 
 What a collar renders into the launch command (`launch`, `models.option`,
-`options`, and hook `install_args`) takes effect when an agent is hitched. Gangline reads the collar again for each later operation, so edits to
-its other fields apply to agents already running.
+`options`, and hook `install_args`) takes effect when an agent is hitched. An
+agent hitched with `--context-bands` keeps its thresholds until re-hitched;
+Gangline reads band names, messages, and model selectors from the collar for
+each later operation. A later selector with a different band count uses its
+collar thresholds until the agent is re-hitched. Without the option, the collar
+also supplies thresholds.
 
 A native submit precedes UI paint. Gangline bridges an idle-looking frame
 with a brief busy display grace when the collar leaves open turns to the

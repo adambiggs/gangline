@@ -69,6 +69,7 @@ func (cmd command) context(args []string) error {
 	if err != nil {
 		return err
 	}
+	c = agentContextCollar(a, c)
 	if c.Primitives.Telemetry != nil {
 		r := a.Native.Context
 		if r.Status != "observed" || r.Used == nil || r.Limit == nil || r.Percent == nil {
