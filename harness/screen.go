@@ -107,7 +107,6 @@ func ReadComposer(invocation Invocation, screen substrate.Screen) (Composer, err
 }
 
 var codexCollapsedPastePattern = regexp.MustCompile(`^\[Pasted Content ([1-9][0-9]*) chars\]$`)
-var codexFooterPattern = regexp.MustCompile(`^[^\n]+ · Context [0-9]+% used$`)
 
 // SameComposerText reports whether a composer read-back shows the submitted
 // text. The composer wraps long input at the pane width and the reader joins
@@ -119,6 +118,7 @@ func SameComposerText(composer, submitted string) bool {
 
 func readCodexComposer(screen substrate.Screen) (Composer, error) {
 	lines := screenLines(screen, false)
+	rawLines := screenLines(screen, true)
 	for index := len(lines) - 1; index >= 0; index-- {
 		line := strings.TrimRight(lines[index], " \t")
 		if !strings.HasPrefix(line, "›") {
@@ -131,14 +131,19 @@ func readCodexComposer(screen substrate.Screen) (Composer, error) {
 		text = strings.TrimPrefix(text, " ")
 		text = strings.ReplaceAll(text, "\u00a0", "")
 		composer := Composer{Text: text, first: index, end: len(lines)}
-		blankBeforeFooter := false
-		for _, following := range lines[index+1:] {
+		for offset, following := range rawLines[index+1:] {
 			following = strings.TrimSpace(following)
 			if following == "" {
-				blankBeforeFooter = true
 				continue
 			}
-			if blankBeforeFooter && codexFooterPattern.MatchString(following) {
+			row := index + 1 + offset
+			// The input has a blank bottom padding row before the final
+			// status and hint rows. Their contents and styling are configurable;
+			// only a cursor on this input row establishes that layout. Any
+			// continuation before the padding still occupies the composer.
+			if screen.Cursor.Visible && screen.Cursor.Row == index && row >= len(lines)-2 &&
+				row > index+1 && strings.TrimSpace(rawLines[row-1]) == "" {
+				composer.end = row - 1
 				break
 			}
 			composer.TailOccupied = true

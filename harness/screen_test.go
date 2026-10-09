@@ -287,9 +287,84 @@ func TestCodexCollapsedComposerRequiresClearRegionBeforeFooter(t *testing.T) {
 			for index, row := range test.rows {
 				rows[index] = testCells(row, false)
 			}
-			composer, err := ReadComposer(Invocation{Name: "codex-composer"}, testScreen(rows...))
+			screen := testScreen(rows...)
+			if test.name != "unknown footer" {
+				screen.Cursor = substrate.Cursor{Row: 0, Visible: true}
+			}
+			composer, err := ReadComposer(Invocation{Name: "codex-composer"}, screen)
 			if err != nil || composer.CollapsedChars != test.want || composer.TailOccupied != test.tail {
 				t.Fatalf("composer = %+v, err = %v", composer, err)
+			}
+		})
+	}
+}
+
+func TestCodexComposerFooterLayout(t *testing.T) {
+	for _, footer := range []string{
+		"GPT-6-Astra high · Context 4% used · gangline · never",
+		"gangline · never · Context 4% used · GPT-6-Astra high",
+		"Context 96% left · GPT-6-Astra high",
+		"5h: 80% · weekly: 95%",
+		"GPT-6-Astra high",
+		"issue-163",
+		"/home/adam/Repos/gangline · main · 42k tokens",
+		"Context 4% us…",
+		"? for shortcuts",
+		"",
+	} {
+		t.Run(footer, func(t *testing.T) {
+			for _, dim := range []bool{false, true} {
+				for _, text := range []string{"/compact", "[Pasted Content 9526 chars]", ""} {
+					screen := testScreen(testCells("› "+text, false), nil, testCells("  "+footer, dim), testCells("  ? for shortcuts", true))
+					screen.Cursor = substrate.Cursor{Row: 0, Column: 2 + len(text), Visible: true}
+					composer, err := ReadComposer(Invocation{Name: "codex-composer"}, screen)
+					wantChars := 0
+					if strings.HasPrefix(text, "[Pasted Content") {
+						wantChars = 9526
+					}
+					if err != nil || composer.Text != text || composer.TailOccupied || composer.CollapsedChars != wantChars {
+						t.Fatalf("dim=%v composer=%+v err=%v", dim, composer, err)
+					}
+				}
+			}
+		})
+	}
+}
+
+func TestCodexComposerFooterDoesNotHideDraftContinuation(t *testing.T) {
+	for _, dim := range []bool{false, true} {
+		for _, continuation := range []string{"operator draft", "GPT-6-Astra high · Context 4% used"} {
+			screen := testScreen(testCells("› /compact", false), nil, testCells("  "+continuation, dim), nil, testCells("  gangline · never", false))
+			screen.Cursor = substrate.Cursor{Row: 0, Column: 10, Visible: true}
+			composer, err := ReadComposer(Invocation{Name: "codex-composer"}, screen)
+			if err != nil || !composer.TailOccupied {
+				t.Fatalf("dim=%v continuation=%q composer=%+v err=%v", dim, continuation, composer, err)
+			}
+		}
+	}
+}
+
+func TestCodexComposerFooterRequiresInputCursorAndPadding(t *testing.T) {
+	for _, tc := range []struct {
+		name   string
+		rows   []string
+		cursor substrate.Cursor
+	}{
+		{"hidden cursor", []string{"› /compact", "", "  gangline · never"}, substrate.Cursor{Row: 0}},
+		{"footer cursor", []string{"› /compact", "", "  gangline · never"}, substrate.Cursor{Row: 2, Visible: true}},
+		{"continuation cursor", []string{"› /compact", "", "  operator draft", "", "  gangline · never"}, substrate.Cursor{Row: 2, Visible: true}},
+		{"no padding", []string{"› /compact", "  gangline · never"}, substrate.Cursor{Row: 0, Visible: true}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			var rows [][]substrate.Cell
+			for _, row := range tc.rows {
+				rows = append(rows, testCells(row, false))
+			}
+			screen := testScreen(rows...)
+			screen.Cursor = tc.cursor
+			composer, err := ReadComposer(Invocation{Name: "codex-composer"}, screen)
+			if err != nil || !composer.TailOccupied {
+				t.Fatalf("composer=%+v err=%v", composer, err)
 			}
 		})
 	}

@@ -94,13 +94,18 @@ func TestFailedDeferredCompactDraftCanBeClearedExplicitly(t *testing.T) {
 	if err := l.Close(); err != nil {
 		t.Fatal(err)
 	}
-	f.input.screen = screenWithText("› /compact")
+	compactScreen := func(text string) substrate.Screen {
+		screen := screenWithText("› "+text, "", "  GPT-6-Astra high · Context 4% used · gangline · never")
+		screen.Cursor = substrate.Cursor{Row: 0, Column: 2 + len(text), Visible: true}
+		return screen
+	}
+	f.input.screen = compactScreen("/compact")
 	f.input.submit = func(prompt string) error {
 		return p.WriteWitness(store.Witness{ID: "queued-witness", At: f.cmd.now(), Prompt: prompt, SessionID: "s"})
 	}
 	f.input.onKeys = func(keys substrate.Keys) error {
 		if slices.Contains(keys.Names, "C-u") {
-			f.input.screen = screenWithText("› ")
+			f.input.screen = compactScreen("")
 		}
 		return nil
 	}
