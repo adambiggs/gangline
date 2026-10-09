@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.17.1](https://github.com/adambiggs/gangline/compare/gangline-v1.17.0...gangline-v1.17.1) (2026-10-09)
+
+
+### Bug Fixes
+
+* load standing system prompts from files ([daca49d](https://github.com/adambiggs/gangline/commit/daca49dfc55207e101805abe727ea07811e3b6b9)), closes [#164](https://github.com/adambiggs/gangline/issues/164)
+
 ## [1.17.0](https://github.com/adambiggs/gangline/compare/gangline-v1.16.5...gangline-v1.17.0) (2026-10-08)
 
 
