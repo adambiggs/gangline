@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.17.2](https://github.com/adambiggs/gangline/compare/gangline-v1.17.1...gangline-v1.17.2) (2026-10-09)
+
+
+### Bug Fixes
+
+* distinguish composer footers from draft continuations ([deb9780](https://github.com/adambiggs/gangline/commit/deb9780f1e5fb59bbc9bf376147c5acfec992d48))
+
 ## [1.17.1](https://github.com/adambiggs/gangline/compare/gangline-v1.17.0...gangline-v1.17.1) (2026-10-09)
 
 
