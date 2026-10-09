@@ -56,7 +56,7 @@ collar: {
   }
  }
  models: {catalog: {name: "codex-debug-models", params: {command: "false", args: ""}}, option: {args: ["-m", "{{value}}"]}}
- options: {effort: {args: ["-e", "{{value}}"]}, role_prompt: {args: ["--role-prompt", "{{value}}"]}}
+ options: {effort: {args: ["-e", "{{value}}"]}, role_prompt_file: {args: ["--role-prompt-file", "{{value}}"]}}
  primitives: {
 	  startup: [{name: "claude-composer"}]
 	  composer: {name: "claude-composer"}

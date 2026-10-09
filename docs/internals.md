@@ -208,16 +208,18 @@ match `collar.name`. Unknown fields or primitive names fail before launch.
 | `launch` | New, resumed, and probe commands. |
 | `hooks` | Native callback arguments and payload interpretation. |
 | `models` | Model discovery and selection. |
-| `options` | Effort and role-prompt argument templates. |
+| `options` | Effort and role-prompt-file argument templates. |
 | `primitives` | Built-in native behaviors, readings, queue witnesses, and optional limits queries. |
 | `actions` | Interrupt, compact, and recovery key sequences; optional refusal and running-compaction patterns. |
 | `context_bands` | Named context thresholds by model. |
 | `usage_bands` | Named native provider-usage thresholds by window. |
 
-A `role_prompt` option places standing instructions in the native system
-prompt and leaves the assignment in the first message. Other collars receive
-both together. Custom collars without supported transcript discovery leave
-resume identities to their native CLI.
+A `role_prompt_file` option passes the path of an agent's private startup file
+to a native system-prompt-file argument. Gangline writes the composed contract,
+doctrine, and role brief to that file before launch and keeps it until drop.
+The assignment stays in the first message. Collars without this option receive
+the standing instructions in that message. Custom collars without supported
+transcript discovery leave resume identities to their native CLI.
 
 ## Design principles
 

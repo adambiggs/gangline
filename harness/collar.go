@@ -65,8 +65,8 @@ type Models struct {
 }
 
 type Options struct {
-	Effort     *Option `json:"effort,omitempty"`
-	RolePrompt *Option `json:"role_prompt,omitempty"`
+	Effort         *Option `json:"effort,omitempty"`
+	RolePromptFile *Option `json:"role_prompt_file,omitempty"`
 }
 
 type Invocation struct {
@@ -244,7 +244,7 @@ func validateCollar(collar Collar) error {
 	if !argsContain(collar.Models.Option.Args, "{{value}}") {
 		return fmt.Errorf("model option does not contain {{value}}")
 	}
-	for name, option := range map[string]*Option{"effort": collar.Options.Effort, "role prompt": collar.Options.RolePrompt} {
+	for name, option := range map[string]*Option{"effort": collar.Options.Effort, "role prompt file": collar.Options.RolePromptFile} {
 		if option != nil && !argsContain(option.Args, "{{value}}") {
 			return fmt.Errorf("%s option does not contain {{value}}", name)
 		}

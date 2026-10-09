@@ -12,6 +12,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/adambiggs/gangline/internal/prose"
 	"github.com/adambiggs/gangline/store"
 )
 
@@ -41,6 +42,17 @@ func TestCommandLifecycleOnPrivateTmux(t *testing.T) {
 	}
 	if err := os.WriteFile(filepath.Join(collars, "acceptance.cue"), []byte(commandAcceptanceCollar(exe)), 0600); err != nil {
 		t.Fatal(err)
+	}
+	config := filepath.Join(root, "config")
+	if err := os.MkdirAll(filepath.Join(config, "roles"), 0700); err != nil {
+		t.Fatal(err)
+	}
+	doctrine := strings.Repeat("doctrine line\n", 700)
+	role := strings.Repeat("role line\n", 700)
+	for path, content := range map[string]string{"DOCTRINE.md": doctrine, "roles/bulk.md": role} {
+		if err := os.WriteFile(filepath.Join(config, path), []byte(content), 0600); err != nil {
+			t.Fatal(err)
+		}
 	}
 	const session = "gangline-rebuild-acceptance"
 	socket := filepath.Join(root, "tmux.sock")
@@ -98,7 +110,10 @@ func TestCommandLifecycleOnPrivateTmux(t *testing.T) {
 	start := make(chan struct{})
 	results := make(chan result, 2)
 	for i := 0; i < 2; i++ {
-		go func() { <-start; results <- runGang("", "hitch", "worker", "-t", "acceptance assignment") }()
+		go func() {
+			<-start
+			results <- runGang("", "hitch", "worker", "-r", "bulk", "-t", "acceptance assignment")
+		}()
 	}
 	close(start)
 	success, refused := 0, 0
@@ -139,8 +154,32 @@ func TestCommandLifecycleOnPrivateTmux(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if strings.Count(string(argv), "# Gangline delivery contract") != 1 || strings.Contains(string(received), "# Gangline delivery contract") || strings.Contains(string(argv), "acceptance assignment") {
+	if strings.Contains(string(argv), doctrine) || strings.Contains(string(argv), role) || strings.Contains(string(received), doctrine) || strings.Contains(string(received), role) || strings.Contains(string(argv), "acceptance assignment") {
 		t.Fatalf("standing prose or task duplicated across launch and startup: argv=%q received=%q", argv, received)
+	}
+	var promptFile string
+	for index, arg := range strings.Split(string(argv), "\n") {
+		if arg == "--role-prompt-file" {
+			parts := strings.Split(string(argv), "\n")
+			if index+1 < len(parts) {
+				promptFile = parts[index+1]
+			}
+		}
+	}
+	if promptFile == "" {
+		t.Fatalf("native launch lacks role prompt file: %q", argv)
+	}
+	contract, err := prose.Contract()
+	if err != nil {
+		t.Fatal(err)
+	}
+	wantPrompt := "You are worker in Gangline. Read the standing contract below before anything else.\n\n" + string(contract) + "\n\nOperator doctrine:\n\n" + doctrine + "\n\nRole brief (operator instructions take precedence, including provider, model, effort, and staffing policy):\n\n" + role
+	if len(wantPrompt) <= 16<<10 {
+		t.Fatal("prompt fixture does not exceed tmux's command limit")
+	}
+	gotPrompt, err := os.ReadFile(promptFile)
+	if err != nil || string(gotPrompt) != wantPrompt {
+		t.Fatalf("native prompt file differs from composed prose: %v", err)
 	}
 	if !regexp.MustCompile(`^\[gang:hitch#[0-9a-f]{16} assignment\]`).Match(received) || !strings.Contains(string(received), "Assignment: acceptance assignment") {
 		t.Fatalf("startup lacks Gangline attribution or assignment: %q", received)

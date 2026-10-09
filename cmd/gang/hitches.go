@@ -124,7 +124,7 @@ func (cmd command) hitchWithStaleClaim(args []string, supersede bool) (result er
 	if sender.Kind == "" {
 		sender = core.Sender{Kind: core.SenderGangline, Name: "hitch"}
 	}
-	rolePrompt, message := startupMessages(o.Name, brief, assignment, c.Options.RolePrompt != nil)
+	rolePrompt, message := startupMessages(o.Name, brief, assignment, c.Options.RolePromptFile != nil)
 	purpose := "startup"
 	if assignment != "" {
 		purpose = "assignment"
@@ -135,7 +135,7 @@ func (cmd command) hitchWithStaleClaim(args []string, supersede bool) (result er
 	a := core.Agent{ID: core.HitchID(id), Name: core.AgentName(o.Name), Collar: o.Collar, Role: o.Role, HitchedBy: hitcher, Directory: dir, Status: core.Starting, Activity: core.Unknown, CreatedAt: now, ChangedAt: now, BootDeadline: now.Add(bootTimeout), ContextBandThresholds: bandThresholds}
 	a.Native.SessionID = o.Resume
 	e := core.Envelope{ID: core.EnvelopeID(eid), Token: token, Recipient: a.ID, To: a.Name, From: sender, Purpose: purpose, Message: core.Message{Text: message}, CreatedAt: now}
-	if c.Options.RolePrompt == nil {
+	if c.Options.RolePromptFile == nil {
 		e.Startup = startupSections(o.Name, brief)
 	}
 	wire, err := envelopeText(e)
@@ -149,7 +149,15 @@ func (cmd command) hitchWithStaleClaim(args []string, supersede bool) (result er
 	if err != nil {
 		return err
 	}
-	launch, err := harness.RenderLaunch(c, harness.LaunchOptions{ResumeSession: o.Resume, HookCommand: []string{exe, "hook"}, HookTimeoutSeconds: boundaryHookTimeoutSeconds, Model: o.Model, Effort: o.Effort, RolePrompt: rolePrompt})
+	var rolePromptFile string
+	if rolePrompt != "" {
+		paths, err := run.team.Agent(a.ID)
+		if err != nil {
+			return err
+		}
+		rolePromptFile = filepath.Join(paths.Directory, "role-prompt")
+	}
+	launch, err := harness.RenderLaunch(c, harness.LaunchOptions{ResumeSession: o.Resume, HookCommand: []string{exe, "hook"}, HookTimeoutSeconds: boundaryHookTimeoutSeconds, Model: o.Model, Effort: o.Effort, RolePromptFile: rolePromptFile})
 	if err != nil {
 		return err
 	}
@@ -267,6 +275,11 @@ func (cmd command) hitchWithStaleClaim(args []string, supersede bool) (result er
 	defer func() { result = errors.Join(result, run.release(l)) }()
 	if err := run.record(a, core.Event{Type: "hitch_claimed"}); err != nil {
 		return err
+	}
+	if rolePromptFile != "" {
+		if err := os.WriteFile(rolePromptFile, []byte(rolePrompt), 0600); err != nil {
+			return errors.Join(err, run.apply(l, &a, core.Event{Type: "hitch_failed", Reason: err.Error()}))
+		}
 	}
 	if err := l.Paths.Publish(e); err != nil {
 		return err

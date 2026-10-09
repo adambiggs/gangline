@@ -18,20 +18,24 @@ func TestStartupDeliversStandingProseOnce(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			prompt, message := startupMessages("worker", brief, "build the result", collar.Options.RolePrompt != nil)
-			launch, err := harness.RenderLaunch(collar, harness.LaunchOptions{HookCommand: []string{"gang", "hook"}, RolePrompt: prompt})
+			prompt, message := startupMessages("worker", brief, "build the result", collar.Options.RolePromptFile != nil)
+			promptFile := ""
+			if prompt != "" {
+				promptFile = "/state/role-prompt"
+			}
+			launch, err := harness.RenderLaunch(collar, harness.LaunchOptions{HookCommand: []string{"gang", "hook"}, RolePromptFile: promptFile})
 			if err != nil {
 				t.Fatal(err)
 			}
 			e := core.Envelope{ID: "startup-1", Token: "0123456789abcdef", From: core.Sender{Kind: core.SenderAgent, Name: "lead", HitchID: "lead-hitch"}, Purpose: "assignment", Message: core.Message{Text: message}}
-			if collar.Options.RolePrompt == nil {
+			if collar.Options.RolePromptFile == nil {
 				e.Startup = startupSections("worker", brief)
 			}
 			wire, err := envelopeText(e)
 			if err != nil {
 				t.Fatal(err)
 			}
-			all := strings.Join(launch.Args, "\n") + "\n" + wire
+			all := strings.Join(launch.Args, "\n") + "\n" + prompt + "\n" + wire
 			for _, body := range []string{string(brief.Contract), string(brief.Doctrine), string(brief.Role), "build the result"} {
 				if strings.Count(all, body) != 1 {
 					t.Fatalf("expected one verbatim copy of %q in launch and message: %q", body, all)
@@ -40,8 +44,42 @@ func TestStartupDeliversStandingProseOnce(t *testing.T) {
 			if strings.Contains(prompt, "build the result") {
 				t.Fatal("assignment went into system prompt")
 			}
-			if collar.Options.RolePrompt != nil && message != "Assignment: build the result" {
+			if collar.Options.RolePromptFile != nil && message != "Assignment: build the result" {
 				t.Fatalf("system-prompt collar also delivered standing prose: %q", message)
+			}
+			if prompt != "" && (strings.Contains(strings.Join(launch.Args, "\n"), string(brief.Contract)) || !strings.Contains(strings.Join(launch.Args, "\n"), promptFile)) {
+				t.Fatalf("system prompt must be supplied by file: %q", launch.Args)
+			}
+		})
+	}
+}
+
+func TestLargeStartupProseStaysOutOfLaunchArguments(t *testing.T) {
+	brief := startupProse{Contract: []byte(strings.Repeat("contract line\n", 700)), Doctrine: []byte(strings.Repeat("doctrine line\n", 700)), Role: []byte(strings.Repeat("role line\n", 700))}
+	for _, name := range []string{"claude", "codex"} {
+		t.Run(name, func(t *testing.T) {
+			collar, err := harness.EmbeddedCollar(name)
+			if err != nil {
+				t.Fatal(err)
+			}
+			prompt, _ := startupMessages("worker", brief, "build it", collar.Options.RolePromptFile != nil)
+			file := ""
+			if prompt != "" {
+				file = "/state/role-prompt"
+			}
+			launch, err := harness.RenderLaunch(collar, harness.LaunchOptions{HookCommand: []string{"gang", "hook"}, RolePromptFile: file})
+			if err != nil {
+				t.Fatal(err)
+			}
+			if len(composeStartup("worker", brief)) <= 16<<10 {
+				t.Fatal("fixture is below tmux's command limit")
+			}
+			args := strings.Join(launch.Args, "\n")
+			if strings.Contains(args, "contract line") || strings.Contains(args, "doctrine line") || strings.Contains(args, "role line") {
+				t.Fatal("standing prose entered launch arguments")
+			}
+			if len(args) >= 16<<10 {
+				t.Fatalf("launch arguments alone exceed tmux's command limit: %d", len(args))
 			}
 		})
 	}

@@ -75,7 +75,7 @@ func TestRenderLaunchRefusesUnsupportedOption(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	_, err = RenderLaunch(collar, LaunchOptions{HookCommand: []string{"gang", "hook"}, RolePrompt: "role"})
+	_, err = RenderLaunch(collar, LaunchOptions{HookCommand: []string{"gang", "hook"}, RolePromptFile: "/state/role-prompt"})
 	if err == nil {
 		t.Fatal("unsupported role prompt was accepted")
 	}

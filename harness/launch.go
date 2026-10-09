@@ -17,7 +17,7 @@ type LaunchOptions struct {
 	HookTimeoutSeconds int
 	Model              string
 	Effort             string
-	RolePrompt         string
+	RolePromptFile     string
 	Probe              bool
 }
 
@@ -95,7 +95,7 @@ func RenderLaunch(collar Collar, options LaunchOptions) (Command, error) {
 	}{
 		{name: "model", value: options.Model, spec: &collar.Models.Option},
 		{name: "effort", value: options.Effort, spec: collar.Options.Effort},
-		{name: "role prompt", value: options.RolePrompt, spec: collar.Options.RolePrompt},
+		{name: "role prompt file", value: options.RolePromptFile, spec: collar.Options.RolePromptFile},
 	} {
 		if option.value == "" {
 			continue

@@ -70,7 +70,7 @@ package harness
 	models: #Models
 	options?: close({
 		effort?: #Option
-		role_prompt?: #Option
+		role_prompt_file?: #Option
 	})
 	primitives: close({
  telemetry?: #Invocation

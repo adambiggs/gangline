@@ -30,7 +30,7 @@ collar: {
 	}
 	options: {
 		effort: {args: ["--effort={{value}}"]}
-		role_prompt: {args: ["--append-system-prompt", "{{value}}"]}
+		role_prompt_file: {args: ["--append-system-prompt-file", "{{value}}"]}
 	}
 	primitives: {
  telemetry: {name: "claude-status-line"}

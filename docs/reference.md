@@ -438,7 +438,16 @@ collar: {
 
 What a collar renders into the launch command (`launch`, `models.option`,
 `options`, and hook `install_args`) takes effect when an agent is hitched. An
-agent hitched with `--context-bands` keeps its thresholds until re-hitched;
+`options.role_prompt_file` template receives the path to a private file in the
+agent's state directory containing the unchanged composed startup prompt;
+the native CLI reads it as a system prompt. Claude Code uses
+`--append-system-prompt-file`. A collar without this option receives the
+standing instructions in the startup message instead. The prompt file is
+removed with the agent's state on drop. The assignment remains in the startup
+message either way. A custom collar that used `options.role_prompt` must use
+`options.role_prompt_file` with a native file-reading argument to keep standing
+instructions in the system prompt.
+An agent hitched with `--context-bands` keeps its thresholds until re-hitched;
 Gangline reads band names, messages, and model selectors from the collar for
 each later operation. A later selector with a different band count uses its
 collar thresholds until the agent is re-hitched. Without the option, the collar
