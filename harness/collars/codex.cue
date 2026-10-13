@@ -48,6 +48,7 @@ collar: {
 		queue_witness: {name: "codex-pending-input"}
 		turn_boundary: {name: "hook-boundary"}
 		blocked: {name: "screen-blocked", params: {
+			permission_hook: "screen"
 			prompt: "Would you like to run|Do you want to allow|requires approval|approval required|Hooks need review|Giving this request a little extra[[:space:]]+thought"
 			choice: "Yes, proceed|Yes, and don't ask again|Press enter to confirm|(?m)^[ \t]*[› ]?[ \t]*[0-9]+[.] Retry with a faster model"
 		}}

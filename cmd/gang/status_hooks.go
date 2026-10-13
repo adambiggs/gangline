@@ -128,6 +128,8 @@ func (run *runtime) statusCaptureGap(a core.Agent, c harness.Collar) string {
 		return "capacity retry screen validation"
 	case c.Primitives.Telemetry == nil:
 		return "collar telemetry requires the screen"
+	case a.Native.HookKind == "permission-requested" && c.Primitives.Blocked.Params["permission_hook"] == "screen":
+		return "permission request needs a visible native prompt"
 	case a.Native.HookAt.IsZero():
 		return "hook evidence absent; inspect native prompt, exit, capacity and activity"
 	case run.cmd.now().Before(a.Native.HookAt):

@@ -267,9 +267,12 @@ Each `activity_observed` event records what its reading was derived from.
 read successfully. `basis.rule` is the rule that set the activity: `screen`, `open-turn`,
 `interrupt-pending`, `compaction-record`, `turn-failure`, `wedge`,
 `probe-failure`, `native-hook`, or `permission-request`. A fresh native
-permission request reads blocked until a later hook. After its evidence
-expires, an idle screen can confirm dismissal; dismissal itself fires no
-hook. Hook-derived readings carry no screen fingerprint.
+permission request reads blocked until a later hook unless the collar sets
+`primitives.blocked.params.permission_hook` to `screen`. The Codex collar
+uses that setting because its request hook precedes automatic approval; status
+reads the pane and reports blocked only for a visible input choice. An
+unreadable pane stays unknown. An idle screen can confirm dismissal; dismissal
+itself fires no hook. Hook-derived readings carry no screen fingerprint.
 `basis.compaction` is the compaction record's status, and
 `fingerprint` is a hash of the screen. Neither carries screen text, and
 neither does the reason: a blocked reading names the native prompt by a hash

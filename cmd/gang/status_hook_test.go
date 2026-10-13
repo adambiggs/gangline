@@ -16,6 +16,10 @@ func TestHookStatusSurvivesSkippedRefreshWithoutCapture(t *testing.T) {
 			{"UserPromptSubmit", "-worker-"}, {"PostToolUse", "-worker-"},
 			{"Stop", "~worker~"}, {"PermissionRequest", "!worker!"}, {"PreCompact", "-worker-"}, {"PostCompact", "~worker~"},
 		} {
+			// A pre-decision permission hook requires a current pane reading.
+			if collar == "codex" && tc.event == "PermissionRequest" {
+				continue
+			}
 			t.Run(collar+"/"+tc.event, func(t *testing.T) {
 				f := newStateFixture(t)
 				a := f.add(t, "a", "worker", collar)

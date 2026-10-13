@@ -79,7 +79,7 @@ func (run *runtime) observeScreen(l *store.LockedAgent, a *core.Agent, c harness
 			}
 		}
 	}
-	if basis.Screen == "unreadable" || basis.Screen == "idle" {
+	if basis.Screen == "idle" || basis.Screen == "unreadable" && c.Primitives.Blocked.Params["permission_hook"] != "screen" {
 		if _, pending, err := l.Paths.ReadPermissionWitness(); err != nil {
 			return false, err
 		} else if pending && basis.Screen == "unreadable" {
