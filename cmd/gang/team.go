@@ -575,7 +575,25 @@ func (cmd command) status(args []string) error {
 		}
 	}
 	if why && a.Compaction != nil {
-		_, err = fmt.Fprintf(cmd.stdout, "compaction %s: %s\n", a.Compaction.Status, cmd.operatorText(a.Compaction.Reason))
+		if _, err := fmt.Fprintf(cmd.stdout, "compaction %s: %s\n", a.Compaction.Status, cmd.operatorText(a.Compaction.Reason)); err != nil {
+			return err
+		}
 	}
-	return err
+	if why {
+		path, err := run.team.ForeignSubmitPath(a.ID)
+		if err != nil {
+			return err
+		}
+		foreign, err := run.team.ReadForeignSubmit(a.ID)
+		if errors.Is(err, os.ErrNotExist) {
+			return nil
+		}
+		if err != nil {
+			_, err = fmt.Fprintf(cmd.stdout, "ignored submit record at %s is unreadable: %s\n", path, cmd.operatorText(err.Error()))
+			return err
+		}
+		_, err = fmt.Fprintf(cmd.stdout, "ignored at %s: %s; raw payload: %s\n", foreign.At.UTC().Format(time.RFC3339), cmd.operatorText(foreign.Reason), path)
+		return err
+	}
+	return nil
 }

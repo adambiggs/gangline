@@ -27,6 +27,9 @@ normalized witness and registered session in `native-session-conflict`.
 Later submit hooks cannot overwrite this private diagnostic snapshot; another
 rejected boundary can replace it. It is not the raw hook payload. Copy it
 before dropping the agent, which removes it with the registration.
+A submit hook from a session beside the conversation, a spawned agent or one
+without a transcript, is retained raw in `foreign-submits/HITCH_ID.json` at the
+team level, where the latest one per hitch outlasts the agent's removal.
 `status-hooks` coalesces auxiliary display observations under its own short
 writer lock. Terminal boundaries remain pending until a sweep handles their
 native outcomes and acknowledges the sequence. Roster reads cannot consume

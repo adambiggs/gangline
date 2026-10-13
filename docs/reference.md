@@ -499,8 +499,14 @@ the same pane into the new session. When the turn boundary sets
 session only when the new session's transcript sits beside the old one and the
 old transcript ends with Claude Code's record that the conversation continued
 in that session, with no prompt or reply after it. Moves are followed record by
-record. A witness from any other session is never followed: the agent fails
-once, and its hitcher is told both session ids and to drop the agent and
+record. A submit hook from another session that names a spawned agent
+(`agent_id`), or that leaves a transcript the collar maps missing, null or
+empty, comes from a session the harness runs beside the conversation, not one
+that replaces it. Gang keeps the agent's registration and witness, logs a
+`native_hook` event with status `foreign-session`, and keeps the raw payload in
+`STATE_ROOT/teams/TEAM/foreign-submits/HITCH_ID.json`, which `gang status NAME
+--why` names. A witness from any other session is never followed: the agent
+fails once, and its hitcher is told both session ids and to drop the agent and
 re-hitch it with `--resume` for the session to continue, in the agent's own
 directory, collar, and role. Drop tells the sender of each message still queued
 for the agent. A message submitted into such a session stays unverified.

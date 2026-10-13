@@ -93,6 +93,9 @@ func (cmd command) handleHook(args []string) (result error) {
 	if err != nil {
 		return err
 	}
+	if reason := foreignSubmit(a, event); reason != "" {
+		return run.recordForeignSubmit(a, event, payload, reason)
+	}
 	if resumeCandidate && event.Kind != "turn-started" {
 		return fmt.Errorf("compaction continuation did not map to a submit boundary")
 	}

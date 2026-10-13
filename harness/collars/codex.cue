@@ -18,7 +18,7 @@ collar: {
 			"-c", "hooks.PostCompact=[{ hooks = [{ type = \"command\", command = {{hook.command.json}}, timeout = 30 }] }]",
 		]
 		events: {
-			userpromptsubmit: {event: "turn-started", payload: {session_id: "session_id", transcript_path: "transcript_path", prompt: "prompt", turn_id: "turn_id"}}
+			userpromptsubmit: {event: "turn-started", payload: {session_id: "session_id", transcript_path: "transcript_path", prompt: "prompt", turn_id: "turn_id", agent_id: "agent_id"}}
 			posttooluse: {event: "activity", payload: {session_id: "session_id", transcript_path: "transcript_path", turn_id: "turn_id"}}
 			stop: {event: "turn-finished", payload: {session_id: "session_id", transcript_path: "transcript_path", turn_id: "turn_id"}}
 			permissionrequest: {event: "permission-requested", payload: {session_id: "session_id", turn_id: "turn_id"}}

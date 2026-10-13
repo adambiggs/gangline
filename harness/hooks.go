@@ -13,11 +13,14 @@ import (
 )
 
 // HookEvent is a decoded native callback. Counts holds the length of each
-// array the collar names; a target is absent when its array is.
+// array the collar names; a target is absent when its array is. Absent holds
+// each payload target the collar maps that the callback left missing, null or
+// empty, which a target the collar never maps cannot be.
 type HookEvent struct {
 	NativeEvent string
 	Kind        string
 	Payload     map[string]string
+	Absent      map[string]bool
 	Counts      map[string]int
 }
 
@@ -85,9 +88,17 @@ func DecodeHook(collar Collar, data []byte) (HookEvent, error) {
 		return HookEvent{}, fmt.Errorf("collar %q does not map native hook event %q", collar.Name, native)
 	}
 	payload := make(map[string]string, len(wiring.Payload))
+	var absent map[string]bool
 	for target, source := range wiring.Payload {
-		if value, ok := nestedString(body, strings.Split(source, ".")); ok {
+		value, ok := nestedString(body, strings.Split(source, "."))
+		if ok {
 			payload[target] = value
+		}
+		if value == "" {
+			if absent == nil {
+				absent = make(map[string]bool, len(wiring.Payload))
+			}
+			absent[target] = true
 		}
 	}
 	var counts map[string]int
@@ -101,7 +112,7 @@ func DecodeHook(collar Collar, data []byte) (HookEvent, error) {
 			}
 		}
 	}
-	return HookEvent{NativeEvent: native, Kind: wiring.Event, Payload: payload, Counts: counts}, nil
+	return HookEvent{NativeEvent: native, Kind: wiring.Event, Payload: payload, Absent: absent, Counts: counts}, nil
 }
 
 // SubmittedPromptMatches compares the text Gangline sent with the prompt a
