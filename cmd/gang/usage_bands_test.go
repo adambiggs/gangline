@@ -6,6 +6,7 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"sync"
 	"testing"
@@ -30,18 +31,92 @@ func usageSnapshot(t *testing.T, run *runtime) usageState {
 
 func TestUsageBandDefaultIsMeasurementOnly(t *testing.T) {
 	reset := time.Date(2026, 10, 3, 16, 58, 14, 0, time.UTC).Unix()
-	got := renderUsageBand(harness.UsageBand{Name: "yellow", At: 0.75}, "codex", "weekly", 84, reset)
-	want := "codex weekly usage: 84% used, resets 2026-10-03T16:58:14Z"
+	exhausts := time.Date(2026, 10, 2, 4, 0, 0, 0, time.UTC)
+	pace := harness.Pace{ElapsedPercent: 60, Delta: 24, Exhausts: exhausts}
+	got := renderUsageBand(harness.UsageBand{Name: "yellow", Ahead: 0.10}, "codex", "weekly", 84, reset, pace)
+	want := "codex weekly usage: 84% used at 60% of the window (pace +24 points), projected exhaustion 2026-10-02T04:00:00Z, resets 2026-10-03T16:58:14Z"
 	if got != want {
 		t.Fatalf("default notice = %q, want %q", got, want)
 	}
-	custom := renderUsageBand(harness.UsageBand{Name: "red", Message: "{{collar}} {{band}}: operator note"}, "claude", "five_hour", 95, reset)
-	if custom != "claude red: operator note" {
+	onLine := renderUsageBand(harness.UsageBand{Name: "yellow"}, "codex", "weekly", 60, reset, harness.Pace{ElapsedPercent: 60})
+	if !strings.Contains(onLine, "(pace +0 points), projected exhaustion after the reset,") {
+		t.Fatalf("on-pace notice = %q", onLine)
+	}
+	custom := renderUsageBand(harness.UsageBand{Name: "red", Ahead: 0.2, Message: "{{collar}} {{band}} {{threshold_percent}}: operator note"}, "claude", "five_hour", 95, reset, pace)
+	if custom != "claude red 20: operator note" {
 		t.Fatalf("operator message = %q", custom)
 	}
-	withNote := renderUsageBand(harness.UsageBand{Name: "red", Note: "{{band}}: operator guidance"}, "codex", "weekly", 95, reset)
-	if withNote != "codex weekly usage: 95% used, resets 2026-10-03T16:58:14Z red: operator guidance" {
+	withNote := renderUsageBand(harness.UsageBand{Name: "red", Note: "{{band}}: operator guidance"}, "codex", "weekly", 95, reset, pace)
+	if !strings.HasSuffix(withNote, "resets 2026-10-03T16:58:14Z red: operator guidance") {
 		t.Fatalf("operator note = %q", withNote)
+	}
+}
+
+// A band crosses on pace delta: use well past an absolute threshold stays
+// quiet when the window has elapsed as far, and modest use early in the
+// window crosses. The threshold is inclusive.
+func TestUsageBandFiresOnPaceNotAbsoluteUse(t *testing.T) {
+	week := 7 * 24 * time.Hour
+	for _, tc := range []struct {
+		name    string
+		used    float64
+		elapsed time.Duration
+		fired   []string
+	}{
+		{"high use on pace is quiet", 80, week * 3 / 4, nil},
+		{"far behind is quiet", 50, week * 95 / 100, nil},
+		{"just under yellow", 59.99, week / 2, nil},
+		{"exactly yellow", 60, week / 2, []string{"yellow"}},
+		{"modest early use crosses both", 30, week / 10, []string{"yellow", "red"}},
+		{"exactly red", 70, week / 2, []string{"yellow", "red"}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			f := newStateFixture(t)
+			a := f.add(t, "worker-id", "worker", "codex")
+			c, err := loadCollar("codex", f.run.settings)
+			if err != nil {
+				t.Fatal(err)
+			}
+			c.UsageBands = map[string][]harness.UsageBand{"weekly": {{Name: "yellow", Ahead: 0.10}, {Name: "red", Ahead: 0.20}}}
+			at := f.cmd.now()
+			reset := at.Add(week - tc.elapsed).Unix()
+			a.Native.Limits = core.Reading{Kind: "provider-limits", Status: "observed", At: &at, Limits: []core.LimitWindow{{Label: "codex/secondary", WindowMinutes: 10080, UsedPercent: tc.used, ResetAt: reset}}}
+			if err := f.run.observeUsageBands(a, c); err != nil {
+				t.Fatal(err)
+			}
+			state := usageSnapshot(t, f.run)
+			if got := state.Windows["codex/weekly"].Fired; !slices.Equal(got, tc.fired) {
+				t.Fatalf("fired %v, want %v", got, tc.fired)
+			}
+			if len(tc.fired) > 0 && !strings.Contains(state.Notices[0].Text, "% of the window (pace +") {
+				t.Fatalf("notice omits pace: %q", state.Notices[0].Text)
+			}
+		})
+	}
+}
+
+// Of two windows of one kind, the one further ahead of its pace line is the
+// one measured, even when another carries the higher absolute use.
+func TestUsageBandMeasuresTheWindowFurthestAhead(t *testing.T) {
+	f := newStateFixture(t)
+	a := f.add(t, "worker-id", "worker", "claude")
+	c, err := loadCollar("claude", f.run.settings)
+	if err != nil {
+		t.Fatal(err)
+	}
+	c.UsageBands = map[string][]harness.UsageBand{"weekly": {{Name: "yellow", Ahead: 0.10}}}
+	at := f.cmd.now()
+	week := 7 * 24 * time.Hour
+	a.Native.Limits = core.Reading{Kind: "provider-limits", Status: "observed", At: &at, Limits: []core.LimitWindow{
+		{Label: "seven_day", WindowMinutes: 10080, UsedPercent: 70, ResetAt: at.Add(week / 4).Unix()},
+		{Label: "seven_day/fable", WindowMinutes: 10080, UsedPercent: 40, ResetAt: at.Add(week * 3 / 4).Unix()},
+	}}
+	if err := f.run.observeUsageBands(a, c); err != nil {
+		t.Fatal(err)
+	}
+	state := usageSnapshot(t, f.run)
+	if len(state.Notices) != 1 || !strings.Contains(state.Notices[0].Text, "40% used at 25% of the window (pace +15 points)") {
+		t.Fatalf("notices = %+v", state.Notices)
 	}
 }
 
@@ -272,7 +347,7 @@ func TestUsageBandsAreAccountWideAndLeadOnly(t *testing.T) {
 		}
 	}
 	at := f.cmd.now()
-	observe(first, 80, at, "observed")
+	observe(first, 25, at, "observed")                   // the window just opened, so pace is ahead by the whole use
 	observe(second, 95, at, "observed")                  // the same native timestamp can carry a newer account percentage
 	observe(first, 99, at.Add(-time.Second), "observed") // an older agent reading cannot roll the state back
 	observe(second, 100, at.Add(2*time.Second), "unknown")
@@ -1151,7 +1226,7 @@ func TestUsageNoticeExpiresWithItsWindow(t *testing.T) {
 		t.Fatal(err)
 	}
 	at := f.cmd.now()
-	reset := at.Add(time.Hour)
+	reset := at.Add(3 * time.Hour) // 40% of the window elapsed, so 80% use is ahead of pace
 	worker.Native.Limits = core.Reading{Kind: "provider-limits", Status: "observed", At: &at, Limits: []core.LimitWindow{{Label: "primary", WindowMinutes: 300, UsedPercent: 80, ResetAt: reset.Unix()}}}
 	if err := f.run.observeUsageBands(worker, c); err != nil {
 		t.Fatal(err)
@@ -1185,7 +1260,7 @@ func TestQueuedUsageNoticeIsCancelledAtReset(t *testing.T) {
 		t.Fatal(err)
 	}
 	at := f.cmd.now()
-	reset := at.Add(time.Hour)
+	reset := at.Add(3 * time.Hour) // 40% of the window elapsed, so 80% use is ahead of pace
 	lead.Native.Limits = core.Reading{Kind: "provider-limits", Status: "observed", At: &at, Limits: []core.LimitWindow{{Label: "primary", WindowMinutes: 300, UsedPercent: 80, ResetAt: reset.Unix()}}}
 	if err := f.run.observeUsageBands(lead, c); err != nil {
 		t.Fatal(err)

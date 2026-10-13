@@ -505,9 +505,14 @@ optional `message`. A nonfinal band without a message advises saving state and
 compacting at the next good stopping point; the last orders compaction now.
 Messages use these tokens; token counts are integers and percents are rounded:
 
-Usage bands use the same named fraction thresholds under `usage_bands.five_hour`
-and `usage_bands.weekly`. They read native provider usage for the collar's
-account and notify the active lead once per band and reset window. A collar
+Usage bands are named thresholds under `usage_bands.five_hour` and
+`usage_bands.weekly`. A band's `ahead` is a fraction from 0 to 1 of the window:
+the band crosses when the window's used share runs ahead of its elapsed share
+by at least that much. A window three days into a seven-day week has 43%
+elapsed, so a band with `ahead: 0.10` crosses at 53% used. Bands read native
+provider usage for the collar's account and notify the active lead once per
+band and reset window. Of several windows of one kind, the one furthest ahead
+of its pace is measured. A collar
 overlay can replace either window independently. When one reading crosses
 several bands in a window, identical messages are sent once; every crossed
 band is recorded, and distinct operator guidance is preserved:
@@ -515,7 +520,7 @@ band is recorded, and distinct operator guidance is preserved:
 ```cue
 collar: {
 	usage_bands: {
-		five_hour: [{name: "early", at: 0.80}, {name: "full", at: 0.95}]
+		five_hour: [{name: "early", ahead: 0.15}, {name: "late", ahead: 0.30}]
 	}
 }
 ```
@@ -523,9 +528,12 @@ collar: {
 An optional per-band `note` appends operator guidance to the measurement;
 its default is empty. An optional `message` replaces the measurement template.
 Both accept `{{band}}`, `{{collar}}`,
-`{{window}}`, `{{threshold_percent}}`, `{{used_percent}}`,
-`{{reset_at}}` (UTC RFC3339), and `{{snooze_command}}`. With no message,
-the notice reports only provider, usage percent, and reset time. Unknown native
+`{{window}}`, `{{threshold_percent}}` (the band's `ahead` as a percent),
+`{{used_percent}}`, `{{elapsed_percent}}`, `{{pace_points}}` (used minus
+elapsed, signed), `{{exhaustion_at}}` (when the average rate so far reaches
+100%, UTC RFC3339, or "after the reset"), `{{reset_at}}` (UTC RFC3339), and
+`{{snooze_command}}`. With no message, the notice reports only provider, use,
+elapsed share, pace, projected exhaustion, and reset time. Unknown native
 window durations are ignored; Gangline does not estimate provider usage.
 
 | Token | Value |

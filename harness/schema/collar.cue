@@ -37,7 +37,7 @@ package harness
 
 #UsageBand: close({
 	name: #Name
-	at: number & >=0 & <=1
+	ahead: number & >=0 & <=1
 	message?: string & !=""
 	note?: string
 })

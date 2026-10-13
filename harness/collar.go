@@ -114,9 +114,11 @@ type ContextBand struct {
 	Message string  `json:"message,omitempty"`
 }
 
+// UsageBand fires when a window's use runs Ahead of its elapsed share by at
+// least that fraction of the window.
 type UsageBand struct {
 	Name    string  `json:"name"`
-	At      float64 `json:"at"`
+	Ahead   float64 `json:"ahead"`
 	Message string  `json:"message,omitempty"`
 	Note    string  `json:"note,omitempty"`
 }
@@ -358,11 +360,11 @@ func validateCollar(collar Collar) error {
 			if err := validateUsageBandMessage(band); err != nil {
 				return err
 			}
-			if seen[band.Name] || band.At <= previous {
+			if seen[band.Name] || band.Ahead <= previous {
 				return fmt.Errorf("usage bands for %q must have unique names and increasing thresholds", window)
 			}
 			seen[band.Name] = true
-			previous = band.At
+			previous = band.Ahead
 		}
 	}
 	if g := collar.HitchGuard; g != nil && g.FiveHour == nil && g.Weekly == nil {
@@ -421,7 +423,8 @@ func validateContextBandMessage(band ContextBand) error {
 
 var usageBandMessageTokens = map[string]bool{
 	"band": true, "collar": true, "window": true, "threshold_percent": true,
-	"used_percent": true, "reset_at": true, "snooze_command": true,
+	"used_percent": true, "elapsed_percent": true, "pace_points": true,
+	"exhaustion_at": true, "reset_at": true, "snooze_command": true,
 }
 
 func validateUsageBandMessage(band UsageBand) error {

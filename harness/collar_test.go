@@ -1,11 +1,14 @@
 package harness
 
-import "testing"
+import (
+	"strings"
+	"testing"
+)
 
 func TestUsageBandOverlayReplacesOnlySelectedWindow(t *testing.T) {
 	collar, err := LoadCustomCollar("codex", "codex.cue", []byte(`collar: {
 		usage_bands: {
-			five_hour: [{name: "early", at: 0.8, message: "{{collar}} {{reset_at}}"}]
+			five_hour: [{name: "early", ahead: 0.8, message: "{{collar}} {{reset_at}}"}]
 		}
 	}`))
 	if err != nil {
@@ -19,10 +22,29 @@ func TestUsageBandOverlayReplacesOnlySelectedWindow(t *testing.T) {
 	}
 }
 
+// A band measures pace, not absolute use; an overlay that still sets the
+// absolute "at" threshold must fail to load rather than change meaning.
+func TestUsageBandRejectsAbsoluteThreshold(t *testing.T) {
+	_, err := LoadCustomCollar("codex", "codex.cue", []byte(`collar: {
+		usage_bands: {weekly: [{name: "yellow", at: 0.75}]}
+	}`))
+	if err == nil || !strings.Contains(err.Error(), "at: field not allowed") {
+		t.Fatalf("absolute usage-band threshold = %v", err)
+	}
+}
+
+func TestUsageBandMessageTokensCarryPace(t *testing.T) {
+	if _, err := LoadCustomCollar("codex", "codex.cue", []byte(`collar: {
+		usage_bands: {weekly: [{name: "yellow", ahead: 0.1, message: "{{used_percent}} {{elapsed_percent}} {{pace_points}} {{exhaustion_at}} {{threshold_percent}}"}]}
+	}`)); err != nil {
+		t.Fatal(err)
+	}
+}
+
 func TestUsageBandRejectsInvalidMessageToken(t *testing.T) {
 	_, err := LoadCustomCollar("codex", "codex.cue", []byte(`collar: {
 		usage_bands: {
-			weekly: [{name: "warn", at: 0.8, message: "{{secret}}"}]
+			weekly: [{name: "warn", ahead: 0.8, message: "{{secret}}"}]
 		}
 	}`))
 	if err == nil {
@@ -32,7 +54,7 @@ func TestUsageBandRejectsInvalidMessageToken(t *testing.T) {
 
 func TestUsageBandRejectsInvalidNoteToken(t *testing.T) {
 	_, err := LoadCustomCollar("codex", "codex.cue", []byte(`collar: {
-		usage_bands: {weekly: [{name: "yellow", at: 0.75, note: "{{unknown}}"}]}
+		usage_bands: {weekly: [{name: "yellow", ahead: 0.75, note: "{{unknown}}"}]}
 	}`))
 	if err == nil {
 		t.Fatal("unknown usage-band note token passed validation")

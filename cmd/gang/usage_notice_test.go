@@ -80,9 +80,9 @@ func TestUsageBandDistinctGuidanceSurvivesCoalescing(t *testing.T) {
 		t.Fatal(err)
 	}
 	c.UsageBands["weekly"] = []harness.UsageBand{
-		{Name: "yellow", At: 0.75},
-		{Name: "orange", At: 0.85, Note: "save your work"},
-		{Name: "red", At: 0.90},
+		{Name: "yellow", Ahead: 0.75},
+		{Name: "orange", Ahead: 0.85, Note: "save your work"},
+		{Name: "red", Ahead: 0.90},
 	}
 	at := f.cmd.now()
 	a.Native.Limits = core.Reading{Kind: "provider-limits", Status: "observed", At: &at, Limits: []core.LimitWindow{{Label: "weekly", UsedPercent: 98, ResetAt: at.Add(7 * 24 * time.Hour).Unix()}}}

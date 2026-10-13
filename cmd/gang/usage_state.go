@@ -448,20 +448,27 @@ func (run *runtime) observeSnoozeTurn(a core.Agent, boundary harness.Invocation,
 	return run.appendEvents(events)
 }
 
-func renderUsageBand(band harness.UsageBand, collar, window string, used float64, reset int64) string {
+func renderUsageBand(band harness.UsageBand, collar, window string, used float64, reset int64, pace harness.Pace) string {
 	message := band.Message
 	if message == "" {
-		message = "{{collar}} {{window}} usage: {{used_percent}}% used, resets {{reset_at}}"
+		message = "{{collar}} {{window}} usage: {{used_percent}}% used at {{elapsed_percent}}% of the window (pace {{pace_points}} points), projected exhaustion {{exhaustion_at}}, resets {{reset_at}}"
 	}
 	if band.Note != "" {
 		message += " " + band.Note
+	}
+	exhaustion := "after the reset"
+	if !pace.Exhausts.IsZero() {
+		exhaustion = pace.Exhausts.UTC().Format(time.RFC3339)
 	}
 	return strings.NewReplacer(
 		"{{band}}", band.Name,
 		"{{collar}}", collar,
 		"{{window}}", strings.ReplaceAll(window, "_", "-"),
-		"{{threshold_percent}}", fmt.Sprintf("%.0f", band.At*100),
+		"{{threshold_percent}}", fmt.Sprintf("%.0f", band.Ahead*100),
 		"{{used_percent}}", fmt.Sprintf("%.0f", used),
+		"{{elapsed_percent}}", fmt.Sprintf("%.0f", pace.ElapsedPercent),
+		"{{pace_points}}", pacePoints(pace.Delta),
+		"{{exhaustion_at}}", exhaustion,
 		"{{reset_at}}", time.Unix(reset, 0).UTC().Format(time.RFC3339),
 		"{{snooze_command}}", "gang snooze --note 'Resume from your saved state'",
 	).Replace(message)
@@ -475,14 +482,24 @@ func (run *runtime) observeUsageBands(a core.Agent, c harness.Collar) error {
 		return nil
 	}
 	now := run.cmd.now()
-	windows := make(map[string]core.LimitWindow)
+	// Pace is measured at the reading's own time, so a reading that waited
+	// before this observation is not credited with time it did not see.
+	type paced struct {
+		core.LimitWindow
+		pace harness.Pace
+	}
+	windows := make(map[string]paced)
 	for _, w := range r.Limits {
 		kind := harness.UsageWindowKind(w.Label, w.WindowMinutes)
 		if kind == "" || w.ResetAt <= now.Unix() || w.UsedPercent < 0 || w.UsedPercent > 100 {
 			continue
 		}
-		if selected, exists := windows[kind]; !exists || w.UsedPercent > selected.UsedPercent || w.UsedPercent == selected.UsedPercent && w.ResetAt > selected.ResetAt {
-			windows[kind] = w
+		p, ok := harness.UsagePace(w.UsedPercent, time.Unix(w.ResetAt, 0), w.Label, w.WindowMinutes, *r.At)
+		if !ok {
+			continue
+		}
+		if selected, exists := windows[kind]; !exists || p.Delta > selected.pace.Delta || p.Delta == selected.pace.Delta && w.ResetAt > selected.ResetAt {
+			windows[kind] = paced{w, p}
 		}
 	}
 	return run.withUsageState(func(state *usageState) error {
@@ -505,12 +522,12 @@ func (run *runtime) observeUsageBands(a core.Agent, c harness.Collar) error {
 			// text. Record every crossing, but publish each distinct message once.
 			messages := make(map[string]bool)
 			for _, band := range c.UsageBands[kind] {
-				if w.UsedPercent < band.At*100 || fired[band.Name] {
+				if w.pace.Delta < band.Ahead*100 || fired[band.Name] {
 					continue
 				}
 				previous.Fired = append(previous.Fired, band.Name)
 				fired[band.Name] = true
-				message := renderUsageBand(band, c.Name, kind, w.UsedPercent, w.ResetAt)
+				message := renderUsageBand(band, c.Name, kind, w.UsedPercent, w.ResetAt, w.pace)
 				if messages[message] {
 					continue
 				}
