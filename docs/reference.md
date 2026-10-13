@@ -210,9 +210,14 @@ or `interrupt -m` reason that contains one of Claude Code's
 numbered placeholders in brackets, for pasted text, an image, or truncated
 text, is refused: Claude Code can replace that token with the content of an
 earlier paste, so the prompt it submits is no longer the message. Describe the
-placeholder in words. A `snooze --note` that contains one is refused whatever
+placeholder in words. Text for a Claude Code recipient is also refused when it
+holds an invisible format character, such as a zero-width space or byte order
+mark, or a Unicode line or paragraph separator: Claude Code drops or rewrites
+them and leaves that paste unsubmitted. The refusal names the code points to
+remove. Tabs are delivered; Claude Code shows each as four spaces. A
+`snooze --note` that contains either is refused whatever
 the snoozing agent's harness, since an overdue wake whose caller is gone goes
-to the lead. A queued message that still carries one fails before it is typed.
+to the lead. A queued message that still carries either fails before it is typed.
 `--source watchdog --watchdog UNIT` is the internal watchdog invocation.
 
 ## Inspect

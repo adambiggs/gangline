@@ -195,3 +195,76 @@ func TestSubmittedEnvelopeMatchesRecordsOutsideBytes(t *testing.T) {
 		})
 	}
 }
+
+// Claude Code turns every tab of a paste into four spaces, whatever its column,
+// and leaves the rest of the text, newlines included, unchanged.
+func TestSubmittedEnvelopeMatchesClaudeTabRewrite(t *testing.T) {
+	sent := "[gang:hitch#0123456789abcdef assignment] Assignment: quote\n\tif x {\n\t\treturn\n\t}\na\tb [/gang:hitch#0123456789abcdef]"
+	body := "[gang:hitch#0123456789abcdef assignment] Assignment: quote\n    if x {\n        return\n    }\na    b [/gang:hitch#0123456789abcdef]"
+	wrap := func(text string) string {
+		return "\n\n<pasted_content id=\"0af8\">\n" + text + "\n</pasted_content id=\"0af8\">\n"
+	}
+	primitive := Invocation{Name: "claude-pasted-content"}
+	for _, tc := range []struct{ name, witness, outside string }{
+		{name: "wrapped", witness: wrap(body)},
+		{name: "unwrapped", witness: body},
+		{name: "later input", witness: wrap(body) + "later", outside: "later"},
+		{name: "unrewritten", witness: wrap(sent)},
+	} {
+		matched, outside, err := SubmittedEnvelopeMatches(primitive, sent, tc.witness)
+		if err != nil || !matched || outside != tc.outside {
+			t.Fatalf("%s: matched = %v, outside = %q, err = %v", tc.name, matched, outside, err)
+		}
+	}
+	for _, tc := range []struct{ name, old, new string }{
+		{name: "token", old: "#0123456789abcdef]", new: "#0123456789abcdee]"},
+		{name: "text", old: "return", new: "retorn"},
+		{name: "tab stop", old: "a    b", new: "a   b"},
+		{name: "kept tab", old: "    if", new: "\tif"},
+		{name: "lost newline", old: "{\n        return", new: "{        return"},
+	} {
+		altered := strings.Replace(body, tc.old, tc.new, 1)
+		if altered == body {
+			t.Fatalf("%s: %q is not in the rewritten body", tc.name, tc.old)
+		}
+		for _, witness := range []string{wrap(altered), altered} {
+			if matched, _, err := SubmittedEnvelopeMatches(primitive, sent, witness); err != nil || matched {
+				t.Fatalf("%s: matched = %v, err = %v for %q", tc.name, matched, err, witness)
+			}
+		}
+	}
+	// The rewrite belongs to Claude Code's paste; an exact prompt stays exact.
+	if matched, _, err := SubmittedEnvelopeMatches(Invocation{Name: "exact-prompt"}, sent, body); err != nil || matched {
+		t.Fatalf("exact prompt matched rewritten text: matched = %v, err = %v", matched, err)
+	}
+}
+
+// Claude Code drops format characters from a paste, turns line and paragraph
+// separators into newlines, and leaves such a paste in its composer after the
+// next Enter. It keeps prepended concatenation marks such as U+0600.
+func TestPasteHazardRefusesCharactersClaudeHolds(t *testing.T) {
+	claude := Invocation{Name: "claude-pasted-content"}
+	for _, tc := range []struct{ text, named string }{
+		{text: "zero\u200bwidth and again\u200b", named: "U+200B, "},
+		{text: "bom\ufeff join\u200d", named: "U+FEFF, U+200D, "},
+		{text: "soft\u00adhyphen", named: "U+00AD, "},
+		{text: "line\u2028para\u2029", named: "U+2028, U+2029, "},
+		{text: "tag\U000E0041", named: "U+E0041, "},
+	} {
+		reason, err := PasteHazard(claude, tc.text)
+		if err != nil || !strings.HasPrefix(reason, "text contains "+tc.named+"which Claude Code") {
+			t.Fatalf("%q: reason = %q, err = %v", tc.text, reason, err)
+		}
+		if reason, err := AnyPasteHazard(tc.text); err != nil || reason == "" {
+			t.Fatalf("%q: any harness reason = %q, err = %v", tc.text, reason, err)
+		}
+		if reason, err := PasteHazard(Invocation{Name: "exact-prompt"}, tc.text); err != nil || reason != "" {
+			t.Fatalf("%q: exact prompt reason = %q, err = %v", tc.text, reason, err)
+		}
+	}
+	for _, text := range []string{"tab\tand newline\n", "mark \u0600 kept", "nbsp\u00a0and em\u2003space", "emoji \U0001F642"} {
+		if reason, err := PasteHazard(claude, text); err != nil || reason != "" {
+			t.Fatalf("%q refused: reason = %q, err = %v", text, reason, err)
+		}
+	}
+}

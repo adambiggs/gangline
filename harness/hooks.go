@@ -5,8 +5,10 @@ import (
 	"errors"
 	"fmt"
 	"regexp"
+	"slices"
 	"strings"
 	"time"
+	"unicode"
 	"unicode/utf8"
 )
 
@@ -148,6 +150,14 @@ func SubmittedPromptMatches(primitive Invocation, sent, witnessed string) (bool,
 // whatever its label.
 var pastePlaceholder = regexp.MustCompile(`\[(?:Pasted text|Image|\.\.\.Truncated text) #\d+(?: \+\d+ lines)?\.*\]`)
 
+// heldByClaudePaste reports a character that Claude Code drops from a paste,
+// or turns into a newline, and whose paste the next Enter does not submit: a
+// format character other than a prepended concatenation mark, or a Unicode
+// line or paragraph separator.
+func heldByClaudePaste(r rune) bool {
+	return r == '\u2028' || r == '\u2029' || unicode.Is(unicode.Cf, r) && !unicode.Is(unicode.Prepended_Concatenation_Mark, r)
+}
+
 // PasteHazard returns why text cannot be typed into a harness unchanged.
 // Claude Code replaces a placeholder token with the content of a live earlier
 // paste carrying that number, and a paste stays live after its
@@ -160,6 +170,15 @@ func PasteHazard(primitive Invocation, text string) (string, error) {
 	case "claude-pasted-content":
 		if pastePlaceholder.MatchString(text) {
 			return "text contains a numbered paste placeholder in brackets, for pasted text, an image, or truncated text; Claude Code can replace it with the content of an earlier paste, so describe it in words", nil
+		}
+		var held []string
+		for _, r := range text {
+			if name := fmt.Sprintf("U+%04X", r); heldByClaudePaste(r) && !slices.Contains(held, name) {
+				held = append(held, name)
+			}
+		}
+		if len(held) != 0 {
+			return "text contains " + strings.Join(held, ", ") + ", which Claude Code drops or turns into a newline, and it then leaves the paste unsubmitted; remove these invisible format characters or line and paragraph separators", nil
 		}
 		return "", nil
 	default:
@@ -197,38 +216,52 @@ func SubmittedEnvelopeMatches(primitive Invocation, sent, witnessed string) (boo
 		rest, ok := strings.CutPrefix(witnessed, sent)
 		return ok, rest, nil
 	case "claude-pasted-content":
-		if rest, ok := consumePastedBody(witnessed, sent); ok {
-			return true, rest, nil
+		// Claude Code turns each tab of a paste into four spaces, whatever
+		// its column; the paste matches as sent or so rewritten.
+		for _, text := range []string{sent, strings.ReplaceAll(sent, "\t", "    ")} {
+			if rest, ok := matchClaudePaste(text, witnessed); ok {
+				return true, rest, nil
+			}
 		}
-		framed := witnessed
-		if strings.HasPrefix(framed, "\n\n") {
-			framed = strings.TrimPrefix(framed, "\n\n")
-		} else {
-			framed = strings.TrimPrefix(framed, "\n")
-		}
-		const prefix = "<pasted_content id=\""
-		if !strings.HasPrefix(framed, prefix) {
-			return false, "", nil
-		}
-		identifier, wrapped, found := strings.Cut(strings.TrimPrefix(framed, prefix), "\">\n")
-		if !found || identifier == "" || strings.ContainsAny(identifier, "\"\r\n<>") {
-			return false, "", nil
-		}
-		suffix := "\n</pasted_content id=\"" + identifier + "\">"
-		rest, ok := consumePastedBody(wrapped, sent)
-		if !ok {
-			return false, "", nil
-		}
-		inside, after, closed := strings.Cut(rest, suffix)
-		if !closed {
-			return false, "", nil
-		}
-		// Claude's one trailing newline belongs to the paste wrapper.
-		after = strings.TrimPrefix(after, "\n")
-		return true, inside + after, nil
+		return false, "", nil
 	default:
 		return false, "", fmt.Errorf("unknown submit-witness primitive %q", primitive.Name)
 	}
+}
+
+// matchClaudePaste matches sent against a prompt Claude Code reports for a
+// paste, wrapped in its pasted_content element or not, and returns the bytes
+// outside the paste.
+func matchClaudePaste(sent, witnessed string) (string, bool) {
+	if rest, ok := consumePastedBody(witnessed, sent); ok {
+		return rest, true
+	}
+	framed := witnessed
+	if strings.HasPrefix(framed, "\n\n") {
+		framed = strings.TrimPrefix(framed, "\n\n")
+	} else {
+		framed = strings.TrimPrefix(framed, "\n")
+	}
+	const prefix = "<pasted_content id=\""
+	if !strings.HasPrefix(framed, prefix) {
+		return "", false
+	}
+	identifier, wrapped, found := strings.Cut(strings.TrimPrefix(framed, prefix), "\">\n")
+	if !found || identifier == "" || strings.ContainsAny(identifier, "\"\r\n<>") {
+		return "", false
+	}
+	suffix := "\n</pasted_content id=\"" + identifier + "\">"
+	rest, ok := consumePastedBody(wrapped, sent)
+	if !ok {
+		return "", false
+	}
+	inside, after, closed := strings.Cut(rest, suffix)
+	if !closed {
+		return "", false
+	}
+	// Claude's one trailing newline belongs to the paste wrapper.
+	after = strings.TrimPrefix(after, "\n")
+	return inside + after, true
 }
 
 // consumePastedBody matches sent against the start of pasted text as Claude
