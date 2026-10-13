@@ -106,7 +106,7 @@ func (run *runtime) apply(l *store.LockedAgent, a *core.Agent, e core.Event) err
 // inactiveRecipient refuses input to an agent that is not active and names
 // the command that shows why.
 func inactiveRecipient(a core.Agent) error {
-	return refuseError("recipient %s is %s, not active; gang status %s shows why", a.Name, a.Status, a.Name)
+	return refuseError("recipient %s is %s, not active; gang status %s --why shows why", a.Name, a.Status, a.Name)
 }
 
 // unregistered refuses a name that no agent in the selected team holds.

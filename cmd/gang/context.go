@@ -259,7 +259,7 @@ func (cmd command) capture(args []string) error {
 			return err
 		}
 		if a.Pane == "" {
-			return refuseError("capture: %s has no pane to capture: it is %s. gang status %s shows its record", a.Name, a.Status, a.Name)
+			return refuseError("capture: %s has no pane to capture: it is %s. gang status %s --why shows its record", a.Name, a.Status, a.Name)
 		}
 		record = &a
 	}

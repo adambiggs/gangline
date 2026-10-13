@@ -327,7 +327,7 @@ func TestHitchFailureNotifiesHitcher(t *testing.T) {
 				t.Fatalf("notices = %+v", got)
 			}
 			e := got[0]
-			if e.From.Kind != core.SenderGangline || e.Recipient != lead.ID || !strings.Contains(e.Message.Text, "owner, which you hitched, failed: "+reason) {
+			if e.From.Kind != core.SenderGangline || e.Recipient != lead.ID || !strings.Contains(e.Message.Text, "owner, which you hitched, failed: "+reason) || !strings.Contains(e.Message.Text, "gang status owner --why shows its record") {
 				t.Fatalf("notice = %+v", e)
 			}
 			if len(woken) != 1 || woken[0] != "l" {

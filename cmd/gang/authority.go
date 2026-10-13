@@ -132,7 +132,7 @@ func (run *runtime) notifyHitcher(a core.Agent, id core.EnvelopeID, text string)
 // new failure.
 func (run *runtime) notifyHitcherFailed(a core.Agent, reason string) error {
 	id := core.EnvelopeID(fmt.Sprintf("hitch-failed-%s-%d", a.ID, a.ChangedAt.UnixNano()))
-	return run.notifyHitcher(a, id, fmt.Sprintf("%s, which you hitched, failed: %s. gang status %s shows its record.", a.Name, reason, a.Name))
+	return run.notifyHitcher(a, id, fmt.Sprintf("%s, which you hitched, failed: %s. gang status %s --why shows its record.", a.Name, reason, a.Name))
 }
 
 // notifyHitcherRecovered tells a's hitcher that recovery returned a to
@@ -145,7 +145,7 @@ func (run *runtime) notifyHitcherRecovered(a core.Agent) error {
 		return err
 	}
 	id := core.EnvelopeID(fmt.Sprintf("hitch-recovered-%s-%d", a.ID, a.ChangedAt.UnixNano()))
-	return run.notifyHitcher(a, id, fmt.Sprintf("%s, which you hitched, recovered from its failure (%s) and resumed startup; its original contract and assignment are retained. gang status %s shows its record.", a.Name, core.BootDeadlineElapsed, a.Name))
+	return run.notifyHitcher(a, id, fmt.Sprintf("%s, which you hitched, recovered from its failure (%s) and resumed startup; its original contract and assignment are retained. gang status %s --why shows its record.", a.Name, core.BootDeadlineElapsed, a.Name))
 }
 
 // notifyHeldInput tells a's hitcher once a has read as holding unsubmitted

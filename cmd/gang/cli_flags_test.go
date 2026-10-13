@@ -229,7 +229,7 @@ func TestCaptureOfAgentWithoutPaneNamesIt(t *testing.T) {
 		t.Fatal(err)
 	}
 	f.out.Reset()
-	requireRefused(t, f.cmd.capture([]string{"worker", "-n", "25"}), "worker has no pane to capture: it is failed")
+	requireRefused(t, f.cmd.capture([]string{"worker", "-n", "25"}), "worker has no pane to capture: it is failed. gang status worker --why shows its record")
 	if f.out.Len() != 0 {
 		t.Fatalf("captured %q", f.out.String())
 	}

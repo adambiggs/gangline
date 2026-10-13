@@ -390,7 +390,7 @@ func TestRecoverTellsHitcherOnce(t *testing.T) {
 		}
 	}
 	got := notices("hitch-recovered-a-")
-	if len(got) != 1 || got[0].From.Kind != core.SenderGangline || got[0].Recipient != lead.ID || !strings.Contains(got[0].Message.Text, "worker, which you hitched, recovered from its failure (boot deadline elapsed)") {
+	if len(got) != 1 || got[0].From.Kind != core.SenderGangline || got[0].Recipient != lead.ID || !strings.Contains(got[0].Message.Text, "worker, which you hitched, recovered from its failure (boot deadline elapsed)") || !strings.Contains(got[0].Message.Text, "gang status worker --why shows its record") {
 		t.Fatalf("recovery notices = %+v", got)
 	}
 }

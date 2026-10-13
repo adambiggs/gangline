@@ -13,7 +13,7 @@ func TestInactiveRefusalsNameARoute(t *testing.T) {
 	a := f.add(t, "a", "worker", "codex")
 	a = f.setAgent(t, a, func(a *core.Agent) { a.Status = core.Failed })
 	f.cmd.stdin = strings.NewReader("hello")
-	want := "recipient worker is failed, not active; gang status worker shows why"
+	want := "recipient worker is failed, not active; gang status worker --why shows why"
 	for _, test := range []struct {
 		name string
 		call func() error
