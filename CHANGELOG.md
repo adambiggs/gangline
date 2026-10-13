@@ -1,5 +1,23 @@
 # Changelog
 
+## [1.18.0](https://github.com/adambiggs/gangline/compare/gangline-v1.17.2...gangline-v1.18.0) (2026-10-13)
+
+
+### Features
+
+* fire usage bands on pace instead of absolute use ([f90f181](https://github.com/adambiggs/gangline/commit/f90f181e63353e92d5a1e25f882d04c759f350d4))
+* report every collar's limits and pace without a live agent ([cc735f4](https://github.com/adambiggs/gangline/commit/cc735f48315dffceb65ba46ab358fe42de636382))
+
+
+### Bug Fixes
+
+* accept Claude Code's tab rewrite and refuse text it holds ([3a6308a](https://github.com/adambiggs/gangline/commit/3a6308a0f67397d317168bb8b8abb3ba3cf73a94))
+* keep a hitch active when a session beside its conversation submits ([f36dc65](https://github.com/adambiggs/gangline/commit/f36dc6541147b741b775fff2a84195109ed2be62))
+* preserve native approval for protected Git metadata ([0eb372f](https://github.com/adambiggs/gangline/commit/0eb372f4139fe9b91be799e75270d5cf8ef4bac2))
+* retain the submit prompt that failed to match ([16717f3](https://github.com/adambiggs/gangline/commit/16717f354f815d0483052789b18c8b884e514c52))
+* show retained evidence in status hints ([fecef2a](https://github.com/adambiggs/gangline/commit/fecef2a7bb5f29378b590aa0b7027ae896c1f22d))
+* **status:** verify pre-decision permission requests against the pane ([5ecb524](https://github.com/adambiggs/gangline/commit/5ecb524ae6d7c9bdda351a822ec25964d459517f))
+
 ## [1.17.2](https://github.com/adambiggs/gangline/compare/gangline-v1.17.1...gangline-v1.17.2) (2026-10-09)
 
 
