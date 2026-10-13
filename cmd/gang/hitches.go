@@ -163,7 +163,7 @@ func (cmd command) hitchWithStaleClaim(args []string, supersede bool) (result er
 	}
 	launch = applyLaunchPolicy(launch, o.Collar, run.settings)
 	if filepath.Base(launch.Name) == "codex" {
-		launch.Args, err = codexRepositoryLaunch(launch.Args, run.settings.CodexPermissionProfile, dir)
+		launch.Args, err = codexProfileLaunch(launch.Args, run.settings.CodexPermissionProfile)
 		if err != nil {
 			return refuseError("%v", err)
 		}

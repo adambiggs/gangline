@@ -324,31 +324,15 @@ config. Conflicting sandbox or profile arguments supplied through Gangline are
 refused. Codex may load other config layers that override the selected
 permission mode.
 
-When a Codex hitch directory is a linked Git worktree, Gangline passes its
-exact private gitdir to Codex with `--add-dir`, whatever the profile setting.
-It also passes existing `objects`, `refs` and `logs` directories under the
-verified common Git directory. Storage symlinks are not followed. Codex marks
-the private gitdir read-only with an exact-path rule that a pattern grant
-does not override; common storage separately needs writes for commits and
-fetches. Grants are resolved from the hitch directory, including nested
-paths and symlinks to a worktree. An unverified pointer receives no grant.
-
-These grants allow shared history/ref edits and private worktree metadata
-changes, including moving the branch checked out in the canonical checkout.
-Private metadata and the worktree's writable `.git` pointer can still redirect
-later host Git commands to executable configuration. This is trusted development
-access, not a security boundary against hostile repository content.
-The grants do not grant the common directory itself: config, hooks, info,
-packed-refs and other root files remain operator policy. This avoids making
-shared Git settings writable when later host Git commands could execute them.
-Primary checkouts, missing storage directories and canonical or sibling source
-trees receive no automatic grant. Git maintenance that needs broader access
-may fail; leave it to the operator rather than widening the sandbox.
-
-Codex refuses to start when given `--add-dir` under its read-only sandbox.
-Gangline omits these grants when its launch arguments select that sandbox, but
-cannot see one selected in Codex's own config: such a hitch into a linked
-worktree fails at launch with Codex's error.
+Gangline does not add Git write roots for linked worktrees or primary
+checkouts. Codex protects `.git` and a linked worktree's resolved Git directory
+by default; metadata writes use Codex's native approval path. Operator-supplied
+arguments, including explicit `--add-dir` grants, are passed through unchanged.
+Gangline does not select an approval policy or reviewer. For unattended Git,
+configure `approval_policy = "on-request"` and
+`approvals_reviewer = "auto_review"` in Codex's own config; see
+[sandboxed development teams](operations.md#sandboxed-development-teams).
+With `approval_policy = "never"`, protected Git writes cannot escalate.
 
 These variables are environment-only:
 

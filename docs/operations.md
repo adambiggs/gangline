@@ -66,20 +66,30 @@ unconfirmed and routes it to the lead if the caller is gone.
 
 Use a named Codex permission profile owned by the operator. Keep the sandbox
 on and select a trusted checkout with `gang hitch NAME -c codex -d CHECKOUT`.
-Gangline grants a linked worktree's private Git directory and existing common
-`objects`, `refs` and `logs` at launch; see the [launch contract](reference.md).
-It deliberately leaves shared config, hooks and other common root files out:
-those can control code executed by later host Git commands. Shared refs and
-objects still let workers move any branch, including one checked out in the
-canonical checkout. Private metadata and the writable `.git` pointer can also
-redirect later host Git commands to executable configuration. Use mutually
-trusted teammates and review changes before executing or publishing them;
-these grants do not make hostile repository content safe for host Git.
+Gangline leaves Git permissions to Codex. Under its default workspace-write
+policy, `.git` and a linked worktree's resolved Git directory are read-only,
+even within a writable checkout.
 
-With the scoped `gangline` profile, operations that rewrite common-root
-`packed-refs` require host-side execution. These include `git branch -d` for
-packed branches, `git pack-refs`, `git gc`, and large fetches that trigger ref
-packing or garbage collection.
+For unattended Git writes, configure Codex's
+[native automatic approval review](https://learn.chatgpt.com/docs/agent-approvals-security#automatic-approval-reviews)
+with `approval_policy = "on-request"` and `approvals_reviewer = "auto_review"`.
+Codex can request an approved execution outside the sandbox for commits,
+rebases, fetches, pushes and maintenance. The normal sandbox still protects
+Git config and hooks when the common Git directory is outside writable roots
+or has an explicit read rule. The approved command, including hooks it runs,
+executes with host authority; use trusted checkouts and review hooks before running them.
+Automatic review can refuse a request, and does not authorize every command.
+
+Review existing Codex exec-policy rules too: an explicit `allow` rule can run
+matching commands outside the sandbox without automatic review. Remove standing
+Git allow rules if those writes should receive approval for each request.
+
+`approval_policy = "never"` disables escalation; it does not automatically
+approve requests. Do not combine that setting with partial Git storage grants:
+a commit can survive while a hook fails to write `packed-refs.lock`, leaving
+publication blocked. When migrating from storage grants, remove Git `--add-dir`
+arguments and write rules for common/private metadata and workspace `.git`.
+Keep required read access and restart affected agents.
 
 The following is a starting profile for a dedicated team, using the
 [Codex permission profile syntax](https://learn.chatgpt.com/docs/permissions).
@@ -91,6 +101,9 @@ without making them writable; add an exact rule per repository you use.
 combine named permissions with legacy `sandbox_mode` settings.
 
 ```toml
+approval_policy = "on-request"
+approvals_reviewer = "auto_review"
+
 [permissions.gangline]
 description = "Trusted checkout development and a dedicated team state root"
 
@@ -113,8 +126,9 @@ description = "Trusted checkout development and a dedicated team state root"
 enabled = true
 ```
 
-This limits permanent writes to the checkout, selected Git storage, team state and
-briefs. It allows ordinary temporary files and direct network access. It is
+This limits unapproved writes to the checkout, team state and briefs. Approved
+commands can write outside those roots. It allows ordinary temporary files and
+direct network access. It is
 not a network destination allowlist: profile domain rules require Codex's
 network proxy. If using that proxy, allow only the team's exact tmux socket
 through its Unix socket allowlist; do not enable all Unix sockets. Prepare the
@@ -132,24 +146,16 @@ This example needs validation against your installed toolchains and any
 administrator-managed policy; a syntactically valid profile is not proof that
 a command can run. Restart affected agents after changing grants.
 
-A sandboxed lead can hitch and drop through the team's tmux socket and use
-operator-prepared worktrees. Letting it create linked worktrees also requires
-writes to shared storage, the common Git `worktrees` registration directory
-and the chosen source-worktree parent. Registration access lets it rewrite
-all sibling private metadata, including pointers that can redirect later host
-Git commands. That broader authority is an explicit operator decision, not
-part of the profile above. Otherwise the operator creates/removes worktrees
-and performs maintenance needing common root files. Primary checkouts get no
-automatic metadata grant, so canonical merges need separately reviewed policy
-or a host handoff. Do not grant the whole repositories parent. A push from an
-arc branch can avoid canonical source writes, but still needs independently
-working authentication. Leave pushes and releases with the host operator when
-credentials are unavailable; do not introduce an automatic host command proxy
-or forward a signing agent to work around the sandbox.
+A sandboxed lead can hitch and drop through the team's tmux socket. Creating
+or removing linked worktrees and updating the canonical checkout need the
+same native approval path when they write outside the permitted roots.
+Do not grant the whole repositories parent. Pushes also need working
+authentication; leave them with the operator when credentials are unavailable.
+Do not add a host command proxy or forward a signing agent to bypass a refusal.
 
 A "host-shell" role is an ordinary sandboxed worker with a specific task
 checkout, not an escape hatch. It can apply reviewed patches, run local test
-runners and commit scripts inside its grants. Hardcoded external test scratch
+runners inside its grants, and request native approval for Git writes. Hardcoded external test scratch
 needs an exact directory grant or a supported runner override. A deployment tree
 containing code used by host services is not ordinary scratch: keep patch
 application there with the host operator unless that execution authority is
