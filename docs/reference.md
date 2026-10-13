@@ -225,8 +225,9 @@ to the lead. A queued message that still carries one fails before it is typed.
 | `gang capture --composer [NAME]` | Print draft input from the composer. |
 | `gang context [NAME] [--json]` | Show native context usage or an unknown reading. |
 | `gang context --widget NAME` / `gang context --clear` | Select a context widget for the tmux status line, or clear it. |
-| `gang limits [NAME]` | Show observed provider limits. |
-| `gang limits -c\|--collar COLLAR` | Query native account limits without a live agent, if supported. |
+| `gang limits` | Query every configured collar's account limits and pace without a live agent. |
+| `gang limits NAME` | Show the provider limits an agent observed, with pace. |
+| `gang limits -c\|--collar COLLAR` | Query one collar's account limits without a live agent, if supported. |
 | `gang snooze [--at TIME] [--note TEXT]` | Schedule a wake for the calling agent at its observed native reset, or at an explicit future time. |
 | `gang snooze --status` / `gang snooze --clear [ID]` | Inspect or cancel a pending wake. The lead sees every agent's wake and uncertain notices, and can clear a notice or fallback wake by ID. |
 | `gang log [--agent NAME\|HITCH_ID] [--type TYPE\|KIND] [LOG.jsonl]` | Print JSONL events from a team or saved log, with optional filters. |
@@ -539,10 +540,14 @@ window durations are ignored; Gangline does not estimate provider usage.
 | `{{compact_command}}` | `gang compact --resume 'Resume from FILE'`. |
 
 Claude Code context readings come from its status line. Codex readings come
-from its native session log. `gang limits -c codex` queries account limits
-through a private native app server without creating a conversation or turn.
-The Claude Code collar has no standalone limits query; use `gang limits NAME`
-for readings observed from an agent.
+from its native session log. Both collars also have a standalone limits
+query that needs no agent. Codex's runs a private native app server without
+creating a conversation or turn. Claude Code's runs `claude -p /usage` as a
+local command, refuses a result that reports a model turn, and reads the
+account usage that command caches in Claude Code's global configuration.
+`/usage` fetches again only when its cache is not recent, so the reading's age
+is the cache's. Its windows include model-scoped weekly
+limits, labelled `seven_day/MODEL`, which the status line does not report.
 
 A collar overlay can name costly models in `hitch_guard`. `up` and `hitch`
 check a `--model` the guard names against the collar's provider usage before

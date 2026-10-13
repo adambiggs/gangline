@@ -49,7 +49,7 @@ Observe and control:
   context   read native context use
   statusline render or install the native context footer
   log       read the event log
-  limits    read current provider limits
+  limits    read provider limits and pace
   snooze    schedule a provider-reset or explicit wake
   whoami    read this pane's identity
   attach    join an agent's pane in tmux
@@ -279,7 +279,7 @@ var commandDescription = map[string]string{
 	"statusline": "Read native status-line JSON on stdin; --install fills an absent native\nsetting.\n",
 	"context":    "NAME is a registered agent; omit it for the current pane's agent.\nPrint its native context reading. --widget NAME selects an agent for the\ntmux widget; --clear empties it.\n",
 	"log":        "Print the selected team's durable JSONL event log.\nThe agent filter accepts a registered NAME or a hitch ID.\nWith LOG.jsonl, read that file instead; --team does not apply to it.\n",
-	"limits":     "NAME is a registered agent; omit it for the current pane's agent.\nRead its provider limits, or use --collar to query a collar without an agent.\n",
+	"limits":     "Without arguments, query every configured collar without an agent; a\nfailed query falls back to the newest reading a team agent recorded. NAME\nreads that agent's recorded limits; --collar queries one collar. Each line\nshows a window's use, elapsed share, pace (use minus elapsed, in points),\nreset, projected exhaustion at the average rate so far, and reading age.\n",
 	"snooze":     "Schedule a wake for the calling agent. Without --at, use the most-used\nfuture native five-hour or weekly reset. A wake completes after its\nmatching native turn succeeds. --status shows queued and uncertain wakes;\nthe lead also sees every agent's wake with its due time and note.\nUse --clear or a new --at to withdraw a wake still queued for input; the\nlead can clear a notice or fallback wake by ID. Clearing cannot retract\nnative input. gang log --agent NAME shows the wakes NAME scheduled,\ncleared, completed, or failed.\n",
 	"wait":       "NAME is the registered agent to watch for a recorded idle boundary.\nA zero timeout checks once.\n",
 	"curfew":     "Declare, inspect, or clear one team deadline. In an agent's pane only the\nlead may set or clear it.\n",

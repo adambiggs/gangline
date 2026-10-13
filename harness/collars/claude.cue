@@ -46,6 +46,7 @@ collar: {
 		}}
 		context: {name: "claude-screen-context"}
 		provider_limits: {name: "claude-screen-limits"}
+		limits_query: {name: "claude-usage-command"}
 		wedge: {name: "stable-busy-screen", params: {busy: "esc to interrupt|Retrying in [0-9]+s|API Error: 529 Overloaded\\.|▰|▱|(?m)^[·✢✳✶✻✽*] \\p{Lu}[\\p{L}'-]+…", after: "5m"}}
 	}
 	actions: {

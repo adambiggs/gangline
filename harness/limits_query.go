@@ -8,17 +8,34 @@ import (
 	"os"
 	"os/exec"
 	"sort"
+	"time"
 )
 
 // QueryProviderLimits asks the native account service without creating a thread
-// or sending a prompt. No recorded session reading can satisfy this query.
-func QueryProviderLimits(ctx context.Context, collar Collar) ([]LimitWindow, error) {
+// or sending a prompt. It returns when the provider measured the windows, or
+// zero when the provider read the account live for this query. No recorded
+// session reading can satisfy this query.
+func QueryProviderLimits(ctx context.Context, collar Collar) ([]LimitWindow, time.Time, error) {
+	limits, err := queryProviderLimits(ctx, collar)
+	return limits.windows, limits.at, err
+}
+
+type measuredLimits struct {
+	windows []LimitWindow
+	at      time.Time
+}
+
+func queryProviderLimits(ctx context.Context, collar Collar) (measuredLimits, error) {
 	inv := collar.Primitives.LimitsQuery
 	if inv == nil {
-		return nil, fmt.Errorf("collar %q does not declare an agent-free limits query; use gang limits NAME for an observed agent reading", collar.Name)
+		return measuredLimits{}, fmt.Errorf("collar %q does not declare an agent-free limits query; use gang limits NAME for an observed agent reading", collar.Name)
 	}
-	if inv.Name != "codex-app-server-limits" {
-		return nil, fmt.Errorf("unknown limits-query primitive %q", inv.Name)
+	switch inv.Name {
+	case "codex-app-server-limits":
+	case "claude-usage-command":
+		return queryClaudeUsage(ctx, collar)
+	default:
+		return measuredLimits{}, fmt.Errorf("unknown limits-query primitive %q", inv.Name)
 	}
 	child := exec.CommandContext(ctx, collar.Launch.Command, "app-server", "--listen", "stdio://")
 	child.Env = os.Environ()
@@ -27,17 +44,17 @@ func QueryProviderLimits(ctx context.Context, collar Collar) ([]LimitWindow, err
 	}
 	stdin, err := child.StdinPipe()
 	if err != nil {
-		return nil, err
+		return measuredLimits{}, err
 	}
 	stdout, err := child.StdoutPipe()
 	if err != nil {
 		_ = stdin.Close()
-		return nil, err
+		return measuredLimits{}, err
 	}
 	if err := child.Start(); err != nil {
 		_ = stdin.Close()
 		_ = stdout.Close()
-		return nil, fmt.Errorf("start %s limits query: %w", collar.Name, err)
+		return measuredLimits{}, fmt.Errorf("start %s limits query: %w", collar.Name, err)
 	}
 	limits, queryErr := queryCodexLimits(stdout, stdin)
 	// EOF shuts down this private server. The caller's context also bounds a
@@ -45,15 +62,16 @@ func QueryProviderLimits(ctx context.Context, collar Collar) ([]LimitWindow, err
 	_ = stdin.Close()
 	err = child.Wait()
 	if ctx.Err() != nil {
-		return nil, fmt.Errorf("%s limits query: %w", collar.Name, ctx.Err())
+		return measuredLimits{}, fmt.Errorf("%s limits query: %w", collar.Name, ctx.Err())
 	}
 	if queryErr != nil {
-		return nil, queryErr
+		return measuredLimits{}, queryErr
 	}
 	if err != nil {
-		return nil, fmt.Errorf("%s limits query exited: %w", collar.Name, err)
+		return measuredLimits{}, fmt.Errorf("%s limits query exited: %w", collar.Name, err)
 	}
-	return limits, nil
+	// The app server reads the account live.
+	return measuredLimits{windows: limits}, nil
 }
 
 func queryCodexLimits(input io.Reader, output io.Writer) ([]LimitWindow, error) {

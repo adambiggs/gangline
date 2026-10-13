@@ -20,6 +20,8 @@ func guardedClaude(t *testing.T, refuse bool) harness.Collar {
 	if err != nil {
 		t.Fatal(err)
 	}
+	// Unit tests never reach the real provider's limits query.
+	c.Primitives.LimitsQuery = nil
 	fiveHour := 0.9
 	c.HitchGuard = &harness.HitchGuard{Models: []string{"costly"}, FiveHour: &fiveHour, Refuse: refuse}
 	return c
@@ -224,7 +226,7 @@ const guardedFiveHour = `{"id":2,"result":{"rateLimits":{"limitId":"codex","prim
 func TestHitchGuardQueriesProviderWhenNoAgentHoldsAReading(t *testing.T) {
 	reader, stderr, err := guardedHitch(t, true, guardedFiveHour)
 	var refused commandError
-	if !errors.As(err, &refused) || refused.status != exitRefused || !strings.Contains(err.Error(), "codex limits query just now shows codex/primary 95% used (guard 90%), resets 2100-01-01T00:00:00Z") {
+	if !errors.As(err, &refused) || refused.status != exitRefused || !strings.Contains(err.Error(), "codex limits query reading from 0s ago shows codex/primary 95% used (guard 90%), resets 2100-01-01T00:00:00Z") {
 		t.Fatalf("guarded hitch = %v", err)
 	}
 	if reader.read {
@@ -243,5 +245,43 @@ func TestHitchGuardLaunchesWhenProviderQueryFails(t *testing.T) {
 	reader, stderr, err := guardedHitch(t, true, `{"id":2,"error":{"message":"signed out"}}`)
 	if !passedPreflight(reader, err) || !strings.Contains(stderr, "the provider limits query failed") || !strings.Contains(stderr, "launching unchecked") {
 		t.Fatalf("hitch = %v; stderr = %q", err, stderr)
+	}
+}
+
+// Claude's query serves a cached reading. A cache older than the guard's
+// freshness bound launches unchecked; a recent one refuses.
+func TestHitchGuardJudgesAQueryReadingByItsAge(t *testing.T) {
+	f := newStateFixture(t)
+	root := t.TempDir()
+	executable := filepath.Join(root, "claude")
+	script := "#!/bin/sh\n# SPDX-License-Identifier: Apache-2.0\nprintf '%s\\n' '{\"subtype\":\"success\",\"is_error\":false,\"num_turns\":0}'\n"
+	if err := os.WriteFile(executable, []byte(script), 0700); err != nil {
+		t.Fatal(err)
+	}
+	c := guardedClaude(t, true)
+	c.Launch.Command = executable
+	c.Launch.Env = map[string]string{"HOME": root, "CLAUDE_CONFIG_DIR": ""}
+	c.Primitives.LimitsQuery = &harness.Invocation{Name: "claude-usage-command"}
+	reset := f.cmd.now().Add(time.Hour).UTC().Format(time.RFC3339)
+	for _, tc := range []struct {
+		age     time.Duration
+		refused bool
+	}{{10 * time.Minute, false}, {time.Minute, true}} {
+		f.errOut.Reset()
+		cache := `{"cachedUsageUtilization":{"fetchedAtMs":` + strconv.FormatInt(f.cmd.now().Add(-tc.age).UnixMilli(), 10) +
+			`,"utilization":{"limits":[{"kind":"session","group":"session","percent":99,"resets_at":"` + reset + `"}]}}}`
+		if err := os.WriteFile(filepath.Join(root, ".claude.json"), []byte(cache), 0600); err != nil {
+			t.Fatal(err)
+		}
+		err := f.run.checkHitchGuard(c, "costly")
+		if tc.refused {
+			if err == nil || !strings.Contains(err.Error(), "claude limits query reading from 1m0s ago shows five_hour 99% used") {
+				t.Fatalf("recent query reading = %v", err)
+			}
+			continue
+		}
+		if err != nil || !strings.Contains(f.errOut.String(), "returned a reading from 10m0s ago; launching unchecked") {
+			t.Fatalf("stale query reading = %v; stderr = %q", err, f.errOut.String())
+		}
 	}
 }

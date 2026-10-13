@@ -304,7 +304,7 @@ func validateCollar(collar Collar) error {
 			where   string
 			value   Invocation
 			allowed []string
-		}{"limits query", *collar.Primitives.LimitsQuery, []string{"codex-app-server-limits"}})
+		}{"limits query", *collar.Primitives.LimitsQuery, []string{"codex-app-server-limits", "claude-usage-command"}})
 	}
 	if collar.Models.Selected != nil {
 		checks = append(checks, struct {

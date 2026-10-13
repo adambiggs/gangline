@@ -13,9 +13,9 @@ notice contains only the provider, reported usage, and reset time. Bands do
 not change agent work. A collar overlay can supply an optional per-band `note`
 with operator guidance.
 Native
-readings can be absent or stale; `gang limits NAME` shows what an agent has
-observed, and `gang limits -c COLLAR` queries a collar that supports a
-standalone native limits query.
+readings can be absent or stale; `gang limits` queries every configured collar
+without an agent, `gang limits NAME` shows what an agent has observed, and
+`gang limits -c COLLAR` queries one collar.
 
 When a native turn is rejected by an attributable provider cap, Gangline
 automatically records a wake for that agent at the observed native reset.

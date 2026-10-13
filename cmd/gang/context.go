@@ -5,7 +5,6 @@ import (
 	"fmt"
 	"strconv"
 	"strings"
-	"time"
 
 	"github.com/adambiggs/gangline/core"
 	"github.com/adambiggs/gangline/harness"
@@ -131,89 +130,6 @@ func (cmd command) unknownContext(machine bool, r contextJSON) error {
 		}
 	}
 	return commandError{status: exitUnknown, text: r.Reason}
-}
-func (cmd command) limits(args []string) error {
-	collar := ""
-	flags := boundFlagSet("limits", map[string]any{"c": &collar, "collar": &collar})
-	positionals, err := parseOptions(flags, args)
-	if err != nil {
-		return usageError("limits: %v", err)
-	}
-	if flagWasSet(flags, "c") || flagWasSet(flags, "collar") {
-		if len(positionals) != 0 {
-			return usageError("limits --collar: expected one collar and no agent")
-		}
-		s, err := cmd.settings()
-		if err != nil {
-			return err
-		}
-		c, err := loadCollar(collar, s)
-		if err != nil {
-			return err
-		}
-		ctx, cancel := cmd.timeout(operationTimeout)
-		defer cancel()
-		limits, err := harness.QueryProviderLimits(ctx, c)
-		if err != nil {
-			return commandError{status: exitUnknown, text: err.Error()}
-		}
-		for _, w := range limits {
-			if _, err := fmt.Fprintf(cmd.stdout, "%s\t%.0f%%\t%s\n", w.Label, w.UsedPercent, time.Unix(w.ResetAt, 0).UTC().Format(time.RFC3339)); err != nil {
-				return err
-			}
-		}
-		return nil
-	}
-	name, err := observationName(positionals, "limits")
-	if err != nil {
-		return err
-	}
-	run, err := cmd.runtime()
-	if err != nil {
-		return err
-	}
-	a, err := run.resolve(name)
-	if err != nil {
-		return err
-	}
-	a, err = run.latest(a)
-	if err != nil {
-		return err
-	}
-	c, err := loadCollar(a.Collar, run.settings)
-	if err != nil {
-		return err
-	}
-	if c.Primitives.Telemetry != nil {
-		r := a.Native.Limits
-		if r.Status != "observed" {
-			return commandError{status: exitUnknown, text: valueOr(r.Reason, "native provider limits have not been observed")}
-		}
-		for _, w := range r.Limits {
-			if _, err := fmt.Fprintf(cmd.stdout, "%s\t%.0f%%\t%s\n", w.Label, w.UsedPercent, time.Unix(w.ResetAt, 0).UTC().Format(time.RFC3339)); err != nil {
-				return err
-			}
-		}
-		return nil
-	}
-	b, err := run.input()
-	if err != nil {
-		return err
-	}
-	screen, err := b.Capture(context.Background(), substrate.PaneID(a.Pane))
-	if err != nil {
-		return err
-	}
-	readings, err := harness.ReadProviderLimits(c.Primitives.ProviderLimits, screen, cmd.now())
-	if err != nil {
-		return commandError{status: exitUnknown, text: err.Error()}
-	}
-	for _, r := range readings {
-		if _, err := fmt.Fprintf(cmd.stdout, "%s\t%d%%\t%s\n", r.Label, r.UsedPercent, r.ResetAt.Format(time.RFC3339)); err != nil {
-			return err
-		}
-	}
-	return nil
 }
 func (cmd command) capture(args []string) error {
 	composer, count := false, ""

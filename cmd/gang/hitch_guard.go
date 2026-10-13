@@ -55,7 +55,7 @@ func (run *runtime) checkHitchGuard(c harness.Collar, model string) error {
 	if len(tripped) == 0 {
 		return nil
 	}
-	source := fmt.Sprintf("a %s limits query just now", c.Name)
+	source := fmt.Sprintf("a %s limits query reading from %s ago", c.Name, max(now.Sub(r.at), 0).Round(time.Second))
 	if r.agent != "" {
 		source = fmt.Sprintf("%s's %s reading from %s ago", r.agent, c.Name, now.Sub(r.at).Round(time.Second))
 	}
@@ -93,11 +93,17 @@ func (run *runtime) hitchGuardReading(c harness.Collar, now time.Time) (*guardRe
 	}
 	ctx, cancel := run.cmd.timeout(operationTimeout)
 	defer cancel()
-	windows, err := harness.QueryProviderLimits(ctx, c)
+	windows, at, err := harness.QueryProviderLimits(ctx, c)
 	if err != nil {
 		return nil, fmt.Sprintf("the provider limits query failed (%v)", err)
 	}
-	r := &guardReading{at: now}
+	if at.IsZero() {
+		at = now
+	}
+	if now.Sub(at) > hitchGuardFreshness {
+		return nil, fmt.Sprintf("the provider limits query returned a reading from %s ago", now.Sub(at).Round(time.Second))
+	}
+	r := &guardReading{at: at}
 	for _, w := range windows {
 		r.limits = append(r.limits, core.LimitWindow{Label: w.Label, UsedPercent: w.UsedPercent, ResetAt: w.ResetAt, WindowMinutes: w.WindowMinutes})
 	}

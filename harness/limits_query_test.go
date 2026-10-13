@@ -117,9 +117,12 @@ if IFS= read -r request; then exit 87; fi
 		t.Fatal(err)
 	}
 	collar := Collar{Name: "fixture", Launch: Launch{Command: executable, Env: map[string]string{"LIMITS_CLOSED": done}}, Primitives: Primitives{LimitsQuery: &Invocation{Name: "codex-app-server-limits"}}}
-	limits, err := QueryProviderLimits(context.Background(), collar)
+	limits, at, err := QueryProviderLimits(context.Background(), collar)
 	if err != nil {
 		t.Fatal(err)
+	}
+	if !at.IsZero() {
+		t.Fatalf("a live app-server reading carries measurement time %v", at)
 	}
 	if len(limits) != 1 || limits[0].UsedPercent != 0 {
 		t.Fatalf("limits = %#v", limits)
@@ -139,7 +142,7 @@ func TestLimitsQueryCancelledBeforeLaunch(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel()
 	collar := Collar{Name: "fixture", Launch: Launch{Command: executable, Env: map[string]string{"START_MARKER": marker}}, Primitives: Primitives{LimitsQuery: &Invocation{Name: "codex-app-server-limits"}}}
-	if limits, err := QueryProviderLimits(ctx, collar); !errors.Is(err, context.Canceled) || len(limits) != 0 {
+	if limits, _, err := QueryProviderLimits(ctx, collar); !errors.Is(err, context.Canceled) || len(limits) != 0 {
 		t.Fatalf("limits = %#v, error = %v", limits, err)
 	}
 	if _, err := os.Stat(marker); !errors.Is(err, os.ErrNotExist) {
