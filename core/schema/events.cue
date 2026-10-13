@@ -19,6 +19,7 @@ import "time"
  not_after?: #Time
  outcome?: "accepted" | "delivered" | "failed" | "unverified" | "cancelled"
  reason?: string
+ witnessed?: string
 })
 #Compaction: close({id: #ID, resume: close({text: string}), resume_from?: close({kind: "agent" | "self_declared" | "gangline", name: #ID, hitch_id?: #ID}), requester?: close({kind: "agent", name: #ID, hitch_id: #ID}), started_at: #Time, deadline: #Time, status: "queued" | "submitted" | "completed" | "failed" | "unverified", continuation?: bool, resume_token?: string, resume_admitted?: bool, completed_at?: #Time, refusal_before?: int & >=0, reason?: string})
 #Reading: close({

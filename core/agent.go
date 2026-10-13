@@ -173,6 +173,9 @@ type Envelope struct {
 	NotAfter   time.Time        `json:"not_after,omitzero"`
 	Outcome    string           `json:"outcome,omitempty"`
 	Reason     string           `json:"reason,omitempty"`
+	// Witnessed keeps the prompt a submit hook reported when it did not
+	// match this envelope, after a later turn replaces the witness.
+	Witnessed string `json:"witnessed,omitempty"`
 }
 
 // CompactionUnconfirmed is the reason a submitted compaction carries once its

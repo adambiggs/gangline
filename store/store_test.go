@@ -264,3 +264,30 @@ func TestRenameRecoveryHandlesNameReuse(t *testing.T) {
 		t.Fatalf("unfinished rename: %+v", a)
 	}
 }
+
+func TestFiledResultKeepsWitnessedPromptOnlyWhenUnverified(t *testing.T) {
+	p := testTeam(t)
+	l, err := p.CreateAgent(testAgent("a", "worker"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer l.Close()
+	for _, tc := range []struct {
+		id, outcome, want string
+	}{{"kept", "unverified", "seen"}, {"cancelled", "cancelled", ""}, {"failed", "failed", ""}} {
+		e := core.Envelope{ID: core.EnvelopeID(tc.id), Recipient: "a", To: "worker", From: core.Sender{Kind: core.SenderSelfDeclared, Name: "operator"}, Message: core.Message{Text: "hello"}, CreatedAt: time.Now(), Witnessed: "seen"}
+		if err := l.Paths.Publish(e); err != nil {
+			t.Fatal(err)
+		}
+		if err := l.FileFailure(e, tc.outcome, "reason"); err != nil {
+			t.Fatal(err)
+		}
+		got, err := l.Paths.ReadEnvelope("failed", e.ID)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if got.Witnessed != tc.want {
+			t.Fatalf("%s result witnessed = %q, want %q", tc.outcome, got.Witnessed, tc.want)
+		}
+	}
+}

@@ -360,6 +360,7 @@ func (run *runtime) deliver(l *store.LockedAgent, a *core.Agent, e core.Envelope
 				}
 			}
 			if err == nil && !accepted {
+				e.Witnessed = witness.Prompt
 				err = fmt.Errorf("submit witness does not match the message text and one-time token")
 			}
 		}

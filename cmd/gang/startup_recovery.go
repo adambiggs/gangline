@@ -204,6 +204,7 @@ func (run *runtime) recoverStartup(name string) (result error) {
 		var matched bool
 		matched, err = harness.SubmittedPromptStartsWith(c.Primitives.SubmitWitness, wire, witness.Prompt)
 		if err == nil && !matched {
+			e.Witnessed = witness.Prompt
 			err = fmt.Errorf("submit witness does not match the original startup message")
 		}
 	}
