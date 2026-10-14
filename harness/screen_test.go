@@ -307,7 +307,7 @@ func TestCodexComposerFooterLayout(t *testing.T) {
 		"5h: 80% · weekly: 95%",
 		"GPT-6-Astra high",
 		"issue-163",
-		"/home/adam/Repos/gangline · main · 42k tokens",
+		"/home/user/Repos/gangline · main · 42k tokens",
 		"Context 4% us…",
 		"? for shortcuts",
 		"",

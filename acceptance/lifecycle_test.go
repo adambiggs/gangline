@@ -310,24 +310,24 @@ func TestCommandLifecycleOnPrivateTmux(t *testing.T) {
 	finishDelivery(delivered, "independent delivery")
 	// A peer host's gang forwards over ssh by piping one request into
 	// peer-receive; the recipient sees the host-qualified sender.
-	if err := os.WriteFile(filepath.Join(config, "config"), []byte("GANG_HOST=ser5\nGANG_PEERS={\"ser5\":{\"ssh\":\"loopback\",\"gang\":\""+binary+"\",\"team\":\""+session+"\"}}\n"), 0600); err != nil {
+	if err := os.WriteFile(filepath.Join(config, "config"), []byte("GANG_HOST=alpha\nGANG_PEERS={\"alpha\":{\"ssh\":\"loopback\",\"gang\":\""+binary+"\",\"team\":\""+session+"\"}}\n"), 0600); err != nil {
 		t.Fatal(err)
 	}
-	peer := runGang(`{"host":"ser5","team":"`+session+`","id":"msg-0123456789abcdef0123456789abcdef","from":"lead","to":"second","body":"peer delivery"}`, "peer-receive")
-	if peer.status != 0 || !regexp.MustCompile(`^\{"id":"peer-ser5\.msg-0123456789abcdef0123456789abcdef","outcome":"(delivered|queued)"\}\n$`).MatchString(peer.out) {
+	peer := runGang(`{"host":"alpha","team":"`+session+`","id":"msg-0123456789abcdef0123456789abcdef","from":"lead","to":"second","body":"peer delivery"}`, "peer-receive")
+	if peer.status != 0 || !regexp.MustCompile(`^\{"id":"peer-alpha\.msg-0123456789abcdef0123456789abcdef","outcome":"(delivered|queued)"\}\n$`).MatchString(peer.out) {
 		t.Fatalf("peer-receive status=%d\n%s", peer.status, peer.out)
 	}
 	check("", "tick")
-	if received, err := os.ReadFile(filepath.Join(root, "received")); err != nil || !regexp.MustCompile(`\[gang:ser5:lead#[0-9a-f]{16}\] peer delivery`).Match(received) {
+	if received, err := os.ReadFile(filepath.Join(root, "received")); err != nil || !regexp.MustCompile(`\[gang:alpha:lead#[0-9a-f]{16}\] peer delivery`).Match(received) {
 		t.Fatalf("native delivery ledger lacks the peer envelope: %q %v", received, err)
 	}
 	// An agent addresses a peer as HOST:NAME; this host enrolls itself, so
 	// the request crosses ssh into its own peer-receive and back.
-	if r := runInPane(worker.Pane, "send", "ser5:second", "over-ssh"); r.status != 0 || !regexp.MustCompile(`(?m)^ser5:peer-ser5\.msg-[0-9a-f]{32}\t(delivered|queued)$`).MatchString(r.out) {
+	if r := runInPane(worker.Pane, "send", "alpha:second", "over-ssh"); r.status != 0 || !regexp.MustCompile(`(?m)^alpha:peer-alpha\.msg-[0-9a-f]{32}\t(delivered|queued)$`).MatchString(r.out) {
 		t.Fatalf("peer send status=%d\n%s", r.status, r.out)
 	}
 	check("", "tick")
-	if received, err := os.ReadFile(filepath.Join(root, "received")); err != nil || !regexp.MustCompile(`\[gang:ser5:worker#[0-9a-f]{16}\] over-ssh`).Match(received) {
+	if received, err := os.ReadFile(filepath.Join(root, "received")); err != nil || !regexp.MustCompile(`\[gang:alpha:worker#[0-9a-f]{16}\] over-ssh`).Match(received) {
 		t.Fatalf("native delivery ledger lacks the forwarded envelope: %q %v", received, err)
 	}
 	if err := os.Chmod(team.Log, 0200); err != nil {

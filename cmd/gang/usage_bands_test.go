@@ -320,7 +320,7 @@ func TestCodexAutomaticWakeRearmsAfterAnotherCap(t *testing.T) {
 
 func TestUsageBandsAreAccountWideAndLeadOnly(t *testing.T) {
 	f := newStateFixture(t)
-	lead := f.add(t, "lead-id", "ser5", "codex")
+	lead := f.add(t, "lead-id", "alpha", "codex")
 	p, _ := f.run.team.Agent(lead.ID)
 	l, err := p.TryLock()
 	if err != nil {

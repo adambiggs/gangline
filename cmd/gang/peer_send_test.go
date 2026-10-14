@@ -37,7 +37,7 @@ fi
 [ ! -f "$d/stderr" ] || /bin/cat "$d/stderr" >&2
 request=$(/bin/cat "$d/stdin")
 id=${request#*'"id":"'}
-id=peer-ser5.${id%%'"'*}
+id=peer-alpha.${id%%'"'*}
 out=$(/bin/cat "$d/stdout"; printf x)
 out=${out%x}
 while :; do
@@ -83,12 +83,12 @@ func (s fakeSSH) request(t *testing.T) peerRequest {
 	return request
 }
 
-// peerSender is a verified agent lead on host ser5 with peer tombo enrolled.
+// peerSender is a verified agent lead on host alpha with peer beta enrolled.
 func peerSender(t *testing.T) (*stateFixture, fakeSSH) {
 	t.Helper()
 	f := newStateFixture(t)
-	f.env["GANG_HOST"] = "ser5"
-	f.env["GANG_PEERS"] = `{"tombo":{"ssh":"tombo-alias","user":"tombo","gang":"/home/tombo/.local/bin/gang","team":"gangline"}}`
+	f.env["GANG_HOST"] = "alpha"
+	f.env["GANG_PEERS"] = `{"beta":{"ssh":"beta-alias","user":"beta","gang":"/home/beta/.local/bin/gang","team":"gangline"}}`
 	f.add(t, "lead-id", "lead", "codex")
 	f.env["GANG_AGENT_ID"] = "lead-id"
 	return f, newFakeSSH(t)
@@ -111,28 +111,28 @@ func requireStatus(t *testing.T, err error, status int, text string) {
 // forwardedID is the ID the peer files the forwarded message under.
 func (s fakeSSH) forwardedID(t *testing.T) string {
 	t.Helper()
-	return "peer-ser5." + s.request(t).ID
+	return "peer-alpha." + s.request(t).ID
 }
 
 func TestPeerSendForwardsOverSSHAndRelaysTheOutcome(t *testing.T) {
 	f, ssh := peerSender(t)
 	ssh.reply(t, "Last login: rc noise\n"+`{"id":"@ID@","outcome":"delivered"}`+"\n", "", "0")
-	if err := sendPeer(f, "tombo:reviewer", "status: it's $(done); `really`"); err != nil {
+	if err := sendPeer(f, "beta:reviewer", "status: it's $(done); `really`"); err != nil {
 		t.Fatal(err)
 	}
-	if got := f.out.String(); got != "tombo:"+ssh.forwardedID(t)+"\tdelivered\n" {
+	if got := f.out.String(); got != "beta:"+ssh.forwardedID(t)+"\tdelivered\n" {
 		t.Fatalf("stdout = %q", got)
 	}
 	argv, err := os.ReadFile(filepath.Join(ssh.dir, "argv"))
 	if err != nil {
 		t.Fatal(err)
 	}
-	want := "-T\n-o\nBatchMode=yes\n-o\nConnectTimeout=10\n-o\nServerAliveInterval=10\n-o\nServerAliveCountMax=3\n-l\ntombo\n--\ntombo-alias\n/home/tombo/.local/bin/gang\npeer-receive\n--team\ngangline\n"
+	want := "-T\n-o\nBatchMode=yes\n-o\nConnectTimeout=10\n-o\nServerAliveInterval=10\n-o\nServerAliveCountMax=3\n-l\nbeta\n--\nbeta-alias\n/home/beta/.local/bin/gang\npeer-receive\n--team\ngangline\n"
 	if string(argv) != want {
 		t.Fatalf("ssh argv =\n%s\nwant\n%s", argv, want)
 	}
 	request := ssh.request(t)
-	if request.Host != "ser5" || request.Team != "gangline" || request.From != "lead" || request.To != "reviewer" || request.Body != "status: it's $(done); `really`" || !peerMessageIDPattern.MatchString(request.ID) {
+	if request.Host != "alpha" || request.Team != "gangline" || request.From != "lead" || request.To != "reviewer" || request.Body != "status: it's $(done); `really`" || !peerMessageIDPattern.MatchString(request.ID) {
 		t.Fatalf("request = %+v", request)
 	}
 }
@@ -145,17 +145,17 @@ func TestPeerSendRelaysEveryPeerOutcome(t *testing.T) {
 	}{
 		{"queued", `{"id":"@ID@","outcome":"queued"}`, "0", exitOK, "queued", ""},
 		{"accepted", `{"id":"@ID@","outcome":"accepted"}`, "0", exitOK, "accepted", "native queue accepted the message; do not resend"},
-		{"failed", `{"id":"@ID@","outcome":"failed","warning":"message x was retained\u001b[2J with failed status"}`, "0", exitOK, "failed", "warning: tombo: message x was retained?[2J with failed status\n"},
+		{"failed", `{"id":"@ID@","outcome":"failed","warning":"message x was retained\u001b[2J with failed status"}`, "0", exitOK, "failed", "warning: beta: message x was retained?[2J with failed status\n"},
 		{"unverified", `{"id":"@ID@","outcome":"unverified"}`, "5", exitUnknown, "unverified", ""},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			f, ssh := peerSender(t)
 			ssh.reply(t, tc.stdout+"\n", "", tc.status)
-			err := sendPeer(f, "tombo:lead", "hi")
+			err := sendPeer(f, "beta:lead", "hi")
 			if tc.exit == exitOK && err != nil || tc.exit != exitOK && errorStatus(err) != tc.exit {
 				t.Fatalf("error = %v, want status %d", err, tc.exit)
 			}
-			if got := f.out.String(); got != "tombo:"+ssh.forwardedID(t)+"\t"+tc.line+"\n" {
+			if got := f.out.String(); got != "beta:"+ssh.forwardedID(t)+"\t"+tc.line+"\n" {
 				t.Fatalf("stdout = %q", got)
 			}
 			if !strings.Contains(f.errOut.String(), tc.stderr) {
@@ -173,7 +173,7 @@ func TestPeerSendRelaysAPeerRefusal(t *testing.T) {
 		t.Run(tc.status, func(t *testing.T) {
 			f, ssh := peerSender(t)
 			ssh.reply(t, `{"error":"agent \"lead\" is not registered\u001b[2J in team gangline"}`+"\n", "", tc.status)
-			requireStatus(t, sendPeer(f, "tombo:lead", "hi"), tc.exit, `tombo: agent "lead" is not registered?[2J in team`)
+			requireStatus(t, sendPeer(f, "beta:lead", "hi"), tc.exit, `beta: agent "lead" is not registered?[2J in team`)
 			if f.out.String() != "" {
 				t.Fatalf("stdout = %q", f.out.String())
 			}
@@ -185,12 +185,12 @@ func TestPeerSendRelaysAPeerRefusal(t *testing.T) {
 // so the outcome is unknown and names the ID to look up there.
 func TestPeerSendReportsALostReplyAsUnknown(t *testing.T) {
 	for _, tc := range []struct{ name, stdout, stderr, status, cause string }{
-		{"connection lost", "", "Connection to tombo closed by remote host.\n", "255", "ssh: exit status 255: Connection to tombo closed by remote host."},
-		{"gang missing", "", "sh: 1: /home/tombo/.local/bin/gang: not found\n", "127", "exit status 127"},
+		{"connection lost", "", "Connection to beta closed by remote host.\n", "255", "ssh: exit status 255: Connection to beta closed by remote host."},
+		{"gang missing", "", "sh: 1: /home/beta/.local/bin/gang: not found\n", "127", "exit status 127"},
 		{"garbled reply", "Welcome\n{\"id\":\n", "", "0", "its last line was not a reply to this message"},
 		{"empty reply", "", "", "0", "its last line was not a reply to this message"},
 		{"reply without outcome", `{"id":"@ID@"}` + "\n", "", "0", "its last line was not a reply to this message"},
-		{"another message's reply", `{"id":"peer-ser5.msg-0123456789abcdef0123456789abcdef","outcome":"delivered"}` + "\n", "", "0", "its last line was not a reply to this message"},
+		{"another message's reply", `{"id":"peer-alpha.msg-0123456789abcdef0123456789abcdef","outcome":"delivered"}` + "\n", "", "0", "its last line was not a reply to this message"},
 		{"unknown outcome", `{"id":"@ID@","outcome":"read"}` + "\n", "", "0", "its last line was not a reply to this message"},
 		{"controls in stderr", "", "bad\x1b[2J\n", "255", "bad?[2J"},
 		{"error-shaped noise, then connection lost", `{"error":"login rc warning"}` + "\n", "", "255", "ssh: exit status 255"},
@@ -200,13 +200,13 @@ func TestPeerSendReportsALostReplyAsUnknown(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			f, ssh := peerSender(t)
 			ssh.reply(t, tc.stdout, tc.stderr, tc.status)
-			err := sendPeer(f, "tombo:lead", "hi")
-			requireStatus(t, err, exitUnknown, "resend it only once no gang peer-receive runs on tombo and its gang queue and gang log both lack it")
+			err := sendPeer(f, "beta:lead", "hi")
+			requireStatus(t, err, exitUnknown, "resend it only once no gang peer-receive runs on beta and its gang queue and gang log both lack it")
 			if !strings.Contains(err.Error(), tc.cause) {
 				t.Fatalf("error = %v, want cause %q", err, tc.cause)
 			}
-			id := "peer-ser5." + ssh.request(t).ID
-			if got := f.out.String(); got != "tombo:"+id+"\tunknown\n" || !strings.Contains(err.Error(), "message "+id+" may have been published") {
+			id := "peer-alpha." + ssh.request(t).ID
+			if got := f.out.String(); got != "beta:"+id+"\tunknown\n" || !strings.Contains(err.Error(), "message "+id+" may have been published") {
 				t.Fatalf("stdout = %q, error = %v", got, err)
 			}
 		})
@@ -234,9 +234,9 @@ func TestPeerSendStopsWaitingAtTheDeadline(t *testing.T) {
 		}()
 		return ctx, cancel
 	}
-	err := sendPeer(f, "tombo:lead", "hi")
+	err := sendPeer(f, "beta:lead", "hi")
 	requireStatus(t, err, exitUnknown, "no reply within "+peerSendTimeout.String())
-	if asked != peerSendTimeout || !regexp.MustCompile(`^tombo:peer-ser5\.msg-[0-9a-f]{32}\tunknown\n$`).MatchString(f.out.String()) {
+	if asked != peerSendTimeout || !regexp.MustCompile(`^beta:peer-alpha\.msg-[0-9a-f]{32}\tunknown\n$`).MatchString(f.out.String()) {
 		t.Fatalf("deadline = %s, stdout = %q", asked, f.out.String())
 	}
 }
@@ -250,22 +250,22 @@ func TestPeerSendRefusesBeforeContactingThePeer(t *testing.T) {
 		want  string
 	}{
 		{"unenrolled host", nil, []string{"mac:lead", "hi"}, exitRefused, `peer host "mac" is not enrolled`},
-		{"no peers", func(f *stateFixture) { delete(f.env, "GANG_PEERS") }, []string{"tombo:lead", "hi"}, exitRefused, "not enrolled"},
-		{"no host name", func(f *stateFixture) { delete(f.env, "GANG_HOST") }, []string{"tombo:lead", "hi"}, exitRefused, "GANG_HOST is unset"},
-		{"operator", func(f *stateFixture) { delete(f.env, "GANG_AGENT_ID") }, []string{"tombo:lead", "hi"}, exitRefused, "only a registered agent sends to a peer host"},
-		{"forged pane token", func(f *stateFixture) { f.env["GANG_AGENT_NONCE"] = "copied" }, []string{"tombo:lead", "hi"}, exitRefused, "hitch token does not match"},
-		{"empty body", nil, []string{"tombo:lead", ""}, exitRefused, "body is empty"},
-		{"control body", nil, []string{"tombo:lead", "a\x1b[2Jb"}, exitRefused, "control"},
-		{"--from", nil, []string{"tombo:lead", "--from", "x", "hi"}, exitUsage, "HOST:NAME recipient takes no"},
-		{"--at", nil, []string{"tombo:lead", "--at", "5m", "hi"}, exitUsage, "HOST:NAME recipient takes no"},
-		{"--live-only", nil, []string{"tombo:lead", "--live-only", "hi"}, exitUsage, "HOST:NAME recipient takes no"},
-		{"--supersede", nil, []string{"tombo:lead", "--supersede", "hi"}, exitUsage, "HOST:NAME recipient takes no"},
-		{"--clear", nil, []string{"tombo:lead", "--clear"}, exitUsage, "HOST:NAME recipient takes no"},
+		{"no peers", func(f *stateFixture) { delete(f.env, "GANG_PEERS") }, []string{"beta:lead", "hi"}, exitRefused, "not enrolled"},
+		{"no host name", func(f *stateFixture) { delete(f.env, "GANG_HOST") }, []string{"beta:lead", "hi"}, exitRefused, "GANG_HOST is unset"},
+		{"operator", func(f *stateFixture) { delete(f.env, "GANG_AGENT_ID") }, []string{"beta:lead", "hi"}, exitRefused, "only a registered agent sends to a peer host"},
+		{"forged pane token", func(f *stateFixture) { f.env["GANG_AGENT_NONCE"] = "copied" }, []string{"beta:lead", "hi"}, exitRefused, "hitch token does not match"},
+		{"empty body", nil, []string{"beta:lead", ""}, exitRefused, "body is empty"},
+		{"control body", nil, []string{"beta:lead", "a\x1b[2Jb"}, exitRefused, "control"},
+		{"--from", nil, []string{"beta:lead", "--from", "x", "hi"}, exitUsage, "HOST:NAME recipient takes no"},
+		{"--at", nil, []string{"beta:lead", "--at", "5m", "hi"}, exitUsage, "HOST:NAME recipient takes no"},
+		{"--live-only", nil, []string{"beta:lead", "--live-only", "hi"}, exitUsage, "HOST:NAME recipient takes no"},
+		{"--supersede", nil, []string{"beta:lead", "--supersede", "hi"}, exitUsage, "HOST:NAME recipient takes no"},
+		{"--clear", nil, []string{"beta:lead", "--clear"}, exitUsage, "HOST:NAME recipient takes no"},
 		{"bad host", nil, []string{"to;mbo:lead", "hi"}, exitUsage, "invalid peer host"},
 		{"self-declared host", nil, []string{"self-declared:lead", "hi"}, exitUsage, "invalid peer host"},
 		{"empty host", nil, []string{":lead", "hi"}, exitUsage, "invalid peer host"},
-		{"bad name", nil, []string{"tombo:le ad", "hi"}, exitUsage, "invalid agent name"},
-		{"nested label", nil, []string{"tombo:ser5:lead", "hi"}, exitUsage, "invalid agent name"},
+		{"bad name", nil, []string{"beta:le ad", "hi"}, exitUsage, "invalid agent name"},
+		{"nested label", nil, []string{"beta:alpha:lead", "hi"}, exitUsage, "invalid agent name"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			f, ssh := peerSender(t)
@@ -285,7 +285,7 @@ func TestPeerSendReadsTheBodyFromStdin(t *testing.T) {
 	f, ssh := peerSender(t)
 	ssh.reply(t, `{"id":"@ID@","outcome":"delivered"}`+"\n", "", "0")
 	f.cmd.stdin = strings.NewReader("line one\nline two\n")
-	if err := sendPeer(f, "tombo:lead"); err != nil {
+	if err := sendPeer(f, "beta:lead"); err != nil {
 		t.Fatal(err)
 	}
 	if body := ssh.request(t).Body; body != "line one\nline two" {
@@ -299,7 +299,7 @@ func TestHostConfiguration(t *testing.T) {
 		getenv:      func(k string) string { return map[string]string{"GANG_CONFIG_DIR": directory}[k] },
 		userHomeDir: func() (string, error) { return directory, nil },
 	}
-	for value, ok := range map[string]bool{"ser5": true, "mac-mini.local": true, "self-declared": false, "Self-Declared": false, "a:b": false, "gangline": false, "-x": false} {
+	for value, ok := range map[string]bool{"alpha": true, "mac-mini.local": true, "self-declared": false, "Self-Declared": false, "a:b": false, "gangline": false, "-x": false} {
 		if err := os.WriteFile(filepath.Join(directory, "config"), []byte("GANG_HOST="+value+"\n"), 0o600); err != nil {
 			t.Fatal(err)
 		}
@@ -311,7 +311,7 @@ func TestHostConfiguration(t *testing.T) {
 }
 
 func TestLastPeerReplyTakesTheFinalLine(t *testing.T) {
-	const id = "peer-ser5.msg-0123456789abcdef0123456789abcdef"
+	const id = "peer-alpha.msg-0123456789abcdef0123456789abcdef"
 	published, _ := json.Marshal(peerReply{ID: id, Outcome: "delivered"})
 	for _, tc := range []struct {
 		output string

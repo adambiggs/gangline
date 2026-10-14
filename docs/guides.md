@@ -23,8 +23,8 @@ not send it again. `gang queue` lists messages still pending in Gangline and why
 The receipt tells you where the input is; the pane shows what the worker does.
 
 An agent on another host is addressed as `HOST:NAME`, such as
-`gang send tombo:lead '...'`, once both hosts enroll each other in `GANG_PEERS`
-and set `GANG_HOST`. The receiving agent sees the sender as `ser5:lead` and
+`gang send beta:lead '...'`, once both hosts enroll each other in `GANG_PEERS`
+and set `GANG_HOST`. The receiving agent sees the sender as `alpha:lead` and
 replies the same way. A send that prints `unknown` lost its reply: send it again
 only once no `gang peer-receive` runs on that host and its `gang queue` and
 `gang log` both lack the printed ID.

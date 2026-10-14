@@ -17,7 +17,7 @@ const peerTestID = "msg-0123456789abcdef0123456789abcdef"
 
 func peerRequestJSON(t *testing.T, edit func(map[string]any)) string {
 	t.Helper()
-	request := map[string]any{"host": "ser5", "team": "unit", "id": peerTestID, "from": "lead", "to": "worker", "body": "status report"}
+	request := map[string]any{"host": "alpha", "team": "unit", "id": peerTestID, "from": "lead", "to": "worker", "body": "status report"}
 	if edit != nil {
 		edit(request)
 	}
@@ -31,7 +31,7 @@ func peerRequestJSON(t *testing.T, edit func(map[string]any)) string {
 func peerFixture(t *testing.T) (*stateFixture, core.Agent) {
 	t.Helper()
 	f := newStateFixture(t)
-	f.env["GANG_PEERS"] = `{"ser5":{"ssh":"ser5","user":"adam","gang":"/opt/gang","team":"unit"}}`
+	f.env["GANG_PEERS"] = `{"alpha":{"ssh":"alpha","user":"adam","gang":"/opt/gang","team":"unit"}}`
 	a := f.add(t, "worker-id", "worker", "codex")
 	f.env["GANGLINE_HITCH_ID"] = string(a.ID)
 	return f, a
@@ -55,7 +55,7 @@ func TestPeerReceiveDeliversHostQualifiedSender(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if reply.ID != "peer-ser5."+peerTestID || reply.Outcome != "delivered" || reply.Error != "" {
+	if reply.ID != "peer-alpha."+peerTestID || reply.Outcome != "delivered" || reply.Error != "" {
 		t.Fatalf("reply = %+v", reply)
 	}
 	p, err := f.run.team.Agent(a.ID)
@@ -66,14 +66,14 @@ func TestPeerReceiveDeliversHostQualifiedSender(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if e.From != (core.Sender{Kind: core.SenderPeer, Name: "lead", Host: "ser5"}) {
+	if e.From != (core.Sender{Kind: core.SenderPeer, Name: "lead", Host: "alpha"}) {
 		t.Fatalf("sender = %+v", e.From)
 	}
 	// The receiver stamps its own clock and token; the sender supplies neither.
 	if !e.CreatedAt.Equal(f.cmd.now()) || len(e.Token) != 16 {
 		t.Fatalf("envelope = %+v", e)
 	}
-	if !strings.HasPrefix(f.input.pasted, "[gang:ser5:lead#"+e.Token+"] status report") {
+	if !strings.HasPrefix(f.input.pasted, "[gang:alpha:lead#"+e.Token+"] status report") {
 		t.Fatalf("pasted = %q", f.input.pasted)
 	}
 	if strings.Contains(f.input.pasted, "self-declared") {
@@ -97,7 +97,7 @@ func TestPeerReceiveReportsUnverifiedWithItsID(t *testing.T) {
 	if !errors.As(err, &status) || status.status != exitUnknown {
 		t.Fatalf("error = %v", err)
 	}
-	if reply.ID != "peer-ser5."+peerTestID || reply.Outcome != "unverified" || reply.Error != "" {
+	if reply.ID != "peer-alpha."+peerTestID || reply.Outcome != "unverified" || reply.Error != "" {
 		t.Fatalf("reply = %+v", reply)
 	}
 }
@@ -112,9 +112,9 @@ func TestPeerReceiveRefusesForgedOrMalformedRequests(t *testing.T) {
 		setup   func(*stateFixture)
 		want    string
 	}{
-		{"unenrolled host", func(t *testing.T) string { return peerRequestJSON(t, set("host", "tombo")) }, nil, "not enrolled"},
+		{"unenrolled host", func(t *testing.T) string { return peerRequestJSON(t, set("host", "beta")) }, nil, "not enrolled"},
 		{"no peers configured", func(t *testing.T) string { return peerRequestJSON(t, nil) }, func(f *stateFixture) { delete(f.env, "GANG_PEERS") }, "not enrolled"},
-		{"local name label", func(t *testing.T) string { return peerRequestJSON(t, set("from", "ser5:lead")) }, nil, "not an agent name"},
+		{"local name label", func(t *testing.T) string { return peerRequestJSON(t, set("from", "alpha:lead")) }, nil, "not an agent name"},
 		{"self-declared label", func(t *testing.T) string { return peerRequestJSON(t, set("from", "self-declared:lead")) }, nil, "not an agent name"},
 		{"reserved sender", func(t *testing.T) string { return peerRequestJSON(t, set("from", "gangline")) }, nil, "not an agent name"},
 		{"other team", func(t *testing.T) string { return peerRequestJSON(t, set("team", "other")) }, nil, "not the selected team"},
@@ -170,7 +170,7 @@ func TestPeerReceiveNeverReplacesAPublishedMessage(t *testing.T) {
 		t.Fatalf("duplicate: reply=%+v err=%v", reply, err)
 	}
 	p, _ := f.run.team.Agent(a.ID)
-	e, err := p.ReadEnvelope("cur", "peer-ser5."+peerTestID)
+	e, err := p.ReadEnvelope("cur", "peer-alpha."+peerTestID)
 	if err != nil || e.Message.Text != "status report" || f.input.submits != 1 {
 		t.Fatalf("original = %+v err=%v submits=%d", e, err, f.input.submits)
 	}
@@ -178,23 +178,23 @@ func TestPeerReceiveNeverReplacesAPublishedMessage(t *testing.T) {
 
 // A peer label is HOST:NAME. No local identity can render that form.
 func TestLocalSendersCannotTakeAPeerLabel(t *testing.T) {
-	if _, err := parseSend([]string{"worker", "--from", "ser5:lead", "hi"}); err == nil {
+	if _, err := parseSend([]string{"worker", "--from", "alpha:lead", "hi"}); err == nil {
 		t.Fatal("--from accepted a peer label")
 	}
-	if validAgentName("ser5:lead") {
+	if validAgentName("alpha:lead") {
 		t.Fatal("a local agent may be named with a peer label")
 	}
-	local := senderLabel(core.Sender{Kind: core.SenderAgent, Name: "ser5-lead"})
-	peer := senderLabel(core.Sender{Kind: core.SenderPeer, Name: "lead", Host: "ser5"})
-	if peer != "ser5:lead" || local == peer {
+	local := senderLabel(core.Sender{Kind: core.SenderAgent, Name: "alpha-lead"})
+	peer := senderLabel(core.Sender{Kind: core.SenderPeer, Name: "lead", Host: "alpha"})
+	if peer != "alpha:lead" || local == peer {
 		t.Fatalf("local %q, peer %q", local, peer)
 	}
 }
 
 func TestPeerSendersDifferByHost(t *testing.T) {
-	ser5 := core.Sender{Kind: core.SenderPeer, Name: "lead", Host: "ser5"}
-	tombo := core.Sender{Kind: core.SenderPeer, Name: "lead", Host: "tombo"}
-	if ser5.SameIdentity(tombo) || !ser5.SameIdentity(ser5) {
+	alpha := core.Sender{Kind: core.SenderPeer, Name: "lead", Host: "alpha"}
+	beta := core.Sender{Kind: core.SenderPeer, Name: "lead", Host: "beta"}
+	if alpha.SameIdentity(beta) || !alpha.SameIdentity(alpha) {
 		t.Fatal("peer identity ignores its host")
 	}
 }
@@ -215,9 +215,9 @@ func TestPeersConfiguration(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
-	write(`{"ser5":{"ssh":"ser5","gang":"/usr/local/bin/gang","team":"gangline"},"tombo":{"ssh":"tombo","user":"tombo","gang":"/home/tombo/.local/bin/gang","team":"gang.line_2"}}`)
+	write(`{"alpha":{"ssh":"alpha","gang":"/usr/local/bin/gang","team":"gangline"},"beta":{"ssh":"beta","user":"beta","gang":"/home/beta/.local/bin/gang","team":"gang.line_2"}}`)
 	got, err = cmd.settings()
-	if err != nil || got.Peers["tombo"] != (peerHost{SSH: "tombo", User: "tombo", Gang: "/home/tombo/.local/bin/gang", Team: "gang.line_2"}) || got.Peers["ser5"].SSH != "ser5" || got.Origins["GANG_PEERS"] != "config" {
+	if err != nil || got.Peers["beta"] != (peerHost{SSH: "beta", User: "beta", Gang: "/home/beta/.local/bin/gang", Team: "gang.line_2"}) || got.Peers["alpha"].SSH != "alpha" || got.Origins["GANG_PEERS"] != "config" {
 		t.Fatalf("peers = %+v origin=%q err=%v", got.Peers, got.Origins["GANG_PEERS"], err)
 	}
 	for name, value := range map[string]string{
@@ -225,22 +225,22 @@ func TestPeersConfiguration(t *testing.T) {
 		"self-declared case": `{"Self-Declared":{"ssh":"x","gang":"/g","team":"t"}}`,
 		"label host":         `{"a:b":{"ssh":"x","gang":"/g","team":"t"}}`,
 		"reserved host":      `{"gangline":{"ssh":"x","gang":"/g","team":"t"}}`,
-		"option alias":       `{"ser5":{"ssh":"-oProxyCommand=x","gang":"/g","team":"t"}}`,
-		"missing alias":      `{"ser5":{"gang":"/g","team":"t"}}`,
-		"spaced user":        `{"ser5":{"ssh":"ser5","user":"a b","gang":"/g","team":"t"}}`,
-		"missing gang":       `{"ser5":{"ssh":"ser5","team":"t"}}`,
-		"relative gang":      `{"ser5":{"ssh":"ser5","gang":"gang","team":"t"}}`,
-		"home gang":          `{"ser5":{"ssh":"ser5","gang":"~/bin/gang","team":"t"}}`,
-		"shell in gang":      `{"ser5":{"ssh":"ser5","gang":"/bin/gang;id","team":"t"}}`,
-		"spaced gang":        `{"ser5":{"ssh":"ser5","gang":"/my bin/gang","team":"t"}}`,
-		"missing team":       `{"ser5":{"ssh":"ser5","gang":"/g"}}`,
-		"option team":        `{"ser5":{"ssh":"ser5","gang":"/g","team":"-x"}}`,
-		"shell in team":      `{"ser5":{"ssh":"ser5","gang":"/g","team":"$(id)"}}`,
-		"unknown field":      `{"ser5":{"ssh":"ser5","gang":"/g","team":"t","kind":"x"}}`,
-		"not an object":      `["ser5"]`,
+		"option alias":       `{"alpha":{"ssh":"-oProxyCommand=x","gang":"/g","team":"t"}}`,
+		"missing alias":      `{"alpha":{"gang":"/g","team":"t"}}`,
+		"spaced user":        `{"alpha":{"ssh":"alpha","user":"a b","gang":"/g","team":"t"}}`,
+		"missing gang":       `{"alpha":{"ssh":"alpha","team":"t"}}`,
+		"relative gang":      `{"alpha":{"ssh":"alpha","gang":"gang","team":"t"}}`,
+		"home gang":          `{"alpha":{"ssh":"alpha","gang":"~/bin/gang","team":"t"}}`,
+		"shell in gang":      `{"alpha":{"ssh":"alpha","gang":"/bin/gang;id","team":"t"}}`,
+		"spaced gang":        `{"alpha":{"ssh":"alpha","gang":"/my bin/gang","team":"t"}}`,
+		"missing team":       `{"alpha":{"ssh":"alpha","gang":"/g"}}`,
+		"option team":        `{"alpha":{"ssh":"alpha","gang":"/g","team":"-x"}}`,
+		"shell in team":      `{"alpha":{"ssh":"alpha","gang":"/g","team":"$(id)"}}`,
+		"unknown field":      `{"alpha":{"ssh":"alpha","gang":"/g","team":"t","kind":"x"}}`,
+		"not an object":      `["alpha"]`,
 		"null":               `null`,
-		"trailing data":      `{"ser5":{"ssh":"ser5","gang":"/g","team":"t"}} {}`,
-		"trailing bracket":   `{"ser5":{"ssh":"ser5","gang":"/g","team":"t"}}}`,
+		"trailing data":      `{"alpha":{"ssh":"alpha","gang":"/g","team":"t"}} {}`,
+		"trailing bracket":   `{"alpha":{"ssh":"alpha","gang":"/g","team":"t"}}}`,
 	} {
 		write(value)
 		if _, err := cmd.settings(); err == nil || !strings.Contains(err.Error(), "GANG_PEERS") {
@@ -284,7 +284,7 @@ func TestPeerReceiveKeepsSendRecipientChecks(t *testing.T) {
 	})
 	t.Run("paste hazard", func(t *testing.T) {
 		f, a, p := claudeRecipient(t)
-		f.env["GANG_PEERS"] = `{"ser5":{"ssh":"ser5","gang":"/opt/gang","team":"unit"}}`
+		f.env["GANG_PEERS"] = `{"alpha":{"ssh":"alpha","gang":"/opt/gang","team":"unit"}}`
 		f.env["GANGLINE_HITCH_ID"] = string(a.ID)
 		reply, err := peerReceive(f, peerRequestJSON(t, func(r map[string]any) { r["body"] = placeholderQuote }))
 		requirePlaceholderRefusal(t, err)
