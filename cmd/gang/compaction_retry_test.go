@@ -20,8 +20,8 @@ func TestCompactionRetryWaitsForNativeTurnCompletion(t *testing.T) {
 		t.Fatal(err)
 	}
 	queued := readAgent(t, f, a.ID)
-	// An idle-looking screen previously triggered compaction before the
-	// native boundary, which could reject it while the turn still ran.
+	// An idle-looking screen before the turn's native boundary does not start
+	// the compaction: the harness could reject it while the turn still runs.
 	for _, at := range []time.Time{start.Add(time.Second), start.Add(time.Minute)} {
 		got := f.tickAt(t, a, at, hookNotice{})
 		if got.Compaction.Status != "queued" || got.Compaction.ID != queued.Compaction.ID || got.Compaction.Resume.Text != "saved retry note" || f.input.submits != 0 {

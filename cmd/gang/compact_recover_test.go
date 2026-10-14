@@ -248,8 +248,9 @@ func TestCompactInterruptReportsSurfaceAfterEscape(t *testing.T) {
 					t.Fatal(err)
 				}
 				wantActivity := tc.activity
-				// A visible compaction used to count only as busy; its dedicated
-				// active pattern now preserves the compaction activity.
+				// The Codex busy fixture matches its collar's compaction pattern
+				// and reads as compacting; the Claude fixture does not match
+				// Claude's.
 				if collar == "codex" && tc.surface == "busy" {
 					wantActivity = core.Compacting
 				}

@@ -61,7 +61,7 @@ func downRecords(t *testing.T, f *stateFixture) []downRecord {
 	return records
 }
 
-// A shell an owner starts inherits its pane's team and state root, so a
+// A shell a teammate starts inherits its pane's team and state root, so a
 // script it runs that downs "its" team ends the lead and every teammate.
 func TestDownRefusesTeammateThatIsNotLead(t *testing.T) {
 	for _, test := range []struct{ name, role, nonce string }{

@@ -86,8 +86,8 @@ func TestResumedStartupRecoversEmptyComposerOnlyBeforeSubmit(t *testing.T) {
 			if err := l.Close(); err != nil {
 				t.Fatal(err)
 			}
-			// Encode the receipt directly so this regression also runs against
-			// the implementation that did not retain pre-submit proof.
+			// Encode the receipt directly so each case controls whether it
+			// carries pre-submit proof.
 			path, err := p.EnvelopePath("failed", e.ID)
 			if err != nil {
 				t.Fatal(err)

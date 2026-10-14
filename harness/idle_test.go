@@ -68,8 +68,8 @@ func TestClaudeToolRunScreenIsBusy(t *testing.T) {
 }
 
 func TestClaudePonderingToolRunScreenIsBusy(t *testing.T) {
-	// The issue records the status label, but not a full screen capture.
-	// This fixture supplies the surrounding tool and composer shape.
+	// Not a native capture: the fixture builds a tool run and composer around
+	// Claude Code's "Pondering" status label.
 	collar, err := EmbeddedCollar("claude")
 	if err != nil {
 		t.Fatal(err)

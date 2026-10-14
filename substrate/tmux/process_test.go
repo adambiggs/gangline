@@ -185,7 +185,8 @@ func TestPinnedSignalAndWaitDoNotFollowReplacementPID(t *testing.T) {
 		t.Fatal(err)
 	}
 	current = replacement
-	// Zero keeps this regression harmless even if numeric PID signalling returns.
+	// Signal zero, so a numeric-PID fallback that signalled the record's PID
+	// (this test process) would harm nothing.
 	if err := signalProcesses([]processIdentity{identity}, syscall.Signal(0)); err != nil {
 		t.Fatal(err)
 	}

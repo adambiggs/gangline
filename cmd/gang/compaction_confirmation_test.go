@@ -174,8 +174,8 @@ func TestCompactionRechecksBusyBeforeSubmit(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	// Leaving the command staged stranded the resume and later messages. A
-	// busy recheck must withdraw that command and retain the original request.
+	// A command left staged would strand the resume and later messages, so a
+	// busy recheck withdraws it and retains the original request.
 	if f.input.submits != 0 || !slices.Equal(f.input.keys, []string{"C-u"}) || a.Compaction.Status != "queued" || a.Compaction.Resume.Text != "saved original note" || a.Input != nil || a.Activity != core.Busy {
 		t.Fatalf("deferred compaction: %+v input=%+v activity=%s submits=%d keys=%v", a.Compaction, a.Input, a.Activity, f.input.submits, f.input.keys)
 	}
@@ -231,8 +231,7 @@ func TestCompactionSurfacesNativeRefusalWithoutResume(t *testing.T) {
 			}
 			// The command reports the refusal itself; a later tick reports it
 			// only through the queued notice.
-			// The old immediate-refusal guard allowed the resume submit before
-			// withholding it. Refusal must now stop that submit entirely.
+			// Refusal withholds the resume before it is submitted.
 			dir, submits := "new", 1
 			if delayed {
 				dir, submits = "cur", 3

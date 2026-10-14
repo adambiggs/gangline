@@ -7,8 +7,9 @@ import (
 	"github.com/adambiggs/gangline/core"
 )
 
-// The reported resumed lead witness lost the two newlines after Assignment:.
-// Replay that loss through delivery, including a later completion report.
+// Claude Code can drop the two newlines after Assignment: from a resumed
+// startup's submit witness. Replay that loss through delivery, including a
+// later completion report.
 func TestClaudeResumedStartupWithNativeNewlineLoss(t *testing.T) {
 	f := newStateFixture(t)
 	a := f.add(t, "a", "lead", "claude")

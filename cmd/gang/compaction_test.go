@@ -518,7 +518,7 @@ func TestCompactionResumeProceedsWhileWrappedCompactRemains(t *testing.T) {
 	}
 }
 
-// Claude Code 2.1.287 shows a bracketed paste longer than 800 characters as a
+// Claude Code shows a bracketed paste longer than 800 characters as a
 // placeholder and submits it as an ordinary prompt wrapped in pasted_content,
 // so Enter on a collapsed /compact line never runs the command.
 func TestCollapsedCompactCommandIsNeverSubmitted(t *testing.T) {
