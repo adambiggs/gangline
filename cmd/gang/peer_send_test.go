@@ -172,8 +172,10 @@ func TestPeerSendRelaysAPeerRefusal(t *testing.T) {
 	}{{"3", exitRefused}, {"2", exitUsage}, {"1", exitError}, {"4", exitNative}} {
 		t.Run(tc.status, func(t *testing.T) {
 			f, ssh := peerSender(t)
-			ssh.reply(t, `{"error":"agent \"lead\" is not registered\u001b[2J in team gangline"}`+"\n", "", tc.status)
-			requireStatus(t, sendPeer(f, "beta:lead", "hi"), tc.exit, `beta: agent "lead" is not registered?[2J in team`)
+			ssh.reply(t, `{"error":"agent \"lead\" is not registered\u001b[2J in team gangline; gang roster --team gangline lists its agents"}`+"\n", "", tc.status)
+			// The peer's commands are for the peer, so the relay says where
+			// they run before the sending agent reads them.
+			requireStatus(t, sendPeer(f, "beta:lead", "hi"), tc.exit, `peer host beta refused the message; any command in its reason runs on beta, not here: agent "lead" is not registered?[2J in team`)
 			if f.out.String() != "" {
 				t.Fatalf("stdout = %q", f.out.String())
 			}

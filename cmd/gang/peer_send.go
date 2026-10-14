@@ -104,7 +104,9 @@ func (run *runtime) sendToPeer(o sendOptions) error {
 		}
 		return deliveryResult(reply.Outcome)
 	case replied && refused:
-		return commandError{status: exit.ExitCode(), text: fmt.Sprintf("%s: %s", o.Host, printable(reply.Error))}
+		// The peer words its refusal for its own host, where any command it
+		// names must run, so that is said before the reason.
+		return commandError{status: exit.ExitCode(), text: fmt.Sprintf("peer host %s refused the message; any command in its reason runs on %s, not here: %s", o.Host, o.Host, printable(reply.Error))}
 	}
 	cause := "its last line was not a reply to this message"
 	if ctx.Err() != nil {
