@@ -4,19 +4,7 @@
     ".": {
       "release-type": "go",
       "package-name": "gangline",
-      "changelog-path": "CHANGELOG.md",
-      "extra-files": [
-        {
-          "type": "json",
-          "path": "packaging/npm/package.json",
-          "jsonpath": "$.version"
-        },
-        {
-          "type": "toml",
-          "path": "packaging/pypi/pyproject.toml",
-          "jsonpath": "$.project.version"
-        }
-      ]
+      "changelog-path": "CHANGELOG.md"
     }
   }
 }
