@@ -121,6 +121,7 @@ contract and assignment.
 | Command | Effect |
 | --- | --- |
 | `gang send NAME [OPTIONS] [BODY]` | Send BODY, or read stdin when absent, and report its receipt. |
+| `gang send HOST:NAME [BODY]` | From a registered agent, forward BODY over ssh to agent NAME on `GANG_PEERS` host HOST, whose `gang peer-receive` delivers it, and print `HOST:ID` with that host's receipt. No reply within two minutes, or a last line that is not a reply to this message, prints `unknown` and exits 5: the message may have been published there, so send it again only once no `gang peer-receive` runs on that host and its `gang queue` and `gang log` both lack the ID. Takes no `--from`, `--at`, `--live-only`, `--supersede`, or `--clear`. |
 | `gang queue [NAME] [--json]` | List pending messages with ID, recipient, sender, kind, a text excerpt, and state: `ready`, `scheduled` with its due time, `blocked` with the reason, or `unknown` with the reason. |
 | `gang interrupt [NAME] [-m\|--message REASON]` | Interrupt the turn; deliver an optional reason after it stops. |
 | `gang compact [NAME] [--resume TEXT]` | Compact at native idle; submit the continuation behind compaction, ahead of later input. Refuses, asking for a retry, while another gang operation holds the agent. Refuses while startup input is unverified, or while the previous compaction's resume note waits in the harness, until it is admitted, until one operation's timeout after that compaction completed, or, for a compaction past its deadline, until the pane stops showing it; a queued compaction waits until startup input is verified (`gang hitch NAME --recover`). |
@@ -317,7 +318,8 @@ override file values. Run `gang config` to see effective values and defaults.
 | `GANG_LAUNCH_ARGS` | JSON object mapping collar names to extra launch argument arrays. |
 | `GANG_CODEX_PERMISSION_PROFILE` | Codex permission profile name for hitched agents; unset by default. |
 | `GANG_CAPACITY_TIMEOUT` | Positive duration budget for provider-error continuations. |
-| `GANG_PEERS` | JSON object of enrolled peer host names to `{"ssh": ALIAS, "user": LOGIN}` (`user` optional); unset means no peers. |
+| `GANG_PEERS` | JSON object of enrolled peer host names to `{"ssh": ALIAS, "user": LOGIN, "gang": PATH, "team": TEAM}`: the ssh alias and optional login that reach the host, the absolute path of its `gang`, and its team. Messages from an enrolled host are accepted; `gang send HOST:NAME` runs `ssh ALIAS PATH peer-receive --team TEAM`. Unset means no peers. |
+| `GANG_HOST` | This host's name as its peers enroll it in their `GANG_PEERS`; required to send to a peer, and the `HOST` in the `HOST:NAME` sender they see. |
 
 Set `GANG_CODEX_PERMISSION_PROFILE=gangline` in the config file or environment
 to select that profile for Codex hitches. The named profile must exist in

@@ -63,7 +63,17 @@ func TestCommandLifecycleOnPrivateTmux(t *testing.T) {
 			t.Fatalf("create pane pipe: %v\n%s", err, output)
 		}
 	}
-	environment := append(withoutEnvironment(os.Environ(), "TMUX", "TMUX_PANE", "GANG_CONFIG_DIR", "GANG_SESSION", "GANG_STATE_ROOT", "GANG_TMUX_SOCKET", "GANG_COLLARS", "GANG_COLLAR", "GANGLINE_HITCH_ID", "GANG_AGENT_ID", "GANG_AGENT_NONCE", "GANG_AGENT_TOKEN"),
+	// ssh here runs its remote command through a shell, as a peer's sshd
+	// would, with none of the calling pane's identity.
+	bin := filepath.Join(root, "bin")
+	if err := os.Mkdir(bin, 0700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(bin, "ssh"), []byte(loopbackSSH), 0700); err != nil {
+		t.Fatal(err)
+	}
+	environment := append(withoutEnvironment(os.Environ(), "PATH", "TMUX", "TMUX_PANE", "GANG_CONFIG_DIR", "GANG_SESSION", "GANG_STATE_ROOT", "GANG_TMUX_SOCKET", "GANG_COLLARS", "GANG_COLLAR", "GANGLINE_HITCH_ID", "GANG_AGENT_ID", "GANG_AGENT_NONCE", "GANG_AGENT_TOKEN"),
+		"PATH="+bin+string(os.PathListSeparator)+os.Getenv("PATH"),
 		"GANG_SESSION="+session, "GANG_CONFIG_DIR="+filepath.Join(root, "config"), "GANG_STATE_ROOT="+filepath.Join(root, "state"), "GANG_TMUX_SOCKET="+socket, "GANG_COLLARS="+collars, "GANG_COLLAR=acceptance",
 		"GANGLINE_ACCEPTANCE_CMD_HARNESS=1", "GANGLINE_ACCEPTANCE_TMUX=tmux", "GANGLINE_ACCEPTANCE_TMUX_SOCKET="+socket, "GANGLINE_ACCEPTANCE_LEDGER="+filepath.Join(root, "received"), "GANGLINE_ACCEPTANCE_ARGV_LEDGER="+filepath.Join(root, "argv"), "GANGLINE_ACCEPTANCE_GANG="+binary, "GANGLINE_ACCEPTANCE_PANE_RESULT="+filepath.Join(root, "pane-result"), "GANGLINE_ACCEPTANCE_PANE_READY="+paneReady, "GANGLINE_ACCEPTANCE_PANE_EXIT="+paneExit)
 	runner := tmuxRunner{binary: "tmux", socket: socket, env: environment}
@@ -300,7 +310,7 @@ func TestCommandLifecycleOnPrivateTmux(t *testing.T) {
 	finishDelivery(delivered, "independent delivery")
 	// A peer host's gang forwards over ssh by piping one request into
 	// peer-receive; the recipient sees the host-qualified sender.
-	if err := os.WriteFile(filepath.Join(config, "config"), []byte(`GANG_PEERS={"ser5":{"ssh":"ser5"}}`+"\n"), 0600); err != nil {
+	if err := os.WriteFile(filepath.Join(config, "config"), []byte("GANG_HOST=ser5\nGANG_PEERS={\"ser5\":{\"ssh\":\"loopback\",\"gang\":\""+binary+"\",\"team\":\""+session+"\"}}\n"), 0600); err != nil {
 		t.Fatal(err)
 	}
 	peer := runGang(`{"host":"ser5","team":"`+session+`","id":"msg-0123456789abcdef0123456789abcdef","from":"lead","to":"second","body":"peer delivery"}`, "peer-receive")
@@ -310,6 +320,15 @@ func TestCommandLifecycleOnPrivateTmux(t *testing.T) {
 	check("", "tick")
 	if received, err := os.ReadFile(filepath.Join(root, "received")); err != nil || !regexp.MustCompile(`\[gang:ser5:lead#[0-9a-f]{16}\] peer delivery`).Match(received) {
 		t.Fatalf("native delivery ledger lacks the peer envelope: %q %v", received, err)
+	}
+	// An agent addresses a peer as HOST:NAME; this host enrolls itself, so
+	// the request crosses ssh into its own peer-receive and back.
+	if r := runInPane(worker.Pane, "send", "ser5:second", "over-ssh"); r.status != 0 || !regexp.MustCompile(`(?m)^ser5:peer-ser5\.msg-[0-9a-f]{32}\t(delivered|queued)$`).MatchString(r.out) {
+		t.Fatalf("peer send status=%d\n%s", r.status, r.out)
+	}
+	check("", "tick")
+	if received, err := os.ReadFile(filepath.Join(root, "received")); err != nil || !regexp.MustCompile(`\[gang:ser5:worker#[0-9a-f]{16}\] over-ssh`).Match(received) {
+		t.Fatalf("native delivery ledger lacks the forwarded envelope: %q %v", received, err)
 	}
 	if err := os.Chmod(team.Log, 0200); err != nil {
 		t.Fatal(err)

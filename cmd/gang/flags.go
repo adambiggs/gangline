@@ -75,6 +75,9 @@ func parseHitch(arguments []string, defaultCollar, defaultDirectory string) (hit
 }
 
 type sendOptions struct {
+	// Host is the enrolled peer host of a HOST:NAME recipient; Name is then
+	// the agent on that host.
+	Host      string
 	Name      string
 	Body      *string
 	From      string
@@ -135,6 +138,15 @@ func parseSend(arguments []string) (sendOptions, error) {
 	}
 	if options.Clear && (options.Body != nil || options.At != "" || options.LiveOnly) {
 		return sendOptions{}, usageError("send: --clear takes no body, --at, or --live-only")
+	}
+	if host, name, peer := strings.Cut(options.Name, ":"); peer {
+		if !validPeerHost(host) {
+			return sendOptions{}, usageError("send: invalid peer host %q in %q (%s; self-declared is reserved)", host, options.Name, agentNameForm)
+		}
+		if options.From != "" || options.LiveOnly || options.Supersede || options.At != "" || options.Clear {
+			return sendOptions{}, usageError("send: a HOST:NAME recipient takes no --from, --live-only, --supersede, --at, or --clear")
+		}
+		options.Host, options.Name = host, name
 	}
 	if err := validateAgentName(options.Name); err != nil {
 		return sendOptions{}, err

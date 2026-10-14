@@ -28,14 +28,18 @@ type settings struct {
 	CodexPermissionProfile string
 	Peers                  map[string]peerHost
 	PeersJSON              string
+	Host                   string
 	Origins                map[string]string
 }
 
 // peerHost is an enrolled peer host: its gang may deliver messages here that
-// name one of its agents as the sender.
+// name one of its agents as the sender, and gang send HOST:NAME reaches it by
+// running Gang peer-receive --team Team over ssh.
 type peerHost struct {
 	SSH  string `json:"ssh"`
 	User string `json:"user,omitempty"`
+	Gang string `json:"gang"`
+	Team string `json:"team"`
 }
 
 func (cmd command) settings() (settings, error) {
@@ -97,6 +101,7 @@ func (cmd command) settings() (settings, error) {
 		"GANG_LAUNCH_ARGS":              &result.LaunchArgsJSON,
 		"GANG_CODEX_PERMISSION_PROFILE": &result.CodexPermissionProfile,
 		"GANG_PEERS":                    &result.PeersJSON,
+		"GANG_HOST":                     &result.Host,
 	}
 	for name, destination := range values {
 		if value, ok := configured[name]; ok {
@@ -155,6 +160,9 @@ func (cmd command) settings() (settings, error) {
 			return settings{}, err
 		}
 	}
+	if result.Host != "" && !validPeerHost(result.Host) {
+		return settings{}, fmt.Errorf("GANG_HOST has invalid host name %q (%s; self-declared is reserved)", result.Host, agentNameForm)
+	}
 	if result.CodexPermissionProfile != "" && !codexProfileName(result.CodexPermissionProfile) {
 		return settings{}, fmt.Errorf("GANG_CODEX_PERMISSION_PROFILE must contain only letters, digits, hyphens, or underscores")
 	}
@@ -169,14 +177,18 @@ var configurationKeys = map[string]bool{
 	"GANG_LAUNCH_ARGS":              true,
 	"GANG_CODEX_PERMISSION_PROFILE": true,
 	"GANG_PEERS":                    true,
+	"GANG_HOST":                     true,
 }
 
-// peerLoginPattern bounds an SSH alias or login to one token that cannot be
-// read as an option.
+// peerLoginPattern bounds an SSH alias, login, or team to one token that
+// cannot be read as an option. ssh joins the remote command into one shell
+// string, so these and the gang path admit no character a shell interprets.
 var peerLoginPattern = regexp.MustCompile(`^[A-Za-z0-9_][A-Za-z0-9._-]*$`)
 
+var peerGangPattern = regexp.MustCompile(`^/[A-Za-z0-9._/+-]+$`)
+
 func parsePeers(value string) (map[string]peerHost, error) {
-	const form = "GANG_PEERS must be a JSON object of peer host names to {\"ssh\": ALIAS, \"user\": LOGIN}"
+	const form = "GANG_PEERS must be a JSON object of peer host names to {\"ssh\": ALIAS, \"user\": LOGIN, \"gang\": PATH, \"team\": TEAM}"
 	decoder := json.NewDecoder(strings.NewReader(value))
 	decoder.DisallowUnknownFields()
 	var peers map[string]peerHost
@@ -198,6 +210,12 @@ func parsePeers(value string) (map[string]peerHost, error) {
 		}
 		if peer.User != "" && !peerLoginPattern.MatchString(peer.User) {
 			return nil, fmt.Errorf("GANG_PEERS[%q] has invalid user %q", host, peer.User)
+		}
+		if !peerGangPattern.MatchString(peer.Gang) {
+			return nil, fmt.Errorf("GANG_PEERS[%q] needs gang, the absolute path of that host's gang, of letters, digits, '.', '_', '+', '-' or '/'", host)
+		}
+		if !peerLoginPattern.MatchString(peer.Team) {
+			return nil, fmt.Errorf("GANG_PEERS[%q] needs team, that host's team name, of letters, digits, '.', '_' or '-'", host)
 		}
 	}
 	return peers, nil

@@ -97,6 +97,9 @@ func (cmd command) send(args []string) (result error) {
 	if err != nil {
 		return err
 	}
+	if o.Host != "" {
+		return run.sendToPeer(o)
+	}
 	a, err := run.resolve(o.Name)
 	if err != nil {
 		return err

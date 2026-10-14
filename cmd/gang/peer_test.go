@@ -29,7 +29,7 @@ func peerRequestJSON(t *testing.T, edit func(map[string]any)) string {
 func peerFixture(t *testing.T) (*stateFixture, core.Agent) {
 	t.Helper()
 	f := newStateFixture(t)
-	f.env["GANG_PEERS"] = `{"ser5":{"ssh":"ser5","user":"adam"}}`
+	f.env["GANG_PEERS"] = `{"ser5":{"ssh":"ser5","user":"adam","gang":"/opt/gang","team":"unit"}}`
 	a := f.add(t, "worker-id", "worker", "codex")
 	f.env["GANGLINE_HITCH_ID"] = string(a.ID)
 	return f, a
@@ -205,24 +205,32 @@ func TestPeersConfiguration(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
-	write(`{"ser5":{"ssh":"ser5"},"tombo":{"ssh":"tombo","user":"tombo"}}`)
+	write(`{"ser5":{"ssh":"ser5","gang":"/usr/local/bin/gang","team":"gangline"},"tombo":{"ssh":"tombo","user":"tombo","gang":"/home/tombo/.local/bin/gang","team":"gang.line_2"}}`)
 	got, err = cmd.settings()
-	if err != nil || got.Peers["tombo"] != (peerHost{SSH: "tombo", User: "tombo"}) || got.Peers["ser5"].SSH != "ser5" || got.Origins["GANG_PEERS"] != "config" {
+	if err != nil || got.Peers["tombo"] != (peerHost{SSH: "tombo", User: "tombo", Gang: "/home/tombo/.local/bin/gang", Team: "gang.line_2"}) || got.Peers["ser5"].SSH != "ser5" || got.Origins["GANG_PEERS"] != "config" {
 		t.Fatalf("peers = %+v origin=%q err=%v", got.Peers, got.Origins["GANG_PEERS"], err)
 	}
 	for name, value := range map[string]string{
-		"self-declared host": `{"self-declared":{"ssh":"x"}}`,
-		"self-declared case": `{"Self-Declared":{"ssh":"x"}}`,
-		"label host":         `{"a:b":{"ssh":"x"}}`,
-		"reserved host":      `{"gangline":{"ssh":"x"}}`,
-		"option alias":       `{"ser5":{"ssh":"-oProxyCommand=x"}}`,
-		"missing alias":      `{"ser5":{}}`,
-		"spaced user":        `{"ser5":{"ssh":"ser5","user":"a b"}}`,
-		"unknown field":      `{"ser5":{"ssh":"ser5","team":"x"}}`,
+		"self-declared host": `{"self-declared":{"ssh":"x","gang":"/g","team":"t"}}`,
+		"self-declared case": `{"Self-Declared":{"ssh":"x","gang":"/g","team":"t"}}`,
+		"label host":         `{"a:b":{"ssh":"x","gang":"/g","team":"t"}}`,
+		"reserved host":      `{"gangline":{"ssh":"x","gang":"/g","team":"t"}}`,
+		"option alias":       `{"ser5":{"ssh":"-oProxyCommand=x","gang":"/g","team":"t"}}`,
+		"missing alias":      `{"ser5":{"gang":"/g","team":"t"}}`,
+		"spaced user":        `{"ser5":{"ssh":"ser5","user":"a b","gang":"/g","team":"t"}}`,
+		"missing gang":       `{"ser5":{"ssh":"ser5","team":"t"}}`,
+		"relative gang":      `{"ser5":{"ssh":"ser5","gang":"gang","team":"t"}}`,
+		"home gang":          `{"ser5":{"ssh":"ser5","gang":"~/bin/gang","team":"t"}}`,
+		"shell in gang":      `{"ser5":{"ssh":"ser5","gang":"/bin/gang;id","team":"t"}}`,
+		"spaced gang":        `{"ser5":{"ssh":"ser5","gang":"/my bin/gang","team":"t"}}`,
+		"missing team":       `{"ser5":{"ssh":"ser5","gang":"/g"}}`,
+		"option team":        `{"ser5":{"ssh":"ser5","gang":"/g","team":"-x"}}`,
+		"shell in team":      `{"ser5":{"ssh":"ser5","gang":"/g","team":"$(id)"}}`,
+		"unknown field":      `{"ser5":{"ssh":"ser5","gang":"/g","team":"t","kind":"x"}}`,
 		"not an object":      `["ser5"]`,
 		"null":               `null`,
-		"trailing data":      `{"ser5":{"ssh":"ser5"}} {}`,
-		"trailing bracket":   `{"ser5":{"ssh":"ser5"}}}`,
+		"trailing data":      `{"ser5":{"ssh":"ser5","gang":"/g","team":"t"}} {}`,
+		"trailing bracket":   `{"ser5":{"ssh":"ser5","gang":"/g","team":"t"}}}`,
 	} {
 		write(value)
 		if _, err := cmd.settings(); err == nil || !strings.Contains(err.Error(), "GANG_PEERS") {
@@ -235,7 +243,7 @@ func TestPeersConfiguration(t *testing.T) {
 // like a Gangline sender, must not make its message read as Gangline input.
 func TestPeerHostCannotNameADerivedID(t *testing.T) {
 	f, _ := peerFixture(t)
-	f.env["GANG_PEERS"] = `{"resume-x":{"ssh":"x"}}`
+	f.env["GANG_PEERS"] = `{"resume-x":{"ssh":"x","gang":"/opt/gang","team":"unit"}}`
 	reply, err := peerReceive(f, peerRequestJSON(t, func(r map[string]any) {
 		r["host"], r["from"] = "resume-x", "compact"
 	}))
@@ -266,7 +274,7 @@ func TestPeerReceiveKeepsSendRecipientChecks(t *testing.T) {
 	})
 	t.Run("paste hazard", func(t *testing.T) {
 		f, a, p := claudeRecipient(t)
-		f.env["GANG_PEERS"] = `{"ser5":{"ssh":"ser5"}}`
+		f.env["GANG_PEERS"] = `{"ser5":{"ssh":"ser5","gang":"/opt/gang","team":"unit"}}`
 		f.env["GANGLINE_HITCH_ID"] = string(a.ID)
 		reply, err := peerReceive(f, peerRequestJSON(t, func(r map[string]any) { r["body"] = placeholderQuote }))
 		requirePlaceholderRefusal(t, err)

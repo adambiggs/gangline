@@ -41,6 +41,18 @@ func TestMain(m *testing.M) {
 	os.Exit(m.Run())
 }
 
+// loopbackSSH stands in for ssh to a peer: it drops ssh's options and host,
+// then runs the remote command through a shell as sshd does, without the
+// calling pane's identity. It calls only absolute paths and never itself.
+const loopbackSSH = `#!/bin/sh
+# SPDX-License-Identifier: Apache-2.0
+[ -z "$GANG_FAKE_SSH_DEPTH" ] || exit 97
+while [ $# -gt 0 ] && [ "$1" != "--" ]; do shift; done
+[ $# -ge 3 ] || exit 96
+shift 2
+exec /usr/bin/env -u TMUX -u TMUX_PANE -u GANGLINE_HITCH_ID -u GANG_AGENT_ID -u GANG_AGENT_NONCE -u GANG_AGENT_TOKEN GANG_FAKE_SSH_DEPTH=1 /bin/sh -c "$*"
+`
+
 func commandAcceptanceCollar(command string) string {
 	return fmt.Sprintf(`package collars
 collar: {
