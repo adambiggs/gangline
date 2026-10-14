@@ -38,6 +38,7 @@ type inputFixture struct {
 	submit           func(string) error
 	onKeys           func(substrate.Keys) error
 	registeredSender harnessInput
+	onForeground     func()
 }
 
 func (b *inputFixture) RegisterPane(_ context.Context, p substrate.PaneID) (tmux.PaneIdentity, error) {
@@ -74,6 +75,9 @@ func (b *inputFixture) SendRegisteredKeys(ctx context.Context, id tmux.PaneIdent
 	return b.SendKeys(ctx, substrate.PaneID(id.Pane), k)
 }
 func (b *inputFixture) ForegroundCommand(context.Context, substrate.PaneID) (string, error) {
+	if b.onForeground != nil {
+		b.onForeground()
+	}
 	if b.tmuxCommand != "" {
 		return b.tmuxCommand, b.foregroundErr
 	}

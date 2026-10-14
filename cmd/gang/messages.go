@@ -277,7 +277,7 @@ func (run *runtime) publishMessage(a core.Agent, p store.AgentPaths, l *store.Lo
 	if err := requireHarnessForeground(context.Background(), b, substrate.PaneID(a.Pane), c); err != nil {
 		return "", "", nil, err
 	}
-	if err := p.Publish(e); err != nil {
+	if err := p.PublishNew(e); err != nil {
 		return "", "", nil, err
 	}
 	outcome = "queued"

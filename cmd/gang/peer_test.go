@@ -296,3 +296,35 @@ func TestPeerReceiveKeepsSendRecipientChecks(t *testing.T) {
 		requireNothingTyped(t, f, p)
 	})
 }
+
+// Two requests with one ID can both pass the duplicate check before either
+// publishes. The later one is refused at publish and the queued message keeps
+// its body.
+func TestPeerReceiveRefusesARacingDuplicate(t *testing.T) {
+	f, a := peerFixture(t)
+	p, err := f.run.team.Agent(a.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	id := core.EnvelopeID("peer-alpha." + peerTestID)
+	rival := core.Envelope{ID: id, Token: "0123456789abcdef", Recipient: a.ID, To: a.Name, From: core.Sender{Kind: core.SenderPeer, Name: "lead", Host: "alpha"}, Message: core.Message{Text: "the first request's body"}, CreatedAt: f.cmd.now()}
+	// The harness check runs between the duplicate check and publishing.
+	f.input.onForeground = func() {
+		f.input.onForeground = nil
+		if err := p.Publish(rival); err != nil {
+			t.Fatal(err)
+		}
+	}
+	reply, err := peerReceive(f, peerRequestJSON(t, nil))
+	var refused commandError
+	if !errors.As(err, &refused) || refused.status != exitRefused || !strings.Contains(reply.Error, "already published here") || reply.ID != "" {
+		t.Fatalf("racing duplicate: reply=%+v err=%v", reply, err)
+	}
+	queued, err := p.ReadEnvelope("new", id)
+	if err != nil || queued.Message.Text != rival.Message.Text {
+		t.Fatalf("queued message = %+v, %v; want the first request's body", queued.Message, err)
+	}
+	if f.input.pasted != "" {
+		t.Fatalf("pasted = %q", f.input.pasted)
+	}
+}

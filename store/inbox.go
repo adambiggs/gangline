@@ -35,6 +35,29 @@ func (p AgentPaths) Publish(e core.Envelope) error {
 	return os.Rename(tmp, path)
 }
 
+// ErrEnvelopeQueued reports that an envelope with the ID is already queued.
+var ErrEnvelopeQueued = errors.New("an envelope with this ID is already queued")
+
+// PublishNew queues e only when no envelope with its ID is queued, so two
+// publishers of one ID cannot replace each other's message.
+func (p AgentPaths) PublishNew(e core.Envelope) error {
+	path, err := p.EnvelopePath("new", e.ID)
+	if err != nil {
+		return err
+	}
+	tmp, err := jsonTemp(filepath.Join(p.Inbox, "tmp"), e)
+	if err != nil {
+		return err
+	}
+	defer os.Remove(tmp)
+	if err := os.Link(tmp, path); errors.Is(err, os.ErrExist) {
+		return ErrEnvelopeQueued
+	} else if err != nil {
+		return err
+	}
+	return nil
+}
+
 // Withdraw removes an undelivered envelope without a result, so the agent's
 // retained receipts are untouched. The team log keeps its audit history.
 func (l *LockedAgent) Withdraw(id core.EnvelopeID) error {

@@ -320,7 +320,7 @@ that turn failed. Delivery does not establish that the assignment completed.
 | `gang upgrade [-y, --yes]` | Print the installed and latest stable versions, confirm on a terminal (`[y/N]`, default no), then install into the installer-managed checkout. Use `--yes` without a terminal. A current install exits 0 without asking. |
 | `gang help [COMMAND]` | Show command help. |
 | `gang hook` | Read native hook JSON from stdin; invoked by the collar integration. |
-| `gang peer-receive` | Read one JSON request (`host`, `team`, `id`, `from`, `to`, `body`) from stdin, forwarded by an enrolled `GANG_PEERS` host's gang, and deliver it; print one JSON line with the message ID and outcome, or the error that published nothing. Refused inside a registered agent pane. |
+| `gang peer-receive` | Read one JSON request (`host`, `team`, `id`, `from`, `to`, `body`) from stdin, forwarded by an enrolled `GANG_PEERS` host's gang, and deliver it; print one JSON line with the message ID and outcome, or the error that published nothing. Refuses an ID whose envelope or retained receipt this host still holds; once a later message's receipt replaces that receipt, the same ID is delivered again. Refused inside a registered agent pane. |
 
 ## Configuration
 

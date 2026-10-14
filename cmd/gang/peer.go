@@ -9,6 +9,7 @@ import (
 	"regexp"
 
 	"github.com/adambiggs/gangline/core"
+	"github.com/adambiggs/gangline/store"
 )
 
 // peerRequest is one message an enrolled peer host's gang forwards here. That
@@ -106,12 +107,13 @@ func (cmd command) peerReceive(args []string) (result error) {
 		return refuseError("startup contract input is unverified; inspect the recipient and run gang hitch %s --recover before sending another message", a.Name)
 	}
 	id := core.EnvelopeID("peer-" + request.Host + "." + request.ID)
-	// Publishing renames over an existing file, which would replace a
-	// message that may already be in the recipient's composer.
+	alreadyPublished := refuseError("message %s was already published here; do not resend", id)
+	// This check sees the receipts this agent retains. Of two requests that
+	// pass it together, publishing queues only the first.
 	if published, err := envelopePublished(p, id); err != nil {
 		return err
 	} else if published {
-		return refuseError("message %s was already published here; do not resend", id)
+		return alreadyPublished
 	}
 	token, err := randomEnvelopeToken()
 	if err != nil {
@@ -131,7 +133,9 @@ func (cmd command) peerReceive(args []string) (result error) {
 		return err
 	}
 	outcome, step, postPublishErr, err := run.publishMessage(a, p, nil, e)
-	if err != nil {
+	if errors.Is(err, store.ErrEnvelopeQueued) {
+		return alreadyPublished
+	} else if err != nil {
 		return err
 	}
 	reply.ID, reply.Outcome = e.ID, outcome
