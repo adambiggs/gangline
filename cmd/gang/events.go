@@ -32,6 +32,12 @@ type hookNotice struct {
 }
 
 func (cmd command) hook(args []string) error {
+	if fifo := cmd.environment(collarCheckFIFOEnvironment); fifo != "" {
+		if err := cmd.collarCheckHook(args, fifo); err != nil && cmd.stderr != nil {
+			_, _ = fmt.Fprintf(cmd.stderr, "gang hook: %s\n", cmd.operatorText(err.Error()))
+		}
+		return nil
+	}
 	err := cmd.handleHook(args)
 	if err != nil {
 		if cmd.stderr != nil {

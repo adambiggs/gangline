@@ -211,13 +211,24 @@ func (cmd command) probeActive(ctx context.Context, backend *tmux.Backend, colla
 	if err := syscall.Mkfifo(fifo, 0o600); err != nil {
 		return nil, err
 	}
-	hook := []string{"sh", "-c", "cat > \"$1\"", "gang-collar-check", fifo}
-	launch, err := harness.RenderLaunch(collar, harness.LaunchOptions{HookCommand: hook, Probe: true})
+	exe, err := os.Executable()
+	if err != nil {
+		return nil, err
+	}
+	// The probe runs in the caller's repository with the hooks a hitch
+	// installs, so the native hook trust the operator gave them covers it
+	// and any other hook there still needs native review.
+	options := agentHooks(exe)
+	options.Probe = true
+	launch, err := harness.RenderLaunch(collar, options)
 	if err != nil {
 		return nil, err
 	}
 	launch = applyLaunchPolicy(launch, collar.Name, settings)
-	pane, err := backend.CreateSession(ctx, launch.SpawnSpec("probe", workdir))
+	spec := launch.SpawnSpec("probe", workdir)
+	spec.Env[collarCheckFIFOEnvironment] = fifo
+	spec.Env["GANGLINE_HITCH_ID"] = ""
+	pane, err := backend.CreateSession(ctx, spec)
 	if err != nil {
 		results[harness.ProbeComposer] = unknownProbe(harness.ProbeComposer, "tmux did not start the hooked probe: "+err.Error())
 		return results, nil

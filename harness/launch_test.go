@@ -92,7 +92,7 @@ func TestRenderLaunchRequiresDeclaredHooks(t *testing.T) {
 }
 
 func TestRenderLaunchAddsProbeArgumentsOnlyForProbe(t *testing.T) {
-	collar, err := EmbeddedCollar("codex")
+	collar, err := EmbeddedCollar("claude")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -104,11 +104,28 @@ func TestRenderLaunchAddsProbeArgumentsOnlyForProbe(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	const flag = "--dangerously-bypass-hook-trust"
-	if strings.Contains(strings.Join(normal.Args, "\n"), flag) {
-		t.Fatalf("ordinary launch contains probe flag: %q", normal.Args)
+	if want := append(append([]string(nil), normal.Args...), collar.Launch.ProbeArgs...); len(collar.Launch.ProbeArgs) == 0 || strings.Join(probe.Args, "\n") != strings.Join(want, "\n") {
+		t.Fatalf("probe launch = %q, want the ordinary launch plus %q", probe.Args, collar.Launch.ProbeArgs)
 	}
-	if !strings.Contains(strings.Join(probe.Args, "\n"), flag) {
-		t.Fatalf("probe launch does not contain probe flag: %q", probe.Args)
+}
+
+// A collar check runs its probe in the caller's repository, so a probe
+// argument that bypasses native review would run whatever hooks or commands
+// that repository holds.
+func TestNoEmbeddedProbeBypassesNativeReview(t *testing.T) {
+	names, err := EmbeddedCollarNames()
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, name := range names {
+		collar, err := EmbeddedCollar(name)
+		if err != nil {
+			t.Fatal(err)
+		}
+		for _, arg := range collar.Launch.ProbeArgs {
+			if strings.Contains(arg, "dangerously") || strings.Contains(arg, "yolo") {
+				t.Errorf("collar %s probe passes %q", name, arg)
+			}
+		}
 	}
 }

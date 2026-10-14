@@ -2,6 +2,11 @@ package main
 
 import (
 	"context"
+	"errors"
+	"fmt"
+	"io"
+	"io/fs"
+	"os"
 	"os/exec"
 	"path/filepath"
 	"strings"
@@ -42,6 +47,39 @@ func installedHarnessVersion(collar harness.Collar) string {
 		return "unknown"
 	}
 	return line
+}
+
+// collarCheckFIFOEnvironment names the FIFO a collar check reads its
+// probe's hook payloads from.
+const collarCheckFIFOEnvironment = "GANGLINE_COLLAR_CHECK_FIFO"
+
+// collarCheckHook hands a hook payload from a collar check's probe to the
+// check. It touches no team state, so a hitch ID the probe inherited from the
+// caller cannot route the probe's events to the caller's agent.
+func (cmd command) collarCheckHook(args []string, fifo string) error {
+	if err := noArguments(args, "hook"); err != nil {
+		return err
+	}
+	payload, err := io.ReadAll(io.LimitReader(cmd.stdin, maximumHookBytes+1))
+	if err != nil {
+		return err
+	}
+	if len(payload) > maximumHookBytes {
+		return fmt.Errorf("hook payload exceeds maximum size")
+	}
+	info, err := os.Lstat(fifo)
+	if err != nil {
+		return err
+	}
+	if info.Mode().Type() != fs.ModeNamedPipe {
+		return fmt.Errorf("%s %s is not a FIFO", collarCheckFIFOEnvironment, fifo)
+	}
+	file, err := os.OpenFile(fifo, os.O_WRONLY, 0)
+	if err != nil {
+		return err
+	}
+	_, err = file.Write(payload)
+	return errors.Join(err, file.Close())
 }
 
 func awaitNativeHook(ctx context.Context, fifo string, trigger func() error) ([]byte, error) {

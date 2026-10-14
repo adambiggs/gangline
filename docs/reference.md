@@ -301,7 +301,7 @@ failure.
 | Command | Effect |
 | --- | --- |
 | `gang collars` | List bundled and custom collars. |
-| `gang collar check NAME` | Probe an installed harness in a private throwaway tmux session. |
+| `gang collar check NAME` | Probe an installed harness in a private throwaway tmux session, in the current repository with the hooks a hitch installs. A hook still awaiting native review, Gangline's included, makes the check report unknown; review hooks where a hitched agent starts. |
 | `gang models [-c COLLAR]` | List native models and efforts; also accepts `--collar`. |
 | `gang roles` | List role briefs. |
 | `gang config` | Print effective settings and their sources. |

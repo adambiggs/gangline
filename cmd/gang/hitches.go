@@ -21,6 +21,12 @@ import (
 	"github.com/adambiggs/gangline/substrate/tmux"
 )
 
+// agentHooks renders the native hooks every hitch installs. A collar check
+// installs the same ones, so native hook trust given for a hitch covers it.
+func agentHooks(exe string) harness.LaunchOptions {
+	return harness.LaunchOptions{HookCommand: []string{exe, "hook"}, HookTimeoutSeconds: boundaryHookTimeoutSeconds}
+}
+
 func (cmd command) hitch(args []string) error {
 	return cmd.hitchWithStaleClaim(args, false)
 }
@@ -157,7 +163,9 @@ func (cmd command) hitchWithStaleClaim(args []string, supersede bool) (result er
 		}
 		rolePromptFile = filepath.Join(paths.Directory, "role-prompt")
 	}
-	launch, err := harness.RenderLaunch(c, harness.LaunchOptions{ResumeSession: o.Resume, HookCommand: []string{exe, "hook"}, HookTimeoutSeconds: boundaryHookTimeoutSeconds, Model: o.Model, Effort: o.Effort, RolePromptFile: rolePromptFile})
+	options := agentHooks(exe)
+	options.ResumeSession, options.Model, options.Effort, options.RolePromptFile = o.Resume, o.Model, o.Effort, rolePromptFile
+	launch, err := harness.RenderLaunch(c, options)
 	if err != nil {
 		return err
 	}
@@ -306,7 +314,7 @@ func (cmd command) hitchWithStaleClaim(args []string, supersede bool) (result er
 		}
 		return err, false
 	}
-	for k, v := range map[string]string{"GANG_SESSION": run.settings.Session, "GANG_STATE_ROOT": run.settings.StateRoot, "GANG_COLLAR": o.Collar, "GANG_CONFIG_DIR": run.settings.ConfigDir, "GANG_AGENT_ID": id, "GANGLINE_HITCH_ID": id} {
+	for k, v := range map[string]string{"GANG_SESSION": run.settings.Session, "GANG_STATE_ROOT": run.settings.StateRoot, "GANG_COLLAR": o.Collar, "GANG_CONFIG_DIR": run.settings.ConfigDir, "GANG_AGENT_ID": id, "GANGLINE_HITCH_ID": id, collarCheckFIFOEnvironment: ""} {
 		spec.Env[k] = v
 	}
 	if run.settings.Socket != "" {
