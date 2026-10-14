@@ -1,6 +1,7 @@
 package acceptance
 
 import (
+	"encoding/base64"
 	"errors"
 	"fmt"
 	"io"
@@ -308,27 +309,39 @@ func TestCommandLifecycleOnPrivateTmux(t *testing.T) {
 		}
 	}
 	finishDelivery(delivered, "independent delivery")
-	// A peer host's gang forwards over ssh by piping one request into
-	// peer-receive; the recipient sees the host-qualified sender.
+	// A peer host's gang forwards over ssh into the forced command that gang
+	// peer-authorize prints for its key. Outside sshd, that command and any
+	// direct run of peer-receive are refused before the request is read, so
+	// no peer envelope reaches an agent.
 	if err := os.WriteFile(filepath.Join(config, "config"), []byte("GANG_HOST=alpha\nGANG_PEERS={\"alpha\":{\"ssh\":\"loopback\",\"gang\":\""+binary+"\",\"team\":\""+session+"\"}}\n"), 0600); err != nil {
 		t.Fatal(err)
 	}
-	peer := runGang(`{"host":"alpha","team":"`+session+`","id":"msg-0123456789abcdef0123456789abcdef","from":"lead","to":"second","body":"peer delivery"}`, "peer-receive")
-	if peer.status != 0 || !regexp.MustCompile(`^\{"id":"peer-alpha\.msg-0123456789abcdef0123456789abcdef","outcome":"(delivered|queued)"\}\n$`).MatchString(peer.out) {
-		t.Fatalf("peer-receive status=%d\n%s", peer.status, peer.out)
+	keyType := "ssh-ed25519"
+	// An OpenSSH key blob: the type, then the key, each length-prefixed.
+	blob := append(append([]byte{0, 0, 0, byte(len(keyType))}, keyType...), 0, 0, 0, 32)
+	key := keyType + " " + base64.StdEncoding.EncodeToString(append(blob, make([]byte, 32)...)) + " peer@alpha\n"
+	if err := os.WriteFile(filepath.Join(root, "peer.pub"), []byte(key), 0600); err != nil {
+		t.Fatal(err)
 	}
-	check("", "tick")
-	if received, err := os.ReadFile(filepath.Join(root, "received")); err != nil || !regexp.MustCompile(`\[gang:alpha:lead#[0-9a-f]{16}\] peer delivery`).Match(received) {
-		t.Fatalf("native delivery ledger lacks the peer envelope: %q %v", received, err)
+	authorized := check("", "peer-authorize", "alpha", filepath.Join(root, "peer.pub"))
+	forced := regexp.MustCompile(`^command="([^"]*)",restrict ssh-ed25519 \S+ gangline-peer-alpha\n`).FindStringSubmatch(authorized)
+	if forced == nil || forced[1] != binary+" peer-receive --team "+session+" --peer alpha" {
+		t.Fatalf("peer-authorize printed %q", authorized)
 	}
-	// An agent addresses a peer as HOST:NAME; this host enrolls itself, so
-	// the request crosses ssh into its own peer-receive and back.
-	if r := runInPane(worker.Pane, "send", "alpha:second", "over-ssh"); r.status != 0 || !regexp.MustCompile(`(?m)^alpha:peer-alpha\.msg-[0-9a-f]{32}\t(delivered|queued)$`).MatchString(r.out) {
+	if err := os.WriteFile(filepath.Join(bin, "forced"), []byte(forced[1]), 0600); err != nil {
+		t.Fatal(err)
+	}
+	transportRefusal := "peer-receive runs only as the forced command of a peer's key, under this host's sshd"
+	peer := runGang(`{"host":"alpha","team":"`+session+`","id":"msg-0123456789abcdef0123456789abcdef","from":"lead","to":"second","body":"peer delivery"}`, "peer-receive", "--peer", "alpha")
+	if peer.status != 3 || !strings.Contains(peer.out, `{"error":"`+transportRefusal) {
+		t.Fatalf("peer-receive outside sshd status=%d\n%s", peer.status, peer.out)
+	}
+	if r := runInPane(worker.Pane, "send", "alpha:second", "over-ssh"); r.status != 3 || !strings.Contains(r.out, "peer host alpha refused the message") || !strings.Contains(r.out, transportRefusal) {
 		t.Fatalf("peer send status=%d\n%s", r.status, r.out)
 	}
 	check("", "tick")
-	if received, err := os.ReadFile(filepath.Join(root, "received")); err != nil || !regexp.MustCompile(`\[gang:alpha:worker#[0-9a-f]{16}\] over-ssh`).Match(received) {
-		t.Fatalf("native delivery ledger lacks the forwarded envelope: %q %v", received, err)
+	if received, err := os.ReadFile(filepath.Join(root, "received")); err != nil || strings.Contains(string(received), "peer delivery") || strings.Contains(string(received), "over-ssh") {
+		t.Fatalf("a refused peer request reached an agent: %q %v", received, err)
 	}
 	if err := os.Chmod(team.Log, 0200); err != nil {
 		t.Fatal(err)

@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/adambiggs/gangline/core"
+	"github.com/adambiggs/gangline/substrate/tmux"
 )
 
 const peerTestID = "msg-0123456789abcdef0123456789abcdef"
@@ -28,20 +29,73 @@ func peerRequestJSON(t *testing.T, edit func(map[string]any)) string {
 	return string(data)
 }
 
+// fakeProcesses is a process table that answers each read from a script.
+type fakeProcesses struct {
+	uid uint32
+	// parents are successive getppid results; the last repeats.
+	parents []int
+	// table holds successive reads of each PID; the last repeats. A read
+	// with PID 0 finds no process.
+	table map[int][]tmux.Owner
+	reads map[int]int
+	calls int
+}
+
+func (p *fakeProcesses) parentPID() int {
+	i := min(p.calls, len(p.parents)-1)
+	p.calls++
+	return p.parents[i]
+}
+
+func (p *fakeProcesses) userID() uint32 { return p.uid }
+
+func (p *fakeProcesses) owner(pid int) (tmux.Owner, error) {
+	reads := p.table[pid]
+	if len(reads) == 0 {
+		return tmux.Owner{}, os.ErrNotExist
+	}
+	i := min(p.reads[pid], len(reads)-1)
+	p.reads[pid]++
+	if reads[i].PID == 0 {
+		return tmux.Owner{}, os.ErrNotExist
+	}
+	return reads[i], nil
+}
+
+// sshdChain is the process table of a command sshd runs for user 1000: PID
+// 50 is the user's sshd process, under root's sshd at PID 40.
+func sshdChain(session string) *fakeProcesses {
+	return &fakeProcesses{uid: 1000, parents: []int{50}, reads: map[int]int{}, table: map[int][]tmux.Owner{
+		50: {{PID: 50, ParentPID: 40, UID: 1000, RealUID: 1000, Command: session}},
+		40: {{PID: 40, ParentPID: 1, UID: 0, RealUID: 0, Command: session}},
+	}}
+}
+
 func peerFixture(t *testing.T) (*stateFixture, core.Agent) {
 	t.Helper()
 	f := newStateFixture(t)
 	f.env["GANG_PEERS"] = `{"alpha":{"ssh":"alpha","user":"adam","gang":"/opt/gang","team":"unit"}}`
+	f.cmd.processes = sshdChain("sshd")
 	a := f.add(t, "worker-id", "worker", "codex")
 	f.env["GANGLINE_HITCH_ID"] = string(a.ID)
 	return f, a
 }
 
 func peerReceive(f *stateFixture, request string) (peerReply, error) {
+	return peerReceiveAs(f, "alpha", request)
+}
+
+// peerReceiveAs runs peer-receive as the forced command of host's key; an
+// empty host leaves --peer out.
+func peerReceiveAs(f *stateFixture, host, request string) (peerReply, error) {
 	f.out.Reset()
 	cmd := f.cmd
 	cmd.stdin = strings.NewReader(request)
-	err := cmd.execute([]string{"peer-receive"})
+	args := []string{"peer-receive"}
+	if host != "" {
+		args = append(args, "--peer", host)
+	}
+	err := cmd.execute(args)
 	var reply peerReply
 	if decodeErr := json.Unmarshal([]byte(f.out.String()), &reply); decodeErr != nil {
 		return reply, errors.Join(err, decodeErr)
@@ -109,11 +163,16 @@ func TestPeerReceiveRefusesForgedOrMalformedRequests(t *testing.T) {
 	for _, tc := range []struct {
 		name    string
 		request func(*testing.T) string
-		setup   func(*stateFixture)
+		setup   func(f *stateFixture, peer *string)
 		want    string
 	}{
-		{"unenrolled host", func(t *testing.T) string { return peerRequestJSON(t, set("host", "beta")) }, nil, "not enrolled"},
-		{"no peers configured", func(t *testing.T) string { return peerRequestJSON(t, nil) }, func(f *stateFixture) { delete(f.env, "GANG_PEERS") }, "not enrolled"},
+		{"unenrolled host", func(t *testing.T) string { return peerRequestJSON(t, set("host", "beta")) }, func(f *stateFixture, peer *string) { *peer = "beta" }, "not enrolled"},
+		{"no peers configured", func(t *testing.T) string { return peerRequestJSON(t, nil) }, func(f *stateFixture, peer *string) { delete(f.env, "GANG_PEERS") }, "not enrolled"},
+		{"no --peer", func(t *testing.T) string { return peerRequestJSON(t, nil) }, func(f *stateFixture, peer *string) { *peer = "" }, "gang peer-authorize HOST PUBKEY_FILE"},
+		{"request names another host", func(t *testing.T) string { return peerRequestJSON(t, set("host", "beta")) }, nil, `request names host "beta", but this key is bound to "alpha"`},
+		{"request names another enrolled host", func(t *testing.T) string { return peerRequestJSON(t, set("host", "beta")) }, func(f *stateFixture, peer *string) {
+			f.env["GANG_PEERS"] = `{"alpha":{"ssh":"alpha","gang":"/opt/gang","team":"unit"},"beta":{"ssh":"beta","gang":"/opt/gang","team":"unit"}}`
+		}, "this key is bound to"},
 		{"local name label", func(t *testing.T) string { return peerRequestJSON(t, set("from", "alpha:lead")) }, nil, "not an agent name"},
 		{"self-declared label", func(t *testing.T) string { return peerRequestJSON(t, set("from", "self-declared:lead")) }, nil, "not an agent name"},
 		{"reserved sender", func(t *testing.T) string { return peerRequestJSON(t, set("from", "gangline")) }, nil, "not an agent name"},
@@ -130,17 +189,18 @@ func TestPeerReceiveRefusesForgedOrMalformedRequests(t *testing.T) {
 		{"unknown field", func(t *testing.T) string { return peerRequestJSON(t, set("kind", "agent")) }, nil, "unknown field"},
 		{"trailing data", func(t *testing.T) string { return peerRequestJSON(t, nil) + "{}" }, nil, "after its JSON object"},
 		{"oversized request", func(t *testing.T) string { return strings.Repeat(" ", maximumPeerRequestBytes+1) }, nil, "exceeds"},
-		{"inside agent pane", func(t *testing.T) string { return peerRequestJSON(t, nil) }, func(f *stateFixture) {
+		{"inside agent pane", func(t *testing.T) string { return peerRequestJSON(t, nil) }, func(f *stateFixture, peer *string) {
 			f.add(t, "lead-id", "lead", "codex")
 			f.env["GANG_AGENT_ID"] = "lead-id"
 		}, "registered agent lead"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			f, a := peerFixture(t)
+			peer := "alpha"
 			if tc.setup != nil {
-				tc.setup(f)
+				tc.setup(f, &peer)
 			}
-			reply, err := peerReceive(f, tc.request(t))
+			reply, err := peerReceiveAs(f, peer, tc.request(t))
 			var refusal commandError
 			if !errors.As(err, &refusal) || refusal.status != exitRefused || !strings.Contains(err.Error(), tc.want) {
 				t.Fatalf("error = %v, want refusal containing %q", err, tc.want)
@@ -256,7 +316,7 @@ func TestPeersConfiguration(t *testing.T) {
 func TestPeerHostCannotNameADerivedID(t *testing.T) {
 	f, _ := peerFixture(t)
 	f.env["GANG_PEERS"] = `{"resume-x":{"ssh":"x","gang":"/opt/gang","team":"unit"}}`
-	reply, err := peerReceive(f, peerRequestJSON(t, func(r map[string]any) {
+	reply, err := peerReceiveAs(f, "resume-x", peerRequestJSON(t, func(r map[string]any) {
 		r["host"], r["from"] = "resume-x", "compact"
 	}))
 	if err != nil || reply.ID != "peer-resume-x."+peerTestID || reply.Outcome != "delivered" {
@@ -287,6 +347,7 @@ func TestPeerReceiveKeepsSendRecipientChecks(t *testing.T) {
 	t.Run("paste hazard", func(t *testing.T) {
 		f, a, p := claudeRecipient(t)
 		f.env["GANG_PEERS"] = `{"alpha":{"ssh":"alpha","gang":"/opt/gang","team":"unit"}}`
+		f.cmd.processes = sshdChain("sshd")
 		f.env["GANGLINE_HITCH_ID"] = string(a.ID)
 		reply, err := peerReceive(f, peerRequestJSON(t, func(r map[string]any) { r["body"] = placeholderQuote }))
 		requirePlaceholderRefusal(t, err)
@@ -326,5 +387,84 @@ func TestPeerReceiveRefusesARacingDuplicate(t *testing.T) {
 	}
 	if f.input.pasted != "" {
 		t.Fatalf("pasted = %q", f.input.pasted)
+	}
+}
+
+func TestPeerTransportAdmitsSSHDChildren(t *testing.T) {
+	for _, session := range []string{"sshd", "sshd-session"} {
+		if err := checkPeerTransport(sshdChain(session)); err != nil {
+			t.Errorf("%s: %v", session, err)
+		}
+	}
+}
+
+// Only sshd's child for an authenticated key may run peer-receive. Each
+// refused table differs from an admitted one in one read.
+func TestPeerReceiveRefusesAnyOtherTransport(t *testing.T) {
+	edit := func(pid int, change func(*tmux.Owner)) func(*fakeProcesses) {
+		return func(p *fakeProcesses) { change(&p.table[pid][0]) }
+	}
+	for _, tc := range []struct {
+		name   string
+		change func(*fakeProcesses)
+		want   string
+	}{
+		{"parent not sshd", edit(50, func(o *tmux.Owner) { o.Command = "bash" }), `parent process 50 is "bash"`},
+		{"parent named like sshd", edit(50, func(o *tmux.Owner) { o.Command = "sshd " }), `parent process 50 is "sshd "`},
+		{"parent of another real user", edit(50, func(o *tmux.Owner) { o.RealUID = 1001 }), "1001 real"},
+		{"parent of another effective user", edit(50, func(o *tmux.Owner) { o.UID = 0 }), "0 effective"},
+		{"parent unreadable", func(p *fakeProcesses) { delete(p.table, 50) }, "read parent process 50"},
+		{"grandparent not sshd", edit(40, func(o *tmux.Owner) { o.Command = "systemd" }), `process 40 above sshd is "systemd"`},
+		{"grandparent real user not root", edit(40, func(o *tmux.Owner) { o.RealUID = 1000 }), "1000 real"},
+		{"grandparent effective user not root", edit(40, func(o *tmux.Owner) { o.UID = 1000 }), "1000 effective"},
+		{"grandparent unreadable", func(p *fakeProcesses) { delete(p.table, 40) }, "read sshd process 40"},
+		{"parent moved while read", func(p *fakeProcesses) {
+			p.table[50] = append(p.table[50], tmux.Owner{PID: 50, ParentPID: 1, UID: 1000, RealUID: 1000, Command: "sshd"})
+		}, "moved from parent 40 to 1"},
+		{"parent gone on reread", func(p *fakeProcesses) { p.table[50] = append(p.table[50], tmux.Owner{}) }, "read parent process 50 again"},
+		{"own parent changed", func(p *fakeProcesses) { p.parents = []int{50, 1} }, "changed from 50 to 1"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			f, a := peerFixture(t)
+			processes := sshdChain("sshd")
+			tc.change(processes)
+			f.cmd.processes = processes
+			stdin := strings.NewReader(peerRequestJSON(t, nil))
+			f.cmd.stdin = stdin
+			err := f.cmd.execute([]string{"peer-receive", "--peer", "alpha"})
+			var refusal commandError
+			if !errors.As(err, &refusal) || refusal.status != exitRefused || !strings.Contains(err.Error(), peerTransportRefusal) || !strings.Contains(err.Error(), tc.want) {
+				t.Fatalf("error = %v, want the transport refusal with %q", err, tc.want)
+			}
+			if stdin.Len() != int(stdin.Size()) {
+				t.Fatalf("refused request read %d bytes of stdin", int(stdin.Size())-stdin.Len())
+			}
+			p, err := f.run.team.Agent(a.ID)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if pending, err := p.ListNew(); err != nil || len(pending) != 0 || f.input.submits != 0 {
+				t.Fatalf("refused request published: %+v submits=%d err=%v", pending, f.input.submits, err)
+			}
+		})
+	}
+}
+
+// The sender's label and the envelope ID name the host whose key ran
+// peer-receive.
+func TestPeerReceiveLabelsTheBoundHost(t *testing.T) {
+	f, a := peerFixture(t)
+	f.env["GANG_PEERS"] = `{"alpha":{"ssh":"alpha","gang":"/opt/gang","team":"unit"},"beta":{"ssh":"beta","gang":"/opt/gang","team":"unit"}}`
+	reply, err := peerReceiveAs(f, "beta", peerRequestJSON(t, func(r map[string]any) { r["host"] = "beta" }))
+	if err != nil || reply.ID != "peer-beta."+peerTestID {
+		t.Fatalf("reply = %+v, err = %v", reply, err)
+	}
+	p, err := f.run.team.Agent(a.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	e, err := p.ReadEnvelope("cur", reply.ID)
+	if err != nil || e.From != (core.Sender{Kind: core.SenderPeer, Name: "lead", Host: "beta"}) {
+		t.Fatalf("sender = %+v, err = %v", e.From, err)
 	}
 }

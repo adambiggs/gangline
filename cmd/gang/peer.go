@@ -6,15 +6,18 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"os"
 	"regexp"
 
 	"github.com/adambiggs/gangline/core"
 	"github.com/adambiggs/gangline/store"
+	"github.com/adambiggs/gangline/substrate/tmux"
 )
 
 // peerRequest is one message an enrolled peer host's gang forwards here. That
 // gang verified From as its own calling agent; this host trusts the enrolled
-// host for that and observes neither.
+// host for that and observes neither. Host must name the host the ssh key that
+// ran peer-receive is bound to; the sender's own reply check reads it back.
 type peerRequest struct {
 	Host string `json:"host"`
 	Team string `json:"team"`
@@ -52,7 +55,13 @@ func (cmd command) peerReceive(args []string) (result error) {
 		}
 		result = errors.Join(result, writeJSON(cmd.stdout, reply))
 	}()
-	if err := noArguments(args, "peer-receive"); err != nil {
+	host := ""
+	flags := boundFlagSet("peer-receive", map[string]any{"peer": &host})
+	positionals, err := parseOptions(flags, args)
+	if err != nil {
+		return usageError("peer-receive: %v", err)
+	}
+	if err := noArguments(positionals, "peer-receive"); err != nil {
 		return err
 	}
 	run, err := cmd.runtime()
@@ -66,12 +75,23 @@ func (cmd command) peerReceive(args []string) (result error) {
 	} else if a != nil {
 		return refuseError("peer-receive is a peer host's ingress; registered agent %s sends with gang send", a.Name)
 	}
+	// The sender's host comes from the forced command of the key sshd
+	// authenticated, never from the request, which the sender writes.
+	if host == "" {
+		return refuseError("peer-receive needs --peer HOST from the forced command of that peer's key; run gang peer-authorize HOST PUBKEY_FILE on this host to set one up")
+	}
+	if _, enrolled := run.settings.Peers[host]; !enrolled {
+		return refuseError("peer host %q is not enrolled in GANG_PEERS", host)
+	}
+	if err := checkPeerTransport(cmd.peerProcesses()); err != nil {
+		return err
+	}
 	request, err := readPeerRequest(cmd.stdin)
 	if err != nil {
 		return err
 	}
-	if _, enrolled := run.settings.Peers[request.Host]; !enrolled {
-		return refuseError("peer host %q is not enrolled in GANG_PEERS", request.Host)
+	if request.Host != host {
+		return refuseError("request names host %q, but this key is bound to %q", request.Host, host)
 	}
 	if request.Team != run.settings.Session {
 		return refuseError("request names team %q, not the selected team %q", request.Team, run.settings.Session)
@@ -106,7 +126,7 @@ func (cmd command) peerReceive(args []string) (result error) {
 	} else if failedStartup {
 		return refuseError("startup contract input is unverified; inspect the recipient and run gang hitch %s --recover before sending another message", a.Name)
 	}
-	id := core.EnvelopeID("peer-" + request.Host + "." + request.ID)
+	id := core.EnvelopeID("peer-" + host + "." + request.ID)
 	alreadyPublished := refuseError("message %s was already published here; do not resend", id)
 	// This check sees the receipts this agent retains. Of two requests that
 	// pass it together, publishing queues only the first.
@@ -119,7 +139,7 @@ func (cmd command) peerReceive(args []string) (result error) {
 	if err != nil {
 		return err
 	}
-	from := core.Sender{Kind: core.SenderPeer, Name: core.AgentName(request.From), Host: request.Host}
+	from := core.Sender{Kind: core.SenderPeer, Name: core.AgentName(request.From), Host: host}
 	e := core.Envelope{ID: id, Token: token, Recipient: a.ID, To: a.Name, From: from, Message: core.Message{Text: request.Body}, CreatedAt: cmd.now()}
 	wire, err := envelopeText(e)
 	if err != nil {
@@ -149,6 +169,80 @@ func (cmd command) peerReceive(args []string) (result error) {
 		}
 	}
 	return deliveryResult(outcome)
+}
+
+// peerTransportRefusal is the reason peer-receive gives when it is not running
+// as sshd's child for an authenticated peer key.
+const peerTransportRefusal = "peer-receive runs only as the forced command of a peer's key, under this host's sshd; run gang peer-authorize to set one up"
+
+// sshdCommands are the names OpenSSH gives its per-connection processes:
+// sshd, or sshd-session where OpenSSH runs each session as its own program.
+var sshdCommands = map[string]bool{"sshd": true, "sshd-session": true}
+
+// processTable is the view of this host's processes the transport check
+// reads.
+type processTable interface {
+	// parentPID is this process's parent, as getppid reports it.
+	parentPID() int
+	// userID is this process's real user ID.
+	userID() uint32
+	owner(pid int) (tmux.Owner, error)
+}
+
+type hostProcesses struct{}
+
+func (hostProcesses) parentPID() int                    { return os.Getppid() }
+func (hostProcesses) userID() uint32                    { return uint32(os.Getuid()) }
+func (hostProcesses) owner(pid int) (tmux.Owner, error) { return tmux.ProcessOwner(pid) }
+
+func (cmd command) peerProcesses() processTable {
+	if cmd.processes != nil {
+		return cmd.processes
+	}
+	return hostProcesses{}
+}
+
+// checkPeerTransport admits peer-receive only as the command sshd runs for an
+// authenticated key: its parent is an sshd process of this user, privilege
+// separated from a root sshd above it. A local process of this user cannot
+// place itself under a root sshd, so --peer is the forced command's.
+//
+// The parent is read, then its parent, then the parent again. A process whose
+// parent exits is moved to another parent, so a grandparent still named by
+// the parent's second read is the one read between, and a getppid unchanged
+// at the end means the parent read is this process's own: a PID reused in
+// between cannot pass.
+//
+// The environment sshd sets is not consulted; whoever runs the command sets
+// it.
+func checkPeerTransport(processes processTable) error {
+	pid := processes.parentPID()
+	parent, err := processes.owner(pid)
+	if err != nil {
+		return refuseError("%s (read parent process %d: %v)", peerTransportRefusal, pid, err)
+	}
+	uid := processes.userID()
+	if !sshdCommands[parent.Command] || parent.UID != uid || parent.RealUID != uid {
+		return refuseError("%s (parent process %d is %q with user IDs %d real, %d effective; want sshd or sshd-session as user %d)", peerTransportRefusal, pid, parent.Command, parent.RealUID, parent.UID, uid)
+	}
+	grandparent, err := processes.owner(parent.ParentPID)
+	if err != nil {
+		return refuseError("%s (read sshd process %d: %v)", peerTransportRefusal, parent.ParentPID, err)
+	}
+	if !sshdCommands[grandparent.Command] || grandparent.UID != 0 || grandparent.RealUID != 0 {
+		return refuseError("%s (process %d above sshd is %q with user IDs %d real, %d effective; want sshd or sshd-session as root)", peerTransportRefusal, parent.ParentPID, grandparent.Command, grandparent.RealUID, grandparent.UID)
+	}
+	again, err := processes.owner(pid)
+	if err != nil {
+		return refuseError("%s (read parent process %d again: %v)", peerTransportRefusal, pid, err)
+	}
+	if again.ParentPID != parent.ParentPID {
+		return refuseError("%s (parent process %d moved from parent %d to %d while it was read)", peerTransportRefusal, pid, parent.ParentPID, again.ParentPID)
+	}
+	if now := processes.parentPID(); now != pid {
+		return refuseError("%s (parent process changed from %d to %d while it was read)", peerTransportRefusal, pid, now)
+	}
+	return nil
 }
 
 // readPeerRequest reads exactly one bounded JSON request with no unknown

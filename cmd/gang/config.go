@@ -34,7 +34,8 @@ type settings struct {
 }
 
 // peerHost is an enrolled peer host: its gang may deliver messages here that
-// name one of its agents as the sender, and gang send HOST:NAME reaches it by
+// name one of its agents as the sender, through the forced command gang
+// peer-authorize prints for its key, and gang send HOST:NAME reaches it by
 // running Gang peer-receive --team Team over ssh.
 type peerHost struct {
 	SSH  string `json:"ssh"`

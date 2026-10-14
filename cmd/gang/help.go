@@ -63,6 +63,9 @@ Settings and discovery:
   roles     list role briefs
   config    show effective configuration
 
+Peer hosts:
+  peer-authorize print the ssh key line that admits a peer host
+
 Installation:
   version   print the release version
   upgrade   install the latest release
@@ -110,9 +113,11 @@ var commandUsage = map[string]string{
 	"help":       "usage: gang help [COMMAND]\n",
 	"version":    "usage: gang version\n",
 
-	// The commandInventory omits peer-receive: it is a peer host's ingress,
-	// not a command an agent runs.
-	"peer-receive": "usage: gang peer-receive [--team TEAM] < peer-request.json\n",
+	"peer-authorize": "usage: gang peer-authorize HOST PUBKEY_FILE [--team TEAM]\n",
+
+	// The commandInventory omits peer-receive: it is the forced command of a
+	// peer host's ssh key, not a command an agent or operator runs.
+	"peer-receive": "usage: gang peer-receive --peer HOST [--team TEAM] < peer-request.json\n",
 }
 
 type optionSpec struct {
@@ -189,8 +194,9 @@ var commandOptions = map[string][]optionSpec{
 		{"c", "COLLAR", "harness collar (default GANG_COLLAR)"},
 		{"collar", "COLLAR", "harness collar (default GANG_COLLAR)"},
 	},
-	"down":    {{"y", "", "skip confirmation"}, {"yes", "", "skip confirmation"}},
-	"upgrade": {{"y", "", "skip confirmation"}, {"yes", "", "skip confirmation"}},
+	"down":         {{"y", "", "skip confirmation"}, {"yes", "", "skip confirmation"}},
+	"peer-receive": {{"peer", "HOST", "enrolled peer host the calling key is bound to"}},
+	"upgrade":      {{"y", "", "skip confirmation"}, {"yes", "", "skip confirmation"}},
 }
 
 // upOptions are hitch's options with the role default up applies.
@@ -220,7 +226,7 @@ var teamCommands = map[string]bool{
 	"status": true, "tick": true, "capture": true, "whoami": true,
 	"roster": true, "attach": true, "drop": true, "down": true,
 
-	"peer-receive": true,
+	"peer-receive": true, "peer-authorize": true,
 }
 
 // helpOptions is a command's own options plus the team selector it accepts.
@@ -308,7 +314,9 @@ var commandDescription = map[string]string{
 	"help":       "Show the command inventory or detailed help for one command.\n",
 	"version":    "Print the release version.\n",
 
-	"peer-receive": "Deliver one message forwarded by an enrolled peer host's gang. Read a JSON\nrequest of host, team, id, from, to, and body on stdin; print one JSON line\nwith the message ID and outcome, or the error that published nothing.\n",
+	"peer-authorize": "HOST is an enrolled GANG_PEERS host; PUBKEY_FILE holds one OpenSSH public key\nthat HOST keeps for this link. Print the authorized_keys line whose forced\ncommand runs gang peer-receive --peer HOST for the selected team, and the\nsteps HOST takes to send with that key.\n",
+
+	"peer-receive": "Deliver one message forwarded by an enrolled peer host's gang. Runs only as\nthe forced command gang peer-authorize prints, as sshd's child; the sender\nis HOST from --peer. Read a JSON request of host, team, id, from, to, and\nbody on stdin; print one JSON line with the message ID and outcome, or the\nerror that published nothing.\n",
 }
 
 const flagSyntaxHelp = "Flags accept - or --, VALUE or =VALUE, and one-letter flags also -cVALUE;\nswitches accept =true/=false. Flags may follow operands; -- ends flags.\n"

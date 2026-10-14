@@ -66,7 +66,12 @@ type command struct {
 	schedulerLockWait func()
 	// flock takes the watchdog scheduler lock in cleanup's blocking wait;
 	// nil means syscall.Flock.
-	flock        func(fd int, how int) error
+	flock func(fd int, how int) error
+	// processes is the process table peer-receive checks its ssh transport
+	// against; nil means this host's.
+	processes processTable
+	// executable is the path of this gang binary; nil means os.Executable.
+	executable   func() (string, error)
 	presentation *operatorNames
 }
 
@@ -271,6 +276,8 @@ func (cmd command) execute(args []string) (result error) {
 		return cmd.send(arguments)
 	case "peer-receive":
 		return cmd.peerReceive(arguments)
+	case "peer-authorize":
+		return cmd.peerAuthorize(arguments)
 	case "queue":
 		return cmd.queue(arguments)
 	case "interrupt":

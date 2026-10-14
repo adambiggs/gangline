@@ -31,9 +31,19 @@ an observed agent name. A sender supplied with `--from` is marked
 `self-declared:` because Gangline did not observe that identity.
 
 A message forwarded by an enrolled peer host names its sender `HOST:NAME`,
-such as `alpha:lead`. The peer host's Gangline observed that agent; the
-receiving host trusts the enrolled host for it and observes neither. Agent
-names cannot contain `:`, so no local sender can take that form.
+such as `alpha:lead`. HOST is the enrolled host whose ssh key delivered the
+message: `gang peer-receive` runs only as the forced command that
+`gang peer-authorize` prints for that key, as the child of this host's sshd,
+and takes HOST from that command rather than from the request. NAME is the
+agent the peer host's Gangline observed; the receiving host trusts that host
+for it and observes nothing of it. Agent names cannot contain `:`, so no local
+sender can take that form.
+
+The binding holds for that ingress only. Anyone with a shell as the receiving
+account can still forge a peer label: a key authorized for the account without
+a forced command can run `gang peer-receive --peer` naming any enrolled host
+under sshd, and a local process of that user can write team state or type into
+a pane directly.
 
 A system sender such as `usage-band` identifies a message emitted by Gangline. Text supplied
 by the caller, such as an interrupt reason, still has an unverified author.

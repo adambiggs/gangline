@@ -35,7 +35,8 @@ var teamSelectorCommands = map[string][]string{
 	"drop":      {"worker"},
 	"down":      {"--yes"},
 
-	"peer-receive": {},
+	"peer-receive":   {"--peer", "alpha"},
+	"peer-authorize": {"alpha", "key.pub"},
 }
 
 // addToTeam registers a worker in another team under the fixture's state root.

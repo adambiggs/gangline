@@ -2,6 +2,7 @@ package main
 
 import (
 	"bytes"
+	"io"
 	"reflect"
 	"strings"
 	"testing"
@@ -216,6 +217,11 @@ func TestEveryCommandFlagParserConstructs(t *testing.T) {
 		"queue":      func() error { return cmd.queue(bad) },
 		"models":     func() error { _, err := parseCollarFlags("models", bad, "codex"); return err },
 		"upgrade":    func() error { return cmd.upgrade(bad) },
+		"peer-receive": func() error {
+			receiver := cmd
+			receiver.stdout = io.Discard
+			return receiver.peerReceive(bad)
+		},
 	}
 	for name, check := range checks {
 		t.Run(name, func(t *testing.T) {
