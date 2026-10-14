@@ -23,6 +23,7 @@ func TestValidateResumeUsesSelectedNativeStoreAndIdentity(t *testing.T) {
 		{"claude", "codex-id", true, true}, {"codex", "claude-id", true, true},
 		{"codex", "missing-id", true, true}, {"claude", "missing-id", true, true},
 		{"codex", "../codex-id", false, false}, {"claude", "*", false, false},
+		{"codex", "--dangerously-bypass-approvals-and-sandbox", false, false}, {"claude", "--dangerously-skip-permissions", false, false},
 	} {
 		t.Run(test.collar+"/"+test.session, func(t *testing.T) {
 			c, err := EmbeddedCollar(test.collar)
@@ -109,6 +110,9 @@ func TestValidateResumeKeepsCustomCollarWithoutTelemetry(t *testing.T) {
 	// ResumeArgs are sufficient for a custom collar; telemetry is optional.
 	if _, err := ValidateResume(c, "native-id"); err != nil {
 		t.Fatalf("ValidateResume = %v", err)
+	}
+	if _, err := ValidateResume(c, "--yolo"); err == nil {
+		t.Fatal("ValidateResume accepted a native option as the session")
 	}
 }
 

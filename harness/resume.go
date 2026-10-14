@@ -10,13 +10,18 @@ import (
 	"strings"
 )
 
-// ValidateResume refuses a resume only when a native transcript stored under
-// the session ID names a different session. Every state it cannot judge (no
-// native store, no transcript, an unreadable header) is left to the native CLI
-// and returned as unverified.
+// ValidateResume refuses a resume session that starts with '-', and otherwise
+// only when a native transcript stored under the session ID names a different
+// session. Every state it cannot judge (no native store, no transcript, an
+// unreadable header) is left to the native CLI and returned as unverified.
 func ValidateResume(collar Collar, session string) (unverified string, err error) {
 	refuse := func(reason string) error {
 		return fmt.Errorf("refuse resume session %q for collar %q: %s", session, collar.Name, reason)
+	}
+	// The session becomes a native argv word, where a leading dash reads as
+	// an option rather than a session.
+	if strings.HasPrefix(session, "-") {
+		return "", refuse("a session ID cannot start with '-'")
 	}
 	if collar.Primitives.Telemetry == nil {
 		return "", nil
