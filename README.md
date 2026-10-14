@@ -19,11 +19,7 @@ Then tell the lead what you want:
 The lead briefs a worker, receives its report, and brings the result back.
 Watch their tmux panes in separate windows or a shared split layout.
 
-<picture>
-  <source media="(prefers-color-scheme: dark)" srcset="site/demo.gif">
-  <source media="(prefers-color-scheme: light)" srcset="site/demo-light.gif">
-  <img alt="A Claude Code lead asks a Codex worker for an animated greeting; the finished result plays after the reply" src="site/demo.gif">
-</picture>
+<img alt="A Claude Code lead asks a Codex worker for an animated greeting; the finished result plays after the reply" src="site/demo.gif">
 
 The Claude Code lead asks a Codex worker to finish an animated greeting. The
 worker edits and runs it, reports back, and the finished animation plays.

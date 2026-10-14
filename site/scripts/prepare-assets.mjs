@@ -6,7 +6,6 @@ const site = resolve(import.meta.dirname, '..');
 const publicDir = resolve(site, 'public');
 mkdirSync(publicDir, { recursive: true });
 for (const file of [
-  'CNAME', 'demo.txt', 'demo.gif', 'demo-light.gif',
-  'demo.mp4', 'demo-light.mp4', 'demo-poster.jpg', 'demo-poster-light.jpg',
+  'CNAME', 'demo.txt', 'demo.gif', 'demo.mp4', 'demo-poster.jpg',
 ]) copyFileSync(resolve(site, file), resolve(publicDir, file));
 cpSync(resolve(site, 'fonts'), resolve(publicDir, 'fonts'), { recursive: true, force: true });

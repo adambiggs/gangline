@@ -43,8 +43,7 @@ Review the captured event log and scrollback before publishing. Confirm both
 message deliveries and the animation's final text. The recorder requires the
 worker's source to match the checked-in result exactly. `verify.py` requires
 both registered senders and native delivery receipts before the script
-installs the assets and writes `site/demo.txt` from the
-recorded messages. Inspect the entire video for private material, cropped text,
-permission prompts and missing work. The native terminal appearance is kept
-in both site themes. GitHub Pages publishes the generated video, GIF and poster
-with cache-versioned URLs.
+installs the assets and writes `site/demo.txt` from the recorded messages.
+Inspect the entire video for private material, cropped text, permission
+prompts and missing work. GitHub Pages publishes the generated video, GIF and
+poster with cache-versioned URLs.

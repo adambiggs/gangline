@@ -116,8 +116,4 @@ mv site/demo/.demo-render.gif "$DEMO_STATE/demo.gif"
 cp "$DEMO_STATE/demo.mp4" site/demo.mp4
 cp "$DEMO_STATE/demo.gif" site/demo.gif
 ffmpeg -v error -y -sseof -3 -i site/demo.mp4 -frames:v 1 site/demo-poster.jpg
-# Native terminals retain the same appearance in either site theme.
-cp site/demo.mp4 site/demo-light.mp4
-cp site/demo.gif site/demo-light.gif
-cp site/demo-poster.jpg site/demo-poster-light.jpg
 printf 'Recorded native session: %s\n' "$DEMO_STATE"
