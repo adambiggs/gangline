@@ -47,7 +47,6 @@ next operation for them.
 | File | Holds |
 |---|---|
 | `README.md` | what Gangline is and why |
-| `ARCHITECTURE.md` | packages and the message path |
 | `docs/design.md` | principles and decisions |
 | `docs/reference.md` | commands, environment, collar contract |
 | `docs/operations.md` | running unattended and recovery |

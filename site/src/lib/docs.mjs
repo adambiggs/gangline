@@ -10,7 +10,6 @@ export const sources = {
   readme: 'README.md',
   contributing: 'CONTRIBUTING.md',
   security: 'SECURITY.md',
-  architecture: 'ARCHITECTURE.md',
   concepts: 'docs/concepts.md',
   design: 'docs/design.md',
   guides: 'docs/guides.md',
