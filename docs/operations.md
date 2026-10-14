@@ -87,9 +87,7 @@ Git allow rules if those writes should receive approval for each request.
 `approval_policy = "never"` disables escalation; it does not automatically
 approve requests. Do not combine that setting with partial Git storage grants:
 a commit can survive while a hook fails to write `packed-refs.lock`, leaving
-publication blocked. When migrating from storage grants, remove Git `--add-dir`
-arguments and write rules for common/private metadata and workspace `.git`.
-Keep required read access and restart affected agents.
+publication blocked.
 
 The following is a starting profile for a dedicated team, using the
 [Codex permission profile syntax](https://learn.chatgpt.com/docs/permissions).
@@ -115,7 +113,6 @@ description = "Trusted checkout development and a dedicated team state root"
 "/home/you/.local/share/gangline" = "read"
 "/home/you/.local/bin/gang" = "read"
 "/home/you/.config/gangline" = "read"
-"/home/you/team-briefs" = "write"
 "/home/you/Repos/project/.git" = "read"
 "/run/user/1000/gangline" = "write"
 
@@ -126,7 +123,7 @@ description = "Trusted checkout development and a dedicated team state root"
 enabled = true
 ```
 
-This limits unapproved writes to the checkout, team state and briefs. Approved
+This limits unapproved writes to the checkout and team state. Approved
 commands can write outside those roots. It allows ordinary temporary files and
 direct network access. It is
 not a network destination allowlist: profile domain rules require Codex's
@@ -147,25 +144,11 @@ administrator-managed policy; a syntactically valid profile is not proof that
 a command can run. Restart affected agents after changing grants.
 
 A sandboxed lead can hitch and drop through the team's tmux socket. Creating
-or removing linked worktrees and updating the canonical checkout need the
-same native approval path when they write outside the permitted roots.
-Do not grant the whole repositories parent. Pushes also need working
-authentication; leave them with the operator when credentials are unavailable.
-Do not add a host command proxy or forward a signing agent to bypass a refusal.
-
-A "host-shell" role is an ordinary sandboxed worker with a specific task
-checkout, not an escape hatch. It can apply reviewed patches, run local test
-runners inside its grants, and request native approval for Git writes. Hardcoded external test scratch
-needs an exact directory grant or a supported runner override. A deployment tree
-containing code used by host services is not ordinary scratch: keep patch
-application there with the host operator unless that execution authority is
-explicitly intended. Reading a selected transcript does not require write
-access to a real harness profile; prefer a sanitized export for investigation.
-Native reproduction requiring that profile to write remains a host task.
+or removing linked worktrees needs the same native approval path when it
+writes outside the permitted roots, and pushes need working authentication.
 
 `[process-unavailable]` means the caller cannot verify host process ancestry.
 The registered-pane fallback still supports team operations, but detached
 children may survive drop; a filesystem grant cannot restore PID namespace
-visibility. Do not remove the marker or weaken identity checks to make a team
-look healthy. Full host process cleanup, native trust/login prompts and any
+visibility. Full host process cleanup, native trust/login prompts and any
 operation refused by the effective policy remain operator responsibilities.
