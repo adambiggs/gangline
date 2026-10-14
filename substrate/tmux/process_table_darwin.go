@@ -77,29 +77,52 @@ func listDarwinPIDs(ctx context.Context) ([]int, error) {
 	return nil, fmt.Errorf("read process tree: native PID list changed during enumeration")
 }
 
-func readDarwinBSDProcess(pid int) (processRecord, error) {
+func readDarwinBSDInfo(pid int) (darwinBSDInfo, error) {
 	var info darwinBSDInfo
 	size := unsafe.Sizeof(info)
 	count, _, errno := syscall.Syscall6(syscall.SYS_PROC_INFO, procInfoPIDInfo, uintptr(pid), procPIDTBSDInfo, 0,
 		uintptr(unsafe.Pointer(&info)), size)
 	if errno != 0 {
-		return processRecord{}, errno
+		return darwinBSDInfo{}, errno
 	}
 	if count == 0 {
-		return processRecord{}, os.ErrNotExist
+		return darwinBSDInfo{}, os.ErrNotExist
 	}
 	if count != size || info.PID != uint32(pid) {
-		return processRecord{}, fmt.Errorf("native BSD process data unavailable for %d: returned %d bytes and PID %d", pid, count, info.PID)
+		return darwinBSDInfo{}, fmt.Errorf("native BSD process data unavailable for %d: returned %d bytes and PID %d", pid, count, info.PID)
 	}
+	return info, nil
+}
+
+// command is the kernel's short process name up to its first NUL.
+func (info darwinBSDInfo) command() string {
 	command := info.Command[:]
 	if end := indexZero(command); end >= 0 {
 		command = command[:end]
 	}
+	return string(command)
+}
+
+func readDarwinBSDProcess(pid int) (processRecord, error) {
+	info, err := readDarwinBSDInfo(pid)
+	if err != nil {
+		return processRecord{}, err
+	}
 	return processRecord{
-		Process:         substrate.Process{PID: pid, ParentPID: int(info.ParentPID), GroupID: int(info.GroupID), Command: string(command)},
+		Process:         substrate.Process{PID: pid, ParentPID: int(info.ParentPID), GroupID: int(info.GroupID), Command: info.command()},
 		foregroundGroup: int(info.ForegroundGroup),
 		started:         fmt.Sprintf("%d.%06d", info.StartSeconds, info.StartMicroseconds),
 	}, nil
+}
+
+// ProcessOwner reads pid's parent, command name, and effective (pbi_uid) and
+// real (pbi_ruid) user IDs from one PROC_PIDTBSDINFO record.
+func ProcessOwner(pid int) (Owner, error) {
+	info, err := readDarwinBSDInfo(pid)
+	if err != nil {
+		return Owner{}, err
+	}
+	return Owner{PID: pid, ParentPID: int(info.ParentPID), UID: info.UID, RealUID: info.RealUID, Command: info.command()}, nil
 }
 
 func foregroundCommand(process substrate.Process) string {
