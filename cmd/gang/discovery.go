@@ -198,6 +198,7 @@ func (cmd command) config(arguments []string) error {
 		{"GANG_PEERS", valueOr(settings.PeersJSON, "unset")},
 		{"GANG_HOST", valueOr(settings.Host, "unset")},
 		{"GANG_CAPACITY_TIMEOUT", settings.CapacityTimeout.String()},
+		{"GANG_BACKGROUND_IDLE_NOTICE", settings.BackgroundIdleNotice.String()},
 		{"GANG_STATE_ROOT", settings.StateRoot},
 		{"GANG_CONFIG_DIR", settings.ConfigDir},
 		{"GANG_TMUX_SOCKET", valueOr(settings.Socket, "default")},

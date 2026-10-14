@@ -56,10 +56,10 @@ func TestRosterQualifiesIdleWithPendingBackgroundTasks(t *testing.T) {
 	if got.Activity != core.Idle || got.BackgroundTasks != 2 {
 		t.Fatalf("status = %+v", got)
 	}
-	if out := read("roster"); !strings.Contains(out, "idle (2 bg)") {
+	if out := read("roster"); !strings.Contains(out, "idle (2 bg <1m)") {
 		t.Fatalf("roster = %q", out)
 	}
-	if out := read("status", "worker"); !strings.Contains(out, "\tidle (2 bg)\n") {
+	if out := read("status", "worker"); !strings.Contains(out, "\tidle (2 bg <1m)\n") {
 		t.Fatalf("status = %q", out)
 	}
 
@@ -68,7 +68,7 @@ func TestRosterQualifiesIdleWithPendingBackgroundTasks(t *testing.T) {
 		t.Fatalf("status while busy = %q", out)
 	}
 	stop([]map[string]string{{"id": "b1", "type": "shell", "status": "running"}, {"id": "w1", "type": "workflow", "status": "running"}})
-	if out := read("status", "worker"); !strings.Contains(out, "\tidle (2 bg)\n") {
+	if out := read("status", "worker"); !strings.Contains(out, "\tidle (2 bg <1m)\n") {
 		t.Fatalf("status idle again = %q", out)
 	}
 
@@ -79,7 +79,7 @@ func TestRosterQualifiesIdleWithPendingBackgroundTasks(t *testing.T) {
 
 	stop([]map[string]string{{"id": "b1", "type": "shell", "status": "running", "description": "monitor"}})
 	stop([]map[string]string{})
-	if out := read("roster"); strings.Contains(out, " bg)") || !strings.Contains(out, "idle") {
+	if out := read("roster"); strings.Contains(out, " bg ") || !strings.Contains(out, "idle") {
 		t.Fatalf("roster after an empty stop = %q", out)
 	}
 }

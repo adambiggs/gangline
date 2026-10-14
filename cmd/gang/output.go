@@ -48,6 +48,8 @@ type agentJSON struct {
 	// BackgroundTasks qualifies idle with the native background tasks the
 	// last turn left pending. It never marks the agent busy.
 	BackgroundTasks int `json:"background_tasks,omitempty"`
+	// BackgroundSince is when the turn that left them pending ended.
+	BackgroundSince *time.Time `json:"background_since,omitempty"`
 }
 
 type compactionJSON struct {

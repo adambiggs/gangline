@@ -106,7 +106,10 @@ message to the agent is withdrawn from its composer and not delivered, when a me
 agent's composer, and when the agent has read as holding unsubmitted composer
 input past the notice threshold, since messages to it wait behind that input.
 The threshold is `heldInputNoticeAfter` in
-[`authority.go`](../cmd/gang/authority.go).
+[`authority.go`](../cmd/gang/authority.go). The hitcher also gets one notice,
+and the agent's log a `background_idle` event, when the agent has stayed idle
+for `GANG_BACKGROUND_IDLE_NOTICE` since a turn that ended with native
+background tasks pending. Each such turn is announced once.
 
 Each line of `downs.jsonl` records the time, team, agent count, the caller's
 agent name and inherited `GANG_AGENT_ID`, its process and parent process IDs,
@@ -225,8 +228,8 @@ to the lead. A queued message that still carries either fails before it is typed
 
 | Command | Effect |
 | --- | --- |
-| `gang roster [--json]` | Show registered agents and current states, with the recorded reason for a failed agent or a blocked, wedged, or unknown one. The table cuts a long reason to its head and its end so that the row's characters fit the terminal's width; `--json` and `gang status --why` carry the whole text. An idle agent whose last turn ended with native background tasks pending reads `idle (N bg)`, and `background_tasks` in `--json`; it is still idle for delivery, and the next turn boundary clears the count. |
-| `gang status [NAME] [--why] [--json]` | Show state; `--why` includes activity and compaction evidence. Pending background tasks qualify idle as in `gang roster`. |
+| `gang roster [--json]` | Show registered agents and current states, with the recorded reason for a failed agent or a blocked, wedged, or unknown one. The table cuts a long reason to its head and its end so that the row's characters fit the terminal's width; `--json` and `gang status --why` carry the whole text. An idle agent whose last turn ended with native background tasks pending reads `idle (N bg DURATION)`, where DURATION is the time since that turn ended, and `background_tasks` and `background_since` in `--json`; it is still idle for delivery, and the next turn boundary clears the count. |
+| `gang status [NAME] [--why] [--json]` | Show state; `--why` includes activity and compaction evidence. Pending background tasks qualify idle as in `gang roster`, and `--why` names when the agent went idle with them. |
 | `gang capture [NAME] [-n\|--lines LINES]` | Print the native pane, or only its last LINES lines. |
 | `gang capture --composer [NAME]` | Print draft input from the composer. |
 | `gang context [NAME] [--json]` | Show native context usage or an unknown reading. |
@@ -334,6 +337,7 @@ override file values. Run `gang config` to see effective values and defaults.
 | `GANG_LAUNCH_ARGS` | JSON object mapping collar names to extra launch argument arrays. |
 | `GANG_CODEX_PERMISSION_PROFILE` | Codex permission profile name for hitched agents; unset by default. |
 | `GANG_CAPACITY_TIMEOUT` | Positive duration budget for provider-error continuations. |
+| `GANG_BACKGROUND_IDLE_NOTICE` | Positive duration an agent stays idle with native background tasks pending before its hitcher is told; defaults to `30m`. |
 | `GANG_PEERS` | JSON object of enrolled peer host names to `{"ssh": ALIAS, "user": LOGIN, "gang": PATH, "team": TEAM}`: the ssh alias and optional login that reach the host, the absolute path of its `gang`, and its team. Messages from an enrolled host are accepted; `gang send HOST:NAME` runs `ssh ALIAS PATH peer-receive --team TEAM`. Unset means no peers. |
 | `GANG_HOST` | This host's name as its peers enroll it in their `GANG_PEERS`; required to send to a peer, and the `HOST` in the `HOST:NAME` sender they see. |
 

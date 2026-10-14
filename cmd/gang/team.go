@@ -419,7 +419,7 @@ func (cmd command) roster(args []string) error {
 		if watchdogLimited {
 			marker += " [watchdog-unavailable]"
 		}
-		line := fmt.Sprintf("%-16s %-10s %-14s %s%s", a.Name, a.Status, activityLabel(row.Activity, row.BackgroundTasks), a.Collar, marker)
+		line := fmt.Sprintf("%-16s %-10s %-18s %s%s", a.Name, a.Status, activityLabel(row.Activity, row.BackgroundTasks, row.BackgroundSince, run.cmd.now()), a.Collar, marker)
 		if _, err := fmt.Fprintln(cmd.stdout, line+cmd.operatorText(rosterReason(a, rosterReasonLimit(cmd.stdout, line)))); err != nil {
 			return err
 		}
@@ -490,38 +490,49 @@ func (run *runtime) agentRow(a core.Agent) (agentJSON, error) {
 	if a.Compaction != nil {
 		row.Compaction = &compactionJSON{ID: a.Compaction.ID, Status: a.Compaction.Status, Reason: run.cmd.operatorText(a.Compaction.Reason)}
 	}
-	tasks, err := run.backgroundTasks(a)
+	background, err := run.background(a)
 	if err != nil {
 		return agentJSON{}, err
 	}
-	row.BackgroundTasks = tasks
+	if background.Tasks > 0 {
+		row.BackgroundTasks, row.BackgroundSince = background.Tasks, &background.At
+	}
 	return row, nil
 }
 
-// backgroundTasks is the count of native background tasks an idle agent's
-// last turn left pending; a busy agent shows none.
-func (run *runtime) backgroundTasks(a core.Agent) (int, error) {
+// background is the native background tasks an idle agent's last turn left
+// pending and when that turn ended; a busy agent shows none.
+func (run *runtime) background(a core.Agent) (store.Background, error) {
 	if a.Activity != core.Idle {
-		return 0, nil
+		return store.Background{}, nil
 	}
 	p, err := run.team.Agent(a.ID)
 	if err != nil {
-		return 0, err
+		return store.Background{}, err
 	}
-	background, ok, err := p.ReadBackground()
-	if err != nil || !ok {
-		return 0, err
-	}
-	return background.Tasks, nil
+	background, _, err := p.ReadBackground()
+	return background, err
 }
 
 // activityLabel is an activity with the background tasks the agent left
-// pending, as in "idle (2 bg)".
-func activityLabel(activity core.Activity, tasks int) string {
-	if tasks > 0 {
-		return fmt.Sprintf("%s (%d bg)", activity, tasks)
+// pending and how long it has been idle with them, as in "idle (2 bg 1h05m)".
+func activityLabel(activity core.Activity, tasks int, since *time.Time, now time.Time) string {
+	if tasks > 0 && since != nil {
+		return fmt.Sprintf("%s (%d bg %s)", activity, tasks, idleDuration(now.Sub(*since)))
 	}
 	return string(activity)
+}
+
+// idleDuration is a duration in whole minutes, as in "1h05m" or "12m".
+func idleDuration(d time.Duration) string {
+	minutes := int(d / time.Minute)
+	if minutes < 1 {
+		return "<1m"
+	}
+	if minutes < 60 {
+		return fmt.Sprintf("%dm", minutes)
+	}
+	return fmt.Sprintf("%dh%02dm", minutes/60, minutes%60)
 }
 func (cmd command) status(args []string) error {
 	why, machine := false, false
@@ -557,15 +568,21 @@ func (cmd command) status(args []string) error {
 		}
 		return writeJSON(cmd.stdout, row)
 	}
-	tasks, err := run.backgroundTasks(a)
+	background, err := run.background(a)
 	if err != nil {
 		return err
 	}
-	if _, err := fmt.Fprintf(cmd.stdout, "%s\t%s\t%s\n", a.Name, a.Status, activityLabel(a.Activity, tasks)); err != nil {
+	now := cmd.now()
+	if _, err := fmt.Fprintf(cmd.stdout, "%s\t%s\t%s\n", a.Name, a.Status, activityLabel(a.Activity, background.Tasks, &background.At, now)); err != nil {
 		return err
 	}
 	if why && a.Evidence != "" {
 		if _, err := fmt.Fprintln(cmd.stdout, cmd.operatorText(a.Evidence)); err != nil {
+			return err
+		}
+	}
+	if why && background.Tasks > 0 {
+		if _, err := fmt.Fprintf(cmd.stdout, "idle since %s (%s) with %s pending\n", background.At.UTC().Format(time.RFC3339), idleDuration(now.Sub(background.At)), backgroundTaskCount(background.Tasks)); err != nil {
 			return err
 		}
 	}

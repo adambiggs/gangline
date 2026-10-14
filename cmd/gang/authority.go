@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/adambiggs/gangline/core"
+	"github.com/adambiggs/gangline/store"
 )
 
 const heldInputNoticeAfter = time.Minute
@@ -109,22 +110,29 @@ func (run *runtime) hitcherID() (core.HitchID, error) {
 // published once per ID. A notice that cannot be sent is logged and warned
 // about rather than failing the operation that observed the condition.
 func (run *runtime) notifyHitcher(a core.Agent, id core.EnvelopeID, text string) error {
+	_, err := run.noticeHitcher(a, id, text)
+	return err
+}
+
+// noticeHitcher is notifyHitcher reporting whether this call published the
+// notice.
+func (run *runtime) noticeHitcher(a core.Agent, id core.EnvelopeID, text string) (bool, error) {
 	if a.HitchedBy == "" || a.HitchedBy == a.ID || a.ID == run.hitching {
-		return nil
+		return false, nil
 	}
-	err := run.sendHitcherNotice(a, id, text)
+	published, err := run.sendHitcherNotice(a, id, text)
 	if err == nil {
-		return nil
+		return published, nil
 	}
 	if err := run.record(a, core.Event{Type: "notice_failed", ID: string(id), Reason: err.Error()}); err != nil {
-		return err
+		return false, err
 	}
 	if run.cmd.stderr != nil {
 		if _, err := fmt.Fprintf(run.cmd.stderr, "warning: could not tell the agent that hitched %s: %v\n", a.Name, err); err != nil {
-			return err
+			return false, err
 		}
 	}
-	return nil
+	return false, nil
 }
 
 // notifyHitcherFailed tells a's hitcher that a has failed. One notice per
@@ -161,36 +169,71 @@ func (run *runtime) notifyHeldInput(a core.Agent) error {
 	return run.notifyHitcher(a, id, fmt.Sprintf("%s, which you hitched, has held unsubmitted input in its composer since %s; messages to %s wait behind it. gang capture --composer %s shows it.", a.Name, a.ChangedAt.UTC().Format(time.RFC3339), a.Name, a.Name))
 }
 
+// notifyBackgroundIdle tells a's hitcher once a has stayed idle for the
+// configured threshold since a turn that ended with native background tasks
+// pending. The agent reads as idle throughout, so nothing else reaches the
+// hitcher, and work finished before that turn ended waits unreported. The
+// record keeps the announced turn's end, since the hitcher's inbox keeps only
+// its latest delivered receipt, so each such turn is announced once.
+func (run *runtime) notifyBackgroundIdle(l *store.LockedAgent, a *core.Agent) error {
+	if a.Activity != core.Idle {
+		return nil
+	}
+	background, ok, err := l.Paths.ReadBackground()
+	if err != nil || !ok || a.BackgroundNoticed.Equal(background.At) || run.cmd.now().Before(background.At.Add(run.settings.BackgroundIdleNotice)) {
+		return err
+	}
+	id := core.EnvelopeID(fmt.Sprintf("background-idle-%s-%d", a.ID, background.At.UnixNano()))
+	reason := fmt.Sprintf("idle since %s with %s pending", background.At.UTC().Format(time.RFC3339), backgroundTaskCount(background.Tasks))
+	published, err := run.noticeHitcher(*a, id, fmt.Sprintf("%s, which you hitched, has been %s. gang status %s --why shows its record and gang capture %s its pane.", a.Name, reason, a.Name, a.Name))
+	if err != nil || !published {
+		return err
+	}
+	a.BackgroundNoticed = background.At
+	if err := l.Save(*a); err != nil {
+		return err
+	}
+	return run.record(*a, core.Event{Type: "background_idle", ID: string(id), Reason: reason})
+}
+
+// backgroundTaskCount names a count of native background tasks.
+func backgroundTaskCount(tasks int) string {
+	if tasks == 1 {
+		return "1 background task"
+	}
+	return fmt.Sprintf("%d background tasks", tasks)
+}
+
 // sendHitcherNotice wakes the hitcher only for a notice it publishes, since a
 // condition observed on every tick asks for its notice on every tick.
-func (run *runtime) sendHitcherNotice(a core.Agent, id core.EnvelopeID, text string) error {
+func (run *runtime) sendHitcherNotice(a core.Agent, id core.EnvelopeID, text string) (bool, error) {
 	text = run.cmd.operatorText(text)
 	p, err := run.team.Agent(a.HitchedBy)
 	if err != nil {
-		return err
+		return false, err
 	}
 	if published, err := envelopePublished(p, id); published || err != nil {
-		return err
+		return false, err
 	}
 	hitcher, err := p.Read()
 	if errors.Is(err, os.ErrNotExist) {
-		return nil
+		return false, nil
 	}
 	if err != nil {
-		return err
+		return false, err
 	}
 	if hitcher.Status != core.Active {
-		return nil
+		return false, nil
 	}
 	token, err := randomEnvelopeToken()
 	if err != nil {
-		return err
+		return false, err
 	}
 	if err := run.publishOnceTo(p, hitcher, core.Envelope{ID: id, Token: token, Recipient: hitcher.ID, To: hitcher.Name, From: core.Sender{Kind: core.SenderGangline, Name: "hitch"}, Message: core.Message{Text: text}, CreatedAt: run.cmd.now()}); err != nil {
-		return err
+		return false, err
 	}
 	run.wake = append(run.wake, hitcher.ID)
-	return nil
+	return true, nil
 }
 
 // downRecord names who ended a team and from where. Down deletes the team's

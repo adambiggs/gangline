@@ -70,6 +70,9 @@ type Agent struct {
 	Cleanup               *ResultRef             `json:"cleanup,omitempty"`
 
 	CurfewNoticeDeadline time.Time `json:"curfew_notice_deadline,omitzero"`
+	// BackgroundNoticed is the turn end of the background record whose idle
+	// stretch the hitcher was last told about.
+	BackgroundNoticed time.Time `json:"background_noticed,omitzero"`
 }
 
 type ContextBandThresholds struct {

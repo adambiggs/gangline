@@ -17,6 +17,7 @@ import (
 
 type settings struct {
 	CapacityTimeout        time.Duration
+	BackgroundIdleNotice   time.Duration
 	Session                string
 	StateRoot              string
 	Collar                 string
@@ -93,8 +94,10 @@ func (cmd command) settings() (settings, error) {
 		}
 	}
 	capacityTimeout := "5m"
+	backgroundIdleNotice := "30m"
 	values := map[string]*string{
 		"GANG_CAPACITY_TIMEOUT":         &capacityTimeout,
+		"GANG_BACKGROUND_IDLE_NOTICE":   &backgroundIdleNotice,
 		"GANG_SESSION":                  &result.Session,
 		"GANG_COLLAR":                   &result.Collar,
 		"GANG_COLLARS":                  &result.CollarDir,
@@ -137,6 +140,10 @@ func (cmd command) settings() (settings, error) {
 	if err != nil || result.CapacityTimeout <= 0 {
 		return settings{}, fmt.Errorf("GANG_CAPACITY_TIMEOUT must be a positive duration")
 	}
+	result.BackgroundIdleNotice, err = time.ParseDuration(backgroundIdleNotice)
+	if err != nil || result.BackgroundIdleNotice <= 0 {
+		return settings{}, fmt.Errorf("GANG_BACKGROUND_IDLE_NOTICE must be a positive duration")
+	}
 	if result.CollarDir != "" && !filepath.IsAbs(result.CollarDir) {
 		return settings{}, fmt.Errorf("GANG_COLLARS must be an absolute path")
 	}
@@ -171,6 +178,7 @@ func (cmd command) settings() (settings, error) {
 
 var configurationKeys = map[string]bool{
 	"GANG_CAPACITY_TIMEOUT":         true,
+	"GANG_BACKGROUND_IDLE_NOTICE":   true,
 	"GANG_COLLAR":                   true,
 	"GANG_SESSION":                  true,
 	"GANG_COLLARS":                  true,

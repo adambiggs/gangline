@@ -19,7 +19,7 @@ import (
 
 const watchdogTimeout = 5 * time.Second
 
-var watchdogEnvironmentKeys = []string{"GANG_SESSION", "GANG_STATE_ROOT", "GANG_CONFIG_DIR", "GANG_TMUX_SOCKET", "GANG_COLLARS", "GANG_TMUX", "GANG_CAPACITY_TIMEOUT", "PATH"}
+var watchdogEnvironmentKeys = []string{"GANG_SESSION", "GANG_STATE_ROOT", "GANG_CONFIG_DIR", "GANG_TMUX_SOCKET", "GANG_COLLARS", "GANG_TMUX", "GANG_CAPACITY_TIMEOUT", "GANG_BACKGROUND_IDLE_NOTICE", "PATH"}
 var watchdogUnsetEnvironment = []string{"TMUX", "TMUX_PANE", "TMUX_TMPDIR", "GANGLINE_BOUNDARY", "GANGLINE_HITCH_ID", "GANG_AGENT_ID", "GANG_AGENT_NONCE", "GANG_AGENT_TOKEN", "GANG_COLLAR", "GANG_LAUNCH_ARGS"}
 
 type watchdogScheduler interface {
@@ -318,7 +318,7 @@ func (run *runtime) updateWatchdog(generation string, cleanup, reset bool) (proc
 	if err != nil {
 		return false, err
 	}
-	environment := map[string]string{"GANG_SESSION": run.settings.Session, "GANG_STATE_ROOT": root, "GANG_CONFIG_DIR": run.settings.ConfigDir, "GANG_TMUX_SOCKET": socket, "GANG_COLLARS": run.settings.CollarDir, "GANG_CAPACITY_TIMEOUT": run.settings.CapacityTimeout.String(), "GANG_TMUX": run.cmd.environment("GANG_TMUX"), "PATH": os.Getenv("PATH")}
+	environment := map[string]string{"GANG_SESSION": run.settings.Session, "GANG_STATE_ROOT": root, "GANG_CONFIG_DIR": run.settings.ConfigDir, "GANG_TMUX_SOCKET": socket, "GANG_COLLARS": run.settings.CollarDir, "GANG_CAPACITY_TIMEOUT": run.settings.CapacityTimeout.String(), "GANG_BACKGROUND_IDLE_NOTICE": run.settings.BackgroundIdleNotice.String(), "GANG_TMUX": run.cmd.environment("GANG_TMUX"), "PATH": os.Getenv("PATH")}
 	if err := scheduler.Arm(unit, executable, environment); err != nil {
 		return false, err
 	}

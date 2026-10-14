@@ -55,6 +55,7 @@ import "time"
  snooze_failed: {id: #ID, hitch_id: #ID, reason: #ID}
  snooze_completed: {id: #ID, hitch_id: #ID}
  notice_failed: {id: #ID, hitch_id: #ID, reason: #ID}
+ background_idle: {id: #ID, hitch_id: #ID, reason: #ID}
  snooze_cap_rejected: {id: #ID, hitch_id: #ID, reason: #ID}
  snooze_rearmed: {id: #ID, hitch_id: #ID, deadline: #Time, reason: #ID}
  input_started: {id: #ID, status: #ID, hitch_id: #ID}
