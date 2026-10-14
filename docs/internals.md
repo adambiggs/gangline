@@ -200,6 +200,32 @@ Provider errors can end a turn without a Stop hook. Tick can recognize such
 an error and send a continuation, backing off within the configured capacity
 budget. Native choice prompts remain the operator's decision.
 
+## Usage notices and scheduled wakes
+
+Provider cap notices use the native usage readings collected for
+`gang limits`. The account-wide window is keyed by collar and native reset,
+so concurrent agents do not each notify the lead. An unknown window triggers
+no notice. Usage-band notices carry measurements only by default.
+
+A wake is a durable message intent that an agent schedules. It is submitted
+through the ordinary delivery path at or after its due time, so it shares
+delivery and retry semantics with other messages. The team state root holds
+the schedule; a host scheduler does not restart a stopped team. On a later
+startup, an overdue wake goes to its caller if active, otherwise to the lead.
+An exact native submit witness records that the harness received the wake,
+and the wake completes only after a matching successful native turn boundary.
+Unknown turn outcomes remain pending. A missing recipient after restart moves
+an unconfirmed wake back to the due queue for the caller or lead.
+
+When a delivered wake's own turn fails on an attributable native cap, Gangline
+re-arms it with its note at the next native reset, unless another wake is
+already scheduled; a manual wake re-arms once. An attributable cap failure
+with no wake pending schedules an automatic wake. If the reset is not yet
+observed, the wake waits for a native reading.
+
+Curfew deadlines notify each active agent without dropping registrations or
+refusing startup or attach.
+
 ## Collar schema
 
 A collar is a CUE file with a top-level `collar` value checked against

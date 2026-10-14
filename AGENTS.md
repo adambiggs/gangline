@@ -1,7 +1,7 @@
 # AGENTS.md
 
-Read [`docs/design.md`](docs/design.md) before changing anything and
-[`CONTRIBUTING.md`](CONTRIBUTING.md) before committing.
+Read the [design principles](docs/internals.md#design-principles) before
+changing anything and [`CONTRIBUTING.md`](CONTRIBUTING.md) before committing.
 
 ## The running binary is not your source tree
 
@@ -47,7 +47,7 @@ next operation for them.
 | File | Holds |
 |---|---|
 | `README.md` | what Gangline is and why |
-| `docs/design.md` | principles and decisions |
+| `docs/internals.md` | packages, message path, design principles |
 | `docs/reference.md` | commands, environment, collar contract |
 | `docs/operations.md` | running unattended and recovery |
 | `CONTRIBUTING.md` | setup, the gate, commits |

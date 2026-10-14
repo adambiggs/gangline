@@ -11,7 +11,6 @@ export const sources = {
   contributing: 'CONTRIBUTING.md',
   security: 'SECURITY.md',
   concepts: 'docs/concepts.md',
-  design: 'docs/design.md',
   guides: 'docs/guides.md',
   internals: 'docs/internals.md',
   operations: 'docs/operations.md',
