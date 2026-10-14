@@ -51,7 +51,11 @@ func parseHitch(arguments []string, defaultCollar, defaultDirectory string) (hit
 		return hitchOptions{}, usageError("hitch: unexpected argument %q", positionals[1])
 	}
 	options.Name = positionals[0]
-	if err := validateAgentName(options.Name); err != nil {
+	validate := validateNewAgentName
+	if options.Recover {
+		validate = validateAgentName
+	}
+	if err := validate(options.Name); err != nil {
 		return hitchOptions{}, err
 	}
 	if options.Collar == "" || options.Directory == "" {
@@ -457,6 +461,26 @@ func validAgentName(name string) bool {
 func validateAgentName(name string) error {
 	if !validAgentName(name) {
 		return usageError("invalid agent name %q (%s)", name, agentNameForm)
+	}
+	return nil
+}
+
+// reservedAgentNames are the labels Gangline puts on its own messages and
+// startup sections, and operator, which names the human. An agent that took
+// one, in any letter case, would send messages that read as theirs. Peer and
+// self-declared labels carry a prefix, so only a name an agent takes is
+// checked.
+var reservedAgentNames = []string{"capacity-recovery", "compact", "context-band", "contract", "curfew", "delivery", "doctrine", "gangline", "hitch", "interrupt", "operator", "role", "snooze", "startup", "usage-band"}
+
+// validateNewAgentName checks a name an agent is about to take.
+func validateNewAgentName(name string) error {
+	if err := validateAgentName(name); err != nil {
+		return err
+	}
+	for _, reserved := range reservedAgentNames {
+		if strings.EqualFold(name, reserved) {
+			return usageError("agent name %q is reserved (reserved: %s)", name, strings.Join(reservedAgentNames, ", "))
+		}
 	}
 	return nil
 }

@@ -651,7 +651,7 @@ func (cmd command) rename(args []string) (result error) {
 	if err := exactly(args, 2, "rename"); err != nil {
 		return err
 	}
-	if err := validateAgentName(args[1]); err != nil {
+	if err := validateNewAgentName(args[1]); err != nil {
 		return err
 	}
 	run, err := cmd.runtime()
