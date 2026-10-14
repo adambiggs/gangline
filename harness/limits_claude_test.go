@@ -101,6 +101,50 @@ func TestClaudeUsageQueryReadsTheCacheAtItsFetchTime(t *testing.T) {
 	}
 }
 
+// Print mode skips Claude Code's folder-trust dialog, so the project settings
+// and hooks of the query's directory would run unasked. A shared temporary
+// directory is writable by other processes; the query must run in a private
+// empty directory of its own and remove it afterwards.
+func TestClaudeUsageQueryRunsOutsideTheSharedTemporaryDirectory(t *testing.T) {
+	shared := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(shared, ".claude"), 0700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(shared, ".claude", "settings.json"), []byte(`{"hooks":{}}`), 0600); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("TMPDIR", shared)
+	collar := claudeUsageFixture(t, localResult, "1791856775387")
+	record := filepath.Join(collar.Launch.Env["HOME"], "query-directory")
+	script := `#!/bin/sh
+# SPDX-License-Identifier: Apache-2.0
+pwd -P > "$HOME/query-directory"
+[ -z "$(ls -A .)" ] || exit 81
+[ "$(ls -ld . | cut -c1-10)" = drwx------ ] || exit 82
+cp "$HOME/cache.json" "$HOME/.claude.json"
+printf '%s\n' '` + localResult + `'
+`
+	if err := os.WriteFile(collar.Launch.Command, []byte(script), 0700); err != nil {
+		t.Fatal(err)
+	}
+	if _, _, err := QueryProviderLimits(context.Background(), collar); err != nil {
+		t.Fatal(err)
+	}
+	data, err := os.ReadFile(record)
+	if err != nil {
+		t.Fatal(err)
+	}
+	directory := strings.TrimSpace(string(data))
+	if sharedPath, err := filepath.EvalSymlinks(shared); err != nil {
+		t.Fatal(err)
+	} else if directory == sharedPath {
+		t.Fatalf("query ran in the shared temporary directory %s", directory)
+	}
+	if _, err := os.Stat(directory); !os.IsNotExist(err) {
+		t.Fatalf("query directory %s remains after the query: %v", directory, err)
+	}
+}
+
 func TestClaudeUsageQueryRefusesUnwitnessedReadings(t *testing.T) {
 	for name, collar := range map[string]Collar{
 		"model answered":        claudeUsageFixture(t, strings.Replace(localResult, `"num_turns":0`, `"num_turns":1`, 1), "4102444800000"),

@@ -39,8 +39,15 @@ func queryClaudeUsage(ctx context.Context, collar Collar) (measuredLimits, error
 	for key, value := range collar.Launch.Env {
 		child.Env = append(child.Env, key+"="+value)
 	}
-	// A neutral directory keeps project settings and hooks out of the query.
-	child.Dir = os.TempDir()
+	// Print mode skips the folder-trust dialog, so the directory's project
+	// settings and hooks would run unasked. A private empty directory has
+	// none, and no other process can add them.
+	dir, err := os.MkdirTemp("", "gangline-usage-")
+	if err != nil {
+		return measuredLimits{}, fmt.Errorf("%s limits query: %w", collar.Name, err)
+	}
+	defer os.RemoveAll(dir)
+	child.Dir = dir
 	output, err := child.Output()
 	if ctx.Err() != nil {
 		return measuredLimits{}, fmt.Errorf("%s limits query: %w", collar.Name, ctx.Err())
