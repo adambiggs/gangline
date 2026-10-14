@@ -1,6 +1,7 @@
 package main
 
 import (
+	"errors"
 	"strings"
 	"testing"
 
@@ -50,5 +51,31 @@ func TestCompactionStoresResumeProvenance(t *testing.T) {
 		if got.Compaction == nil || got.Compaction.ResumeFrom != want {
 			t.Fatalf("custom=%v compaction=%+v want=%+v", custom, got.Compaction, want)
 		}
+	}
+}
+
+// An interrupt leaves a native approval prompt for the operator: its keys
+// would answer the prompt as a refusal.
+func TestInterruptRefusesBlockedNativeInput(t *testing.T) {
+	for _, collar := range []string{"codex", "claude"} {
+		t.Run(collar, func(t *testing.T) {
+			f := newStateFixture(t)
+			a := f.add(t, "a", "worker", collar)
+			f.input.screen = compactInterruptScreens(t, f, collar).blocked
+			err := f.cmd.interrupt([]string{"worker", "-m", "stop and report"})
+			var refused commandError
+			if !errors.As(err, &refused) || refused.status != exitRefused || !strings.Contains(err.Error(), "native input blocked") {
+				t.Fatalf("interrupt on an approval prompt: %v", err)
+			}
+			p, _ := f.run.team.Agent(a.ID)
+			requireNothingTyped(t, f, p)
+			got, err := p.Read()
+			if err != nil {
+				t.Fatal(err)
+			}
+			if !got.InterruptDeadline.IsZero() || got.Activity == core.Interrupting || got.Input != nil {
+				t.Fatalf("refused interrupt left state: activity=%s deadline=%v input=%+v", got.Activity, got.InterruptDeadline, got.Input)
+			}
+		})
 	}
 }

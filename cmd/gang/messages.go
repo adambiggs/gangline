@@ -525,6 +525,17 @@ func (cmd command) interrupt(args []string) (result error) {
 		return err
 	}
 	b = run.registeredInput(a, b)
+	// The interrupt keys answer a native approval or trust prompt as a
+	// refusal, which is the operator's to give.
+	screen, err := run.captureAgentPane(context.Background(), b, a)
+	if err != nil {
+		return err
+	}
+	if blocker, blocked, err := harness.InputBlocked(c, screen); err != nil {
+		return err
+	} else if blocked {
+		return refuseError("native input blocked: %s; no keys sent, so the prompt stays for the operator", blocker.Evidence)
+	}
 	if err := run.apply(l, &a, core.Event{Type: "interrupt_requested", Deadline: cmd.now().Add(operationTimeout)}); err != nil {
 		return err
 	}
