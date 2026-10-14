@@ -30,6 +30,11 @@ that identifies the sender and delivery attempt. A registered pane supplies
 an observed agent name. A sender supplied with `--from` is marked
 `self-declared:` because Gangline did not observe that identity.
 
+A message forwarded by an enrolled peer host names its sender `HOST:NAME`,
+such as `ser5:lead`. The peer host's Gangline observed that agent; the
+receiving host trusts the enrolled host for it and observes neither. Agent
+names cannot contain `:`, so no local sender can take that form.
+
 A system sender such as `usage-band` identifies a message emitted by Gangline. Text supplied
 by the caller, such as an interrupt reason, still has an unverified author.
 Text typed directly into a window is operator input without a teammate's
