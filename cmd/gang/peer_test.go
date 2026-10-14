@@ -1,12 +1,14 @@
 package main
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/adambiggs/gangline/core"
 )
@@ -82,6 +84,14 @@ func TestPeerReceiveDeliversHostQualifiedSender(t *testing.T) {
 func TestPeerReceiveReportsUnverifiedWithItsID(t *testing.T) {
 	f, _ := peerFixture(t)
 	f.input.submit = func(string) error { return nil }
+	// The delivery budget is already spent, so the witness wait ends at once
+	// with no hook having fired.
+	f.cmd.newTimeout = func(ctx context.Context, d time.Duration) (context.Context, context.CancelFunc) {
+		if d != operationTimeout {
+			return context.WithTimeout(ctx, d)
+		}
+		return context.WithDeadline(ctx, time.Time{})
+	}
 	reply, err := peerReceive(f, peerRequestJSON(t, nil))
 	var status commandError
 	if !errors.As(err, &status) || status.status != exitUnknown {
