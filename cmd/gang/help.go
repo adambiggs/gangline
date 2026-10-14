@@ -109,6 +109,10 @@ var commandUsage = map[string]string{
 	"hook":       "usage: gang hook < native-hook.json\n",
 	"help":       "usage: gang help [COMMAND]\n",
 	"version":    "usage: gang version\n",
+
+	// The commandInventory omits peer-receive: it is a peer host's ingress,
+	// not a command an agent runs.
+	"peer-receive": "usage: gang peer-receive [--team TEAM] < peer-request.json\n",
 }
 
 type optionSpec struct {
@@ -215,6 +219,8 @@ var teamCommands = map[string]bool{
 	"limits": true, "snooze": true, "wait": true, "curfew": true,
 	"status": true, "tick": true, "capture": true, "whoami": true,
 	"roster": true, "attach": true, "drop": true, "down": true,
+
+	"peer-receive": true,
 }
 
 // helpOptions is a command's own options plus the team selector it accepts.
@@ -301,6 +307,8 @@ var commandDescription = map[string]string{
 	"hook":       "Read native hook JSON on stdin and resolve the pane by GANGLINE_HITCH_ID.\n",
 	"help":       "Show the command inventory or detailed help for one command.\n",
 	"version":    "Print the release version.\n",
+
+	"peer-receive": "Deliver one message forwarded by an enrolled peer host's gang. Read a JSON\nrequest of host, team, id, from, to, and body on stdin; print one JSON line\nwith the message ID and outcome, or the error that published nothing.\n",
 }
 
 const flagSyntaxHelp = "Flags accept - or --, VALUE or =VALUE, and one-letter flags also -cVALUE;\nswitches accept =true/=false. Flags may follow operands; -- ends flags.\n"

@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"regexp"
 	"strings"
 	"time"
 
@@ -24,7 +25,16 @@ type settings struct {
 	LaunchArgs             map[string][]string
 	LaunchArgsJSON         string
 	CodexPermissionProfile string
+	Peers                  map[string]peerHost
+	PeersJSON              string
 	Origins                map[string]string
+}
+
+// peerHost is an enrolled peer host: its gang may deliver messages here that
+// name one of its agents as the sender.
+type peerHost struct {
+	SSH  string `json:"ssh"`
+	User string `json:"user,omitempty"`
 }
 
 func (cmd command) settings() (settings, error) {
@@ -85,6 +95,7 @@ func (cmd command) settings() (settings, error) {
 		"GANG_COLLARS":                  &result.CollarDir,
 		"GANG_LAUNCH_ARGS":              &result.LaunchArgsJSON,
 		"GANG_CODEX_PERMISSION_PROFILE": &result.CodexPermissionProfile,
+		"GANG_PEERS":                    &result.PeersJSON,
 	}
 	for name, destination := range values {
 		if value, ok := configured[name]; ok {
@@ -138,6 +149,11 @@ func (cmd command) settings() (settings, error) {
 			}
 		}
 	}
+	if result.PeersJSON != "" {
+		if result.Peers, err = parsePeers(result.PeersJSON); err != nil {
+			return settings{}, err
+		}
+	}
 	if result.CodexPermissionProfile != "" && !codexProfileName(result.CodexPermissionProfile) {
 		return settings{}, fmt.Errorf("GANG_CODEX_PERMISSION_PROFILE must contain only letters, digits, hyphens, or underscores")
 	}
@@ -151,6 +167,45 @@ var configurationKeys = map[string]bool{
 	"GANG_COLLARS":                  true,
 	"GANG_LAUNCH_ARGS":              true,
 	"GANG_CODEX_PERMISSION_PROFILE": true,
+	"GANG_PEERS":                    true,
+}
+
+// peerLoginPattern bounds an SSH alias or login to one token that cannot be
+// read as an option.
+var peerLoginPattern = regexp.MustCompile(`^[A-Za-z0-9_][A-Za-z0-9._-]*$`)
+
+func parsePeers(value string) (map[string]peerHost, error) {
+	const form = "GANG_PEERS must be a JSON object of peer host names to {\"ssh\": ALIAS, \"user\": LOGIN}"
+	decoder := json.NewDecoder(strings.NewReader(value))
+	decoder.DisallowUnknownFields()
+	var peers map[string]peerHost
+	if err := decoder.Decode(&peers); err != nil {
+		return nil, fmt.Errorf("%s: %w", form, err)
+	}
+	if decoder.More() {
+		return nil, fmt.Errorf("%s: unexpected data after the object", form)
+	}
+	if peers == nil {
+		return nil, fmt.Errorf("%s", form)
+	}
+	for host, peer := range peers {
+		if !validPeerHost(host) {
+			return nil, fmt.Errorf("GANG_PEERS has invalid peer host %q (%s; self-declared is reserved)", host, agentNameForm)
+		}
+		if !peerLoginPattern.MatchString(peer.SSH) {
+			return nil, fmt.Errorf("GANG_PEERS[%q] needs an ssh host alias of letters, digits, '.', '_' or '-'", host)
+		}
+		if peer.User != "" && !peerLoginPattern.MatchString(peer.User) {
+			return nil, fmt.Errorf("GANG_PEERS[%q] has invalid user %q", host, peer.User)
+		}
+	}
+	return peers, nil
+}
+
+// validPeerHost reports whether host can label a peer sender. The label
+// HOST:NAME must not repeat the self-declared:NAME form.
+func validPeerHost(host string) bool {
+	return validAgentName(host) && host != "self-declared"
 }
 
 func readConfiguration(filename string) (map[string]string, error) {

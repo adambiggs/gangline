@@ -90,8 +90,13 @@ func isResumeEnvelope(e core.Envelope) bool {
 }
 
 func senderLabel(s core.Sender) string {
-	if s.Kind == core.SenderSelfDeclared {
+	switch s.Kind {
+	case core.SenderSelfDeclared:
 		return "self-declared:" + string(s.Name)
+	case core.SenderPeer:
+		// A local agent name cannot contain ':', so this label cannot be
+		// taken by a local hitch or --from.
+		return s.Host + ":" + string(s.Name)
 	}
 	return string(s.Name)
 }
@@ -404,7 +409,7 @@ func (run *runtime) deliver(l *store.LockedAgent, a *core.Agent, e core.Envelope
 	case withdrawn:
 		// A sender that is not an agent gets no notice of its own, and a
 		// composer that keeps refusing pastes withdraws one message per drain.
-		text := fmt.Sprintf("A message from %s to %s, which you hitched, was withdrawn from its composer and not delivered: %s.", e.From.Name, a.Name, reason)
+		text := fmt.Sprintf("A message from %s to %s, which you hitched, was withdrawn from its composer and not delivered: %s.", senderLabel(e.From), a.Name, reason)
 		if err := run.notifyHitcher(*a, core.EnvelopeID("withdrawn-"+e.ID), text); err != nil {
 			return outcome, withdrawn, err
 		}

@@ -300,6 +300,7 @@ reading names the collar's threshold. `gang capture NAME` prints the prompt.
 | `gang upgrade [-y, --yes]` | Print the installed and latest stable versions, confirm on a terminal (`[y/N]`, default no), then install into the installer-managed checkout. Use `--yes` without a terminal. A current install exits 0 without asking. |
 | `gang help [COMMAND]` | Show command help. |
 | `gang hook` | Read native hook JSON from stdin; invoked by the collar integration. |
+| `gang peer-receive` | Read one JSON request (`host`, `team`, `id`, `from`, `to`, `body`) from stdin, forwarded by an enrolled `GANG_PEERS` host's gang, and deliver it; print one JSON line with the message ID and outcome, or the error that published nothing. Refused inside a registered agent pane. |
 
 ## Configuration
 
@@ -316,6 +317,7 @@ override file values. Run `gang config` to see effective values and defaults.
 | `GANG_LAUNCH_ARGS` | JSON object mapping collar names to extra launch argument arrays. |
 | `GANG_CODEX_PERMISSION_PROFILE` | Codex permission profile name for hitched agents; unset by default. |
 | `GANG_CAPACITY_TIMEOUT` | Positive duration budget for provider-error continuations. |
+| `GANG_PEERS` | JSON object of enrolled peer host names to `{"ssh": ALIAS, "user": LOGIN}` (`user` optional); unset means no peers. |
 
 Set `GANG_CODEX_PERMISSION_PROFILE=gangline` in the config file or environment
 to select that profile for Codex hitches. The named profile must exist in

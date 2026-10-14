@@ -298,6 +298,19 @@ func TestCommandLifecycleOnPrivateTmux(t *testing.T) {
 		}
 	}
 	finishDelivery(delivered, "independent delivery")
+	// A peer host's gang forwards over ssh by piping one request into
+	// peer-receive; the recipient sees the host-qualified sender.
+	if err := os.WriteFile(filepath.Join(config, "config"), []byte(`GANG_PEERS={"ser5":{"ssh":"ser5"}}`+"\n"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	peer := runGang(`{"host":"ser5","team":"`+session+`","id":"msg-0123456789abcdef0123456789abcdef","from":"lead","to":"second","body":"peer delivery"}`, "peer-receive")
+	if peer.status != 0 || !regexp.MustCompile(`^\{"id":"ser5\.msg-0123456789abcdef0123456789abcdef","outcome":"(delivered|queued)"\}\n$`).MatchString(peer.out) {
+		t.Fatalf("peer-receive status=%d\n%s", peer.status, peer.out)
+	}
+	check("", "tick")
+	if received, err := os.ReadFile(filepath.Join(root, "received")); err != nil || !regexp.MustCompile(`\[gang:ser5:lead#[0-9a-f]{16}\] peer delivery`).Match(received) {
+		t.Fatalf("native delivery ledger lacks the peer envelope: %q %v", received, err)
+	}
 	if err := os.Chmod(team.Log, 0200); err != nil {
 		t.Fatal(err)
 	}

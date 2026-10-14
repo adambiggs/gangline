@@ -269,6 +269,8 @@ func (cmd command) execute(args []string) (result error) {
 		return cmd.rename(arguments)
 	case "send":
 		return cmd.send(arguments)
+	case "peer-receive":
+		return cmd.peerReceive(arguments)
 	case "queue":
 		return cmd.queue(arguments)
 	case "interrupt":
