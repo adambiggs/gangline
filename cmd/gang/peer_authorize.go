@@ -64,7 +64,8 @@ without the forced command leaves it unbound; remove that line.
 On %[1]s:
   - keep this key pair for this link only;
   - add an ssh alias for this host with its HostName, IdentityFile set to the
-    private key, and IdentitiesOnly yes;
+    private key, IdentitiesOnly yes, and ControlPath none, so ssh neither
+    offers another key first nor reuses a connection another key opened;
   - set that alias as "ssh" in GANG_PEERS for this host, and GANG_HOST=%[1]s.
 `, host)
 	return err

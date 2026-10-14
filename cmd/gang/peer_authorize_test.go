@@ -41,7 +41,7 @@ func TestPeerAuthorizePrintsTheForcedCommandLine(t *testing.T) {
 	if f.out.String() != want {
 		t.Fatalf("line = %q, want %q", f.out.String(), want)
 	}
-	for _, step := range []string{"first line whose key matches", "IdentitiesOnly yes", `"ssh" in GANG_PEERS`, "GANG_HOST=alpha"} {
+	for _, step := range []string{"first line whose key matches", "IdentitiesOnly yes", "ControlPath none", `"ssh" in GANG_PEERS`, "GANG_HOST=alpha"} {
 		if !strings.Contains(f.errOut.String(), step) {
 			t.Errorf("stderr lacks %q:\n%s", step, f.errOut.String())
 		}
