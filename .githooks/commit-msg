@@ -120,6 +120,6 @@ Expected: <type>[(scope)][!]: <description>
 
   fix(collars): refuse an occupied composer
   feat(down): tear the whole team down
-  refactor!: rename executable and protocol from gl to gang
+  feat(send)!: require a recipient name
 EOF
 exit 1
