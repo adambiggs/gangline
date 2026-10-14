@@ -209,6 +209,9 @@ func parsePeers(value string) (map[string]peerHost, error) {
 	if peers == nil {
 		return nil, fmt.Errorf("%s", form)
 	}
+	if err := refuseRepeatedPeerHosts(value); err != nil {
+		return nil, err
+	}
 	for host, peer := range peers {
 		if !validPeerHost(host) {
 			return nil, fmt.Errorf("GANG_PEERS has invalid peer host %q (%s; self-declared is reserved)", host, agentNameForm)
@@ -227,6 +230,37 @@ func parsePeers(value string) (map[string]peerHost, error) {
 		}
 	}
 	return peers, nil
+}
+
+// refuseRepeatedPeerHosts refuses an object that names a host twice, which
+// decoding would settle silently in favour of the last entry, or names two
+// hosts that differ only in case, which would label two senders for one host.
+// value has already decoded as an object.
+func refuseRepeatedPeerHosts(value string) error {
+	decoder := json.NewDecoder(strings.NewReader(value))
+	if _, err := decoder.Token(); err != nil {
+		return err
+	}
+	seen := map[string]string{}
+	for decoder.More() {
+		token, err := decoder.Token()
+		if err != nil {
+			return err
+		}
+		host, _ := token.(string)
+		if earlier, repeated := seen[strings.ToLower(host)]; repeated {
+			if earlier == host {
+				return fmt.Errorf("GANG_PEERS names peer host %q more than once", host)
+			}
+			return fmt.Errorf("GANG_PEERS names peer hosts %q and %q, which differ only in case", earlier, host)
+		}
+		seen[strings.ToLower(host)] = host
+		var peer json.RawMessage
+		if err := decoder.Decode(&peer); err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 // validPeerHost reports whether host can label a peer sender. The label

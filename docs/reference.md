@@ -338,7 +338,7 @@ override file values. Run `gang config` to see effective values and defaults.
 | `GANG_CODEX_PERMISSION_PROFILE` | Codex permission profile name for hitched agents; unset by default. |
 | `GANG_CAPACITY_TIMEOUT` | Positive duration budget for provider-error continuations. |
 | `GANG_BACKGROUND_IDLE_NOTICE` | Positive duration an agent stays idle with native background tasks pending before its hitcher is told; defaults to `30m`. |
-| `GANG_PEERS` | JSON object of enrolled peer host names to `{"ssh": ALIAS, "user": LOGIN, "gang": PATH, "team": TEAM}`: the ssh alias and optional login that reach the host, the absolute path of its `gang`, and its team. Messages from an enrolled host are accepted; `gang send HOST:NAME` runs `ssh ALIAS PATH peer-receive --team TEAM`. Unset means no peers. |
+| `GANG_PEERS` | JSON object of enrolled peer host names to `{"ssh": ALIAS, "user": LOGIN, "gang": PATH, "team": TEAM}`: the ssh alias and optional login that reach the host, the absolute path of its `gang`, and its team. Messages from an enrolled host are accepted; `gang send HOST:NAME` runs `ssh ALIAS PATH peer-receive --team TEAM`. Host names must differ other than by case. Unset means no peers. |
 | `GANG_HOST` | This host's name as its peers enroll it in their `GANG_PEERS`; required to send to a peer, and the `HOST` in the `HOST:NAME` sender they see. |
 
 Set `GANG_CODEX_PERMISSION_PROFILE=gangline` in the config file or environment

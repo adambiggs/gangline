@@ -241,6 +241,8 @@ func TestPeersConfiguration(t *testing.T) {
 		"null":               `null`,
 		"trailing data":      `{"alpha":{"ssh":"alpha","gang":"/g","team":"t"}} {}`,
 		"trailing bracket":   `{"alpha":{"ssh":"alpha","gang":"/g","team":"t"}}}`,
+		"repeated host":      `{"alpha":{"ssh":"alpha","gang":"/g","team":"t"},"alpha":{"ssh":"other","gang":"/g","team":"t"}}`,
+		"case variant host":  `{"lead":{"ssh":"lead","gang":"/g","team":"t"},"Lead":{"ssh":"lead","gang":"/g","team":"t"}}`,
 	} {
 		write(value)
 		if _, err := cmd.settings(); err == nil || !strings.Contains(err.Error(), "GANG_PEERS") {
