@@ -129,7 +129,9 @@ func (cmd command) peerReceive(args []string) (result error) {
 	id := core.EnvelopeID("peer-" + host + "." + request.ID)
 	alreadyPublished := refuseError("message %s was already published here; do not resend", id)
 	// This check sees the receipts this agent retains. Of two requests that
-	// pass it together, publishing queues only the first.
+	// pass it together, publishing queues only the first, so neither replaces
+	// the other's body. A repeat that passes it after the first copy is
+	// delivered is delivered again: a repeated ID is at-least-once.
 	if published, err := envelopePublished(p, id); err != nil {
 		return err
 	} else if published {

@@ -88,7 +88,7 @@ func (run *runtime) sendToPeer(o sendOptions) error {
 	var exit *exec.ExitError
 	refused := errors.As(runErr, &exit) && exit.ExitCode() >= exitError && exit.ExitCode() <= exitNative
 	// The peer's log records what it received; this host's log records what
-	// its agent sent, once ssh has carried the request.
+	// its agent sent, once ssh has run, whether or not it reached the peer.
 	sent := core.Event{Type: "peer_sent", ID: string(remoteID), To: o.Host + ":" + o.Name}
 	switch {
 	case replied && reply.ID != "":

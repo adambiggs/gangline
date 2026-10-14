@@ -72,7 +72,9 @@ For example, `gang up --context-bands 10,20` gives the lead earlier notices,
 while `gang hitch worker --context-bands 20,30` sets the worker's thresholds
 independently.
 
-For collars whose transcripts Gangline reads, a resume is refused when the
+A resume is refused when the session ID starts with `-`, since the native CLI
+would read it as an option. For collars whose transcripts Gangline reads, a
+resume is also refused when the
 native transcript stored under that session ID names a different session, or
 when the ID contains path or glob characters. A session Gangline cannot check
 is left to the native CLI, and `hitch` says why on stderr.
@@ -321,7 +323,7 @@ that turn failed. Delivery does not establish that the assignment completed.
 | `gang help [COMMAND]` | Show command help. |
 | `gang hook` | Read native hook JSON from stdin; invoked by the collar integration. |
 | `gang peer-authorize HOST PUBKEY_FILE` | Print the `~/.ssh/authorized_keys` line that binds enrolled `GANG_PEERS` host HOST's public key to `gang peer-receive` for the selected team: `command="GANG peer-receive --team TEAM --peer HOST",restrict TYPE KEY gangline-peer-HOST`, where GANG is this `gang`'s path. PUBKEY_FILE holds exactly one OpenSSH public key line with no options; its comment is dropped. Stderr names HOST's steps: keep the key pair for this link only, add an ssh alias for this host with `IdentityFile` and `IdentitiesOnly yes`, set that alias as `ssh` in its `GANG_PEERS` entry for this host, and set `GANG_HOST=HOST`. sshd uses the first line whose key matches, so a line that already authorizes the key without the forced command leaves it unbound. Refuses an unenrolled host, a team name or `gang` path that cannot appear in the command, and any other key file. |
-| `gang peer-receive --peer HOST` | The forced command `gang peer-authorize` prints; HOST is the enrolled host whose key ssh authenticated. Before reading stdin, it refuses unless its parent is an `sshd` or `sshd-session` process of this user whose parent is an `sshd` or `sshd-session` process of root, and refuses without `--peer` or with an unenrolled HOST. Read one JSON request (`host`, `team`, `id`, `from`, `to`, `body`) from stdin and deliver it from sender `HOST:NAME` as message `peer-HOST.ID`; a request whose `host` is not HOST is refused. Print one JSON line with the message ID and outcome, or the error that published nothing. Refuses an ID whose envelope or retained receipt this host still holds; once a later message's receipt replaces that receipt, the same ID is delivered again. Refused inside a registered agent pane. [Peer labels](concepts.md#messages-and-envelopes) states what the binding leaves open. |
+| `gang peer-receive --peer HOST` | The forced command `gang peer-authorize` prints; HOST is the enrolled host whose key ssh authenticated. Before reading stdin, it refuses unless its parent is an `sshd` or `sshd-session` process of this user whose parent is an `sshd` or `sshd-session` process of root, and refuses without `--peer` or with an unenrolled HOST. Read one JSON request (`host`, `team`, `id`, `from`, `to`, `body`) from stdin and deliver it from sender `HOST:NAME` as message `peer-HOST.ID`; a request whose `host` is not HOST is refused. Print one JSON line with the message ID and outcome, or the error that published nothing. Refuses an ID whose envelope or retained receipt this host still holds, so a concurrent duplicate never replaces a queued message; delivery of a repeated ID is still at-least-once, because one that arrives after the first copy is delivered, or after a later message's receipt replaces its receipt, is delivered again. Refused inside a registered agent pane. [Peer labels](concepts.md#messages-and-envelopes) states what the binding leaves open. |
 
 ## Configuration
 
@@ -339,7 +341,7 @@ override file values. Run `gang config` to see effective values and defaults.
 | `GANG_CODEX_PERMISSION_PROFILE` | Codex permission profile name for hitched agents; unset by default. |
 | `GANG_CAPACITY_TIMEOUT` | Positive duration budget for provider-error continuations. |
 | `GANG_BACKGROUND_IDLE_NOTICE` | Positive duration an agent stays idle with native background tasks pending before its hitcher is told; defaults to `30m`. |
-| `GANG_PEERS` | JSON object of enrolled peer host names to `{"ssh": ALIAS, "user": LOGIN, "gang": PATH, "team": TEAM}`: the ssh alias and optional login that reach the host, the absolute path of its `gang`, and its team. An enrolled host's messages are accepted through the forced command `gang peer-authorize` prints for its key. `gang send HOST:NAME` runs `ssh ALIAS PATH peer-receive --team TEAM`; HOST runs its forced command for the key in its place. Host names must differ other than by case. Unset means no peers. |
+| `GANG_PEERS` | JSON object of enrolled peer host names to `{"ssh": ALIAS, "user": LOGIN, "gang": PATH, "team": TEAM}`: the ssh alias and optional login that reach the host, the absolute path of its `gang`, and its team. An enrolled host's messages are accepted through the forced command `gang peer-authorize` prints for its key. `gang send HOST:NAME` runs `ssh ALIAS PATH peer-receive --team TEAM`; HOST runs its forced command for the key in its place. No two host names may differ only by case. Unset means no peers. |
 | `GANG_HOST` | This host's name as its peers enroll it in their `GANG_PEERS` and authorize its key; required to send to a peer, which refuses a request naming any other host. |
 
 Set `GANG_CODEX_PERMISSION_PROFILE=gangline` in the config file or environment
