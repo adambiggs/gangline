@@ -36,7 +36,7 @@ import "time"
  type: string
  at: #Time
  source?: "hook" | "command" | "watchdog"
- hitch_id?: #ID, name?: #ID, pane?: #ID, id?: #ID, reason?: string, status?: string
+ hitch_id?: #ID, name?: #ID, to?: #ID, pane?: #ID, id?: #ID, reason?: string, status?: string
  activity?: #Activity, deadline?: #Time, envelope?: #Envelope, compaction?: #Compaction
  readings?: [...#Reading], native_event?: string, fingerprint?: #ID, basis?: #Basis
 })
@@ -49,6 +49,7 @@ import "time"
  compaction_completed: {}, compaction_failed: {}, compaction_unverified: {}, interrupt_requested: {}, interrupt_completed: {}, deadline_checked: {}, drop_started: {}, drop_finished: {}
  curfew_set: {}, curfew_cleared: {}, capacity_detected: {}, capacity_submitted: {}, capacity_cleared: {}, watchdog_available: {}, process_verification_available: {}
  send_queued: {envelope: #Envelope}
+ peer_sent: {hitch_id: #ID, name: #ID, id: #ID, to: #ID, status: "queued" | "delivered" | "accepted" | "failed" | "unverified" | "refused" | "unknown"}
  context_band_crossed: {id: #ID, hitch_id: #ID, status: #ID, envelope: #Envelope, readings: [#Reading]}
  snooze_scheduled: {id: #ID, hitch_id: #ID, reason: #ID}
  snooze_cleared: {id: #ID, hitch_id: #ID, reason: #ID}

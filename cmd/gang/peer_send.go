@@ -87,8 +87,15 @@ func (run *runtime) sendToPeer(o sendOptions) error {
 	// line may be noise a login shell printed before the peer published.
 	var exit *exec.ExitError
 	refused := errors.As(runErr, &exit) && exit.ExitCode() >= exitError && exit.ExitCode() <= exitNative
+	// The peer's log records what it received; this host's log records what
+	// its agent sent, once ssh has carried the request.
+	sent := core.Event{Type: "peer_sent", ID: string(remoteID), To: o.Host + ":" + o.Name}
 	switch {
 	case replied && reply.ID != "":
+		sent.Status = reply.Outcome
+		if err := run.recordPeerSend(sender, sent); err != nil {
+			return err
+		}
 		if _, err := fmt.Fprintf(run.cmd.stdout, "%s:%s\t%s\n", o.Host, reply.ID, reply.Outcome); err != nil {
 			return err
 		}
@@ -104,6 +111,10 @@ func (run *runtime) sendToPeer(o sendOptions) error {
 		}
 		return deliveryResult(reply.Outcome)
 	case replied && refused:
+		sent.Status, sent.Reason = "refused", printable(reply.Error)
+		if err := run.recordPeerSend(sender, sent); err != nil {
+			return err
+		}
 		// The peer words its refusal for its own host, where any command it
 		// names must run, so that is said before the reason.
 		return commandError{status: exit.ExitCode(), text: fmt.Sprintf("peer host %s refused the message; any command in its reason runs on %s, not here: %s", o.Host, o.Host, printable(reply.Error))}
@@ -117,10 +128,26 @@ func (run *runtime) sendToPeer(o sendOptions) error {
 	if line := lastLine(stderr.data); line != "" {
 		cause += ": " + line
 	}
+	sent.Status, sent.Reason = "unknown", cause
+	if err := run.recordPeerSend(sender, sent); err != nil {
+		return err
+	}
 	if _, err := fmt.Fprintf(run.cmd.stdout, "%s:%s\tunknown\n", o.Host, remoteID); err != nil {
 		return err
 	}
 	return commandError{status: exitUnknown, text: fmt.Sprintf("peer host %s gave no outcome (%s); message %s may have been published there, so resend it only once no gang peer-receive runs on %s and its gang queue and gang log both lack it", o.Host, cause, remoteID, o.Host)}
+}
+
+// recordPeerSend logs a forwarded send under the agent that sent it. The
+// message has gone whatever the log says, so a failed append is a warning and
+// leaves the send's own result in place.
+func (run *runtime) recordPeerSend(sender core.Sender, e core.Event) error {
+	err := run.record(core.Agent{ID: sender.HitchID, Name: sender.Name}, e)
+	if err == nil {
+		return nil
+	}
+	_, err = fmt.Fprintf(run.cmd.stderr, "warning: message %s to %s is missing from this host's team log: %v\n", e.ID, e.To, err)
+	return err
 }
 
 // peerOutcomes are the outcomes a peer's publish reports.

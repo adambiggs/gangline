@@ -5,11 +5,13 @@ import "time"
 // Event is an audit fact. Target identity travels with every agent event so
 // filtering a log never needs to reconstruct state.
 type Event struct {
-	Source      string         `json:"source,omitempty"`
-	Type        string         `json:"type"`
-	At          time.Time      `json:"at"`
-	HitchID     HitchID        `json:"hitch_id,omitempty"`
-	Name        AgentName      `json:"name,omitempty"`
+	Source  string    `json:"source,omitempty"`
+	Type    string    `json:"type"`
+	At      time.Time `json:"at"`
+	HitchID HitchID   `json:"hitch_id,omitempty"`
+	Name    AgentName `json:"name,omitempty"`
+	// To is the HOST:NAME address of a message forwarded to a peer host.
+	To          string         `json:"to,omitempty"`
 	Pane        string         `json:"pane,omitempty"`
 	ID          string         `json:"id,omitempty"`
 	Reason      string         `json:"reason,omitempty"`

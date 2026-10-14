@@ -11,6 +11,8 @@ import (
 	"syscall"
 	"testing"
 	"time"
+
+	"github.com/adambiggs/gangline/core"
 )
 
 // fakeSSH puts an ssh on PATH that records its arguments and stdin and plays
@@ -338,5 +340,51 @@ func TestLastPeerReplyTakesTheFinalLine(t *testing.T) {
 	b.Write([]byte("defg"))
 	if string(b.data) != "defg" {
 		t.Fatalf("tail = %q", b.data)
+	}
+}
+
+// The sending host's team log answers what its agent sent to a peer, under
+// that agent, whatever the peer answered.
+func TestPeerSendRecordsTheSendHere(t *testing.T) {
+	for _, tc := range []struct{ name, stdout, stderr, exit, status, reason string }{
+		{"delivered", `{"id":"@ID@","outcome":"delivered"}` + "\n", "", "0", "delivered", ""},
+		{"refused", `{"error":"agent \"reviewer\" is not registered"}` + "\n", "", "3", "refused", `agent "reviewer" is not registered`},
+		{"unknown", "", "Connection to beta closed by remote host.\n", "255", "unknown", "Connection to beta closed"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			f, ssh := peerSender(t)
+			ssh.reply(t, tc.stdout, tc.stderr, tc.exit)
+			_ = sendPeer(f, "beta:reviewer", "hi")
+			f.out.Reset()
+			if err := f.cmd.execute([]string{"log", "--type", "peer_sent"}); err != nil {
+				t.Fatal(err)
+			}
+			var got core.Event
+			if err := json.Unmarshal(f.out.Bytes(), &got); err != nil || strings.Count(f.out.String(), "\n") != 1 {
+				t.Fatalf("log = %q: %v", f.out.String(), err)
+			}
+			if got.HitchID != "lead-id" || got.Name != "lead" || got.ID != ssh.forwardedID(t) || got.To != "beta:reviewer" || got.Status != tc.status || !strings.Contains(got.Reason, tc.reason) {
+				t.Fatalf("peer_sent = %+v", got)
+			}
+		})
+	}
+}
+
+// A message the peer delivered stays delivered when this host cannot log it,
+// so the sending agent is not led to send it again.
+func TestPeerSendKeepsTheOutcomeWhenTheLogFails(t *testing.T) {
+	f, ssh := peerSender(t)
+	ssh.reply(t, `{"id":"@ID@","outcome":"delivered"}`+"\n", "", "0")
+	if err := os.RemoveAll(f.run.team.Log); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Mkdir(f.run.team.Log, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := sendPeer(f, "beta:reviewer", "hi"); err != nil {
+		t.Fatal(err)
+	}
+	if got := f.out.String(); got != "beta:"+ssh.forwardedID(t)+"\tdelivered\n" || !strings.Contains(f.errOut.String(), "warning: message "+ssh.forwardedID(t)+" to beta:reviewer is missing from this host's team log") {
+		t.Fatalf("stdout = %q stderr = %q", got, f.errOut.String())
 	}
 }
