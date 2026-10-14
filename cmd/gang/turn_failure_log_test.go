@@ -1,6 +1,7 @@
 package main
 
 import (
+	"encoding/json"
 	"fmt"
 	"path/filepath"
 	"strings"
@@ -17,7 +18,7 @@ const refusalMessage = "This content was flagged for possible cybersecurity risk
 // witnessed and whose session log ends turn failed with an error of class.
 // Codex fires no Stop hook for the failed turn, so the log is its only
 // boundary, and the pane reads idle.
-func codexTurnErrorFixture(t *testing.T, witnessed, failed, class, message string) (*stateFixture, core.Agent) {
+func codexTurnErrorFixture(t *testing.T, witnessed, failed string, class any, message string) (*stateFixture, core.Agent) {
 	t.Helper()
 	f := newStateFixture(t)
 	a := f.add(t, "a", "worker", "codex")
@@ -31,10 +32,14 @@ func codexTurnErrorFixture(t *testing.T, witnessed, failed, class, message strin
 	}
 	stamp := at.UTC().Format("2006-01-02T15:04:05.000Z")
 	path := filepath.Join(f.env["GANG_STATE_ROOT"], "rollout.jsonl")
+	errorClass, err := json.Marshal(class)
+	if err != nil {
+		t.Fatal(err)
+	}
 	appendLines(t, path,
 		`{"type":"session_meta","payload":{"id":"s"}}`,
 		fmt.Sprintf(`{"timestamp":%q,"type":"event_msg","payload":{"type":"task_started","turn_id":%q}}`, stamp, failed),
-		fmt.Sprintf(`{"timestamp":%q,"type":"event_msg","payload":{"type":"task_complete","turn_id":%q,"last_agent_message":null,"error":{"message":%q,"codex_error_info":%q}}}`, stamp, failed, message, class),
+		fmt.Sprintf(`{"timestamp":%q,"type":"event_msg","payload":{"type":"task_complete","turn_id":%q,"last_agent_message":null,"error":{"message":%q,"codex_error_info":%s}}}`, stamp, failed, message, errorClass),
 	)
 	a = f.setAgent(t, a, func(a *core.Agent) {
 		a.Native.SessionID, a.Native.TurnID, a.Native.Transcript, a.Native.SubmittedAt = "s", witnessed, path, at
@@ -156,5 +161,83 @@ func TestRosterSurvivesUnreadableSessionLog(t *testing.T) {
 	}
 	if got := f.agent(t, a.ID); got.Activity != core.Blocked {
 		t.Fatalf("readable agent lost its refusal: %s %q", got.Activity, got.Evidence)
+	}
+}
+
+func TestCodexProviderErrorVisibleWithoutFailureHook(t *testing.T) {
+	for _, status := range []int{429, 503} {
+		for _, read := range []string{"status", "roster", "tick"} {
+			for _, probed := range []bool{false, true} {
+				t.Run(fmt.Sprintf("%d/%s/probed=%v", status, read, probed), func(t *testing.T) {
+					message := "exceeded retry limit, last status: 429 Too Many Requests"
+					if status == 503 {
+						message = "exceeded retry limit, last status: 503 Service Unavailable"
+					}
+					class := map[string]any{"response_too_many_failed_attempts": map[string]int{"http_status_code": status}}
+					f, a := codexTurnErrorFixture(t, "t1", "t1", class, message)
+					f.setAgent(t, a, func(a *core.Agent) {
+						a.Native.HookAt, a.Native.HookKind = f.cmd.now().Add(-time.Second), "turn-started"
+						if probed {
+							a.StatusProbeAt = f.cmd.now()
+							a.Activity, a.Evidence = core.Idle, ""
+						}
+					})
+					var err error
+					switch read {
+					case "status":
+						err = f.cmd.status([]string{"worker", "--why"})
+					case "roster":
+						err = f.cmd.roster(nil)
+					case "tick":
+						err = f.run.tickAgent(a.ID, hookNotice{}, false)
+					}
+					if err != nil {
+						t.Fatal(err)
+					}
+					got := f.agent(t, a.ID)
+					if got.Activity != core.Unknown || got.Evidence != "native turn failed: "+message {
+						t.Fatalf("provider error invisible: activity=%s evidence=%q", got.Activity, got.Evidence)
+					}
+					if read != "tick" && !strings.Contains(f.out.String(), message) {
+						t.Fatalf("output omits provider error: %q", f.out.String())
+					}
+				})
+			}
+		}
+	}
+}
+
+func TestStartupRecoveryDoesNotReplayProviderFailedTurn(t *testing.T) {
+	f, a := codexTurnErrorFixture(t, "t1", "t1", map[string]any{"response_too_many_failed_attempts": map[string]int{"http_status_code": 429}}, "exceeded retry limit, last status: 429 Too Many Requests")
+	p, err := f.run.team.Agent(a.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	e := core.Envelope{ID: "original", Token: "0123456789abcdef", Recipient: a.ID, To: a.Name, From: core.Sender{Kind: core.SenderSelfDeclared, Name: "operator"}, Purpose: "assignment", Message: core.Message{Text: "Do the assignment."}, Startup: startupSections("worker", startupProse{Contract: []byte("Report completion.")}), CreatedAt: f.cmd.now()}
+	if err := p.Publish(e); err != nil {
+		t.Fatal(err)
+	}
+	l, err := p.TryLock()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := l.Settle(&a, e, "delivered", "native submit witness"); err != nil {
+		t.Fatal(err)
+	}
+	if err := l.Close(); err != nil {
+		t.Fatal(err)
+	}
+	if err := f.cmd.status([]string{"worker", "--why"}); err != nil {
+		t.Fatal(err)
+	}
+	f.out.Reset()
+	if err := f.cmd.hitch([]string{"worker", "--recover"}); err != nil {
+		t.Fatal(err)
+	}
+	if f.input.submits != 0 || !strings.Contains(f.out.String(), "delivered") {
+		t.Fatalf("recovery replayed delivered assignment: submits=%d output=%q", f.input.submits, f.out.String())
+	}
+	if got := f.agent(t, a.ID); got.Native.TurnFailure == "" {
+		t.Fatal("delivery recovery erased the execution failure")
 	}
 }

@@ -296,6 +296,14 @@ refused too. Codex reports a failed turn only in its session log, which ticks,
 `gang status`, and `gang roster` read. The next submitted prompt clears the
 failure.
 
+Provider errors such as an exhausted retry limit or an HTTP 429 or 5xx also
+read unknown with the native error text. A structured native error class can
+leave the reason without a class prefix. Inspect `gang status NAME --why`,
+then send an explicit continuation when retrying is appropriate.
+`gang hitch NAME --recover` recovers startup delivery, not execution: it
+reports an already delivered startup without submitting it again, even when
+that turn failed. Delivery does not establish that the assignment completed.
+
 ## Discover and maintain
 
 | Command | Effect |

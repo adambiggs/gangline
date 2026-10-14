@@ -141,8 +141,9 @@ func (run *runtime) statusCaptureGap(a core.Agent, c harness.Collar) string {
 }
 
 func (run *runtime) observeHookStatus(l *store.LockedAgent, a *core.Agent) error {
-	// A stale hook must not overwrite the later fallback's observed state.
-	if !a.Native.HookAt.After(a.StatusProbeAt) {
+	// A stale hook must not overwrite a later pane reading. A recorded turn
+	// failure remains authoritative even when it arrives without a hook.
+	if a.Native.TurnFailure == "" && !a.Native.HookAt.After(a.StatusProbeAt) {
 		return nil
 	}
 	activity, evidence := core.Busy, "native hook: "+a.Native.HookKind
