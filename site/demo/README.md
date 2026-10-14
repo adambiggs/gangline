@@ -7,10 +7,9 @@ palette, the worker edits and runs it, and the reply arrives. The completed
 animation then plays in a separate terminal window. The recorder saves the
 worker's result as `site/demo/greet.py`. The tape sets the canvas, font, frame
 rate, typing speed and playback speed. The two panes sit side by side on a
-1280x720 canvas, wide enough that neither harness truncates its status line. Phones scale the video
-down and can open it full screen.
+1280x720 canvas, wide enough that neither harness truncates its status line.
 
-Run from a trusted linked worktree with `gang`, `tmux`, both authenticated
+Run from a trusted checkout with `gang`, `tmux`, both authenticated
 harnesses, VHS, Chromium, ttyd and FFmpeg on PATH. Claude Code's status line
 uses U+23F5, which DejaVu Sans Mono lacks; fontconfig must find a font that
 covers it, such as Noto Sans Symbols 2, either installed or through
@@ -29,7 +28,6 @@ explicitly selects the sandboxed `gangline` permission profile through
 profile enables network access, including local sockets for team messages.
 Create that profile in Codex's user config before recording.
 The recorder grants its private state root as an additional writable directory.
-A permission prompt needs the operator; a failed take is not a recording.
 
 The recorder clears `NO_COLOR` and sets `COLORTERM=truecolor` before starting
 the private team so both harnesses render their native colours.
@@ -50,8 +48,3 @@ recorded messages. Inspect the entire video for private material, cropped text,
 permission prompts and missing work. The native terminal appearance is kept
 in both site themes. GitHub Pages publishes the generated video, GIF and poster
 with cache-versioned URLs.
-
-Use `ffprobe -show_entries format=duration site/demo.mp4` to measure playback
-length. Use FFmpeg's `framemd5` output to count distinct decoded frames. Review
-live browser playback at desktop and phone widths after deployment, and keep
-browser screenshots in a local directory.
