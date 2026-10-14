@@ -4,6 +4,7 @@ import (
 	"bufio"
 	"encoding/json"
 	"fmt"
+	"io"
 	"os"
 	"path/filepath"
 	"regexp"
@@ -182,7 +183,7 @@ func parsePeers(value string) (map[string]peerHost, error) {
 	if err := decoder.Decode(&peers); err != nil {
 		return nil, fmt.Errorf("%s: %w", form, err)
 	}
-	if decoder.More() {
+	if _, err := decoder.Token(); err != io.EOF {
 		return nil, fmt.Errorf("%s: unexpected data after the object", form)
 	}
 	if peers == nil {
@@ -205,7 +206,7 @@ func parsePeers(value string) (map[string]peerHost, error) {
 // validPeerHost reports whether host can label a peer sender. The label
 // HOST:NAME must not repeat the self-declared:NAME form.
 func validPeerHost(host string) bool {
-	return validAgentName(host) && host != "self-declared"
+	return validAgentName(host) && !strings.EqualFold(host, "self-declared")
 }
 
 func readConfiguration(filename string) (map[string]string, error) {

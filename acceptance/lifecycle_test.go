@@ -304,7 +304,7 @@ func TestCommandLifecycleOnPrivateTmux(t *testing.T) {
 		t.Fatal(err)
 	}
 	peer := runGang(`{"host":"ser5","team":"`+session+`","id":"msg-0123456789abcdef0123456789abcdef","from":"lead","to":"second","body":"peer delivery"}`, "peer-receive")
-	if peer.status != 0 || !regexp.MustCompile(`^\{"id":"ser5\.msg-0123456789abcdef0123456789abcdef","outcome":"(delivered|queued)"\}\n$`).MatchString(peer.out) {
+	if peer.status != 0 || !regexp.MustCompile(`^\{"id":"peer-ser5\.msg-0123456789abcdef0123456789abcdef","outcome":"(delivered|queued)"\}\n$`).MatchString(peer.out) {
 		t.Fatalf("peer-receive status=%d\n%s", peer.status, peer.out)
 	}
 	check("", "tick")

@@ -53,7 +53,7 @@ func TestPeerReceiveDeliversHostQualifiedSender(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if reply.ID != "ser5."+peerTestID || reply.Outcome != "delivered" || reply.Error != "" {
+	if reply.ID != "peer-ser5."+peerTestID || reply.Outcome != "delivered" || reply.Error != "" {
 		t.Fatalf("reply = %+v", reply)
 	}
 	p, err := f.run.team.Agent(a.ID)
@@ -87,7 +87,7 @@ func TestPeerReceiveReportsUnverifiedWithItsID(t *testing.T) {
 	if !errors.As(err, &status) || status.status != exitUnknown {
 		t.Fatalf("error = %v", err)
 	}
-	if reply.ID != "ser5."+peerTestID || reply.Outcome != "unverified" || reply.Error != "" {
+	if reply.ID != "peer-ser5."+peerTestID || reply.Outcome != "unverified" || reply.Error != "" {
 		t.Fatalf("reply = %+v", reply)
 	}
 }
@@ -160,7 +160,7 @@ func TestPeerReceiveNeverReplacesAPublishedMessage(t *testing.T) {
 		t.Fatalf("duplicate: reply=%+v err=%v", reply, err)
 	}
 	p, _ := f.run.team.Agent(a.ID)
-	e, err := p.ReadEnvelope("cur", "ser5."+peerTestID)
+	e, err := p.ReadEnvelope("cur", "peer-ser5."+peerTestID)
 	if err != nil || e.Message.Text != "status report" || f.input.submits != 1 {
 		t.Fatalf("original = %+v err=%v submits=%d", e, err, f.input.submits)
 	}
@@ -212,6 +212,7 @@ func TestPeersConfiguration(t *testing.T) {
 	}
 	for name, value := range map[string]string{
 		"self-declared host": `{"self-declared":{"ssh":"x"}}`,
+		"self-declared case": `{"Self-Declared":{"ssh":"x"}}`,
 		"label host":         `{"a:b":{"ssh":"x"}}`,
 		"reserved host":      `{"gangline":{"ssh":"x"}}`,
 		"option alias":       `{"ser5":{"ssh":"-oProxyCommand=x"}}`,
@@ -221,10 +222,57 @@ func TestPeersConfiguration(t *testing.T) {
 		"not an object":      `["ser5"]`,
 		"null":               `null`,
 		"trailing data":      `{"ser5":{"ssh":"ser5"}} {}`,
+		"trailing bracket":   `{"ser5":{"ssh":"ser5"}}}`,
 	} {
 		write(value)
 		if _, err := cmd.settings(); err == nil || !strings.Contains(err.Error(), "GANG_PEERS") {
 			t.Errorf("%s: error = %v", name, err)
 		}
 	}
+}
+
+// A host named like a Gangline-derived ID prefix, sending from an agent named
+// like a Gangline sender, must not make its message read as Gangline input.
+func TestPeerHostCannotNameADerivedID(t *testing.T) {
+	f, _ := peerFixture(t)
+	f.env["GANG_PEERS"] = `{"resume-x":{"ssh":"x"}}`
+	reply, err := peerReceive(f, peerRequestJSON(t, func(r map[string]any) {
+		r["host"], r["from"] = "resume-x", "compact"
+	}))
+	if err != nil || reply.ID != "peer-resume-x."+peerTestID || reply.Outcome != "delivered" {
+		t.Fatalf("reply = %+v, err = %v", reply, err)
+	}
+}
+
+func TestPeerReceiveKeepsSendRecipientChecks(t *testing.T) {
+	t.Run("inactive", func(t *testing.T) {
+		f, a := peerFixture(t)
+		p, _ := f.run.team.Agent(a.ID)
+		l, err := p.TryLock()
+		if err != nil {
+			t.Fatal(err)
+		}
+		a.Status = core.Dropping
+		if err := l.Save(a); err != nil {
+			t.Fatal(err)
+		}
+		if err := l.Close(); err != nil {
+			t.Fatal(err)
+		}
+		reply, err := peerReceive(f, peerRequestJSON(t, nil))
+		if err == nil || reply.ID != "" || reply.Error == "" || f.input.submits != 0 {
+			t.Fatalf("inactive recipient: reply=%+v err=%v", reply, err)
+		}
+	})
+	t.Run("paste hazard", func(t *testing.T) {
+		f, a, p := claudeRecipient(t)
+		f.env["GANG_PEERS"] = `{"ser5":{"ssh":"ser5"}}`
+		f.env["GANGLINE_HITCH_ID"] = string(a.ID)
+		reply, err := peerReceive(f, peerRequestJSON(t, func(r map[string]any) { r["body"] = placeholderQuote }))
+		requirePlaceholderRefusal(t, err)
+		if reply.ID != "" || reply.Error == "" {
+			t.Fatalf("reply = %+v", reply)
+		}
+		requireNothingTyped(t, f, p)
+	})
 }

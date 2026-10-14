@@ -23,8 +23,9 @@ type peerRequest struct {
 	Body string `json:"body"`
 }
 
-// peerReply is the one JSON line peer-receive prints. ID and Outcome mean the
-// message was published here; Error means nothing was.
+// peerReply is the one JSON line peer-receive prints once its team option has
+// parsed. ID and Outcome mean the message was published here; Error means
+// nothing was. A malformed --team is a usage error with no reply line.
 type peerReply struct {
 	ID      core.EnvelopeID `json:"id,omitempty"`
 	Outcome string          `json:"outcome,omitempty"`
@@ -33,8 +34,9 @@ type peerReply struct {
 }
 
 // peerMessageIDPattern is the form of a sending gang's message ID. The
-// receiver prefixes the host, so a peer cannot name any ID Gangline derives
-// for its own notices, startup, or resume input.
+// receiver files it as peer-HOST.ID. No ID Gangline derives for its own
+// notices, startup, or resume input starts with peer-, and a derived ID
+// prefixes another, so a peer cannot name one whatever its host is called.
 var peerMessageIDPattern = regexp.MustCompile(`^msg-[0-9a-f]{32}$`)
 
 // maximumPeerRequestBytes admits a body at the message budget even when the
@@ -103,7 +105,7 @@ func (cmd command) peerReceive(args []string) (result error) {
 	} else if failedStartup {
 		return refuseError("startup contract input is unverified; inspect the recipient and run gang hitch %s --recover before sending another message", a.Name)
 	}
-	id := core.EnvelopeID(request.Host + "." + request.ID)
+	id := core.EnvelopeID("peer-" + request.Host + "." + request.ID)
 	// Publishing renames over an existing file, which would replace a
 	// message that may already be in the recipient's composer.
 	if published, err := envelopePublished(p, id); err != nil {
