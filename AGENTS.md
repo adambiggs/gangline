@@ -25,7 +25,6 @@ next operation for them.
   scale the fake clock and write down the measured margin.
 - A check that only prints on success proves nothing when it prints nothing.
   Keep "unknown" separate from pass and fail.
-- Don't add test matrices or release blockers the operator didn't ask for.
 
 ## Don't touch the live team
 
