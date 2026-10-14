@@ -75,8 +75,7 @@ compaction's own note fails that compaction, since input waits behind a note
 that will not arrive. The next agent access cancels stale context-band notices
 before delivery. Submit, activity, permission-request, turn-end,
 compaction-start, compaction-end, and blocked submit hooks schedule detached
-scoped ticks. Hook-first as much as possible; pane scraping only for additional
-validation or telemetry, or where hooks leave a gap. These ticks reconcile
+scoped ticks. These ticks reconcile
 retained native boundaries and repaint status without capturing a pane while
 hook evidence is fresh. Native prompt identity rejects a delayed finish from
 an older turn; receipt time alone cannot order turns.
@@ -256,6 +255,8 @@ Read these before changing behavior. A conflicting change needs an explicit
 decision about the principle or implementation.
 
 - Use universal surfaces: tmux panes, keystrokes, pane capture, and a CLI.
+- Observe through native hooks first; capture the pane only for additional
+  validation or telemetry, or where hooks leave a gap.
 - Name every message's sender, distinguishing observed and declared identity.
 - Reserve `delivered` for verified submission; preserve uncertainty.
 - Describe native differences in collars so the CLI stays harness-neutral.

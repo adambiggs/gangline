@@ -250,11 +250,10 @@ Pane borders use `?name?` for changing or unknown state, `~name~` for idle,
 `-name-` for work, and `!name!` for native decisions, wedges, or failures.
 An unsubmitted operator draft holds message delivery but keeps the idle
 symbol, or the work symbol while a witnessed turn is still open.
-Hook-first as much as possible; pane scraping only for additional validation
-or telemetry, or where hooks leave a gap. Native submit, activity, permission,
-turn-end, failure, and compaction hooks persist pending status records and
-refresh the affected agent through a detached tick. Fresh records drive the
-symbol without a pane capture, including after a skipped detached refresh.
+Native submit, activity, permission, turn-end, failure, and compaction hooks
+persist pending status records and refresh the affected agent through a
+detached tick. Fresh records drive the symbol without a pane capture,
+including after a skipped detached refresh.
 See `statusHookFreshness` in `cmd/gang/status_hooks.go` for the freshness and
 stale-probe interval. After expiry, a pane observation supplies the symbol
 until a newer hook or another probe is due. Capture reasons appear in the log.
@@ -458,9 +457,7 @@ the native CLI reads it as a system prompt. Claude Code uses
 `--append-system-prompt-file`. A collar without this option receives the
 standing instructions in the startup message instead. The prompt file is
 removed with the agent's state on drop. The assignment remains in the startup
-message either way. A custom collar that used `options.role_prompt` must use
-`options.role_prompt_file` with a native file-reading argument to keep standing
-instructions in the system prompt.
+message either way.
 An agent hitched with `--context-bands` keeps its thresholds until re-hitched;
 Gangline reads band names, messages, and model selectors from the collar for
 each later operation. A later selector with a different band count uses its
