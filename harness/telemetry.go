@@ -18,6 +18,7 @@ type Reading struct {
 	At          *time.Time    `json:"at,omitempty"`
 	Status      string        `json:"status"`
 	Reason      string        `json:"reason,omitempty"`
+	TurnID      string        `json:"turn_id,omitempty"`
 	Model       string        `json:"model,omitempty"`
 	Used        *int64        `json:"used,omitempty"`
 	Limit       *int64        `json:"limit,omitempty"`
@@ -176,7 +177,12 @@ func ReadTranscript(invocation Invocation, input io.ReadSeeker, session string, 
 			Type    string `json:"type"`
 			Message string `json:"message"`
 			Reason  string `json:"reason"`
-			Info    *struct {
+			TurnID  string `json:"turn_id"`
+			Error   *struct {
+				Message string          `json:"message"`
+				Class   json.RawMessage `json:"codex_error_info"`
+			} `json:"error"`
+			Info *struct {
 				Usage *struct {
 					Total *int64 `json:"total_tokens"`
 				} `json:"last_token_usage"`
@@ -252,7 +258,24 @@ func ReadTranscript(invocation Invocation, input io.ReadSeeker, session string, 
 			base.Kind = "turn-started"
 			result.Readings = append(result.Readings, base)
 		case "task_complete":
-			base.Kind = "turn-finished"
+			base.Kind, base.TurnID = "turn-finished", p.TurnID
+			if p.Error != nil {
+				// Codex records a turn it could not complete as an error on
+				// its completion. A turn the provider refused fires no Stop
+				// hook, so this record is its only boundary. The class leads
+				// the reason, as a Claude StopFailure's does; only a class
+				// serialized as a bare name is read.
+				var class string
+				_ = json.Unmarshal(p.Error.Class, &class)
+				base.Kind, base.Reason = "turn-failed", p.Error.Message
+				if class != "" && base.Reason != "" {
+					base.Reason = class + ": " + base.Reason
+				} else if class != "" {
+					base.Reason = class
+				} else if base.Reason == "" {
+					base.Reason = "native turn failed"
+				}
+			}
 			result.Readings = append(result.Readings, base)
 		case "turn_aborted":
 			base.Kind = "turn-finished"

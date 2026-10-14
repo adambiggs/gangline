@@ -287,6 +287,15 @@ of the text the collar matched, so a prompt whose matched text differs logs a
 new reading, and a wedged
 reading names the collar's threshold. `gang capture NAME` prints the prompt.
 
+A native turn that fails reads unknown with the reason
+`native turn failed: CLASS: MESSAGE` under rule `turn-failure`. A turn the
+provider refused for its content (Codex class `cyber_policy`) reads blocked
+with `native turn refused: CLASS: MESSAGE` instead: the agent is alive and
+takes the next message, so rebrief it, and replace it only if the rebrief is
+refused too. Codex reports a failed turn only in its session log, which ticks,
+`gang status`, and `gang roster` read. The next submitted prompt clears the
+failure.
+
 ## Discover and maintain
 
 | Command | Effect |

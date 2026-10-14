@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"os"
 
@@ -11,7 +12,7 @@ import (
 )
 
 func coreReading(r harness.Reading) core.Reading {
-	out := core.Reading{Kind: r.Kind, Source: r.Source, NativeEvent: r.NativeEvent, At: r.At, Status: r.Status, Reason: r.Reason, Model: r.Model, Used: r.Used, Limit: r.Limit, Percent: r.Percent}
+	out := core.Reading{Kind: r.Kind, Source: r.Source, NativeEvent: r.NativeEvent, At: r.At, Status: r.Status, Reason: r.Reason, TurnID: r.TurnID, Model: r.Model, Used: r.Used, Limit: r.Limit, Percent: r.Percent}
 	for _, w := range r.Limits {
 		out.Limits = append(out.Limits, core.LimitWindow{Label: w.Label, UsedPercent: w.UsedPercent, ResetAt: w.ResetAt, WindowMinutes: w.WindowMinutes})
 	}
@@ -56,6 +57,38 @@ func acceptReadings(n *core.NativeState, readings []core.Reading) {
 		}
 	}
 }
+
+// acceptTurnFailures records a native turn failure that only the session log
+// reports. The failure describes the agent only when the submit witness names
+// its turn: an older turn's failure is history, and a later submit clears it.
+func acceptTurnFailures(l *store.LockedAgent, a *core.Agent, readings []core.Reading) error {
+	for _, r := range readings {
+		if r.Kind != "turn-failed" || r.TurnID == "" || r.At == nil {
+			continue
+		}
+		witness, err := l.Paths.ReadWitness()
+		if errors.Is(err, os.ErrNotExist) {
+			continue
+		}
+		if err != nil {
+			return err
+		}
+		if witness.TurnID != r.TurnID {
+			continue
+		}
+		a.Native.TurnFailure, a.Native.FailedTurn = boundedFailureReason(r.Reason), r.TurnID
+		// Gang records its own delivery after the submit hook ran, so the
+		// failed turn closes no earlier than that submission.
+		finished := *r.At
+		if a.Native.SubmittedAt.After(finished) {
+			finished = a.Native.SubmittedAt
+		}
+		if finished.After(a.Native.FinishedAt) {
+			a.Native.FinishedAt = finished
+		}
+	}
+	return nil
+}
 func (run *runtime) refreshNative(l *store.LockedAgent, a *core.Agent, c harness.Collar) error {
 	if c.Primitives.Telemetry == nil || !harness.TelemetryUsesTranscript(*c.Primitives.Telemetry) || a.Native.Transcript == "" {
 		return nil
@@ -80,6 +113,9 @@ func (run *runtime) refreshNative(l *store.LockedAgent, a *core.Agent, c harness
 		readings = append(readings, coreReading(r))
 	}
 	if err := run.acceptContextReadings(a, c, readings); err != nil {
+		return err
+	}
+	if err := acceptTurnFailures(l, a, readings); err != nil {
 		return err
 	}
 	a.Native.Offset = parsed.Offset

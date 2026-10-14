@@ -97,7 +97,8 @@ func (run *runtime) observeScreen(l *store.LockedAgent, a *core.Agent, c harness
 		activity, evidence, basis.Rule = core.Compacting, "native compaction completion unconfirmed; queued resume awaits confirmation", "compaction-record"
 	}
 	if a.Native.TurnFailure != "" {
-		activity, evidence, basis.Rule = core.Unknown, "native turn failed: "+a.Native.TurnFailure, "turn-failure"
+		activity, evidence = turnFailureActivity(a.Native.TurnFailure)
+		basis.Rule = "turn-failure"
 	}
 	if a.ScreenFingerprint != fingerprint {
 		a.ScreenFingerprint, a.ScreenSince = fingerprint, run.cmd.now()
@@ -121,6 +122,22 @@ func (run *runtime) observeScreen(l *store.LockedAgent, a *core.Agent, c harness
 		}
 	}
 	return screenIdle, nil
+}
+
+// turnFailureActivity reads a failed native turn. A provider refusal ended the
+// turn and nothing runs: the agent moves only when someone rebriefs it, so it
+// reads blocked. Any other failure leaves the state unestablished.
+func turnFailureActivity(failure string) (core.Activity, string) {
+	if refusalFailure(turnFailureClass(failure)) {
+		return core.Blocked, "native turn refused: " + failure
+	}
+	return core.Unknown, "native turn failed: " + failure
+}
+
+// refusalFailure names the native classes that report the provider refused
+// the turn's content.
+func refusalFailure(class string) bool {
+	return class == "cyber_policy"
 }
 
 // activityBasis names what an activity reading of a was derived from: the

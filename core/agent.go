@@ -245,6 +245,7 @@ type Reading struct {
 	At          *time.Time    `json:"at,omitempty"`
 	Status      string        `json:"status"`
 	Reason      string        `json:"reason,omitempty"`
+	TurnID      string        `json:"turn_id,omitempty"`
 	Model       string        `json:"model,omitempty"`
 	Used        *int64        `json:"used,omitempty"`
 	Limit       *int64        `json:"limit,omitempty"`

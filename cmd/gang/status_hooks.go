@@ -158,7 +158,7 @@ func (run *runtime) observeHookStatus(l *store.LockedAgent, a *core.Agent) error
 		activity = core.Compacting
 	}
 	if a.Native.TurnFailure != "" {
-		activity, evidence = core.Unknown, "native turn failed: "+a.Native.TurnFailure
+		activity, evidence = turnFailureActivity(a.Native.TurnFailure)
 	}
 	if a.Activity == activity && a.Evidence == evidence {
 		return nil
@@ -229,6 +229,14 @@ func (run *runtime) observeRosterStatus(l *store.LockedAgent, a *core.Agent, c h
 	}
 	if a.Status == core.Failed {
 		return nil
+	}
+	// A turn Codex refused fires no hook; only its session log ends the
+	// turn, so the roster reads it as a tick would rather than wait for one.
+	// An unreadable log fails this agent's ticks, not the team's roster.
+	if err := run.refreshNative(l, a, c); err != nil {
+		if err := run.record(*a, core.Event{Type: "observation", Reason: "status session log unreadable: " + err.Error()}); err != nil {
+			return err
+		}
 	}
 	gap := run.statusCaptureGap(*a, c)
 	if gap == "" {

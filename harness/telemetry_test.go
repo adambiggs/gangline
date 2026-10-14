@@ -184,3 +184,39 @@ func TestTerminalFailureHookReleasesNativeDispatcher(t *testing.T) {
 		t.Fatal("terminal failure owns queued delivery while blocking the native dispatcher")
 	}
 }
+
+// A Codex turn that ends in an error, a provider refusal included, reads as a
+// failed turn carrying its class, message and native turn id.
+func TestTranscriptTurnErrorIsAFailedTurn(t *testing.T) {
+	input := `{"type":"session_meta","payload":{"id":"s"}}
+{"timestamp":"2026-10-13T21:10:00Z","type":"event_msg","payload":{"type":"task_complete","turn_id":"t1","last_agent_message":null,"error":{"message":"This content was flagged for possible cybersecurity risk.","codex_error_info":"cyber_policy"}}}
+{"timestamp":"2026-10-13T21:11:00Z","type":"event_msg","payload":{"type":"task_complete","turn_id":"t2","error":{"message":"Selected model is at capacity."}}}
+{"timestamp":"2026-10-13T21:12:00Z","type":"event_msg","payload":{"type":"task_complete","turn_id":"t3","last_agent_message":"done"}}
+`
+	got, err := ReadTranscript(Invocation{Name: "codex-session-log"}, strings.NewReader(input), "s", 0, time.Time{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := []Reading{
+		{Kind: "turn-failed", TurnID: "t1", Reason: "cyber_policy: This content was flagged for possible cybersecurity risk."},
+		{Kind: "turn-failed", TurnID: "t2", Reason: "Selected model is at capacity."},
+		{Kind: "turn-finished", TurnID: "t3"},
+	}
+	if len(got.Readings) != len(want) {
+		t.Fatalf("readings = %#v", got.Readings)
+	}
+	for i, w := range want {
+		r := got.Readings[i]
+		if r.Kind != w.Kind || r.TurnID != w.TurnID || r.Reason != w.Reason || r.NativeEvent != "task_complete" {
+			t.Errorf("reading %d = %#v, want %s %s %q", i, r, w.Kind, w.TurnID, w.Reason)
+		}
+	}
+	// A bare error still ends the turn: rejecting it would stall the reader.
+	for payload, want := range map[string]string{`{"codex_error_info":"other"}`: "other", `{}`: "native turn failed"} {
+		line := `{"timestamp":"2026-10-13T21:10:00Z","type":"event_msg","payload":{"type":"task_complete","turn_id":"t1","error":` + payload + `}}` + "\n"
+		got, err := ReadTranscript(Invocation{Name: "codex-session-log"}, strings.NewReader(`{"type":"session_meta","payload":{"id":"s"}}`+"\n"+line), "s", 0, time.Time{})
+		if err != nil || len(got.Readings) != 1 || got.Readings[0].Kind != "turn-failed" || got.Readings[0].Reason != want {
+			t.Errorf("error %s: %#v %v, want turn-failed %q", payload, got.Readings, err, want)
+		}
+	}
+}
