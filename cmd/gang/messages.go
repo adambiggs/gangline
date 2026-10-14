@@ -232,43 +232,9 @@ func (cmd command) send(args []string) (result error) {
 			}
 		}
 	}
-	if err := run.checkRecipient(a); err != nil {
-		return err
-	}
-	c, err := loadCollar(a.Collar, run.settings)
+	outcome, step, postPublishErr, err := run.publishMessage(a, p, l, e)
 	if err != nil {
 		return err
-	}
-	b, err := run.input()
-	if err != nil {
-		return err
-	}
-	if err := requireHarnessForeground(context.Background(), b, substrate.PaneID(a.Pane), c); err != nil {
-		return err
-	}
-	if err := p.Publish(e); err != nil {
-		return err
-	}
-	outcome := "queued"
-	step := "record queue event"
-	postPublishErr := run.record(a, core.Event{Type: "send_queued", Envelope: &e})
-	if postPublishErr == nil {
-		step = "drain"
-		if l != nil {
-			outcome, postPublishErr = run.drainFrom(l, a, e.ID)
-		} else {
-			outcome, postPublishErr = run.drain(a.ID, e.ID)
-		}
-	}
-	// A hook may promote this receipt after drain releases the input lock.
-	// Read this ID's retained receipt, not another message's latest result.
-	if receipt, readErr := p.ReadEnvelope("cur", e.ID); readErr == nil {
-		outcome = receipt.Outcome
-	} else if !errors.Is(readErr, os.ErrNotExist) {
-		if postPublishErr == nil {
-			step = "read receipt"
-		}
-		postPublishErr = errors.Join(postPublishErr, fmt.Errorf("read receipt: %w", readErr))
 	}
 	if _, err := fmt.Fprintf(cmd.stdout, "%s\t%s\n", e.ID, outcome); err != nil {
 		return err
@@ -288,6 +254,51 @@ func (cmd command) send(args []string) (result error) {
 		}
 	}
 	return deliveryResult(outcome)
+}
+
+// publishMessage checks a's pane and harness, publishes e, and drains it. An
+// err leaves nothing published. Once e is published, outcome is the receipt
+// retained for e, and postPublishErr names a later failure at step.
+func (run *runtime) publishMessage(a core.Agent, p store.AgentPaths, l *store.LockedAgent, e core.Envelope) (outcome, step string, postPublishErr, err error) {
+	if err := run.checkRecipient(a); err != nil {
+		return "", "", nil, err
+	}
+	c, err := loadCollar(a.Collar, run.settings)
+	if err != nil {
+		return "", "", nil, err
+	}
+	b, err := run.input()
+	if err != nil {
+		return "", "", nil, err
+	}
+	if err := requireHarnessForeground(context.Background(), b, substrate.PaneID(a.Pane), c); err != nil {
+		return "", "", nil, err
+	}
+	if err := p.Publish(e); err != nil {
+		return "", "", nil, err
+	}
+	outcome = "queued"
+	step = "record queue event"
+	postPublishErr = run.record(a, core.Event{Type: "send_queued", Envelope: &e})
+	if postPublishErr == nil {
+		step = "drain"
+		if l != nil {
+			outcome, postPublishErr = run.drainFrom(l, a, e.ID)
+		} else {
+			outcome, postPublishErr = run.drain(a.ID, e.ID)
+		}
+	}
+	// A hook may promote this receipt after drain releases the input lock.
+	// Read this ID's retained receipt, not another message's latest result.
+	if receipt, readErr := p.ReadEnvelope("cur", e.ID); readErr == nil {
+		outcome = receipt.Outcome
+	} else if !errors.Is(readErr, os.ErrNotExist) {
+		if postPublishErr == nil {
+			step = "read receipt"
+		}
+		postPublishErr = errors.Join(postPublishErr, fmt.Errorf("read receipt: %w", readErr))
+	}
+	return outcome, step, postPublishErr, nil
 }
 func (cmd command) queue(args []string) error {
 	machine := false
