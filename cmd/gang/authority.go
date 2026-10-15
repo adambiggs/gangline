@@ -89,7 +89,17 @@ func (run *runtime) refuseDrop(target core.Agent) error {
 			}
 		}
 	}
-	return refuseError("drop refused: this process carries the hitch identity of %s in team %q, and %s %s; this protects an agent from a teammate that did not start it. Caller authority: role=%q, hitched_by=%q, pane_token_match=%t. Ask that agent or the lead to drop %s", caller.Name, run.settings.Session, target.Name, hitcher, caller.Role, caller.HitchedBy, run.holdsToken(*caller), target.Name)
+	hint := ""
+	if caller.Role == "" && caller.HitchedBy == "" {
+		quote := func(value string) string { return "'" + strings.ReplaceAll(value, "'", "'\\''") + "'" }
+		selection := "GANG_STATE_ROOT=" + quote(run.settings.StateRoot) + " GANG_TMUX_SOCKET=" + quote(run.settings.Socket) + " "
+		command := selection + fmt.Sprintf("gang hitch %s --team %s -c %s -d %s --role lead", caller.Name, quote(run.settings.Session), quote(caller.Collar), quote(caller.Directory))
+		if caller.Native.SessionID != "" {
+			command += " --resume " + quote(caller.Native.SessionID)
+		}
+		hint = fmt.Sprintf(". This caller has no role. For lead authority, from an operator shell run %sgang drop %s --team %s, then %s", selection, caller.Name, quote(run.settings.Session), command)
+	}
+	return refuseError("drop refused: this process carries the hitch identity of %s in team %q, and %s %s; this protects an agent from a teammate that did not start it. Caller authority: role=%q, hitched_by=%q, pane_token_match=%t. Ask that agent or the lead to drop %s%s", caller.Name, run.settings.Session, target.Name, hitcher, caller.Role, caller.HitchedBy, run.holdsToken(*caller), target.Name, hint)
 }
 
 // hitcherID names the verified agent whose pane runs this command, or nothing
