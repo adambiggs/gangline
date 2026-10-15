@@ -13,12 +13,7 @@ Flags accept `-` or `--`, `VALUE` or `=VALUE`, and one-letter flags also
 
 Every command that acts on a team accepts `--team TEAM`. Without it,
 `GANG_SESSION` selects the team. Agent operands such as `NAME` always name
-agents in the selected team. In a hitched pane, `--team` may name only the
-team `GANG_SESSION` selects; any other team is refused with exit status 3,
-and setting `GANG_SESSION` is the deliberate way to act on another team
-there. `log` refuses `--team` together with a `LOG.jsonl` operand. `teams`, `collars`,
-`collar`, `models`, `roles`, `config`, `statusline`, `upgrade`, `help`,
-`version`, and `hook` do not act on one team and do not accept `--team`.
+agents in the selected team.
 
 ## Start and stop
 
@@ -75,54 +70,19 @@ For example, `gang up --context-bands 10,20` gives the lead earlier notices,
 while `gang hitch worker --context-bands 20,30` sets the worker's thresholds
 independently.
 
-A resume is refused when the session ID starts with `-`, since the native CLI
-would read it as an option. For collars whose transcripts Gangline reads, a
-resume is also refused when the
-native transcript stored under that session ID names a different session, or
-when the ID contains path or glob characters. A session Gangline cannot check
-is left to the native CLI, and `hitch` says why on stderr.
-If the native CLI exits before `hitch` returns, `hitch` fails
-with the pane's last lines and, when tmux collected one, the exit status. It
-records them as the agent's failure reason and closes the pane.
-A pane that shows no recognized startup screen within the startup wait
-leaves the agent registered with its startup queued; `hitch` exits with
-status 4, naming the agent and `gang hitch NAME --recover`, and the boot
-deadline still fails the agent if startup is not resumed.
-A startup blocked on a native prompt keeps holding its pane after `hitch`
-returns, so an answer that ends the native CLI fails the agent at the next
-tick or roster with its last lines and exit status, and the pane stays until
-`drop`.
-`drop` reports an observed native resume session, or says it is unknown.
-
 A command run from an agent's pane, including any script its native CLI
-starts, carries that agent's identity and team. Within that team, `down` and
-a change to `curfew` are refused unless the caller is the lead, and `drop
-NAME` is refused unless the caller is the lead or the agent that hitched
-`NAME`; an agent with no recorded hitcher is the lead's to drop. The lead is
-the agent started in the `lead` role by `gang up` or the operator; neither its
-name nor a `--role lead` given by another agent confers that authority. The operator
-outside any agent pane is not restricted. A hitch run from an agent's pane
-records that agent as the hitcher. When a hitched agent later fails, its
-hitcher, if active, gets a `[gang:hitch#…]` notice naming the agent and the
-reason. When `gang hitch NAME --recover` resumes the startup of an agent whose
-boot deadline failed it, the hitcher gets a notice that the agent recovered,
-unless the hitcher ran the recovery itself. The hitcher gets one too when a
-message to the agent is withdrawn from its composer and not delivered, when a message paste may remain in the
-agent's composer, and when the agent has read as holding unsubmitted composer
-input past the notice threshold, since messages to it wait behind that input.
-The threshold is `heldInputNoticeAfter` in
-[`authority.go`](../cmd/gang/authority.go). The hitcher also gets one notice,
-and the agent's log a `background_idle` event, when the agent has stayed idle
-for `GANG_BACKGROUND_IDLE_NOTICE` since a turn that ended with native
-background tasks pending. Each such turn is announced once.
+starts, carries that agent's identity and team. Within that team, `down`,
+a `curfew` change, and dropping an agent the caller did not hitch are the
+lead's. The lead is the agent started in the `lead` role by `gang up` or the
+operator; neither its name nor a `--role lead` given by another agent confers
+that authority. A hitch run from an agent's pane records that agent as the hitcher,
+which gets a `[gang:hitch#…]` notice when the agent fails, recovers, holds
+undelivered input, or sits idle with native background tasks pending.
 
 Each line of `downs.jsonl` records the time, team, agent count, the caller's
 agent name and inherited `GANG_AGENT_ID`, its process and parent process IDs,
 the parent's command line where `/proc` shows it, the working directory, and
 `TMUX_PANE`.
-When Codex asks to trust a hitch directory, startup stays queued. After
-choosing the native trust option, run `gang tick` to deliver the retained
-contract and assignment.
 
 ## Message and control
 
@@ -132,11 +92,11 @@ contract and assignment.
 | `gang sender list` | List registered sender names. |
 | `gang sender remove NAME` | From the operator shell or active lead pane, revoke NAME and delete its key file and registration; queued messages retain their authenticated attribution. |
 | `gang send NAME [OPTIONS] [BODY]` | Send BODY, or read stdin when absent, and report its receipt. |
-| `gang send HOST:NAME [BODY]` | From an active registered agent, or with `--as NAME` and its registered sender credential, forward BODY over ssh to agent NAME on `GANG_PEERS` host HOST, where the forced command of this host's key runs `gang peer-receive` to deliver it, and print `HOST:ID` with that host's receipt. A refusal from that host names it as the host where any command in its reason runs. Once ssh has run, the sending host's team log records a `peer_sent` event under the sender with `HOST:NAME`, the message ID, and the outcome, `refused`, or `unknown`. No reply within two minutes, or a last line that is not a reply to this message, prints `unknown` and exits 5: the message may have been published there, so send it again only once no `gang peer-receive` runs on that host and its `gang queue` and `gang log` both lack the ID. |
+| `gang send HOST:NAME [BODY]` | From an active registered agent, or with `--as NAME` and its registered sender credential, forward BODY over ssh to agent NAME on `GANG_PEERS` host HOST, where the forced command of this host's key runs `gang peer-receive` to deliver it, and print `HOST:ID` with that host's receipt. Once ssh has run, the sending host's team log records a `peer_sent` event under the sender with `HOST:NAME`, the message ID, and the outcome, `refused`, or `unknown`. A lost reply prints `unknown` and exits 5. |
 | `gang queue [NAME] [--json]` | List pending messages with ID, recipient, sender, kind, a text excerpt, and state: `ready`, `scheduled` with its due time, `blocked` with the reason, or `unknown` with the reason. |
-| `gang interrupt [NAME] [-m\|--message REASON]` | Interrupt the turn; deliver an optional reason after it stops. Refuses without sending keys while the pane shows a native approval or trust prompt. |
-| `gang compact [NAME] [--resume TEXT]` | Compact at native idle; submit the continuation behind compaction, ahead of later input. Refuses, asking for a retry, while another gang operation holds the agent. Refuses while startup input is unverified, or while the previous compaction's resume note waits in the harness, until it is admitted, until one operation's timeout after that compaction completed, or, for a compaction past its deadline, until the pane stops showing it; a queued compaction waits until startup input is verified (`gang hitch NAME --recover`). |
-| `gang compact NAME --interrupt` | Interrupt a submitted or unconfirmed compaction with the collar's recovery keys while the pane shows it running. A failed deferred compaction can instead clear its exact staged command from an idle composer and retry queued delivery; edited input remains untouched. Busy recovery refuses without sending on an approval, trust, draft, idle, or unrecognized screen; when the resume note was never queued or the harness has taken it; and after an earlier recovery of the same compaction. It records an interrupted compaction as unconfirmed and reports the screen it left. |
+| `gang interrupt [NAME] [-m\|--message REASON]` | Interrupt the turn; deliver an optional reason after it stops. |
+| `gang compact [NAME] [--resume TEXT]` | Compact at native idle; submit the continuation behind compaction, ahead of later input. |
+| `gang compact NAME --interrupt` | Interrupt a submitted or unconfirmed compaction with the collar's recovery keys while the pane shows it running. A failed deferred compaction can instead clear its exact staged command from an idle composer and retry queued delivery; edited input remains untouched. It records an interrupted compaction as unconfirmed and reports the screen it left. |
 | `gang curfew [DURATION\|HH:MM\|RFC3339\|clear]` | Show, set, or clear the team deadline. |
 | `gang tick [--agent NAME\|HITCH_ID]` | Check deadlines, recover native failures, and drain due messages, for every agent or the one `--agent` names. |
 | `gang wait NAME [--timeout DURATION]` | Wait up to DURATION (default 30s) for a recorded idle boundary; a zero timeout checks once. |
@@ -145,21 +105,6 @@ At or after a curfew deadline, a tick notifies each active agent once for
 that deadline, including agents started later. The notice names the team,
 deadline and observation time. The deadline remains set until changed or
 cleared. Agents remain active; `up`, `hitch`, and `attach` remain available.
-
-If native work starts after the idle check but before compaction submission,
-`actions.compact_defer_clear` withdraws the exact staged command and keeps its
-resume note queued for the next idle boundary. Gangline leaves changed input
-untouched and reports a withdrawal it cannot confirm as a failure.
-
-The resume note enters native input when compaction starts and runs when the
-harness takes it. Gangline admits that exact note once; until a completion hook
-confirms that compaction finished, the compaction stays unconfirmed.
-Codex may merge later Enter steers into the same prompt, with the resume note
-first; Tab queues separate follow-up turns. If the note cannot enter ahead of
-an occupied composer, the command fails and withholds the note rather than
-delivering it out of order. After confirmed completion, an unchanged continuation
-that was published but never submitted stays queued for the next free composer,
-ahead of later messages. An altered or unknown continuation is withheld.
 
 While the collar's `actions.compact.active` pattern matches the pane, the agent
 reads as compacting: sends wait in Gangline's queue, a queued compaction waits,
@@ -173,26 +118,7 @@ and an idle-looking screen does not show that none will: the harness may hold
 the command behind a turn still streaming, or still be running its
 pre-compaction hooks.
 
-A recorded native turn failure leaves the agent's activity unknown, but a
-queued compaction still starts once the screen reads idle with no turn open.
-A provider capacity failure (`rate_limit`, `overloaded`, `server_error`,
-`billing_error`) would fail the compaction the same way, so it keeps waiting
-until a later turn finishes: one `compaction_waiting` event names the class,
-`gang compact` and `gang status NAME --why` show it as the compaction's reason, and
-an empty `compaction_waiting` marks the end of the wait.
-
-For a harness without a native queue witness, sends also wait after the
-compaction ends until the harness admits the queued resume note, whose submit
-hook must run first. If that hook blocks the note, the compaction fails, the
-agent is told its note was withheld, and held messages go out at once. If no
-admission arrives within one operation's timeout, the hold ends and held
-messages go out at the agent's next tick.
-
-Gangline never presses Enter on a composer that holds anything other than the
-compact command, nor on one the command has already left. Claude Code shows a long or multi-line paste as a placeholder
-and would submit it as an ordinary prompt, so such a resume note fails there:
-Gangline clears the composer with the collar's `compact_clear` keys and submits
-nothing. Keep the note short, on one line, and pointed at a state file. Without
+Keep a `--resume` note short, on one line, and pointed at a state file. Without
 `--resume`, the note tells the agent to re-read its brief and durable state and
 names `gang log --agent NAME --type send_queued`, which records the messages
 queued for it. Every
@@ -226,21 +152,6 @@ send again. `registered` is reserved as a peer-host prefix.
 
 A send prints the message ID and `delivered`, `accepted`, `queued`,
 `unverified`, or `failed`. See [message receipts](concepts.md#messages-and-envelopes).
-Oversized rendered messages are refused without splitting; put details in a
-file and send its path.
-For a Claude Code recipient, a message, hitch task, `compact --resume` note,
-or `interrupt -m` reason that contains one of Claude Code's
-numbered placeholders in brackets, for pasted text, an image, or truncated
-text, is refused: Claude Code can replace that token with the content of an
-earlier paste, so the prompt it submits is no longer the message. Describe the
-placeholder in words. Text for a Claude Code recipient is also refused when it
-holds an invisible format character, such as a zero-width space or byte order
-mark, or a Unicode line or paragraph separator: Claude Code drops or rewrites
-them and leaves that paste unsubmitted. The refusal names the code points to
-remove. Tabs are delivered; Claude Code shows each as four spaces. A
-`snooze --note` that contains either is refused whatever
-the snoozing agent's harness, since an overdue wake whose caller is gone goes
-to the lead. A queued message that still carries either fails before it is typed.
 `--source watchdog --watchdog UNIT` is the internal watchdog invocation.
 
 ## Inspect
@@ -272,21 +183,9 @@ Pane borders use `?name?` for changing or unknown state, `~name~` for idle,
 `-name-` for work, and `!name!` for native decisions, wedges, or failures.
 An unsubmitted operator draft holds message delivery but keeps the idle
 symbol, or the work symbol while a witnessed turn is still open.
-Native submit, activity, permission, turn-end, failure, and compaction hooks
-persist pending status records and refresh the affected agent through a
-detached tick. Fresh records drive the symbol without a pane capture,
-including after a skipped detached refresh.
-See `statusHookFreshness` in `cmd/gang/status_hooks.go` for the freshness and
-stale-probe interval. After expiry, a pane observation supplies the symbol
-until a newer hook or another probe is due. Capture reasons appear in the log.
-Hooks do not report every permission dismissal, native prompt, process exit,
-capacity error, or wedge; those remain bounded fallback observations. Startup,
-input recovery, compaction, interrupts, and wake outcomes can need additional
-validation sooner. Delivery still checks the composer and native receipts. The watchdog supplies a
-five-second whole-team fallback on an awake host with a working user scheduler.
-Scheduler delays, occupied agent locks, and slow captures can delay a reading;
-an unreadable capture remains unknown. `gang status` and `gang roster` also
-observe and refresh the symbols.
+Hooks and a five-second watchdog refresh the symbols; `gang status` and
+`gang roster` also observe and refresh them. See
+[native events and observation](internals.md#native-events-and-observation).
 Use a hitch ID in log filters to follow a registration across renames.
 
 Each `activity_observed` event records what its reading was derived from.
@@ -311,11 +210,8 @@ reading names the collar's threshold. `gang capture NAME` prints the prompt.
 A native turn that fails reads unknown with the reason
 `native turn failed: CLASS: MESSAGE` under rule `turn-failure`. A turn the
 provider refused for its content (Codex class `cyber_policy`) reads blocked
-with `native turn refused: CLASS: MESSAGE` instead: the agent is alive and
-takes the next message, so rebrief it, and replace it only if the rebrief is
-refused too. Codex reports a failed turn only in its session log, which ticks,
-`gang status`, and `gang roster` read. The next submitted prompt clears the
-failure.
+with `native turn refused: CLASS: MESSAGE` instead. The next submitted
+prompt clears the failure.
 
 Provider errors such as an exhausted retry limit or an HTTP 429 or 5xx also
 read unknown with the native error text. A structured native error class can
@@ -339,8 +235,8 @@ that turn failed. Delivery does not establish that the assignment completed.
 | `gang upgrade [-y, --yes]` | Print the installed and latest stable versions, confirm on a terminal (`[y/N]`, default no), then install into the installer-managed checkout. Use `--yes` without a terminal. A current install exits 0 without asking. |
 | `gang help [COMMAND]` | Show command help. |
 | `gang hook` | Read native hook JSON from stdin; invoked by the collar integration. |
-| `gang peer-authorize HOST PUBKEY_FILE` | Print the `~/.ssh/authorized_keys` line that binds enrolled `GANG_PEERS` host HOST's public key to `gang peer-receive` for the selected team: `command="GANG peer-receive --team TEAM --peer HOST",restrict TYPE KEY gangline-peer-HOST`, where GANG is this `gang`'s path. PUBKEY_FILE holds exactly one OpenSSH public key line with no options; its comment is dropped. Stderr names HOST's steps: keep the key pair for this link only, add an ssh alias for this host with `IdentityFile`, `IdentitiesOnly yes`, and `ControlPath none`, set that alias as `ssh` in its `GANG_PEERS` entry for this host, and set `GANG_HOST=HOST`. sshd uses the first line whose key matches, so a line that already authorizes the key without the forced command leaves it unbound. A dedicated restricted key supplies the binding; unrestricted SSH access to the receiving account can invoke `peer-receive --peer` directly. Refuses an unenrolled host, a team name or `gang` path that cannot appear in the command, and any other key file. |
-| `gang peer-receive --peer HOST` | The forced command `gang peer-authorize` prints; its dedicated restricted-key setup binds HOST to an enrolled host. Before reading stdin, it refuses unless its parent is an `sshd` or `sshd-session` process of this user whose parent is an `sshd` or `sshd-session` process of root, and refuses without `--peer` or with an unenrolled HOST. This ancestry screen does not authenticate the key or distinguish host-root from namespace-local root UIDs; receiving-account shell and state access are trusted. Read one JSON request (`host`, `team`, `id`, `from`, `to`, `body`, and optional `class`) from stdin and deliver it from sender `HOST:NAME` or `HOST:registered:NAME` as message `peer-HOST.ID`; a request whose `host` is not HOST is refused. Print one JSON line with the message ID and outcome, or the error that published nothing. Refuses an ID whose envelope or retained receipt this host still holds, so a concurrent duplicate never replaces a queued message; delivery of a repeated ID is still at-least-once, because one that arrives after the first copy is delivered, or after a later message's receipt replaces its receipt, is delivered again. Refused inside a registered agent pane. [Peer labels](concepts.md#messages-and-envelopes) states what the binding leaves open. |
+| `gang peer-authorize HOST PUBKEY_FILE` | Print the `~/.ssh/authorized_keys` line that binds enrolled `GANG_PEERS` host HOST's public key to `gang peer-receive` for the selected team: `command="GANG peer-receive --team TEAM --peer HOST",restrict TYPE KEY gangline-peer-HOST`, where GANG is this `gang`'s path. PUBKEY_FILE holds exactly one OpenSSH public key line with no options; its comment is dropped. Stderr names the setup steps on HOST. A dedicated restricted key supplies the binding; unrestricted SSH access to the receiving account can invoke `peer-receive --peer` directly. |
+| `gang peer-receive --peer HOST` | The forced command `gang peer-authorize` prints; its dedicated restricted-key setup binds HOST to an enrolled host. It runs only under this account's sshd session beneath a root sshd; that check does not authenticate the key or distinguish host-root from namespace-local root UIDs; receiving-account shell and state access are trusted. Read one JSON request (`host`, `team`, `id`, `from`, `to`, `body`, and optional `class`) from stdin and deliver it from sender `HOST:NAME` or `HOST:registered:NAME` as message `peer-HOST.ID`. Print one JSON line with the message ID and outcome, or the error that published nothing. Delivery of a repeated ID is at-least-once: one that arrives after the first copy is delivered, or after a later message's receipt replaces its receipt, is delivered again. [Peer labels](concepts.md#messages-and-envelopes) states what the binding leaves open. |
 
 ## Configuration
 
@@ -364,19 +260,13 @@ override file values. Run `gang config` to see effective values and defaults.
 Set `GANG_CODEX_PERMISSION_PROFILE=gangline` in the config file or environment
 to select that profile for Codex hitches. The named profile must exist in
 Codex's own config. An unset value leaves profile selection to Codex's own
-config. Conflicting sandbox or profile arguments supplied through Gangline are
-refused. Codex may load other config layers that override the selected
+config. Codex may load other config layers that override the selected
 permission mode.
 
-Gangline does not add Git write roots for linked worktrees or primary
-checkouts. Codex protects `.git` and a linked worktree's resolved Git directory
-by default; metadata writes use Codex's native approval path. Operator-supplied
-arguments, including explicit `--add-dir` grants, are passed through unchanged.
-Gangline does not select an approval policy or reviewer. For unattended Git,
-configure `approval_policy = "on-request"` and
-`approvals_reviewer = "auto_review"` in Codex's own config; see
+Gangline does not add Git write roots or select an approval policy or
+reviewer; operator-supplied arguments, including explicit `--add-dir` grants,
+are passed through unchanged. See
 [sandboxed development teams](operations.md#sandboxed-development-teams).
-With `approval_policy = "never"`, protected Git writes cannot escalate.
 
 These variables are environment-only:
 
@@ -404,10 +294,8 @@ which logs `process_verification_available`. The process watchdog is
 also skipped visibly with `watchdog_unavailable` and `[watchdog-unavailable]`,
 and `hitch` and `snooze` warn on stderr; ordinary hooks and commands still tick
 the team. The next armed timer clears the marker and logs `watchdog_available`. A pane-only drop cannot
-prove that detached descendants exited. Every registered pane requires a server
-generation, session, pane ID, and inherited capability. Missing registration or
-capability is refused; launch a fresh hitch to establish them. Later ordinary
-panes do not inherit that per-hitch capability.
+prove that detached descendants exited. Later ordinary panes do not inherit
+the per-hitch capability.
 
 `--team TEAM` selects another team in the same state root and tmux server for
 one command. For a separate team, keep its selection in the shell environment
@@ -533,10 +421,7 @@ that replaces it. Gang keeps the agent's registration and witness, logs a
 `native_hook` event with status `foreign-session`, and keeps the raw payload in
 `STATE_ROOT/teams/TEAM/foreign-submits/HITCH_ID.json`, which `gang status NAME
 --why` names. A witness from any other session is never followed: the agent
-fails once, and its hitcher is told both session ids and to drop the agent and
-re-hitch it with `--resume` for the session to continue, in the agent's own
-directory, collar, and role. Drop tells the sender of each message still queued
-for the agent. A message submitted into such a session stays unverified.
+fails, and its failure reason names the recovery.
 
 Each context band has a `name`, threshold `at` (a fraction from 0 to 1), and
 optional `message`. A nonfinal band without a message advises saving state and
@@ -611,14 +496,9 @@ The reading is the freshest one an agent on the same collar recorded in the
 last five minutes, or else the collar's limits query, as in
 `gang limits -c codex`. Every five-hour or weekly window in that reading
 counts, whichever limit bucket reports it, as for usage bands. A window at or
-past its threshold that has not reset makes
-`hitch` warn on stderr with the window, used percent, the reading's age and
-source, and the reset time (UTC RFC3339), then launch. With `refuse: true`,
-`hitch` refuses instead. When no fresh reading exists or the query fails,
-`hitch` says so and launches; a stale or missing reading never refuses. The
-five-minute window keeps an old reading from refusing a launch the account
-would accept, at the cost of an unchecked launch when no agent reported
-recently and the collar has no query. Bundled collars set no guard.
+past its threshold that has not reset makes `hitch` warn, then launch; with
+`refuse: true`, `hitch` refuses instead. A stale or missing reading never
+refuses. Bundled collars set no guard.
 
 `gang snooze` is a manual override for an active agent. On an attributable
 provider cap refusal, Gangline automatically schedules a wake at the observed
