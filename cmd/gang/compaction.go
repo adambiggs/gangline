@@ -242,6 +242,9 @@ func (run *runtime) queueCompactionResume(l *store.LockedAgent, a *core.Agent, b
 		}
 	}
 	if err == nil {
+		err = refuseNativePrompt(ctx, b, pane, c)
+	}
+	if err == nil {
 		err = sendHarnessKeys(ctx, b, pane, c, substrate.Keys{Submit: true})
 	}
 	if err != nil {

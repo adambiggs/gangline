@@ -62,6 +62,21 @@ func sendHarnessKeys(ctx context.Context, b harnessInput, pane substrate.PaneID,
 	return b.SendKeys(ctx, pane, keys)
 }
 
+func refuseNativePrompt(ctx context.Context, b harnessInput, pane substrate.PaneID, c harness.Collar) error {
+	screen, err := b.Capture(ctx, pane)
+	if err != nil {
+		return err
+	}
+	blocker, blocked, err := harness.InputBlocked(c, screen)
+	if err != nil {
+		return err
+	}
+	if blocked {
+		return fmt.Errorf("native prompt needs attention after paste: %s", blocker.Evidence)
+	}
+	return nil
+}
+
 // refusePasteHazard refuses text that the recipient's harness could rewrite
 // before submitting it.
 func refusePasteHazard(c harness.Collar, text string) error {
@@ -316,16 +331,7 @@ func (run *runtime) deliver(l *store.LockedAgent, a *core.Agent, e core.Envelope
 		}
 	}
 	if err == nil {
-		screen, captureErr := b.Capture(ctx, pane)
-		err = captureErr
-		if err == nil {
-			var blocked bool
-			var blocker harness.Blocked
-			blocker, blocked, err = harness.InputBlocked(c, screen)
-			if blocked && err == nil {
-				err = fmt.Errorf("native prompt needs attention after paste: %s", blocker.Evidence)
-			}
-		}
+		err = refuseNativePrompt(ctx, b, pane, c)
 	}
 	if err == nil {
 		err = startupSubmitPossible(l.Paths, &e)
