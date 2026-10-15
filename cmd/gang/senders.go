@@ -51,7 +51,7 @@ func (cmd command) senderCommand(args []string) error {
 		return err
 	}
 	if a != nil && (!run.leadCaller(a) || a.Status != core.Active) {
-		return refuseError("sender %s requires the active lead or operator shell; ask the lead to run gang sender %s %s", action, action, args[1])
+		return refuseError("sender %s requires the active lead or operator shell; ask the lead to run gang sender %s %s. Caller authority: role=%q, hitched_by=%q, pane_token_match=%t%s", action, action, args[1], a.Role, a.HitchedBy, run.holdsToken(*a), run.leadRoleRecovery(*a))
 	}
 	lock, err := run.lockTeam()
 	if err != nil {

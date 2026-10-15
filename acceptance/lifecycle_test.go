@@ -310,6 +310,32 @@ func TestCommandLifecycleOnPrivateTmux(t *testing.T) {
 	}
 	finishDelivery(delivered, "independent delivery")
 
+	// A name and an active pane do not confer operator-assigned lead authority.
+	check("", "hitch", "roleless")
+	rolelessID, err := team.ResolveName("roleless")
+	if err != nil {
+		t.Fatal(err)
+	}
+	rolelessPaths, err := team.Agent(rolelessID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	roleless, err := rolelessPaths.Read()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if r := runInPane(roleless.Pane, "whoami"); r.status != 0 || strings.TrimSpace(r.out) != "roleless" {
+		t.Fatalf("roleless identity: %+v", r)
+	}
+	for _, action := range []string{"add", "remove"} {
+		r := runInPane(roleless.Pane, "sender", action, "relay")
+		if r.status != 3 || !strings.Contains(r.out, "This caller has no role") || !strings.Contains(r.out, "--role lead") {
+			t.Fatalf("roleless registry authority: %+v", r)
+		}
+	}
+	check("", "roster")
+	check("", "drop", "roleless")
+
 	// Registered credentials authenticate the envelope delivered to native input.
 	senderKey := strings.TrimSpace(check("", "sender", "add", "relay"))
 	if info, err := os.Stat(senderKey); err != nil || info.Mode().Perm() != 0600 {

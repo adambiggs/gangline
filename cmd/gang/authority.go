@@ -89,6 +89,13 @@ func (run *runtime) refuseDrop(target core.Agent) error {
 			}
 		}
 	}
+	hint := run.leadRoleRecovery(*caller)
+	return refuseError("drop refused: this process carries the hitch identity of %s in team %q, and %s %s; this protects an agent from a teammate that did not start it. Caller authority: role=%q, hitched_by=%q, pane_token_match=%t. Ask that agent or the lead to drop %s%s", caller.Name, run.settings.Session, target.Name, hitcher, caller.Role, caller.HitchedBy, run.holdsToken(*caller), target.Name, hint)
+}
+
+// leadRoleRecovery gives an operator the hitch command that establishes lead
+// authority when an operator-started caller has no role.
+func (run *runtime) leadRoleRecovery(caller core.Agent) string {
 	hint := ""
 	if caller.Role == "" && caller.HitchedBy == "" {
 		quote := func(value string) string { return "'" + strings.ReplaceAll(value, "'", "'\\''") + "'" }
@@ -99,7 +106,7 @@ func (run *runtime) refuseDrop(target core.Agent) error {
 		}
 		hint = fmt.Sprintf(". This caller has no role. For lead authority, from an operator shell run %sgang drop %s --team %s, then %s", selection, caller.Name, quote(run.settings.Session), command)
 	}
-	return refuseError("drop refused: this process carries the hitch identity of %s in team %q, and %s %s; this protects an agent from a teammate that did not start it. Caller authority: role=%q, hitched_by=%q, pane_token_match=%t. Ask that agent or the lead to drop %s%s", caller.Name, run.settings.Session, target.Name, hitcher, caller.Role, caller.HitchedBy, run.holdsToken(*caller), target.Name, hint)
+	return hint
 }
 
 // hitcherID names the verified agent whose pane runs this command, or nothing

@@ -304,3 +304,29 @@ func TestRegisteredSenderOptionAndPrefixGuards(t *testing.T) {
 		}
 	}
 }
+
+func TestRolelessLeadSenderRefusalNamesOperatorRecovery(t *testing.T) {
+	f := newStateFixture(t)
+	a := f.addHitched(t, "l", "lead", "", "")
+	f.env["GANG_AGENT_ID"] = string(a.ID)
+	if err := f.cmd.execute([]string{"whoami"}); err != nil || f.out.String() != "lead\n" {
+		t.Fatalf("identity %q: %v", f.out.String(), err)
+	}
+	f.out.Reset()
+	// Snooze and team-wide authority use the same role requirement.
+	requireRefused(t, f.cmd.execute([]string{"snooze", "--clear", "another-intent"}), "only the lead")
+	requireRefused(t, f.run.refuseTeamWide("down"), "not its lead")
+	for _, action := range []string{"add", "remove"} {
+		err := f.cmd.execute([]string{"sender", action, "relay"})
+		requireRefused(t, err, "This caller has no role")
+		for _, text := range []string{"from an operator shell", "gang drop lead --team", "gang hitch lead --team", "--role lead"} {
+			if !strings.Contains(err.Error(), text) {
+				t.Fatalf("recovery lacks %q: %v", text, err)
+			}
+		}
+	}
+	rows, err := f.run.team.ListSenders()
+	if err != nil || len(rows) != 0 {
+		t.Fatalf("refusal mutated registry: %+v %v", rows, err)
+	}
+}
