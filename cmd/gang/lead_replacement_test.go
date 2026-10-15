@@ -2,10 +2,11 @@ package main
 
 import (
 	"errors"
-	"github.com/adambiggs/gangline/core"
 	"os"
 	"strings"
 	"testing"
+
+	"github.com/adambiggs/gangline/core"
 )
 
 func TestReplacementLeadCanDropEarlierLeadsChildren(t *testing.T) {
@@ -35,6 +36,7 @@ func TestReplacementLeadCanDropEarlierLeadsChildren(t *testing.T) {
 
 func TestDropRefusalReportsCallerAuthority(t *testing.T) {
 	for _, tc := range []struct{ role, hitcher, nonce, want string }{
+		{"", "", "fixture-nonce", `role="", hitched_by="", pane_token_match=true`},
 		{"worker", "", "fixture-nonce", `role="worker", hitched_by="", pane_token_match=true`},
 		{"lead", "old-owner", "fixture-nonce", `role="lead", hitched_by="old-owner", pane_token_match=true`},
 		{"lead", "", "wrong-token", `role="lead", hitched_by="", pane_token_match=false`},
