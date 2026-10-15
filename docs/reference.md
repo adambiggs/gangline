@@ -300,13 +300,22 @@ the per-hitch capability.
 `--team TEAM` selects another team in the same state root and tmux server for
 one command. For a separate team, keep its selection in the shell environment
 for every command. A separate state root and socket also isolate its files and
-server:
+server. For a disposable team, create both in a temporary directory:
 
 ```sh
 export GANG_SESSION=review
-export GANG_STATE_ROOT="$HOME/.local/state/gangline-review"
+export GANG_STATE_ROOT="$(mktemp -d "${TMPDIR:-/tmp}/gang-XXXXXX")"
 export GANG_TMUX_SOCKET="$GANG_STATE_ROOT/tmux.sock"
 gang up
+```
+
+`gang down` ends only the agents' panes and keeps the state root. To discard
+the team, end its server and remove the root:
+
+```sh
+gang down
+tmux -S "$GANG_TMUX_SOCKET" kill-server
+rm -rf "$GANG_STATE_ROOT"
 ```
 
 Installer variables:
