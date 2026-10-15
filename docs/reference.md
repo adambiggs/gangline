@@ -313,7 +313,7 @@ gang up
 the team, end its server and remove the root:
 
 ```sh
-gang down
+gang down --yes
 tmux -S "$GANG_TMUX_SOCKET" kill-server
 rm -rf "$GANG_STATE_ROOT"
 ```
