@@ -157,9 +157,6 @@ func testLiveProvider(t *testing.T, collar, cli, cheapest string) {
 	if out, err := runner.run("new-session", "-d", "-s", session, "-n", "control"); err != nil {
 		t.Fatalf("create private session: %v: %s", err, out)
 	}
-	if out, err := runner.run("list-sessions", "-F", "#{session_name}"); err != nil || strings.TrimSpace(out) != session {
-		t.Fatalf("private socket has sessions %q: %v", out, err)
-	}
 	runGang := func(c context.Context, input string, args ...string) (string, string, error) {
 		command := exec.CommandContext(c, binary, args...)
 		command.Dir = repo
@@ -191,6 +188,9 @@ func testLiveProvider(t *testing.T, collar, cli, cheapest string) {
 			}
 		}
 	})
+	if out, err := runner.run("list-sessions", "-F", "#{session_name}"); err != nil || strings.TrimSpace(out) != session {
+		t.Fatalf("private socket has sessions %q: %v", out, err)
+	}
 	models, diagnostic, err := runGang(ctx, "", "models", "-c", collar)
 	if err != nil {
 		t.Fatalf("gang models -c %s: %v: %s %s", collar, err, models, diagnostic)
