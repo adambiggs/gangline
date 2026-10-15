@@ -331,7 +331,7 @@ func TestCommandLifecycleOnPrivateTmux(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(bin, "forced"), []byte(forced[1]), 0600); err != nil {
 		t.Fatal(err)
 	}
-	transportRefusal := "peer-receive runs only as the forced command of a peer's key, under this host's sshd"
+	transportRefusal := "peer-receive requires this account's sshd session under a root sshd process"
 	peer := runGang(`{"host":"alpha","team":"`+session+`","id":"msg-0123456789abcdef0123456789abcdef","from":"lead","to":"second","body":"peer delivery"}`, "peer-receive", "--peer", "alpha")
 	if peer.status != 3 || !strings.Contains(peer.out, `{"error":"`+transportRefusal) {
 		t.Fatalf("peer-receive outside sshd status=%d\n%s", peer.status, peer.out)

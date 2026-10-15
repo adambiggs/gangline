@@ -85,8 +85,8 @@ func peerReceive(f *stateFixture, request string) (peerReply, error) {
 	return peerReceiveAs(f, "alpha", request)
 }
 
-// peerReceiveAs runs peer-receive as the forced command of host's key; an
-// empty host leaves --peer out.
+// peerReceiveAs supplies the host argument under an admitted ancestry fixture;
+// an empty host leaves --peer out.
 func peerReceiveAs(f *stateFixture, host, request string) (peerReply, error) {
 	f.out.Reset()
 	cmd := f.cmd
@@ -398,7 +398,7 @@ func TestPeerTransportAdmitsSSHDChildren(t *testing.T) {
 	}
 }
 
-// Only sshd's child for an authenticated key may run peer-receive. Each
+// The transport screen requires the expected sshd ancestry. Each
 // refused table differs from an admitted one in one read.
 func TestPeerReceiveRefusesAnyOtherTransport(t *testing.T) {
 	edit := func(pid int, change func(*tmux.Owner)) func(*fakeProcesses) {
@@ -450,8 +450,7 @@ func TestPeerReceiveRefusesAnyOtherTransport(t *testing.T) {
 	}
 }
 
-// The sender's label and the envelope ID name the host whose key ran
-// peer-receive.
+// The sender's label and envelope ID use the host supplied by --peer.
 func TestPeerReceiveLabelsTheBoundHost(t *testing.T) {
 	f, a := peerFixture(t)
 	f.env["GANG_PEERS"] = `{"alpha":{"ssh":"alpha","gang":"/opt/gang","team":"unit"},"beta":{"ssh":"beta","gang":"/opt/gang","team":"unit"}}`

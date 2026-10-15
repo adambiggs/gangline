@@ -75,8 +75,9 @@ func (cmd command) peerReceive(args []string) (result error) {
 	} else if a != nil {
 		return refuseError("peer-receive is a peer host's ingress; registered agent %s sends with gang send", a.Name)
 	}
-	// The sender's host comes from the forced command of the key sshd
-	// authenticated, never from the request, which the sender writes.
+	// The dedicated peer key binds this argument in its forced command.
+	// The request cannot choose a different host; receiving-account shell
+	// and state access remain trusted.
 	if host == "" {
 		return refuseError("peer-receive needs --peer HOST from the forced command of that peer's key; run gang peer-authorize HOST PUBKEY_FILE on this host to set one up")
 	}
@@ -173,9 +174,8 @@ func (cmd command) peerReceive(args []string) (result error) {
 	return deliveryResult(outcome)
 }
 
-// peerTransportRefusal is the reason peer-receive gives when it is not running
-// as sshd's child for an authenticated peer key.
-const peerTransportRefusal = "peer-receive runs only as the forced command of a peer's key, under this host's sshd; run gang peer-authorize to set one up"
+// peerTransportRefusal describes the required process ancestry.
+const peerTransportRefusal = "peer-receive requires this account's sshd session under a root sshd process; run gang peer-authorize to bind a peer key"
 
 // sshdCommands are the names OpenSSH gives its per-connection processes:
 // sshd, or sshd-session where OpenSSH runs each session as its own program.
@@ -204,10 +204,11 @@ func (cmd command) peerProcesses() processTable {
 	return hostProcesses{}
 }
 
-// checkPeerTransport admits peer-receive only as the command sshd runs for an
-// authenticated key: its parent is an sshd process of this user, privilege
-// separated from a root sshd above it. A local process of this user cannot
-// place itself under a root sshd, so --peer is the forced command's.
+// checkPeerTransport screens for an sshd process of this user under an sshd
+// process whose observed user IDs are zero. It does not identify the SSH key
+// or prove a forced command: an unrestricted login can supply --peer, and
+// user-namespace processes can present this ancestry with namespace-local UIDs.
+// Dedicated restricted keys bind peer labels; receiving-account access is trusted.
 //
 // The parent is read, then its parent, then the parent again. A process whose
 // parent exits is moved to another parent, so a grandparent still named by
