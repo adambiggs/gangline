@@ -178,14 +178,14 @@ func lastLine(output []byte) string {
 	return ""
 }
 
-// printable replaces the control characters a remote host may have sent.
+// printable defangs envelope-shaped text and replaces remote display controls.
 func printable(text string) string {
 	return strings.Map(func(r rune) rune {
-		if unicode.IsControl(r) {
+		if unicode.IsControl(r) || invisibleMessageRune(r) {
 			return '?'
 		}
 		return r
-	}, text)
+	}, defangEnvelopeTags(text))
 }
 
 // tailBuffer keeps the last limit bytes written to it.
