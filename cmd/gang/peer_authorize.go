@@ -1,7 +1,6 @@
 package main
 
 import (
-	"bytes"
 	"encoding/base64"
 	"encoding/binary"
 	"fmt"
@@ -9,11 +8,13 @@ import (
 	"strings"
 )
 
-// peerKeyTypes are the OpenSSH public key types a peer key may have.
-var peerKeyTypes = map[string]bool{
-	"ssh-ed25519": true, "ssh-rsa": true,
-	"ecdsa-sha2-nistp256": true, "ecdsa-sha2-nistp384": true, "ecdsa-sha2-nistp521": true,
-	"sk-ssh-ed25519@openssh.com": true, "sk-ecdsa-sha2-nistp256@openssh.com": true,
+// peerKeyTypes are the OpenSSH public key types a peer key may have, each
+// with the number of length-prefixed fields its key blob holds after the type
+// (RFC 4253, RFC 5656, OpenSSH PROTOCOL.u2f).
+var peerKeyTypes = map[string]int{
+	"ssh-ed25519": 1, "ssh-rsa": 2,
+	"ecdsa-sha2-nistp256": 2, "ecdsa-sha2-nistp384": 2, "ecdsa-sha2-nistp521": 2,
+	"sk-ssh-ed25519@openssh.com": 2, "sk-ecdsa-sha2-nistp256@openssh.com": 3,
 }
 
 // peerAuthorize prints the authorized_keys line that binds a peer host's key
@@ -85,9 +86,9 @@ func parsePeerKey(name string, data []byte) (string, string, error) {
 		return "", "", refuseError("%s holds %d lines; want exactly one public key", name, len(lines))
 	}
 	fields := strings.Fields(lines[0])
-	if !peerKeyTypes[fields[0]] {
+	if peerKeyTypes[fields[0]] == 0 {
 		for _, field := range fields[1:] {
-			if peerKeyTypes[field] {
+			if peerKeyTypes[field] > 0 {
 				return "", "", refuseError("%s gives options before its key type; give the plain public key file", name)
 			}
 		}
@@ -100,10 +101,38 @@ func parsePeerKey(name string, data []byte) (string, string, error) {
 	if err != nil {
 		return "", "", refuseError("%s key data is not base64: %v", name, err)
 	}
-	// An OpenSSH key blob starts with its type as a length-prefixed string.
-	keyType := []byte(fields[0])
-	if len(blob) < 4+len(keyType) || binary.BigEndian.Uint32(blob) != uint32(len(keyType)) || !bytes.Equal(blob[4:4+len(keyType)], keyType) {
+	if !peerKeyBlobValid(fields[0], blob) {
 		return "", "", refuseError("%s key data does not encode a %s key", name, fields[0])
 	}
 	return fields[0], fields[1], nil
+}
+
+// peerKeyBlobValid reports whether blob is a whole OpenSSH public key blob of
+// keyType: its type, then exactly the type's non-empty fields, each a
+// length-prefixed string, with an Ed25519 key of 32 bytes and an ECDSA curve
+// that matches the type.
+func peerKeyBlobValid(keyType string, blob []byte) bool {
+	var fields [][]byte
+	for len(blob) > 0 {
+		if len(blob) < 4 || uint64(binary.BigEndian.Uint32(blob)) > uint64(len(blob)-4) {
+			return false
+		}
+		n := binary.BigEndian.Uint32(blob)
+		fields, blob = append(fields, blob[4:4+n]), blob[4+n:]
+	}
+	if len(fields) != 1+peerKeyTypes[keyType] || string(fields[0]) != keyType {
+		return false
+	}
+	for _, field := range fields[1:] {
+		if len(field) == 0 {
+			return false
+		}
+	}
+	if strings.Contains(keyType, "ed25519") && len(fields[1]) != 32 {
+		return false
+	}
+	if i := strings.Index(keyType, "nistp"); i >= 0 && string(fields[1]) != keyType[i:i+len("nistp256")] {
+		return false
+	}
+	return true
 }

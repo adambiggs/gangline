@@ -10,13 +10,53 @@ import (
 	"testing"
 )
 
-// testPublicKey is the base64 of an OpenSSH key blob of keyType.
+// testPublicKey is the base64 of an OpenSSH key blob of keyType with one
+// 32-byte key field, the shape of an Ed25519 key.
 func testPublicKey(keyType string) string {
-	blob := binary.BigEndian.AppendUint32(nil, uint32(len(keyType)))
-	blob = append(blob, keyType...)
-	blob = binary.BigEndian.AppendUint32(blob, 32)
-	blob = append(blob, make([]byte, 32)...)
+	return testKeyBlob(keyType, string(make([]byte, 32)))
+}
+
+// testKeyBlob is the base64 of fields, each as a length-prefixed string.
+func testKeyBlob(fields ...string) string {
+	var blob []byte
+	for _, field := range fields {
+		blob = binary.BigEndian.AppendUint32(blob, uint32(len(field)))
+		blob = append(blob, field...)
+	}
 	return base64.StdEncoding.EncodeToString(blob)
+}
+
+func TestPeerAuthorizeAcceptsEachKeyType(t *testing.T) {
+	ed := string(make([]byte, 32))
+	for _, fields := range [][]string{
+		{"ssh-ed25519", ed},
+		{"ssh-rsa", "\x01\x00\x01", "\x00\xc1\x02"},
+		{"ecdsa-sha2-nistp256", "nistp256", "\x04\x01\x02"},
+		{"ecdsa-sha2-nistp384", "nistp384", "\x04\x01\x02"},
+		{"ecdsa-sha2-nistp521", "nistp521", "\x04\x01\x02"},
+		{"sk-ssh-ed25519@openssh.com", ed, "ssh:"},
+		{"sk-ecdsa-sha2-nistp256@openssh.com", "nistp256", "\x04\x01\x02", "ssh:"},
+	} {
+		t.Run(fields[0], func(t *testing.T) {
+			key := testKeyBlob(fields...)
+			f, file := peerAuthorizeFixture(t, fields[0]+" "+key+"\n")
+			if err := f.cmd.execute([]string{"peer-authorize", "alpha", file}); err != nil {
+				t.Fatal(err)
+			}
+			if !strings.HasSuffix(f.out.String(), ",restrict "+fields[0]+" "+key+" gangline-peer-alpha\n") {
+				t.Fatalf("line = %q", f.out.String())
+			}
+		})
+	}
+}
+
+func mustDecode(t *testing.T, s string) []byte {
+	t.Helper()
+	b, err := base64.StdEncoding.DecodeString(s)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return b
 }
 
 func peerAuthorizeFixture(t *testing.T, key string) (*stateFixture, string) {
@@ -69,6 +109,14 @@ func TestPeerAuthorizeRefusesWhatItCannotBind(t *testing.T) {
 		{"key data naming a longer type", "alpha", "ssh-ed25519 " + base64.StdEncoding.EncodeToString(append([]byte{0, 0, 0, 12}, "ssh-ed25519x"...)) + "\n", "", "", "does not encode a ssh-ed25519 key"},
 		{"key data naming a same-length type", "alpha", "ssh-ed25519 " + testPublicKey("ssh-ed25518") + "\n", "", "", "does not encode a ssh-ed25519 key"},
 		{"key data too short", "alpha", "ssh-ed25519 " + base64.StdEncoding.EncodeToString([]byte{0, 0, 0, 11, 's'}) + "\n", "", "", "does not encode"},
+		{"key data with no key", "alpha", "ssh-ed25519 " + testKeyBlob("ssh-ed25519") + "\n", "", "", "does not encode"},
+		{"key data with a short Ed25519 key", "alpha", "ssh-ed25519 " + testKeyBlob("ssh-ed25519", string(make([]byte, 31))) + "\n", "", "", "does not encode"},
+		{"key data with an extra field", "alpha", "ssh-ed25519 " + testKeyBlob("ssh-ed25519", string(make([]byte, 32)), "x") + "\n", "", "", "does not encode"},
+		{"key data with trailing bytes", "alpha", "ssh-ed25519 " + base64.StdEncoding.EncodeToString(append(mustDecode(t, ed25519), 0)) + "\n", "", "", "does not encode"},
+		{"key data with a length past its end", "alpha", "ssh-ed25519 " + base64.StdEncoding.EncodeToString(append(mustDecode(t, testKeyBlob("ssh-ed25519")), 0, 0, 0, 33, 1)) + "\n", "", "", "does not encode"},
+		{"RSA key with an empty modulus", "alpha", "ssh-rsa " + testKeyBlob("ssh-rsa", "\x01\x00\x01", "") + "\n", "", "", "does not encode"},
+		{"ECDSA key on another curve", "alpha", "ecdsa-sha2-nistp256 " + testKeyBlob("ecdsa-sha2-nistp256", "nistp384", "\x04\x01") + "\n", "", "", "does not encode"},
+		{"security key without its application", "alpha", "sk-ssh-ed25519@openssh.com " + testPublicKey("sk-ssh-ed25519@openssh.com") + "\n", "", "", "does not encode"},
 		{"gang path with a space", "alpha", plain, "/my bin/gang", "", "cannot appear in a forced command"},
 		{"team with a space", "alpha", plain, "", "a b", `team "a b" cannot appear`},
 		{"team with a quote", "alpha", plain, "", `x"y`, "cannot appear in a forced command"},
