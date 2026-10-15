@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.19.1](https://github.com/adambiggs/gangline/compare/gangline-v1.19.0...gangline-v1.19.1) (2026-10-15)
+
+
+### Bug Fixes
+
+* read peer-receive's sshd chain on macOS without privilege ([cde9cf6](https://github.com/adambiggs/gangline/commit/cde9cf68ffa361e2ad1b71b5d9f666b130ee8f3c)), closes [#184](https://github.com/adambiggs/gangline/issues/184)
+
 ## [1.19.0](https://github.com/adambiggs/gangline/compare/gangline-v1.18.0...gangline-v1.19.0) (2026-10-15)
 
 
