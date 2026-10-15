@@ -1,5 +1,38 @@
 # Changelog
 
+## [1.19.0](https://github.com/adambiggs/gangline/compare/gangline-v1.18.0...gangline-v1.19.0) (2026-10-15)
+
+
+### Features
+
+* receive messages from enrolled peer hosts ([2f269bd](https://github.com/adambiggs/gangline/commit/2f269bd81f50411330c620b760ba7927648a9e1f))
+* send to an agent on an enrolled peer host ([cfd3481](https://github.com/adambiggs/gangline/commit/cfd3481de4ef87b87cae13b7e0795c138417a822))
+* **substrate:** read a process's parent, user IDs, and command name ([a1f3acd](https://github.com/adambiggs/gangline/commit/a1f3acd959dbc74d6020098b24f3624e72b9f114))
+* tell the hitcher when an agent idles with background tasks pending ([08447d4](https://github.com/adambiggs/gangline/commit/08447d4a733a72f14c98c3aa4a6235e2f7979560))
+
+
+### Bug Fixes
+
+* authenticate native callbacks and reject nonregular transcripts ([0f4464e](https://github.com/adambiggs/gangline/commit/0f4464e0403bee6cce0cb122382105de8647a687))
+* bind a peer sender's host to the ssh key that delivered it ([59388c0](https://github.com/adambiggs/gangline/commit/59388c0daa1607cf5118a56bb8e8d7f169b6d09a))
+* defang Unicode envelope lookalikes on every message path ([7fced9e](https://github.com/adambiggs/gangline/commit/7fced9e634247e39499deab958ad9582624dd395))
+* keep peer message IDs out of Gangline's derived ID space ([a6c7c37](https://github.com/adambiggs/gangline/commit/a6c7c371963e0699003ad12122aa699560126152))
+* queue a message only when no envelope with its ID is queued ([da5d251](https://github.com/adambiggs/gangline/commit/da5d25181fd861ad8e96d1373ae13e54ad8ef02d)), closes [#176](https://github.com/adambiggs/gangline/issues/176)
+* recheck native prompts before submitting compaction resumes ([27dad3a](https://github.com/adambiggs/gangline/commit/27dad3ad5fa73704c17e61782d573dd335798018))
+* record each peer send in the sending host's team log ([0a16d52](https://github.com/adambiggs/gangline/commit/0a16d522b4d91f7123c94aaaa29122b24ccea93a)), closes [#177](https://github.com/adambiggs/gangline/issues/177)
+* refuse a hitch resume session that starts with a dash ([6ba4ffe](https://github.com/adambiggs/gangline/commit/6ba4ffeadc9f244204a50aac2d35f38cfe80ba10)), closes [#180](https://github.com/adambiggs/gangline/issues/180)
+* refuse a peer key file whose key data is not a whole key ([53e7d9e](https://github.com/adambiggs/gangline/commit/53e7d9ee5a825c639f5abac2fd60cc97625af66a))
+* refuse gang interrupt while a native prompt blocks the pane ([83835b8](https://github.com/adambiggs/gangline/commit/83835b865856d420102e819f5c5b2de8e8fe8958)), closes [#181](https://github.com/adambiggs/gangline/issues/181)
+* refuse GANG_PEERS that names a host twice or in two cases ([7916bb0](https://github.com/adambiggs/gangline/commit/7916bb0df9985841559f6fa34ce0e7458cdf09d6)), closes [#179](https://github.com/adambiggs/gangline/issues/179)
+* reserve snooze authority and notice routing for operator-granted leads ([8679145](https://github.com/adambiggs/gangline/commit/8679145ba79d00df4bd807c8890db61f1b6a3cb3))
+* reserve the names Gangline sends its own messages under ([91a48c1](https://github.com/adambiggs/gangline/commit/91a48c191027dace199656e271f05ce57bd913b9))
+* run the Claude usage query outside the shared temporary directory ([09d4112](https://github.com/adambiggs/gangline/commit/09d4112e6a189b5a4399090d697cf1e9c88aa2f4))
+* say that a peer's refusal names commands for the peer host ([802c142](https://github.com/adambiggs/gangline/commit/802c1422cb584144930c9e0b16db57721faa5fbe)), closes [#178](https://github.com/adambiggs/gangline/issues/178)
+* show a Codex turn the provider refused as blocked ([42be9c3](https://github.com/adambiggs/gangline/commit/42be9c38c8de03845a25140f883e9f7f62000d3c))
+* show native turn failures after recent pane probes ([7be9f46](https://github.com/adambiggs/gangline/commit/7be9f4611ecd6079cd4d8f1bce5af746f14bac72))
+* stop the collar check from bypassing native hook review ([c8fa51c](https://github.com/adambiggs/gangline/commit/c8fa51ca22e823efe75de134d75ec37a48f4ff35))
+* tell peer-authorize users to disable ssh connection sharing ([9799045](https://github.com/adambiggs/gangline/commit/97990459e7662f439b10534440e4290a423fcc39))
+
 ## [1.18.0](https://github.com/adambiggs/gangline/compare/gangline-v1.17.2...gangline-v1.18.0) (2026-10-13)
 
 
