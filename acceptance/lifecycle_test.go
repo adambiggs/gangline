@@ -309,6 +309,45 @@ func TestCommandLifecycleOnPrivateTmux(t *testing.T) {
 		}
 	}
 	finishDelivery(delivered, "independent delivery")
+
+	// Registered credentials authenticate the envelope delivered to native input.
+	senderKey := strings.TrimSpace(check("", "sender", "add", "relay"))
+	if info, err := os.Stat(senderKey); err != nil || info.Mode().Perm() != 0600 {
+		t.Fatalf("registered key mode: %v %v", info, err)
+	}
+	wrongKey := filepath.Join(root, "wrong-key")
+	if err := os.WriteFile(wrongKey, []byte("wrong"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	for _, credential := range []string{"", wrongKey, root} {
+		args := []string{"send", "second", "--as", "relay", "registered refusal probe"}
+		if credential != "" {
+			args = append(args, "--credential", credential)
+		}
+		if r := runGang("", args...); r.status != 3 || !strings.Contains(r.out, "--credential FILE") {
+			t.Fatalf("registered credential refusal: status=%d %s", r.status, r.out)
+		}
+	}
+	finishDelivery(check("registered delivery proof", "send", "second", "--as", "relay", "--credential", senderKey), "registered delivery proof")
+	ledger, err := os.ReadFile(filepath.Join(root, "received"))
+	if err != nil || !strings.Contains(string(ledger), "[gang:registered:relay#") || strings.Contains(string(ledger), "registered refusal probe") {
+		t.Fatalf("registered envelope ledger: %s %v", ledger, err)
+	}
+	copiedKey := filepath.Join(root, "copied-key")
+	secret, err := os.ReadFile(senderKey)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(copiedKey, secret, 0600); err != nil {
+		t.Fatal(err)
+	}
+	check("", "sender", "remove", "relay")
+	if _, err := os.Stat(senderKey); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("removed secret retained: %v", err)
+	}
+	if r := runGang("", "send", "second", "--as", "relay", "--credential", copiedKey, "revoked key probe"); r.status != 3 {
+		t.Fatalf("revoked key: status=%d %s", r.status, r.out)
+	}
 	// A peer host's gang forwards over ssh into the forced command that gang
 	// peer-authorize prints for its key. Outside sshd, that command and any
 	// direct run of peer-receive are refused before the request is read, so

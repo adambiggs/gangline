@@ -109,7 +109,7 @@ func (cmd command) send(args []string) (result error) {
 	if err != nil {
 		return err
 	}
-	sender, err := run.sender(o.From)
+	sender, err := run.sendSender(o)
 	if err != nil {
 		return err
 	}

@@ -81,14 +81,16 @@ func parseHitch(arguments []string, defaultCollar, defaultDirectory string) (hit
 type sendOptions struct {
 	// Host is the enrolled peer host of a HOST:NAME recipient; Name is then
 	// the agent on that host.
-	Host      string
-	Name      string
-	Body      *string
-	From      string
-	LiveOnly  bool
-	Supersede bool
-	At        string
-	Clear     bool
+	Host       string
+	Name       string
+	Body       *string
+	From       string
+	As         string
+	Credential string
+	LiveOnly   bool
+	Supersede  bool
+	At         string
+	Clear      bool
 }
 
 type waitOptions struct {
@@ -122,7 +124,7 @@ func parseWait(arguments []string) (waitOptions, error) {
 func parseSend(arguments []string) (sendOptions, error) {
 	options := sendOptions{}
 	flags := boundFlagSet("send", map[string]any{
-		"from": &options.From, "live-only": &options.LiveOnly,
+		"from": &options.From, "as": &options.As, "credential": &options.Credential, "live-only": &options.LiveOnly,
 		"supersede": &options.Supersede, "at": &options.At, "clear": &options.Clear,
 	})
 	positionals, err := parseOptions(flags, arguments)
@@ -145,10 +147,10 @@ func parseSend(arguments []string) (sendOptions, error) {
 	}
 	if host, name, peer := strings.Cut(options.Name, ":"); peer {
 		if !validPeerHost(host) {
-			return sendOptions{}, usageError("send: invalid peer host %q in %q (%s; self-declared is reserved)", host, options.Name, agentNameForm)
+			return sendOptions{}, usageError("send: invalid peer host %q in %q (%s; self-declared and registered are reserved)", host, options.Name, agentNameForm)
 		}
-		if options.From != "" || options.LiveOnly || options.Supersede || options.At != "" || options.Clear {
-			return sendOptions{}, usageError("send: a HOST:NAME recipient takes no --from, --live-only, --supersede, --at, or --clear")
+		if options.As != "" || options.From != "" || options.LiveOnly || options.Supersede || options.At != "" || options.Clear {
+			return sendOptions{}, usageError("send: a HOST:NAME recipient takes no --as, --credential, --from, --live-only, --supersede, --at, or --clear")
 		}
 		options.Host, options.Name = host, name
 	}
@@ -157,6 +159,17 @@ func parseSend(arguments []string) (sendOptions, error) {
 	}
 	if options.From != "" && !validAgentName(options.From) {
 		return sendOptions{}, usageError("send: invalid --from %q (%s)", options.From, agentNameForm)
+	}
+	if flagWasSet(flags, "as") {
+		if err := validateNewAgentName(options.As); err != nil {
+			return sendOptions{}, err
+		}
+		if flagWasSet(flags, "from") {
+			return sendOptions{}, usageError("send: --as and --from cannot be combined")
+		}
+	}
+	if flagWasSet(flags, "credential") && (options.As == "" || options.Credential == "") {
+		return sendOptions{}, usageError("send: --credential FILE requires --as NAME")
 	}
 	if options.LiveOnly && options.At != "" {
 		return sendOptions{}, usageError("send: --live-only and --at cannot be combined")

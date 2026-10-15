@@ -274,6 +274,8 @@ func (cmd command) execute(args []string) (result error) {
 		return cmd.rename(arguments)
 	case "outside":
 		return cmd.outside(arguments)
+	case "sender":
+		return cmd.senderCommand(arguments)
 	case "send":
 		return cmd.send(arguments)
 	case "peer-receive":

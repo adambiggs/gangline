@@ -718,6 +718,9 @@ func (cmd command) drop(args []string) error {
 	if err != nil {
 		return err
 	}
+	if store.IsSenderID(id) {
+		return refuseError("%s is a registered sender; use gang sender remove %s", name, name)
+	}
 	if isOutsideID(id) {
 		if err := run.team.RemoveOutside(name); err != nil {
 			return err

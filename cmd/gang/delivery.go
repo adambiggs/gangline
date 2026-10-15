@@ -108,6 +108,8 @@ func senderLabel(s core.Sender) string {
 	switch s.Kind {
 	case core.SenderSelfDeclared:
 		return "self-declared:" + string(s.Name)
+	case core.SenderRegistered:
+		return "registered:" + string(s.Name)
 	case core.SenderPeer:
 		// A local agent name cannot contain ':', so this label cannot be
 		// taken by a local hitch or --from.

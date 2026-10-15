@@ -80,7 +80,7 @@ func (run *runtime) sendOutside(o sendOptions, registration store.OutsideRegistr
 	if o.LiveOnly || o.Supersede || o.Clear || o.At != "" {
 		return usageError("outside mailboxes take immediate queued sends without --live-only, --supersede, --clear or --at")
 	}
-	sender, err := run.sender(o.From)
+	sender, err := run.sendSender(o)
 	if err != nil {
 		return err
 	}

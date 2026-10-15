@@ -17,7 +17,7 @@ func (run *runtime) supersedeStoppedClaim(ctx context.Context, b *tmux.Backend, 
 	if err != nil {
 		return nil, err
 	}
-	if isOutsideID(id) {
+	if isOutsideID(id) || store.IsSenderID(id) {
 		return nil, store.ErrNameTaken
 	}
 	p, err := run.team.Agent(id)

@@ -169,7 +169,7 @@ func (cmd command) settings() (settings, error) {
 		}
 	}
 	if result.Host != "" && !validPeerHost(result.Host) {
-		return settings{}, fmt.Errorf("GANG_HOST has invalid host name %q (%s; self-declared is reserved)", result.Host, agentNameForm)
+		return settings{}, fmt.Errorf("GANG_HOST has invalid host name %q (%s; self-declared and registered are reserved)", result.Host, agentNameForm)
 	}
 	if result.CodexPermissionProfile != "" && !codexProfileName(result.CodexPermissionProfile) {
 		return settings{}, fmt.Errorf("GANG_CODEX_PERMISSION_PROFILE must contain only letters, digits, hyphens, or underscores")
@@ -215,7 +215,7 @@ func parsePeers(value string) (map[string]peerHost, error) {
 	}
 	for host, peer := range peers {
 		if !validPeerHost(host) {
-			return nil, fmt.Errorf("GANG_PEERS has invalid peer host %q (%s; self-declared is reserved)", host, agentNameForm)
+			return nil, fmt.Errorf("GANG_PEERS has invalid peer host %q (%s; self-declared and registered are reserved)", host, agentNameForm)
 		}
 		if !peerLoginPattern.MatchString(peer.SSH) {
 			return nil, fmt.Errorf("GANG_PEERS[%q] needs an ssh host alias of letters, digits, '.', '_' or '-'", host)
@@ -265,9 +265,9 @@ func refuseRepeatedPeerHosts(value string) error {
 }
 
 // validPeerHost reports whether host can label a peer sender. The label
-// HOST:NAME must not repeat the self-declared:NAME form.
+// HOST:NAME must not repeat a local sender prefix.
 func validPeerHost(host string) bool {
-	return validAgentName(host) && !strings.EqualFold(host, "self-declared")
+	return validAgentName(host) && !strings.EqualFold(host, "self-declared") && !strings.EqualFold(host, "registered")
 }
 
 func readConfiguration(filename string) (map[string]string, error) {

@@ -128,8 +128,11 @@ contract and assignment.
 
 | Command | Effect |
 | --- | --- |
+| `gang sender add NAME` | From the operator shell or active lead pane, register NAME and print the path of a random key file under the team's state directory, readable only by the user. Refuses agent, outside-mailbox, registered-sender and enrolled peer-host names. |
+| `gang sender list` | List registered sender names. |
+| `gang sender remove NAME` | From the operator shell or active lead pane, revoke NAME and delete its key file and registration; queued messages retain their authenticated attribution. |
 | `gang send NAME [OPTIONS] [BODY]` | Send BODY, or read stdin when absent, and report its receipt. |
-| `gang send HOST:NAME [BODY]` | From a registered agent, forward BODY over ssh to agent NAME on `GANG_PEERS` host HOST, where the forced command of this host's key runs `gang peer-receive` to deliver it, and print `HOST:ID` with that host's receipt. A refusal from that host names it as the host where any command in its reason runs. Once ssh has run, the sending host's team log records a `peer_sent` event under the sending agent with `HOST:NAME`, the message ID, and the outcome, `refused`, or `unknown`. No reply within two minutes, or a last line that is not a reply to this message, prints `unknown` and exits 5: the message may have been published there, so send it again only once no `gang peer-receive` runs on that host and its `gang queue` and `gang log` both lack the ID. Takes no `--from`, `--at`, `--live-only`, `--supersede`, or `--clear`. |
+| `gang send HOST:NAME [BODY]` | From a registered agent, forward BODY over ssh to agent NAME on `GANG_PEERS` host HOST, where the forced command of this host's key runs `gang peer-receive` to deliver it, and print `HOST:ID` with that host's receipt. A refusal from that host names it as the host where any command in its reason runs. Once ssh has run, the sending host's team log records a `peer_sent` event under the sending agent with `HOST:NAME`, the message ID, and the outcome, `refused`, or `unknown`. No reply within two minutes, or a last line that is not a reply to this message, prints `unknown` and exits 5: the message may have been published there, so send it again only once no `gang peer-receive` runs on that host and its `gang queue` and `gang log` both lack the ID. Takes no `--as`, `--credential`, `--from`, `--at`, `--live-only`, `--supersede`, or `--clear`. |
 | `gang queue [NAME] [--json]` | List pending messages with ID, recipient, sender, kind, a text excerpt, and state: `ready`, `scheduled` with its due time, `blocked` with the reason, or `unknown` with the reason. |
 | `gang interrupt [NAME] [-m\|--message REASON]` | Interrupt the turn; deliver an optional reason after it stops. Refuses without sending keys while the pane shows a native approval or trust prompt. |
 | `gang compact [NAME] [--resume TEXT]` | Compact at native idle; submit the continuation behind compaction, ahead of later input. Refuses, asking for a retry, while another gang operation holds the agent. Refuses while startup input is unverified, or while the previous compaction's resume note waits in the harness, until it is admitted, until one operation's timeout after that compaction completed, or, for a compaction past its deadline, until the pane stops showing it; a queued compaction waits until startup input is verified (`gang hitch NAME --recover`). |
@@ -201,11 +204,20 @@ Send options:
 
 | Option | Meaning |
 | --- | --- |
-| `--from SENDER` | Required outside registered panes; refused inside them. |
+| `--from SENDER` | Required outside registered panes unless using `--as`; refused inside registered panes. |
+| `--as SENDER` | Authenticate a registered sender with a key file; incompatible with `--from` and peer-host recipients. Wrong, missing, unreadable or revoked keys refuse without falling back to a self-declared identity. |
+| `--credential FILE` | Read the key for `--as` from FILE, taking precedence over `GANG_SENDER_CREDENTIAL`; requires `--as`. |
 | `--live-only` | Refuse instead of queuing if the recipient cannot take input now. |
 | `--supersede` | Clear this sender's older scheduled messages for this recipient first. |
 | `--at DURATION\|HH:MM\|RFC3339` | Schedule delivery after a duration, at a local time, or at an exact deadline. |
 | `--clear` | Clear this sender's scheduled messages for the recipient instead of sending; takes no body, `--at`, or `--live-only`. |
+
+A `registered:NAME` envelope identifies a registered sender whose key file Gangline checked; this separates registered identities from self-declared names, while any process running as the same user can read the file.
+
+A service can supply its key through a private copy such as a user unit's
+`LoadCredential` file and call `gang send RECIPIENT --as NAME --credential FILE`.
+Removing and adding NAME issues a new key; copies of the revoked key cannot
+send again. `registered` is reserved as a peer-host prefix.
 
 `DURATION` uses Go duration syntax (for example, `1h30m` or `500ms`) for
 `--at`, `curfew`, and `--timeout`.
@@ -369,6 +381,7 @@ These variables are environment-only:
 | Variable | Default and purpose |
 | --- | --- |
 | `GANG_CONFIG_DIR` | `${XDG_CONFIG_HOME:-~/.config}/gangline`; absolute config directory. |
+| `GANG_SENDER_CREDENTIAL` | Key file used by `gang send --as NAME` unless `--credential FILE` supplies one; ignored by sends without `--as`. |
 | `GANG_STATE_ROOT` | `${XDG_STATE_HOME:-~/.local/state}/gangline`; team state root. |
 | `GANG_TMUX_SOCKET` | tmux's default socket; selects a separate server when set. |
 | `GANG_TMUX` | `tmux`; executable used for tmux commands. |

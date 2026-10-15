@@ -117,3 +117,15 @@ func TestDecodeStoredContextBandMeasurement(t *testing.T) {
 		t.Fatalf("stored context band event: %+v, %v", decoded, err)
 	}
 }
+
+func TestRegisteredSenderEventRequiresIdentity(t *testing.T) {
+	now := time.Date(2026, 9, 22, 0, 0, 0, 0, time.UTC)
+	e := Event{Type: "send_queued", At: now, Envelope: &Envelope{ID: "message", Token: "0123456789abcdef", From: Sender{Kind: SenderRegistered, Name: "relay", HitchID: "sender-identity"}, To: "worker", Recipient: "a", Message: Message{Text: "hello"}, CreatedAt: now}}
+	if _, err := EncodeEvent(e); err != nil {
+		t.Fatal(err)
+	}
+	e.Envelope.From.HitchID = ""
+	if _, err := EncodeEvent(e); err == nil {
+		t.Fatal("registered sender without registry identity accepted")
+	}
+}

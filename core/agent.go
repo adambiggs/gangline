@@ -144,6 +144,7 @@ type Sender struct {
 const (
 	SenderAgent        = "agent"
 	SenderOutside      = "outside"
+	SenderRegistered   = "registered"
 	SenderSelfDeclared = "self_declared"
 	SenderGangline     = "gangline"
 	// SenderPeer is an agent on an enrolled peer host, named by that host's
@@ -155,7 +156,7 @@ func (s Sender) SameIdentity(other Sender) bool {
 	if s.Kind != other.Kind {
 		return false
 	}
-	if s.Kind == SenderAgent || s.Kind == SenderOutside {
+	if s.Kind == SenderAgent || s.Kind == SenderOutside || s.Kind == SenderRegistered {
 		return s.HitchID != "" && s.HitchID == other.HitchID
 	}
 	return s.Name == other.Name && s.Host == other.Host
