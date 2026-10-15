@@ -1,5 +1,25 @@
 # Changelog
 
+## [1.20.0](https://github.com/adambiggs/gangline/compare/gangline-v1.19.1...gangline-v1.20.0) (2026-10-15)
+
+
+### Features
+
+* add authenticated mailboxes and remote MCP access ([567a7b9](https://github.com/adambiggs/gangline/commit/567a7b914c18943237c9fcf336621f04966438ee))
+* **send:** authenticate registered senders with private key files ([cb8f1e2](https://github.com/adambiggs/gangline/commit/cb8f1e2ed9917595dbeb49b33ad45bcae817b54a))
+
+
+### Bug Fixes
+
+* allow browser OAuth consent and callback navigation ([698f589](https://github.com/adambiggs/gangline/commit/698f589cc4af3b90f6d633466ba2311d54dc9767))
+* describe peer ancestry as transport screening ([9fd49a2](https://github.com/adambiggs/gangline/commit/9fd49a26b8c9c603780eb17b7e67729af6799953)), closes [#185](https://github.com/adambiggs/gangline/issues/185)
+* ignore foreign submits before session registration ([a0314a3](https://github.com/adambiggs/gangline/commit/a0314a3226326192d0cfbc4b8a1c1c03e40a87da)), closes [#173](https://github.com/adambiggs/gangline/issues/173)
+* keep internal mailbox errors in server diagnostics ([ed2d429](https://github.com/adambiggs/gangline/commit/ed2d429ede2d8c01eba9f8b76fe01bdfe6547b31))
+* name operator recovery for callers without a role ([b28b484](https://github.com/adambiggs/gangline/commit/b28b484e6237cc9fdaa9a651d34ef1a1e97e7cbd))
+* restore OAuth grants when state writes fail ([751963e](https://github.com/adambiggs/gangline/commit/751963ee1728b6696b9e4ea9b462789bf697bc82))
+* share mailbox command flags with CLI help ([e4d02fe](https://github.com/adambiggs/gangline/commit/e4d02fec48163a5b40d4d52417582bb81bfd7dca))
+* show caller authority when drop is refused ([87d0be9](https://github.com/adambiggs/gangline/commit/87d0be9739ea857634302d2cb2163caf09ff8776))
+
 ## [1.19.1](https://github.com/adambiggs/gangline/compare/gangline-v1.19.0...gangline-v1.19.1) (2026-10-15)
 
 
