@@ -129,7 +129,14 @@ type optionSpec struct {
 // These definitions drive both flag registration and help. A nonempty argument
 // names a required value; an empty argument denotes a boolean switch.
 var commandOptions = map[string][]optionSpec{
-	"outside": {{"credential-file", "PATH", "new private file for the registration credential"}},
+	"outside": {
+		{"credential-file", "PATH", "register/rotate: new private credential file"},
+		{"listen", "ADDRESS", "serve: loopback bind (default 127.0.0.1:8484)"},
+		{"issuer", "HTTPS_ORIGIN", "serve: public OAuth and MCP origin"},
+		{"client-id", "ID", "serve: predefined OAuth public client"},
+		{"redirect-uri", "URL", "serve: exact connector OAuth callback"},
+		{"allow-read", "DIR", "serve: report directory; repeat for each root"},
+	},
 	"hitch": {
 		{"c", "COLLAR", "harness collar (default GANG_COLLAR)"}, {"collar", "COLLAR", "harness collar (default GANG_COLLAR)"},
 		{"d", "DIR", "working directory (default current)"}, {"dir", "DIR", "working directory (default current)"},
@@ -284,7 +291,7 @@ func optionArgument(option optionSpec) string {
 }
 
 var commandDescription = map[string]string{
-	"outside": "Register a mailbox identity; credentials are written only to a new private file.\nRotation revokes existing credentials and OAuth authorizations.\nServe exposes the mailbox through authenticated remote MCP.\n\nServe options:\n  --listen ADDRESS       HTTP bind address (default 127.0.0.1:8484)\n  --issuer HTTPS_ORIGIN  public OAuth and MCP origin\n  --client-id ID         connector OAuth client ID\n  --redirect-uri URL     exact connector OAuth callback\n  --allow-read DIR       allowed report directory; repeat for each root\n",
+	"outside": "Register a mailbox identity with credentials in a new private file.\nRotation revokes existing credentials and OAuth authorizations.\nServe exposes the mailbox through authenticated remote MCP.\n",
 
 	"up":         "NAME names the lead agent (default lead). Start the selected team and attach,\nor use --recover to recover that existing agent's startup.\n",
 	"hitch":      "NAME is an agent's registered name in the selected team.\nLaunch in a new window by default. --split NAME places a sibling beside\nthat agent; --vertical splits top/bottom. Use --recover for retained startup.\n",

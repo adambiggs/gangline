@@ -4,12 +4,22 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"errors"
+	"flag"
 	"fmt"
 	"strings"
 
 	"github.com/adambiggs/gangline/core"
 	"github.com/adambiggs/gangline/store"
 )
+
+type outsideOptions struct {
+	credentialFile, listen, issuer, clientID, redirect string
+	roots                                              reportDirectories
+}
+
+func outsideFlags(o *outsideOptions) *flag.FlagSet {
+	return boundFlagSet("outside", map[string]any{"credential-file": &o.credentialFile, "listen": &o.listen, "issuer": &o.issuer, "client-id": &o.clientID, "redirect-uri": &o.redirect, "allow-read": &o.roots})
+}
 
 func (cmd command) outside(args []string) error {
 	if len(args) == 0 {
@@ -22,11 +32,16 @@ func (cmd command) outside(args []string) error {
 	if action != "register" && action != "rotate" && action != "remove" {
 		return usageError("outside: unknown action %q", action)
 	}
-	credentialFile := ""
-	flags := boundFlagSet("outside", map[string]any{"credential-file": &credentialFile})
+	var o outsideOptions
+	flags := outsideFlags(&o)
 	positionals, err := parseOptions(flags, args[1:])
 	if err != nil {
 		return usageError("outside: %v", err)
+	}
+	for _, option := range optionsFor("outside") {
+		if option.name != "credential-file" && flagWasSet(flags, option.name) {
+			return usageError("outside %s: --%s is a serve option", action, option.name)
+		}
 	}
 	if len(positionals) != 1 {
 		return usageError("outside: one agent name required")
@@ -35,10 +50,10 @@ func (cmd command) outside(args []string) error {
 	if err := validateNewAgentName(name); err != nil {
 		return err
 	}
-	if action == "remove" && credentialFile != "" {
+	if action == "remove" && o.credentialFile != "" {
 		return usageError("outside remove: --credential-file is not used")
 	}
-	if action != "remove" && credentialFile == "" {
+	if action != "remove" && o.credentialFile == "" {
 		return usageError("outside %s: --credential-file PATH required", action)
 	}
 	run, err := cmd.runtime()
@@ -48,9 +63,9 @@ func (cmd command) outside(args []string) error {
 	paths := store.Paths{Root: run.settings.StateRoot}
 	switch action {
 	case "register":
-		_, err = paths.RegisterOutside(run.settings.Session, name, credentialFile)
+		_, err = paths.RegisterOutside(run.settings.Session, name, o.credentialFile)
 	case "rotate":
-		err = paths.RotateOutside(run.settings.Session, name, credentialFile)
+		err = paths.RotateOutside(run.settings.Session, name, o.credentialFile)
 	case "remove":
 		err = paths.RemoveOutside(run.settings.Session, name)
 	}

@@ -410,6 +410,11 @@ func boundFlagSet(name string, bindings map[string]any) *flag.FlagSet {
 				panic("missing flag argument: " + name + " " + option.name)
 			}
 			flags.DurationVar(value, option.name, *value, option.meaning)
+		case flag.Value:
+			if option.argument == "" {
+				panic("missing flag argument: " + name + " " + option.name)
+			}
+			flags.Var(value, option.name, option.meaning)
 		default:
 			panic("unsupported flag binding: " + name + " " + option.name)
 		}

@@ -158,14 +158,8 @@ func (s *outsideService) watchMail(ctx context.Context) error {
 }
 
 func (cmd command) outsideServe(args []string) error {
-	listen, issuer, clientID, redirect := "127.0.0.1:8484", "", "", ""
-	var roots reportDirectories
-	flags := quietFlagSet("outside serve")
-	flags.StringVar(&listen, "listen", listen, "loopback address for HTTPS proxy")
-	flags.StringVar(&issuer, "issuer", issuer, "public HTTPS origin")
-	flags.StringVar(&clientID, "client-id", clientID, "predefined OAuth public client ID")
-	flags.StringVar(&redirect, "redirect-uri", redirect, "exact ChatGPT callback URI")
-	flags.Var(&roots, "allow-read", "report directory; repeat for each root")
+	o := outsideOptions{listen: "127.0.0.1:8484"}
+	flags := outsideFlags(&o)
 	positionals, err := parseOptions(flags, args)
 	if err != nil {
 		return usageError("outside serve: %v", err)
@@ -173,7 +167,10 @@ func (cmd command) outsideServe(args []string) error {
 	if len(positionals) != 0 {
 		return usageError("outside serve: unexpected arguments")
 	}
-	host, _, err := net.SplitHostPort(listen)
+	if flagWasSet(flags, "credential-file") {
+		return usageError("outside serve: --credential-file is a register/rotate option")
+	}
+	host, _, err := net.SplitHostPort(o.listen)
 	if err != nil || net.ParseIP(host) == nil || !net.ParseIP(host).IsLoopback() {
 		return usageError("outside serve: --listen must be a loopback IP address and port")
 	}
@@ -196,7 +193,7 @@ func (cmd command) outsideServe(args []string) error {
 	if err := syscall.Flock(int(lock.Fd()), syscall.LOCK_EX|syscall.LOCK_NB); err != nil {
 		return refuseError("outside MCP server state is already in use: %v", err)
 	}
-	service, err := run.newOutsideService(issuer, clientID, redirect, roots)
+	service, err := run.newOutsideService(o.issuer, o.clientID, o.redirect, o.roots)
 	if err != nil {
 		return err
 	}
@@ -204,7 +201,7 @@ func (cmd command) outsideServe(args []string) error {
 	if err := os.MkdirAll(filepath.Join(run.team.Directory, "outside"), 0700); err != nil {
 		return err
 	}
-	listener, err := net.Listen("tcp", listen)
+	listener, err := net.Listen("tcp", o.listen)
 	if err != nil {
 		return err
 	}
@@ -215,7 +212,7 @@ func (cmd command) outsideServe(args []string) error {
 	results := make(chan error, 2)
 	go func() { results <- server.Serve(listener) }()
 	go func() { results <- service.watchMail(ctx) }()
-	fmt.Fprintf(cmd.stdout, "outside MCP listening on %s; HTTPS resource %s/mcp\n", listener.Addr(), issuer)
+	fmt.Fprintf(cmd.stdout, "outside MCP listening on %s; HTTPS resource %s/mcp\n", listener.Addr(), o.issuer)
 	var result error
 	select {
 	case result = <-results:

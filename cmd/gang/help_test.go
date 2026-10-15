@@ -199,6 +199,7 @@ func TestEveryCommandFlagParserConstructs(t *testing.T) {
 	cmd := command{stdin: strings.NewReader("")}
 	bad := []string{"--unlisted"}
 	checks := map[string]func() error{
+		"outside":    func() error { return cmd.outside([]string{"register", "--unlisted"}) },
 		"hitch":      func() error { _, err := parseHitch([]string{"worker", "--unlisted"}, "codex", "/work"); return err },
 		"send":       func() error { _, err := parseSend([]string{"worker", "--unlisted"}); return err },
 		"interrupt":  func() error { return cmd.interrupt(bad) },
