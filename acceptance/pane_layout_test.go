@@ -57,6 +57,7 @@ func TestNamedPaneLayouts(t *testing.T) {
 				}
 				return string(out)
 			}
+			runner.killServerAtCleanup(t)
 			if got := gang("hitch", "lead", "--role", "lead"); got != "lead\n" {
 				t.Fatalf("hitch output = %q", got)
 			}

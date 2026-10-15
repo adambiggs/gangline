@@ -203,6 +203,56 @@ func (runner tmuxRunner) run(arguments ...string) (string, error) {
 	return runner.runContext(context.Background(), arguments...)
 }
 
+// killServerAtCleanup ends the server at runner's socket when the test ends,
+// passed or failed. Register it before the command that starts the server. A
+// server gang starts reads the user's tmux configuration, and gang down ends
+// only the panes gang registered, so neither guarantees the server exits.
+func (runner tmuxRunner) killServerAtCleanup(t *testing.T) {
+	t.Helper()
+	t.Cleanup(func() { _, _ = runner.run("kill-server") })
+}
+
+const cleanupFixtureSocket = "GANGLINE_ACCEPTANCE_CLEANUP_SOCKET"
+
+// TestKillServerAtCleanupFixture runs only as the child of
+// TestFailedTestEndsItsTmuxServer: it starts a server and then fails.
+func TestKillServerAtCleanupFixture(t *testing.T) {
+	socket := os.Getenv(cleanupFixtureSocket)
+	if socket == "" {
+		t.Skip("runs as the child of TestFailedTestEndsItsTmuxServer")
+	}
+	runner := tmuxRunner{binary: "tmux", socket: socket, env: os.Environ()}
+	runner.killServerAtCleanup(t)
+	if out, err := runner.run("new-session", "-d", "-s", "cleanup-fixture"); err != nil {
+		t.Fatalf("create private session: %v %s", err, out)
+	}
+	t.Fatal("fixture failed with its server running")
+}
+
+func TestFailedTestEndsItsTmuxServer(t *testing.T) {
+	executable, err := os.Executable()
+	if err != nil {
+		t.Fatal(err)
+	}
+	root, err := os.MkdirTemp(os.TempDir(), "cleanup-")
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = os.RemoveAll(root) })
+	runner := tmuxRunner{binary: "tmux", socket: filepath.Join(root, "tmux.sock"), env: withoutEnvironment(os.Environ(), "TMUX", "TMUX_PANE")}
+	// The child's cleanup is under test, so this test does not rely on it.
+	t.Cleanup(func() { _, _ = runner.run("kill-server") })
+	child := exec.Command(executable, "-test.run=^TestKillServerAtCleanupFixture$")
+	child.Env = append(runner.env, cleanupFixtureSocket+"="+runner.socket)
+	out, err := child.CombinedOutput()
+	if err == nil || !strings.Contains(string(out), "fixture failed with its server running") {
+		t.Fatalf("fixture did not fail with its server running: %v\n%s", err, out)
+	}
+	if _, err := runner.run("has-session", "-t", "=cleanup-fixture"); err == nil {
+		t.Fatal("the failed test's server still holds its session")
+	}
+}
+
 // runContext runs a tmux command that ctx bounds, so a server that stops
 // answering fails the test instead of holding it. A client passes its output
 // descriptors to the server, so a stopped server holds the output pipe open
