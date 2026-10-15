@@ -62,7 +62,8 @@ func TestCodexRefusedTurnReadsBlocked(t *testing.T) {
 					a.Native.HookAt, a.Native.HookKind = f.cmd.now(), "turn-started"
 				})
 			}
-			want := "native turn refused: cyber_policy: " + refusalMessage
+			advice := "; the agent takes the next message: rebrief it, and replace it only if the rebrief is refused too"
+			want := "native turn refused: cyber_policy: " + refusalMessage + advice
 			if err := f.cmd.status([]string{"worker", "--why"}); err != nil {
 				t.Fatal(err)
 			}
@@ -76,7 +77,7 @@ func TestCodexRefusedTurnReadsBlocked(t *testing.T) {
 			if err := f.cmd.roster(nil); err != nil {
 				t.Fatal(err)
 			}
-			if row := strings.TrimSpace(f.out.String()); !strings.Contains(row, " blocked ") || !strings.HasSuffix(row, want) {
+			if row := strings.TrimSpace(f.out.String()); !strings.Contains(row, " blocked ") || !strings.Contains(row, "native turn refused: cyber_policy: ") || !strings.HasSuffix(row, "brief it, and replace it only if the rebrief is refused too") {
 				t.Fatalf("roster row: %q", row)
 			}
 			f.out.Reset()

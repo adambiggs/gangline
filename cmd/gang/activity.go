@@ -129,7 +129,7 @@ func (run *runtime) observeScreen(l *store.LockedAgent, a *core.Agent, c harness
 // reads blocked. Any other failure leaves the state unestablished.
 func turnFailureActivity(failure string) (core.Activity, string) {
 	if refusalFailure(turnFailureClass(failure)) {
-		return core.Blocked, "native turn refused: " + failure
+		return core.Blocked, "native turn refused: " + failure + "; the agent takes the next message: rebrief it, and replace it only if the rebrief is refused too"
 	}
 	return core.Unknown, "native turn failed: " + failure
 }
