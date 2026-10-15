@@ -15,10 +15,10 @@ import (
 // agent names itself, and a session the harness never persists has no
 // transcript. Neither can replace the conversation, so neither is a session
 // change. A different session with a transcript is left to the continuation
-// guard, and the first submit registers whichever session sent it.
+// guard, and the first conversation submit registers its session.
 func foreignSubmit(a core.Agent, event harness.HookEvent) string {
 	session := event.Payload["session_id"]
-	if event.Kind != string(harness.TurnStarted) || session == "" || a.Native.SessionID == "" || session == a.Native.SessionID {
+	if event.Kind != string(harness.TurnStarted) || session == "" || session == a.Native.SessionID {
 		return ""
 	}
 	if agent := event.Payload["agent_id"]; agent != "" {

@@ -29,6 +29,11 @@ func nativeFailureFixture(t *testing.T) (*stateFixture, core.Agent, func(map[str
 	hook.detach = func(_ string, n hookNotice) error { notice = n; return nil }
 	call := func(body map[string]string) hookNotice {
 		t.Helper()
+		if body["hook_event_name"] == "UserPromptSubmit" {
+			if _, supplied := body["transcript_path"]; !supplied {
+				body["transcript_path"] = f.transcript
+			}
+		}
 		now = now.Add(time.Second)
 		data, err := json.Marshal(body)
 		if err != nil {

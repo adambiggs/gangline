@@ -1,6 +1,7 @@
 package main
 
 import (
+	"encoding/json"
 	"errors"
 	"os"
 	"path/filepath"
@@ -11,6 +12,81 @@ import (
 	"github.com/adambiggs/gangline/harness"
 	"github.com/adambiggs/gangline/store"
 )
+
+func TestForeignSubmitBeforeRegistrationKeepsConversation(t *testing.T) {
+	for _, test := range []struct {
+		name, fields string
+	}{
+		{"missing transcript", ``},
+		{"null transcript", `,"transcript_path":null`},
+		{"empty transcript", `,"transcript_path":""`},
+		{"spawned agent", `,"transcript_path":"/sessions/x.jsonl","agent_id":"x"`},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			f := newStateFixture(t)
+			a := f.add(t, "a", "worker", "codex")
+			f.env["GANGLINE_HITCH_ID"] = string(a.ID)
+			transcript := filepath.Join(t.TempDir(), "s.jsonl")
+			if err := os.WriteFile(transcript, []byte(`{"type":"session_meta","payload":{"id":"s"}}`+"\n"), 0600); err != nil {
+				t.Fatal(err)
+			}
+			otherTranscript := filepath.Join(filepath.Dir(transcript), "x.jsonl")
+			if err := os.WriteFile(otherTranscript, []byte(`{"type":"session_meta","payload":{"id":"x"}}`+"\n"), 0600); err != nil {
+				t.Fatal(err)
+			}
+			submit := func(payload string) {
+				t.Helper()
+				f.cmd.stdin = strings.NewReader(payload)
+				if err := f.cmd.hook(nil); err != nil || f.errOut.Len() != 0 {
+					t.Fatalf("hook: %v %s", err, f.errOut)
+				}
+			}
+			conversation, err := json.Marshal(map[string]string{"hook_event_name": "UserPromptSubmit", "session_id": "s", "turn_id": "t1", "transcript_path": transcript, "prompt": "work"})
+			if err != nil {
+				t.Fatal(err)
+			}
+			p, err := f.run.team.Agent(a.ID)
+			if err != nil {
+				t.Fatal(err)
+			}
+			fields := strings.ReplaceAll(test.fields, "/sessions/x.jsonl", otherTranscript)
+			foreign := `{"hook_event_name":"UserPromptSubmit","session_id":"x","turn_id":"t2","prompt":"review"` + fields + `}`
+			submit(foreign)
+			if witness, err := p.ReadWitness(); !errors.Is(err, os.ErrNotExist) {
+				t.Errorf("foreign submit before conversation created witness: %+v %v", witness, err)
+			}
+			submit(string(conversation))
+			first, err := p.ReadWitness()
+			if err != nil {
+				t.Fatal(err)
+			}
+			if got := f.agent(t, a.ID); got.Native.SessionID != "" {
+				t.Fatalf("hook registered session before tick: %q", got.Native.SessionID)
+			}
+			submit(foreign)
+			if witness, err := p.ReadWitness(); err != nil || witness != first {
+				t.Errorf("foreign submit replaced initial witness: %+v %v", witness, err)
+			}
+			retained, err := f.run.team.ReadForeignSubmit(a.ID)
+			if err != nil || retained.Payload != foreign || retained.SessionID != "x" || retained.Registered != "" {
+				t.Errorf("foreign submit retained = %+v %v", retained, err)
+			}
+			if err := f.run.tickAgent(a.ID, hookNotice{}, false); err != nil {
+				t.Fatal(err)
+			}
+			if got := f.agent(t, a.ID); got.Status != core.Active || got.Native.SessionID != "s" || got.Native.Transcript != transcript {
+				t.Errorf("registration = %s session %q: %s", got.Status, got.Native.SessionID, got.Evidence)
+			}
+			submit(string(conversation))
+			if err := f.run.tickAgent(a.ID, hookNotice{}, false); err != nil {
+				t.Fatal(err)
+			}
+			if got := f.agent(t, a.ID); got.Status != core.Active || got.Native.SessionID != "s" {
+				t.Fatalf("conversation submit = %s session %q: %s", got.Status, got.Native.SessionID, got.Evidence)
+			}
+		})
+	}
+}
 
 // A submit hook from another native session in the same harness process,
 // one the harness never persists or one it spawned as an agent, leaves the

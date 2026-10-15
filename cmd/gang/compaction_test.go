@@ -433,13 +433,10 @@ func TestCompletedCompactionResumesBeforeQueuedMessages(t *testing.T) {
 
 // An agent compacts itself from its own window during a running turn.
 func TestAgentCompactsItselfAfterItsTurn(t *testing.T) {
-	f := newStateFixture(t)
-	a := f.add(t, "a", "worker", "codex")
-	p, _ := f.run.team.Agent(a.ID)
+	f, a, p := compactionFixture(t)
 	f.env["GANG_AGENT_ID"] = string(a.ID)
 	f.env["TMUX_PANE"] = a.Pane
 	f.input.screen = screenWithText("• Working (esc to interrupt)", "", "› ")
-	echoCompactInput(f)
 	if err := f.cmd.compact([]string{"--resume", "state is in FILE"}); err != nil {
 		t.Fatal(err)
 	}

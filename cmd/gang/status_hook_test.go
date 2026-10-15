@@ -25,7 +25,7 @@ func TestHookStatusSurvivesSkippedRefreshWithoutCapture(t *testing.T) {
 				a := f.add(t, "a", "worker", collar)
 				f.env["GANGLINE_HITCH_ID"] = string(a.ID)
 				f.cmd.detach = func(string, hookNotice) error { return nil }
-				payload, _ := json.Marshal(map[string]string{"hook_event_name": tc.event, "session_id": "s", "turn_id": "t", "prompt": "work"})
+				payload, _ := json.Marshal(map[string]string{"hook_event_name": tc.event, "session_id": "s", "turn_id": "t", "prompt": "work", "transcript_path": f.transcript})
 				hook := f.cmd
 				hook.stdin = bytes.NewReader(payload)
 				if err := hook.handleHook(nil); err != nil {

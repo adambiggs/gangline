@@ -138,6 +138,7 @@ type stateFixture struct {
 	env         map[string]string
 	out, errOut *synchronizedBuffer
 	input       *inputFixture
+	transcript  string
 }
 
 type synchronizedBuffer struct {
@@ -196,9 +197,25 @@ func newStateFixture(t *testing.T) *stateFixture {
 		t.Fatal(err)
 	}
 	env["GANG_TMUX"] = fakeTmux
-	f := &stateFixture{cmd: cmd, run: run, env: env, out: out, errOut: errOut, input: backend}
+	transcript := filepath.Join(root, "s.jsonl")
+	if err := os.WriteFile(transcript, []byte(`{"type":"session_meta","payload":{"id":"s"}}`+"\n"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	f := &stateFixture{cmd: cmd, run: run, env: env, out: out, errOut: errOut, input: backend, transcript: transcript}
 	backend.submit = func(prompt string) error {
-		payload, _ := json.Marshal(map[string]string{"hook_event_name": "UserPromptSubmit", "prompt": prompt, "session_id": "s"})
+		p, err := run.team.Agent(core.HitchID(env["GANGLINE_HITCH_ID"]))
+		if err != nil {
+			return err
+		}
+		a, err := p.Read()
+		if err != nil {
+			return err
+		}
+		path := transcript
+		if a.Native.Transcript != "" {
+			path = a.Native.Transcript
+		}
+		payload, _ := json.Marshal(map[string]string{"hook_event_name": "UserPromptSubmit", "prompt": prompt, "session_id": "s", "transcript_path": path})
 		hook := f.cmd
 		hook.stdin = bytes.NewReader(payload)
 		return hook.hook(nil)
@@ -252,7 +269,7 @@ func TestHooksCompleteWithAllAgentLocksHeld(t *testing.T) {
 			}
 			count := 0
 			for native := range c.Hooks.Events {
-				payload, _ := json.Marshal(map[string]string{"hook_event_name": native, "prompt": "witness", "session_id": "s"})
+				payload, _ := json.Marshal(map[string]string{"hook_event_name": native, "prompt": "witness", "session_id": "s", "transcript_path": f.transcript})
 				cmd := f.cmd
 				cmd.stdin = bytes.NewReader(payload)
 				if err := cmd.hook(nil); err != nil {

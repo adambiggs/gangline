@@ -106,7 +106,7 @@ func submitResumeHook(t *testing.T, f *stateFixture, a core.Agent, token, text s
 	if err != nil {
 		t.Fatal(err)
 	}
-	payload, err := json.Marshal(map[string]string{"hook_event_name": "UserPromptSubmit", "prompt": wire, "session_id": "s"})
+	payload, err := json.Marshal(map[string]string{"hook_event_name": "UserPromptSubmit", "prompt": wire, "session_id": "s", "transcript_path": f.transcript})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -207,7 +207,7 @@ func TestTypedResumeHeaderKeepsQueuedCompaction(t *testing.T) {
 	})
 	f.env["GANGLINE_HITCH_ID"] = string(a.ID)
 	f.cmd.detach = func(string, hookNotice) error { return nil }
-	payload, err := json.Marshal(map[string]string{"hook_event_name": "UserPromptSubmit", "prompt": "[gang:x# resume] continue", "session_id": "s"})
+	payload, err := json.Marshal(map[string]string{"hook_event_name": "UserPromptSubmit", "prompt": "[gang:x# resume] continue", "session_id": "s", "transcript_path": f.transcript})
 	if err != nil {
 		t.Fatal(err)
 	}

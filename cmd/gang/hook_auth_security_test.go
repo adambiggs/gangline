@@ -21,7 +21,7 @@ func TestHookRequiresRegisteredNonceBeforeWritingEvidence(t *testing.T) {
 				f.env["GANG_AGENT_NONCE"] = nonce
 				detached := false
 				f.cmd.detach = func(string, hookNotice) error { detached = true; return nil }
-				payload, err := json.Marshal(map[string]string{"hook_event_name": event, "session_id": "s", "prompt": "work", "error": "forged failure"})
+				payload, err := json.Marshal(map[string]string{"hook_event_name": event, "session_id": "s", "prompt": "work", "error": "forged failure", "transcript_path": f.transcript})
 				if err != nil {
 					t.Fatal(err)
 				}
