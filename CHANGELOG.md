@@ -1,5 +1,13 @@
 # Changelog
 
+## [1.22.0](https://github.com/adambiggs/gangline/compare/gangline-v1.21.0...gangline-v1.22.0) (2026-10-15)
+
+
+### Features
+
+* **snooze:** tell the lead to inspect native input before clearing a notice ([5c00edd](https://github.com/adambiggs/gangline/commit/5c00eddc141d8f8c19a78d8a4faec8c42552fc0d))
+* **status:** carry the rebrief advice in a refused-turn reason ([6d3a2c4](https://github.com/adambiggs/gangline/commit/6d3a2c4cc6ca46e1977ebd6ba886fcd9e346e3b9))
+
 ## [1.21.0](https://github.com/adambiggs/gangline/compare/gangline-v1.20.0...gangline-v1.21.0) (2026-10-15)
 
 
