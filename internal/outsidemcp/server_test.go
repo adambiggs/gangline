@@ -151,6 +151,18 @@ func TestUnknownMethodsAndInvalidParamsHaveProtocolHTTPStatus(t *testing.T) {
 		}
 	}
 }
+func TestToolErrorsKeepPrivateStatePathsInServerDiagnostics(t *testing.T) {
+	h, _ := fixture(t)
+	err := errors.New("read /private/operator/state/teams/team/outside/secret-id.json: permission denied")
+	h.config.Pending = func(string) ([]Mail, error) { return nil, err }
+	var diagnostic error
+	h.config.ReportError = func(err error) { diagnostic = err }
+	w := httptest.NewRecorder()
+	h.ServeHTTP(w, request("tools/call", map[string]any{"name": "fetch_mail", "arguments": map[string]any{}}))
+	if strings.Contains(w.Body.String(), "/private/operator") || !strings.Contains(w.Body.String(), "operation failed") || diagnostic != err {
+		t.Fatalf("private error not confined: %s", w.Body)
+	}
+}
 func TestReportContainmentPaginationAndSpecialFiles(t *testing.T) {
 	dir := t.TempDir()
 	root := filepath.Join(dir, "reports")

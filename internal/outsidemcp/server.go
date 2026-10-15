@@ -40,6 +40,7 @@ type Config struct {
 	Events       Events
 	Reports      *Reports
 	ReportError  func(error)
+	PublicError  func(error) bool
 }
 type Handler struct{ config Config }
 
@@ -56,6 +57,10 @@ type rpcError struct {
 	Message string `json:"message"`
 	Data    any    `json:"data,omitempty"`
 }
+type toolError struct{ message string }
+
+func (e toolError) Error() string          { return e.message }
+func publicToolError(message string) error { return toolError{message} }
 
 func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Cache-Control", "no-store")
@@ -231,7 +236,14 @@ func (h *Handler) call(ctx context.Context, p, method string, params json.RawMes
 		}
 		value, err := h.tool(p, args.Name, args.Arguments)
 		if err != nil {
-			return map[string]any{"resultType": "complete", "isError": true, "content": []any{map[string]string{"type": "text", "text": err.Error()}}}, nil
+			message := "operation failed; inspect server diagnostics"
+			var public toolError
+			if errors.As(err, &public) || (h.config.PublicError != nil && h.config.PublicError(err)) {
+				message = err.Error()
+			} else if h.config.ReportError != nil {
+				h.config.ReportError(err)
+			}
+			return map[string]any{"resultType": "complete", "isError": true, "content": []any{map[string]string{"type": "text", "text": message}}}, nil
 		}
 		body, err := json.Marshal(value)
 		if err != nil {
@@ -247,13 +259,13 @@ func (h *Handler) call(ctx context.Context, p, method string, params json.RawMes
 
 func (h *Handler) tool(p, name string, raw json.RawMessage) (any, error) {
 	if string(raw) == "null" || len(raw) == 0 {
-		return nil, errors.New("arguments must be an object")
+		return nil, publicToolError("arguments must be an object")
 	}
 	switch name {
 	case "fetch_mail":
 		var args struct{}
 		if err := decode(bytes.NewReader(raw), &args); err != nil {
-			return nil, errors.New("fetch_mail takes no arguments")
+			return nil, publicToolError("fetch_mail takes no arguments")
 		}
 		mail, err := h.config.Pending(p)
 		return map[string]any{"messages": mail}, err
@@ -262,7 +274,7 @@ func (h *Handler) tool(p, name string, raw json.RawMessage) (any, error) {
 			IDs []string `json:"ids"`
 		}
 		if err := decode(bytes.NewReader(raw), &args); err != nil || len(args.IDs) == 0 {
-			return nil, errors.New("ids must name the messages to acknowledge")
+			return nil, publicToolError("ids must name the messages to acknowledge")
 		}
 		if err := h.config.Ack(p, args.IDs); err != nil {
 			return nil, err
@@ -275,7 +287,7 @@ func (h *Handler) tool(p, name string, raw json.RawMessage) (any, error) {
 			Key  string `json:"idempotency_key"`
 		}
 		if err := decode(bytes.NewReader(raw), &args); err != nil || args.To == "" || args.Body == "" || args.Key == "" {
-			return nil, errors.New("to, body and idempotency_key are required")
+			return nil, publicToolError("to, body and idempotency_key are required")
 		}
 		receipt, err := h.config.Send(p, args.To, args.Body, args.Key)
 		return receipt, err
@@ -285,21 +297,21 @@ func (h *Handler) tool(p, name string, raw json.RawMessage) (any, error) {
 			Offset int64  `json:"offset"`
 		}
 		if err := decode(bytes.NewReader(raw), &args); err != nil || args.Path == "" || args.Offset < 0 {
-			return nil, errors.New("absolute path and nonnegative offset required")
+			return nil, publicToolError("absolute path and nonnegative offset required")
 		}
 		if h.config.Reports == nil {
-			return nil, errors.New("no report directories configured")
+			return nil, publicToolError("no report directories configured")
 		}
 		result, err := h.config.Reports.Read(args.Path, args.Offset)
 		if err != nil {
-			return nil, err
+			return nil, publicToolError(err.Error())
 		}
 		if err := h.config.Authorize(p); err != nil {
-			return nil, errors.New("registration revoked")
+			return nil, publicToolError("registration revoked")
 		}
 		return result, nil
 	default:
-		return nil, fmt.Errorf("unknown tool %q", name)
+		return nil, publicToolError(fmt.Sprintf("unknown tool %q", name))
 	}
 }
 func schema(props map[string]any, required ...string) map[string]any {

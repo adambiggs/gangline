@@ -64,7 +64,11 @@ func (run *runtime) newOutsideService(issuer, clientID, redirect string, roots [
 	}
 	handler := outsidemcp.New(outsidemcp.Config{Origin: issuer, Challenge: auth.Challenge(), Authenticate: auth.AuthenticateAccess, Authorize: authorize, Reports: reports, Events: events,
 		ReportError: func(err error) { fmt.Fprintf(run.cmd.stderr, "outside MCP operation failed: %v\n", err) },
-		Pending:     run.outsidePending,
+		PublicError: func(err error) bool {
+			var e commandError
+			return errors.As(err, &e) && (e.status == exitUsage || e.status == exitRefused)
+		},
+		Pending: run.outsidePending,
 		Ack: func(opaque string, ids []string) error {
 			principal, err := paths.ResolveOutsidePrincipal(run.settings.Session, opaque)
 			if err != nil {
