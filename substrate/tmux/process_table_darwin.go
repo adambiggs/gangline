@@ -12,13 +12,17 @@ import (
 	"github.com/adambiggs/gangline/substrate"
 )
 
-// XNU proc_info ABI: PROC_INFO_CALL_LISTPIDS, PROC_ALL_PIDS, and
-// PROC_PIDTBSDINFO. The BSD record includes the tty foreground process group.
+// XNU proc_info ABI: PROC_INFO_CALL_LISTPIDS, PROC_ALL_PIDS,
+// PROC_PIDTBSDINFO, and PROC_PIDT_SHORTBSDINFO. The BSD record includes the tty
+// foreground process group. XNU refuses it with EPERM for a process of another
+// effective user unless the caller is privileged; the short record carries no
+// tty data and is readable for any process.
 const (
-	procInfoListPIDs = 1
-	procAllPIDs      = 1
-	procPIDTBSDInfo  = 3
-	kernProcArgs2    = 49
+	procInfoListPIDs     = 1
+	procAllPIDs          = 1
+	procPIDTBSDInfo      = 3
+	procPIDTShortBSDInfo = 13
+	kernProcArgs2        = 49
 )
 
 type darwinBSDInfo struct {
@@ -31,6 +35,14 @@ type darwinBSDInfo struct {
 	ForegroundGroup                           uint32
 	Nice                                      int32
 	StartSeconds, StartMicroseconds           uint64
+}
+
+type darwinShortBSDInfo struct {
+	PID, ParentPID, GroupID, Status uint32
+	Command                         [16]byte
+	Flags                           uint32
+	UID, GID, RealUID, RealGID      uint32
+	SavedUID, SavedGID, Reserved    uint32
 }
 
 func readProcessTable(ctx context.Context, root int) (map[int]processRecord, error) {
@@ -96,7 +108,10 @@ func readDarwinBSDInfo(pid int) (darwinBSDInfo, error) {
 
 // command is the kernel's short process name up to its first NUL.
 func (info darwinBSDInfo) command() string {
-	command := info.Command[:]
+	return darwinCommand(info.Command[:])
+}
+
+func darwinCommand(command []byte) string {
 	if end := indexZero(command); end >= 0 {
 		command = command[:end]
 	}
@@ -115,14 +130,24 @@ func readDarwinBSDProcess(pid int) (processRecord, error) {
 	}, nil
 }
 
-// ProcessOwner reads pid's parent, command name, and effective (pbi_uid) and
-// real (pbi_ruid) user IDs from one PROC_PIDTBSDINFO record.
+// ProcessOwner reads pid's parent, command name, and effective (pbsi_uid) and
+// real (pbsi_ruid) user IDs from one PROC_PIDT_SHORTBSDINFO record, which an
+// unprivileged caller can read for a process of any user, root's included.
 func ProcessOwner(pid int) (Owner, error) {
-	info, err := readDarwinBSDInfo(pid)
-	if err != nil {
-		return Owner{}, err
+	var info darwinShortBSDInfo
+	size := unsafe.Sizeof(info)
+	count, _, errno := syscall.Syscall6(syscall.SYS_PROC_INFO, procInfoPIDInfo, uintptr(pid), procPIDTShortBSDInfo, 0,
+		uintptr(unsafe.Pointer(&info)), size)
+	if errno != 0 {
+		return Owner{}, errno
 	}
-	return Owner{PID: pid, ParentPID: int(info.ParentPID), UID: info.UID, RealUID: info.RealUID, Command: info.command()}, nil
+	if count == 0 {
+		return Owner{}, os.ErrNotExist
+	}
+	if count != size || info.PID != uint32(pid) {
+		return Owner{}, fmt.Errorf("native short BSD process data unavailable for %d: returned %d bytes and PID %d", pid, count, info.PID)
+	}
+	return Owner{PID: pid, ParentPID: int(info.ParentPID), UID: info.UID, RealUID: info.RealUID, Command: darwinCommand(info.Command[:])}, nil
 }
 
 func foregroundCommand(process substrate.Process) string {
