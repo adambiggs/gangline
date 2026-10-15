@@ -21,34 +21,10 @@ without an agent, `gang limits NAME` shows what an agent has observed, and
 
 When a native turn is rejected by an attributable provider cap, Gangline
 automatically records a wake for that agent at the observed native reset.
-If the reset is not yet known, the park remains pending until a fresh reading
-supplies it. The agent's native conversation and the durable wake remain in
-place. `gang snooze --at TIME --note TEXT` is available as a manual override.
+`gang snooze --at TIME --note TEXT` is available as a manual override.
 At the due time, Gangline sends the note to the caller to resume work. If that caller is
-gone, the active lead receives an overdue wake naming the caller. A wake
-remains pending until the matching native turn finishes successfully. If
-input is blocked before submission, ordinary ticks keep trying the queued
-wake; `gang snooze --status` shows it as queued, and `gang snooze --clear` or a
-new `gang snooze --at` withdraws it from the recipient's inbox. A submitted
-prompt remains pending until its matching turn finishes successfully. When
-native input is accepted or its outcome cannot be verified, Gangline records
-the submission and does not type it again. The caller can
-inspect an uncertain wake with `gang snooze --status` and clear it after
-checking the native turn. The lead's `gang snooze --status` lists every
-agent's wake with its due time and note, and uncertain usage notices; the
-lead can clear a notice or withdraw a wake routed from an absent caller with
-`gang snooze --clear ID`. `gang log --agent NAME` shows the wakes NAME
-scheduled, cleared, completed, or failed; their delivery is logged under the
-recipient. Clearing cannot retract native input.
-If an automatic wake is rejected by another attributable cap, Gangline
-schedules another wake at the next observed reset. A manually scheduled wake
-is re-armed once when a fresh reading confirms the capped window.
-Failed turns and unknown completion stay visible in `gang snooze --status`
-until the agent clears or replaces the wake.
-An unconfirmed generic rate-limit error remains visible in
-`gang snooze --status` while a fresh capped-window reading could confirm it.
-Without that confirmation, Gangline does not park the agent. A failed manual
-wake remains available for the agent to inspect or clear.
+gone, the active lead receives an overdue wake naming the caller.
+`gang snooze --status` shows each pending wake's state and what it needs.
 
 The schedule lives in the team state root, so it survives Gangline process
 restarts, compaction, and host reboot. Gangline does not start a team after a
@@ -58,9 +34,7 @@ wake. When no scheduler can arm a timer, or arming fails, `gang snooze` warns an
 `gang tick` in the team. If the team is not running, the next team startup
 delivers the pending wake and marks it overdue.
 Keep a durable work note because a wake can reach a different lead after the
-original agent disappears. If the host stops after submitting a wake but before
-recording successful completion, the next team startup treats that work as
-unconfirmed and routes it to the lead if the caller is gone.
+original agent disappears.
 
 ## Sandboxed development teams
 
