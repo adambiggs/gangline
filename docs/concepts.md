@@ -30,14 +30,15 @@ that identifies the sender and delivery attempt. A registered pane supplies
 an observed agent name. A sender supplied with `--from` is marked
 `self-declared:` because Gangline did not observe that identity.
 
-A message forwarded by an enrolled peer host names its sender `HOST:NAME`,
-such as `alpha:lead`. For dedicated peer-key ingress, HOST is bound by the
+A message forwarded by an enrolled peer host names its sender `HOST:NAME` for
+an agent or `HOST:registered:NAME` for a registered sender, such as `alpha:lead`
+or `alpha:registered:relay`. For dedicated peer-key ingress, HOST is bound by the
 forced command that `gang peer-authorize` prints for that key.
 `gang peer-receive` takes HOST from that command rather than from the request.
 Its process-ancestry check screens for an sshd session; it cannot identify
-the authenticated key or prove that a forced command supplied HOST. NAME is the
-agent the peer host's Gangline observed; the receiving host trusts that host
-for it and observes nothing of it. Agent names cannot contain `:`, so no local
+the authenticated key or prove that a forced command supplied HOST. NAME and
+its class are attributed by that host's Gangline; the receiving host trusts
+that attribution. Agent names cannot contain `:`, so no local
 sender can take that form.
 
 The binding holds for that ingress only. Anyone with a shell as the receiving

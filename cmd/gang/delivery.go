@@ -113,6 +113,9 @@ func senderLabel(s core.Sender) string {
 	case core.SenderPeer:
 		// A local agent name cannot contain ':', so this label cannot be
 		// taken by a local hitch or --from.
+		if s.PeerClass == core.SenderRegistered {
+			return s.Host + ":registered:" + string(s.Name)
+		}
 		return s.Host + ":" + string(s.Name)
 	}
 	return string(s.Name)

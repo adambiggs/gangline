@@ -87,7 +87,7 @@ var commandUsage = map[string]string{
 	"up":         "usage: gang up [NAME] [HITCH OPTIONS] [--team TEAM]\n",
 	"hitch":      "usage: gang hitch NAME [-c COLLAR] [-d DIR] [-m MODEL] [-e EFFORT]\n       [-t TASK] [-r ROLE] [--resume SESSION] [--stdin]\n       [--split NAME] [--vertical] [--team TEAM]\n       gang hitch NAME --recover [--team TEAM]\n",
 	"rename":     "usage: gang rename OLD NEW [--team TEAM]\n",
-	"send":       "usage: gang send NAME [--from SENDER | --as SENDER] [--credential FILE]\n       [--live-only] [--supersede] [--at DURATION|HH:MM|RFC3339]\n       [--team TEAM] [BODY]\n       gang send NAME --clear [--team TEAM]\n       gang send HOST:NAME [--team TEAM] [BODY]\n       Without BODY, read stdin. Use -- before BODY when it begins with -.\n",
+	"send":       "usage: gang send NAME [--from SENDER | --as SENDER] [--credential FILE]\n       [--live-only] [--supersede] [--at DURATION|HH:MM|RFC3339]\n       [--team TEAM] [BODY]\n       gang send NAME --clear [--team TEAM]\n       gang send HOST:NAME [--as SENDER] [--credential FILE]\n       [--team TEAM] [BODY]\n       Without BODY, read stdin. Use -- before BODY when it begins with -.\n",
 	"queue":      "usage: gang queue [NAME] [--json] [--team TEAM]\n",
 	"interrupt":  "usage: gang interrupt [NAME] [-m|--message REASON] [--team TEAM]\n",
 	"compact":    "usage: gang compact [NAME] [--resume TEXT] [--team TEAM]\n       gang compact [NAME] --interrupt [--team TEAM]\n",
@@ -301,7 +301,7 @@ var commandDescription = map[string]string{
 	"hitch":      "NAME is an agent's registered name in the selected team.\nLaunch in a new window by default. --split NAME places a sibling beside\nthat agent; --vertical splits top/bottom. Use --recover for retained startup.\n",
 	"rename":     "OLD and NEW are registered agent names in the selected team.\nRename the agent without restarting its harness.\n",
 	"sender":     "Add or remove a sender from the operator shell or active lead pane.\nList registered names. Same-user processes can read the keys.\n",
-	"send":       "NAME is the recipient agent's registered name in the selected team.\nSend BODY or read stdin. An exact native hook proves delivery; a native\nqueue receipt proves acceptance. Otherwise input stays queued or unverified.\nHOST:NAME sends from this agent to NAME on GANG_PEERS host HOST over ssh and\nprints that host's receipt; a lost reply is unknown, so do not resend it.\n",
+	"send":       "NAME is the recipient agent's registered name in the selected team.\nSend BODY or read stdin. An exact native hook proves delivery; a native\nqueue receipt proves acceptance. Otherwise input stays queued or unverified.\nHOST:NAME forwards this sender to NAME on GANG_PEERS host HOST over ssh and\nprints that host's receipt; a lost reply is unknown, so do not resend it.\n",
 	"queue":      "NAME filters pending work to one registered agent. Omit it to list\npending work for every agent in the selected team. Each message shows\nwhether it is ready, scheduled, blocked, or unknown, with its due time or\nthe reason it waits.\n",
 	"interrupt":  "NAME is a registered agent; omit it for the current pane's agent.\nInterrupt its native turn and optionally deliver a reason afterward.\n",
 	"compact":    "NAME is a registered agent; omit it for the current pane's agent.\nQueue the continuation as compaction starts; admit it once when the\nharness submits it.\n",
@@ -333,7 +333,7 @@ var commandDescription = map[string]string{
 
 	"peer-authorize": "HOST is an enrolled GANG_PEERS host; PUBKEY_FILE holds one OpenSSH public key\nthat HOST keeps for this link. Print the authorized_keys line whose forced\ncommand runs gang peer-receive --peer HOST for the selected team, and the\nsteps HOST takes to send with that key.\n",
 
-	"peer-receive": "Deliver one message forwarded by an enrolled peer host's gang. Runs only as\nthe forced command gang peer-authorize prints, as sshd's child; the sender\nis HOST from --peer. Read a JSON request of host, team, id, from, to, and\nbody on stdin; print one JSON line with the message ID and outcome, or the\nerror that published nothing.\n",
+	"peer-receive": "Deliver one message forwarded by an enrolled peer host's gang. Runs only as\nthe forced command gang peer-authorize prints, as sshd's child; the sender\nis HOST from --peer. Read a JSON request of host, team, id, from, to,\nbody, and optional class on stdin; print one JSON line with the message ID\nand outcome, or the error that published nothing.\n",
 }
 
 const flagSyntaxHelp = "Flags accept - or --, VALUE or =VALUE, and one-letter flags also -cVALUE;\nswitches accept =true/=false. Flags may follow operands; -- ends flags.\n"

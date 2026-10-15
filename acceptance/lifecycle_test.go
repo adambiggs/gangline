@@ -2,6 +2,7 @@ package acceptance
 
 import (
 	"encoding/base64"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
@@ -359,6 +360,49 @@ func TestCommandLifecycleOnPrivateTmux(t *testing.T) {
 	if err != nil || !strings.Contains(string(ledger), "[gang:registered:relay#") || strings.Contains(string(ledger), "registered refusal probe") {
 		t.Fatalf("registered envelope ledger: %s %v", ledger, err)
 	}
+	// Exercise the built sender's wire against a recording peer transport.
+	if err := os.WriteFile(filepath.Join(config, "config"), []byte("GANG_HOST=alpha\nGANG_PEERS={\"alpha\":{\"ssh\":\"loopback\",\"gang\":\""+binary+"\",\"team\":\""+session+"\"}}\n"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	peerSSH := `#!/bin/sh
+# SPDX-License-Identifier: Apache-2.0
+/bin/cat > "${0%/*}/peer-request"
+request=$(/bin/cat "${0%/*}/peer-request")
+id=${request#*'"id":"'}
+id=${id%%'"'*}
+printf '{"id":"peer-alpha.%s","outcome":"queued"}\n' "$id"
+`
+	if err := os.WriteFile(filepath.Join(bin, "ssh"), []byte(peerSSH), 0700); err != nil {
+		t.Fatal(err)
+	}
+	for _, credential := range []string{"", wrongKey} {
+		args := []string{"send", "alpha:second", "--as", "relay", "peer refusal probe"}
+		if credential != "" {
+			args = append(args, "--credential", credential)
+		}
+		if r := runGang("", args...); r.status != 3 || !strings.Contains(r.out, "--credential FILE") {
+			t.Fatalf("peer key refusal: %+v", r)
+		}
+		if _, err := os.Stat(filepath.Join(bin, "peer-request")); !errors.Is(err, os.ErrNotExist) {
+			t.Fatalf("refused sender reached peer: %v", err)
+		}
+	}
+	check("peer registered proof", "send", "alpha:second", "--as", "relay", "--credential", senderKey)
+	requestData, err := os.ReadFile(filepath.Join(bin, "peer-request"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var request map[string]any
+	if err := json.Unmarshal(requestData, &request); err != nil {
+		t.Fatal(err)
+	}
+	if request["class"] != "registered" || request["from"] != "relay" || request["body"] != "peer registered proof" {
+		t.Fatalf("registered peer wire: %s", requestData)
+	}
+	if err := os.WriteFile(filepath.Join(bin, "ssh"), []byte(loopbackSSH), 0700); err != nil {
+		t.Fatal(err)
+	}
+
 	copiedKey := filepath.Join(root, "copied-key")
 	secret, err := os.ReadFile(senderKey)
 	if err != nil {

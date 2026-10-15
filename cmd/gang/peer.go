@@ -15,16 +15,18 @@ import (
 )
 
 // peerRequest is one message an enrolled peer host's gang forwards here. That
-// gang verified From as its own calling agent; this host trusts the enrolled
-// host for that and observes neither. Host must name the host the ssh key that
+// gang verified From and its class; this host trusts the enrolled host's
+// attribution and observes neither. Host must name the host the ssh key that
 // ran peer-receive is bound to; the sender's own reply check reads it back.
 type peerRequest struct {
-	Host string `json:"host"`
-	Team string `json:"team"`
-	ID   string `json:"id"`
-	From string `json:"from"`
-	To   string `json:"to"`
-	Body string `json:"body"`
+	// Omit Class for agent sends so strict older receivers still accept them.
+	Class string `json:"class,omitempty"`
+	Host  string `json:"host"`
+	Team  string `json:"team"`
+	ID    string `json:"id"`
+	From  string `json:"from"`
+	To    string `json:"to"`
+	Body  string `json:"body"`
 }
 
 // peerReply is the one JSON line peer-receive prints once its team option has
@@ -100,6 +102,9 @@ func (cmd command) peerReceive(args []string) (result error) {
 	if !peerMessageIDPattern.MatchString(request.ID) {
 		return refuseError("request message id %q is not msg- and 32 lowercase hex digits", request.ID)
 	}
+	if request.Class != "" && request.Class != core.SenderAgent && request.Class != core.SenderRegistered {
+		return refuseError("request sender class %q cannot be verified by the sending host; only agent and registered classes are accepted", request.Class)
+	}
 	if !validAgentName(request.From) {
 		return refuseError("request sender %q is not an agent name (%s)", request.From, agentNameForm)
 	}
@@ -143,6 +148,9 @@ func (cmd command) peerReceive(args []string) (result error) {
 		return err
 	}
 	from := core.Sender{Kind: core.SenderPeer, Name: core.AgentName(request.From), Host: host}
+	if request.Class == core.SenderRegistered {
+		from.PeerClass = core.SenderRegistered
+	}
 	e := core.Envelope{ID: id, Token: token, Recipient: a.ID, To: a.Name, From: from, Message: core.Message{Text: request.Body}, CreatedAt: cmd.now()}
 	wire, err := envelopeText(e)
 	if err != nil {
@@ -262,7 +270,7 @@ func readPeerRequest(reader io.Reader) (peerRequest, error) {
 	decoder.DisallowUnknownFields()
 	var request peerRequest
 	if err := decoder.Decode(&request); err != nil {
-		return peerRequest{}, refuseError("peer request is not one JSON object of host, team, id, from, to, and body: %v", err)
+		return peerRequest{}, refuseError("peer request is not one JSON object of host, team, id, from, to, body, and optional class: %v", err)
 	}
 	if _, err := decoder.Token(); err != io.EOF {
 		return peerRequest{}, refuseError("peer request has data after its JSON object")

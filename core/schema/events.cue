@@ -6,7 +6,7 @@ import "time"
 #Envelope: close({
  id: #ID
  token?: string & =~"^[0-9a-f]{16}$"
- from: close({kind: "agent" | "self_declared" | "gangline", name: #ID, hitch_id?: #ID}) | close({kind: "peer", name: #ID, host: #ID}) | close({kind: "registered", name: #ID, hitch_id: #ID})
+ from: close({kind: "agent" | "self_declared" | "gangline", name: #ID, hitch_id?: #ID}) | close({kind: "peer", name: #ID, host: #ID, peer_class?: "registered"}) | close({kind: "registered", name: #ID, hitch_id: #ID})
  to: #ID
  recipient: #ID
  message: close({text: #ID})

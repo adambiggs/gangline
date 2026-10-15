@@ -467,3 +467,55 @@ func TestPeerReceiveLabelsTheBoundHost(t *testing.T) {
 		t.Fatalf("sender = %+v, err = %v", e.From, err)
 	}
 }
+
+func TestPeerReceiveSenderClasses(t *testing.T) {
+	for _, class := range []string{"", "agent", "registered", "self_declared", "outside", "gangline", "peer", "invented"} {
+		t.Run("class="+class, func(t *testing.T) {
+			f, a := peerFixture(t)
+			reply, err := peerReceive(f, peerRequestJSON(t, func(r map[string]any) { r["class"] = class; r["from"] = "relay" }))
+			allowed := class == "" || class == "agent" || class == "registered"
+			p, pathErr := f.run.team.Agent(a.ID)
+			if pathErr != nil {
+				t.Fatal(pathErr)
+			}
+			if !allowed {
+				requireStatus(t, err, exitRefused, "sender class")
+				pending, err := p.ListNew()
+				if err != nil || len(pending) != 0 || f.input.submits != 0 || reply.ID != "" {
+					t.Fatal("unsupported class published")
+				}
+				return
+			}
+			if err != nil {
+				t.Fatal(err)
+			}
+			e, err := p.ReadEnvelope("cur", reply.ID)
+			if err != nil {
+				t.Fatalf("reply=%+v pasted=%q stderr=%s: %v", reply, f.input.pasted, f.errOut.String(), err)
+			}
+			label := "alpha:relay"
+			if class == "registered" {
+				label = "alpha:registered:relay"
+			}
+			if senderLabel(e.From) != label || !strings.Contains(f.input.pasted, "[gang:"+label+"#") {
+				t.Fatalf("sender %+v pasted %s", e.From, f.input.pasted)
+			}
+			// A stored envelope must retain the distinction after JSON round-trip.
+			data, err := json.Marshal(e.From)
+			if err != nil {
+				t.Fatal(err)
+			}
+			var restored core.Sender
+			if err := json.Unmarshal(data, &restored); err != nil {
+				t.Fatal(err)
+			}
+			if senderLabel(restored) != label {
+				t.Fatalf("class lost in storage: %s", data)
+			}
+			plain := core.Sender{Kind: core.SenderPeer, Name: "relay", Host: "alpha"}
+			if restored.SameIdentity(plain) == (class == "registered") {
+				t.Fatal("peer sender classes share identity")
+			}
+		})
+	}
+}

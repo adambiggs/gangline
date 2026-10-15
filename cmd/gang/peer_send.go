@@ -23,7 +23,7 @@ const peerSendTimeout = 2 * time.Minute
 // line, so text a login shell prints before it cannot push it out.
 const peerReplyBytes = 64 << 10
 
-// sendToPeer forwards a message from this host's calling agent to agent
+// sendToPeer forwards a message from this host's verified sender to agent
 // o.Name on enrolled peer host o.Host. The peer's gang publishes and drains
 // it, and its reply is the outcome. A reply that never arrives is unknown:
 // the peer may have published the message, and nothing here can tell.
@@ -35,12 +35,18 @@ func (run *runtime) sendToPeer(o sendOptions) error {
 	if run.settings.Host == "" {
 		return refuseError("GANG_HOST is unset; set it to this host's name as its peers enroll it")
 	}
-	sender, err := run.observedSender()
+	var sender core.Sender
+	var err error
+	if o.As != "" {
+		sender, err = run.sendSender(o)
+	} else {
+		sender, err = run.observedSender()
+	}
 	if err != nil {
 		return err
 	}
-	if sender.Kind != core.SenderAgent {
-		return refuseError("only a registered agent sends to a peer host; run gang send on %s instead", o.Host)
+	if sender.Kind != core.SenderAgent && sender.Kind != core.SenderRegistered {
+		return refuseError("only an active registered agent or credentialed --as sender sends to a peer host; run gang send on %s instead", o.Host)
 	}
 	bodyReader := run.cmd.stdin
 	if o.Body != nil {
@@ -54,7 +60,11 @@ func (run *runtime) sendToPeer(o sendOptions) error {
 	if err != nil {
 		return err
 	}
-	request, err := json.Marshal(peerRequest{Host: run.settings.Host, Team: peer.Team, ID: id, From: string(sender.Name), To: o.Name, Body: body})
+	class := ""
+	if sender.Kind == core.SenderRegistered {
+		class = core.SenderRegistered
+	}
+	request, err := json.Marshal(peerRequest{Class: class, Host: run.settings.Host, Team: peer.Team, ID: id, From: string(sender.Name), To: o.Name, Body: body})
 	if err != nil {
 		return err
 	}
@@ -88,7 +98,7 @@ func (run *runtime) sendToPeer(o sendOptions) error {
 	var exit *exec.ExitError
 	refused := errors.As(runErr, &exit) && exit.ExitCode() >= exitError && exit.ExitCode() <= exitNative
 	// The peer's log records what it received; this host's log records what
-	// its agent sent, once ssh has run, whether or not it reached the peer.
+	// its sender sent, once ssh has run, whether or not it reached the peer.
 	sent := core.Event{Type: "peer_sent", ID: string(remoteID), To: o.Host + ":" + o.Name}
 	switch {
 	case replied && reply.ID != "":
@@ -115,6 +125,9 @@ func (run *runtime) sendToPeer(o sendOptions) error {
 		if err := run.recordPeerSend(sender, sent); err != nil {
 			return err
 		}
+		if class != "" && strings.Contains(reply.Error, `unknown field "class"`) {
+			return commandError{status: exit.ExitCode(), text: fmt.Sprintf("peer host %s does not understand sender classes; upgrade Gangline on %s before sending as a registered sender: %s", o.Host, o.Host, printable(reply.Error))}
+		}
 		// The peer words its refusal for its own host, where any command it
 		// names must run, so that is said before the reason.
 		return commandError{status: exit.ExitCode(), text: fmt.Sprintf("peer host %s refused the message; any command in its reason runs on %s, not here: %s", o.Host, o.Host, printable(reply.Error))}
@@ -138,7 +151,7 @@ func (run *runtime) sendToPeer(o sendOptions) error {
 	return commandError{status: exitUnknown, text: fmt.Sprintf("peer host %s gave no outcome (%s); message %s may have been published there, so resend it only once no gang peer-receive runs on %s and its gang queue and gang log both lack it", o.Host, cause, remoteID, o.Host)}
 }
 
-// recordPeerSend logs a forwarded send under the agent that sent it. The
+// recordPeerSend logs a forwarded send under the identity that sent it. The
 // message has gone whatever the log says, so a failed append is a warning and
 // leaves the send's own result in place.
 func (run *runtime) recordPeerSend(sender core.Sender, e core.Event) error {

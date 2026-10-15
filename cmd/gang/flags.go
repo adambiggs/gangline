@@ -149,8 +149,8 @@ func parseSend(arguments []string) (sendOptions, error) {
 		if !validPeerHost(host) {
 			return sendOptions{}, usageError("send: invalid peer host %q in %q (%s; self-declared and registered are reserved)", host, options.Name, agentNameForm)
 		}
-		if options.As != "" || options.From != "" || options.LiveOnly || options.Supersede || options.At != "" || options.Clear {
-			return sendOptions{}, usageError("send: a HOST:NAME recipient takes no --as, --credential, --from, --live-only, --supersede, --at, or --clear")
+		if options.From != "" || options.LiveOnly || options.Supersede || options.At != "" || options.Clear {
+			return sendOptions{}, usageError("send: a HOST:NAME recipient takes no --from, --live-only, --supersede, --at, or --clear")
 		}
 		options.Host, options.Name = host, name
 	}

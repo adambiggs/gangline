@@ -44,6 +44,9 @@ as unverified. A `<host>:<name>` sender such as `alpha:lead` is an agent on an
 enrolled peer host: that host's Gangline observed it, this one did not. A
 `registered:<name>` sender carries a registered identity whose key file Gangline
 checked; any process running as the same user can read that file.
+A `<host>:registered:<name>` sender is a registered identity whose key the sending
+host's Gangline checked; this host trusts that check as it trusts `<host>:<name>`.
+A class is never rewritten in transit.
 
 A `startup` envelope with no assignment supplies context only. A message
 whose envelope reads `assignment` is the work you were hitched for: begin it in

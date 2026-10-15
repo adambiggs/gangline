@@ -285,7 +285,7 @@ func TestRegisteredSenderOptionAndPrefixGuards(t *testing.T) {
 	for _, args := range [][]string{
 		{"worker", "--as", ""}, {"worker", "--as", "a:b"}, {"worker", "--as", "relay", "--from", "operator"},
 		{"worker", "--credential", "key"}, {"worker", "--as", "relay", "--credential", ""},
-		{"alpha:worker", "--as", "relay"}, {"alpha:worker", "--credential", "key"},
+		{"alpha:worker", "--credential", "key"},
 		{"registered:relay", "hi"}, {"Registered:relay", "hi"},
 	} {
 		if _, err := parseSend(args); err == nil {

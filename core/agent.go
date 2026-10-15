@@ -139,6 +139,8 @@ type Sender struct {
 	HitchID HitchID   `json:"hitch_id,omitempty"`
 	// Host names the enrolled peer host whose gang attributed a peer sender.
 	Host string `json:"host,omitempty"`
+	// PeerClass distinguishes registered senders from agents attributed by Host.
+	PeerClass string `json:"peer_class,omitempty"`
 }
 
 const (
@@ -147,8 +149,8 @@ const (
 	SenderRegistered   = "registered"
 	SenderSelfDeclared = "self_declared"
 	SenderGangline     = "gangline"
-	// SenderPeer is an agent on an enrolled peer host, named by that host's
-	// gang. This host observed neither the agent nor the host.
+	// SenderPeer is a sender on an enrolled peer host, named by that host's
+	// gang. This host observed neither the sender nor the host.
 	SenderPeer = "peer"
 )
 
@@ -159,7 +161,7 @@ func (s Sender) SameIdentity(other Sender) bool {
 	if s.Kind == SenderAgent || s.Kind == SenderOutside || s.Kind == SenderRegistered {
 		return s.HitchID != "" && s.HitchID == other.HitchID
 	}
-	return s.Name == other.Name && s.Host == other.Host
+	return s.Name == other.Name && s.Host == other.Host && s.PeerClass == other.PeerClass
 }
 
 // StartupPaste records the witness before startup input while no submit has been attempted.

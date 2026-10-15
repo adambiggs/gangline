@@ -256,7 +256,7 @@ func TestPeerSendRefusesBeforeContactingThePeer(t *testing.T) {
 		{"unenrolled host", nil, []string{"mac:lead", "hi"}, exitRefused, `peer host "mac" is not enrolled`},
 		{"no peers", func(f *stateFixture) { delete(f.env, "GANG_PEERS") }, []string{"beta:lead", "hi"}, exitRefused, "not enrolled"},
 		{"no host name", func(f *stateFixture) { delete(f.env, "GANG_HOST") }, []string{"beta:lead", "hi"}, exitRefused, "GANG_HOST is unset"},
-		{"operator", func(f *stateFixture) { delete(f.env, "GANG_AGENT_ID") }, []string{"beta:lead", "hi"}, exitRefused, "only a registered agent sends to a peer host"},
+		{"operator", func(f *stateFixture) { delete(f.env, "GANG_AGENT_ID") }, []string{"beta:lead", "hi"}, exitRefused, "only an active registered agent or credentialed --as sender"},
 		{"forged pane token", func(f *stateFixture) { f.env["GANG_AGENT_NONCE"] = "copied" }, []string{"beta:lead", "hi"}, exitRefused, "hitch token does not match"},
 		{"empty body", nil, []string{"beta:lead", ""}, exitRefused, "body is empty"},
 		{"control body", nil, []string{"beta:lead", "a\x1b[2Jb"}, exitRefused, "control"},
@@ -386,5 +386,105 @@ func TestPeerSendKeepsTheOutcomeWhenTheLogFails(t *testing.T) {
 	}
 	if got := f.out.String(); got != "beta:"+ssh.forwardedID(t)+"\tdelivered\n" || !strings.Contains(f.errOut.String(), "warning: message "+ssh.forwardedID(t)+" to beta:reviewer is missing from this host's team log") {
 		t.Fatalf("stdout = %q stderr = %q", got, f.errOut.String())
+	}
+}
+
+func TestPeerRegisteredSenderAuthenticatesBeforeSSH(t *testing.T) {
+	for _, actor := range []string{"flag", "environment", "agent", "missing", "wrong", "other-name", "revoked", "bad-caller"} {
+		t.Run(actor, func(t *testing.T) {
+			f, ssh := peerSender(t)
+			delete(f.env, "GANG_AGENT_ID")
+			key := senderKeyFixture(t, f)
+			ssh.reply(t, `{"id":"@ID@","outcome":"delivered"}`+"\n", "", "0")
+			args := []string{"beta:reviewer", "--as", "relay", "hello"}
+			switch actor {
+			case "environment":
+				f.env["GANG_SENDER_CREDENTIAL"] = key
+			case "missing":
+			case "wrong":
+				key = filepath.Join(t.TempDir(), "wrong-key")
+				if err := os.WriteFile(key, []byte("wrong"), 0o600); err != nil {
+					t.Fatal(err)
+				}
+				args = append(args, "--credential", key)
+			default:
+				args = append(args, "--credential", key)
+			}
+			if actor == "agent" || actor == "bad-caller" {
+				f.env["GANG_AGENT_ID"] = "lead-id"
+			}
+			if actor == "bad-caller" {
+				f.env["GANG_AGENT_NONCE"] = "wrong"
+			}
+			if actor == "other-name" {
+				args[2] = "unregistered"
+			}
+			if actor == "revoked" {
+				if err := f.cmd.execute([]string{"sender", "remove", "relay"}); err != nil {
+					t.Fatal(err)
+				}
+			}
+			err := sendPeer(f, args...)
+			allowed := actor == "flag" || actor == "environment" || actor == "agent"
+			if allowed {
+				if err != nil {
+					t.Fatal(err)
+				}
+				data, err := os.ReadFile(filepath.Join(ssh.dir, "stdin"))
+				if err != nil {
+					t.Fatal(err)
+				}
+				var request map[string]any
+				if err := json.Unmarshal(data, &request); err != nil {
+					t.Fatal(err)
+				}
+				if request["class"] != "registered" || request["from"] != "relay" {
+					t.Fatalf("request %s", data)
+				}
+			} else {
+				requireStatus(t, err, exitRefused, "")
+				if ssh.ran() || f.out.Len() != 0 {
+					t.Fatal("unauthenticated sender reached peer")
+				}
+			}
+		})
+	}
+}
+
+func TestPeerAgentWireOmitsClassForOldReceivers(t *testing.T) {
+	f, ssh := peerSender(t)
+	ssh.reply(t, `{"id":"@ID@","outcome":"queued"}`+"\n", "", "0")
+	if err := sendPeer(f, "beta:worker", "hello"); err != nil {
+		t.Fatal(err)
+	}
+	data, err := os.ReadFile(filepath.Join(ssh.dir, "stdin"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	// This is the old receiver's schema, with strict decoding intact.
+	var old struct{ Host, Team, ID, From, To, Body string }
+	decoder := json.NewDecoder(strings.NewReader(string(data)))
+	decoder.DisallowUnknownFields()
+	if err := decoder.Decode(&old); err != nil {
+		t.Fatalf("old peer refuses: %v", err)
+	}
+	if old.From != "lead" {
+		t.Fatalf("sender %+v", old)
+	}
+}
+
+func TestPeerRegisteredSenderOldReceiverRefusesWithoutDowngrade(t *testing.T) {
+	f, ssh := peerSender(t)
+	delete(f.env, "GANG_AGENT_ID")
+	key := senderKeyFixture(t, f)
+	ssh.reply(t, `{"error":"peer request is not one JSON object: json: unknown field \"class\""}`+"\n", "", "3")
+	err := sendPeer(f, "beta:worker", "--as", "relay", "--credential", key, "hello")
+	requireStatus(t, err, exitRefused, "does not understand sender classes")
+	if !strings.Contains(err.Error(), "upgrade") || f.out.Len() != 0 {
+		t.Fatalf("refusal %v stdout %s", err, f.out.String())
+	}
+	data, readErr := os.ReadFile(filepath.Join(ssh.dir, "stdin"))
+	if readErr != nil || !strings.Contains(string(data), `"class":"registered"`) {
+		t.Fatalf("downgraded request %s: %v", data, readErr)
 	}
 }

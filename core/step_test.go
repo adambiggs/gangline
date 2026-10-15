@@ -129,3 +129,25 @@ func TestRegisteredSenderEventRequiresIdentity(t *testing.T) {
 		t.Fatal("registered sender without registry identity accepted")
 	}
 }
+
+func TestPeerSenderEventClasses(t *testing.T) {
+	now := time.Date(2026, 9, 22, 0, 0, 0, 0, time.UTC)
+	for _, class := range []string{"", SenderRegistered, SenderAgent, SenderSelfDeclared, SenderOutside, SenderGangline, SenderPeer, "invented"} {
+		e := Event{Type: "send_queued", At: now, Envelope: &Envelope{
+			ID: "message", Token: "0123456789abcdef", From: Sender{Kind: SenderPeer, Name: "relay", Host: "alpha", PeerClass: class},
+			To: "worker", Recipient: "a", Message: Message{Text: "hello"}, CreatedAt: now,
+		}}
+		data, err := EncodeEvent(e)
+		allowed := class == "" || class == SenderRegistered
+		if (err == nil) != allowed {
+			t.Fatalf("class %q validation: %v", class, err)
+		}
+		if !allowed {
+			continue
+		}
+		decoded, err := DecodeEvent(data)
+		if err != nil || !reflect.DeepEqual(decoded, e) {
+			t.Fatalf("class round-trip: %+v %v", decoded, err)
+		}
+	}
+}
