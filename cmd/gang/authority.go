@@ -89,7 +89,7 @@ func (run *runtime) refuseDrop(target core.Agent) error {
 			}
 		}
 	}
-	return refuseError("drop refused: this process carries the hitch identity of %s in team %q, and %s %s; this protects an agent from a teammate that did not start it. Ask that agent or the lead to drop %s", caller.Name, run.settings.Session, target.Name, hitcher, target.Name)
+	return refuseError("drop refused: this process carries the hitch identity of %s in team %q, and %s %s; this protects an agent from a teammate that did not start it. Caller authority: role=%q, hitched_by=%q, pane_token_match=%t. Ask that agent or the lead to drop %s", caller.Name, run.settings.Session, target.Name, hitcher, caller.Role, caller.HitchedBy, run.holdsToken(*caller), target.Name)
 }
 
 // hitcherID names the verified agent whose pane runs this command, or nothing
