@@ -5,7 +5,6 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
-	"os"
 	"time"
 )
 
@@ -312,7 +311,7 @@ func StatuslineMeasurementTime(data []byte, r Reading) (*time.Time, error) {
 	if payload.Transcript == "" || r.Used == nil {
 		return nil, nil
 	}
-	file, err := os.Open(payload.Transcript)
+	file, err := OpenTranscript(payload.Transcript)
 	if err != nil {
 		return nil, err
 	}

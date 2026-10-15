@@ -76,7 +76,7 @@ func ValidateResume(collar Collar, session string) (unverified string, err error
 	}
 	foreign, unknown := "", ""
 	for _, path := range paths {
-		file, err := os.Open(path)
+		file, err := OpenTranscript(path)
 		if err != nil {
 			unknown = err.Error()
 			continue

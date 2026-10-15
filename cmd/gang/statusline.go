@@ -84,6 +84,10 @@ func (cmd command) statusline(args []string) (result error) {
 		if err != nil {
 			return err
 		}
+		token := cmd.environment("GANG_AGENT_NONCE")
+		if token == "" || tokenHash(token) != a.Registration.TokenHash {
+			return refuseError("hitch token does not match the registered pane")
+		}
 		if a.Native.SessionID != "" && a.Native.SessionID != session {
 			return fmt.Errorf("status-line session does not match registered native session")
 		}

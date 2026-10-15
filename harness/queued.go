@@ -5,7 +5,6 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
-	"os"
 	"slices"
 	"sort"
 	"strings"
@@ -203,7 +202,7 @@ func (r claudeQueueRecord) text() string {
 }
 
 func claudeQueueRecords(transcript string) ([]claudeQueueRecord, error) {
-	file, err := os.Open(transcript)
+	file, err := OpenTranscript(transcript)
 	if err != nil {
 		return nil, err
 	}

@@ -93,7 +93,7 @@ func (run *runtime) refreshNative(l *store.LockedAgent, a *core.Agent, c harness
 	if c.Primitives.Telemetry == nil || !harness.TelemetryUsesTranscript(*c.Primitives.Telemetry) || a.Native.Transcript == "" {
 		return nil
 	}
-	f, err := os.Open(a.Native.Transcript)
+	f, err := harness.OpenTranscript(a.Native.Transcript)
 	if err != nil {
 		return err
 	}

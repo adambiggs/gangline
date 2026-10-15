@@ -91,6 +91,10 @@ func (cmd command) handleHook(args []string) (result error) {
 	if err != nil {
 		return err
 	}
+	token := cmd.environment("GANG_AGENT_NONCE")
+	if token == "" || tokenHash(token) != a.Registration.TokenHash {
+		return refuseError("hitch token does not match the registered pane")
+	}
 	c, err := loadCollar(a.Collar, run.settings)
 	if err != nil {
 		return err

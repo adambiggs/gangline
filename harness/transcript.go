@@ -5,6 +5,8 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"os"
+	"syscall"
 )
 
 const transcriptWindow = 4 << 20
@@ -60,4 +62,22 @@ func boundedTranscriptStart(input io.ReadSeeker, start, size int64) (int64, erro
 		return 0, err
 	}
 	return start + int64(len(partial)), nil
+}
+
+// OpenTranscript opens a regular transcript without waiting for a FIFO writer.
+func OpenTranscript(path string) (*os.File, error) {
+	file, err := os.OpenFile(path, os.O_RDONLY|syscall.O_NONBLOCK, 0)
+	if err != nil {
+		return nil, err
+	}
+	info, err := file.Stat()
+	if err != nil {
+		file.Close()
+		return nil, err
+	}
+	if !info.Mode().IsRegular() {
+		file.Close()
+		return nil, fmt.Errorf("transcript %q is not a regular file", path)
+	}
+	return file, nil
 }

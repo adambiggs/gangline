@@ -66,7 +66,7 @@ func SessionMoved(invocation Invocation, fromTranscript, from, next, nextTranscr
 // transcript names, or empty when the transcript records a prompt or reply
 // after it, or has none.
 func claudeContinuedIn(transcript, session string) (string, error) {
-	file, err := os.Open(transcript)
+	file, err := OpenTranscript(transcript)
 	if err != nil {
 		return "", err
 	}

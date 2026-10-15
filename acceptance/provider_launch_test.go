@@ -259,9 +259,27 @@ func testLiveProvider(t *testing.T, collar, cli, cheapest string) {
 	if len(sendFields) < 2 || (sendFields[1] != "delivered" && sendFields[1] != "accepted" && sendFields[1] != "queued") {
 		t.Fatalf("unexpected send receipt: stdout=%q stderr=%q", sent, sendDiagnostic)
 	}
-	if _, err := awaitProviderEvents(ctx, team.Log, sendFields[0], collar); err != nil {
+	events, err := awaitProviderEvents(ctx, team.Log, sendFields[0], collar)
+	if err != nil {
 		screen, _, _ := runGang(ctx, "", "capture", "worker", "-n", "30")
 		t.Fatalf("provider events: %v; initial receipt=%s pane=%s screen=%s timeline=%s", err, sendFields[1], pane, screen, providerTimeline(team.Log))
+	}
+	if collar == "claude" {
+		authenticatedStatusline := false
+		for _, event := range events {
+			if event.Type != "observation" {
+				continue
+			}
+			for _, reading := range event.Readings {
+				if reading.Source == "status-line" {
+					authenticatedStatusline = true
+				}
+			}
+		}
+		if !authenticatedStatusline {
+			t.Fatal("native status-line child did not record an authenticated observation")
+		}
+		t.Log("native status-line child recorded an authenticated observation")
 	}
 	lastWitness, err := awaitProviderWitness(ctx, paths, second)
 	if err != nil || !strings.Contains(lastWitness.Prompt, "[gang:") {
