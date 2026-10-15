@@ -75,6 +75,7 @@ func TestLeadStatusShowsEveryTeammateWake(t *testing.T) {
 		state.Recent["left-id"] = usageSnooze{ID: "left-wake", CallerID: "left-id", CallerName: "left", RecipientID: lead.ID, RecipientName: lead.Name, TurnID: "t", CapCandidate: true, At: now.Add(-time.Minute)}
 		state.Recent["failed-id"] = usageSnooze{ID: "failed-wake", CallerName: "failed", TurnID: "t", TurnFailed: true, At: now}
 		state.Recent["unknown-id"] = usageSnooze{ID: "unknown-wake", CallerName: "unknown", At: now}
+		state.Notices = []usageNotice{{ID: "uncertain-notice", RecipientID: lead.ID, Collar: "codex", Window: "weekly", Band: "90", Submission: "unverified"}}
 		return nil
 	}); err != nil {
 		t.Fatal(err)
@@ -100,6 +101,7 @@ func TestLeadStatusShowsEveryTeammateWake(t *testing.T) {
 		"unknown-wake\twake for unknown; native turn identity unavailable; due 2026-09-22T10:00:00Z\n",
 		"limited-wake\twake for limited; rate limit unconfirmed by native usage; due 2026-09-22T09:59:00Z\n",
 		"left-wake\twake for left; rate limit unconfirmed by native usage; inspect or clear; due 2026-09-22T09:59:00Z\n",
+		"uncertain-notice\tcodex weekly 90 notice; native unverified; inspect native input before clearing by ID\n",
 	} {
 		if !strings.Contains(got, want) {
 			t.Fatalf("lead status lacks %q:\n%s", want, got)
