@@ -29,6 +29,7 @@ const commandInventory = `usage: gang <command> [arguments]
 
 Start and end a team:
   up        start a team and join it
+  outside   manage authenticated mailbox agents
   hitch     add an agent
   rename    change an agent's registered name
   drop      remove one agent
@@ -80,6 +81,7 @@ Commands that act on a team take --team TEAM (default GANG_SESSION).
 `
 
 var commandUsage = map[string]string{
+	"outside":    "usage: gang outside register|rotate NAME --credential-file PATH [--team TEAM]\n       gang outside remove NAME [--team TEAM]\n       gang outside serve [OPTIONS] [--team TEAM]\n",
 	"up":         "usage: gang up [NAME] [HITCH OPTIONS] [--team TEAM]\n",
 	"hitch":      "usage: gang hitch NAME [-c COLLAR] [-d DIR] [-m MODEL] [-e EFFORT]\n       [-t TASK] [-r ROLE] [--resume SESSION] [--stdin]\n       [--split NAME] [--vertical] [--team TEAM]\n       gang hitch NAME --recover [--team TEAM]\n",
 	"rename":     "usage: gang rename OLD NEW [--team TEAM]\n",
@@ -127,6 +129,7 @@ type optionSpec struct {
 // These definitions drive both flag registration and help. A nonempty argument
 // names a required value; an empty argument denotes a boolean switch.
 var commandOptions = map[string][]optionSpec{
+	"outside": {{"credential-file", "PATH", "new private file for the registration credential"}},
 	"hitch": {
 		{"c", "COLLAR", "harness collar (default GANG_COLLAR)"}, {"collar", "COLLAR", "harness collar (default GANG_COLLAR)"},
 		{"d", "DIR", "working directory (default current)"}, {"dir", "DIR", "working directory (default current)"},
@@ -220,7 +223,7 @@ func optionsFor(name string) []optionSpec {
 // teamCommands act on one team and accept teamOption. GANG_SESSION selects
 // the team when the option is absent.
 var teamCommands = map[string]bool{
-	"up": true, "hitch": true, "rename": true, "send": true, "queue": true,
+	"outside": true, "up": true, "hitch": true, "rename": true, "send": true, "queue": true,
 	"interrupt": true, "compact": true, "context": true, "log": true,
 	"limits": true, "snooze": true, "wait": true, "curfew": true,
 	"status": true, "tick": true, "capture": true, "whoami": true,
@@ -281,6 +284,8 @@ func optionArgument(option optionSpec) string {
 }
 
 var commandDescription = map[string]string{
+	"outside": "Register a mailbox identity; credentials are written only to a new private file.\nRotation revokes existing credentials and OAuth authorizations.\nServe exposes the mailbox through authenticated remote MCP.\n\nServe options:\n  --listen ADDRESS       HTTP bind address (default 127.0.0.1:8484)\n  --issuer HTTPS_ORIGIN  public OAuth and MCP origin\n  --client-id ID         connector OAuth client ID\n  --redirect-uri URL     exact connector OAuth callback\n  --allow-read DIR       allowed report directory; repeat for each root\n",
+
 	"up":         "NAME names the lead agent (default lead). Start the selected team and attach,\nor use --recover to recover that existing agent's startup.\n",
 	"hitch":      "NAME is an agent's registered name in the selected team.\nLaunch in a new window by default. --split NAME places a sibling beside\nthat agent; --vertical splits top/bottom. Use --recover for retained startup.\n",
 	"rename":     "OLD and NEW are registered agent names in the selected team.\nRename the agent without restarting its harness.\n",

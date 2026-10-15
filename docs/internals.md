@@ -11,6 +11,9 @@ Gangline is a Go module built into the `gang` binary.
 | `substrate` | Terminal operations, implemented through tmux. |
 | `harness` | Collar loading, native launch, screen interpretation, and readings. |
 | `cmd/gang` | Commands that coordinate these packages. |
+| `internal/mcpauth` | Outside-registration OAuth consent and delegated grants. |
+| `internal/mcpevents` | Persistent webhook subscriptions and signed mailbox wakeups. |
+| `internal/outsidemcp` | Authenticated mailbox tools and confined report reads. |
 
 `core` has no I/O or clock. `harness` and `substrate` do not import it.
 Collars live in `harness/collars/` or `GANG_COLLARS`.
@@ -44,6 +47,18 @@ history. Each agent has its own lock. `gang drop` removes the registration and
 its files; `gang down` removes the team directory. Registration, drop, and
 whole-team teardown share a nonblocking lock under `STATE_ROOT/team-locks/`
 so the agent list cannot change while the confirmation prompt is open.
+
+Outside registrations claim names in the same namespace, with mailbox state
+under `outside/`. They have no native agent record or pane. Credential
+generations bind OAuth grants and event subscriptions to the current
+registration. The HTTP process stores its grants and subscriptions under
+`outside-mcp/` and watches mailbox changes before reading pending mail.
+Mailbox operations scale with pending mail; idempotent send receipts live in
+separately addressed `outside-data/` files until the registration is removed.
+Credential authentication scans
+the selected team's outside registrations. Report reads use anchored directory
+handles supplied at server startup. See [outside agents](outside-agents.md)
+for the trust boundary, endpoint and deployment.
 
 ## Message path
 

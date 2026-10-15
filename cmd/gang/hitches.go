@@ -718,6 +718,13 @@ func (cmd command) drop(args []string) error {
 	if err != nil {
 		return err
 	}
+	if isOutsideID(id) {
+		if err := run.team.RemoveOutside(name); err != nil {
+			return err
+		}
+		_, err := fmt.Fprintf(cmd.stdout, "%s outside registration removed\n", name)
+		return err
+	}
 	p, err := run.team.Agent(id)
 	if err != nil {
 		return err

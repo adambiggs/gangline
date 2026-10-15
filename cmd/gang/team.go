@@ -424,6 +424,19 @@ func (cmd command) roster(args []string) error {
 			return err
 		}
 	}
+	outside, err := run.team.ListOutside()
+	if err != nil {
+		return err
+	}
+	for _, registration := range outside {
+		if machine {
+			out.Agents = append(out.Agents, agentJSON{Kind: "outside", Name: registration.Name, HitchID: registration.ID, Status: core.Active})
+			continue
+		}
+		if _, err := fmt.Fprintf(cmd.stdout, "%-16s %-10s mailbox            outside\n", registration.Name, "registered"); err != nil {
+			return err
+		}
+	}
 	if machine {
 		return writeJSON(cmd.stdout, out)
 	}
@@ -486,7 +499,7 @@ func (run *runtime) agentRow(a core.Agent) (agentJSON, error) {
 	if a.Pane != "" {
 		paneName = string(a.Name)
 	}
-	row := agentJSON{InputOutage: a.InputOutage, Name: a.Name, HitchID: a.ID, Status: a.Status, Activity: a.Activity, Collar: a.Collar, Pane: paneName, ProcessAvailable: !limited, Evidence: run.cmd.operatorText(a.Evidence)}
+	row := agentJSON{Kind: "native", InputOutage: a.InputOutage, Name: a.Name, HitchID: a.ID, Status: a.Status, Activity: a.Activity, Collar: a.Collar, Pane: paneName, ProcessAvailable: !limited, Evidence: run.cmd.operatorText(a.Evidence)}
 	if a.Compaction != nil {
 		row.Compaction = &compactionJSON{ID: a.Compaction.ID, Status: a.Compaction.Status, Reason: run.cmd.operatorText(a.Compaction.Reason)}
 	}

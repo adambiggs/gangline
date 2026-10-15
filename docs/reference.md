@@ -1,5 +1,8 @@
 # Reference
 
+For named mailbox registrations and their remote MCP endpoint, see
+[outside agents](outside-agents.md).
+
 `gang --help` lists commands. `gang help COMMAND` or `gang COMMAND --help`
 shows arguments and flags for the installed binary. From an operator shell,
 supply an explicit name when inspecting or controlling a single agent.

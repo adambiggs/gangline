@@ -41,6 +41,13 @@ next operation for them.
   (`/proc/PID/cwd`, or a file only your tree has) in a separate command that
   finishes before the kill.
 
+## Outside endpoint
+
+The outside mailbox, OAuth and MCP components are described in
+[`docs/outside-agents.md`](docs/outside-agents.md). Test with synthetic
+credentials, report roots and a disposable team. Deployment, DNS and connector
+authorization are operator actions.
+
 ## Docs
 
 | File | Holds |
@@ -49,6 +56,7 @@ next operation for them.
 | `docs/internals.md` | packages, message path, design principles |
 | `docs/reference.md` | commands, environment, collar contract |
 | `docs/operations.md` | running unattended and recovery |
+| `docs/outside-agents.md` | mailbox identity, remote MCP and deployment |
 | `CONTRIBUTING.md` | setup, the gate, commits |
 | `CHANGELOG.md` | written by Release Please; never edit by hand |
 

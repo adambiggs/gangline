@@ -132,6 +132,9 @@ func (run *runtime) resolve(name string) (core.Agent, error) {
 	if err != nil {
 		return core.Agent{}, err
 	}
+	if isOutsideID(id) {
+		return core.Agent{}, refuseError("%s has an outside mailbox; use gang send or gang outside", name)
+	}
 	p, err := run.team.Agent(id)
 	if err != nil {
 		return core.Agent{}, err

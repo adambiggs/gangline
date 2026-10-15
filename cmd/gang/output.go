@@ -35,6 +35,7 @@ type rosterJSON struct {
 }
 
 type agentJSON struct {
+	Kind             string            `json:"kind"`
 	InputOutage      *core.InputOutage `json:"input_outage,omitempty"`
 	Name             core.AgentName    `json:"name"`
 	HitchID          core.HitchID      `json:"hitch_id"`

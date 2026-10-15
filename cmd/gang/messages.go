@@ -100,6 +100,11 @@ func (cmd command) send(args []string) (result error) {
 	if o.Host != "" {
 		return run.sendToPeer(o)
 	}
+	if registration, err := run.team.ResolveOutside(o.Name); err == nil {
+		return run.sendOutside(o, registration)
+	} else if !errors.Is(err, os.ErrNotExist) {
+		return err
+	}
 	a, err := run.resolve(o.Name)
 	if err != nil {
 		return err

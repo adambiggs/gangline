@@ -2,7 +2,7 @@ export const groups = [
   ['Getting started', [['readme', 'Overview'], ['quickstart', 'Your first team']]],
   ['Guides', [['guides', 'Work with a team'], ['troubleshooting', 'Troubleshooting']]],
   ['Concepts', [['concepts', 'How a team works']]],
-  ['Reference', [['reference', 'CLI and configuration']]],
+  ['Reference', [['reference', 'CLI and configuration'], ['outside-agents', 'Outside agents']]],
   ['Internals and contributing', [['internals', 'Internals'], ['contributing', 'Contributing'], ['security', 'Security']]],
 ];
 
@@ -14,6 +14,7 @@ export const sources = {
   guides: 'docs/guides.md',
   internals: 'docs/internals.md',
   operations: 'docs/operations.md',
+  'outside-agents': 'docs/outside-agents.md',
   quickstart: 'docs/quickstart.md',
   reference: 'docs/reference.md',
   troubleshooting: 'docs/troubleshooting.md',
