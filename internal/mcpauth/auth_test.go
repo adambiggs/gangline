@@ -272,12 +272,12 @@ func TestDiscoveryAndBrowserSecurity(t *testing.T) {
 		}
 	}
 	w := f.request("GET", "/authorize?"+authValues().Encode(), nil, "")
-	for key, value := range map[string]string{"Cache-Control": "no-store", "Referrer-Policy": "no-referrer", "X-Frame-Options": "DENY", "X-Content-Type-Options": "nosniff"} {
+	for key, value := range map[string]string{"Cache-Control": "no-store", "Referrer-Policy": "same-origin", "X-Frame-Options": "DENY", "X-Content-Type-Options": "nosniff"} {
 		if w.Header().Get(key) != value {
 			t.Fatal(key)
 		}
 	}
-	if w.Header().Get("Set-Cookie") != "" || !strings.Contains(w.Header().Get("Content-Security-Policy"), "form-action 'self'") {
+	if w.Header().Get("Set-Cookie") != "" || w.Header().Get("Content-Security-Policy") != "default-src 'none'; form-action 'self' https://chatgpt.com; frame-ancestors 'none'; base-uri 'none'" {
 		t.Fatal("unsafe consent page")
 	}
 	if !strings.Contains(f.s.Challenge(), `resource_metadata="https://gang.example/.well-known/oauth-protected-resource"`) {
@@ -383,5 +383,25 @@ func TestWriteFailureDoesNotIssueCodeOrTokens(t *testing.T) {
 	w = f.request("POST", "/token", exchangeValues(code), "")
 	if w.Code != 500 || strings.Contains(w.Body.String(), "access_token") {
 		t.Fatal("token exposed without durable consumption")
+	}
+}
+
+func TestConsentAllowsConfiguredCallbackOrigin(t *testing.T) {
+	f := setup(t)
+	f.cfg.RedirectURI = "https://callback.example:8443/oauth/callback?connection=test"
+	var err error
+	f.s, err = New(f.cfg)
+	if err != nil {
+		t.Fatal(err)
+	}
+	v := authValues()
+	v.Set("redirect_uri", f.cfg.RedirectURI)
+	w := f.request("GET", "/authorize?"+v.Encode(), nil, "")
+	if w.Code != 200 {
+		t.Fatal(w.Body.String())
+	}
+	want := "default-src 'none'; form-action 'self' https://callback.example:8443; frame-ancestors 'none'; base-uri 'none'"
+	if got := w.Header().Get("Content-Security-Policy"); got != want {
+		t.Fatalf("CSP = %q, want %q", got, want)
 	}
 }

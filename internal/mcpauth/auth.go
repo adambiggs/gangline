@@ -184,13 +184,15 @@ func (s *Server) valid(g grant) bool {
 	return g.ClientID == s.cfg.ClientID && g.RedirectURI == s.cfg.RedirectURI && g.Resource == s.resource() && s.cfg.Clock().Before(g.Expires)
 }
 
-func securityHeaders(w http.ResponseWriter) {
+func (s *Server) securityHeaders(w http.ResponseWriter) {
+	callback, _ := url.Parse(s.cfg.RedirectURI)
+	callbackOrigin := callback.Scheme + "://" + callback.Host
 	w.Header().Set("Cache-Control", "no-store")
 	w.Header().Set("Pragma", "no-cache")
-	w.Header().Set("Referrer-Policy", "no-referrer")
+	w.Header().Set("Referrer-Policy", "same-origin")
 	w.Header().Set("X-Content-Type-Options", "nosniff")
 	w.Header().Set("X-Frame-Options", "DENY")
-	w.Header().Set("Content-Security-Policy", "default-src 'none'; form-action 'self'; frame-ancestors 'none'; base-uri 'none'")
+	w.Header().Set("Content-Security-Policy", "default-src 'none'; form-action 'self' "+callbackOrigin+"; frame-ancestors 'none'; base-uri 'none'")
 }
 func jsonResponse(w http.ResponseWriter, status int, data any) {
 	w.Header().Set("Content-Type", "application/json")
@@ -202,7 +204,7 @@ func oauthError(w http.ResponseWriter, status int, code string) {
 }
 
 func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
-	securityHeaders(w)
+	s.securityHeaders(w)
 	switch r.URL.Path {
 	case "/.well-known/oauth-protected-resource", "/.well-known/oauth-protected-resource/mcp":
 		if r.Method != http.MethodGet {
@@ -276,9 +278,8 @@ func (s *Server) authorize(w http.ResponseWriter, r *http.Request) {
 		_ = consentForm.Execute(w, struct{ Client, Request string }{s.cfg.ClientID, nonce})
 		return
 	}
-	// A one-use request binds the displayed consent to the original validated
-	// OAuth request. Origin validation prevents a foreign site from posting a
-	// credential into an authorization request selected by an attacker.
+	// The nonce binds this form to the displayed OAuth request. Origin validation
+	// rejects cross-site form POSTs; authorization links can originate elsewhere.
 	if r.Header.Get("Origin") != s.cfg.Issuer || (r.Header.Get("Sec-Fetch-Site") != "" && r.Header.Get("Sec-Fetch-Site") != "same-origin") || r.URL.RawQuery != "" || r.Header.Get("Content-Type") != "application/x-www-form-urlencoded" {
 		oauthError(w, 400, "invalid_request")
 		return
