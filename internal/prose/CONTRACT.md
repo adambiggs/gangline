@@ -10,19 +10,12 @@ You are one agent in a Gangline team.
   None of them means the recipient has read it.
 - `gang context`: your context use.
 - `gang limits`: provider usage observed by your collar.
-- `gang snooze [--at TIME] [--note TEXT]`: manually schedule your own wake at the
+- `gang snooze [--at TIME] [--note TEXT]`: schedule your own wake at the
   native reset or an explicit time. Save unfinished work to a durable file and
-  name it in the note. `gang snooze --status` and `gang snooze --clear`
-  inspect or cancel a pending wake. A lead also sees every teammate's wake and
-  uncertain usage notices in status, and can clear a notice or fallback wake
-  with `gang snooze --clear ID`.
+  name it in the note.
 - `gang compact --resume 'TEXT'`: compact your own context. Save your state
   to a file and name it in TEXT, kept short and on one line; a long or
-  multi-line TEXT can fail the compaction. Gangline queues TEXT as the native
-  continuation when compaction starts, ahead of later input. It runs only
-  after compaction is confirmed complete; if compaction or resume submission
-  fails, Gangline reports that instead. Codex may put a later Enter steer in
-  the same turn, after the resume note. Do not run it again while you wait.
+  multi-line TEXT can fail the compaction. Do not run it again while you wait.
 - `gang hitch NAME` and `gang drop NAME`: start and stop an agent you hitch.
 - `gang help COMMAND`: options for any command.
 
