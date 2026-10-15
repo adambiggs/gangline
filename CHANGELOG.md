@@ -1,5 +1,17 @@
 # Changelog
 
+## [1.21.0](https://github.com/adambiggs/gangline/compare/gangline-v1.20.0...gangline-v1.21.0) (2026-10-15)
+
+
+### Features
+
+* **send:** carry authenticated registered senders across peer hosts ([2dcdf5b](https://github.com/adambiggs/gangline/commit/2dcdf5b1370e8249e736a9c415f605ed4769e23c))
+
+
+### Bug Fixes
+
+* **sender:** give roleless callers the operator recovery command ([180b597](https://github.com/adambiggs/gangline/commit/180b597a2877c80b095221944776437698e8100f))
+
 ## [1.20.0](https://github.com/adambiggs/gangline/compare/gangline-v1.19.1...gangline-v1.20.0) (2026-10-15)
 
 
