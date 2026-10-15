@@ -361,28 +361,109 @@ func TestConsumedCodeAndRefreshRemainConsumedAfterRestart(t *testing.T) {
 	}
 }
 
+func blockStateWrites(t *testing.T, cfg Config) func() {
+	t.Helper()
+	path := filepath.Join(cfg.StateDir, "oauth.json")
+	backup := path + ".saved"
+	if err := os.Rename(path, backup); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Mkdir(path, 0700); err != nil {
+		t.Fatal(err)
+	}
+	return func() {
+		t.Helper()
+		if err := os.Remove(path); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.Rename(backup, path); err != nil {
+			t.Fatal(err)
+		}
+	}
+}
+
 func TestWriteFailureDoesNotIssueCodeOrTokens(t *testing.T) {
 	f := setup(t)
-	if err := os.Mkdir(filepath.Join(f.cfg.StateDir, "oauth.json"), 0700); err != nil {
+	path := filepath.Join(f.cfg.StateDir, "oauth.json")
+	if err := os.Mkdir(path, 0700); err != nil {
 		t.Fatal(err)
 	}
 	w := f.request("GET", "/authorize?"+authValues().Encode(), nil, "")
-	if w.Code != 500 || strings.Contains(w.Body.String(), "name=\"request\"") {
+	if w.Code != 500 || strings.Contains(w.Body.String(), "name=\"request\"") || len(f.s.state.Consent) != 0 {
 		t.Fatal("consent exposed without durable binding")
 	}
-	if err := os.Remove(filepath.Join(f.cfg.StateDir, "oauth.json")); err != nil {
+	if err := os.Remove(path); err != nil {
 		t.Fatal(err)
 	}
-	code := f.code(t)
-	if err := os.Remove(filepath.Join(f.cfg.StateDir, "oauth.json")); err != nil {
+
+	request := f.consent(t, authValues())
+	form := url.Values{"request": {request}, "credential": {"registration-secret"}}
+	recoverWrites := blockStateWrites(t, f.cfg)
+	w = f.request("POST", "/authorize", form, f.cfg.Issuer)
+	if w.Code != 500 || w.Header().Get("Location") != "" || len(f.s.state.Codes) != 0 {
+		t.Fatal("code exposed without durable consent consumption")
+	}
+	recoverWrites()
+	w = f.request("POST", "/authorize", form, f.cfg.Issuer)
+	if w.Code != 303 {
+		t.Fatalf("consent retry failed: %d %s", w.Code, w.Body.String())
+	}
+	callback, err := url.Parse(w.Header().Get("Location"))
+	if err != nil {
 		t.Fatal(err)
 	}
-	if err := os.Mkdir(filepath.Join(f.cfg.StateDir, "oauth.json"), 0700); err != nil {
-		t.Fatal(err)
-	}
+	code := callback.Query().Get("code")
+
+	recoverWrites = blockStateWrites(t, f.cfg)
 	w = f.request("POST", "/token", exchangeValues(code), "")
-	if w.Code != 500 || strings.Contains(w.Body.String(), "access_token") {
-		t.Fatal("token exposed without durable consumption")
+	if w.Code != 500 || strings.Contains(w.Body.String(), "access_token") || len(f.s.state.Access) != 0 || len(f.s.state.Refresh) != 0 {
+		t.Fatal("token exposed without durable code consumption")
+	}
+	recoverWrites()
+	_ = f.consent(t, authValues())
+	w = f.request("POST", "/token", exchangeValues(code), "")
+	if w.Code != 200 {
+		t.Fatalf("code retry failed: %d %s", w.Code, w.Body.String())
+	}
+	tokens := decode(t, w)
+	access := tokens["access_token"].(string)
+	refresh := tokens["refresh_token"].(string)
+
+	recoverWrites = blockStateWrites(t, f.cfg)
+	w = f.request("POST", "/token", refreshValues(refresh), "")
+	if w.Code != 500 || strings.Contains(w.Body.String(), "access_token") || len(f.s.state.Access) != 1 || len(f.s.state.Refresh) != 1 {
+		t.Fatal("refresh exposed without durable rotation")
+	}
+	if _, err := f.s.AuthenticateAccess(access); err != nil {
+		t.Fatal("failed refresh revoked access")
+	}
+	recoverWrites()
+	_ = f.consent(t, authValues())
+	w = f.request("POST", "/token", refreshValues(refresh), "")
+	if w.Code != 200 {
+		t.Fatalf("refresh retry failed: %d %s", w.Code, w.Body.String())
+	}
+	rotated := decode(t, w)
+	if _, err := f.s.AuthenticateAccess(access); err != nil {
+		t.Fatal("retry revoked family")
+	}
+	if _, err := f.s.AuthenticateAccess(rotated["access_token"].(string)); err != nil {
+		t.Fatal(err)
+	}
+
+	recoverWrites = blockStateWrites(t, f.cfg)
+	if f.request("POST", "/token", refreshValues(refresh), "").Code != 500 {
+		t.Fatal("replay revocation unexpectedly persisted")
+	}
+	if _, err := f.s.AuthenticateAccess(access); err != nil {
+		t.Fatal("failed revocation changed active records")
+	}
+	recoverWrites()
+	if f.request("POST", "/token", refreshValues(refresh), "").Code != 400 {
+		t.Fatal("replay accepted after recovery")
+	}
+	if _, err := f.s.AuthenticateAccess(rotated["access_token"].(string)); err == nil {
+		t.Fatal("replay revocation failed after recovery")
 	}
 }
 

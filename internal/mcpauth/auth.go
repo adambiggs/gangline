@@ -10,6 +10,7 @@ import (
 	"errors"
 	"fmt"
 	"html/template"
+	"maps"
 	"net/http"
 	"net/url"
 	"os"
@@ -162,6 +163,20 @@ func (s *Server) persist() error {
 	return dir.Sync()
 }
 
+func (s *Server) update(change func()) error {
+	before := s.state
+	before.Consent = maps.Clone(s.state.Consent)
+	before.Codes = maps.Clone(s.state.Codes)
+	before.Access = maps.Clone(s.state.Access)
+	before.Refresh = maps.Clone(s.state.Refresh)
+	change()
+	if err := s.persist(); err != nil {
+		s.state = before
+		return err
+	}
+	return nil
+}
+
 func (s *Server) resource() string { return s.cfg.Issuer + "/mcp" }
 func (s *Server) Challenge() string {
 	return `Bearer resource_metadata="` + s.cfg.Issuer + `/.well-known/oauth-protected-resource", scope="gangline"`
@@ -268,9 +283,7 @@ func (s *Server) authorize(w http.ResponseWriter, r *http.Request) {
 			oauthError(w, 500, "server_error")
 			return
 		}
-		s.state.Consent[digest(nonce)] = g
-		if err := s.persist(); err != nil {
-			delete(s.state.Consent, digest(nonce))
+		if err := s.update(func() { s.state.Consent[digest(nonce)] = g }); err != nil {
 			oauthError(w, 500, "server_error")
 			return
 		}
@@ -308,13 +321,13 @@ func (s *Server) authorize(w http.ResponseWriter, r *http.Request) {
 		oauthError(w, 500, "server_error")
 		return
 	}
-	delete(s.state.Consent, key)
 	g.Principal = principal
 	g.Family = digest(code)
 	g.Expires = s.cfg.Clock().Add(codeLifetime)
-	s.state.Codes[digest(code)] = g
-	if err := s.persist(); err != nil {
-		delete(s.state.Codes, digest(code))
+	if err := s.update(func() {
+		delete(s.state.Consent, key)
+		s.state.Codes[digest(code)] = g
+	}); err != nil {
 		oauthError(w, 500, "server_error")
 		return
 	}
@@ -377,14 +390,15 @@ func (s *Server) token(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if g.Used && s.valid(g) {
-		for _, familyRecords := range []map[string]grant{s.state.Access, s.state.Refresh} {
-			for tokenKey, record := range familyRecords {
-				if record.Family == g.Family {
-					delete(familyRecords, tokenKey)
+		if err := s.update(func() {
+			for _, familyRecords := range []map[string]grant{s.state.Access, s.state.Refresh} {
+				for tokenKey, record := range familyRecords {
+					if record.Family == g.Family {
+						delete(familyRecords, tokenKey)
+					}
 				}
 			}
-		}
-		if err := s.persist(); err != nil {
+		}); err != nil {
 			oauthError(w, 500, "server_error")
 			return
 		}
@@ -409,22 +423,21 @@ func (s *Server) token(w http.ResponseWriter, r *http.Request) {
 		oauthError(w, 500, "server_error")
 		return
 	}
-	if v.Get("grant_type") == "refresh_token" {
-		g.Used = true
-		records[key] = g
-		g.Used = false
-	} else {
-		delete(records, key)
-	}
-	g.State = ""
-	g.Challenge = ""
-	g.Expires = s.cfg.Clock().Add(accessLifetime)
-	s.state.Access[digest(access)] = g
-	g.Expires = s.cfg.Clock().Add(refreshLifetime)
-	s.state.Refresh[digest(refresh)] = g
-	if err := s.persist(); err != nil {
-		delete(s.state.Access, digest(access))
-		delete(s.state.Refresh, digest(refresh))
+	if err := s.update(func() {
+		if v.Get("grant_type") == "refresh_token" {
+			g.Used = true
+			records[key] = g
+			g.Used = false
+		} else {
+			delete(records, key)
+		}
+		g.State = ""
+		g.Challenge = ""
+		g.Expires = s.cfg.Clock().Add(accessLifetime)
+		s.state.Access[digest(access)] = g
+		g.Expires = s.cfg.Clock().Add(refreshLifetime)
+		s.state.Refresh[digest(refresh)] = g
+	}); err != nil {
 		oauthError(w, 500, "server_error")
 		return
 	}
