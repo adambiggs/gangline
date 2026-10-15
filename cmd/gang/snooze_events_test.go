@@ -55,6 +55,7 @@ func setClock(f *stateFixture, at time.Time) {
 func TestLeadStatusShowsEveryTeammateWake(t *testing.T) {
 	f := newStateFixture(t)
 	lead := f.add(t, "lead-id", "lead", "codex")
+	saveAgent(t, f, lead.ID, func(a *core.Agent) { a.Role = "lead" })
 	worker := f.add(t, "worker-id", "worker", "codex")
 	reviewer := f.add(t, "reviewer-id", "reviewer", "codex")
 	builder := f.add(t, "builder-id", "builder", "codex")
@@ -208,6 +209,7 @@ func TestWakeRoutedToLeadIsLoggedUnderItsCaller(t *testing.T) {
 		t.Fatal(err)
 	}
 	lead := f.add(t, "lead-id", "lead", "codex")
+	saveAgent(t, f, lead.ID, func(a *core.Agent) { a.Role = "lead" })
 	f.env["GANGLINE_HITCH_ID"] = string(lead.ID)
 	if err := f.run.flushUsageWork(); err != nil {
 		t.Fatal(err)

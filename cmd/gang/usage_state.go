@@ -552,15 +552,8 @@ func (run *runtime) observeUsageBands(a core.Agent, c harness.Collar) error {
 func currentLead(agents []core.Agent) (core.Agent, bool) {
 	var leads []core.Agent
 	for _, a := range agents {
-		if a.Status == core.Active && a.Role == "lead" {
+		if a.Status == core.Active && isLead(a) {
 			leads = append(leads, a)
-		}
-	}
-	if len(leads) == 0 {
-		for _, a := range agents {
-			if a.Status == core.Active && a.Name == "lead" {
-				leads = append(leads, a)
-			}
 		}
 	}
 	if len(leads) != 1 {

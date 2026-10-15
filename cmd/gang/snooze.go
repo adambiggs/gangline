@@ -204,7 +204,7 @@ func (cmd command) snooze(args []string) error {
 		return refuseError("hitch identity %s is %s, not active; run gang snooze once its hitch completes", a.Name, a.Status)
 	}
 	key := string(a.ID)
-	isLead := a.Role == "lead" || a.Name == "lead"
+	callerIsLead := isLead(*a)
 	if status {
 		var rows []string
 		if err := run.withUsageState(func(state *usageState) error {
@@ -223,7 +223,7 @@ func (cmd command) snooze(args []string) error {
 			} else if candidate := state.AutoCandidates[key]; !candidate.At.IsZero() {
 				rows = append(rows, "provider cap unconfirmed; awaiting fresh native usage")
 			}
-			if isLead {
+			if callerIsLead {
 				for _, n := range state.Notices {
 					if n.RecipientID == a.ID && n.Submission != "" {
 						rows = append(rows, fmt.Sprintf("%s\t%s %s %s notice; native %s; inspect or clear by ID", n.ID, n.Collar, n.Window, n.Band, n.Submission))
@@ -245,7 +245,7 @@ func (cmd command) snooze(args []string) error {
 			return err
 		}
 		if len(rows) == 0 {
-			if isLead {
+			if callerIsLead {
 				_, err = fmt.Fprintln(cmd.stdout, "no wake scheduled or uncertain usage notice")
 			} else {
 				_, err = fmt.Fprintln(cmd.stdout, "no wake scheduled")
@@ -258,7 +258,7 @@ func (cmd command) snooze(args []string) error {
 	}
 	if clear {
 		if len(positionals) == 1 {
-			if !isLead {
+			if !callerIsLead {
 				return refuseError("only the lead can clear another usage intent by ID")
 			}
 			id := core.EnvelopeID(positionals[0])

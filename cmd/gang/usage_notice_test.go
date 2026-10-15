@@ -14,6 +14,7 @@ func TestUsageBandIdenticalCrossingsDeliverOnce(t *testing.T) {
 			t.Run(collar+"/"+window, func(t *testing.T) {
 				f := newStateFixture(t)
 				lead := f.add(t, "lead-id", "lead", "codex")
+				saveAgent(t, f, lead.ID, func(a *core.Agent) { a.Role = "lead" })
 				worker := f.add(t, "worker-id", "worker", collar)
 				c, err := loadCollar(collar, f.run.settings)
 				if err != nil {

@@ -403,6 +403,7 @@ func TestUsageBandWaitsForLead(t *testing.T) {
 func TestUsageNoticeReceiptSurvivesLaterDeliveryUntilAcknowledged(t *testing.T) {
 	f := newStateFixture(t)
 	lead := f.add(t, "lead-id", "lead", "codex")
+	saveAgent(t, f, lead.ID, func(a *core.Agent) { a.Role = "lead" })
 	worker := f.add(t, "worker-id", "worker", "codex")
 	c, err := loadCollar("codex", f.run.settings)
 	if err != nil {
@@ -475,6 +476,7 @@ func TestUnconfirmedUsageInputIsNotResubmittedAfterReceiptEviction(t *testing.T)
 		t.Run(tc.kind+"-"+tc.outcome, func(t *testing.T) {
 			f := newStateFixture(t)
 			a := f.add(t, "lead-id", "lead", "codex")
+			saveAgent(t, f, a.ID, func(a *core.Agent) { a.Role = "lead" })
 			f.env["GANGLINE_HITCH_ID"] = string(a.ID)
 			at := f.cmd.now()
 			from := "usage-band"
@@ -640,6 +642,7 @@ func TestSnoozeDurableDueAndCallerFallback(t *testing.T) {
 		t.Fatal(err)
 	}
 	lead := f.add(t, "new-lead", "lead", "codex")
+	saveAgent(t, f, lead.ID, func(a *core.Agent) { a.Role = "lead" })
 	f.env["GANGLINE_HITCH_ID"] = string(lead.ID)
 	now := f.cmd.now().Add(3 * time.Hour)
 	f.run.cmd.clock = func() time.Time { return now }
@@ -668,6 +671,7 @@ func TestUnconfirmedWakeRoutesToLeadAfterRecipientDisappears(t *testing.T) {
 		t.Fatal(err)
 	}
 	lead := f.add(t, "new-lead", "lead", "codex")
+	saveAgent(t, f, lead.ID, func(a *core.Agent) { a.Role = "lead" })
 	f.env["GANGLINE_HITCH_ID"] = string(lead.ID)
 	if err := f.run.flushUsageWork(); err != nil {
 		t.Fatal(err)
@@ -954,6 +958,7 @@ func TestOldRateLimitCandidateCannotUseLaterCapReading(t *testing.T) {
 func TestLeadCanInspectAndClearUncertainUsageIntents(t *testing.T) {
 	f := newStateFixture(t)
 	lead := f.add(t, "lead-id", "lead", "codex")
+	saveAgent(t, f, lead.ID, func(a *core.Agent) { a.Role = "lead" })
 	f.env["GANG_AGENT_ID"] = string(lead.ID)
 	f.env["TMUX_PANE"] = lead.Pane
 	if err := f.run.withUsageState(func(state *usageState) error {
@@ -998,6 +1003,7 @@ func TestFailedRecipientReroutesUncertainNativeInput(t *testing.T) {
 		t.Fatal(err)
 	}
 	lead := f.add(t, "new-lead", "lead", "codex")
+	saveAgent(t, f, lead.ID, func(a *core.Agent) { a.Role = "lead" })
 	f.env["GANGLINE_HITCH_ID"] = string(lead.ID)
 	if err := f.run.withUsageState(func(state *usageState) error {
 		state.Notices = []usageNotice{{ID: "notice", Token: "0123456789abcdef", RecipientID: caller.ID, RecipientName: caller.Name, Submission: "unverified", Text: "Cap warning", ResetAt: f.cmd.now().Add(time.Hour).Unix()}}
@@ -1191,6 +1197,7 @@ func TestUsageWindowKindNeedsNativeIdentification(t *testing.T) {
 func TestFailedNoticeRecipientDoesNotBlockOtherWakes(t *testing.T) {
 	f := newStateFixture(t)
 	lead := f.add(t, "lead-id", "lead", "claude")
+	saveAgent(t, f, lead.ID, func(a *core.Agent) { a.Role = "lead" })
 	worker := f.add(t, "caller-id", "worker", "codex")
 	f.env["GANGLINE_HITCH_ID"] = string(worker.ID)
 	if err := f.run.withUsageState(func(state *usageState) error {
@@ -1237,6 +1244,7 @@ func TestUsageNoticeExpiresWithItsWindow(t *testing.T) {
 	f.cmd.clock = func() time.Time { return reset }
 	f.run.cmd.clock = f.cmd.clock
 	lead := f.add(t, "lead-id", "lead", "codex")
+	saveAgent(t, f, lead.ID, func(a *core.Agent) { a.Role = "lead" })
 	f.env["GANGLINE_HITCH_ID"] = string(lead.ID)
 	if err := f.run.flushUsageWork(); err != nil {
 		t.Fatal(err)
@@ -1254,6 +1262,7 @@ func TestUsageNoticeExpiresWithItsWindow(t *testing.T) {
 func TestQueuedUsageNoticeIsCancelledAtReset(t *testing.T) {
 	f := newStateFixture(t)
 	lead := f.add(t, "lead-id", "lead", "codex")
+	saveAgent(t, f, lead.ID, func(a *core.Agent) { a.Role = "lead" })
 	f.env["GANGLINE_HITCH_ID"] = string(lead.ID)
 	c, err := loadCollar("codex", f.run.settings)
 	if err != nil {
@@ -1339,6 +1348,7 @@ func TestQueuedWakeCanBeClearedOrReplaced(t *testing.T) {
 		f.cmd.clock = func() time.Time { return due }
 		f.run.cmd = f.cmd
 		lead := f.add(t, "lead-id", "lead", "codex")
+		saveAgent(t, f, lead.ID, func(a *core.Agent) { a.Role = "lead" })
 		f.input.screen = screenWithText("› an unsent operator draft")
 		if err := f.run.flushUsageWork(); err != nil {
 			t.Fatal(err)
@@ -1492,6 +1502,7 @@ func TestQueuedWakeCanBeClearedOrReplaced(t *testing.T) {
 			t.Fatal(err)
 		}
 		lead := f.add(t, "lead-id", "lead", "codex")
+		saveAgent(t, f, lead.ID, func(a *core.Agent) { a.Role = "lead" })
 		f.env["GANG_AGENT_ID"], f.env["TMUX_PANE"] = string(lead.ID), lead.Pane
 		due := f.cmd.now().Add(2 * time.Hour)
 		f.cmd.clock = func() time.Time { return due }
