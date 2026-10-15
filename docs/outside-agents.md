@@ -21,7 +21,9 @@ gang drop toby
 `outside remove NAME` also removes a registration. Registration shares the
 team's name namespace with native agents. Rotation revokes the old credential,
 OAuth grants and event subscriptions while preserving pending mail. Removal
-deletes its mailbox and send receipts. Credential output files belong to the
+revokes the registration before deleting its mailbox and send receipts. A
+cleanup error leaves private files for team teardown; the identity stays
+revoked. Credential output files belong to the
 operator; remove them when they are no longer needed.
 
 The credential authenticates the operator on the server's OAuth consent page.
