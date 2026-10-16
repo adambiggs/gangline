@@ -79,9 +79,7 @@ func TestCommandLifecycleOnPrivateTmux(t *testing.T) {
 		"GANG_SESSION="+session, "GANG_CONFIG_DIR="+filepath.Join(root, "config"), "GANG_STATE_ROOT="+filepath.Join(root, "state"), "GANG_TMUX_SOCKET="+socket, "GANG_COLLARS="+collars, "GANG_COLLAR=acceptance",
 		"GANGLINE_ACCEPTANCE_CMD_HARNESS=1", "GANGLINE_ACCEPTANCE_TMUX=tmux", "GANGLINE_ACCEPTANCE_TMUX_SOCKET="+socket, "GANGLINE_ACCEPTANCE_LEDGER="+filepath.Join(root, "received"), "GANGLINE_ACCEPTANCE_ARGV_LEDGER="+filepath.Join(root, "argv"), "GANGLINE_ACCEPTANCE_GANG="+binary, "GANGLINE_ACCEPTANCE_PANE_RESULT="+filepath.Join(root, "pane-result"), "GANGLINE_ACCEPTANCE_PANE_READY="+paneReady, "GANGLINE_ACCEPTANCE_PANE_EXIT="+paneExit)
 	runner := tmuxRunner{binary: "tmux", socket: socket, env: environment}
-	if out, err := runner.run("new-session", "-d", "-s", session, "-n", "control"); err != nil {
-		t.Fatalf("private session: %v %s", err, out)
-	}
+	runner.newSession(t, session)
 	t.Cleanup(func() { _, _ = runner.run("kill-session", "-t", session) })
 	if out, err := runner.run("list-sessions", "-F", "#{session_name}"); err != nil || strings.TrimSpace(out) != session {
 		t.Fatalf("private server contains unexpected sessions: %q %v", out, err)

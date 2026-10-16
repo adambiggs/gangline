@@ -46,9 +46,7 @@ func TestHitchReportsNativeExitOnStartupInput(t *testing.T) {
 		"GANGLINE_ACCEPTANCE_TMUX=tmux", "GANGLINE_ACCEPTANCE_TMUX_SOCKET="+socket, "GANGLINE_ACCEPTANCE_LEDGER="+filepath.Join(root, "received"), "GANGLINE_ACCEPTANCE_ARGV_LEDGER="+filepath.Join(root, "argv"))
 	runner := tmuxRunner{binary: "tmux", socket: socket, env: environment}
 	t.Cleanup(func() { _, _ = runner.run("kill-session", "-t", "="+session) })
-	if out, err := runner.run("new-session", "-d", "-s", session, "-n", "control"); err != nil {
-		t.Fatalf("private session: %v %s", err, out)
-	}
+	runner.newSession(t, session)
 	gang := func(args ...string) (string, error) {
 		cmd := exec.Command(binary, args...)
 		cmd.Dir = repo

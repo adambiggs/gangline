@@ -85,9 +85,7 @@ exec tmux "$@"
 				"GANGLINE_ACCEPTANCE_CMD_HARNESS=1", "GANG_TMUX="+wrapper)
 			runner := tmuxRunner{binary: "tmux", socket: socket, env: environment}
 			t.Cleanup(func() { _, _ = runner.run("kill-session", "-t", "="+session) })
-			if out, err := runner.run("new-session", "-d", "-s", session, "-n", "control"); err != nil {
-				t.Fatalf("private session: %v %s", err, out)
-			}
+			runner.newSession(t, session)
 			if out, err := runner.run("set-hook", "-g", "pane-exited", "wait-for -S closed"); err != nil {
 				t.Fatalf("pane exit hook: %v %s", err, out)
 			}

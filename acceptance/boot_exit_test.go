@@ -130,9 +130,7 @@ exec tmux "$@"
 			runner := tmuxRunner{binary: "tmux", socket: socket, env: environment}
 			t.Cleanup(func() { _, _ = runner.run("kill-session", "-t", "="+session) })
 			if existing {
-				if out, err := runner.run("new-session", "-d", "-s", session, "-n", "control"); err != nil {
-					t.Fatalf("private session: %v %s", err, out)
-				}
+				runner.newSession(t, session)
 			}
 			gang := func(args ...string) (string, error) {
 				cmd := exec.Command(binary, args...)

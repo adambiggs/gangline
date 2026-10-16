@@ -65,7 +65,7 @@ func TestResumedLeadCopyModeStartupRecoveryAndSends(t *testing.T) {
 		"GANG_SESSION="+session, "GANG_CONFIG_DIR="+filepath.Join(root, "config"), "GANG_STATE_ROOT="+filepath.Join(root, "state"), "GANG_TMUX_SOCKET="+socket, "GANG_COLLARS="+collars, "GANG_COLLAR=acceptance",
 		"GANGLINE_ACCEPTANCE_RESUME_HARNESS=1", "GANGLINE_ACCEPTANCE_ROOT="+root, "GANGLINE_ACCEPTANCE_GANG="+binary)
 	runner := tmuxRunner{binary: "tmux", socket: socket, env: env}
-	mustResumeTmux(t, runner, "new-session", "-d", "-s", session, "-n", "control", "-x", "240", "-y", "60")
+	runner.newSession(t, session, "-x", "240", "-y", "60")
 	t.Cleanup(func() { _, _ = runner.run("kill-session", "-t", session) })
 	if got := strings.TrimSpace(mustResumeTmux(t, runner, "list-sessions", "-F", "#{session_name}")); got != session {
 		t.Fatalf("private server sessions = %q, want %q", got, session)

@@ -127,9 +127,7 @@ exec tmux "$@"
 			}
 			runner := tmuxRunner{binary: "tmux", socket: socket, env: append(append([]string(nil), environment...), native...)}
 			t.Cleanup(func() { _, _ = runner.run("kill-session", "-t", "="+session) })
-			if out, err := runner.run("new-session", "-d", "-s", session, "-n", "control"); err != nil {
-				t.Fatalf("private session: %v %s", err, out)
-			}
+			runner.newSession(t, session)
 			server := runner.serverPID(t)
 			// Output goes to a file, not a pipe: a tmux client left blocked by a
 			// killed gang inherits its descriptors and would hold a pipe open.

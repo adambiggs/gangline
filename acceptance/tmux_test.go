@@ -13,6 +13,7 @@ import (
 	"path/filepath"
 	"strconv"
 	"strings"
+	"sync"
 	"syscall"
 	"testing"
 	"time"
@@ -130,9 +131,7 @@ func TestTmuxCarriesOneHarnessTurn(t *testing.T) {
 		env:    withoutEnvironment(os.Environ(), "TMUX", "TMUX_PANE"),
 	}
 	const session = "gangline-acceptance"
-	if output, err := runner.run("new-session", "-d", "-s", session); err != nil {
-		t.Fatalf("create private tmux session: %v\n%s", err, output)
-	}
+	runner.newSession(t, session)
 	t.Cleanup(func() {
 		if _, err := runner.run("kill-session", "-t", session); err != nil {
 			t.Errorf("remove private tmux session: %v", err)
@@ -146,15 +145,6 @@ func TestTmuxCarriesOneHarnessTurn(t *testing.T) {
 	if strings.TrimSpace(listed) != session {
 		t.Fatalf("private tmux socket contains sessions %q, want only %q", strings.TrimSpace(listed), session)
 	}
-	pane, err := runner.run("list-panes", "-t", session, "-F", "#{pane_id}")
-	if err != nil {
-		t.Fatalf("locate private tmux pane: %v\n%s", err, pane)
-	}
-	pane = strings.TrimSpace(pane)
-	if pane == "" || strings.Contains(pane, "\n") {
-		t.Fatalf("private tmux session has unexpected panes %q", pane)
-	}
-
 	ready := "fake-ready"
 	received := "fake-received"
 	for key, value := range map[string]string{
@@ -169,9 +159,11 @@ func TestTmuxCarriesOneHarnessTurn(t *testing.T) {
 		}
 	}
 	command := "exec " + shellQuote(executable)
-	if output, err := runner.run("respawn-pane", "-k", "-t", pane, command); err != nil {
-		t.Fatalf("start fake harness: %v\n%s", err, output)
+	pane, err := runner.run("new-window", "-d", "-P", "-F", "#{pane_id}", "-t", "="+session, command)
+	if err != nil {
+		t.Fatalf("start fake harness: %v\n%s", err, pane)
 	}
+	pane = strings.TrimSpace(pane)
 	if output, err := runner.run("wait-for", ready); err != nil {
 		t.Fatalf("wait for fake harness readiness: %v\n%s", err, output)
 	}
@@ -210,6 +202,119 @@ func (runner tmuxRunner) run(arguments ...string) (string, error) {
 func (runner tmuxRunner) killServerAtCleanup(t *testing.T) {
 	t.Helper()
 	t.Cleanup(func() { _, _ = runner.run("kill-server") })
+}
+
+// processHolds keeps each control window's FIFO open for writing until this
+// process exits; a collected file would close its descriptor early.
+var processHolds struct {
+	sync.Mutex
+	files []*os.File
+}
+
+// newSession creates session on runner's private server with a first window
+// named control that ends the server when this test process exits. A process
+// that dies before its cleanup, through the go test timeout or a signal, runs
+// no t.Cleanup, so the server and every pane in it would outlive the run. The
+// control window reads a FIFO until its last writer, this process, closes it,
+// and only that EOF ends the server: a kill-session hangs the reader up instead.
+func (runner tmuxRunner) newSession(t *testing.T, session string, arguments ...string) {
+	t.Helper()
+	fifo := filepath.Join(t.TempDir(), "test-process")
+	if err := syscall.Mkfifo(fifo, 0o600); err != nil {
+		t.Fatalf("create test process FIFO: %v", err)
+	}
+	watch := "cat " + shellQuote(fifo) + " >/dev/null && exec " + shellQuote(runner.binary) + " -S " + shellQuote(runner.socket) + " -f /dev/null kill-server"
+	arguments = append(append([]string{"new-session", "-d", "-s", session, "-n", "control"}, arguments...), watch)
+	if out, err := runner.run(arguments...); err != nil {
+		t.Fatalf("private session: %v %s", err, out)
+	}
+	// The open returns once the control window has opened the FIFO to read.
+	hold, err := os.OpenFile(fifo, os.O_WRONLY, 0)
+	if err != nil {
+		t.Fatalf("hold test process FIFO: %v", err)
+	}
+	processHolds.Lock()
+	processHolds.files = append(processHolds.files, hold)
+	processHolds.Unlock()
+}
+
+const processDeathFixtureSocket = "GANGLINE_ACCEPTANCE_PROCESS_DEATH_SOCKET"
+
+// TestNewSessionFixture runs only as the child of
+// TestDeadTestProcessEndsItsTmuxServer: it starts a server, reports it, and
+// waits to be killed without running its cleanup.
+func TestNewSessionFixture(t *testing.T) {
+	socket := os.Getenv(processDeathFixtureSocket)
+	if socket == "" {
+		t.Skip("runs as the child of TestDeadTestProcessEndsItsTmuxServer")
+	}
+	runner := tmuxRunner{binary: "tmux", socket: socket, env: os.Environ()}
+	runner.newSession(t, "process-death-fixture")
+	// An agent's window keeps the session after the control window exits.
+	if out, err := runner.run("new-window", "-d", "-t", "=process-death-fixture", "cat"); err != nil {
+		t.Fatalf("agent window: %v %s", err, out)
+	}
+	fmt.Println("server ready")
+	_, _ = io.Copy(io.Discard, os.Stdin)
+	t.Fatal("fixture outlived its parent's kill")
+}
+
+func TestDeadTestProcessEndsItsTmuxServer(t *testing.T) {
+	executable, err := os.Executable()
+	if err != nil {
+		t.Fatal(err)
+	}
+	root, err := os.MkdirTemp(os.TempDir(), "process-death-")
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = os.RemoveAll(root) })
+	runner := tmuxRunner{binary: "tmux", socket: filepath.Join(root, "tmux.sock"), env: withoutEnvironment(os.Environ(), "TMUX", "TMUX_PANE")}
+	// The child's server is under test, so this test does not rely on it ending.
+	t.Cleanup(func() { _, _ = runner.run("kill-server") })
+	child := exec.Command(executable, "-test.run=^TestNewSessionFixture$")
+	// The killed child removes no temporary directory of its own.
+	child.Env = append(runner.env, processDeathFixtureSocket+"="+runner.socket, "TMPDIR="+root)
+	stdin, err := child.StdinPipe()
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = stdin.Close() })
+	stdout, err := child.StdoutPipe()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := child.Start(); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = child.Process.Kill(); _ = child.Wait() })
+	line, err := bufio.NewReader(stdout).ReadString('\n')
+	if err != nil || line != "server ready\n" {
+		t.Fatalf("fixture did not start its server: %q %v", line, err)
+	}
+	// A wait-for client returns when its server exits. Only a failing run
+	// waits out the bound, which leaves time for the cleanup.
+	bound := time.Minute
+	if deadline, ok := t.Deadline(); ok {
+		bound = min(bound, time.Until(deadline)-4*nativeExitProbe)
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), bound)
+	defer cancel()
+	ended := make(chan error, 1)
+	go func() {
+		_, err := runner.runContext(ctx, "wait-for", "gangline-acceptance-never-signalled")
+		ended <- err
+	}()
+	if err := child.Process.Signal(syscall.SIGKILL); err != nil {
+		t.Fatal(err)
+	}
+	<-ended
+	if ctx.Err() != nil {
+		t.Fatal("the killed test process's server is still running")
+	}
+	if out, err := runner.run("has-session", "-t", "=process-death-fixture"); err == nil {
+		t.Fatalf("the killed test process's server still holds its session: %s", out)
+	}
 }
 
 const cleanupFixtureSocket = "GANGLINE_ACCEPTANCE_CLEANUP_SOCKET"

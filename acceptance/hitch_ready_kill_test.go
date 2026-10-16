@@ -85,9 +85,7 @@ exec tmux "$@"
 				"GANGLINE_ACCEPTANCE_TMUX=tmux", "GANGLINE_ACCEPTANCE_TMUX_SOCKET="+socket, "GANGLINE_ACCEPTANCE_LEDGER="+filepath.Join(team, "received"), "GANGLINE_ACCEPTANCE_ARGV_LEDGER="+filepath.Join(team, "argv"))
 			runner := tmuxRunner{binary: "tmux", socket: socket, env: environment}
 			t.Cleanup(func() { _, _ = runner.run("kill-session", "-t", "="+session) })
-			if out, err := runner.run("new-session", "-d", "-s", session, "-n", "control"); err != nil {
-				t.Fatalf("private session: %v %s", err, out)
-			}
+			runner.newSession(t, session)
 			// Output goes to a file, not a pipe: a process the killed gang left
 			// behind inherits its descriptors and would hold a pipe open.
 			gang := func(env []string, args ...string) (string, *os.ProcessState, error) {
