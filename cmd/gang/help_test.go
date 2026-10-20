@@ -204,6 +204,7 @@ func TestEveryCommandFlagParserConstructs(t *testing.T) {
 		"send":       func() error { _, err := parseSend([]string{"worker", "--unlisted"}); return err },
 		"interrupt":  func() error { return cmd.interrupt(bad) },
 		"compact":    func() error { _, err := parseCompact(bad); return err },
+		"title":      func() error { _, _, err := parseTitle(bad); return err },
 		"statusline": func() error { return cmd.statusline(bad) },
 		"context":    func() error { return cmd.context(bad) },
 		"log":        func() error { _, _, err := parseLogFilter(bad, true); return err },

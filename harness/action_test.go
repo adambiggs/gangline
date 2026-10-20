@@ -128,3 +128,24 @@ func TestCodexCompactionActiveRequiresTheCompactionSpinner(t *testing.T) {
 		}
 	}
 }
+
+func TestRenderTitleAction(t *testing.T) {
+	for _, name := range []string{"claude", "codex"} {
+		t.Run(name, func(t *testing.T) {
+			c, err := EmbeddedCollar(name)
+			if err != nil {
+				t.Fatal(err)
+			}
+			a, err := RenderAction(c.Actions.Title, map[string]string{"title": "Résumé {{literal}}"})
+			if err != nil {
+				t.Fatal(err)
+			}
+			if a.Text != "/rename Résumé {{literal}}" || !a.Submit || len(a.Keys) != 0 {
+				t.Fatalf("action = %+v", a)
+			}
+			if _, err := RenderAction(c.Actions.Title, nil); err == nil {
+				t.Fatal("missing title accepted")
+			}
+		})
+	}
+}

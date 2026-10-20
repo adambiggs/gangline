@@ -51,6 +51,7 @@ collar: {
 	}
 	actions: {
 		interrupt: {keys: ["Escape"]}
+		title: {text: "/rename {{title}}", submit: true}
 		compact: {text: "/compact {{instructions}}", submit: true, active: "(?m)^[·✢✳✶✻✽*] Compacting conversation… \\([0-9]"}
 		compact_recover: [{keys: ["Escape"]}]
 		compact_clear: {keys: ["C-u"]}

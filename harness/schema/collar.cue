@@ -90,6 +90,7 @@ package harness
 	})
 	actions: close({
 		interrupt: #Action
+		title: #Action
 		compact: #Action
 		compact_recover: [...#Action]
 		compact_clear?: #Action

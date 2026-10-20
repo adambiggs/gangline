@@ -22,6 +22,7 @@ var teamSelectorCommands = map[string][]string{
 	"queue":     {},
 	"interrupt": {"worker"},
 	"compact":   {"worker"},
+	"title":     {"worker", "title"},
 	"context":   {"worker"},
 	"log":       {},
 	"limits":    {"worker"},

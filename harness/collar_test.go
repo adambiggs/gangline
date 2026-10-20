@@ -148,3 +148,22 @@ func TestCollarRejectsUnknownSessionMoveSource(t *testing.T) {
 		t.Fatal("unknown session_moves source passed validation")
 	}
 }
+
+func TestTitleActionOverlay(t *testing.T) {
+	c, err := LoadCustomCollar("codex", "custom.cue", []byte(`collar: actions: title: {text: "/name {{title}}", refusal: "^failed to set thread name:"}`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if c.Actions.Title.Text != "/name {{title}}" || !c.Actions.Title.Submit {
+		t.Fatalf("title = %+v", c.Actions.Title)
+	}
+	for _, overlay := range []string{
+		`collar: actions: title: {refusal: "("}`,
+		`collar: actions: title: {submit: "yes"}`,
+		`collar: actions: title: {unknown: true}`,
+	} {
+		if _, err := LoadCustomCollar("codex", "custom.cue", []byte(overlay)); err == nil {
+			t.Fatalf("invalid title accepted: %s", overlay)
+		}
+	}
+}

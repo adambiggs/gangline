@@ -85,7 +85,7 @@ collar: {
   provider_limits: {name: "codex-screen-limits"}
   wedge: {name: "stable-busy-screen", params: {busy: "WORKING", after: "1ns"}}
  }
- actions: {interrupt: {keys: ["Escape"]}, compact: {text: "/compact {{instructions}}", submit: true}, compact_recover: [{keys: ["Escape"]}]}
+ actions: {interrupt: {keys: ["Escape"]}, title: {text: "/rename {{title}}", submit: true}, compact: {text: "/compact {{instructions}}", submit: true}, compact_recover: [{keys: ["Escape"]}]}
  context_bands: {"*": [{name: "yellow", at: 0.75}]}
 }
 `, command)

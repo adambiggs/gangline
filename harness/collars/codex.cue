@@ -58,6 +58,7 @@ collar: {
 	}
 	actions: {
 		interrupt: {keys: ["Escape"]}
+		title: {text: "/rename {{title}}", submit: true}
 		compact: {
 			text: "/compact"
 			submit: true

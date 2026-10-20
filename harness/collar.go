@@ -92,6 +92,7 @@ type Primitives struct {
 }
 
 type Actions struct {
+	Title             Action   `json:"title"`
 	Interrupt         Action   `json:"interrupt"`
 	Compact           Action   `json:"compact"`
 	CompactRecover    []Action `json:"compact_recover"`
@@ -232,6 +233,9 @@ func mergeCollarFields(base, overlay map[string]any) {
 }
 
 func validateCollar(collar Collar) error {
+	if _, err := regexp.Compile(collar.Actions.Title.Refusal); err != nil {
+		return fmt.Errorf("title refusal pattern: %w", err)
+	}
 	if _, err := regexp.Compile(collar.Actions.Compact.Refusal); err != nil {
 		return fmt.Errorf("compact refusal pattern: %w", err)
 	}
@@ -373,6 +377,7 @@ func validateCollar(collar Collar) error {
 	for name, action := range map[string]Action{
 		"interrupt": collar.Actions.Interrupt,
 		"compact":   collar.Actions.Compact,
+		"title":     collar.Actions.Title,
 	} {
 		if action.Text == "" && len(action.Keys) == 0 && !action.Submit {
 			return fmt.Errorf("%s action is empty", name)

@@ -251,7 +251,7 @@ func (cmd command) execute(args []string) (result error) {
 	if cmd.stderr != nil {
 		cmd.stderr = operatorOutput{writer: cmd.stderr, names: cmd.presentation}
 	}
-	if len(optionsFor(name)) == 0 {
+	if len(optionsFor(name)) == 0 && name != "title" {
 		for i, argument := range arguments {
 			if argument == "--" {
 				arguments = append(append([]string{}, arguments[:i]...), arguments[i+1:]...)
@@ -288,6 +288,8 @@ func (cmd command) execute(args []string) (result error) {
 		return cmd.interrupt(arguments)
 	case "compact":
 		return cmd.compact(arguments)
+	case "title":
+		return cmd.title(arguments)
 	case "statusline":
 		return cmd.statusline(arguments)
 	case "context":
