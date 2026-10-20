@@ -75,8 +75,7 @@ Run the gate at each checkpoint:
 test/gate.sh
 ```
 
-CI runs the Go checks on Linux and macOS. Test rules are in
-[AGENTS.md](AGENTS.md).
+Test rules are in [AGENTS.md](AGENTS.md).
 
 The Astro site in `site/` renders the repository's Markdown directly. After
 changing docs or navigation, install its locked dependencies and build it:
@@ -88,6 +87,7 @@ npm run build --prefix site
 
 The install populates Git-ignored `site/node_modules/`. The build writes
 Git-ignored `site/dist/` and reports the local link and navigation checks.
+GitHub Pages publishes the site when a release is created.
 
 ## Commit
 
