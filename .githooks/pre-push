@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # SPDX-License-Identifier: Apache-2.0
 #
-# The fast push-triggered CI checks. Enable in a clone with:
+# Runs the gate on every pushed tree. Enable in a clone with:
 #   git config core.hooksPath .githooks
 set -euo pipefail
 
@@ -66,35 +66,35 @@ fi
 
 unset GIT_DIR GIT_WORK_TREE GIT_INDEX_FILE GIT_OBJECT_DIRECTORY GIT_COMMON_DIR GIT_PREFIX
 
-echo "pre-push: checking pushed Go trees; run test/gate.sh for distribution and acceptance scenarios." >&2
+echo "pre-push: running the gate on pushed trees." >&2
 
 while read -r local_ref local_sha _remote_ref _remote_sha \
       || [ -n "${local_sha:-}" ]; do
   case "${local_sha:-0}" in *[!0]*) ;; *) continue ;; esac
 
-  # Lint what is being PUSHED, not what is lying in the working tree. Those are
-  # different trees whenever anything is uncommitted, and linting the wrong one
+  # Check what is being PUSHED, not what is lying in the working tree. Those are
+  # different trees whenever anything is uncommitted, and checking the wrong one
   # gives both false answers: a red hook over work-in-progress nobody is
   # sending, or a green one over a commit nobody read.
   n_ref=$((n_ref + 1))
   work="$tmp/tree-$n_ref"
   ( unset GIT_DIR GIT_WORK_TREE GIT_INDEX_FILE GIT_OBJECT_DIRECTORY GIT_COMMON_DIR GIT_PREFIX
     git worktree add --detach --quiet "$work" "$local_sha" ) || {
-    echo "pre-push: cannot check out $local_sha into a worktree, so nothing was linted" >&2
+    echo "pre-push: cannot check out $local_sha into a worktree, so nothing was checked" >&2
     fail=1; continue
   }
-  if [ -x "$work/test/go.sh" ]; then
-    echo "pre-push: running pushed-tree Go checks for $local_ref." >&2
+  if [ -x "$work/test/gate.sh" ]; then
+    echo "pre-push: running the gate for $local_ref." >&2
     ( unset GIT_DIR GIT_WORK_TREE GIT_INDEX_FILE GIT_OBJECT_DIRECTORY GIT_COMMON_DIR GIT_PREFIX
-      cd "$work" && ./test/go.sh --push ) || fail=1
+      cd "$work" && ./test/gate.sh ) || fail=1
   else
-    echo "pre-push: $local_sha does not carry the executable Go gate" >&2
+    echo "pre-push: $local_sha does not carry the executable gate" >&2
     fail=1
   fi
   remove_tree "$work"
 done < "$tmp/stdin"
 
 if [ "$fail" -ne 0 ]; then
-  echo "pre-push: refusing — Go checks failed." >&2
+  echo "pre-push: refusing — the gate did not pass." >&2
   exit 1
 fi

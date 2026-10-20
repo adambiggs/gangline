@@ -11,7 +11,7 @@ import (
 	"testing"
 )
 
-// prePushFixture commits gate as test/go.sh in a fresh repository whose
+// prePushFixture commits gate as test/gate.sh in a fresh repository whose
 // global configuration and temporary directory both live under the test.
 func prePushFixture(t *testing.T, gate string) (root, sha string, env []string) {
 	t.Helper()
@@ -53,10 +53,10 @@ func prePushFixture(t *testing.T, gate string) (root, sha string, env []string) 
 	if err := os.Mkdir(filepath.Join(root, "test"), 0700); err != nil {
 		t.Fatal(err)
 	}
-	if err := os.WriteFile(filepath.Join(root, "test", "go.sh"), []byte("#!/bin/sh\n# SPDX-License-Identifier: Apache-2.0\nset -e\n"+gate), 0700); err != nil {
+	if err := os.WriteFile(filepath.Join(root, "test", "gate.sh"), []byte("#!/bin/sh\n# SPDX-License-Identifier: Apache-2.0\nset -e\n"+gate), 0700); err != nil {
 		t.Fatal(err)
 	}
-	git("add", "test/go.sh")
+	git("add", "test/gate.sh")
 	git("-c", "user.name=Fixture", "-c", "user.email=fixture@example.invalid", "commit", "--quiet", "-m", "fixture gate")
 	return root, git("rev-parse", "HEAD"), env
 }

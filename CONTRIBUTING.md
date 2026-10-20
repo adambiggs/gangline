@@ -35,9 +35,9 @@ test/gate.sh
 ```
 
 The pre-push hook runs your global pre-push hook first, if you have one, then
-checks the pushed Go trees with `test/go.sh --push`. This runs formatting, vet,
-sum-type, package-boundary, and unit checks. The full `test/gate.sh` also runs
-distribution and private tmux acceptance scenarios. On macOS, run the gate
+runs `test/gate.sh` on each pushed tree. The gate runs formatting, vet,
+sum-type, package-boundary, unit, distribution, and private tmux acceptance
+checks, and prints each part's wall time. On macOS, run the gate
 where it can inspect host processes and create private tmux sessions; a
 restricted sandbox can produce `operation not permitted` failures. The live
 provider checks launch Claude Code and Codex when their commands and
