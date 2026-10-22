@@ -229,7 +229,7 @@ const description = 'Give a lead a task, let it recruit Claude Code and Codex te
           <a href="#demo">Demo</a>
           <a href="#start">Start</a>
           <a href="#surface">One team</a>
-          <a href="#unattended">Runs without you</a>
+          <a href="#unattended">Keep the work going</a>
         </nav>
       </div>
       <div class="links">
@@ -315,21 +315,15 @@ const description = 'Give a lead a task, let it recruit Claude Code and Codex te
       </section>
 
       <section id="unattended" class="sec">
-        <h2 class="h2">Runs without you</h2>
+        <h2 class="h2">Keep the work going</h2>
+        <p class="soft">Long-running work can span context windows, usage
+        allowances, and changes to the team.</p>
         <ul class="items">
           <li>
             <h3>Compacts at a clean stopping point</h3>
-            <p>Normally, a harness compacts an agent’s context only when the
-            window is nearly full, landing wherever the agent happens to be
-            mid-task. The agent’s effectiveness can degrade well before the
-            context window fills. A million-token window doesn’t make all
-            million tokens equally useful. With <code>gang compact</code>, the
-            agent compacts when it chooses: it saves its own note to a file and
-            runs the command; Gangline waits for the harness to go idle, runs
-            its compaction, confirms it, and submits the note ahead of any
-            queued input. Context bands you{' '}
-            <a href="docs/reference.html#harnesses-and-platforms">set per model</a>{' '}
-            tell the agent when it is time.{' '}
+            <p>Gangline gives agents a <code>gang compact</code> command so they
+            can save their work, compact at a clean stopping point, and resume
+            from their own note.{' '}
             <a href="docs/guides.html#compact-and-resume">Read more</a></p>
           </li>
           <li>
