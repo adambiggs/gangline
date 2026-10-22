@@ -314,7 +314,7 @@ func rehitchHarness() error {
 		input.Reset()
 		switch text {
 		case "__REHITCH__":
-			args := []string{"rehitch", "--upgrade", "--resume", "resume saved work"}
+			args := []string{"rehitch", "--upgrade", "--note", "resume saved work"}
 			cmd := exec.Command(os.Getenv("GANGLINE_ACCEPTANCE_GANG"), args...)
 			if out, err := cmd.CombinedOutput(); err != nil {
 				if !strings.Contains(string(out), "harness update failed; restart was not queued") {

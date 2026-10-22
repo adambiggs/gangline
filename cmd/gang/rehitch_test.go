@@ -63,7 +63,7 @@ func TestRehitchQueuesOnlyForAuthenticatedSelf(t *testing.T) {
 				t.Fatal(err)
 			}
 			_ = l.Close()
-			err = f.cmd.rehitch([]string{"--resume", "continue saved work"})
+			err = f.cmd.rehitch([]string{"--note", "continue saved work"})
 			got, readErr := p.Read()
 			if readErr != nil {
 				t.Fatal(readErr)
@@ -80,7 +80,7 @@ func TestRehitchQueuesOnlyForAuthenticatedSelf(t *testing.T) {
 }
 
 func TestRehitchRequiresContinuation(t *testing.T) {
-	for _, args := range [][]string{nil, {"worker", "--resume", "work"}, {"--resume", " "}, {"--unknown"}} {
+	for _, args := range [][]string{nil, {"worker", "--note", "work"}, {"--note", " "}, {"--unknown"}} {
 		f := newStateFixture(t)
 		if err := f.cmd.rehitch(args); errorStatus(err) != exitUsage {
 			t.Fatalf("%v: %v", args, err)

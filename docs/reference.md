@@ -22,14 +22,14 @@ agents in the selected team.
 | `gang up [NAME] [AGENT OPTIONS]` | Start the selected team with its lead agent named `NAME` (default `lead`), then attach when stdin is a terminal. |
 | `gang hitch NAME [OPTIONS]` | Launch an agent and deliver startup instructions and any task. |
 | `gang hitch NAME --recover` | Recover retained startup from its visible draft or a lone collapsed paste, or resume a queued startup its boot deadline failed once the pane shows an idle composer or a recognized prompt. |
-| `gang rehitch --resume TEXT [--upgrade]` | Restart your harness at the next confirmed idle boundary and resume its native conversation. |
+| `gang rehitch --note TEXT [--upgrade]` | Restart your harness at the next confirmed idle boundary and resume its native conversation. |
 | `gang rename OLD NEW` | Change a registered name and its pane's display title. |
 | `gang drop NAME` | Stop an agent and fail its pending messages. An unregistered `NAME` is refused. |
 | `gang down [-y, --yes]` | Confirm on a terminal (`[y/N]`, default no), then drop the selected team's agents and delete its runtime state and history. Before dropping any agent, it appends who ran it to `downs.jsonl` in the state root. Use `--yes` without a terminal. |
 | `gang attach [NAME]` | Attach to the named agent's pane in the selected team. Without `NAME`, select the lead, or the first registered agent if there is no lead. |
 | `gang teams` | List teams in the configured state root. |
 
-Save unfinished work first and name it in `--resume TEXT`. The harness
+Save unfinished work first and name it in `--note TEXT`. The harness
 executable is resolved from PATH; use `--upgrade` to update it before requesting
 a restart. `--upgrade` runs the collar's harness update command first; an update
 failure leaves the current harness running.

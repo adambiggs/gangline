@@ -13,15 +13,15 @@ import (
 )
 
 func (cmd command) rehitch(args []string) (result error) {
-	var resume string
+	var note string
 	var upgrade bool
-	flags := boundFlagSet("rehitch", map[string]any{"resume": &resume, "upgrade": &upgrade})
+	flags := boundFlagSet("rehitch", map[string]any{"note": &note, "upgrade": &upgrade})
 	positionals, err := parseOptions(flags, args)
 	if err != nil {
 		return usageError("rehitch: %v", err)
 	}
-	if len(positionals) != 0 || strings.TrimSpace(resume) == "" {
-		return usageError("rehitch: expected --resume TEXT")
+	if len(positionals) != 0 || strings.TrimSpace(note) == "" {
+		return usageError("rehitch: expected --note TEXT")
 	}
 	run, err := cmd.runtime()
 	if err != nil {
@@ -64,7 +64,7 @@ func (cmd command) rehitch(args []string) (result error) {
 	if _, err := exec.LookPath(c.Launch.Command); err != nil {
 		return refuseError("rehitch: find harness: %s", err)
 	}
-	if err := refusePasteHazard(c, resume); err != nil {
+	if err := refusePasteHazard(c, note); err != nil {
 		return err
 	}
 	if upgrade {
@@ -82,7 +82,7 @@ func (cmd command) rehitch(args []string) (result error) {
 			return fmt.Errorf("rehitch: harness update failed; restart was not queued: %w", err)
 		}
 	}
-	a.Rehitch = &core.Message{Text: resume}
+	a.Rehitch = &core.Message{Text: note}
 	if err := l.Save(a); err != nil {
 		return err
 	}
