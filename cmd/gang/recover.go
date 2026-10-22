@@ -26,6 +26,9 @@ func (run *runtime) tickAgent(id core.HitchID, notice hookNotice, wait bool) (re
 		if closeErr != nil {
 			result = errors.Join(result, closeErr)
 		}
+		if result == nil {
+			result = run.rehitchPending(id)
+		}
 	}()
 	if err := run.checkDeadlines(l, &a); err != nil {
 		return err
@@ -267,6 +270,9 @@ func (run *runtime) tickAgent(id core.HitchID, notice hookNotice, wait bool) (re
 	}
 	if err := run.mark(a); err != nil {
 		return err
+	}
+	if rehitchReady(a) {
+		return nil
 	}
 	_, err = run.drainFrom(l, a, "")
 	return err

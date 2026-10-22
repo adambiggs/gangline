@@ -498,7 +498,7 @@ func (run *runtime) drainLocked(l *store.LockedAgent, a *core.Agent, target core
 	if err := run.continueCompaction(l, a); err != nil {
 		return result, nil, err
 	}
-	if a.Status != core.Active {
+	if a.Status != core.Active || rehitchReady(*a) {
 		pending, err := l.Paths.ListNew()
 		return result, pending, err
 	}
@@ -513,7 +513,7 @@ func (run *runtime) drainLocked(l *store.LockedAgent, a *core.Agent, target core
 		// The continuation was reserved ahead of later native input when
 		// compaction started, including messages with the same queue timestamp.
 		for i := range pending {
-			if completedResume(*a, pending[i]) {
+			if completedResume(*a, pending[i]) || isStartupEnvelope(pending[i]) {
 				next = &pending[i]
 				break
 			}

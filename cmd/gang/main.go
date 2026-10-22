@@ -270,6 +270,8 @@ func (cmd command) execute(args []string) (result error) {
 		return cmd.up(arguments)
 	case "hitch":
 		return cmd.hitch(arguments)
+	case "rehitch":
+		return cmd.rehitch(arguments)
 	case "rename":
 		return cmd.rename(arguments)
 	case "outside":

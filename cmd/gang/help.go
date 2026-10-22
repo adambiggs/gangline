@@ -31,6 +31,7 @@ Start and end a team:
   up        start a team and join it
   outside   manage authenticated mailbox agents
   hitch     add an agent
+  rehitch   restart your harness and continue
   rename    change an agent's registered name
   drop      remove one agent
   down      end the team
@@ -88,6 +89,7 @@ var commandUsage = map[string]string{
 	"up":         "usage: gang up [NAME] [HITCH OPTIONS] [--team TEAM]\n",
 	"hitch":      "usage: gang hitch NAME [-c COLLAR] [-d DIR] [-m MODEL] [-e EFFORT]\n       [-t TASK] [-r ROLE] [--resume SESSION] [--stdin]\n       [--split NAME] [--vertical] [--team TEAM]\n       gang hitch NAME --recover [--team TEAM]\n",
 	"title":      "usage: gang title [NAME] TEXT [--team TEAM]\n",
+	"rehitch":    "usage: gang rehitch --resume TEXT [--upgrade] [--team TEAM]\n",
 	"rename":     "usage: gang rename OLD NEW [--team TEAM]\n",
 	"send":       "usage: gang send NAME [--from SENDER | --as SENDER] [--credential FILE]\n       [--live-only] [--supersede] [--at DURATION|HH:MM|RFC3339]\n       [--team TEAM] [BODY]\n       gang send NAME --clear [--team TEAM]\n       gang send HOST:NAME [--as SENDER] [--credential FILE]\n       [--team TEAM] [BODY]\n       Without BODY, read stdin. Use -- before BODY when it begins with -.\n",
 	"queue":      "usage: gang queue [NAME] [--json] [--team TEAM]\n",
@@ -155,6 +157,7 @@ var commandOptions = map[string][]optionSpec{
 		{"split", "NAME", "split the named agent's pane side by side"},
 		{"vertical", "", "split top/bottom; requires --split NAME"},
 	},
+	"rehitch": {{"resume", "TEXT", "saved-work continuation"}, {"upgrade", "", "update the harness before queuing its restart"}},
 	"send": {
 		{"from", "SENDER", "outside sender identity"},
 		{"as", "SENDER", "registered sender identity"},
@@ -236,7 +239,7 @@ func optionsFor(name string) []optionSpec {
 // teamCommands act on one team and accept teamOption. GANG_SESSION selects
 // the team when the option is absent.
 var teamCommands = map[string]bool{
-	"sender": true, "outside": true, "up": true, "hitch": true, "rename": true, "send": true, "queue": true,
+	"sender": true, "outside": true, "up": true, "hitch": true, "rehitch": true, "rename": true, "send": true, "queue": true,
 	"interrupt": true, "compact": true, "title": true, "context": true, "log": true,
 	"limits": true, "snooze": true, "wait": true, "curfew": true,
 	"status": true, "tick": true, "capture": true, "whoami": true,
@@ -302,6 +305,7 @@ var commandDescription = map[string]string{
 	"up":         "NAME names the lead agent (default lead). Start the selected team and attach,\nor use --recover to recover that existing agent's startup.\n",
 	"hitch":      "NAME is an agent's registered name in the selected team.\nLaunch in a new window by default. --split NAME places a sibling beside\nthat agent; --vertical splits top/bottom. Use --recover for retained startup.\n",
 	"title":      "NAME is a registered agent; omit it for the current pane's agent.\nQuote TEXT as one argument. Submit the native title command when idle.\n",
+	"rehitch":    "Restart your harness at the next confirmed idle boundary and resume its\nnative conversation.\nSave unfinished work first and name it in --resume TEXT.\nThe harness executable is resolved from PATH; use --upgrade to update it\nbefore requesting a restart. --upgrade runs the collar's harness update\ncommand first; an update failure leaves the current harness running.\n",
 	"rename":     "OLD and NEW are registered agent names in the selected team.\nRename the agent without restarting its harness.\n",
 	"sender":     "Add or remove a sender from the operator shell or active lead pane.\nList registered names. Same-user processes can read the keys.\n",
 	"send":       "NAME is the recipient agent's registered name in the selected team.\nSend BODY or read stdin. An exact native hook proves delivery; a native\nqueue receipt proves acceptance. Otherwise input stays queued or unverified.\nHOST:NAME forwards this sender to NAME on GANG_PEERS host HOST over ssh and\nprints that host's receipt; a lost reply is unknown, so do not resend it.\n",

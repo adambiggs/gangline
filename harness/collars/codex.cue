@@ -3,6 +3,7 @@ package collars
 collar: {
 	name: "codex"
 	launch: {
+		upgrade_args: ["update"]
 		command: "codex"
 		args: ["-c", "check_for_update_on_startup=false"]
 		resume_args: ["resume", "{{session_id}}", "-c", "check_for_update_on_startup=false", "-c", "tui.resume_cwd=\"current\""]

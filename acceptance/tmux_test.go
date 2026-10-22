@@ -30,6 +30,9 @@ func TestMain(m *testing.M) {
 	if channel := os.Getenv("GANGLINE_ACCEPTANCE_BOUNDED_WAIT"); channel != "" {
 		os.Exit(runBoundedWait(os.Args[1], channel))
 	}
+	if os.Getenv("GANGLINE_ACCEPTANCE_REHITCH_HARNESS") == "1" {
+		os.Exit(runRehitchHarness())
+	}
 	if os.Getenv("GANGLINE_ACCEPTANCE_RESUME_HARNESS") == "1" {
 		os.Exit(runResumeHarness())
 	}

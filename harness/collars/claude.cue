@@ -3,6 +3,7 @@ package collars
 collar: {
 	name: "claude"
 	launch: {
+		upgrade_args: ["update"]
 		command: "claude"
 		args: []
 		resume_args: ["--resume", "{{session_id}}"]

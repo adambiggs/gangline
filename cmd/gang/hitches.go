@@ -31,7 +31,11 @@ func (cmd command) hitch(args []string) error {
 	return cmd.hitchWithStaleClaim(args, false)
 }
 
-func (cmd command) hitchWithStaleClaim(args []string, supersede bool) (result error) {
+func (cmd command) hitchWithStaleClaim(args []string, supersede bool) error {
+	return cmd.hitchReplacing(args, supersede, nil)
+}
+
+func (cmd command) hitchReplacing(args []string, supersede bool, previous *core.Agent) (result error) {
 	run, err := cmd.runtime()
 	if err != nil {
 		return err
@@ -119,16 +123,20 @@ func (cmd command) hitchWithStaleClaim(args []string, supersede bool) (result er
 	if err != nil {
 		return err
 	}
-	sender, err := run.observedSender()
-	if err != nil {
-		return err
-	}
-	hitcher, err := run.hitcherID()
-	if err != nil {
-		return err
-	}
-	if sender.Kind == "" {
-		sender = core.Sender{Kind: core.SenderGangline, Name: "hitch"}
+	sender := core.Sender{Kind: core.SenderGangline, Name: "hitch"}
+	var hitcher core.HitchID
+	if previous == nil {
+		sender, err = run.observedSender()
+		if err != nil {
+			return err
+		}
+		hitcher, err = run.hitcherID()
+		if err != nil {
+			return err
+		}
+		if sender.Kind == "" {
+			sender = core.Sender{Kind: core.SenderGangline, Name: "hitch"}
+		}
 	}
 	rolePrompt, message := startupMessages(o.Name, brief, assignment, c.Options.RolePromptFile != nil)
 	purpose := "startup"
@@ -139,6 +147,14 @@ func (cmd command) hitchWithStaleClaim(args []string, supersede bool) (result er
 	}
 	now := cmd.now()
 	a := core.Agent{ID: core.HitchID(id), Name: core.AgentName(o.Name), Collar: o.Collar, Role: o.Role, HitchedBy: hitcher, Directory: dir, Status: core.Starting, Activity: core.Unknown, CreatedAt: now, ChangedAt: now, BootDeadline: now.Add(bootTimeout), ContextBandThresholds: bandThresholds}
+	a.LaunchModel, a.LaunchEffort = o.Model, o.Effort
+	if previous != nil {
+		a.ID, a.HitchedBy, a.CreatedAt = previous.ID, previous.HitchedBy, previous.CreatedAt
+		a.ContextBandThresholds = previous.ContextBandThresholds
+		a.LastAccepted, a.LastDelivered, a.LastFailed = previous.LastAccepted, previous.LastDelivered, previous.LastFailed
+		sender = core.Sender{Kind: core.SenderAgent, Name: a.Name, HitchID: a.ID}
+	}
+	run.hitching = a.ID
 	a.Native.SessionID = o.Resume
 	e := core.Envelope{ID: core.EnvelopeID(eid), Token: token, Recipient: a.ID, To: a.Name, From: sender, Purpose: purpose, Message: core.Message{Text: message}, CreatedAt: now}
 	if c.Options.RolePromptFile == nil {
@@ -267,7 +283,12 @@ func (cmd command) hitchWithStaleClaim(args []string, supersede bool) (result er
 	// client mid-command.
 	ctx, stopInterrupts := interruptible(boot)
 	defer stopInterrupts()
-	l, err := run.team.CreateAgent(a)
+	var l *store.LockedAgent
+	if previous == nil {
+		l, err = run.team.CreateAgent(a)
+	} else {
+		l, err = run.prepareRehitch(*previous, &a)
+	}
 	if errors.Is(err, store.ErrNameTaken) && supersede && !exists {
 		l, err = run.supersedeStoppedClaim(boot, b, a)
 	}
@@ -281,6 +302,12 @@ func (cmd command) hitchWithStaleClaim(args []string, supersede bool) (result er
 		return err
 	}
 	defer func() { result = errors.Join(result, run.release(l)) }()
+	if previous != nil {
+		exists, err = b.SessionExists(boot)
+		if err != nil {
+			return errors.Join(err, run.apply(l, &a, core.Event{Type: "hitch_failed", Reason: err.Error()}))
+		}
+	}
 	if err := run.record(a, core.Event{Type: "hitch_claimed"}); err != nil {
 		return err
 	}
@@ -314,7 +341,7 @@ func (cmd command) hitchWithStaleClaim(args []string, supersede bool) (result er
 		}
 		return err, false
 	}
-	for k, v := range map[string]string{"GANG_SESSION": run.settings.Session, "GANG_STATE_ROOT": run.settings.StateRoot, "GANG_COLLAR": o.Collar, "GANG_CONFIG_DIR": run.settings.ConfigDir, "GANG_AGENT_ID": id, "GANGLINE_HITCH_ID": id, collarCheckFIFOEnvironment: ""} {
+	for k, v := range map[string]string{"GANG_SESSION": run.settings.Session, "GANG_STATE_ROOT": run.settings.StateRoot, "GANG_COLLAR": o.Collar, "GANG_CONFIG_DIR": run.settings.ConfigDir, "GANG_AGENT_ID": string(a.ID), "GANGLINE_HITCH_ID": string(a.ID), collarCheckFIFOEnvironment: ""} {
 		spec.Env[k] = v
 	}
 	if run.settings.Socket != "" {
@@ -781,114 +808,8 @@ func (run *runtime) dropAgent(id core.HitchID, wait bool, reason string) error {
 	if err != nil {
 		return err
 	}
-	registry, err := run.registry()
-	if err != nil {
+	if err := run.endNative(l, &a); err != nil {
 		return err
-	}
-	visible := false
-	replaced := false
-	exited := false
-	if a.Pane != "" {
-		if a.Registration.Generation == "" || a.Registration.Session == "" || a.Registration.TokenHash == "" {
-			return refuseError("refuse teardown: incomplete pane registration; inspect retained state at %s", p.State)
-		}
-		present, checkErr := registry.CheckPane(context.Background(), paneIdentity(a))
-		if errors.Is(checkErr, tmux.ErrPaneReplaced) {
-			replaced = true
-			present = false
-		} else if checkErr != nil {
-			return checkErr
-		}
-		if present {
-			visible, err = registry.ProcessVisibility(context.Background(), substrate.PaneID(a.Pane))
-		}
-		// A pane held from boot outlives its native process, which leaves
-		// nothing to tear down but the pane.
-		if exit := (*substrate.ExitedError)(nil); errors.As(err, &exit) {
-			exited, err = true, nil
-		}
-		if err != nil {
-			return err
-		}
-	}
-	// A command dropping its own agent ends its own pane on every teardown
-	// path, including those that never acquire the pane's processes.
-	if !replaced && run.cmd.dropEndsOwnPane(a) {
-		endOwnPane()
-	}
-	// Cleanup is skipped when gang cannot see into a registered pane, open or
-	// closed, or read its recorded process. A claim without a registration
-	// either started no native process or saw it exit at boot, and leaves
-	// nothing to clean up.
-	if !visible && !exited && (a.Registration.Generation != "" || a.Process.PID != 0) && !tmux.CanReadIdentity(nativeIdentity(a.Process)) {
-		if err := run.noteProcessUnavailable(a); err != nil {
-			return err
-		}
-		if _, err := fmt.Fprintln(run.cmd.stderr, "warning: host process visibility unavailable; detached-descendant cleanup skipped"); err != nil {
-			return err
-		}
-	}
-	if visible && a.Process.PID == 0 && a.Registration.Generation != "" {
-		identity, err := registry.Identity(context.Background(), substrate.PaneID(a.Pane))
-		// A native process that exited since its visibility was read records
-		// no identity and leaves nothing to tear down but the pane. An unheld
-		// pane closes with it, so tmux answers the read for a missing pane.
-		if err == nil {
-			a.Process = storedIdentity(identity)
-		} else if !errors.As(err, new(*substrate.ExitedError)) {
-			present, checkErr := registry.CheckPane(context.Background(), paneIdentity(a))
-			if errors.Is(checkErr, tmux.ErrPaneReplaced) {
-				replaced = true
-			} else if checkErr != nil {
-				return checkErr
-			} else if present {
-				return err
-			}
-		}
-	}
-	nativeVisible := visible || tmux.CanReadIdentity(nativeIdentity(a.Process))
-	if nativeVisible && a.Process.PID != 0 {
-		var owned *tmux.Owned
-		if len(a.Teardown) > 0 {
-			ids := make([]tmux.Identity, len(a.Teardown))
-			for i, p := range a.Teardown {
-				ids[i] = nativeIdentity(p)
-			}
-			owned, err = tmux.AcquireRecorded(ids)
-		} else if !visible {
-			owned, err = tmux.AcquireRecorded([]tmux.Identity{nativeIdentity(a.Process)})
-		} else {
-			owned, err = registry.AcquireTree(context.Background(), substrate.PaneID(a.Pane), nativeIdentity(a.Process))
-			if err == nil {
-				for _, p := range owned.Identities() {
-					a.Teardown = append(a.Teardown, storedIdentity(p))
-				}
-				err = l.Save(a)
-			}
-		}
-		if err != nil {
-			if owned != nil {
-				_ = owned.Close()
-			}
-			return err
-		}
-		defer owned.Close()
-		// Teardown has its own fresh budget. Stored operation deadlines cannot stop it.
-		ctx, cancel := context.WithTimeout(context.Background(), operationTimeout)
-		defer cancel()
-		if err := owned.Stop(ctx); err != nil {
-			return err
-		}
-	}
-	if a.Pane != "" && !replaced {
-		if nativeVisible && a.Process.PID != 0 {
-			err = registry.RemoveRegisteredNativePane(context.Background(), paneIdentity(a), nativeIdentity(a.Process))
-		} else {
-			err = registry.RemoveRegisteredPane(context.Background(), paneIdentity(a))
-		}
-		if err != nil {
-			return err
-		}
 	}
 	if a.Status != core.Dropping {
 		if err := l.CleanResult(&a); err != nil {
@@ -969,4 +890,119 @@ var ownPaneEnding atomic.Bool
 func endOwnPane() {
 	signal.Ignore(syscall.SIGHUP, syscall.SIGPIPE)
 	ownPaneEnding.Store(true)
+}
+
+// endNative removes only the registered native process tree and pane.
+func (run *runtime) endNative(l *store.LockedAgent, a *core.Agent) error {
+	p := l.Paths
+	registry, err := run.registry()
+	if err != nil {
+		return err
+	}
+	visible := false
+	replaced := false
+	exited := false
+	if a.Pane != "" {
+		if a.Registration.Generation == "" || a.Registration.Session == "" || a.Registration.TokenHash == "" {
+			return refuseError("refuse teardown: incomplete pane registration; inspect retained state at %s", p.State)
+		}
+		present, checkErr := registry.CheckPane(context.Background(), paneIdentity(*a))
+		if errors.Is(checkErr, tmux.ErrPaneReplaced) {
+			replaced = true
+			present = false
+		} else if checkErr != nil {
+			return checkErr
+		}
+		if present {
+			visible, err = registry.ProcessVisibility(context.Background(), substrate.PaneID(a.Pane))
+		}
+		// A pane held from boot outlives its native process, which leaves
+		// nothing to tear down but the pane.
+		if exit := (*substrate.ExitedError)(nil); errors.As(err, &exit) {
+			exited, err = true, nil
+		}
+		if err != nil {
+			return err
+		}
+	}
+	// A command dropping its own agent ends its own pane on every teardown
+	// path, including those that never acquire the pane's processes.
+	if !replaced && run.cmd.dropEndsOwnPane(*a) {
+		endOwnPane()
+	}
+	// Cleanup is skipped when gang cannot see into a registered pane, open or
+	// closed, or read its recorded process. A claim without a registration
+	// either started no native process or saw it exit at boot, and leaves
+	// nothing to clean up.
+	if !visible && !exited && (a.Registration.Generation != "" || a.Process.PID != 0) && !tmux.CanReadIdentity(nativeIdentity(a.Process)) {
+		if err := run.noteProcessUnavailable(*a); err != nil {
+			return err
+		}
+		if _, err := fmt.Fprintln(run.cmd.stderr, "warning: host process visibility unavailable; detached-descendant cleanup skipped"); err != nil {
+			return err
+		}
+	}
+	if visible && a.Process.PID == 0 && a.Registration.Generation != "" {
+		identity, err := registry.Identity(context.Background(), substrate.PaneID(a.Pane))
+		// A native process that exited since its visibility was read records
+		// no identity and leaves nothing to tear down but the pane. An unheld
+		// pane closes with it, so tmux answers the read for a missing pane.
+		if err == nil {
+			a.Process = storedIdentity(identity)
+		} else if !errors.As(err, new(*substrate.ExitedError)) {
+			present, checkErr := registry.CheckPane(context.Background(), paneIdentity(*a))
+			if errors.Is(checkErr, tmux.ErrPaneReplaced) {
+				replaced = true
+			} else if checkErr != nil {
+				return checkErr
+			} else if present {
+				return err
+			}
+		}
+	}
+	nativeVisible := visible || tmux.CanReadIdentity(nativeIdentity(a.Process))
+	if nativeVisible && a.Process.PID != 0 {
+		var owned *tmux.Owned
+		if len(a.Teardown) > 0 {
+			ids := make([]tmux.Identity, len(a.Teardown))
+			for i, p := range a.Teardown {
+				ids[i] = nativeIdentity(p)
+			}
+			owned, err = tmux.AcquireRecorded(ids)
+		} else if !visible {
+			owned, err = tmux.AcquireRecorded([]tmux.Identity{nativeIdentity(a.Process)})
+		} else {
+			owned, err = registry.AcquireTree(context.Background(), substrate.PaneID(a.Pane), nativeIdentity(a.Process))
+			if err == nil {
+				for _, p := range owned.Identities() {
+					a.Teardown = append(a.Teardown, storedIdentity(p))
+				}
+				err = l.Save(*a)
+			}
+		}
+		if err != nil {
+			if owned != nil {
+				_ = owned.Close()
+			}
+			return err
+		}
+		defer owned.Close()
+		// Teardown has its own fresh budget. Stored operation deadlines cannot stop it.
+		ctx, cancel := context.WithTimeout(context.Background(), operationTimeout)
+		defer cancel()
+		if err := owned.Stop(ctx); err != nil {
+			return err
+		}
+	}
+	if a.Pane != "" && !replaced {
+		if nativeVisible && a.Process.PID != 0 {
+			err = registry.RemoveRegisteredNativePane(context.Background(), paneIdentity(*a), nativeIdentity(a.Process))
+		} else {
+			err = registry.RemoveRegisteredPane(context.Background(), paneIdentity(*a))
+		}
+		if err != nil {
+			return err
+		}
+	}
+	return nil
 }

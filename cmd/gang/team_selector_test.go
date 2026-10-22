@@ -13,6 +13,7 @@ import (
 // teamSelectorCommands lists every command that acts on one team, with
 // operands that its own parser accepts.
 var teamSelectorCommands = map[string][]string{
+	"rehitch":   {"--resume", "continue"},
 	"sender":    {"list"},
 	"outside":   {"remove", "worker"},
 	"up":        {"lead"},

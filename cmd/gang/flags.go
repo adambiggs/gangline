@@ -488,7 +488,7 @@ func validateAgentName(name string) error {
 // one, in any letter case, would send messages that read as theirs. Peer and
 // self-declared labels carry a prefix, so only a name an agent takes is
 // checked.
-var reservedAgentNames = []string{"capacity-recovery", "compact", "context-band", "contract", "curfew", "delivery", "doctrine", "gangline", "hitch", "interrupt", "operator", "role", "snooze", "startup", "usage-band"}
+var reservedAgentNames = []string{"capacity-recovery", "compact", "context-band", "contract", "curfew", "delivery", "doctrine", "gangline", "hitch", "interrupt", "operator", "rehitch", "role", "snooze", "startup", "usage-band"}
 
 // validateNewAgentName checks a name an agent is about to take.
 func validateNewAgentName(name string) error {

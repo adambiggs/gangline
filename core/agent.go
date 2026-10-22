@@ -37,6 +37,9 @@ type Agent struct {
 	ID                    HitchID                `json:"id"`
 	Name                  AgentName              `json:"name"`
 	Collar                string                 `json:"collar"`
+	LaunchModel           string                 `json:"launch_model,omitempty"`
+	LaunchEffort          string                 `json:"launch_effort,omitempty"`
+	Rehitch               *Message               `json:"rehitch,omitempty"`
 	Role                  string                 `json:"role,omitempty"`
 	HitchedBy             HitchID                `json:"hitched_by,omitempty"`
 	Directory             string                 `json:"directory"`

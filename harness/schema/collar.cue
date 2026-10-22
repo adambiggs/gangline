@@ -63,6 +63,7 @@ package harness
 		command: string & !=""
 		args?: [...string]
 		resume_args?: [...string]
+		upgrade_args?: [...string] & [_, ...]
 		probe_args?: [...string]
 		env?: [string]: string
 	})

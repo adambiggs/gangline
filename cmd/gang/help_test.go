@@ -202,6 +202,7 @@ func TestEveryCommandFlagParserConstructs(t *testing.T) {
 		"outside":    func() error { return cmd.outside([]string{"register", "--unlisted"}) },
 		"hitch":      func() error { _, err := parseHitch([]string{"worker", "--unlisted"}, "codex", "/work"); return err },
 		"send":       func() error { _, err := parseSend([]string{"worker", "--unlisted"}); return err },
+		"rehitch":    func() error { return cmd.rehitch(bad) },
 		"interrupt":  func() error { return cmd.interrupt(bad) },
 		"compact":    func() error { _, err := parseCompact(bad); return err },
 		"title":      func() error { _, _, err := parseTitle(bad); return err },
