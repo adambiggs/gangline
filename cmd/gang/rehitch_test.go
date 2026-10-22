@@ -44,6 +44,8 @@ func TestRehitchQueuesOnlyForAuthenticatedSelf(t *testing.T) {
 			f, a, p := rehitchFixture(t)
 			a.Rehitch = nil
 			switch variant {
+			case "valid":
+				a.LaunchModel, a.LaunchEffort = "recorded-model", "high"
 			case "no identity":
 				delete(f.env, "GANG_AGENT_ID")
 			case "wrong token":

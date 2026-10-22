@@ -104,6 +104,7 @@ func TestSelfRehitchOnPrivateTmux(t *testing.T) {
 	}
 	_ = supervisorLock.Close()
 	before.HitchedBy = supervisor.ID
+	before.LaunchModel, before.LaunchEffort = "", ""
 	ownerLock, err := p.LockAgent()
 	if err != nil {
 		t.Fatal(err)
@@ -126,21 +127,21 @@ func TestSelfRehitchOnPrivateTmux(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(root, "update-fails"), nil, 0600); err != nil {
 		t.Fatal(err)
 	}
-	enter("__REHITCH__")
+	enter("__REHITCH_EXPLICIT__")
 	expect("update-ran")
 	expect("update-failed")
 	failed, _ := p.Read()
-	if failed.Rehitch != nil || failed.Pane != before.Pane || failed.ID != before.ID {
+	if failed.Rehitch != nil || failed.Pane != before.Pane || failed.ID != before.ID || failed.LaunchModel != "" || failed.LaunchEffort != "" {
 		t.Fatalf("update failure changed registration: %+v", failed)
 	}
 	if err := os.Remove(filepath.Join(root, "update-fails")); err != nil {
 		t.Fatal(err)
 	}
-	enter("__REHITCH__")
+	enter("__REHITCH_EXPLICIT__")
 	expect("update-ran")
 	expect("request-queued")
 	queued, _ := p.Read()
-	if queued.Rehitch == nil || queued.Pane != before.Pane {
+	if queued.Rehitch == nil || queued.Pane != before.Pane || queued.LaunchModel != "retained-model" || queued.LaunchEffort != "high" {
 		t.Fatalf("request did not wait for finish: %+v", queued)
 	}
 	pending := core.Envelope{ID: "queued-before-restart", Token: "0123456789abcdef", Recipient: id, To: before.Name, From: core.Sender{Kind: core.SenderSelfDeclared, Name: "operator"}, Message: core.Message{Text: "retained pending work"}, CreatedAt: time.Now(), NotBefore: time.Now().Add(time.Hour)}
@@ -306,8 +307,12 @@ func rehitchHarness() error {
 		text := input.String()
 		input.Reset()
 		switch text {
-		case "__REHITCH__":
-			cmd := exec.Command(os.Getenv("GANGLINE_ACCEPTANCE_GANG"), "rehitch", "--upgrade", "--resume", "resume saved work")
+		case "__REHITCH__", "__REHITCH_EXPLICIT__":
+			args := []string{"rehitch", "--upgrade", "--resume", "resume saved work"}
+			if text == "__REHITCH_EXPLICIT__" {
+				args = append(args, "--model", "retained-model", "--effort", "high")
+			}
+			cmd := exec.Command(os.Getenv("GANGLINE_ACCEPTANCE_GANG"), args...)
 			if out, err := cmd.CombinedOutput(); err != nil {
 				if !strings.Contains(string(out), "harness update failed; restart was not queued") {
 					return fmt.Errorf("request: %w: %s", err, out)
