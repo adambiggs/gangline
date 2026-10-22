@@ -36,6 +36,10 @@ func TestSelfRehitchOnPrivateTmux(t *testing.T) {
 		t.Fatal(err)
 	}
 	collar := strings.Replace(commandAcceptanceCollar(exe), "args: []", `args: [], resume_args: ["--resume", "{{session_id}}"], upgrade_args: ["--fixture-update"]`, 1)
+	collar = strings.Replace(collar, `effort: {args: ["-e", "{{value}}"]}, `, "", 1)
+	if strings.Contains(collar, "effort:") {
+		t.Fatal("restart fixture declares an effort option")
+	}
 	collar = strings.Replace(collar, `payload: {prompt: "prompt"}`, `payload: {prompt: "prompt", session_id: "session_id"}`, 1)
 	if err := os.WriteFile(filepath.Join(collars, "acceptance.cue"), []byte(collar), 0600); err != nil {
 		t.Fatal(err)
@@ -82,7 +86,7 @@ func TestSelfRehitchOnPrivateTmux(t *testing.T) {
 			t.Fatalf("event=%q err=%v want=%s", got, err, want)
 		}
 	}
-	if out, err := runGang("hitch", "owner", "--resume", "native-conversation", "-r", "lead", "-m", "retained-model", "-e", "high", "-t", "initial work"); err != nil {
+	if out, err := runGang("hitch", "owner", "--resume", "native-conversation", "-r", "lead", "-t", "initial work"); err != nil {
 		t.Fatalf("hitch: %v: %s", err, out)
 	}
 	expect("received")
@@ -104,7 +108,6 @@ func TestSelfRehitchOnPrivateTmux(t *testing.T) {
 	}
 	_ = supervisorLock.Close()
 	before.HitchedBy = supervisor.ID
-	before.LaunchModel, before.LaunchEffort = "", ""
 	ownerLock, err := p.LockAgent()
 	if err != nil {
 		t.Fatal(err)
@@ -127,21 +130,21 @@ func TestSelfRehitchOnPrivateTmux(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(root, "update-fails"), nil, 0600); err != nil {
 		t.Fatal(err)
 	}
-	enter("__REHITCH_EXPLICIT__")
+	enter("__REHITCH__")
 	expect("update-ran")
 	expect("update-failed")
 	failed, _ := p.Read()
-	if failed.Rehitch != nil || failed.Pane != before.Pane || failed.ID != before.ID || failed.LaunchModel != "" || failed.LaunchEffort != "" {
+	if failed.Rehitch != nil || failed.Pane != before.Pane || failed.ID != before.ID {
 		t.Fatalf("update failure changed registration: %+v", failed)
 	}
 	if err := os.Remove(filepath.Join(root, "update-fails")); err != nil {
 		t.Fatal(err)
 	}
-	enter("__REHITCH_EXPLICIT__")
+	enter("__REHITCH__")
 	expect("update-ran")
 	expect("request-queued")
 	queued, _ := p.Read()
-	if queued.Rehitch == nil || queued.Pane != before.Pane || queued.LaunchModel != "retained-model" || queued.LaunchEffort != "high" {
+	if queued.Rehitch == nil || queued.Pane != before.Pane {
 		t.Fatalf("request did not wait for finish: %+v", queued)
 	}
 	pending := core.Envelope{ID: "queued-before-restart", Token: "0123456789abcdef", Recipient: id, To: before.Name, From: core.Sender{Kind: core.SenderSelfDeclared, Name: "operator"}, Message: core.Message{Text: "retained pending work"}, CreatedAt: time.Now(), NotBefore: time.Now().Add(time.Hour)}
@@ -171,9 +174,12 @@ func TestSelfRehitchOnPrivateTmux(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	for _, want := range []string{"--resume\nnative-conversation\n", "-m\nretained-model\n", "-e\nhigh\n"} {
-		if !strings.Contains(string(argv), want) {
-			t.Fatalf("resume argv lacks %q: %s", want, argv)
+	if !strings.Contains(string(argv), "--resume\nnative-conversation\n") {
+		t.Fatalf("native resume identity absent: %s", argv)
+	}
+	for _, arg := range strings.Split(string(argv), "\n") {
+		if arg == "-m" || arg == "--model" || arg == "-e" || arg == "--effort" {
+			t.Fatalf("native resume overrides its conversation settings: %s", argv)
 		}
 	}
 	wire, err := os.ReadFile(filepath.Join(root, string(id)+".received"))
@@ -307,11 +313,8 @@ func rehitchHarness() error {
 		text := input.String()
 		input.Reset()
 		switch text {
-		case "__REHITCH__", "__REHITCH_EXPLICIT__":
+		case "__REHITCH__":
 			args := []string{"rehitch", "--upgrade", "--resume", "resume saved work"}
-			if text == "__REHITCH_EXPLICIT__" {
-				args = append(args, "--model", "retained-model", "--effort", "high")
-			}
 			cmd := exec.Command(os.Getenv("GANGLINE_ACCEPTANCE_GANG"), args...)
 			if out, err := cmd.CombinedOutput(); err != nil {
 				if !strings.Contains(string(out), "harness update failed; restart was not queued") {

@@ -15,8 +15,7 @@ import (
 func (cmd command) rehitch(args []string) (result error) {
 	var resume string
 	var upgrade bool
-	var model, effort string
-	flags := boundFlagSet("rehitch", map[string]any{"resume": &resume, "upgrade": &upgrade, "model": &model, "m": &model, "effort": &effort, "e": &effort})
+	flags := boundFlagSet("rehitch", map[string]any{"resume": &resume, "upgrade": &upgrade})
 	positionals, err := parseOptions(flags, args)
 	if err != nil {
 		return usageError("rehitch: %v", err)
@@ -52,15 +51,6 @@ func (cmd command) rehitch(args []string) (result error) {
 	if a.Native.SessionID == "" {
 		return refuseError("rehitch: native resume identity is unknown; inspect gang status %s --why", a.Name)
 	}
-	if model == "" {
-		model = a.LaunchModel
-	}
-	if effort == "" {
-		effort = a.LaunchEffort
-	}
-	if strings.TrimSpace(model) == "" || strings.TrimSpace(effort) == "" {
-		return refuseError("rehitch: no recorded launch model or effort; supply --model MODEL and --effort EFFORT")
-	}
 	c, err := loadCollar(a.Collar, run.settings)
 	if err != nil {
 		return err
@@ -92,7 +82,6 @@ func (cmd command) rehitch(args []string) (result error) {
 			return fmt.Errorf("rehitch: harness update failed; restart was not queued: %w", err)
 		}
 	}
-	a.LaunchModel, a.LaunchEffort = model, effort
 	a.Rehitch = &core.Message{Text: resume}
 	if err := l.Save(a); err != nil {
 		return err
@@ -127,12 +116,6 @@ func (run *runtime) rehitchPending(id core.HitchID) error {
 	args := []string{string(a.Name), "-c", a.Collar, "-d", a.Directory, "--resume", a.Native.SessionID, "-t", a.Rehitch.Text}
 	if a.Role != "" {
 		args = append(args, "-r", a.Role)
-	}
-	if a.LaunchModel != "" {
-		args = append(args, "-m", a.LaunchModel)
-	}
-	if a.LaunchEffort != "" {
-		args = append(args, "-e", a.LaunchEffort)
 	}
 	err = run.cmd.hitchReplacing(args, false, &a)
 	if errors.Is(err, errRehitchDeferred) {

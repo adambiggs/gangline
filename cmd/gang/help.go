@@ -89,7 +89,7 @@ var commandUsage = map[string]string{
 	"up":         "usage: gang up [NAME] [HITCH OPTIONS] [--team TEAM]\n",
 	"hitch":      "usage: gang hitch NAME [-c COLLAR] [-d DIR] [-m MODEL] [-e EFFORT]\n       [-t TASK] [-r ROLE] [--resume SESSION] [--stdin]\n       [--split NAME] [--vertical] [--team TEAM]\n       gang hitch NAME --recover [--team TEAM]\n",
 	"title":      "usage: gang title [NAME] TEXT [--team TEAM]\n",
-	"rehitch":    "usage: gang rehitch --resume TEXT [--upgrade] [-m MODEL] [-e EFFORT]\n       [--team TEAM]\n",
+	"rehitch":    "usage: gang rehitch --resume TEXT [--upgrade] [--team TEAM]\n",
 	"rename":     "usage: gang rename OLD NEW [--team TEAM]\n",
 	"send":       "usage: gang send NAME [--from SENDER | --as SENDER] [--credential FILE]\n       [--live-only] [--supersede] [--at DURATION|HH:MM|RFC3339]\n       [--team TEAM] [BODY]\n       gang send NAME --clear [--team TEAM]\n       gang send HOST:NAME [--as SENDER] [--credential FILE]\n       [--team TEAM] [BODY]\n       Without BODY, read stdin. Use -- before BODY when it begins with -.\n",
 	"queue":      "usage: gang queue [NAME] [--json] [--team TEAM]\n",
@@ -157,11 +157,7 @@ var commandOptions = map[string][]optionSpec{
 		{"split", "NAME", "split the named agent's pane side by side"},
 		{"vertical", "", "split top/bottom; requires --split NAME"},
 	},
-	"rehitch": {
-		{"resume", "TEXT", "saved-work continuation"}, {"upgrade", "", "update the harness before queuing its restart"},
-		{"m", "MODEL", "native model (default recorded launch model)"}, {"model", "MODEL", "native model (default recorded launch model)"},
-		{"e", "EFFORT", "reasoning effort (default recorded launch effort)"}, {"effort", "EFFORT", "reasoning effort (default recorded launch effort)"},
-	},
+	"rehitch": {{"resume", "TEXT", "saved-work continuation"}, {"upgrade", "", "update the harness before queuing its restart"}},
 	"send": {
 		{"from", "SENDER", "outside sender identity"},
 		{"as", "SENDER", "registered sender identity"},
