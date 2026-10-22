@@ -1,5 +1,13 @@
 # Changelog
 
+## [2.0.1](https://github.com/adambiggs/gangline/compare/gangline-v2.0.0...gangline-v2.0.1) (2026-10-22)
+
+
+### Bug Fixes
+
+* await matching hooks without queue receipts ([ed714b7](https://github.com/adambiggs/gangline/commit/ed714b7578d8df812c7118c8e9da9889ca1910b1)), closes [#201](https://github.com/adambiggs/gangline/issues/201)
+* wait past earlier native submit hooks ([baa501a](https://github.com/adambiggs/gangline/commit/baa501a223826562169efb5af2a241d0cc68778e)), closes [#201](https://github.com/adambiggs/gangline/issues/201)
+
 ## [2.0.0](https://github.com/adambiggs/gangline/compare/gangline-v1.22.0...gangline-v2.0.0) (2026-10-22)
 
 
