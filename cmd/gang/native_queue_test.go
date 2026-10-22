@@ -188,9 +188,23 @@ func TestNativeQueueReceiptRespectsExactHookProof(t *testing.T) {
 }
 
 func TestSendWaitsPastEarlierSubmitHook(t *testing.T) {
-	for _, receipt := range []string{"accepted", "delivered", "missing", "foreign session"} {
-		t.Run(receipt, func(t *testing.T) {
-			f, a, p := queueSendFixture(t)
+	for _, test := range []struct{ collar, receipt string }{
+		{"codex", "accepted"},
+		{"codex", "delivered"},
+		{"codex", "missing"},
+		{"codex", "foreign session"},
+		{"claude", "delivered"},
+		{"claude", "missing"},
+		{"claude", "foreign session"},
+	} {
+		t.Run(test.collar+"/"+test.receipt, func(t *testing.T) {
+			receipt := test.receipt
+			fixture := queueSendFixture
+			if test.collar == "claude" {
+				fixture = claudeRecipient
+			}
+			f, a, p := fixture(t)
+			f.cmd.stdin = strings.NewReader("receipt ordering")
 			f.setAgent(t, a, func(a *core.Agent) { a.Native.SessionID = "s" })
 			session := "s"
 			if receipt == "foreign session" {
@@ -241,9 +255,23 @@ func TestSendWaitsPastEarlierSubmitHook(t *testing.T) {
 
 func TestEarlierSubmitHooksRespectOperationDeadline(t *testing.T) {
 	for _, budget := range []time.Duration{time.Millisecond, time.Second, time.Hour} {
-		for _, canceled := range []bool{false, true} {
-			t.Run(fmt.Sprintf("%s/canceled=%t", budget, canceled), func(t *testing.T) {
-				f, a, p := queueSendFixture(t)
+		for _, test := range []struct {
+			collar   string
+			canceled bool
+		}{
+			{"codex", false},
+			{"codex", true},
+			{"claude", false},
+			{"claude", true},
+		} {
+			t.Run(fmt.Sprintf("%s/%s/canceled=%t", test.collar, budget, test.canceled), func(t *testing.T) {
+				canceled := test.canceled
+				fixture := queueSendFixture
+				if test.collar == "claude" {
+					fixture = claudeRecipient
+				}
+				f, a, p := fixture(t)
+				f.cmd.stdin = strings.NewReader("receipt ordering")
 				f.setAgent(t, a, func(a *core.Agent) { a.Native.SessionID = "s" })
 				start, now := f.cmd.now(), f.cmd.now()
 				f.cmd.clock = func() time.Time { return now }
@@ -295,6 +323,54 @@ func TestEarlierSubmitHooksRespectOperationDeadline(t *testing.T) {
 				}
 			})
 		}
+	}
+}
+
+func TestResumeSubmitMismatchDoesNotRetry(t *testing.T) {
+	for _, collar := range []string{"codex", "claude"} {
+		t.Run(collar, func(t *testing.T) {
+			fixture := queueSendFixture
+			if collar == "claude" {
+				fixture = claudeRecipient
+			}
+			f, a, p := fixture(t)
+			a = f.setAgent(t, a, func(a *core.Agent) { a.Native.SessionID = "s" })
+			// This recognized resume form has no explicit purpose.
+			e := core.Envelope{ID: "resume-c", Token: "0123456789abcdef", Recipient: a.ID, To: a.Name, From: core.Sender{Kind: core.SenderGangline, Name: "compact"}, Message: core.Message{Text: "resume"}, CreatedAt: f.cmd.now()}
+			if !isResumeEnvelope(e) {
+				t.Fatal("fixture is not a resume envelope")
+			}
+			if err := p.Publish(e); err != nil {
+				t.Fatal(err)
+			}
+			start, now := f.cmd.now(), f.cmd.now()
+			f.cmd.clock = func() time.Time { return now }
+			f.cmd.newTimeout = func(ctx context.Context, _ time.Duration) (context.Context, context.CancelFunc) {
+				return fakeDeadline{ctx, start.Add(time.Second)}, func() {}
+			}
+			f.input.submit = func(string) error {
+				now = start.Add(time.Second)
+				return p.WriteWitness(store.Witness{ID: "other", At: start, SessionID: "s", Prompt: "another input"})
+			}
+			f.run.cmd = f.cmd
+			c, err := loadCollar(collar, f.run.settings)
+			if err != nil {
+				t.Fatal(err)
+			}
+			l, err := p.TryLock()
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer l.Close()
+			outcome, _, err := f.run.deliver(l, &a, e, f.input, c, "")
+			if err != nil || outcome != "unverified" || f.input.submits != 1 {
+				t.Fatalf("outcome=%s err=%v submits=%d", outcome, err, f.input.submits)
+			}
+			got, err := p.ReadEnvelope("failed", e.ID)
+			if err != nil || got.Reason != "submit witness does not match the message text and one-time token" {
+				t.Fatalf("resume mismatch: %+v err=%v", got, err)
+			}
+		})
 	}
 }
 

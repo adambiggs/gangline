@@ -278,7 +278,8 @@ func (run *runtime) deliver(l *store.LockedAgent, a *core.Agent, e core.Envelope
 	var queue func(context.Context) (bool, error)
 	// Startup needs its exact contract witness. Context notes likewise keep
 	// exact hook proof rather than native queue acceptance.
-	if c.Primitives.QueueWitness != nil && c.Primitives.MidTurn && e.Purpose == "" && !isContextBandNotice(e) {
+	midTurnMessage := c.Primitives.MidTurn && e.Purpose == "" && !isContextBandNotice(e) && !isResumeEnvelope(e)
+	if c.Primitives.QueueWitness != nil && midTurnMessage {
 		opener := wire[:strings.Index(wire, "]")+1]
 		queue = func(ctx context.Context) (bool, error) {
 			if err := requireHarnessForeground(ctx, b, substrate.PaneID(a.Pane), c); err != nil {
@@ -373,7 +374,7 @@ func (run *runtime) deliver(l *store.LockedAgent, a *core.Agent, e core.Envelope
 			break
 		}
 		e.Witnessed = witness.Prompt
-		if queue != nil {
+		if midTurnMessage {
 			var same bool
 			same, err = followNativeSession(c, a, witness.SessionID, witness.Transcript)
 			if err == nil && same {
