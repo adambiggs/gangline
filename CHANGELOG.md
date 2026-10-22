@@ -1,5 +1,29 @@
 # Changelog
 
+## [2.0.0](https://github.com/adambiggs/gangline/compare/gangline-v1.22.0...gangline-v2.0.0) (2026-10-22)
+
+
+### ⚠ BREAKING CHANGES
+
+* gang compact --resume TEXT is renamed to --note TEXT. The old flag is not accepted for compaction.
+
+### Features
+
+* add native title command ([150a8e4](https://github.com/adambiggs/gangline/commit/150a8e459b57bcd076fdfd7320b0620daa45500b))
+* restart the current harness and resume work ([08c874a](https://github.com/adambiggs/gangline/commit/08c874ad712f0a62bad186b8c9ebec800e0c367c))
+* use --note for compaction continuations ([c5ee6b1](https://github.com/adambiggs/gangline/commit/c5ee6b1b512255892f77e4b01c5d98b71a25771b))
+
+
+### Bug Fixes
+
+* defer restarts while the team changes ([db7fa6b](https://github.com/adambiggs/gangline/commit/db7fa6b55feb8cd30c79376b285442c27000298e))
+* distinguish startup attention from restart failure ([adf38cf](https://github.com/adambiggs/gangline/commit/adf38cf0b26d5c7b97a965a9b86102d28645f317))
+* let native resume restore conversation settings ([c3fe8ba](https://github.com/adambiggs/gangline/commit/c3fe8ba6e0d23cbd146caa4819d5263037a19b5f)), closes [#202](https://github.com/adambiggs/gangline/issues/202)
+* name the restart continuation flag --note ([d5c983c](https://github.com/adambiggs/gangline/commit/d5c983cd90ca1ae687798ea34578fbdadf399f2f))
+* preserve active status before teardown starts ([225e4ef](https://github.com/adambiggs/gangline/commit/225e4efd7dcfddd9880ff95109e80eeaf2da759b))
+* recognize computer use permission menus as blocked ([08e7902](https://github.com/adambiggs/gangline/commit/08e79025a035f8c959d7c4303d591523fe49432a)), closes [#197](https://github.com/adambiggs/gangline/issues/197)
+* require complete restart launch choices ([da26ffe](https://github.com/adambiggs/gangline/commit/da26ffea3dde3ba0f0b1e9a8c1652d4d890b05fb))
+
 ## [1.22.0](https://github.com/adambiggs/gangline/compare/gangline-v1.21.0...gangline-v1.22.0) (2026-10-15)
 
 
