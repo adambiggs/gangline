@@ -70,7 +70,7 @@ func TestRepaintDeliveryAllowsQueuedCompactionAndMessages(t *testing.T) {
 		}
 
 		f.input.screen = screenWithText("Working (esc to interrupt)", "› ")
-		if err := f.cmd.compact([]string{"worker", "--resume", "resume the work"}); err != nil {
+		if err := f.cmd.compact([]string{"worker", "--note", "resume the work"}); err != nil {
 			t.Fatal(err)
 		}
 		for i := range 3 {

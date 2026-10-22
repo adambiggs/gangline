@@ -16,7 +16,7 @@ func TestCompactionRetryWaitsForNativeTurnCompletion(t *testing.T) {
 		t.Fatal(err)
 	}
 	f.tickAt(t, a, start, hookNotice{Kind: "turn-started", TurnID: "open"})
-	if err := f.cmd.compact([]string{"worker", "--resume", "saved retry note"}); err != nil {
+	if err := f.cmd.compact([]string{"worker", "--note", "saved retry note"}); err != nil {
 		t.Fatal(err)
 	}
 	queued := readAgent(t, f, a.ID)
@@ -50,7 +50,7 @@ func TestCompactionDoesNotQueueResumeBehindOrdinaryBusyTask(t *testing.T) {
 		}
 		return nil
 	}
-	_ = f.cmd.compact([]string{"worker", "--resume", "saved retry note"})
+	_ = f.cmd.compact([]string{"worker", "--note", "saved retry note"})
 	a, err := p.Read()
 	if err != nil || a.Compaction.Status != "failed" || !strings.Contains(a.Compaction.Reason, "no compaction showed") || f.input.submits != 1 || a.Compaction.Resume.Text != "saved retry note" {
 		t.Fatalf("ordinary task: compaction=%+v submits=%d err=%v", a.Compaction, f.input.submits, err)

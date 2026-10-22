@@ -28,7 +28,7 @@ func TestContractNamesRealAgentCommands(t *testing.T) {
 			t.Errorf("contract omits gang %s", want)
 		}
 	}
-	if !strings.Contains(string(contract), "gang compact --resume") {
+	if !strings.Contains(string(contract), "gang compact --note") {
 		t.Error("contract omits the resume note for self-compaction")
 	}
 }

@@ -228,7 +228,7 @@ func TestTypedResumeHeaderKeepsQueuedCompaction(t *testing.T) {
 func TestCompactRefusedWhileContinuationQueued(t *testing.T) {
 	f, a := completedWithQueuedContinuation(t)
 	var refused commandError
-	err := f.cmd.compact([]string{"worker", "--resume", "second"})
+	err := f.cmd.compact([]string{"worker", "--note", "second"})
 	if !errors.As(err, &refused) || refused.status != exitRefused || !strings.Contains(err.Error(), "compaction c") || !strings.Contains(err.Error(), a.Compaction.CompletedAt.Add(operationTimeout).UTC().Format(time.RFC3339)) {
 		t.Fatalf("compact during the hold: %v", err)
 	}
@@ -236,7 +236,7 @@ func TestCompactRefusedWhileContinuationQueued(t *testing.T) {
 		t.Fatalf("record replaced: %+v", got.Compaction)
 	}
 	f.cmd.clock = func() time.Time { return a.Compaction.CompletedAt.Add(operationTimeout) }
-	if err := f.cmd.compact([]string{"worker", "--resume", "second"}); errors.As(err, &refused) && refused.status == exitRefused {
+	if err := f.cmd.compact([]string{"worker", "--note", "second"}); errors.As(err, &refused) && refused.status == exitRefused {
 		t.Fatalf("compact after the hold expired: %v", err)
 	}
 	if got := f.agent(t, a.ID); got.Compaction.ID == "c" {
@@ -256,7 +256,7 @@ func TestCompactRefusedWhileUnverifiedCompactionHoldsItsNote(t *testing.T) {
 	idle := f.input.screen
 	f.input.screen = screenWithText("✻ Compacting conversation… (40s)", "────────", "❯ ", "────────")
 	var refused commandError
-	err := f.cmd.compact([]string{"worker", "--resume", "second"})
+	err := f.cmd.compact([]string{"worker", "--note", "second"})
 	if !errors.As(err, &refused) || refused.status != exitRefused || !strings.Contains(err.Error(), "compaction c") || !strings.Contains(err.Error(), "--interrupt") {
 		t.Fatalf("compact while the unverified compaction runs: %v", err)
 	}
@@ -264,7 +264,7 @@ func TestCompactRefusedWhileUnverifiedCompactionHoldsItsNote(t *testing.T) {
 		t.Fatalf("record replaced: %+v", got.Compaction)
 	}
 	f.input.screen = idle
-	if err := f.cmd.compact([]string{"worker", "--resume", "second"}); errors.As(err, &refused) && refused.status == exitRefused {
+	if err := f.cmd.compact([]string{"worker", "--note", "second"}); errors.As(err, &refused) && refused.status == exitRefused {
 		t.Fatalf("compact once the harness stopped compacting: %v", err)
 	}
 	if got := f.agent(t, a.ID); got.Compaction.ID == "c" {
@@ -295,7 +295,7 @@ func TestCompactAcceptedWhenUnverifiedCompactionHoldsNoNote(t *testing.T) {
 			})
 			f.input.screen = tc.screen
 			var refused commandError
-			if err := f.cmd.compact([]string{"worker", "--resume", "second"}); errors.As(err, &refused) && refused.status == exitRefused {
+			if err := f.cmd.compact([]string{"worker", "--note", "second"}); errors.As(err, &refused) && refused.status == exitRefused {
 				t.Fatalf("compact refused: %v", err)
 			}
 			if got := f.agent(t, a.ID); got.Compaction.ID == "c" {

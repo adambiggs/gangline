@@ -37,7 +37,7 @@ func TestCompactionStoresResumeProvenance(t *testing.T) {
 		args := []string{"worker"}
 		want := core.Sender{Kind: core.SenderGangline, Name: "compact"}
 		if custom {
-			args = append(args, "--resume", "resume saved work")
+			args = append(args, "--note", "resume saved work")
 			want.Kind = core.SenderSelfDeclared
 		}
 		if err := f.cmd.compact(args); err != nil {

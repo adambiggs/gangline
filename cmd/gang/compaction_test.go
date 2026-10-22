@@ -57,7 +57,7 @@ func TestCompactionQueuesResumeBeforeCompletion(t *testing.T) {
 			}
 			echoCompactInput(f)
 			var ce commandError
-			if err := f.cmd.compact([]string{"worker", "--resume", "continue the work"}); !errors.As(err, &ce) || ce.status != exitUnknown {
+			if err := f.cmd.compact([]string{"worker", "--note", "continue the work"}); !errors.As(err, &ce) || ce.status != exitUnknown {
 				t.Fatalf("submission: %v", err)
 			}
 			got, err := p.Read()
@@ -415,7 +415,7 @@ func TestCompletedCompactionResumesBeforeQueuedMessages(t *testing.T) {
 	}
 	echoCompactInput(f)
 	var ce commandError
-	if err := f.cmd.compact([]string{"worker", "--resume", "state is in FILE"}); !errors.As(err, &ce) || ce.status != exitUnknown {
+	if err := f.cmd.compact([]string{"worker", "--note", "state is in FILE"}); !errors.As(err, &ce) || ce.status != exitUnknown {
 		t.Fatalf("submission: %v", err)
 	}
 	// A teammate's message arrives while compaction is running.
@@ -437,7 +437,7 @@ func TestAgentCompactsItselfAfterItsTurn(t *testing.T) {
 	f.env["GANG_AGENT_ID"] = string(a.ID)
 	f.env["TMUX_PANE"] = a.Pane
 	f.input.screen = screenWithText("• Working (esc to interrupt)", "", "› ")
-	if err := f.cmd.compact([]string{"--resume", "state is in FILE"}); err != nil {
+	if err := f.cmd.compact([]string{"--note", "state is in FILE"}); err != nil {
 		t.Fatal(err)
 	}
 	if !strings.Contains(f.out.String(), "queued") || f.input.submits != 0 {
@@ -503,7 +503,7 @@ func TestCompactionResumeProceedsWhileWrappedCompactRemains(t *testing.T) {
 	echoCompactInput(f)
 	f.cmd.inputBackend = b
 	var ce commandError
-	if err := f.cmd.compact([]string{"worker", "--resume", resume}); !errors.As(err, &ce) || ce.status != exitUnknown {
+	if err := f.cmd.compact([]string{"worker", "--note", resume}); !errors.As(err, &ce) || ce.status != exitUnknown {
 		t.Fatalf("submission: %v", err)
 	}
 	got, err := p.Read()
@@ -560,7 +560,7 @@ func TestCollapsedCompactCommandIsNeverSubmitted(t *testing.T) {
 				return nil
 			}
 			notices := witnessFailureNotices(f, p)
-			err = f.cmd.compact([]string{"--resume", resume})
+			err = f.cmd.compact([]string{"--note", resume})
 			if tc.queued {
 				if err != nil || !strings.Contains(f.out.String(), "queued") {
 					t.Fatalf("busy compaction: %v, %q", err, f.out.String())
@@ -633,7 +633,7 @@ func TestCollapsedCompactClearUsesProductionWait(t *testing.T) {
 			return nil
 		}
 		start := time.Now()
-		err := f.cmd.compact([]string{"--resume", strings.Repeat("Read the state file. ", 45)})
+		err := f.cmd.compact([]string{"--note", strings.Repeat("Read the state file. ", 45)})
 		if ce := (commandError{}); !errors.As(err, &ce) || ce.status != exitNative || !strings.Contains(err.Error(), "composer cleared") {
 			t.Fatalf("clear result: %v", err)
 		}

@@ -10,7 +10,7 @@ import (
 	"github.com/adambiggs/gangline/substrate"
 )
 
-const contextBandCompactCommand = "gang compact --resume 'Resume from FILE'"
+const contextBandCompactCommand = "gang compact --note 'Resume from FILE'"
 
 const contextBandAdvice = "Context band {{band}} crossed (threshold {{threshold_percent}}%): {{used_tokens}}/{{limit_tokens}} ({{used_percent}}%), model {{model}}. Save your working state to a file and compact at the next good stopping point with `{{compact_command}}`."
 const contextBandOrder = "Context band {{band}} crossed (threshold {{threshold_percent}}%): {{used_tokens}}/{{limit_tokens}} ({{used_percent}}%), model {{model}}. Compact now: save your working state to a file, then run `{{compact_command}}`."

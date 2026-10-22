@@ -82,12 +82,15 @@ func TestTerminatorPreservesOperands(t *testing.T) {
 }
 
 func TestParseCompactAllowsSelfTarget(t *testing.T) {
-	got, err := parseCompact([]string{"--resume", "continue"})
+	got, err := parseCompact([]string{"--note", "continue"})
 	if err != nil {
 		t.Fatal(err)
 	}
 	if got.Name != "" || got.Resume != "continue" {
 		t.Fatalf("options = %#v", got)
+	}
+	if _, err := parseCompact([]string{"--resume", "continue"}); err == nil {
+		t.Fatal("compact accepted the removed --resume text flag")
 	}
 }
 
@@ -125,7 +128,7 @@ func TestCompactInterruptFlag(t *testing.T) {
 	if _, err := parseCompact([]string{"worker", "--recover"}); err == nil {
 		t.Fatal("removed recovery flag accepted")
 	}
-	if _, err := parseCompact([]string{"worker", "--interrupt", "--resume", "note"}); err == nil {
+	if _, err := parseCompact([]string{"worker", "--interrupt", "--note", "note"}); err == nil {
 		t.Fatal("interrupt and resume accepted together")
 	}
 }

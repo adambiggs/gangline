@@ -593,7 +593,7 @@ func (cmd command) compact(args []string) (result error) {
 		if o.Interrupt {
 			retry += " --interrupt"
 		} else if o.Resume != "" {
-			retry += " --resume with the same note"
+			retry += " --note with the same note"
 		}
 		return refuseError("%s is busy with another gang operation; retry %s", name, retry)
 	}

@@ -69,7 +69,7 @@ func TestSendDeliversPastePlaceholderToExactPromptHarness(t *testing.T) {
 
 func TestCompactRefusesPastePlaceholderInResumeNote(t *testing.T) {
 	f, _, p := claudeRecipient(t)
-	requirePlaceholderRefusal(t, f.cmd.compact([]string{"worker", "--resume", placeholderQuote}))
+	requirePlaceholderRefusal(t, f.cmd.compact([]string{"worker", "--note", placeholderQuote}))
 	requireNothingTyped(t, f, p)
 	got, err := p.Read()
 	if err != nil {

@@ -63,7 +63,7 @@ func TestContextBandNotesCrossings(t *testing.T) {
 			if f.input.submits != 2 {
 				t.Fatalf("jump across yellow and red submitted %d notes, want 2", f.input.submits)
 			}
-			if !strings.Contains(f.input.pasted, highName) || !strings.HasPrefix(f.input.pasted, "[gang:context-band#") || !strings.Contains(f.input.pasted, " [/gang:context-band#") || !strings.Contains(f.input.pasted, "run `gang compact --resume") {
+			if !strings.Contains(f.input.pasted, highName) || !strings.HasPrefix(f.input.pasted, "[gang:context-band#") || !strings.Contains(f.input.pasted, " [/gang:context-band#") || !strings.Contains(f.input.pasted, "run `gang compact --note") {
 				t.Fatalf("band envelope: %s", f.input.pasted)
 			}
 			note, err := p.ReadEnvelope("cur", "context-2")
@@ -135,7 +135,7 @@ func TestContextBandMessageRendersEveryToken(t *testing.T) {
 	if len(a.ContextBands.Pending) != 1 {
 		t.Fatalf("pending notes = %d", len(a.ContextBands.Pending))
 	}
-	want := "yellow|75|760|1000|76|gpt-test|worker|gang compact --resume 'Resume from FILE'"
+	want := "yellow|75|760|1000|76|gpt-test|worker|gang compact --note 'Resume from FILE'"
 	if got := a.ContextBands.Pending[0].Envelope.Message.Text; got != want {
 		t.Fatalf("rendered note = %q, want %q", got, want)
 	}

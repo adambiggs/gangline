@@ -102,7 +102,7 @@ the parent's command line where `/proc` shows it, the working directory, and
 | `gang queue [NAME] [--json]` | List pending messages with ID, recipient, sender, kind, a text excerpt, and state: `ready`, `scheduled` with its due time, `blocked` with the reason, or `unknown` with the reason. |
 | `gang interrupt [NAME] [-m\|--message REASON]` | Interrupt the turn; deliver an optional reason after it stops. |
 | `gang title [NAME] TEXT` | Set the native harness session title when idle with a free composer. Quote TEXT as one argument; omit NAME for the current pane's agent. |
-| `gang compact [NAME] [--resume TEXT]` | Compact at native idle; submit the continuation behind compaction, ahead of later input. |
+| `gang compact [NAME] [--note TEXT]` | Compact at native idle; submit the continuation behind compaction, ahead of later input. |
 | `gang compact NAME --interrupt` | Interrupt a submitted or unconfirmed compaction with the collar's recovery keys while the pane shows it running. A failed deferred compaction can instead clear its exact staged command from an idle composer and retry queued delivery; edited input remains untouched. It records an interrupted compaction as unconfirmed and reports the screen it left. |
 | `gang curfew [DURATION\|HH:MM\|RFC3339\|clear]` | Show, set, or clear the team deadline. |
 | `gang tick [--agent NAME\|HITCH_ID]` | Check deadlines, recover native failures, and drain due messages, for every agent or the one `--agent` names. |
@@ -125,8 +125,8 @@ and an idle-looking screen does not show that none will: the harness may hold
 the command behind a turn still streaming, or still be running its
 pre-compaction hooks.
 
-Keep a `--resume` note short, on one line, and pointed at a state file. Without
-`--resume`, the note tells the agent to re-read its brief and durable state and
+Keep a `--note` note short, on one line, and pointed at a state file. Without
+`--note`, the note tells the agent to re-read its brief and durable state and
 names `gang log --agent NAME --type send_queued`, which records the messages
 queued for it. Every
 failed compaction queues a `[gang:compact#…]` notice to the agent saying whether
@@ -484,7 +484,7 @@ window durations are ignored; Gangline does not estimate provider usage.
 | `{{used_percent}}` | Reported usage percent. |
 | `{{model}}` | Reported model. |
 | `{{agent_name}}` | Agent name. |
-| `{{compact_command}}` | `gang compact --resume 'Resume from FILE'`. |
+| `{{compact_command}}` | `gang compact --note 'Resume from FILE'`. |
 
 Claude Code context readings come from its status line. Codex readings come
 from its native session log. Both collars also have a standalone limits

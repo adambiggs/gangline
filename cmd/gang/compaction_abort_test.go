@@ -57,7 +57,7 @@ func TestCompactionFailureBeforeEnterIsNotRun(t *testing.T) {
 				return err
 			}
 			f.run.cmd = f.cmd
-			err := f.cmd.compact([]string{"--resume", "Resume from the state file."})
+			err := f.cmd.compact([]string{"--note", "Resume from the state file."})
 			if ce := (commandError{}); !errors.As(err, &ce) || ce.status != exitNative || !strings.Contains(err.Error(), tc.wantReason) {
 				t.Fatalf("compact result: %v", err)
 			}
@@ -95,7 +95,7 @@ func TestQueuedCompactionFailureReachesRequester(t *testing.T) {
 	var ticked []string
 	f.cmd.detach = func(id string, _ hookNotice) error { ticked = append(ticked, id); return nil }
 	f.run.cmd = f.cmd
-	if err := f.cmd.compact([]string{"tester", "--resume", "Resume from the state file."}); err != nil {
+	if err := f.cmd.compact([]string{"tester", "--note", "Resume from the state file."}); err != nil {
 		t.Fatal(err)
 	}
 	f.input.screen = screenWithText("────────", "❯ ", "────────")
@@ -139,7 +139,7 @@ func TestImmediateCompactionFailureNotRequeuedToRequester(t *testing.T) {
 		return harness.ErrComposerEmptied
 	}
 	f.run.cmd = f.cmd
-	if err := f.cmd.compact([]string{"tester", "--resume", "Resume from the state file."}); !strings.Contains(fmt.Sprint(err), "emptied before submission") {
+	if err := f.cmd.compact([]string{"tester", "--note", "Resume from the state file."}); !strings.Contains(fmt.Sprint(err), "emptied before submission") {
 		t.Fatalf("compact result: %v", err)
 	}
 	lp, _ := f.run.team.Agent(lead.ID)
@@ -164,7 +164,7 @@ func TestCompactWithoutResumeToleratesUnobservedCaller(t *testing.T) {
 	if err := f.cmd.compact([]string{"tester"}); err != nil {
 		t.Fatalf("compact without resume: %v", err)
 	}
-	if err := f.cmd.compact([]string{"tester", "--resume", "Resume from the state file."}); !strings.Contains(fmt.Sprint(err), "inherited hitch identity") {
+	if err := f.cmd.compact([]string{"tester", "--note", "Resume from the state file."}); !strings.Contains(fmt.Sprint(err), "inherited hitch identity") {
 		t.Fatalf("resume note from an unobserved caller: %v", err)
 	}
 }

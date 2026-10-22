@@ -94,7 +94,7 @@ var commandUsage = map[string]string{
 	"send":       "usage: gang send NAME [--from SENDER | --as SENDER] [--credential FILE]\n       [--live-only] [--supersede] [--at DURATION|HH:MM|RFC3339]\n       [--team TEAM] [BODY]\n       gang send NAME --clear [--team TEAM]\n       gang send HOST:NAME [--as SENDER] [--credential FILE]\n       [--team TEAM] [BODY]\n       Without BODY, read stdin. Use -- before BODY when it begins with -.\n",
 	"queue":      "usage: gang queue [NAME] [--json] [--team TEAM]\n",
 	"interrupt":  "usage: gang interrupt [NAME] [-m|--message REASON] [--team TEAM]\n",
-	"compact":    "usage: gang compact [NAME] [--resume TEXT] [--team TEAM]\n       gang compact [NAME] --interrupt [--team TEAM]\n",
+	"compact":    "usage: gang compact [NAME] [--note TEXT] [--team TEAM]\n       gang compact [NAME] --interrupt [--team TEAM]\n",
 	"statusline": "usage: gang statusline [--install]\n",
 	"context":    "usage: gang context [NAME] [--json] [--team TEAM]\n       gang context --widget NAME | --clear [--team TEAM]\n",
 	"log":        "usage: gang log [--agent NAME|HITCH_ID] [--type TYPE|KIND] [--team TEAM]\n       [LOG.jsonl]\n",
@@ -172,7 +172,7 @@ var commandOptions = map[string][]optionSpec{
 		{"message", "REASON", "reason to deliver after interrupt"},
 	},
 	"compact": {
-		{"resume", "TEXT", "resume note (default a re-read note)"},
+		{"note", "TEXT", "resume note (default a re-read note)"},
 		{"interrupt", "", "interrupt busy compaction or clear failed draft"},
 	},
 	"statusline": {{"install", "", "install the native status line"}},

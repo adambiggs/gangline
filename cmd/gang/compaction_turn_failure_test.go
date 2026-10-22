@@ -39,7 +39,7 @@ func TestCompactionStartsAfterNonCapacityTurnFailure(t *testing.T) {
 	for _, failure := range []string{"unknown", "invalid_request: fixture rejected this request", "native failure without turn identity: unknown", "native turn failed"} {
 		t.Run(failure, func(t *testing.T) {
 			f, a := failedTurnCompactFixture(t, failure)
-			_ = f.cmd.compact([]string{"--resume", "Resume from the state file."})
+			_ = f.cmd.compact([]string{"--note", "Resume from the state file."})
 			got := readAgent(t, f, a.ID)
 			if f.input.submits == 0 || got.Compaction.Status != "submitted" {
 				t.Fatalf("compaction did not start: submits=%d compaction=%+v", f.input.submits, got.Compaction)
@@ -63,7 +63,7 @@ func TestCompactionWaitsOnCapacityTurnFailure(t *testing.T) {
 	} {
 		t.Run(tc.failure, func(t *testing.T) {
 			f, a := failedTurnCompactFixture(t, tc.failure)
-			if err := f.cmd.compact([]string{"--resume", "Resume from the state file."}); err != nil {
+			if err := f.cmd.compact([]string{"--note", "Resume from the state file."}); err != nil {
 				t.Fatal(err)
 			}
 			want := "provider capacity class " + tc.class
@@ -110,7 +110,7 @@ func TestCompactionCapacityWaitShownWhileScreenReadsBusy(t *testing.T) {
 	if busy, err := harness.Busy(c, f.input.screen); err != nil || !busy {
 		t.Fatalf("failed-turn screen premise: busy=%v err=%v", busy, err)
 	}
-	if err := f.cmd.compact([]string{"--resume", "Resume from the state file."}); err != nil {
+	if err := f.cmd.compact([]string{"--note", "Resume from the state file."}); err != nil {
 		t.Fatal(err)
 	}
 	want := "native turn failed with provider capacity class server_error"
@@ -134,7 +134,7 @@ func TestCompactionAfterTurnFailureWaitsForOpenTurn(t *testing.T) {
 		a.Native.SubmittedAt = time.Now()
 		a.ScreenFingerprint = "an earlier screen"
 	})
-	if err := f.cmd.compact([]string{"--resume", "Resume from the state file."}); err != nil {
+	if err := f.cmd.compact([]string{"--note", "Resume from the state file."}); err != nil {
 		t.Fatal(err)
 	}
 	got := readAgent(t, f, a.ID)

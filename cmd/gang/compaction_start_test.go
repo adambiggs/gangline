@@ -83,7 +83,7 @@ func TestCompactCommandGoneBeforeSubmitKey(t *testing.T) {
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			f, a := compactStartFixture(t, tc.after(t), idleEmptyScreen)
-			_ = f.cmd.compact([]string{"--resume", "Resume from the state file."})
+			_ = f.cmd.compact([]string{"--note", "Resume from the state file."})
 			p, _ := f.run.team.Agent(a.ID)
 			got, err := p.Read()
 			if err != nil {
@@ -112,7 +112,7 @@ func TestCompactCommandGoneBeforeSubmitKey(t *testing.T) {
 func TestCompactionResumeNeedsStartEvidence(t *testing.T) {
 	t.Run("no compaction shown", func(t *testing.T) {
 		f, a := compactStartFixture(t, compactDraftScreen, idleEmptyScreen)
-		_ = f.cmd.compact([]string{"--resume", "Resume from the state file."})
+		_ = f.cmd.compact([]string{"--note", "Resume from the state file."})
 		p, _ := f.run.team.Agent(a.ID)
 		got, err := p.Read()
 		if err != nil {
@@ -130,7 +130,7 @@ func TestCompactionResumeNeedsStartEvidence(t *testing.T) {
 	})
 	t.Run("command stays in the composer", func(t *testing.T) {
 		f, a := compactStartFixture(t, compactDraftScreen, compactDraftScreen)
-		_ = f.cmd.compact([]string{"--resume", "Resume from the state file."})
+		_ = f.cmd.compact([]string{"--note", "Resume from the state file."})
 		p, _ := f.run.team.Agent(a.ID)
 		got, err := p.Read()
 		if err != nil {
@@ -142,7 +142,7 @@ func TestCompactionResumeNeedsStartEvidence(t *testing.T) {
 	})
 	t.Run("compaction shown", func(t *testing.T) {
 		f, a := compactStartFixture(t, compactDraftScreen, func(c harness.Collar) substrate.Screen { return claudeCompactingScreen(t, c) })
-		_ = f.cmd.compact([]string{"--resume", "Resume from the state file."})
+		_ = f.cmd.compact([]string{"--note", "Resume from the state file."})
 		p, _ := f.run.team.Agent(a.ID)
 		got, err := p.Read()
 		if err != nil {

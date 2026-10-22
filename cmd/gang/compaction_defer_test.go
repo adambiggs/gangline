@@ -63,7 +63,7 @@ func TestCompactionDeferRequiresConfirmedWithdrawal(t *testing.T) {
 		f.input.screen = screenWithText("Working (esc to interrupt)", "› /compact")
 		return nil
 	}
-	_ = f.cmd.compact([]string{"worker", "--resume", "saved original note"})
+	_ = f.cmd.compact([]string{"worker", "--note", "saved original note"})
 	a, err := p.Read()
 	if err != nil || a.Compaction.Status != "failed" || !strings.Contains(a.Compaction.Reason, "withdrawal unconfirmed") || a.Compaction.Resume.Text != "saved original note" || !slices.Equal(f.input.keys, []string{"C-u"}) || f.input.submits != 0 {
 		t.Fatalf("unconfirmed withdrawal: compaction=%+v keys=%v submits=%d err=%v", a.Compaction, f.input.keys, f.input.submits, err)

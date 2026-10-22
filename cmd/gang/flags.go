@@ -186,7 +186,7 @@ type compactOptions struct {
 func parseCompact(arguments []string) (compactOptions, error) {
 	options := compactOptions{}
 	flags := boundFlagSet("compact", map[string]any{
-		"resume": &options.Resume, "interrupt": &options.Interrupt,
+		"note": &options.Resume, "interrupt": &options.Interrupt,
 	})
 	positionals, err := parseOptions(flags, arguments)
 	if err != nil {
@@ -204,7 +204,7 @@ func parseCompact(arguments []string) (compactOptions, error) {
 		}
 	}
 	if options.Interrupt && options.Resume != "" {
-		return compactOptions{}, usageError("compact: --interrupt and --resume cannot be combined")
+		return compactOptions{}, usageError("compact: --interrupt and --note cannot be combined")
 	}
 	return options, nil
 }

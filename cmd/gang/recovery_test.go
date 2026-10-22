@@ -263,7 +263,7 @@ func TestCompactionPublicationAcknowledgedBeforeInputIsDelivered(t *testing.T) {
 				t.Fatalf("resume lost while blocked: %+v %v submits=%d", queued, err, f.input.submits)
 			}
 			setClock(f, a.Compaction.CompletedAt.Add(operationTimeout))
-			err = f.cmd.compact([]string{"worker", "--resume", "second"})
+			err = f.cmd.compact([]string{"worker", "--note", "second"})
 			var refused commandError
 			if !errors.As(err, &refused) || refused.status != exitRefused {
 				t.Fatalf("preserved resume replaced: %v", err)

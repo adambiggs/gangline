@@ -79,7 +79,7 @@ func mustEnvelopeText(t *testing.T, e core.Envelope) string {
 func TestCompactionObservesIdleBeforeStarting(t *testing.T) {
 	f, a, p := compactionFixture(t)
 	f.input.screen = screenWithText("Working (esc to interrupt)", "› ")
-	if err := f.cmd.compact([]string{"worker", "--resume", "resume only after compaction"}); err != nil {
+	if err := f.cmd.compact([]string{"worker", "--note", "resume only after compaction"}); err != nil {
 		t.Fatal(err)
 	}
 	got, err := p.Read()
@@ -104,7 +104,7 @@ func TestCompactionObservesIdleBeforeStarting(t *testing.T) {
 
 func TestCompactionRequiresFreshSameSessionCompletion(t *testing.T) {
 	f, a, p := compactionFixture(t)
-	err := f.cmd.compact([]string{"worker", "--resume", "resume only after compaction"})
+	err := f.cmd.compact([]string{"worker", "--note", "resume only after compaction"})
 	var ce commandError
 	if !errors.As(err, &ce) || ce.status != exitUnknown || !strings.Contains(err.Error(), "unconfirmed") {
 		t.Fatalf("submission claimed completion: %v", err)
@@ -167,7 +167,7 @@ func TestCompactionRechecksBusyBeforeSubmit(t *testing.T) {
 		}
 		return next(k)
 	}
-	if err := f.cmd.compact([]string{"worker", "--resume", "saved original note"}); err != nil {
+	if err := f.cmd.compact([]string{"worker", "--note", "saved original note"}); err != nil {
 		t.Fatal(err)
 	}
 	a, err := p.Read()

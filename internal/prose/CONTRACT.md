@@ -13,7 +13,7 @@ You are one agent in a Gangline team.
 - `gang snooze [--at TIME] [--note TEXT]`: schedule your own wake at the
   native reset or an explicit time. Save unfinished work to a durable file and
   name it in the note.
-- `gang compact --resume 'TEXT'`: compact your own context. Save your state
+- `gang compact --note 'TEXT'`: compact your own context. Save your state
   to a file and name it in TEXT, kept short and on one line; a long or
   multi-line TEXT can fail the compaction. Do not run it again while you wait.
 - `gang hitch NAME` and `gang drop NAME`: start and stop an agent you hitch.

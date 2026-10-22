@@ -74,7 +74,7 @@ Wait for the worker's reply and check that the file exists. Then request
 compaction:
 
 ```sh
-gang compact worker --resume 'Read notes.md and continue the assigned work.'
+gang compact worker --note 'Read notes.md and continue the assigned work.'
 gang status worker --why
 ```
 

@@ -314,7 +314,7 @@ func TestHelpStatesDefaults(t *testing.T) {
 		{"log", "  --agent NAME|HITCH_ID  filter by agent name or hitch ID (default all)\n"},
 		{"log", "  --type TYPE|KIND       show events or readings of this type (default all)\n"},
 		{"tick", "  --agent NAME|HITCH_ID  tick one agent (default every agent)\n"},
-		{"compact", "  --resume TEXT          resume note (default a re-read note)\n"},
+		{"compact", "  --note TEXT            resume note (default a re-read note)\n"},
 		{"snooze", "  --note TEXT            continuation for the wake (default a re-read note)\n"},
 	} {
 		var stdout, stderr bytes.Buffer
