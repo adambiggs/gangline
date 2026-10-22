@@ -44,7 +44,7 @@ import "time"
 // Indexed by type, so validating an event is one lookup rather than a trial
 // of every type's branch.
 #Types: {
- rehitch_requested: {}, rehitch_started: {}, rehitch_failed: {reason: #ID}
+ rehitch_requested: {}, rehitch_started: {}, rehitch_failed: {reason: #ID}, rehitch_attention: {reason: #ID}
  hitch_claimed: {}, hitch_spawned: {}, hitch_ready: {}, hitch_blocked: {}, hitch_failed: {}, boot_reopened: {hitch_id: #ID, deadline: #Time}, renamed: {}, send_cancelled: {}, delivery_accepted: {}
  delivery_succeeded: {}, delivery_failed: {}, delivery_unverified: {}, activity_observed: {}, observation: {}, native_hook: {}, compaction_waiting: {}, compaction_submitted: {}
  compaction_completed: {}, compaction_failed: {}, compaction_unverified: {}, interrupt_requested: {}, interrupt_completed: {}, deadline_checked: {}, drop_started: {}, drop_finished: {}

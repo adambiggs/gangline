@@ -132,3 +132,43 @@ func TestRehitchTeardownFailureKeepsLiveHarnessActive(t *testing.T) {
 		})
 	}
 }
+
+func TestRehitchLiveRelaunchNeedsAttentionRatherThanFailure(t *testing.T) {
+	for _, variant := range []string{"blocked startup", "unverified startup", "watchdog error", "failed launch", "original harness"} {
+		t.Run(variant, func(t *testing.T) {
+			f, before, p := rehitchFixture(t)
+			current := before
+			current.Rehitch = nil
+			current.Registration.Generation = strings.Repeat("b", 64)
+			switch variant {
+			case "blocked startup":
+				current.Status, current.Activity = core.Booting, core.Blocked
+			case "unverified startup":
+				current.Status, current.Activity = core.Active, core.Unknown
+			case "watchdog error":
+				current.Status, current.Activity = core.Active, core.Busy
+			case "failed launch":
+				current.Status, current.Pane = core.Failed, ""
+			case "original harness":
+				current = before
+			}
+			f.setAgent(t, current, func(a *core.Agent) { *a = current })
+			failure := errors.New("synthetic " + variant)
+			if err := f.run.rehitchError(before, failure); !errors.Is(err, failure) {
+				t.Fatalf("lost command error: %v", err)
+			}
+			notices, err := p.ListNew()
+			if err != nil || len(notices) != 1 {
+				t.Fatalf("notice: %+v: %v", notices, err)
+			}
+			attention := variant != "failed launch" && variant != "original harness"
+			if attention {
+				if !strings.Contains(notices[0].Message.Text, "restarted its harness but needs attention") || strings.Contains(notices[0].Message.Text, "could not restart") || loggedEvents(t, f, "rehitch_failed") != 0 || loggedEvents(t, f, "rehitch_attention") != 1 {
+					t.Fatalf("live relaunch reported as failed: %s", notices[0].Message.Text)
+				}
+			} else if !strings.Contains(notices[0].Message.Text, "could not restart") || loggedEvents(t, f, "rehitch_failed") != 1 {
+				t.Fatalf("failed restart not reported: %s", notices[0].Message.Text)
+			}
+		})
+	}
+}

@@ -141,6 +141,11 @@ func (run *runtime) rehitchPending(id core.HitchID) error {
 	if err == nil {
 		return nil
 	}
+	return run.rehitchError(a, err)
+}
+
+func (run *runtime) rehitchError(previous core.Agent, err error) error {
+	id := previous.ID
 	// Preflight can fail while the original harness still runs. Consume the
 	// request once and tell its owner; a watchdog must not repeat teardown.
 	l, current, lockErr := run.acquire(id, true)
@@ -152,7 +157,12 @@ func (run *runtime) rehitchPending(id core.HitchID) error {
 	if saveErr := l.Save(current); saveErr != nil {
 		return errors.Join(err, saveErr)
 	}
+	kind := "rehitch_failed"
 	message := fmt.Sprintf("%s could not restart its harness: %s. Inspect gang status %s --why and the team log.", current.Name, err, current.Name)
+	if current.Pane != "" && current.Status != core.Failed && current.Registration.Generation != previous.Registration.Generation {
+		kind = "rehitch_attention"
+		message = fmt.Sprintf("%s restarted its harness but needs attention: %s. Inspect gang status %s --why and the team log.", current.Name, err, current.Name)
+	}
 	failureID, idErr := randomID("rehitch-failed")
 	if idErr != nil {
 		return errors.Join(err, idErr)
@@ -162,7 +172,7 @@ func (run *runtime) rehitchPending(id core.HitchID) error {
 		return errors.Join(err, tokenErr)
 	}
 	envelope := core.Envelope{ID: core.EnvelopeID(failureID), Token: token, Recipient: id, To: current.Name, From: core.Sender{Kind: core.SenderGangline, Name: "rehitch"}, Message: core.Message{Text: message}, CreatedAt: run.cmd.now()}
-	return errors.Join(err, run.record(current, core.Event{Type: "rehitch_failed", Reason: err.Error()}),
+	return errors.Join(err, run.record(current, core.Event{Type: kind, Reason: err.Error()}),
 		l.Paths.Publish(envelope), run.notifyHitcher(current, envelope.ID, message))
 }
 
