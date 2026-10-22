@@ -52,3 +52,31 @@ func TestRehitchRequiresRecordedOrExplicitLaunchChoices(t *testing.T) {
 		})
 	}
 }
+
+func TestRehitchDefersTeamLockContention(t *testing.T) {
+	f, a, p := rehitchFixture(t)
+	a.Directory = t.TempDir()
+	f.setAgent(t, a, func(current *core.Agent) { *current = a })
+	if err := f.run.record(a, core.Event{Type: "rehitch_requested"}); err != nil {
+		t.Fatal(err)
+	}
+	lock, err := f.run.lockTeam()
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer lock.Close()
+	if err := f.run.rehitchPending(a.ID); err != nil {
+		t.Fatalf("contending restart failed: %v", err)
+	}
+	got, err := p.Read()
+	if err != nil {
+		t.Fatal(err)
+	}
+	pending, err := p.ListNew()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.Rehitch == nil || got.Rehitch.Text != a.Rehitch.Text || got.Status != core.Active || got.Pane != a.Pane || len(pending) != 0 || loggedEvents(t, f, "rehitch_failed") != 0 {
+		t.Fatalf("contention consumed restart: %+v notices=%+v", got, pending)
+	}
+}

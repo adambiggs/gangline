@@ -198,7 +198,15 @@ func (cmd command) hitchReplacing(args []string, supersede bool, previous *core.
 		}
 		return fmt.Errorf("find %s: %w", launch.Name, err)
 	}
-	lock, err := run.lockTeam()
+	var lock *os.File
+	if previous != nil {
+		lock, err = (store.Paths{Root: run.settings.StateRoot}).LockTeam(run.settings.Session)
+		if errors.Is(err, store.ErrLocked) {
+			return errRehitchDeferred
+		}
+	} else {
+		lock, err = run.lockTeam()
+	}
 	if err != nil {
 		return err
 	}
