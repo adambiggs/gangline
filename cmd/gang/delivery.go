@@ -348,7 +348,8 @@ func (run *runtime) deliver(l *store.LockedAgent, a *core.Agent, e core.Envelope
 	}
 	var witness store.Witness
 	var accepted, held bool
-	if err == nil {
+	before := old.ID
+	for err == nil {
 		if isContextBandNotice(e) || isResumeEnvelope(e) {
 			// Context notes use exact hook proof. Leave a queued note for a
 			// later hook instead of holding the agent lock waiting for its turn.
@@ -361,24 +362,36 @@ func (run *runtime) deliver(l *store.LockedAgent, a *core.Agent, e core.Envelope
 				}
 			}
 		} else {
-			witness, accepted, err = run.cmd.awaitReceipt(ctx, l.Paths, old.ID, queue)
+			witness, accepted, err = run.cmd.awaitReceipt(ctx, l.Paths, before, queue)
 		}
-	}
-	if err == nil && !accepted {
+		if err != nil || accepted {
+			break
+		}
 		var matched bool
 		matched, err = harness.SubmittedPromptStartsWith(c.Primitives.SubmitWitness, wire, witness.Prompt)
-		if err == nil && !matched {
-			if queue != nil {
-				var same bool
-				same, err = followNativeSession(c, a, witness.SessionID, witness.Transcript)
-				if err == nil && same {
-					accepted, err = queue(ctx)
+		if err != nil || matched {
+			break
+		}
+		e.Witnessed = witness.Prompt
+		if queue != nil {
+			var same bool
+			same, err = followNativeSession(c, a, witness.SessionID, witness.Transcript)
+			if err == nil && same {
+				// An earlier queued input can submit while this message's
+				// receipt is pending. Keep the original operation deadline.
+				if err = ctx.Err(); err != nil {
+					break
 				}
+				if deadline, ok := ctx.Deadline(); ok && !run.cmd.now().Before(deadline) {
+					err = context.DeadlineExceeded
+					break
+				}
+				before = witness.ID
+				continue
 			}
-			if err == nil && !accepted {
-				e.Witnessed = witness.Prompt
-				err = fmt.Errorf("submit witness does not match the message text and one-time token")
-			}
+		}
+		if err == nil {
+			err = fmt.Errorf("submit witness does not match the message text and one-time token")
 		}
 	}
 	if err != nil {
@@ -393,6 +406,7 @@ func (run *runtime) deliver(l *store.LockedAgent, a *core.Agent, e core.Envelope
 			withdrawn = outcome == "failed"
 		}
 	} else if accepted {
+		e.Witnessed = ""
 		outcome, reason = "accepted", "native queue shows sender and one-time token; do not resend"
 	} else {
 		if same, err := followNativeSession(c, a, witness.SessionID, witness.Transcript); err != nil {
@@ -400,6 +414,7 @@ func (run *runtime) deliver(l *store.LockedAgent, a *core.Agent, e core.Envelope
 		} else if !same {
 			outcome, reason = "unverified", "submit witness belongs to another native session"
 		} else {
+			e.Witnessed = ""
 			a.Native.SessionID = witness.SessionID
 			a.Native.TurnID = witness.TurnID
 			a.Native.Transcript = witness.Transcript

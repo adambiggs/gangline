@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"errors"
 	"strings"
 	"testing"
@@ -20,6 +21,9 @@ func TestMismatchedPromptIsRetainedUntilVerified(t *testing.T) {
 	}
 	cmd := f.cmd
 	cmd.stdin = strings.NewReader("hello")
+	cmd.newWatch = func(string) (changeWait, error) {
+		return waitFixture{func(context.Context) error { return errors.New("test boundary: no matching receipt") }}, nil
+	}
 	var ce commandError
 	if err := cmd.send([]string{"worker", "--from", "operator"}); !errors.As(err, &ce) || ce.status != exitUnknown {
 		t.Fatalf("mismatch result: %v", err)

@@ -3,8 +3,10 @@ package main
 import (
 	"context"
 	"errors"
+	"fmt"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/adambiggs/gangline/core"
 	"github.com/adambiggs/gangline/store"
@@ -182,6 +184,117 @@ func TestNativeQueueReceiptRespectsExactHookProof(t *testing.T) {
 				t.Fatalf("receipt: %q, want %s", f.out, want)
 			}
 		})
+	}
+}
+
+func TestSendWaitsPastEarlierSubmitHook(t *testing.T) {
+	for _, receipt := range []string{"accepted", "delivered", "missing", "foreign session"} {
+		t.Run(receipt, func(t *testing.T) {
+			f, a, p := queueSendFixture(t)
+			f.setAgent(t, a, func(a *core.Agent) { a.Native.SessionID = "s" })
+			session := "s"
+			if receipt == "foreign session" {
+				session = "foreign"
+			}
+			// An earlier queued input reaches its submit hook before this
+			// message's queue preview paints or its own submit hook arrives.
+			f.input.submit = func(string) error {
+				return p.WriteWitness(store.Witness{ID: "earlier-hook", At: f.cmd.now(), SessionID: session, Prompt: "earlier queued input"})
+			}
+			waits := 0
+			f.cmd.newWatch = func(string) (changeWait, error) {
+				return waitFixture{func(context.Context) error {
+					waits++
+					if waits > 1 || receipt == "missing" || receipt == "foreign session" {
+						return errors.New("test boundary: no matching receipt")
+					}
+					if receipt == "accepted" {
+						f.input.screen = nativeQueueScreen(f.input.pasted)
+						return nil
+					}
+					return p.WriteWitness(store.Witness{ID: "matching-hook", At: f.cmd.now(), SessionID: "s", Prompt: f.input.pasted})
+				}}, nil
+			}
+			err := f.cmd.send([]string{"worker", "--from", "operator"})
+			want := receipt
+			if receipt == "missing" || receipt == "foreign session" {
+				want = "unverified"
+			}
+			fields := strings.Fields(f.out.String())
+			if len(fields) != 2 || fields[1] != want || (err != nil) != (want == "unverified") {
+				t.Fatalf("output=%q err=%v; want %s", f.out, err, want)
+			}
+			if f.input.submits != 1 || receipt != "foreign session" && waits != 1 || receipt == "foreign session" && waits != 0 {
+				t.Fatalf("submits=%d waits=%d", f.input.submits, waits)
+			}
+			directory := "cur"
+			if want == "unverified" {
+				directory = "failed"
+			}
+			e, readErr := p.ReadEnvelope(directory, core.EnvelopeID(fields[0]))
+			if readErr != nil || e.Outcome != want || want != "unverified" && e.Witnessed != "" {
+				t.Fatalf("receipt=%+v err=%v", e, readErr)
+			}
+		})
+	}
+}
+
+func TestEarlierSubmitHooksRespectOperationDeadline(t *testing.T) {
+	for _, budget := range []time.Duration{time.Millisecond, time.Second, time.Hour} {
+		for _, canceled := range []bool{false, true} {
+			t.Run(fmt.Sprintf("%s/canceled=%t", budget, canceled), func(t *testing.T) {
+				f, a, p := queueSendFixture(t)
+				f.setAgent(t, a, func(a *core.Agent) { a.Native.SessionID = "s" })
+				start, now := f.cmd.now(), f.cmd.now()
+				f.cmd.clock = func() time.Time { return now }
+				var cancelOperation context.CancelFunc
+				f.cmd.newTimeout = func(ctx context.Context, requested time.Duration) (context.Context, context.CancelFunc) {
+					if requested != operationTimeout {
+						t.Fatalf("delivery budget=%s", requested)
+					}
+					ctx, cancelOperation = context.WithCancel(ctx)
+					return fakeDeadline{ctx, start.Add(budget)}, cancelOperation
+				}
+				f.input.submit = func(string) error { return nil }
+				watches := 0
+				f.cmd.newWatch = func(string) (changeWait, error) {
+					watches++
+					if watches > 2 {
+						return nil, errors.New("processed another hook after the operation ended")
+					}
+					// One hook arrives halfway through the budget; the next
+					// reaches its deadline or cancels with half still unused.
+					now = start.Add(time.Duration(watches) * budget / 2)
+					if canceled {
+						now = start.Add(budget / 2)
+						if watches == 2 {
+							cancelOperation()
+						}
+					}
+					if err := p.WriteWitness(store.Witness{ID: fmt.Sprintf("earlier-%d", watches), At: now, SessionID: "s", Prompt: "earlier queued input"}); err != nil {
+						t.Fatal(err)
+					}
+					return waitFixture{func(context.Context) error { return errors.New("unexpected wait with a fresh hook") }}, nil
+				}
+				err := f.cmd.send([]string{"worker", "--from", "operator"})
+				var ce commandError
+				if !errors.As(err, &ce) || ce.status != exitUnknown || watches != 2 || f.input.submits != 1 {
+					t.Fatalf("result=%v watches=%d submits=%d", err, watches, f.input.submits)
+				}
+				fields := strings.Fields(f.out.String())
+				if len(fields) != 2 || fields[1] != "unverified" {
+					t.Fatalf("output=%q", f.out)
+				}
+				e, err := p.ReadEnvelope("failed", core.EnvelopeID(fields[0]))
+				want := context.DeadlineExceeded.Error()
+				if canceled {
+					want = context.Canceled.Error()
+				}
+				if err != nil || e.Outcome != "unverified" || e.Reason != want {
+					t.Fatalf("receipt=%+v err=%v; want %s", e, err, want)
+				}
+			})
+		}
 	}
 }
 
