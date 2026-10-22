@@ -103,7 +103,7 @@ lists their override files.
 ## Context and compaction
 
 **Context** is the native harness's reported conversation usage. Gangline
-reports missing readings as unknown. A collar can define context bands;
+reports missing readings as unknown. A collar defines context bands by model;
 crossing one upward queues a notice. Nonfinal bands advise saving state and
 compacting at a suitable stopping point; the last orders compaction now.
 

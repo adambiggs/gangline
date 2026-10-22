@@ -5,8 +5,8 @@ daily tasks and [troubleshooting](troubleshooting.md) for observable failures.
 
 ## Continue through a provider cap
 
-Gangline reads the collar's native five-hour and weekly usage windows. When a
-configured usage band is crossed, it sends one notice for that collar and reset
+Gangline reads the collar's native five-hour and weekly usage windows. When one of
+its usage bands is crossed, it sends one notice for that collar and reset
 window to the active lead. A band measures pace: how far the window's use runs
 ahead of the share of the window that has elapsed. A notice still waiting for a
 lead, or queued behind one, when its window resets is withdrawn rather than

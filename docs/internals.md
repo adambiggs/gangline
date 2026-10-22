@@ -210,8 +210,9 @@ signalling. This protects against reused process IDs and supports incomplete
 drop recovery. It can find observable descendants, including separate process
 groups; descendants already reparented out of the recorded tree may be missed.
 
-Provider errors can end a turn without a Stop hook. Tick can recognize such
-an error and send a continuation, backing off within the configured capacity
+Provider errors can end a turn without a Stop hook. Tick recognizes such an
+error on screen through the collar's `capacity` primitive, which the Codex
+collar declares, and sends a continuation, backing off within the capacity
 budget. Native choice prompts remain the operator's decision.
 
 ## Usage notices and scheduled wakes

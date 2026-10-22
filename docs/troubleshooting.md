@@ -61,9 +61,9 @@ recover: the text may already have reached the harness.
 `gang status NAME --why` and compare it with `gang capture NAME`. A failed
 probe does not prove that a turn is stuck.
 
-A native turn failure retains its reason in activity evidence. For a provider
-error that ended a turn, `gang tick` can send continuations within the
-configured `GANG_CAPACITY_TIMEOUT` budget. Check `gang config` and
+A native turn failure retains its reason in activity evidence. For a model
+capacity error on a Codex agent's screen, `gang tick` sends continuations
+within the `GANG_CAPACITY_TIMEOUT` budget. Check `gang config` and
 `gang limits NAME`; handle any native choice menu in the pane.
 
 ## Compaction has not resumed the work
