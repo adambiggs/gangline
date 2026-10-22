@@ -224,8 +224,11 @@ func (run *runtime) prepareRehitch(previous core.Agent, next *core.Agent) (*stor
 	if err := l.Save(a); err != nil {
 		return fail(err)
 	}
-	if err := run.endNative(l, &a); err != nil {
-		return fail(errors.Join(err, run.apply(l, &a, core.Event{Type: "hitch_failed", Reason: err.Error()})))
+	if stopping, err := run.endNative(l, &a); err != nil {
+		if stopping {
+			err = errors.Join(err, run.apply(l, &a, core.Event{Type: "hitch_failed", Reason: err.Error()}))
+		}
+		return fail(err)
 	}
 	next.Native = a.Native
 	next.Native.HookAt, next.Native.HookKind = run.cmd.now(), ""

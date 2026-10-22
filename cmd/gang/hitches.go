@@ -816,7 +816,7 @@ func (run *runtime) dropAgent(id core.HitchID, wait bool, reason string) error {
 	if err != nil {
 		return err
 	}
-	if err := run.endNative(l, &a); err != nil {
+	if _, err := run.endNative(l, &a); err != nil {
 		return err
 	}
 	if a.Status != core.Dropping {
@@ -900,26 +900,27 @@ func endOwnPane() {
 	ownPaneEnding.Store(true)
 }
 
-// endNative removes only the registered native process tree and pane.
-func (run *runtime) endNative(l *store.LockedAgent, a *core.Agent) error {
+// endNative removes the registered native process tree and pane.
+// stopping reports whether signalling or pane removal began.
+func (run *runtime) endNative(l *store.LockedAgent, a *core.Agent) (stopping bool, result error) {
 	p := l.Paths
 	registry, err := run.registry()
 	if err != nil {
-		return err
+		return stopping, err
 	}
 	visible := false
 	replaced := false
 	exited := false
 	if a.Pane != "" {
 		if a.Registration.Generation == "" || a.Registration.Session == "" || a.Registration.TokenHash == "" {
-			return refuseError("refuse teardown: incomplete pane registration; inspect retained state at %s", p.State)
+			return stopping, refuseError("refuse teardown: incomplete pane registration; inspect retained state at %s", p.State)
 		}
 		present, checkErr := registry.CheckPane(context.Background(), paneIdentity(*a))
 		if errors.Is(checkErr, tmux.ErrPaneReplaced) {
 			replaced = true
 			present = false
 		} else if checkErr != nil {
-			return checkErr
+			return stopping, checkErr
 		}
 		if present {
 			visible, err = registry.ProcessVisibility(context.Background(), substrate.PaneID(a.Pane))
@@ -930,7 +931,7 @@ func (run *runtime) endNative(l *store.LockedAgent, a *core.Agent) error {
 			exited, err = true, nil
 		}
 		if err != nil {
-			return err
+			return stopping, err
 		}
 	}
 	// A command dropping its own agent ends its own pane on every teardown
@@ -944,10 +945,10 @@ func (run *runtime) endNative(l *store.LockedAgent, a *core.Agent) error {
 	// nothing to clean up.
 	if !visible && !exited && (a.Registration.Generation != "" || a.Process.PID != 0) && !tmux.CanReadIdentity(nativeIdentity(a.Process)) {
 		if err := run.noteProcessUnavailable(*a); err != nil {
-			return err
+			return stopping, err
 		}
 		if _, err := fmt.Fprintln(run.cmd.stderr, "warning: host process visibility unavailable; detached-descendant cleanup skipped"); err != nil {
-			return err
+			return stopping, err
 		}
 	}
 	if visible && a.Process.PID == 0 && a.Registration.Generation != "" {
@@ -962,9 +963,9 @@ func (run *runtime) endNative(l *store.LockedAgent, a *core.Agent) error {
 			if errors.Is(checkErr, tmux.ErrPaneReplaced) {
 				replaced = true
 			} else if checkErr != nil {
-				return checkErr
+				return stopping, checkErr
 			} else if present {
-				return err
+				return stopping, err
 			}
 		}
 	}
@@ -992,25 +993,27 @@ func (run *runtime) endNative(l *store.LockedAgent, a *core.Agent) error {
 			if owned != nil {
 				_ = owned.Close()
 			}
-			return err
+			return stopping, err
 		}
 		defer owned.Close()
 		// Teardown has its own fresh budget. Stored operation deadlines cannot stop it.
 		ctx, cancel := context.WithTimeout(context.Background(), operationTimeout)
 		defer cancel()
+		stopping = true
 		if err := owned.Stop(ctx); err != nil {
-			return err
+			return stopping, err
 		}
 	}
 	if a.Pane != "" && !replaced {
+		stopping = true
 		if nativeVisible && a.Process.PID != 0 {
 			err = registry.RemoveRegisteredNativePane(context.Background(), paneIdentity(*a), nativeIdentity(a.Process))
 		} else {
 			err = registry.RemoveRegisteredPane(context.Background(), paneIdentity(*a))
 		}
 		if err != nil {
-			return err
+			return stopping, err
 		}
 	}
-	return nil
+	return stopping, nil
 }
