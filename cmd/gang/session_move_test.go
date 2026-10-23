@@ -105,6 +105,33 @@ func TestTickFollowsRecordedSessionMove(t *testing.T) {
 	}
 }
 
+// A drop that runs between the submit hook and the tick reconciling it
+// reports and binds the session the harness's records show the conversation
+// moved to, and keeps the saved session for a witness from another
+// conversation.
+func TestDropFollowsRecordedSessionMove(t *testing.T) {
+	for _, c := range []struct{ next, resume string }{{"n", "n"}, {"unexpected", "s"}} {
+		t.Run(c.next, func(t *testing.T) {
+			f, a, _ := movedSessionFixture(t, c.next,
+				`{"type":"user","sessionId":"s","promptId":"p1"}`,
+				`{"type":"continued-in","sessionId":"s","continuedInSessionId":"n"}`)
+			if err := f.cmd.drop([]string{"worker"}); err != nil {
+				t.Fatal(err)
+			}
+			if want := "resume session: " + c.resume + "\n"; !strings.HasSuffix(f.out.String(), want) {
+				t.Fatalf("drop: %q, want %q", f.out, want)
+			}
+			want := []core.Binding{{SessionID: "s", Collar: a.Collar, HitchedBy: "l"}}
+			if c.resume != "s" {
+				want = append(want, core.Binding{SessionID: c.resume, PreviousSessionID: "s", Collar: a.Collar, HitchedBy: "l"})
+			}
+			if got := sessionBindings(t, f, a.ID); !reflect.DeepEqual(got, want) {
+				t.Fatalf("bindings = %+v, want %+v", got, want)
+			}
+		})
+	}
+}
+
 func TestNativeSessionConflictSurvivesWitnessReplacement(t *testing.T) {
 	f, a, _ := movedSessionFixture(t, "unexpected")
 	p, err := f.run.team.Agent(a.ID)
