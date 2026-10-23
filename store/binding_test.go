@@ -12,6 +12,9 @@ import (
 func bindings(t *testing.T, p TeamPaths) []core.Event {
 	t.Helper()
 	f, err := os.Open(p.Log)
+	if os.IsNotExist(err) {
+		return nil
+	}
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -28,13 +31,44 @@ func bindings(t *testing.T, p TeamPaths) []core.Event {
 	return found
 }
 
+// A session requested for resume is bound only once the native harness
+// reports it with its transcript.
+func TestRequestedSessionIsBoundOnceReported(t *testing.T) {
+	p := testTeam(t)
+	a := testAgent("a", "worker")
+	a.Native.SessionID = "r"
+	l, err := p.CreateAgent(a)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer l.Close()
+	a.Activity = core.Busy
+	if err := l.Save(a); err != nil {
+		t.Fatal(err)
+	}
+	if got := bindings(t, p); len(got) != 0 {
+		t.Fatalf("requested session bound before the harness reported it: %+v", *got[0].Binding)
+	}
+	a.Native.Transcript = "r.jsonl"
+	if err := l.Save(a); err != nil {
+		t.Fatal(err)
+	}
+	var got []core.Binding
+	for _, e := range bindings(t, p) {
+		got = append(got, *e.Binding)
+	}
+	if want := []core.Binding{{SessionID: "r", Collar: "codex"}}; !reflect.DeepEqual(got, want) {
+		t.Fatalf("bindings = %+v", got)
+	}
+}
+
 // Every native session a hitch holds is recorded once, when it is first
 // saved, with the collar and parent hitch, and stays in the team log after the
 // agent is dropped and its name reused.
 func TestSavedSessionChangesAreBound(t *testing.T) {
 	p := testTeam(t)
 	a := testAgent("a", "worker")
-	a.HitchedBy, a.Native.SessionID = "l", "s"
+	a.HitchedBy, a.Native.SessionID, a.Native.Transcript = "l", "s", "s.jsonl"
 	l, err := p.CreateAgent(a)
 	if err != nil {
 		t.Fatal(err)
@@ -43,7 +77,7 @@ func TestSavedSessionChangesAreBound(t *testing.T) {
 	if err := l.Save(a); err != nil {
 		t.Fatal(err)
 	}
-	a.Native.SessionID = "n"
+	a.Native.SessionID, a.Native.Transcript = "n", "n.jsonl"
 	if err := l.Save(a); err != nil {
 		t.Fatal(err)
 	}
@@ -77,7 +111,7 @@ func TestSavedSessionChangesAreBound(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	b.Native.SessionID = "c"
+	b.Native.SessionID, b.Native.Transcript = "c", "c.jsonl"
 	if err := l.Save(b); err != nil {
 		t.Fatal(err)
 	}
@@ -108,6 +142,7 @@ func TestSavedSessionChangesAreBound(t *testing.T) {
 func TestUnboundSessionIsBoundAtTheNextSave(t *testing.T) {
 	p := testTeam(t)
 	a := testAgent("a", "worker")
+	a.Native.Transcript = "t.jsonl"
 	l, err := p.CreateAgent(a)
 	if err != nil {
 		t.Fatal(err)

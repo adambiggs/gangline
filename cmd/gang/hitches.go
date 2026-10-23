@@ -895,22 +895,34 @@ func (run *runtime) dropAgent(id core.HitchID, wait bool, reason string) error {
 			return err
 		}
 	}
-	// A submit hook can have recorded identity after the last saved state: a
-	// first session, or one the harness's records show continuing the saved
-	// session. A witness drop cannot verify leaves the saved session.
+	// Hooks can have recorded identity after the last saved state: a first
+	// session, the transcript confirming a requested one, or, in a submit
+	// witness, a session the harness's records show continuing the saved one.
+	// A record drop cannot verify leaves the saved session.
 	witness, err := p.ReadWitness()
 	if err != nil && !errors.Is(err, os.ErrNotExist) {
 		return err
 	}
-	if witness.SessionID != "" && witness.SessionID != a.Native.SessionID {
-		if a.Native.SessionID == "" {
-			a.Native.SessionID, a.Native.Transcript = witness.SessionID, witness.Transcript
-		} else if c, err := loadCollar(a.Collar, run.settings); err == nil {
+	hooks, err := p.ReadStatusHooks()
+	if err != nil {
+		return err
+	}
+	if a.Native.SessionID != "" && witness.SessionID != "" && witness.SessionID != a.Native.SessionID {
+		if c, err := loadCollar(a.Collar, run.settings); err == nil {
 			_, _ = followNativeSession(c, &a, witness.SessionID, witness.Transcript)
 		}
-		if err := l.Save(a); err != nil {
-			return err
+	}
+	for _, n := range append([]store.StatusHook{{SessionID: witness.SessionID, Transcript: witness.Transcript}}, hooks...) {
+		if n.SessionID == "" || a.Native.SessionID != "" && n.SessionID != a.Native.SessionID {
+			continue
 		}
+		a.Native.SessionID = n.SessionID
+		if a.Native.Transcript == "" {
+			a.Native.Transcript = n.Transcript
+		}
+	}
+	if err := l.Save(a); err != nil {
+		return err
 	}
 	session := a.Native.SessionID
 	if session == "" {

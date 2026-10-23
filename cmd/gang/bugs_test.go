@@ -64,14 +64,31 @@ func TestQueuedCompactionWaitsWithoutWedging(t *testing.T) {
 	}
 }
 
+// Drop reports and binds the session a submit witness or a status hook
+// recorded after the last saved state, including the harness's confirmation
+// of a requested resume session.
 func TestDropReportsResumeIdentity(t *testing.T) {
-	for _, session := range []string{"native-session", ""} {
-		t.Run(session, func(t *testing.T) {
+	for _, c := range []struct{ requested, session, record string }{
+		{"", "native-session", "witness"},
+		{"native-session", "native-session", "witness"},
+		{"native-session", "native-session", "status-hook"},
+		{"", "", ""},
+	} {
+		requested, session := c.requested, c.session
+		t.Run(requested+"/"+session+"/"+c.record, func(t *testing.T) {
 			f := newStateFixture(t)
 			a := f.add(t, "a", "worker", "codex")
+			if requested != "" {
+				saveAgent(t, f, a.ID, func(a *core.Agent) { a.Native.SessionID = requested })
+			}
 			p, _ := f.run.team.Agent(a.ID)
-			if session != "" {
-				if err := p.WriteWitness(store.Witness{ID: "latest", SessionID: session, At: f.cmd.now()}); err != nil {
+			switch c.record {
+			case "witness":
+				if err := p.WriteWitness(store.Witness{ID: "latest", SessionID: session, Transcript: session + ".jsonl", At: f.cmd.now()}); err != nil {
+					t.Fatal(err)
+				}
+			case "status-hook":
+				if err := p.WriteStatusHook(store.StatusHook{Kind: "turn-finished", At: f.cmd.now(), SessionID: session, Transcript: session + ".jsonl"}); err != nil {
 					t.Fatal(err)
 				}
 			}

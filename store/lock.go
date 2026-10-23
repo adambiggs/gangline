@@ -43,8 +43,10 @@ func (p AgentPaths) lock(flags int) (*LockedAgent, error) {
 
 // Save writes a's state. When a holds a native session the log has not bound
 // to it, Save first appends a session_bound event, so every session a hitch
-// held stays in the team log after its state is removed. A saved session the
-// log never bound, as from a build without bindings, is bound before it is
+// held stays in the team log after its state is removed. Only a session the
+// native harness reported with its transcript is bound: a requested resume
+// session is not, until the harness confirms it. A saved session the log
+// never bound, as from a build without bindings, is bound before it is
 // replaced. The state records the bound session only once written: a failed
 // append or state write leaves the binding to the next save, which may log it
 // twice but never misses it.
@@ -58,26 +60,29 @@ func (l *LockedAgent) Save(a core.Agent) error {
 			return err
 		}
 		bound := saved.Native.BoundSession
-		if session := saved.Native.SessionID; session != "" && session != bound {
+		if unbound(saved, bound) {
 			if err := l.bind(saved, bound); err != nil {
 				return err
 			}
-			bound = session
+			bound = saved.Native.SessionID
 		}
 		l.bound = &bound
 	}
 	a.Native.BoundSession = *l.bound
-	if session := a.Native.SessionID; session != "" && session != *l.bound {
+	if unbound(a, *l.bound) {
 		if err := l.bind(a, *l.bound); err != nil {
 			return err
 		}
-		a.Native.BoundSession = session
+		a.Native.BoundSession = a.Native.SessionID
 	}
 	if err := atomicJSON(l.Paths.State, a); err != nil {
 		return err
 	}
 	l.bound = &a.Native.BoundSession
 	return nil
+}
+func unbound(a core.Agent, bound string) bool {
+	return a.Native.SessionID != "" && a.Native.Transcript != "" && a.Native.SessionID != bound
 }
 func (l *LockedAgent) bind(a core.Agent, previous string) error {
 	return appendEvent(l.Paths.Log, core.Event{Type: "session_bound", At: time.Now(), HitchID: a.ID, Name: a.Name, Binding: &core.Binding{SessionID: a.Native.SessionID, PreviousSessionID: previous, Collar: a.Collar, HitchedBy: a.HitchedBy}})
