@@ -35,6 +35,9 @@ func (run *runtime) reconcileStatusHooks(l *store.LockedAgent, a *core.Agent, c 
 	if err != nil {
 		return batch, err
 	}
+	if err := confirmTranscript(l, a, append(records, statusHook(notice))); err != nil {
+		return batch, err
+	}
 	if len(records) == 0 {
 		batch.notices = []hookNotice{notice}
 		return batch, run.reconcileNativeBoundary(l, a, c, notice)

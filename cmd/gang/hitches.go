@@ -907,12 +907,16 @@ func (run *runtime) dropAgent(id core.HitchID, wait bool, reason string) error {
 	if err != nil {
 		return err
 	}
+	records := append([]store.StatusHook{{SessionID: witness.SessionID, Transcript: witness.Transcript}}, hooks...)
+	if err := confirmTranscript(l, &a, records); err != nil {
+		return err
+	}
 	if a.Native.SessionID != "" && witness.SessionID != "" && witness.SessionID != a.Native.SessionID {
 		if c, err := loadCollar(a.Collar, run.settings); err == nil {
 			_, _ = followNativeSession(c, &a, witness.SessionID, witness.Transcript)
 		}
 	}
-	for _, n := range append([]store.StatusHook{{SessionID: witness.SessionID, Transcript: witness.Transcript}}, hooks...) {
+	for _, n := range records {
 		if n.SessionID == "" || a.Native.SessionID != "" && n.SessionID != a.Native.SessionID {
 			continue
 		}

@@ -159,6 +159,58 @@ func TestStatuslineAfterSessionMoveKeepsMovedSession(t *testing.T) {
 	}
 }
 
+// A requested resume session whose only confirmation is a retained status
+// hook, then a recorded move to another session, both before any tick: tick
+// and drop confirm the requested session from the hook before judging the
+// move, so both sessions are bound in order.
+func TestRetainedHookConfirmsSessionBeforeMove(t *testing.T) {
+	for _, path := range []string{"tick", "drop"} {
+		t.Run(path, func(t *testing.T) {
+			f, a, start := openTurnFixture(t)
+			f.addHitched(t, "l", "lead", "lead", "")
+			dir := t.TempDir()
+			old := filepath.Join(dir, "s.jsonl")
+			appendLines(t, old,
+				`{"type":"user","sessionId":"s","promptId":"p1"}`,
+				`{"type":"continued-in","sessionId":"s","continuedInSessionId":"n"}`)
+			a = f.setAgent(t, a, func(a *core.Agent) {
+				a.HitchedBy, a.Role = "l", "builder"
+				a.Native.SessionID, a.Native.TurnID, a.Native.Transcript, a.Native.SubmittedAt = "s", "", "", start
+			})
+			transcript := filepath.Join(dir, "n.jsonl")
+			appendLines(t, transcript, `{"type":"user","sessionId":"n","promptId":"p2"}`)
+			p, err := f.run.team.Agent(a.ID)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if err := p.WriteStatusHook(store.StatusHook{Kind: "turn-finished", At: start, SessionID: "s", TurnID: "p1", Transcript: old}); err != nil {
+				t.Fatal(err)
+			}
+			if err := p.WriteWitness(store.Witness{ID: "w2", At: start.Add(time.Second), SessionID: "n", TurnID: "p2", Transcript: transcript}); err != nil {
+				t.Fatal(err)
+			}
+			if path == "tick" {
+				if err := f.run.tickAgent(a.ID, hookNotice{}, false); err != nil {
+					t.Fatal(err)
+				}
+				if got := f.agent(t, a.ID); got.Status != core.Active || got.Native.SessionID != "n" || got.Native.Transcript != transcript {
+					t.Fatalf("agent = %s session %q transcript %q", got.Status, got.Native.SessionID, got.Native.Transcript)
+				}
+			} else {
+				if err := f.cmd.drop([]string{"worker"}); err != nil {
+					t.Fatal(err)
+				}
+				if !strings.HasSuffix(f.out.String(), "resume session: n\n") {
+					t.Fatalf("drop: %q", f.out)
+				}
+			}
+			if bound, want := sessionBindings(t, f, a.ID), []core.Binding{{SessionID: "s", Collar: a.Collar, HitchedBy: "l"}, {SessionID: "n", PreviousSessionID: "s", Collar: a.Collar, HitchedBy: "l"}}; !reflect.DeepEqual(bound, want) {
+				t.Fatalf("bindings = %+v", bound)
+			}
+		})
+	}
+}
+
 func TestNativeSessionConflictSurvivesWitnessReplacement(t *testing.T) {
 	f, a, _ := movedSessionFixture(t, "unexpected")
 	p, err := f.run.team.Agent(a.ID)
