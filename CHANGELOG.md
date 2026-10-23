@@ -1,5 +1,13 @@
 # Changelog
 
+## [2.1.0](https://github.com/adambiggs/gangline/compare/gangline-v2.0.1...gangline-v2.1.0) (2026-10-23)
+
+
+### Features
+
+* **hitch:** place an agent's window at a chosen index with --window ([a39ba52](https://github.com/adambiggs/gangline/commit/a39ba5216c6019689b2ce1309f9a24c2605d04d7))
+* **rehitch:** restore the agent's window position ([32c5ce9](https://github.com/adambiggs/gangline/commit/32c5ce973412520cde56bc46e3ee236c7c8c657f))
+
 ## [2.0.1](https://github.com/adambiggs/gangline/compare/gangline-v2.0.0...gangline-v2.0.1) (2026-10-22)
 
 
