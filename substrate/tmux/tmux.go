@@ -62,7 +62,8 @@ func (backend *Backend) CreateSession(ctx context.Context, spec substrate.SpawnS
 		return substrate.Pane{}, err
 	}
 	arguments = append(append(arguments, "-s", backend.config.Session), command...)
-	return backend.launch(ctx, "create session", arguments)
+	pane, _, err := backend.launch(ctx, "create session", arguments)
+	return pane, err
 }
 
 func (backend *Backend) SessionExists(ctx context.Context) (bool, error) {
@@ -101,7 +102,56 @@ func (backend *Backend) SpawnWindow(ctx context.Context, spec substrate.SpawnSpe
 		target += strconv.Itoa(at.Index)
 	}
 	arguments = append(append(arguments, "-t", target), command...)
-	return backend.launch(ctx, "spawn pane", arguments)
+	pane, _, err := backend.launch(ctx, "spawn pane", arguments)
+	return pane, err
+}
+
+// defaultPlacement is what RestoreWindow prints when it placed the window
+// where Spawn would.
+const defaultPlacement = "gangline: default window placement"
+
+// RestoreWindow creates the pane in a new window where a closed window was:
+// before the window that followed it, when the session renumbers its windows,
+// or else at its index. Renumbering closes every gap, so a window that was
+// last is back in place where Spawn puts it. When the place is gone, because
+// the following window closed or another window took the index, the window
+// goes where Spawn puts it and restored is false. The choice and the creation
+// run in one tmux command list, so no other client can take the place between
+// them, and no window moves except those renumbering had moved down.
+func (backend *Backend) RestoreWindow(ctx context.Context, spec substrate.SpawnSpec, position WindowPosition) (pane substrate.Pane, restored bool, err error) {
+	session := "=" + backend.config.Session + ":"
+	var condition string
+	var place []string
+	switch {
+	case position.Renumber && position.Next == "":
+		pane, err = backend.Spawn(ctx, spec)
+		return pane, err == nil, err
+	case position.Renumber:
+		if !numericTmuxID(position.Next, '@') {
+			return substrate.Pane{}, false, fmt.Errorf("invalid window id %q", position.Next)
+		}
+		condition = "#{W:#{?#{==:#{window_id}," + position.Next + "},1,}}"
+		place = []string{"-b", "-t", session + position.Next}
+	case position.Index < 0:
+		return substrate.Pane{}, false, fmt.Errorf("invalid window index %d", position.Index)
+	default:
+		index := strconv.Itoa(position.Index)
+		condition = "#{==:#{W:#{?#{==:#{window_index}," + index + "},1,}},}"
+		place = []string{"-t", session + index}
+	}
+	arguments, command, err := backend.launchArguments("new-window", spec)
+	if err != nil {
+		return substrate.Pane{}, false, err
+	}
+	restore := append(append(append([]string{}, arguments...), place...), command...)
+	fallback := append(append(append([]string{}, arguments...), "-t", session), command...)
+	pane, output, err := backend.launch(ctx, "spawn pane", []string{"if-shell", "-F", "-t", session, condition,
+		tmuxCommand(restore[0], restore[1:]...),
+		tmuxCommand(fallback[0], fallback[1:]...) + " ; " + tmuxCommand("display-message", "-p", defaultPlacement)})
+	if err != nil {
+		return substrate.Pane{}, false, err
+	}
+	return pane, !strings.Contains(output, "\n"+defaultPlacement+"\n"), nil
 }
 
 // WindowInfo is one window of the session.
@@ -131,6 +181,80 @@ func (backend *Backend) Windows(ctx context.Context) ([]WindowInfo, error) {
 	}
 	sort.Slice(windows, func(i, j int) bool { return windows[i].Index < windows[j].Index })
 	return windows, nil
+}
+
+// WindowPosition is where a pane's window sits in its session. Shared means
+// the window holds other panes; Renumber means the session renumbers its
+// windows when one closes. Next is the id of the following window, empty for
+// the last; ids survive renumbering.
+type WindowPosition struct {
+	Index    int
+	Shared   bool
+	Renumber bool
+	Next     string
+}
+
+// WindowPosition reads where a registered pane's window sits in its registered
+// session, which a window linked into several sessions need not be the one a
+// pane target resolves to. It reports false when the pane is absent or no
+// longer registered there.
+func (b *Backend) WindowPosition(ctx context.Context, id PaneIdentity) (WindowPosition, bool, error) {
+	if err := validPaneIdentity(id); err != nil {
+		return WindowPosition{}, false, err
+	}
+	read := tmuxCommand("display-message", "-p", "-t", id.Session, "#{renumber-windows}") + " ; " +
+		tmuxCommand("list-panes", "-s", "-t", id.Session, "-F", "#{pane_id}\t#{window_id}\t#{window_index}\t#{window_panes}")
+	out, err := b.run(ctx, "if-shell", "-F", "-t", id.Pane, registeredCondition(id), read)
+	if err != nil {
+		if exists, checkErr := b.CheckPane(ctx, id); checkErr == nil && !exists {
+			return WindowPosition{}, false, nil
+		}
+		return WindowPosition{}, false, tmuxError("read window position", err, out)
+	}
+	records := lines(out)
+	if len(records) == 0 {
+		return WindowPosition{}, false, nil
+	}
+	renumber, err := parseFlag(records[0])
+	if err != nil {
+		return WindowPosition{}, false, fmt.Errorf("read renumber-windows: %w", err)
+	}
+	type window struct {
+		index int
+		id    string
+	}
+	var windows []window
+	position, found := WindowPosition{Renumber: renumber}, false
+	for _, record := range records[1:] {
+		fields := strings.Split(record, "\t")
+		if len(fields) != 4 || !numericTmuxID(fields[1], '@') {
+			return WindowPosition{}, false, fmt.Errorf("read window position: tmux returned %q", record)
+		}
+		index, err := nonNegative(fields[2])
+		if err != nil {
+			return WindowPosition{}, false, fmt.Errorf("read window index: %w", err)
+		}
+		panes, err := nonNegative(fields[3])
+		if err != nil || panes == 0 {
+			return WindowPosition{}, false, fmt.Errorf("read window panes: tmux returned %q", fields[3])
+		}
+		if fields[0] == id.Pane {
+			position.Index, position.Shared, found = index, panes > 1, true
+		}
+		if len(windows) == 0 || windows[len(windows)-1].id != fields[1] {
+			windows = append(windows, window{index, fields[1]})
+		}
+	}
+	if !found {
+		return WindowPosition{}, false, nil
+	}
+	sort.Slice(windows, func(i, j int) bool { return windows[i].index < windows[j].index })
+	for i, w := range windows {
+		if w.index == position.Index && i+1 < len(windows) {
+			position.Next = windows[i+1].id
+		}
+	}
+	return position, true, nil
 }
 
 // Split creates a sibling only while the target still has its registered
@@ -163,7 +287,8 @@ func (backend *Backend) Split(ctx context.Context, target PaneIdentity, spec sub
 		orientation = "-v"
 	}
 	arguments = append(append(arguments, orientation, "-t", target.Pane), command...)
-	return backend.launch(ctx, "split pane", []string{"if-shell", "-F", "-t", target.Pane, registeredCondition(target), tmuxCommand(arguments[0], arguments[1:]...), tmuxCommand("display-message", "-p", "split target was replaced")})
+	pane, _, err := backend.launch(ctx, "split pane", []string{"if-shell", "-F", "-t", target.Pane, registeredCondition(target), tmuxCommand(arguments[0], arguments[1:]...), tmuxCommand("display-message", "-p", "split target was replaced")})
+	return pane, err
 }
 
 // ReleaseExit restores the default close-on-exit behaviour for a pane spawned
@@ -347,10 +472,11 @@ func physicalPath(path string) (string, error) {
 	return filepath.Join(dir, name), nil
 }
 
-func (backend *Backend) launch(ctx context.Context, action string, arguments []string) (substrate.Pane, error) {
+// launch also returns what the command list printed.
+func (backend *Backend) launch(ctx context.Context, action string, arguments []string) (substrate.Pane, string, error) {
 	generation, err := randomGeneration()
 	if err != nil {
-		return substrate.Pane{}, err
+		return substrate.Pane{}, "", err
 	}
 	creatingSession := arguments[0] == "new-session"
 	arguments = append(arguments, ";", "set-option", "-soq", generationOption, generation)
@@ -380,11 +506,11 @@ func (backend *Backend) launch(ctx context.Context, action string, arguments []s
 		output, err = backend.run(ctx, arguments...)
 	}
 	if err != nil {
-		return substrate.Pane{}, tmuxError(action, err, output)
+		return substrate.Pane{}, "", tmuxError(action, err, output)
 	}
 	identifier, records, found := strings.Cut(output, "\n")
 	if !found || !numericTmuxID(identifier, '%') {
-		return substrate.Pane{}, fmt.Errorf("%s: tmux returned invalid pane id %q", action, output)
+		return substrate.Pane{}, "", fmt.Errorf("%s: tmux returned invalid pane id %q", action, output)
 	}
 	pane := substrate.PaneID(identifier)
 	for _, line := range strings.Split(strings.TrimSuffix(records, "\n"), "\n") {
@@ -394,7 +520,7 @@ func (backend *Backend) launch(ctx context.Context, action string, arguments []s
 		}
 		id := PaneIdentity{Generation: fields[0], Session: fields[1], Pane: fields[2]}
 		if err := validPaneIdentity(id); err != nil {
-			return substrate.Pane{}, fmt.Errorf("%s: %w", action, err)
+			return substrate.Pane{}, "", fmt.Errorf("%s: %w", action, err)
 		}
 		backend.birthMu.Lock()
 		if backend.birth == nil {
@@ -402,9 +528,9 @@ func (backend *Backend) launch(ctx context.Context, action string, arguments []s
 		}
 		backend.birth[pane] = id
 		backend.birthMu.Unlock()
-		return substrate.Pane{ID: pane}, nil
+		return substrate.Pane{ID: pane}, output, nil
 	}
-	return substrate.Pane{}, fmt.Errorf("%s: tmux did not return the created pane's identity", action)
+	return substrate.Pane{}, "", fmt.Errorf("%s: tmux did not return the created pane's identity", action)
 }
 
 func (backend *Backend) Panes(ctx context.Context) ([]PaneInfo, error) {

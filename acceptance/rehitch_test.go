@@ -101,6 +101,20 @@ func TestSelfRehitchOnPrivateTmux(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	// The restart returns the agent to its place between the operator's
+	// windows, although closing its window renumbers them and fills the gap
+	// the placeholder left.
+	mustResumeTmux(t, runner, "set-option", "-t", session, "renumber-windows", "on")
+	ownerWindow := strings.TrimSpace(mustResumeTmux(t, runner, "display-message", "-p", "-t", before.Pane, "#{window_id}"))
+	mustResumeTmux(t, runner, "new-window", "-d", "-b", "-n", "earlier", "-t", ownerWindow, "cat")
+	mustResumeTmux(t, runner, "new-window", "-d", "-a", "-n", "later", "-t", ownerWindow, "cat")
+	windows := func() string {
+		t.Helper()
+		return strings.Join(strings.Fields(mustResumeTmux(t, runner, "list-windows", "-t", session+":", "-F", "#{window_name}")), " ")
+	}
+	if got := windows(); got != "earlier owner later" {
+		t.Fatalf("window setup: %q", got)
+	}
 	supervisor := core.Agent{ID: "supervisor", Name: "supervisor", Collar: "acceptance", Directory: repo, Status: core.Active}
 	supervisorLock, err := team.CreateAgent(supervisor)
 	if err != nil {
@@ -169,6 +183,9 @@ func TestSelfRehitchOnPrivateTmux(t *testing.T) {
 	}
 	if after.ID != before.ID || after.Pane == before.Pane || after.Role != before.Role || after.HitchedBy != before.HitchedBy || after.Native.SessionID != "native-conversation" || after.Rehitch != nil {
 		t.Fatalf("restart lost identity: before=%+v after=%+v", before, after)
+	}
+	if got := windows(); got != "earlier owner later" {
+		t.Fatalf("restart moved the agent's window: %q", got)
 	}
 	argv, err := os.ReadFile(filepath.Join(root, string(id)+".argv"))
 	if err != nil {

@@ -217,6 +217,21 @@ func (cmd command) hitchReplacing(args []string, supersede bool, previous *core.
 	if err != nil {
 		return err
 	}
+	// A restart reads its window's position before teardown closes the pane.
+	// The read has its own deadline and comes before the boot deadline starts:
+	// an unreadable position only costs the restart its place.
+	var position *tmux.WindowPosition
+	positionLost := ""
+	if previous != nil {
+		read, cancel := context.WithTimeout(context.Background(), operationTimeout)
+		at, ok, err := b.WindowPosition(read, paneIdentity(*previous))
+		cancel()
+		if err != nil {
+			positionLost = err.Error()
+		} else if ok {
+			position = &at
+		}
+	}
 	boot, cancel := context.WithTimeout(context.Background(), bootTimeout)
 	defer cancel()
 	exists, err := b.SessionExists(boot)
@@ -334,6 +349,11 @@ func (cmd command) hitchReplacing(args []string, supersede bool, previous *core.
 	if err := run.record(a, core.Event{Type: "hitch_claimed"}); err != nil {
 		return err
 	}
+	if positionLost != "" {
+		if err := run.record(a, core.Event{Type: "rehitch_position_lost", Reason: positionLost}); err != nil {
+			return err
+		}
+	}
 	if rolePromptFile != "" {
 		if err := os.WriteFile(rolePromptFile, []byte(rolePrompt), 0600); err != nil {
 			return errors.Join(err, run.apply(l, &a, core.Event{Type: "hitch_failed", Reason: err.Error()}))
@@ -410,6 +430,14 @@ func (cmd command) hitchReplacing(args []string, supersede bool, previous *core.
 	var pane substrate.Pane
 	if o.Split != "" {
 		pane, err = b.Split(boot, splitTarget, spec, o.Vertical)
+	} else if exists && position != nil && !position.Shared {
+		var restored bool
+		pane, restored, err = b.RestoreWindow(boot, spec, *position)
+		if !restored && position.Renumber {
+			positionLost = "the window that followed it closed during the restart"
+		} else if !restored {
+			positionLost = fmt.Sprintf("window index %d was taken during the restart", position.Index)
+		}
 	} else if exists {
 		pane, err = b.SpawnWindow(boot, spec, window)
 	} else {
@@ -462,6 +490,11 @@ func (cmd command) hitchReplacing(args []string, supersede bool, previous *core.
 	// startup leaves a pane that tick probes and drop removes.
 	if err := run.apply(l, &a, core.Event{Type: "hitch_spawned", Pane: string(pane.ID)}); err != nil {
 		return err
+	}
+	if position != nil && positionLost != "" {
+		if err := run.record(a, core.Event{Type: "rehitch_position_lost", Reason: positionLost}); err != nil {
+			return err
+		}
 	}
 	// A native exit fails the hitch with the native output as its reason and
 	// removes the held pane.

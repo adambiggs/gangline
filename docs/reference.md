@@ -29,7 +29,15 @@ agents in the selected team.
 | `gang attach [NAME]` | Attach to the named agent's pane in the selected team. Without `NAME`, select the lead, or the first registered agent if there is no lead. |
 | `gang teams` | List teams in the configured state root. |
 
-Save unfinished work first and name it in `--note TEXT`. The harness
+Save unfinished work first and name it in `--note TEXT`. The restarted harness
+returns to its window's place: the same index, or, when the session has
+`renumber-windows` on, the same place before the window that followed it. An
+agent that shared its window with other panes gets a new window where tmux
+places it, and one whose window was its session's only window starts a new
+session. A place that could not be read, or that was lost during the restart
+because another window took the index or the following window closed, also
+gives way to tmux's placement without moving any other window, and the team
+log records why in a `rehitch_position_lost` event. The harness
 executable is resolved from PATH; use `--upgrade` to update it before requesting
 a restart. `--upgrade` runs the collar's harness update command first; an update
 failure leaves the current harness running.
