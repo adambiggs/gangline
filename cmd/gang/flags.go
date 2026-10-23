@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"io"
 	"regexp"
+	"strconv"
 	"strings"
 	"time"
 )
@@ -25,6 +26,31 @@ type hitchOptions struct {
 	Stdin        bool
 	Split        string
 	Vertical     bool
+	Window       windowIndex
+}
+
+// windowIndex is a tmux window index; set is false when none was given.
+type windowIndex struct {
+	set   bool
+	index int
+}
+
+func (w *windowIndex) Set(value string) error {
+	index, err := strconv.ParseInt(value, 10, 32)
+	if err != nil || index < 0 {
+		return fmt.Errorf("expected a non-negative whole number")
+	}
+	w.set, w.index = true, int(index)
+	return nil
+}
+
+func (w *windowIndex) Get() any { return *w }
+
+func (w *windowIndex) String() string {
+	if w == nil || !w.set {
+		return ""
+	}
+	return strconv.Itoa(w.index)
 }
 
 func parseHitch(arguments []string, defaultCollar, defaultDirectory string) (hitchOptions, error) {
@@ -39,6 +65,7 @@ func parseHitch(arguments []string, defaultCollar, defaultDirectory string) (hit
 		"r": &options.Role, "role": &options.Role,
 		"resume": &options.Resume, "recover": &options.Recover, "stdin": &options.Stdin,
 		"split": &options.Split, "vertical": &options.Vertical,
+		"window": &options.Window,
 	})
 	positionals, err := parseOptions(flags, arguments)
 	if err != nil {
@@ -74,6 +101,9 @@ func parseHitch(arguments []string, defaultCollar, defaultDirectory string) (hit
 	}
 	if options.Vertical && options.Split == "" {
 		return hitchOptions{}, usageError("hitch: --vertical requires --split NAME")
+	}
+	if options.Window.set && options.Split != "" {
+		return hitchOptions{}, usageError("hitch: --window places a new window; --split places a pane in an existing one")
 	}
 	return options, nil
 }

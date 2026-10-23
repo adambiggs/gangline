@@ -283,6 +283,22 @@ func (cmd command) hitchReplacing(args []string, supersede bool, previous *core.
 			}
 		}
 	}
+	var window *tmux.Window
+	if o.Window.set {
+		if !exists {
+			return refuseError("team %q has no tmux session for --window; start it with 'gang up', which places the first window", run.settings.Session)
+		}
+		windows, err := b.Windows(boot)
+		if err != nil {
+			return err
+		}
+		for _, w := range windows {
+			if w.Index == o.Window.index {
+				return refuseError("window index %d in use by window %q in team %q; choose a free index or omit --window", w.Index, w.Name, run.settings.Session)
+			}
+		}
+		window = &tmux.Window{Index: o.Window.index}
+	}
 	// From the claim until startup is settled, SIGINT and SIGTERM sent to gang
 	// cancel ctx, and the hitch fails the record and removes its pane. Calls
 	// that create or replace a pane run on boot, so such a signal never loses a
@@ -395,7 +411,7 @@ func (cmd command) hitchReplacing(args []string, supersede bool, previous *core.
 	if o.Split != "" {
 		pane, err = b.Split(boot, splitTarget, spec, o.Vertical)
 	} else if exists {
-		pane, err = b.Spawn(boot, spec)
+		pane, err = b.SpawnWindow(boot, spec, window)
 	} else {
 		pane, err = b.CreateSession(boot, spec)
 	}

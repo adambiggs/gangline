@@ -87,7 +87,7 @@ var commandUsage = map[string]string{
 	"sender":     "usage: gang sender add|remove NAME [--team TEAM]\n       gang sender list [--team TEAM]\n",
 	"outside":    "usage: gang outside register|rotate NAME --credential-file PATH [--team TEAM]\n       gang outside remove NAME [--team TEAM]\n       gang outside serve [OPTIONS] [--team TEAM]\n",
 	"up":         "usage: gang up [NAME] [HITCH OPTIONS] [--team TEAM]\n",
-	"hitch":      "usage: gang hitch NAME [-c COLLAR] [-d DIR] [-m MODEL] [-e EFFORT]\n       [-t TASK] [-r ROLE] [--resume SESSION] [--stdin]\n       [--split NAME] [--vertical] [--team TEAM]\n       gang hitch NAME --recover [--team TEAM]\n",
+	"hitch":      "usage: gang hitch NAME [-c COLLAR] [-d DIR] [-m MODEL] [-e EFFORT]\n       [-t TASK] [-r ROLE] [--resume SESSION] [--stdin]\n       [--split NAME] [--vertical] [--window INDEX] [--team TEAM]\n       gang hitch NAME --recover [--team TEAM]\n",
 	"title":      "usage: gang title [NAME] TEXT [--team TEAM]\n",
 	"rehitch":    "usage: gang rehitch --note TEXT [--upgrade] [--team TEAM]\n",
 	"rename":     "usage: gang rename OLD NEW [--team TEAM]\n",
@@ -156,6 +156,7 @@ var commandOptions = map[string][]optionSpec{
 		{"stdin", "", "read the assignment from stdin"},
 		{"split", "NAME", "split the named agent's pane side by side"},
 		{"vertical", "", "split top/bottom; requires --split NAME"},
+		{"window", "INDEX", "create the window at this free tmux window index"},
 	},
 	"rehitch": {{"note", "TEXT", "saved-work continuation"}, {"upgrade", "", "update the harness before queuing its restart"}},
 	"send": {
@@ -218,13 +219,18 @@ var commandOptions = map[string][]optionSpec{
 	"upgrade":      {{"y", "", "skip confirmation"}, {"yes", "", "skip confirmation"}},
 }
 
-// upOptions are hitch's options with the role default up applies.
+// upOptions are hitch's options with the role default up applies. up creates
+// the team's session, whose first window tmux places, so it takes no --window.
 var upOptions = func() []optionSpec {
-	options := append([]optionSpec{}, commandOptions["hitch"]...)
-	for i := range options {
-		if options[i].name == "r" || options[i].name == "role" {
-			options[i].meaning = "role brief (default lead)"
+	var options []optionSpec
+	for _, option := range commandOptions["hitch"] {
+		if option.name == "window" {
+			continue
 		}
+		if option.name == "r" || option.name == "role" {
+			option.meaning = "role brief (default lead)"
+		}
+		options = append(options, option)
 	}
 	return options
 }()

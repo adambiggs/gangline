@@ -69,6 +69,7 @@ its window and pane position; it is not adopted or removed automatically.
 | `--stdin` | Read the assignment from stdin. |
 | `--split NAME` | Place the new agent beside the named agent in its window; the target must already have a registered pane in the selected team. Without this option, create a new window. |
 | `--vertical` | Split top/bottom instead of side by side; requires `--split NAME`. |
+| `--window INDEX` | `hitch` only: create the agent's window at this tmux window index. An index already in use is refused before the name is claimed, and no other window moves. Requires the team's session; cannot be combined with `--split`. |
 | `--resume SESSION` | Resume a native conversation by its native session ID. |
 | `--recover` | Recover an agent's retained startup input. |
 

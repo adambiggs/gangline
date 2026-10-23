@@ -77,12 +77,60 @@ func (backend *Backend) SessionExists(ctx context.Context) (bool, error) {
 }
 
 func (backend *Backend) Spawn(ctx context.Context, spec substrate.SpawnSpec) (substrate.Pane, error) {
+	return backend.SpawnWindow(ctx, spec, nil)
+}
+
+// Window is a window index in the session. tmux refuses an occupied index
+// and creates nothing.
+type Window struct {
+	Index int
+}
+
+// SpawnWindow creates the pane in a new window at the given index, or at the
+// lowest free index when at is nil.
+func (backend *Backend) SpawnWindow(ctx context.Context, spec substrate.SpawnSpec, at *Window) (substrate.Pane, error) {
 	arguments, command, err := backend.launchArguments("new-window", spec)
 	if err != nil {
 		return substrate.Pane{}, err
 	}
-	arguments = append(append(arguments, "-t", "="+backend.config.Session+":"), command...)
+	target := "=" + backend.config.Session + ":"
+	if at != nil {
+		if at.Index < 0 {
+			return substrate.Pane{}, fmt.Errorf("invalid window index %d", at.Index)
+		}
+		target += strconv.Itoa(at.Index)
+	}
+	arguments = append(append(arguments, "-t", target), command...)
 	return backend.launch(ctx, "spawn pane", arguments)
+}
+
+// WindowInfo is one window of the session.
+type WindowInfo struct {
+	Index int
+	ID    string
+	Name  string
+}
+
+// Windows lists the session's windows in index order.
+func (backend *Backend) Windows(ctx context.Context) ([]WindowInfo, error) {
+	output, err := backend.run(ctx, "list-windows", "-t", "="+backend.config.Session+":", "-F", "#{window_index}\t#{window_id}\t#{window_name}")
+	if err != nil {
+		return nil, tmuxError("list windows", err, output)
+	}
+	var windows []WindowInfo
+	for _, line := range lines(output) {
+		fields := strings.SplitN(line, "\t", 3)
+		if len(fields) != 3 || !numericTmuxID(fields[1], '@') {
+			return nil, fmt.Errorf("list windows: malformed record %q", line)
+		}
+		index, err := nonNegative(fields[0])
+		if err != nil {
+			return nil, fmt.Errorf("list windows: %w", err)
+		}
+		windows = append(windows, WindowInfo{Index: index, ID: fields[1], Name: fields[2]})
+	}
+	sort.Slice(windows, func(i, j int) bool { return windows[i].Index < windows[j].Index })
+	return windows, nil
 }
 
 // Split creates a sibling only while the target still has its registered
