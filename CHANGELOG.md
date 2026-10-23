@@ -1,5 +1,21 @@
 # Changelog
 
+## [2.2.0](https://github.com/adambiggs/gangline/compare/gangline-v2.1.0...gangline-v2.2.0) (2026-10-23)
+
+
+### Features
+
+* **log:** record every native session bound to a hitch ([0598cfa](https://github.com/adambiggs/gangline/commit/0598cfa23d890091120a69f1681608a7b859ece3))
+
+
+### Bug Fixes
+
+* **drop:** report and bind a verified session move before removal ([b0decf1](https://github.com/adambiggs/gangline/commit/b0decf1595e07e1b102e6832960c7c8caf36700b)), closes [#207](https://github.com/adambiggs/gangline/issues/207)
+* **hooks:** confirm a requested session from retained hooks before a move ([6371dec](https://github.com/adambiggs/gangline/commit/6371dec8b714ba6bf61304a6c57d195862338e8a))
+* **log:** bind a native session only once the harness reports it ([226e3a4](https://github.com/adambiggs/gangline/commit/226e3a41380b110aef759a4790da282116a33618))
+* **log:** finish the export past a damaged audit line ([46d6cf9](https://github.com/adambiggs/gangline/commit/46d6cf9ef6f19eece2ba2b1f7e27159ae77054bd)), closes [#204](https://github.com/adambiggs/gangline/issues/204)
+* **statusline:** re-check the native session under the agent lock ([14d9b78](https://github.com/adambiggs/gangline/commit/14d9b786ad71cb87d34820e69f92eedc0d98ea12))
+
 ## [2.1.0](https://github.com/adambiggs/gangline/compare/gangline-v2.0.1...gangline-v2.1.0) (2026-10-23)
 
 
