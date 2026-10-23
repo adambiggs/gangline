@@ -226,10 +226,13 @@ type Capacity struct {
 }
 
 type NativeState struct {
-	HookSequence         uint64    `json:"hook_sequence,omitempty"`
-	HookAt               time.Time `json:"hook_at,omitzero"`
-	HookKind             string    `json:"hook_kind,omitempty"`
-	SessionID            string    `json:"session_id,omitempty"`
+	HookSequence uint64    `json:"hook_sequence,omitempty"`
+	HookAt       time.Time `json:"hook_at,omitzero"`
+	HookKind     string    `json:"hook_kind,omitempty"`
+	SessionID    string    `json:"session_id,omitempty"`
+	// BoundSession is the session last logged as session_bound. Only the
+	// store sets it.
+	BoundSession         string    `json:"bound_session,omitempty"`
 	TurnID               string    `json:"turn_id,omitempty"`
 	Transcript           string    `json:"transcript,omitempty"`
 	TurnFailure          string    `json:"turn_failure,omitempty"`

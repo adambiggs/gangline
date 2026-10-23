@@ -24,6 +24,17 @@ type Event struct {
 	NativeEvent string         `json:"native_event,omitempty"`
 	Fingerprint string         `json:"fingerprint,omitempty"`
 	Basis       *ActivityBasis `json:"basis,omitempty"`
+	Binding     *Binding       `json:"binding,omitempty"`
+}
+
+// Binding records the native session a hitch is bound to, with the collar
+// that launched it and the hitch that hitched it, so a session can be joined
+// to its hitch after the agent's state is gone.
+type Binding struct {
+	SessionID         string  `json:"session_id"`
+	PreviousSessionID string  `json:"previous_session_id,omitempty"`
+	Collar            string  `json:"collar"`
+	HitchedBy         HitchID `json:"hitched_by,omitempty"`
 }
 
 // ActivityBasis records what an activity reading was derived from, without

@@ -15,7 +15,7 @@ import (
 
 type Paths struct{ Root string }
 type TeamPaths struct{ Directory, State, Log, Names, Agents string }
-type AgentPaths struct{ Directory, State, Lock, Witness, CompactionWitness, Inbox, Background, Permission string }
+type AgentPaths struct{ Directory, State, Lock, Witness, CompactionWitness, Inbox, Background, Permission, Log string }
 
 func segment(value string) error {
 	if value == "" || value == "." || value == ".." || filepath.Base(value) != value || strings.ContainsAny(value, "\\\x00") {
@@ -38,7 +38,7 @@ func (p TeamPaths) Agent(id core.HitchID) (AgentPaths, error) {
 		return AgentPaths{}, err
 	}
 	d := filepath.Join(p.Agents, string(id))
-	return AgentPaths{d, filepath.Join(d, "agent.json"), filepath.Join(d, "lock"), filepath.Join(d, "witness"), filepath.Join(d, "compaction-witness"), filepath.Join(d, "inbox"), filepath.Join(d, "background"), filepath.Join(d, "permission")}, nil
+	return AgentPaths{d, filepath.Join(d, "agent.json"), filepath.Join(d, "lock"), filepath.Join(d, "witness"), filepath.Join(d, "compaction-witness"), filepath.Join(d, "inbox"), filepath.Join(d, "background"), filepath.Join(d, "permission"), p.Log}, nil
 }
 func (p TeamPaths) Create() error {
 	for _, d := range []string{p.Names, p.Agents} {
@@ -135,6 +135,7 @@ func (p TeamPaths) CreateAgent(a core.Agent) (*LockedAgent, error) {
 	if err := f.Close(); err != nil {
 		return nil, err
 	}
+	a.Native.BoundSession = ""
 	if err := atomicJSON(ap.State, a); err != nil {
 		return nil, err
 	}
@@ -145,6 +146,11 @@ func (p TeamPaths) CreateAgent(a core.Agent) (*LockedAgent, error) {
 	if err := p.ClaimName(a.Name, a.ID); err != nil {
 		_ = l.Close()
 		return nil, err
+	}
+	l.bound = new(string)
+	if err := l.Save(a); err != nil {
+		_ = l.Close()
+		return nil, errors.Join(err, p.RemoveName(a.Name, a.ID))
 	}
 	success = true
 	return l, nil

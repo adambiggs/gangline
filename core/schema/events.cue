@@ -32,13 +32,14 @@ import "time"
  rule: "screen" | "open-turn" | "interrupt-pending" | "compaction-record" | "turn-failure" | "wedge" | "probe-failure" | "permission-request" | "native-hook"
  compaction?: "queued" | "submitted" | "completed" | "failed" | "unverified"
 })
+#Binding: close({session_id: #ID, previous_session_id?: #ID, collar: #ID, hitched_by?: #ID})
 #Fields: close({
  type: string
  at: #Time
  source?: "hook" | "command" | "watchdog"
  hitch_id?: #ID, name?: #ID, to?: #ID, pane?: #ID, id?: #ID, reason?: string, status?: string
  activity?: #Activity, deadline?: #Time, envelope?: #Envelope, compaction?: #Compaction
- readings?: [...#Reading], native_event?: string, fingerprint?: #ID, basis?: #Basis
+ readings?: [...#Reading], native_event?: string, fingerprint?: #ID, basis?: #Basis, binding?: #Binding
 })
 
 // Indexed by type, so validating an event is one lookup rather than a trial
@@ -73,5 +74,6 @@ import "time"
  input_observation_recovered: {hitch_id: #ID, reason: #ID}
  tick_failed: {source: "hook" | "command" | "watchdog", reason: #ID}
  compaction_requested: {compaction: #Compaction}
+ session_bound: {hitch_id: #ID, name: #ID, binding: #Binding}
 }
 #Event: #Fields & {type: _, #Types[type]}

@@ -900,10 +900,13 @@ func (run *runtime) dropAgent(id core.HitchID, wait bool, reason string) error {
 	if err != nil && !errors.Is(err, os.ErrNotExist) {
 		return err
 	}
-	session := a.Native.SessionID
-	if session == "" && witness.SessionID != "" {
-		session = witness.SessionID
+	if a.Native.SessionID == "" && witness.SessionID != "" {
+		a.Native.SessionID = witness.SessionID
+		if err := l.Save(a); err != nil {
+			return err
+		}
 	}
+	session := a.Native.SessionID
 	if session == "" {
 		session = "unknown"
 	}

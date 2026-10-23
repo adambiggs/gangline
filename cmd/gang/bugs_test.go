@@ -1,6 +1,7 @@
 package main
 
 import (
+	"reflect"
 	"strings"
 	"testing"
 	"time"
@@ -83,6 +84,13 @@ func TestDropReportsResumeIdentity(t *testing.T) {
 			}
 			if !strings.Contains(f.out.String(), want) {
 				t.Fatalf("drop: %q, want %q", f.out, want)
+			}
+			var bound []core.Binding
+			if session != "" {
+				bound = []core.Binding{{SessionID: session, Collar: a.Collar}}
+			}
+			if got := sessionBindings(t, f, a.ID); !reflect.DeepEqual(got, bound) {
+				t.Fatalf("bindings = %+v, want %+v", got, bound)
 			}
 		})
 	}

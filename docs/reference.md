@@ -195,6 +195,19 @@ timestamps and context token counts. Availability conditions such as
 reading prints `status` `unknown` with its `reason` and null counts, and the
 command still exits unknown. The human forms may change layout.
 
+`gang log --type session_bound` joins native sessions to hitches. Gangline
+logs a `session_bound` event whenever it binds a hitch to a native session
+it did not hold before: at a launch with `--resume`, before the native CLI
+accepts the session, at the first native report, at a verified session
+change, at a drop that reports a session no save recorded, and at the first
+save of an agent that held a session before it was bound. `binding` carries
+`session_id`, `previous_session_id` on a change, the `collar`, and the parent
+hitch `hitched_by`. A rehitch keeps its hitch ID and resumed session, so its
+binding stands. A hitch whose launch fails logs `hitch_failed` after its
+binding. A save that fails after its binding is logged binds again at the
+next save, so read bindings by `hitch_id` and `session_id`. The event stays
+in the log after the agent is dropped.
+
 `gang log` warns on stderr of a line that holds no valid event, such as a
 record a full disk cut short, prints the intact event a later write appended
 to that line, and continues the export.

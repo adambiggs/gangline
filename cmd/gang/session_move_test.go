@@ -86,6 +86,9 @@ func TestTickFollowsRecordedSessionMove(t *testing.T) {
 	if got.Activity != core.Busy {
 		t.Fatalf("moved turn read %s: %s", got.Activity, got.Evidence)
 	}
+	if bound, want := sessionBindings(t, f, a.ID), []core.Binding{{SessionID: "s", Collar: a.Collar, HitchedBy: "l"}, {SessionID: "n", PreviousSessionID: "s", Collar: a.Collar, HitchedBy: "l"}}; !reflect.DeepEqual(bound, want) {
+		t.Fatalf("bindings = %+v", bound)
+	}
 	at := f.cmd.now().Add(2 * time.Second)
 	if err := f.run.tickAgent(a.ID, hookNotice{Kind: "turn-finished", SessionID: "n", TurnID: "p2", Transcript: transcript, At: at}, false); err != nil {
 		t.Fatal(err)
@@ -345,4 +348,24 @@ func TestRecoverStartupFollowsRecordedSessionMove(t *testing.T) {
 			}
 		})
 	}
+}
+
+// sessionBindings are the session_bound records the team log holds for id.
+func sessionBindings(t *testing.T, f *stateFixture, id core.HitchID) []core.Binding {
+	t.Helper()
+	log, err := os.Open(f.run.team.Log)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer log.Close()
+	var bound []core.Binding
+	if err := store.ReadLog(log, func(e core.Event) error {
+		if e.Type == "session_bound" && e.HitchID == id {
+			bound = append(bound, *e.Binding)
+		}
+		return nil
+	}); err != nil {
+		t.Fatal(err)
+	}
+	return bound
 }
