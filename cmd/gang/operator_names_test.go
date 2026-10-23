@@ -40,7 +40,7 @@ func TestLogShowsRecordedAgentNamesAndPreservesMessageText(t *testing.T) {
 	}
 	var out bytes.Buffer
 	names := &operatorNames{names: map[string]string{"%1": "worker"}}
-	if err := writeFilteredLog(&out, bytes.NewReader(append(data, '\n')), logFilter{}, names.text); err != nil {
+	if err := writeFilteredLog(&out, failWriter{t}, bytes.NewReader(append(data, '\n')), logFilter{}, names.text); err != nil {
 		t.Fatal(err)
 	}
 	got, err := core.DecodeEvent(bytes.TrimSpace(out.Bytes()))

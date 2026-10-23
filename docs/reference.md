@@ -195,6 +195,10 @@ timestamps and context token counts. Availability conditions such as
 reading prints `status` `unknown` with its `reason` and null counts, and the
 command still exits unknown. The human forms may change layout.
 
+`gang log` warns on stderr of a line that holds no valid event, such as a
+record a full disk cut short, prints the intact event a later write appended
+to that line, and continues the export.
+
 Pane borders use `?name?` for changing or unknown state, `~name~` for idle,
 `-name-` for work, and `!name!` for native decisions, wedges, or failures.
 An unsubmitted operator draft holds message delivery but keeps the idle

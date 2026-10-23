@@ -393,7 +393,7 @@ func (cmd command) log(args []string) error {
 		return err
 	}
 	defer f.Close()
-	return writeFilteredLog(cmd.stdout, f, filter, cmd.operatorText)
+	return writeFilteredLog(cmd.stdout, cmd.stderr, f, filter, cmd.operatorText)
 }
 func (cmd command) wait(args []string) error {
 	o, err := parseWait(args)

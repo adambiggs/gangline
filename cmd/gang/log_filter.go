@@ -1,6 +1,7 @@
 package main
 
 import (
+	"bytes"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -47,10 +48,14 @@ func (filter logFilter) apply(e core.Event) (core.Event, bool) {
 
 // writeFilteredLog validates each event it prints, as stored and as printed.
 // A line the filter rejects on a plain JSON decode is skipped unvalidated, so
-// a filtered read costs schema validation only for the events it prints.
-func writeFilteredLog(out io.Writer, in io.Reader, filter logFilter, present func(string) string) error {
+// a filtered read costs schema validation only for the events it prints. A
+// line that is not a valid event is a warning on warn, the intact event
+// appended after a torn record on that line prints, and the export continues:
+// the log keeps the damage, so failing on it would fail every later export.
+func writeFilteredLog(out, warn io.Writer, in io.Reader, filter logFilter, present func(string) string) error {
 	names := make(map[core.HitchID]core.AgentName)
-	return store.ScanLog(in, func(line int, data []byte) error {
+	var write func(line int, data []byte) error
+	write = func(line int, data []byte) error {
 		var peek core.Event
 		if json.Unmarshal(data, &peek) == nil {
 			if peek.Name != "" {
@@ -62,7 +67,13 @@ func writeFilteredLog(out io.Writer, in io.Reader, filter logFilter, present fun
 		}
 		e, err := core.DecodeEvent(data)
 		if err != nil {
-			return fmt.Errorf("audit line %d: %w", line, err)
+			if _, err := fmt.Fprintf(warn, "warning: audit line %d: %v\n", line, err); err != nil {
+				return err
+			}
+			if appended := appendedEvent(data); appended != nil {
+				return write(line, appended)
+			}
+			return nil
 		}
 		e, ok := filter.apply(e)
 		if !ok {
@@ -91,5 +102,24 @@ func writeFilteredLog(out io.Writer, in io.Reader, filter logFilter, present fun
 		}
 		_, err = fmt.Fprintln(out, string(data))
 		return err
-	})
+	}
+	return store.ScanLog(in, write)
+}
+
+// appendedEvent returns the valid event that ends a damaged line. A write cut
+// short, as by a full disk, leaves a record without its newline, and the next
+// append continues on the same line. A JSON string escapes its quotes, so an
+// event can begin only where the line holds an unescaped {".
+func appendedEvent(data []byte) []byte {
+	for i := 1; i < len(data); i++ {
+		next := bytes.Index(data[i:], []byte(`{"`))
+		if next < 0 {
+			return nil
+		}
+		i += next
+		if _, err := core.DecodeEvent(data[i:]); err == nil {
+			return data[i:]
+		}
+	}
+	return nil
 }
