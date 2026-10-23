@@ -61,6 +61,9 @@ type command struct {
 	awaitStartup  func(context.Context, substrate.PaneID, harness.Collar) (harness.Startup, substrate.Screen, error)
 	detach        func(string, hookNotice) error
 	afterUnlock   func()
+	// statuslineLock runs between the status line's unlocked state read and
+	// its agent lock.
+	statuslineLock func()
 	// schedulerLockWait runs when cleanup finds the watchdog scheduler lock
 	// held, before it waits for the lock.
 	schedulerLockWait func()

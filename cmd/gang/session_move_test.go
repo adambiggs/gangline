@@ -132,6 +132,33 @@ func TestDropFollowsRecordedSessionMove(t *testing.T) {
 	}
 }
 
+// A status-line render for the old session that reads state before a tick
+// follows a recorded move, and saves after it, neither restores the old
+// session nor binds it again.
+func TestStatuslineAfterSessionMoveKeepsMovedSession(t *testing.T) {
+	f, a, transcript := movedSessionFixture(t, "n",
+		`{"type":"user","sessionId":"s","promptId":"p1"}`,
+		`{"type":"continued-in","sessionId":"s","continuedInSessionId":"n"}`)
+	f.env["GANGLINE_HITCH_ID"] = string(a.ID)
+	f.env["GANG_AGENT_NONCE"] = "fixture-nonce"
+	f.cmd.statuslineLock = func() {
+		if err := f.run.tickAgent(a.ID, hookNotice{}, false); err != nil {
+			t.Fatal(err)
+		}
+	}
+	f.cmd.stdin = strings.NewReader(`{"session_id":"s","model":{"id":"claude-test"},"context_window":{"context_window_size":1000,"current_usage":{"input_tokens":10,"cache_creation_input_tokens":0,"cache_read_input_tokens":0}}}`)
+	err := f.cmd.statusline(nil)
+	if bound, want := sessionBindings(t, f, a.ID), []core.Binding{{SessionID: "s", Collar: a.Collar, HitchedBy: "l"}, {SessionID: "n", PreviousSessionID: "s", Collar: a.Collar, HitchedBy: "l"}}; !reflect.DeepEqual(bound, want) {
+		t.Fatalf("bindings = %+v", bound)
+	}
+	if got := f.agent(t, a.ID); got.Native.SessionID != "n" || got.Native.Transcript != transcript {
+		t.Fatalf("session %q transcript %q", got.Native.SessionID, got.Native.Transcript)
+	}
+	if !errors.Is(err, errStatuslineSession) {
+		t.Fatalf("stale status line: %v", err)
+	}
+}
+
 func TestNativeSessionConflictSurvivesWitnessReplacement(t *testing.T) {
 	f, a, _ := movedSessionFixture(t, "unexpected")
 	p, err := f.run.team.Agent(a.ID)

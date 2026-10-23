@@ -12,6 +12,8 @@ import (
 	"github.com/adambiggs/gangline/store"
 )
 
+var errStatuslineSession = errors.New("status-line session does not match registered native session")
+
 func (cmd command) statusline(args []string) (result error) {
 	install := false
 	flags := boundFlagSet("statusline", map[string]any{"install": &install})
@@ -89,7 +91,7 @@ func (cmd command) statusline(args []string) (result error) {
 			return refuseError("hitch token does not match the registered pane")
 		}
 		if a.Native.SessionID != "" && a.Native.SessionID != session {
-			return fmt.Errorf("status-line session does not match registered native session")
+			return errStatuslineSession
 		}
 		converted := make([]core.Reading, len(readings))
 		for i, value := range readings {
@@ -98,6 +100,9 @@ func (cmd command) statusline(args []string) (result error) {
 		if err := run.record(a, core.Event{Type: "observation", Readings: converted}); err != nil {
 			return err
 		}
+		if cmd.statuslineLock != nil {
+			cmd.statuslineLock()
+		}
 		l, current, err := run.acquire(id, false)
 		if err != nil && !errors.Is(err, store.ErrLocked) {
 			return err
@@ -105,6 +110,10 @@ func (cmd command) statusline(args []string) (result error) {
 		if l != nil {
 			defer func() { result = errors.Join(result, run.release(l)) }()
 			a = current
+			// A tick can have followed a session move since the unlocked read.
+			if a.Native.SessionID != "" && a.Native.SessionID != session {
+				return errStatuslineSession
+			}
 			a.Native.SessionID = session
 			c, err := loadCollar(a.Collar, run.settings)
 			if err != nil {
