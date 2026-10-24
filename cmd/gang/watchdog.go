@@ -83,12 +83,12 @@ func (cmd command) watchdogScheduler(directory string) watchdogScheduler {
 	}
 	for _, binary := range []string{"systemd-run", "systemctl"} {
 		if _, err := exec.LookPath(binary); err != nil {
-			return nil
+			return processWatchdog{delay: watchdogTimeout}
 		}
 	}
 	// A session bus alone does not imply a running systemd user manager.
 	if _, err := os.Stat(filepath.Join("/run/user", fmt.Sprint(os.Getuid()), "systemd", "private")); err != nil {
-		return nil
+		return processWatchdog{delay: watchdogTimeout}
 	}
 	return systemdWatchdog{}
 }

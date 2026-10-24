@@ -138,10 +138,10 @@ gang log --type tick
 gang roster
 ```
 
-On Linux with a systemd user manager or on macOS with launchd, Gangline arms a
+On Linux or macOS, Gangline arms a
 transient watchdog that runs whole-team ticks on a five-second fallback cadence.
-Native hooks refresh the affected agent between sweeps. It needs the host awake and the
-user scheduler available. The log's `tick` event identifies a command, hook,
+Native hooks refresh the affected agent between sweeps. It needs the host awake and, where
+systemd or launchd runs it, that user scheduler reachable. The log's `tick` event identifies a command, hook,
 or watchdog source. If the scheduler is unavailable, `gang tick` still does
 ordinary work and logs `watchdog_unavailable`; a scheduler failure logs
 `watchdog_failed` and returns an error. After fixing the scheduler, run

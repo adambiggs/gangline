@@ -180,10 +180,14 @@ The cadence is neither a minimum refresh interval nor a maximum staleness:
 hooks can refresh sooner, while scheduler delay, contention, an unreadable
 pane, and the collar's open-turn quiet fallback can delay a conclusive state.
 
-Linux uses systemd user timers. macOS uses a transient launchd job and a plist
-in the team directory, outside login-loaded LaunchAgents. The expiry shell
-lets its tick child survive job removal so it can re-arm. Both depend on an
-awake host and available user scheduler.
+Linux uses systemd user timers. Where no systemd user manager runs, such as a
+microVM whose init is not systemd, the timer is a detached session that sleeps
+out the cadence and then runs the tick; it lives as long as the user's other
+processes, and a cancelled one expires into a tick that finds its generation
+gone. macOS uses a transient launchd job and a plist in the team directory,
+outside login-loaded LaunchAgents. The expiry shell lets its tick child
+survive job removal so it can re-arm. Each depends on an awake host, and the
+systemd and launchd timers on a reachable user scheduler.
 
 Timer transactions have their own lock, released before agent work. Callers
 that arm never wait for it. Generation tokens reject superseded timers. Last

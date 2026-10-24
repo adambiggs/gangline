@@ -573,9 +573,10 @@ rejection of the wake's turn and the wake that replaces it are logged as
 `snooze_cap_rejected` and `snooze_rearmed` under the agent whose turn was
 rejected. See [operations](operations.md).
 
-Linux uses systemd user timers for the watchdog; macOS uses transient launchd
-user agents. On a host without a supported user scheduler, ordinary commands
-and ticks remain available. See the [watchdog guide](guides.md#keep-an-unattended-team-moving)
+Linux uses systemd user timers for the watchdog, or a detached sleeper
+process where no systemd user manager runs; macOS uses transient launchd user
+agents. On a host without a supported user scheduler, ordinary commands and
+ticks remain available. See the [watchdog guide](guides.md#keep-an-unattended-team-moving)
 and [internals](internals.md#watchdog).
 
 ## Exit status
