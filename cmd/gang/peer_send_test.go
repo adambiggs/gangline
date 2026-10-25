@@ -167,6 +167,14 @@ func TestPeerSendRelaysEveryPeerOutcome(t *testing.T) {
 	}
 }
 
+// The sending host can neither inspect the peer's pane nor hear a later
+// outcome, so an unverified reply names who to ask instead.
+func TestPeerSendUnverifiedNamesTheRecipientToAsk(t *testing.T) {
+	f, ssh := peerSender(t)
+	ssh.reply(t, `{"id":"@ID@","outcome":"unverified"}`+"\n", "", "5")
+	requireStatus(t, sendPeer(f, "beta:reviewer", "hi"), exitUnknown, "message input on beta is unverified; this host can neither inspect the recipient on beta nor learn a later outcome, so ask beta:reviewer whether it arrived before sending again")
+}
+
 func TestPeerSendRelaysAPeerRefusal(t *testing.T) {
 	for _, tc := range []struct {
 		status string

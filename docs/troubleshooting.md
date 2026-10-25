@@ -53,7 +53,9 @@ draft.
 
 `accepted` means the native queue already owns the input. Do not resend it.
 If the result is `unverified`, inspect the recipient before deciding how to
-recover: the text may already have reached the harness.
+recover: the text may already have reached the harness. For a `HOST:NAME`
+send, this host cannot inspect the recipient; ask it whether the message
+arrived.
 
 ## Status is unknown or reports a failed turn
 

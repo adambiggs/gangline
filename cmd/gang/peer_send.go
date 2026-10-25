@@ -119,7 +119,12 @@ func (run *runtime) sendToPeer(o sendOptions) error {
 				return err
 			}
 		}
-		return deliveryResult(reply.Outcome)
+		// This host cannot inspect the peer's pane, and the peer sends no later
+		// notice here, so the reply is the last word on an uncertain receipt.
+		if reply.Outcome == "unverified" {
+			return commandError{status: exitUnknown, text: fmt.Sprintf("message input on %s is unverified; this host can neither inspect the recipient on %s nor learn a later outcome, so ask %s:%s whether it arrived before sending again", o.Host, o.Host, o.Host, o.Name)}
+		}
+		return nil
 	case replied && refused:
 		sent.Status, sent.Reason = "refused", printable(reply.Error)
 		if err := run.recordPeerSend(sender, sent); err != nil {

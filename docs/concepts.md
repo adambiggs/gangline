@@ -79,6 +79,10 @@ command, ends a message failed or unverified, Gangline queues a notice naming
 the message for the agent that sent it. When hook proof or `gang hitch
 --recover` later confirms an unverified message, the sender gets a
 notice saying it was delivered, so it does not send the message again.
+These later notices reach an agent on the recipient's host only. A sender on a
+peer host keeps the receipt the peer returned and cannot inspect the
+recipient's pane, so after `unverified` it asks the recipient whether the
+message arrived before sending it again.
 
 ## Roles and startup instructions
 
