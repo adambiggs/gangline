@@ -48,7 +48,7 @@ import "time"
  rehitch_requested: {}, rehitch_started: {}, rehitch_failed: {reason: #ID}, rehitch_attention: {reason: #ID}, rehitch_position_lost: {reason: #ID}
  hitch_claimed: {}, hitch_spawned: {}, hitch_ready: {}, hitch_blocked: {}, hitch_failed: {}, boot_reopened: {hitch_id: #ID, deadline: #Time}, renamed: {}, send_cancelled: {}, delivery_accepted: {}
  delivery_succeeded: {}, delivery_failed: {}, delivery_unverified: {}, activity_observed: {}, observation: {}, native_hook: {}, compaction_waiting: {}, compaction_submitted: {}
- compaction_completed: {}, compaction_failed: {}, compaction_unverified: {}, interrupt_requested: {}, interrupt_completed: {}, deadline_checked: {}, drop_started: {}, drop_finished: {}
+ compaction_completed: {}, compaction_failed: {}, compaction_unverified: {}, compaction_cancelled: {}, interrupt_requested: {}, interrupt_completed: {}, deadline_checked: {}, drop_started: {}, drop_finished: {}
  curfew_set: {}, curfew_cleared: {}, capacity_detected: {}, capacity_submitted: {}, capacity_cleared: {}, watchdog_available: {}, process_verification_available: {}
  send_queued: {envelope: #Envelope}
  peer_sent: {hitch_id: #ID, name: #ID, id: #ID, to: #ID, status: "queued" | "delivered" | "accepted" | "failed" | "unverified" | "refused" | "unknown"}

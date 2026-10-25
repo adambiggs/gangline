@@ -112,7 +112,7 @@ the parent's command line where `/proc` shows it, the working directory, and
 | `gang interrupt [NAME] [-m\|--message REASON]` | Interrupt the turn; deliver an optional reason after it stops. |
 | `gang title [NAME] TEXT` | Set the native harness session title when idle with a free composer. Quote TEXT as one argument; omit NAME for the current pane's agent. |
 | `gang compact [NAME] [--note TEXT]` | Compact at native idle; submit the continuation behind compaction, ahead of later input. |
-| `gang compact NAME --interrupt` | Interrupt a submitted or unconfirmed compaction with the collar's recovery keys while the pane shows it running. A failed deferred compaction can instead clear its exact staged command from an idle composer and retry queued delivery; edited input remains untouched. It records an interrupted compaction as unconfirmed and reports the screen it left. |
+| `gang compact NAME --interrupt` | Cancel a queued, unsubmitted compaction. Interrupt a submitted or unconfirmed compaction with the collar's recovery keys while the pane shows it running. A failed deferred compaction can instead clear its exact staged command from an idle composer and retry queued delivery; edited input remains untouched. It records an interrupted compaction as unconfirmed and reports the screen it left. |
 | `gang curfew [DURATION\|HH:MM\|RFC3339\|clear]` | Show, set, or clear the team deadline. |
 | `gang tick [--agent NAME\|HITCH_ID]` | Check deadlines, recover native failures, and drain due messages, for every agent or the one `--agent` names. |
 | `gang wait NAME [--timeout DURATION]` | Wait up to DURATION (default 30s) for a recorded idle boundary; a zero timeout checks once. |

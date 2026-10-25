@@ -61,6 +61,10 @@ func Step(agent Agent, event Event) (Agent, []Effect) {
 			return agent, nil
 		}
 		agent.Compaction.Reason = event.Reason
+	case "compaction_cancelled":
+		if agent.Compaction != nil && agent.Compaction.ID == event.ID && agent.Compaction.Status == "queued" {
+			agent.Compaction = nil
+		}
 	case "compaction_submitted":
 		if agent.Compaction == nil || agent.Compaction.ID != event.ID {
 			return agent, nil

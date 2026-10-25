@@ -108,7 +108,6 @@ func TestCompactInterruptRefusesBeforeAnyKey(t *testing.T) {
 		}{
 			{name: "failed-record-on-approval", status: "failed", surface: "blocked", want: "already failed"},
 			{name: "completed-record", status: "completed", surface: "busy", want: "already completed"},
-			{name: "queued-record", status: "queued", surface: "busy", want: "not submitted"},
 			{name: "submitted-on-approval", status: "submitted", surface: "blocked", want: "native input blocked"},
 			{name: "unverified-on-approval", status: "unverified", surface: "blocked", want: "native input blocked"},
 			{name: "submitted-on-draft", status: "submitted", surface: "draft", want: "unsubmitted input"},

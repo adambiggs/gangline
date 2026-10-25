@@ -732,8 +732,8 @@ func (run *runtime) clearFailedCompactDraft(l *store.LockedAgent, a *core.Agent,
 	return err
 }
 
-// interruptCompaction clears an exact draft left by a failed deferred
-// compaction, or interrupts a submitted or unverified compaction that the
+// interruptCompaction cancels a queued request, clears an exact draft left by
+// a failed deferred compaction, or interrupts a compaction that the
 // native harness still shows as running. Busy recovery sends nothing unless
 // the screen has an empty composer and records its keys as unverified.
 func (run *runtime) interruptCompaction(l *store.LockedAgent, a *core.Agent, b harnessInput, c harness.Collar) (result error) {
@@ -742,7 +742,11 @@ func (run *runtime) interruptCompaction(l *store.LockedAgent, a *core.Agent, b h
 	case pending == nil:
 		return refuseError("no compaction to recover")
 	case pending.Status == "queued":
-		return refuseError("compaction %s is queued and not submitted; nothing to recover", pending.ID)
+		if err := run.apply(l, a, core.Event{Type: "compaction_cancelled", ID: pending.ID}); err != nil {
+			return err
+		}
+		_, err := fmt.Fprintf(run.cmd.stdout, "%s\tqueued compaction cancelled\n", pending.ID)
+		return err
 	case pending.Status == "failed":
 		return run.clearFailedCompactDraft(l, a, b, c)
 	case pending.Status == "completed":

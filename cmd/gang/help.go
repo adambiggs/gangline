@@ -174,7 +174,7 @@ var commandOptions = map[string][]optionSpec{
 	},
 	"compact": {
 		{"note", "TEXT", "resume note (default a re-read note)"},
-		{"interrupt", "", "interrupt busy compaction or clear failed draft"},
+		{"interrupt", "", "cancel queued compaction or recover native input"},
 	},
 	"statusline": {{"install", "", "install the native status line"}},
 	"context": {
