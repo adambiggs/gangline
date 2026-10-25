@@ -366,7 +366,9 @@ func TestFailedTestEndsItsTmuxServer(t *testing.T) {
 // descriptors to the server, so a stopped server holds the output pipe open
 // after the client is killed; WaitDelay ends the read.
 func (runner tmuxRunner) runContext(ctx context.Context, arguments ...string) (string, error) {
-	arguments = append([]string{"-S", runner.socket, "-f", "/dev/null"}, arguments...)
+	// -u, as gang's own clients pass it: without a UTF-8 locale, tmux prints
+	// the tabs in a format's output as underscores.
+	arguments = append([]string{"-u", "-S", runner.socket, "-f", "/dev/null"}, arguments...)
 	command := exec.CommandContext(ctx, runner.binary, arguments...)
 	command.Env = runner.env
 	command.WaitDelay = time.Second
