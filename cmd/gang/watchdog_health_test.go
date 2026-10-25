@@ -75,6 +75,18 @@ func ownNamespace(t *testing.T) string {
 	return namespace
 }
 
+func (run *runtime) processLimited(a core.Agent) (bool, error) {
+	p, err := run.team.Agent(a.ID)
+	if err != nil {
+		return false, err
+	}
+	_, err = os.Stat(filepath.Join(p.Directory, "process-unavailable"))
+	if errors.Is(err, os.ErrNotExist) {
+		return false, nil
+	}
+	return err == nil, err
+}
+
 // sandboxedVerifiedAgent registers an agent whose own command has run once
 // without process visibility, leaving its process-unavailable marker.
 func sandboxedVerifiedAgent(t *testing.T, namespace string) (*stateFixture, core.Agent) {

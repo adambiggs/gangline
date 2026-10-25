@@ -164,16 +164,28 @@ func (run *runtime) noteProcessUnavailable(a core.Agent) error {
 	return nil
 }
 
-func (run *runtime) processLimited(a core.Agent) (bool, error) {
-	p, err := run.team.Agent(a.ID)
+// Process visibility belongs to this caller, not to a past command that
+// recorded skipped ancestry checks.
+func (run *runtime) processAvailable(a core.Agent) (bool, error) {
+	if a.Pane == "" {
+		return false, nil
+	}
+	b, err := run.registry()
 	if err != nil {
 		return false, err
 	}
-	_, err = os.Stat(filepath.Join(p.Directory, "process-unavailable"))
-	if errors.Is(err, os.ErrNotExist) {
+	present, err := b.CheckPane(context.Background(), paneIdentity(a))
+	if errors.Is(err, tmux.ErrPaneReplaced) {
 		return false, nil
 	}
-	return err == nil, err
+	if err != nil || !present {
+		return false, err
+	}
+	visible, err := b.ProcessVisibility(context.Background(), substrate.PaneID(a.Pane))
+	if exited := (*substrate.ExitedError)(nil); errors.As(err, &exited) {
+		return false, nil
+	}
+	return visible, err
 }
 
 type paneInput struct {

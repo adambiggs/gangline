@@ -491,7 +491,7 @@ func rosterReason(a core.Agent, limit int) string {
 }
 
 func (run *runtime) agentRow(a core.Agent) (agentJSON, error) {
-	limited, err := run.processLimited(a)
+	available, err := run.processAvailable(a)
 	if err != nil {
 		return agentJSON{}, err
 	}
@@ -499,7 +499,7 @@ func (run *runtime) agentRow(a core.Agent) (agentJSON, error) {
 	if a.Pane != "" {
 		paneName = string(a.Name)
 	}
-	row := agentJSON{Kind: "native", InputOutage: a.InputOutage, Name: a.Name, HitchID: a.ID, Status: a.Status, Activity: a.Activity, Collar: a.Collar, Pane: paneName, ProcessAvailable: !limited, Evidence: run.cmd.operatorText(a.Evidence)}
+	row := agentJSON{Kind: "native", InputOutage: a.InputOutage, Name: a.Name, HitchID: a.ID, Status: a.Status, Activity: a.Activity, Collar: a.Collar, Pane: paneName, ProcessAvailable: available, Evidence: run.cmd.operatorText(a.Evidence)}
 	if a.Compaction != nil {
 		row.Compaction = &compactionJSON{ID: a.Compaction.ID, Status: a.Compaction.Status, Reason: run.cmd.operatorText(a.Compaction.Reason)}
 	}

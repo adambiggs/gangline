@@ -121,7 +121,8 @@ A sandboxed lead can hitch and drop through the team's tmux socket. Creating
 or removing linked worktrees needs the same native approval path when it
 writes outside the permitted roots, and pushes need working authentication.
 
-`[process-unavailable]` means the caller cannot verify host process ancestry.
+`[process-unavailable]` means the caller cannot observe the registered pane's
+live host process.
 The registered-pane fallback still supports team operations, but detached
 children may survive drop; a filesystem grant cannot restore PID namespace
 visibility. Full host process cleanup, native trust/login prompts and any

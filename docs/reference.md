@@ -321,9 +321,11 @@ table by the name it was invoked as; that needs the host process namespace
 visible. Native ancestry checks and
 detached-descendant cleanup remain enabled when the host process namespace is
 visible. Otherwise `process_verification_unavailable` records the skipped
-checks, and `roster` shows `[process-unavailable]` until the agent's own command
-passes ancestry verification from the PID namespace recorded at hitch,
-which logs `process_verification_available`. The process watchdog is
+checks. `roster` and `status --json` report current process visibility from
+the caller's namespace after checking the pane registration; an absent pane
+or exited process is unavailable. The agent's own command passing ancestry
+verification from the PID namespace recorded at hitch logs
+`process_verification_available`. The process watchdog is
 also skipped visibly with `watchdog_unavailable` and `[watchdog-unavailable]`,
 and `hitch` and `snooze` warn on stderr; ordinary hooks and commands still tick
 the team. The next armed timer clears the marker and logs `watchdog_available`. A pane-only drop cannot
