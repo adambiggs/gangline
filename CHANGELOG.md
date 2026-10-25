@@ -1,5 +1,16 @@
 # Changelog
 
+## [2.2.1](https://github.com/adambiggs/gangline/compare/gangline-v2.2.0...gangline-v2.2.1) (2026-10-25)
+
+
+### Bug Fixes
+
+* **compact:** cancel queued requests with --interrupt ([a6bd986](https://github.com/adambiggs/gangline/commit/a6bd986fcae81c0f04f21e1e85279ee2ed9901c1)), closes [#199](https://github.com/adambiggs/gangline/issues/199)
+* **drop:** remove panes before stopping pinned processes ([2622ee3](https://github.com/adambiggs/gangline/commit/2622ee36e91f6b20e8a54a93bd1916e00fd39b47)), closes [#212](https://github.com/adambiggs/gangline/issues/212)
+* **roster:** observe current process availability ([4adb264](https://github.com/adambiggs/gangline/commit/4adb264831a31547d790deefb708902511311284)), closes [#210](https://github.com/adambiggs/gangline/issues/210)
+* **tmux:** preserve empty process record fields ([9eb5631](https://github.com/adambiggs/gangline/commit/9eb56310a28171a43a5e8c9bb33216c237e360bd)), closes [#211](https://github.com/adambiggs/gangline/issues/211)
+* **tmux:** preserve text bytes with extended keys ([7cf6d2b](https://github.com/adambiggs/gangline/commit/7cf6d2bb27362ae3f05f6517667e1f670f1cb16c)), closes [#201](https://github.com/adambiggs/gangline/issues/201)
+
 ## [2.2.0](https://github.com/adambiggs/gangline/compare/gangline-v2.1.0...gangline-v2.2.0) (2026-10-23)
 
 
