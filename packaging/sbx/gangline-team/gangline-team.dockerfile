@@ -9,7 +9,8 @@ USER root
 RUN apt-get update \
  && apt-get install -y --no-install-recommends tmux openssh-server \
  && rm -rf /var/lib/apt/lists/* /etc/ssh/ssh_host_*
-COPY sshd.conf /etc/ssh/sshd_config.d/gangline.conf
+# sshd keeps the first value it reads, so this drop-in sorts first.
+COPY sshd.conf /etc/ssh/sshd_config.d/00-gangline.conf
 # The Claude mixin writes a permission mode into ~/.claude/settings.json on
 # every create; a mode in managed settings outranks it.
 COPY managed-settings.json /etc/claude-code/managed-settings.json

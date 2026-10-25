@@ -29,6 +29,11 @@ capabilities:
           - "codeload.github.com:443"
           - "objects.githubusercontent.com:443"
           - "release-assets.githubusercontent.com:443"
+        # Allows union across kits, so the Codex mixin's portless GitHub
+        # allows open every port; a deny holds against any kit's allow.
+        # GitHub ssh would bypass the proxy-managed token.
+        deny:
+          - "github.com:22"
   - type: com.docker.sandbox/credential@1
     optional: true
     description: GitHub token for git over https and gh
@@ -37,6 +42,8 @@ capabilities:
       phase: runtime
       apiKey:
         name: GH_TOKEN
+        # The VM's GH_TOKEN holds a sentinel; the token itself stays in the proxy.
+        proxyManaged: true
         inject:
           - {domain: api.github.com, header: Authorization, format: "Bearer %s"}
           # git smart-HTTP takes Basic, with the token as the password.
