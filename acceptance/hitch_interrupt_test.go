@@ -5,6 +5,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"syscall"
 	"testing"
@@ -198,6 +199,16 @@ exec tmux "$@"
 				}
 			}
 			if tc.signal == syscall.SIGKILL {
+				if !tc.exits && strings.HasPrefix(tc.steps, "visibility:") {
+					live, err := runner.run("display-message", "-p", "-t", session+":worker", "#{pane_pid}\t#{pane_dead}")
+					fields := strings.Fields(live)
+					if err != nil || len(fields) != 2 || fields[1] != "0" {
+						t.Fatalf("worker is not live before drop: %q: %v", live, err)
+					}
+					if pid, err := strconv.Atoi(fields[0]); err != nil || pid <= 0 {
+						t.Fatalf("worker has no native PID before drop: %q: %v", live, err)
+					}
+				}
 				out, _, err := gang(environment, "drop", "worker")
 				if err != nil {
 					t.Fatalf("drop after killed hitch: %v\n%s", err, out)

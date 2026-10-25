@@ -1043,8 +1043,8 @@ func (run *runtime) endNative(l *store.LockedAgent, a *core.Agent) (stopping boo
 		}
 	}
 	nativeVisible := visible || tmux.CanReadIdentity(nativeIdentity(a.Process))
+	var owned *tmux.Owned
 	if nativeVisible && a.Process.PID != 0 {
-		var owned *tmux.Owned
 		if len(a.Teardown) > 0 {
 			ids := make([]tmux.Identity, len(a.Teardown))
 			for i, p := range a.Teardown {
@@ -1069,14 +1069,9 @@ func (run *runtime) endNative(l *store.LockedAgent, a *core.Agent) (stopping boo
 			return stopping, err
 		}
 		defer owned.Close()
-		// Teardown has its own fresh budget. Stored operation deadlines cannot stop it.
-		ctx, cancel := context.WithTimeout(context.Background(), operationTimeout)
-		defer cancel()
-		stopping = true
-		if err := owned.Stop(ctx); err != nil {
-			return stopping, err
-		}
 	}
+	// Remove the pane while its native identity is readable, then finish
+	// descendant cleanup through the pinned handles.
 	if a.Pane != "" && !replaced {
 		stopping = true
 		if nativeVisible && a.Process.PID != 0 {
@@ -1085,6 +1080,15 @@ func (run *runtime) endNative(l *store.LockedAgent, a *core.Agent) (stopping boo
 			err = registry.RemoveRegisteredPane(context.Background(), paneIdentity(*a))
 		}
 		if err != nil {
+			return stopping, err
+		}
+	}
+	if owned != nil {
+		// Teardown has its own fresh budget. Stored operation deadlines cannot stop it.
+		ctx, cancel := context.WithTimeout(context.Background(), operationTimeout)
+		defer cancel()
+		stopping = true
+		if err := owned.Stop(ctx); err != nil {
 			return stopping, err
 		}
 	}
