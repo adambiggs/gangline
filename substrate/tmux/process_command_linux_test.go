@@ -13,15 +13,17 @@ import (
 )
 
 func TestPaneCommandRetainsLongInvokedName(t *testing.T) {
-	cat, err := exec.LookPath("cat")
+	// The test binary, not a system tool: a multicall coreutils refuses to
+	// run under a name other than its own.
+	executable, err := os.Executable()
 	if err != nil {
 		t.Fatal(err)
 	}
 	launch := filepath.Join(t.TempDir(), "custom-agent-command")
-	if err := os.Symlink(cat, launch); err != nil {
+	if err := os.Symlink(executable, launch); err != nil {
 		t.Fatal(err)
 	}
-	cmd := exec.Command(launch)
+	cmd := exec.Command(launch, "--foreground-fixture")
 	input, err := cmd.StdinPipe()
 	if err != nil {
 		t.Fatal(err)
@@ -40,11 +42,8 @@ func TestPaneCommandRetainsLongInvokedName(t *testing.T) {
 		}
 	})
 	// Exec has completed at Start, but the kernel can still expose an empty
-	// cmdline before the child first runs. An echo proves native readiness.
-	if _, err := input.Write([]byte("ready\n")); err != nil {
-		t.Fatal(err)
-	}
-	ready := make([]byte, len("ready\n"))
+	// cmdline before the child first runs. The fixture's byte proves it ran.
+	ready := make([]byte, 1)
 	if _, err := io.ReadFull(output, ready); err != nil {
 		t.Fatal(err)
 	}
