@@ -192,14 +192,15 @@ func testLiveProvider(t *testing.T, collar, cli, cheapest string) {
 		t.Fatalf("private socket has sessions %q: %v", out, err)
 	}
 	if collar == "claude" {
-		for _, setting := range [][]string{
-			{"set-option", "-s", "extended-keys", "on"},
-			{"set-option", "-s", "extended-keys-format", "xterm"},
-			{"set-option", "-g", "default-terminal", "tmux-256color"},
-		} {
+		options, err := runner.run("show-options", "-s")
+		if err != nil {
+			t.Fatalf("read private server options: %v: %s", err, options)
+		}
+		for _, setting := range liveClaudeInputSettings(options) {
 			if out, err := runner.run(setting...); err != nil {
 				t.Fatalf("private input setting %v: %v: %s", setting, err, out)
 			}
+			t.Logf("private input setting applied: %s", strings.Join(setting, " "))
 		}
 	}
 	models, diagnostic, err := runGang(ctx, "", "models", "-c", collar)
@@ -304,6 +305,19 @@ func testLiveProvider(t *testing.T, collar, cli, cheapest string) {
 		t.Fatalf("second hook did not witness envelope and body: %v: %+v", err, lastWitness)
 	}
 	t.Logf("%s PASS startup and second hook, Stop, envelope, paste, mid-turn delivery initial receipt=%s pane=%s", collar, sendFields[1], pane)
+}
+
+func liveClaudeInputSettings(options string) [][]string {
+	settings := [][]string{
+		{"set-option", "-s", "extended-keys", "on"},
+	}
+	for _, line := range strings.Split(options, "\n") {
+		if strings.HasPrefix(line, "extended-keys-format ") {
+			settings = append(settings, []string{"set-option", "-s", "extended-keys-format", "xterm"})
+			break
+		}
+	}
+	return append(settings, []string{"set-option", "-g", "default-terminal", "tmux-256color"})
 }
 
 func providerTimeline(path string) string {
