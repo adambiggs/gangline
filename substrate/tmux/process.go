@@ -150,10 +150,21 @@ func (backend *Backend) readPaneProcess(ctx context.Context, pane substrate.Pane
 	if err != nil {
 		return 0, tmuxError("read pane process", err, output)
 	}
+	pid, err := parsePaneProcess(output)
+	if nativeExit := (*substrate.ExitedError)(nil); errors.As(err, &nativeExit) {
+		return 0, backend.exitedPane(ctx, pane, nativeExit.Status)
+	}
+	return pid, err
+}
+
+func parsePaneProcess(output string) (int, error) {
 	// The exit status is empty for a live pane and until tmux collects one.
-	fields := strings.Fields(output)
+	fields := strings.Split(strings.TrimSuffix(output, "\n"), " ")
+	if len(fields) == 3 && fields[2] == "" {
+		fields = fields[:2]
+	}
 	if len(fields) >= 2 && len(fields) <= 3 && fields[1] == "1" {
-		return 0, backend.exitedPane(ctx, pane, strings.Join(fields[2:], ""))
+		return 0, exited(strings.Join(fields[2:], ""), "")
 	}
 	if len(fields) != 2 || fields[1] != "0" {
 		return 0, fmt.Errorf("read pane process: no live pane process in %q", strings.TrimSpace(output))
