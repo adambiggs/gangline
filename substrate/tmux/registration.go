@@ -309,7 +309,7 @@ func (b *Backend) SendRegisteredKeys(ctx context.Context, id PaneIdentity, comma
 	}
 	var commands []string
 	if keys.Text != "" {
-		commands = append(commands, tmuxCommand("send-keys", "-t", id.Pane, "-l", "--", keys.Text))
+		commands = append(commands, rawTextCommands(substrate.PaneID(id.Pane), keys.Text)...)
 	}
 	names := append([]string(nil), keys.Names...)
 	if keys.Submit {

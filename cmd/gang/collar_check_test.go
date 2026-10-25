@@ -223,7 +223,12 @@ if-shell|send-keys) printf '%s\n' "$@" > "$socket.input"; echo "stub accepts no 
 		t.Fatal(readErr)
 	}
 	sent := strings.Split(string(data), "\n")
-	guarded := len(sent) > 5 && sent[0] == "if-shell" && strings.Contains(sent[4], "#{==:#{pane_current_command},codex}") && strings.HasPrefix(sent[5], `"if-shell" "-F" "-t" "%1" "#{||:#{==:#{pane_mode},copy-mode},#{==:#{pane_mode},view-mode}}" "\"send-keys\" \"-t\" \"%1\" \"-X\" \"cancel\"" ; "send-keys" "-t" "%1" "-l" "--" "`) && strings.Contains(sent[5], "Reply with exactly READY.")
+	var raw strings.Builder
+	for _, b := range []byte("\x1b[200~Reply with exactly READY.\x1b[201~") {
+		fmt.Fprintf(&raw, ` "%02x"`, b)
+	}
+	wantInput := `"if-shell" "-F" "-t" "%1" "#{||:#{==:#{pane_mode},copy-mode},#{==:#{pane_mode},view-mode}}" "\"send-keys\" \"-t\" \"%1\" \"-X\" \"cancel\"" ; "send-keys" "-t" "%1" "-H" "--"` + raw.String()
+	guarded := len(sent) > 5 && sent[0] == "if-shell" && strings.Contains(sent[4], "#{==:#{pane_current_command},codex}") && sent[5] == wantInput
 	if !guarded {
 		t.Fatalf("probe input bypassed guarded input:\n%s", data)
 	}

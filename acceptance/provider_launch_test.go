@@ -191,6 +191,17 @@ func testLiveProvider(t *testing.T, collar, cli, cheapest string) {
 	if out, err := runner.run("list-sessions", "-F", "#{session_name}"); err != nil || strings.TrimSpace(out) != session {
 		t.Fatalf("private socket has sessions %q: %v", out, err)
 	}
+	if collar == "claude" {
+		for _, setting := range [][]string{
+			{"set-option", "-s", "extended-keys", "on"},
+			{"set-option", "-s", "extended-keys-format", "xterm"},
+			{"set-option", "-g", "default-terminal", "tmux-256color"},
+		} {
+			if out, err := runner.run(setting...); err != nil {
+				t.Fatalf("private input setting %v: %v: %s", setting, err, out)
+			}
+		}
+	}
 	models, diagnostic, err := runGang(ctx, "", "models", "-c", collar)
 	if err != nil {
 		t.Fatalf("gang models -c %s: %v: %s %s", collar, err, models, diagnostic)
@@ -206,6 +217,10 @@ func testLiveProvider(t *testing.T, collar, cli, cheapest string) {
 	}
 	t.Logf("%s model=%s effort=low private_socket=%s", collar, cheapest, socket)
 	assignment := "Reply with 200 short numbered lines, each containing FIRST. Do not use tools."
+	evidence := " <transcript_evidence>\n" + strings.Repeat("Synthetic delivery evidence. ", 32) + "\n\n  Indented é猫.\nAnother line.\nLast line.\nEnd.\n</transcript_evidence>"
+	if collar == "claude" {
+		assignment += evidence
+	}
 	hitch, hitchDiagnostic, err := runGang(ctx, "", "hitch", "worker", "-c", collar, "-d", canonical, "-m", cheapest, "-e", "low", "-t", assignment)
 	if err != nil {
 		if strings.Contains(hitchDiagnostic, "startup is queued") {
@@ -251,6 +266,9 @@ func testLiveProvider(t *testing.T, collar, cli, cheapest string) {
 		t.Fatalf("startup hook did not witness pasted assignment and envelope: %v: %+v; socket=%s status=%s queue=%s screen=%s", err, startupWitness, socket, status, pending, screen)
 	}
 	second := "Reply with exactly SECOND. Do not use tools."
+	if collar == "claude" {
+		second += evidence
+	}
 	sent, sendDiagnostic, err := runGang(ctx, second, "send", "worker", "--from", "acceptance")
 	if err != nil {
 		t.Fatalf("mid-turn send: %v: %s %s", err, sent, sendDiagnostic)

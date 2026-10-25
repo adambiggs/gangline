@@ -598,12 +598,36 @@ func (backend *Backend) DescribePane(ctx context.Context, pane substrate.PaneID)
 	return fmt.Sprintf("window %q at pane position %d", fields[0], position), nil
 }
 
+func rawTextArguments(pane substrate.PaneID, text string) []string {
+	arguments := make([]string, 0, 4+len(text))
+	arguments = append(arguments, "-t", string(pane), "-H", "--")
+	const digits = "0123456789abcdef"
+	for i := 0; i < len(text); i++ {
+		arguments = append(arguments, string([]byte{digits[text[i]>>4], digits[text[i]&15]}))
+	}
+	return arguments
+}
+
+func rawTextCommands(pane substrate.PaneID, text string) []string {
+	// Quoted hex arguments expand again inside a registered branch. Keep each
+	// command within its inline budget rather than exhaust the parser's stack.
+	const chunkBytes = maxInlineRegisteredCommandBytes / 8
+	var commands []string
+	for len(text) > 0 {
+		n := min(len(text), chunkBytes)
+		commands = append(commands, tmuxCommand("send-keys", rawTextArguments(pane, text[:n])...))
+		text = text[n:]
+	}
+	return commands
+}
+
 func (backend *Backend) SendKeys(ctx context.Context, pane substrate.PaneID, keys substrate.Keys) error {
 	if err := validPaneID(pane); err != nil {
 		return err
 	}
 	if keys.Text != "" {
-		output, err := backend.run(ctx, "send-keys", "-t", string(pane), "-l", keys.Text)
+		command := strings.Join(rawTextCommands(pane, keys.Text), " ; ")
+		output, err := backend.runWithInput(ctx, strings.NewReader(command+"\n"), "source-file", "-")
 		if err != nil {
 			return tmuxError("send text", err, output)
 		}

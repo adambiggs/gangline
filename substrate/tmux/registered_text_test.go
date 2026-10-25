@@ -28,9 +28,9 @@ func TestRegisteredLongTextPreservesExactBytes(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			var want string
 			if tc.size == 4300 {
-				// Newlines expand fourfold in tmux's command argument.
+				// Hexadecimal byte arguments exceed tmux's IPC command limit.
 				want = strings.Repeat("\n", tc.size)
-				if len(tmuxCommand("send-keys", "-t", "%1", "-l", "--", want)) <= 16*1024 {
+				if len(strings.Join(rawTextCommands("%1", want), " ; ")) <= 16*1024 {
 					t.Fatal("fixture does not exceed tmux's IPC command limit")
 				}
 			} else if tc.size == 65536 {
