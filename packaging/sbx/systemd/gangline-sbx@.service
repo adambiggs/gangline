@@ -1,0 +1,16 @@
+# SPDX-License-Identifier: Apache-2.0
+# Restores the Docker Sandboxes sandbox named by the instance, with its sshd and
+# published ports, when the user manager starts. The sandbox daemon starts inside
+# this unit, so stopping the unit stops the sandbox and the daemon. The team in
+# the sandbox comes back with gang up --resume, as on a host after a reboot.
+[Unit]
+Description=Gangline sandbox %i
+
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+ExecStart=%h/.local/share/sbx/bin/sbx run --detach --name %i
+ExecStop=%h/.local/share/sbx/bin/sbx stop %i
+
+[Install]
+WantedBy=default.target

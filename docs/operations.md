@@ -127,3 +127,67 @@ The registered-pane fallback still supports team operations, but detached
 children may survive drop; a filesystem grant cannot restore PID namespace
 visibility. Full host process cleanup, native trust/login prompts and any
 operation refused by the effective policy remain operator responsibilities.
+
+## A team inside Docker Sandboxes
+
+A [Docker Sandboxes](https://docs.docker.com/ai/sandboxes/) microVM can hold a
+whole team, with the VM as the boundary: agents run there without their own
+sandboxes, and the network reaches only the hosts the kit allows. The
+`packaging/sbx` directory holds the `gangline-team` workload kit and a user
+unit. The workload carries tmux, `gang` and an sshd; Docker's Claude and Codex
+mixins layer the agents onto it, and each mixin's credential stays on the
+host, where the sandbox proxy adds it to requests.
+
+Stage the kit with a static `gang` for the VM's architecture, then create the
+sandbox once from an interactive terminal, so `sbx` can ask you to approve the
+kit's GitHub credential binding. `SBX_KIT_BUILDER=sandbox` builds the kit in
+`sbx`'s own builder sandbox; the host's build needs an OCI-capable buildx
+driver.
+
+```sh
+CGO_ENABLED=0 go build -trimpath -o /tmp/gang ./cmd/gang
+packaging/sbx/stage.sh /tmp/gang /tmp/gangline-team
+SBX_KIT_BUILDER=sandbox sbx run --name team -p 127.0.0.1:2722:22 \
+  --kit docker.io/sbx/claude-mixin:latest \
+  --kit docker.io/sbx/codex-mixin:latest \
+  /tmp/gangline-team WORKSPACE
+```
+
+The kit path must come before the workspaces. Append further paths, with
+`:ro` for read-only mounts. Edit a mounted tree from one side: the VM can
+keep reading the old contents of a file the host rewrote in place. Run `sbx secret set openai --oauth` on the host
+before the create, and sign Claude in once with `/login` inside the sandbox:
+the proxy captures the token and the VM keeps only sentinels. The image's
+Claude managed settings select auto mode, so `gang up` meets no permission
+prompt, and Codex runs without its own sandbox. The VM has no systemd user
+manager, so `gang` arms its process watchdog there.
+
+GitHub goes over https with `sbx secret set github`: the proxy adds the token,
+and the kit rewrites ssh remotes to https. The kit also allows the Go, npm and
+PyPI registries and GitHub's download hosts, so builds fetch their
+dependencies.
+
+Peer delivery runs over the VM's sshd. On the host, add an ssh alias for the
+published port, enroll the VM in `GANG_PEERS`, and authorize the host's key in
+the VM with `gang peer-authorize`. In the VM, set `GANG_HOST` and `GANG_PEERS`
+in `~/.config/gangline/config`, reach the host as `host.docker.internal`, and
+authorize the VM's key on the host the same way. `sshd` starts each forced
+command without the shell's environment, so a team outside the default state
+root needs its `GANG_SESSION`, `GANG_STATE_ROOT` and `GANG_TMUX_SOCKET` set
+in the forced command.
+
+Any `sbx` command starts the sandbox daemon when none is running, inside the
+caller's cgroup, and stopping the daemon stops its
+sandboxes. Restore the sandbox at login, with the daemon inside a unit of its
+own, from the unit in `packaging/sbx/systemd`. It expects `sbx` at
+`~/.local/share/sbx/bin/sbx`:
+
+```sh
+cp packaging/sbx/systemd/gangline-sbx@.service ~/.config/systemd/user/
+systemctl --user daemon-reload
+systemctl --user enable --now gangline-sbx@team.service
+```
+
+Enable lingering for the account so the unit starts at boot. The unit brings
+back the VM, its sshd and its ports; restart the team inside with
+`gang up --resume`, as on a host after a reboot.

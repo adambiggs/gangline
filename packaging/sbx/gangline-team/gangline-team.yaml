@@ -1,0 +1,63 @@
+# syntax=docker/sandbox-kit:3
+# SPDX-License-Identifier: Apache-2.0
+schemaVersion: "3"
+kind: workload
+displayName: Gangline team
+description: >-
+  A shell workload for a Gangline team: tmux, gang, and an sshd for peer
+  delivery. Layer the Claude and Codex mixins onto it.
+version: "0.1.0"
+
+capabilities:
+  - type: com.docker.sandbox/sbx@1
+  # The team keeps running with no client attached.
+  - type: com.docker.sandbox/long-running@1
+  - type: com.docker.sandbox/network-policy@1
+    config:
+      runtime:
+        allow:
+          # host.docker.internal:22, the host's sshd, for peer delivery.
+          - "localhost:22"
+          - "github.com:443"
+          - "api.github.com:443"
+          # Module, package and release downloads for builds and gates.
+          - "proxy.golang.org:443"
+          - "sum.golang.org:443"
+          - "registry.npmjs.org:443"
+          - "pypi.org:443"
+          - "files.pythonhosted.org:443"
+          - "codeload.github.com:443"
+          - "objects.githubusercontent.com:443"
+          - "release-assets.githubusercontent.com:443"
+  - type: com.docker.sandbox/credential@1
+    optional: true
+    description: GitHub token for git over https and gh
+    config:
+      service: github
+      phase: runtime
+      apiKey:
+        name: GH_TOKEN
+        inject:
+          - {domain: api.github.com, header: Authorization, format: "Bearer %s"}
+          # git smart-HTTP takes Basic, with the token as the password.
+          - {domain: github.com, header: Authorization, format: "%s", username: x-access-token}
+  - type: com.docker.sandbox/lifecycle@1
+    config:
+      install:
+        - command: "ssh-keygen -A"
+          user: "0"
+          description: Generate this sandbox's sshd host keys
+        # The sandbox has no GitHub ssh key, so ssh remotes go over https,
+        # where the proxy adds the token.
+        - command: |
+            set -e
+            git config --global --unset-all url.https://github.com/.insteadOf || [ $? -eq 5 ]
+            git config --global --add url.https://github.com/.insteadOf git@github.com:
+            git config --global --add url.https://github.com/.insteadOf ssh://git@github.com/
+          user: "agent"
+          description: Route GitHub ssh remotes over https
+      startup:
+        - command: ["sh", "-c", "install -d -m 0755 /run/sshd && exec /usr/sbin/sshd -D -e >>/var/log/gangline-sshd.log 2>&1"]
+          user: "0"
+          background: true
+          description: Run sshd for Gangline peer delivery
