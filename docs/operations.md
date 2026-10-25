@@ -155,7 +155,9 @@ kit's GitHub credential binding. `SBX_KIT_BUILDER=sandbox` builds the kit in
 driver.
 
 ```sh
-CGO_ENABLED=0 go build -trimpath -o /tmp/gang ./cmd/gang
+CGO_ENABLED=0 go build -trimpath -o /tmp/gang \
+  -ldflags "-X main.version=$(git describe --tags --match 'gangline-v*' | sed 's/^gangline-v//')" \
+  ./cmd/gang
 packaging/sbx/stage.sh /tmp/gang /tmp/gangline-team
 SBX_KIT_BUILDER=sandbox sbx run --name team -p 127.0.0.1:2722:22 \
   --kit docker.io/sbx/claude-mixin:latest \
@@ -192,14 +194,17 @@ Any `sbx` command starts the sandbox daemon when none is running, inside the
 caller's cgroup, and stopping the daemon stops its
 sandboxes. Restore the sandbox at login, with the daemon inside a unit of its
 own, from the unit in `packaging/sbx/systemd`. It expects `sbx` at
-`~/.local/share/sbx/bin/sbx`:
+`~/.local/share/sbx/bin/sbx`. Stop the daemon the create started first, or the
+unit attaches to it and the daemon stays outside the unit:
 
 ```sh
+sbx daemon stop
 cp packaging/sbx/systemd/gangline-sbx@.service ~/.config/systemd/user/
 systemctl --user daemon-reload
 systemctl --user enable --now gangline-sbx@team.service
 ```
 
 Enable lingering for the account so the unit starts at boot. The unit brings
-back the VM, its sshd and its ports; restart the team inside with
-`gang up --resume`, as on a host after a reboot.
+back the VM, its sshd and its ports, not the team: start the team inside with
+`gang up`, as on a host after a reboot, and resume an agent's conversation with
+`--resume SESSION`.
