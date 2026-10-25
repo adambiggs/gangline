@@ -131,6 +131,18 @@ func (run *runtime) updateWatchdog(generation string, cleanup, reset bool) (proc
 			return false, err
 		}
 	}
+	// A superseded timer's tick leaves before it takes the scheduler lock, so it
+	// cannot cost the current timer's tick its re-arm as both elapse. The check
+	// repeats under the lock.
+	if generation != "" && !cleanup {
+		intent, err := os.ReadFile(path)
+		if err != nil && !errors.Is(err, os.ErrNotExist) {
+			return false, err
+		}
+		if string(intent) != generation {
+			return false, nil
+		}
+	}
 	lock, err := os.OpenFile(filepath.Join(run.team.Directory, "watchdog.lock"), os.O_CREATE|os.O_RDWR, 0600)
 	if errors.Is(err, os.ErrNotExist) {
 		return false, nil

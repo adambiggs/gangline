@@ -299,6 +299,27 @@ func TestElapsedTimerTickThatLosesTheLockReportsOutage(t *testing.T) {
 	}
 }
 
+func TestSupersededTimerTickLeavesTheSchedulerLockAlone(t *testing.T) {
+	f, _ := watchdogFixture(t)
+	if err := f.cmd.tick(nil); err != nil {
+		t.Fatal(err)
+	}
+	// A lock path nothing can open shows whether the tick tried to take it.
+	lock := filepath.Join(f.run.team.Directory, "watchdog.lock")
+	if err := os.Remove(lock); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Mkdir(lock, 0700); err != nil {
+		t.Fatal(err)
+	}
+	if err := f.cmd.tick([]string{"--source", "watchdog", "--watchdog", "superseded"}); err != nil {
+		t.Fatalf("superseded tick took the scheduler lock: %v", err)
+	}
+	if _, err := os.Stat(filepath.Join(f.run.team.Directory, "watchdog-unavailable")); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("superseded timer reported an outage: %v", err)
+	}
+}
+
 func TestElapsedTimerTickThatFailsReportsOutage(t *testing.T) {
 	f, s := watchdogFixture(t)
 	if err := f.cmd.tick(nil); err != nil {
