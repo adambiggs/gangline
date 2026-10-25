@@ -528,10 +528,29 @@ func TestMismatchIsUnverifiedAndNeverRetyped(t *testing.T) {
 	}
 	cmd := f.cmd
 	cmd.stdin = strings.NewReader("hello")
+	start := cmd.now()
+	now := start
+	cmd.clock = func() time.Time { return now }
+	cmd.newTimeout = func(ctx context.Context, budget time.Duration) (context.Context, context.CancelFunc) {
+		return fakeDeadline{ctx, now.Add(budget)}, func() {}
+	}
+	cmd.newWatch = func(string) (changeWait, error) {
+		return waitFixture{func(ctx context.Context) error {
+			deadline, ok := ctx.Deadline()
+			if !ok {
+				t.Fatal("mismatched witness wait has no deadline")
+			}
+			now = deadline
+			return context.DeadlineExceeded
+		}}, nil
+	}
 	err := cmd.send([]string{"worker", "--from", "operator"})
 	var ce commandError
 	if !errors.As(err, &ce) || ce.status != exitUnknown {
 		t.Fatalf("mismatch result: %v", err)
+	}
+	if elapsed := now.Sub(start); elapsed != operationTimeout {
+		t.Fatalf("fake receipt wait=%s, want %s (deadline margin 0)", elapsed, operationTimeout)
 	}
 	if _, err := f.run.drain(a.ID, ""); err != nil {
 		t.Fatal(err)
