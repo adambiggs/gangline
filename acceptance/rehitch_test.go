@@ -2,12 +2,15 @@ package acceptance
 
 import (
 	"bufio"
+	"errors"
 	"fmt"
 	"io"
 	"os"
 	"os/exec"
+	ossignal "os/signal"
 	"path/filepath"
 	"strings"
+	"syscall"
 	"testing"
 	"time"
 
@@ -307,6 +310,11 @@ func rehitchHarness() error {
 	if out, err := stty.CombinedOutput(); err != nil {
 		return fmt.Errorf("stty: %w: %s", err, out)
 	}
+	// A restart removes this harness's pane while the test reads the next
+	// harness's events. Surviving the hangup signal makes every run take the
+	// path a late signal leaves open: the read fails with EIO, which ends the
+	// harness as EOF does instead of reporting a fixture error.
+	ossignal.Notify(make(chan os.Signal, 1), syscall.SIGHUP)
 	team, _ := (store.Paths{Root: os.Getenv("GANG_STATE_ROOT")}).Team(os.Getenv("GANG_SESSION"))
 	p, _ := team.Agent(core.HitchID(id))
 	renderResumeComposer("")
@@ -314,7 +322,7 @@ func rehitchHarness() error {
 	var input strings.Builder
 	for {
 		value, err := reader.ReadByte()
-		if err == io.EOF {
+		if err == io.EOF || errors.Is(err, syscall.EIO) {
 			return nil
 		}
 		if err != nil {
