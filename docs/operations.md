@@ -165,17 +165,18 @@ Create the sandbox once from an interactive terminal, so `sbx` can ask you to
 approve the kit's GitHub credential binding, then start the team inside it:
 
 ```sh
-sbx run --name team -p 127.0.0.1:2722:22 \
-  --kit docker.io/adambiggs/gangline:latest \
+sbx run docker.io/adambiggs/gangline:latest --name team -p 127.0.0.1:2722:22 \
   --kit docker.io/sbx/claude-mixin:latest \
   --kit docker.io/sbx/codex-mixin:latest \
   WORKSPACE
 gang up
 ```
 
+The workload kit is the agent argument, and the mixins come as `--kit`.
+
 To run the kit from its source, for a change to the kit itself, stage it with
-a static `gang` for the VM's architecture and pass the staged directory in
-place of the image. `SBX_KIT_BUILDER=sandbox` builds it in `sbx`'s own
+a static `gang` for the VM's architecture and pass the staged directory as the
+agent argument in place of the image. `SBX_KIT_BUILDER=sandbox` builds it in `sbx`'s own
 builder sandbox; a host build needs an OCI-capable buildx driver, which the
 release uses to publish both Linux architectures.
 

@@ -18,7 +18,7 @@ Claude in once with `claude` and `/login`, then `gang up -c claude`.
 
 ```sh
 sbx secret set openai --oauth
-sbx run --kit docker.io/adambiggs/gangline --kit docker.io/sbx/claude-mixin --kit docker.io/sbx/codex-mixin .
+sbx run docker.io/adambiggs/gangline --kit docker.io/sbx/claude-mixin --kit docker.io/sbx/codex-mixin .
 ```
 
 Then tell the lead what you want:

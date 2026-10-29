@@ -54,7 +54,7 @@ harness's login on the host, where its proxy adds it to requests:
 
 ```sh
 sbx secret set openai --oauth
-sbx run --kit docker.io/adambiggs/gangline --kit docker.io/sbx/claude-mixin --kit docker.io/sbx/codex-mixin .
+sbx run docker.io/adambiggs/gangline --kit docker.io/sbx/claude-mixin --kit docker.io/sbx/codex-mixin .
 ```
 
 In the shell it opens, run `claude` and sign in once with `/login`, then
