@@ -2,6 +2,7 @@ package main
 
 import (
 	"bytes"
+	"io"
 	"strings"
 	"testing"
 )
@@ -171,3 +172,29 @@ func TestHookHelpAndModelsIndex(t *testing.T) {
 		t.Fatalf("models index entry: %q", stdout.String())
 	}
 }
+
+func TestDiscoveryCommandsReportOutputFailure(t *testing.T) {
+	for _, args := range [][]string{
+		nil,
+		{"help"},
+		{"help", "hitch"},
+		{"help", "version"},
+		{"version"},
+		{"--version"},
+	} {
+		t.Run(strings.Join(args, " "), func(t *testing.T) {
+			var stderr bytes.Buffer
+			status := run(args, strings.NewReader(""), failedOutput{}, &stderr)
+			if status != exitError {
+				t.Fatalf("status = %d, want %d", status, exitError)
+			}
+			if !strings.Contains(stderr.String(), "closed pipe") {
+				t.Fatalf("stderr = %q, want output failure", stderr.String())
+			}
+		})
+	}
+}
+
+type failedOutput struct{}
+
+func (failedOutput) Write([]byte) (int, error) { return 0, io.ErrClosedPipe }
