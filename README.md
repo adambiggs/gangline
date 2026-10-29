@@ -11,6 +11,14 @@ curl -fsSL https://raw.githubusercontent.com/adambiggs/gangline/main/install.sh 
 gang up -c claude
 ```
 
+Or keep the team off your host: with the [Docker Sandboxes](https://docs.docker.com/ai/sandboxes/)
+CLI signed in, run the team's kit with both harnesses in a microVM over your
+repository, then `gang up -c claude` in the shell it opens.
+
+```sh
+sbx run --kit docker.io/adambiggs/gangline --kit docker.io/sbx/claude-mixin --kit docker.io/sbx/codex-mixin .
+```
+
 Then tell the lead what you want:
 
 > Ask a Codex worker to find how this repository runs its tests. Have it send
