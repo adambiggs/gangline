@@ -247,6 +247,7 @@ const description = 'Give a lead a task, let it recruit Claude Code and Codex te
         your terminal. You give the lead agent an outcome. It recruits other
         agents, assigns work, and brings back their results.</p>
         <pre><code>curl -fsSL https://raw.githubusercontent.com/adambiggs/gangline/main/install.sh | sh</code></pre>
+        <p class="soft"><a href="docs/operations.html#a-team-inside-docker-sandboxes">Or run the team in a Docker Sandboxes microVM</a>: <code>sbx run docker.io/adambiggs/gangline:latest --name team -p 127.0.0.1:2722:22 --skills readonly --kit docker.io/sbx/claude-mixin:latest --kit docker.io/sbx/codex-mixin:latest WORKSPACE</code></p>
       </section>
 
       <section id="demo" class="sec">
