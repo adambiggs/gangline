@@ -14,7 +14,10 @@ COPY sshd.conf /etc/ssh/sshd_config.d/00-gangline.conf
 # The Claude mixin writes a permission mode into ~/.claude/settings.json on
 # every create; a mode in managed settings outranks it.
 COPY managed-settings.json /etc/claude-code/managed-settings.json
-COPY --chmod=0755 gang /usr/local/bin/gang
+# The build context holds a static gang per target architecture; the release
+# stages them from its assets and a kit developer from a local build.
+ARG TARGETARCH
+COPY --chmod=0755 gang-${TARGETARCH} /usr/local/bin/gang
 # A credential failure fails git instead of opening a prompt that hangs an
 # agent's pane.
 ENV GIT_TERMINAL_PROMPT=0

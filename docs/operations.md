@@ -144,11 +144,12 @@ operation refused by the effective policy remain operator responsibilities.
 
 A [Docker Sandboxes](https://docs.docker.com/ai/sandboxes/) microVM can hold a
 whole team, with the VM as the boundary: agents run there without their own
-sandboxes, and the network reaches only the hosts the kit allows. The
-`packaging/sbx` directory holds the `gangline-team` workload kit and a user
-unit. The workload carries tmux, `gang` and an sshd; Docker's Claude and Codex
-mixins layer the agents onto it, and each mixin's credential stays on the
-host, where the sandbox proxy adds it to requests.
+sandboxes, and the network reaches only the hosts the kit allows. Each
+release publishes the `gangline-team` workload kit as the image
+`docker.io/adambiggs/gangline`, carrying that release's `gang` with tmux and
+an sshd; Docker's Claude and Codex mixins layer the agents onto it, and each
+mixin's credential stays on the host, where the sandbox proxy adds it to
+requests. The kit's source is `packaging/sbx`.
 
 The kit's allows are the only egress when the global policy denies the rest,
 and `sbx` forwards the host's ssh agent into sandboxes by default. Before
@@ -160,17 +161,29 @@ sbx settings set ssh.agentForwardingEnabled false
 sbx daemon stop
 ```
 
-Stage the kit with a static `gang` for the VM's architecture, then create the
-sandbox once from an interactive terminal, so `sbx` can ask you to approve the
-kit's GitHub credential binding. `SBX_KIT_BUILDER=sandbox` builds the kit in
-`sbx`'s own builder sandbox; the host's build needs an OCI-capable buildx
-driver.
+Create the sandbox once from an interactive terminal, so `sbx` can ask you to
+approve the kit's GitHub credential binding, then start the team inside it:
+
+```sh
+sbx run --name team -p 127.0.0.1:2722:22 \
+  --kit docker.io/adambiggs/gangline:latest \
+  --kit docker.io/sbx/claude-mixin:latest \
+  --kit docker.io/sbx/codex-mixin:latest \
+  WORKSPACE
+gang up
+```
+
+To run the kit from its source, for a change to the kit itself, stage it with
+a static `gang` for the VM's architecture and pass the staged directory in
+place of the image. `SBX_KIT_BUILDER=sandbox` builds it in `sbx`'s own
+builder sandbox; a host build needs an OCI-capable buildx driver, which the
+release uses to publish both Linux architectures.
 
 ```sh
 CGO_ENABLED=0 go build -trimpath -o /tmp/gang \
   -ldflags "-X main.version=$(git describe --tags --match 'gangline-v*' | sed 's/^gangline-v//')" \
   ./cmd/gang
-packaging/sbx/stage.sh /tmp/gang /tmp/gangline-team
+packaging/sbx/stage.sh /tmp/gangline-team "$(go env GOARCH)=/tmp/gang"
 SBX_KIT_BUILDER=sandbox sbx run --name team -p 127.0.0.1:2722:22 \
   --kit docker.io/sbx/claude-mixin:latest \
   --kit docker.io/sbx/codex-mixin:latest \

@@ -44,6 +44,43 @@ jobs:
           TAG: ${{ needs.release-please.outputs.tag_name }}
         run: gh release upload "$TAG" dist/* --clobber
 
+  # The team kit for Docker Sandboxes, as a multi-platform image on Docker Hub
+  # carrying this release's gang: `sbx run --kit docker.io/adambiggs/gangline`.
+  release-kit:
+    if: needs.release-please.outputs.release_created == 'true'
+    needs: [release-please, release-binaries]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    env:
+      TAG: ${{ needs.release-please.outputs.tag_name }}
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          ref: ${{ env.TAG }}
+      - name: Stage the kit with the release's gang binaries
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release download "$TAG" --dir assets --pattern "$TAG-linux-*" --pattern SHA256SUMS
+          (cd assets && sha256sum -c --ignore-missing SHA256SUMS)
+          packaging/sbx/stage.sh kit "amd64=assets/$TAG-linux-amd64" "arm64=assets/$TAG-linux-arm64"
+          echo "version=${TAG#gangline-v}" >> "$GITHUB_ENV"
+      - uses: docker/setup-buildx-action@v4
+      - uses: docker/login-action@v4
+        with:
+          username: adambiggs
+          password: ${{ secrets.DOCKERHUB_TOKEN }}
+      - uses: docker/build-push-action@v7
+        with:
+          context: kit
+          file: kit/gangline-team.yaml
+          platforms: linux/amd64,linux/arm64
+          push: true
+          tags: |
+            docker.io/adambiggs/gangline:${{ env.version }}
+            docker.io/adambiggs/gangline:latest
+
   pages:
     if: needs.release-please.outputs.release_created == 'true'
     needs: [release-please]
