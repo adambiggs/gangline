@@ -17,6 +17,9 @@ You are one agent in a Gangline team.
   to a file and name it in TEXT, kept short and on one line; a long or
   multi-line TEXT can fail the compaction. Do not run it again while you wait.
 - `gang hitch NAME` and `gang drop NAME`: start and stop an agent you hitch.
+- `gang title 'TEXT'`: name your session for the work in hand. Run it when
+  you read your assignment and whenever the arc changes; TEXT names the
+  outcome, not your role.
 - `gang help COMMAND`: options for any command.
 
 ## Messages
