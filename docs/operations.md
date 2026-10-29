@@ -220,3 +220,13 @@ Enable lingering for the account so the unit starts at boot. The unit brings
 back the VM, its sshd and its ports, not the team: start the team inside with
 `gang up`, as on a host after a reboot, and resume an agent's conversation with
 `--resume SESSION`.
+
+`sbx exec` starts its command from the image environment, so a host terminal
+joins a pane with its own terminal type passed along:
+
+```sh
+sbx exec -it -e "TERM=$TERM" team -- gang attach
+```
+
+`gang down` removes the team directory with its registered senders, so a
+service that sends with `--as NAME` registers NAME again after each `gang up`.
