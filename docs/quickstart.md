@@ -47,16 +47,18 @@ the binary directory and retained checkout path; see the
 
 To run this walkthrough with nothing installed on your host, let a
 [Docker Sandboxes](https://docs.docker.com/ai/sandboxes/) microVM hold the
-team instead. With the `sbx` CLI signed in, run Gangline's kit with both
-harness mixins over your repository; the sandbox carries `gang`, tmux, and
-both harnesses, and `sbx` keeps each harness's login on the host:
+team instead. With the `sbx` CLI signed in, store the Codex login on the
+host, then run Gangline's kit with both harness mixins over your repository;
+the sandbox carries `gang`, tmux, and both harnesses, and `sbx` keeps each
+harness's login on the host, where its proxy adds it to requests:
 
 ```sh
+sbx secret set openai --oauth
 sbx run --kit docker.io/adambiggs/gangline --kit docker.io/sbx/claude-mixin --kit docker.io/sbx/codex-mixin .
 ```
 
-Sign Claude in once with `/login` inside the shell it opens, then continue
-below from that shell. [Operations](operations.md#a-team-inside-docker-sandboxes)
+In the shell it opens, run `claude` and sign in once with `/login`, then
+continue below from that shell. [Operations](operations.md#a-team-inside-docker-sandboxes)
 covers naming the sandbox, bringing it back at login, and peers.
 
 ## Give the lead a task

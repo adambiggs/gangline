@@ -12,10 +12,12 @@ gang up -c claude
 ```
 
 Or keep the team off your host: with the [Docker Sandboxes](https://docs.docker.com/ai/sandboxes/)
-CLI signed in, run the team's kit with both harnesses in a microVM over your
-repository, then `gang up -c claude` in the shell it opens.
+CLI signed in, store the Codex login, then run the team's kit with both
+harnesses in a microVM over your repository. In the shell it opens, sign
+Claude in once with `claude` and `/login`, then `gang up -c claude`.
 
 ```sh
+sbx secret set openai --oauth
 sbx run --kit docker.io/adambiggs/gangline --kit docker.io/sbx/claude-mixin --kit docker.io/sbx/codex-mixin .
 ```
 
