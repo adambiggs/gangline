@@ -1,5 +1,12 @@
 # Changelog
 
+## [2.4.1](https://github.com/adambiggs/gangline/compare/gangline-v2.4.0...gangline-v2.4.1) (2026-10-29)
+
+
+### Bug Fixes
+
+* **sbx:** stage gang binaries that carry no execute bit ([b0f311d](https://github.com/adambiggs/gangline/commit/b0f311d08f1167ed9c1d389627f5558054e29cd8))
+
 ## [2.4.0](https://github.com/adambiggs/gangline/compare/gangline-v2.3.0...gangline-v2.4.0) (2026-10-29)
 
 
