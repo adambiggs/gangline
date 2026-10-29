@@ -46,6 +46,13 @@ func TestUpStartupTaskForResumedLead(t *testing.T) {
 			if err != nil || len(envelopes) != 1 {
 				t.Fatalf("startup envelopes = %+v, %v", envelopes, err)
 			}
+			titleTask := test.want
+			if titleTask == "No assignment was supplied." {
+				titleTask = ""
+			}
+			if a.NativeTitle == nil || a.NativeTitle.Attempted || a.NativeTitle.Text != nativeSessionTitle(a.Name, "unit", titleTask) {
+				t.Fatalf("hitch title = %+v", a.NativeTitle)
+			}
 			e := envelopes[0]
 			want := test.want
 			purpose := "startup"

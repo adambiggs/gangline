@@ -224,6 +224,7 @@ func (run *runtime) prepareRehitch(previous core.Agent, next *core.Agent) (*stor
 		return fail(err)
 	}
 	next.Native = a.Native
+	next.NativeTitle = a.NativeTitle
 	next.Native.HookAt, next.Native.HookKind = run.cmd.now(), ""
 	// Preserve telemetry's cursor and acknowledged hook sequence across the
 	// same native conversation, while requiring a new startup submit witness.

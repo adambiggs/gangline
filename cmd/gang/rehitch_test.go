@@ -2,6 +2,7 @@ package main
 
 import (
 	"errors"
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
@@ -219,5 +220,34 @@ func TestRehitchStartupPrecedesRetainedDueMail(t *testing.T) {
 	}
 	if len(submitted) != 2 || !strings.Contains(submitted[0], startup.Message.Text) || !strings.Contains(submitted[1], pending.Message.Text) {
 		t.Fatalf("startup ordering = %q", submitted)
+	}
+}
+
+func TestRehitchRetainsNativeTitleFromLockedState(t *testing.T) {
+	for _, attempted := range []bool{false, true} {
+		t.Run(fmt.Sprint(attempted), func(t *testing.T) {
+			f, previous, p := rehitchFixture(t)
+			a := previous
+			a.NativeTitle = &core.NativeTitle{Text: "Operator title", Attempted: attempted}
+			l, err := p.TryLock()
+			if err != nil {
+				t.Fatal(err)
+			}
+			if err := l.Save(a); err != nil {
+				t.Fatal(err)
+			}
+			l.Close()
+			next := core.Agent{ID: a.ID, Name: a.Name, Collar: a.Collar, Directory: a.Directory, Status: core.Starting,
+				NativeTitle: &core.NativeTitle{Text: "Continuation note"}}
+			l, err = f.run.prepareRehitch(previous, &next)
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer l.Close()
+			got, err := p.Read()
+			if err != nil || got.NativeTitle == nil || *got.NativeTitle != *a.NativeTitle {
+				t.Fatalf("rehitch title=%+v want %+v: %v", got.NativeTitle, a.NativeTitle, err)
+			}
+		})
 	}
 }

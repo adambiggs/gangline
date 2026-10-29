@@ -274,6 +274,9 @@ func (run *runtime) tickAgent(id core.HitchID, notice hookNotice, wait bool) (re
 	if rehitchReady(a) {
 		return nil
 	}
+	if err := run.autoTitle(l, &a, c); err != nil {
+		return err
+	}
 	_, err = run.drainFrom(l, a, "")
 	return err
 }

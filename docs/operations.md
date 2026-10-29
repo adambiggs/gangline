@@ -3,6 +3,18 @@
 Start with [your first team](quickstart.md). Use the [guides](guides.md) for
 daily tasks and [troubleshooting](troubleshooting.md) for observable failures.
 
+## Native session titles
+
+Gangline titles Claude Code and Codex sessions at the first idle tick with a
+free composer after startup. Titles identify the agent, team and the task's
+first line so native session lists distinguish them. Drafts, native prompts,
+open turns and compaction defer the attempt.
+
+Automatic title outcomes appear in `gang log` with an `automatic title:`
+reason. A failed or unconfirmed attempt leaves the agent running and is not
+retried automatically. Check the native session list for persistence; use
+`gang title NAME 'TEXT'` at idle to retry or choose another title.
+
 ## Continue through a provider cap
 
 Gangline reads the collar's native five-hour and weekly usage windows. When one of

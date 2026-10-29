@@ -117,6 +117,16 @@ the parent's command line where `/proc` shows it, the working directory, and
 | `gang tick [--agent NAME\|HITCH_ID]` | Check deadlines, recover native failures, and drain due messages, for every agent or the one `--agent` names. |
 | `gang wait NAME [--timeout DURATION]` | Wait up to DURATION (default 30s) for a recorded idle boundary; a zero timeout checks once. |
 
+After startup, an idle tick submits the collar's native title action with
+`NAME@TEAM: TASK`, using a shortened first line of the task. Without a task,
+the title is `NAME@TEAM`. Submission waits for a free composer and a finished
+native turn. Gangline records the attempt before typing and does not repeat
+it automatically; internal rehitch preserves the record for the resumed
+session. `gang title` uses the same guarded submission path.
+An unconfirmed or failed automatic title is logged as an `observation` with
+an `automatic title:` reason and does not fail the hitch. Submission does not
+prove that the native session list persisted the title.
+
 At or after a curfew deadline, a tick notifies each active agent once for
 that deadline, including agents started later. The notice names the team,
 deadline and observation time. The deadline remains set until changed or

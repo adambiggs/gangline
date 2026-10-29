@@ -58,6 +58,7 @@ type Agent struct {
 	Compaction            *Compaction            `json:"compaction,omitempty"`
 	Capacity              Capacity               `json:"capacity,omitzero"`
 	Native                NativeState            `json:"native,omitzero"`
+	NativeTitle           *NativeTitle           `json:"native_title,omitempty"`
 	ContextBandThresholds *ContextBandThresholds `json:"context_band_thresholds,omitempty"`
 	ContextBands          ContextBandState       `json:"context_bands,omitzero"`
 	Registration          PaneRegistration       `json:"registration,omitzero"`
@@ -79,6 +80,13 @@ type Agent struct {
 type ContextBandThresholds struct {
 	Early float64 `json:"early"`
 	Late  float64 `json:"late"`
+}
+
+// NativeTitle records the intended session title and whether native input was
+// attempted. An ambiguous attempt must not be replayed automatically.
+type NativeTitle struct {
+	Text      string `json:"text"`
+	Attempted bool   `json:"attempted,omitempty"`
 }
 
 // InputOutage retains an observation warning across ticks until the registered

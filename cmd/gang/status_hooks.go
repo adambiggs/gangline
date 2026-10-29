@@ -205,6 +205,9 @@ func (run *runtime) tickHookStatus(l *store.LockedAgent, a *core.Agent, c harnes
 	if rehitchReady(*a) {
 		return nil
 	}
+	if err := run.autoTitle(l, a, c); err != nil {
+		return err
+	}
 	// Delivery performs its own composer, foreground and receipt validation.
 	_, err := run.drainFrom(l, *a, "")
 	return err

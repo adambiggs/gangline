@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"errors"
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
@@ -247,5 +248,158 @@ func TestTitleCommandPreservesOptionTerminator(t *testing.T) {
 	err := f.cmd.execute([]string{"title", "worker", "--", "--dash-title"})
 	if err == nil || err.Error() != "title command submitted; native title persistence unconfirmed" || f.input.submits != 1 || f.input.pasted != "/rename --dash-title" {
 		t.Fatalf("result=%v submits=%d text=%q", err, f.input.submits, f.input.pasted)
+	}
+}
+
+func TestNativeSessionTitle(t *testing.T) {
+	for _, tc := range []struct{ task, want string }{
+		{"", "worker@unit"},
+		{"Fix the parser\nDetails to omit", "worker@unit: Fix the parser"},
+		{"  Résumé\t{{literal}}  \nDetails", "worker@unit: Résumé {{literal}}"},
+		{strings.Repeat("界", 61), "worker@unit: " + strings.Repeat("界", 59) + "…"},
+	} {
+		if got := nativeSessionTitle("worker", "unit", tc.task); got != tc.want {
+			t.Errorf("title(%q)=%q want %q", tc.task, got, tc.want)
+		}
+	}
+}
+
+func autoTitleFixture(t *testing.T, collar string, freshHook bool) *stateFixture {
+	t.Helper()
+	f := titleFixture(t, collar)
+	p, _ := f.run.team.Agent("a")
+	l, err := p.TryLock()
+	if err != nil {
+		t.Fatal(err)
+	}
+	a, _ := p.Read()
+	a.NativeTitle = &core.NativeTitle{Text: nativeSessionTitle(a.Name, "unit", "Fix the parser\nDetails")}
+	a.Native.SubmittedAt = f.cmd.now().Add(-time.Second)
+	a.Native.FinishedAt = f.cmd.now()
+	if freshHook {
+		a.Native.HookAt, a.Native.HookKind = f.cmd.now(), "turn-finished"
+	}
+	if err := l.Save(a); err != nil {
+		t.Fatal(err)
+	}
+	l.Close()
+	return f
+}
+
+func TestAutoTitleAtFirstIdleTick(t *testing.T) {
+	for _, collar := range []string{"claude", "codex"} {
+		for _, freshHook := range []bool{false, true} {
+			t.Run(fmt.Sprintf("%s/hooks=%t", collar, freshHook), func(t *testing.T) {
+				f := autoTitleFixture(t, collar, freshHook)
+				for range 2 {
+					// A second runtime reads the saved marker, as a later tick does.
+					run, err := f.cmd.runtime()
+					if err != nil {
+						t.Fatal(err)
+					}
+					if err := run.tickAgent("a", hookNotice{}, false); err != nil {
+						t.Fatal(err)
+					}
+				}
+				if got := f.agent(t, "a"); f.input.submits != 1 || f.input.pasted != "/rename worker@unit: Fix the parser" || !got.NativeTitle.Attempted {
+					t.Fatalf("submits=%d pasted=%q title=%+v", f.input.submits, f.input.pasted, got.NativeTitle)
+				}
+				log, err := os.ReadFile(f.run.team.Log)
+				if err != nil || !strings.Contains(string(log), "automatic title: title command submitted; native title persistence unconfirmed") {
+					t.Fatalf("unconfirmed title not logged: %s, %v", log, err)
+				}
+			})
+		}
+	}
+}
+
+func TestAutoTitleDefersUntilInputIsFree(t *testing.T) {
+	for _, kind := range []string{"startup", "open turn", "busy", "draft", "tail", "permission", "compaction", "input"} {
+		t.Run(kind, func(t *testing.T) {
+			f := autoTitleFixture(t, "codex", true)
+			ready := f.input.screen
+			p, _ := f.run.team.Agent("a")
+			l, _ := p.TryLock()
+			a, _ := p.Read()
+			switch kind {
+			case "startup":
+				a.Native.SubmittedAt, a.Native.FinishedAt = time.Time{}, time.Time{}
+			case "open turn":
+				a.Native.SubmittedAt = a.Native.FinishedAt.Add(time.Second)
+			case "busy":
+				f.input.screen = screenWithText("Working (esc to interrupt)", "› ")
+			case "draft":
+				f.input.screen = screenWithText("READY", "› operator input")
+			case "tail":
+				f.input.screen = screenWithText("READY", "› ", "  operator input")
+			case "permission":
+				f.input.screen = screenWithText("Would you like to run this command?", "› 1. Yes, proceed")
+			case "compaction":
+				a.Compaction = &core.Compaction{Status: "queued"}
+			case "input":
+				a.Input = &core.InputIntent{ID: "other", Kind: "envelope", At: f.cmd.now()}
+			}
+			if err := l.Save(a); err != nil {
+				t.Fatal(err)
+			}
+			c, err := loadCollar(a.Collar, f.run.settings)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if err := f.run.autoTitle(l, &a, c); err != nil || f.input.pasted != "" || a.NativeTitle.Attempted {
+				t.Fatalf("deferred title: %v, pasted=%q title=%+v", err, f.input.pasted, a.NativeTitle)
+			}
+			f.input.screen = ready
+			a.Activity, a.Input, a.Compaction = core.Idle, nil, nil
+			a.Native.SubmittedAt, a.Native.FinishedAt = f.cmd.now().Add(-time.Second), f.cmd.now()
+			if err := f.run.autoTitle(l, &a, c); err != nil || f.input.submits != 1 || !a.NativeTitle.Attempted {
+				t.Fatalf("ready title: %v, submits=%d title=%+v", err, f.input.submits, a.NativeTitle)
+			}
+			l.Close()
+		})
+	}
+}
+
+func TestAutoTitleFailureIsLoggedWithoutReplay(t *testing.T) {
+	for _, kind := range []string{"paste", "submit", "refusal"} {
+		t.Run(kind, func(t *testing.T) {
+			f := autoTitleFixture(t, "codex", true)
+			switch kind {
+			case "paste":
+				f.input.onKeys = func(substrate.Keys) error { return errors.New("paste failed") }
+			case "submit":
+				f.input.submit = func(string) error { return errors.New("submit failed") }
+			case "refusal":
+				if err := os.WriteFile(filepath.Join(f.env["GANG_COLLARS"], "codex.cue"), []byte(`collar: {actions: title: refusal: "(?m)^failed to set thread name:.*$", primitives: submit: params: settle: "0s"}`), 0600); err != nil {
+					t.Fatal(err)
+				}
+				f.input.submit = func(string) error {
+					f.input.screen = screenWithText("failed to set thread name: native refusal", "› ")
+					return nil
+				}
+			}
+			for range 2 {
+				if err := f.run.tickAgent("a", hookNotice{}, false); err != nil {
+					t.Fatalf("title failure escaped tick: %v", err)
+				}
+			}
+			log, err := os.ReadFile(f.run.team.Log)
+			if err != nil || strings.Count(string(log), "automatic title:") != 1 || !f.agent(t, "a").NativeTitle.Attempted {
+				t.Fatalf("failure not retained once: %s, %v", log, err)
+			}
+		})
+	}
+}
+
+func TestManualTitleSupersedesAutomaticTitle(t *testing.T) {
+	f := autoTitleFixture(t, "codex", true)
+	if err := f.cmd.title([]string{"worker", "Operator title"}); err == nil || !strings.Contains(err.Error(), "persistence unconfirmed") {
+		t.Fatal(err)
+	}
+	if err := f.run.tickAgent("a", hookNotice{}, false); err != nil {
+		t.Fatal(err)
+	}
+	if got := f.agent(t, "a"); f.input.submits != 1 || got.NativeTitle.Text != "Operator title" || !got.NativeTitle.Attempted {
+		t.Fatalf("manual title overwritten: submits=%d title=%+v", f.input.submits, got.NativeTitle)
 	}
 }

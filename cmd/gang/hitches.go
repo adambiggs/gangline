@@ -155,6 +155,7 @@ func (cmd command) hitchReplacing(args []string, supersede bool, previous *core.
 	}
 	run.hitching = a.ID
 	a.Native.SessionID = o.Resume
+	a.NativeTitle = &core.NativeTitle{Text: nativeSessionTitle(a.Name, run.settings.Session, assignment)}
 	e := core.Envelope{ID: core.EnvelopeID(eid), Token: token, Recipient: a.ID, To: a.Name, From: sender, Purpose: purpose, Message: core.Message{Text: message}, CreatedAt: now}
 	if c.Options.RolePromptFile == nil {
 		e.Startup = startupSections(o.Name, brief)
