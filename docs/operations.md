@@ -166,6 +166,7 @@ approve the kit's GitHub credential binding, then start the team inside it:
 
 ```sh
 sbx run docker.io/adambiggs/gangline:latest --name team -p 127.0.0.1:2722:22 \
+  --skills readonly \
   --kit docker.io/sbx/claude-mixin:latest \
   --kit docker.io/sbx/codex-mixin:latest \
   WORKSPACE
@@ -173,6 +174,27 @@ gang up
 ```
 
 The workload kit is the agent argument, and the mixins come as `--kit`.
+
+The Claude and Codex mixins read Docker Sandboxes' shared host skills store.
+On the host, install your library for both agents and import it into that
+store, with `SKILLS_CHECKOUT` set to your library checkout:
+
+```sh
+npx --yes skills add "$SKILLS_CHECKOUT" -g -a claude-code codex --skill '*' -y
+sbx skills import
+sbx skills ls
+```
+
+The import copies the host's installed skills; repeat it after updating the
+library. Docker links the store into each mixin's skills directory at sandbox
+start, so it survives sandbox rebuilds without an install inside each VM.
+Keep skills sharing enabled (`--skills readonly` at creation). To expose newly
+imported skills to an existing team, save its conversations, then restart the
+sandbox from the host and start the team inside again with `gang up`:
+
+```sh
+sbx stop team && sbx run --detach --name team
+```
 
 To run the kit from its source, for a change to the kit itself, stage it with
 a static `gang` for the VM's architecture and pass the staged directory as the
@@ -186,6 +208,7 @@ CGO_ENABLED=0 go build -trimpath -o /tmp/gang \
   ./cmd/gang
 packaging/sbx/stage.sh /tmp/gangline-team "$(go env GOARCH)=/tmp/gang"
 SBX_KIT_BUILDER=sandbox sbx run --name team -p 127.0.0.1:2722:22 \
+  --skills readonly \
   --kit docker.io/sbx/claude-mixin:latest \
   --kit docker.io/sbx/codex-mixin:latest \
   /tmp/gangline-team WORKSPACE
