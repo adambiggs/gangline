@@ -144,22 +144,13 @@ operation refused by the effective policy remain operator responsibilities.
 
 A [Docker Sandboxes](https://docs.docker.com/ai/sandboxes/) microVM can hold a
 whole team, with the VM as the boundary: agents run there without their own
-sandboxes, and the network reaches only the hosts the kit allows. Each
+sandboxes. The team has regular internet access unless you choose a restrictive
+`sbx` network policy. Each
 release publishes the `gangline-team` workload kit as the image
 `docker.io/adambiggs/gangline`, carrying that release's `gang` with tmux and
 an sshd; Docker's Claude and Codex mixins layer the agents onto it, and each
 mixin's credential stays on the host, where the sandbox proxy adds it to
 requests. The kit's source is `packaging/sbx`.
-
-The kit's allows are the only egress when the global policy denies the rest,
-and `sbx` forwards the host's ssh agent into sandboxes by default. Before
-the first sandbox, set both; the daemon reads the setting when it starts:
-
-```sh
-sbx policy init deny-all
-sbx settings set ssh.agentForwardingEnabled false
-sbx daemon stop
-```
 
 Create the sandbox once from an interactive terminal, so `sbx` can ask you to
 approve the kit's GitHub credential binding, then start the team inside it:
@@ -174,6 +165,18 @@ gang up
 ```
 
 The workload kit is the agent argument, and the mixins come as `--kit`.
+
+Network policy and SSH-agent forwarding are optional host settings. Choose a
+global network policy with `sbx policy init allow-all` or
+`sbx policy init balanced` or `sbx policy init deny-all`; with deny-all,
+the kits' allowed hosts define
+outbound access. Choose whether to forward your host's SSH agent with
+`sbx settings set ssh.agentForwardingEnabled true` or
+`sbx settings set ssh.agentForwardingEnabled false`. The daemon reads the
+SSH-agent setting when it starts.
+To apply a changed setting to a running daemon, use `sbx daemon stop`, then
+`sbx run --name team` to restart the sandbox. Stopping the daemon stops all
+its sandboxes.
 
 The Claude and Codex mixins read Docker Sandboxes' shared host skills store.
 On the host, install your library for both agents and import it into that

@@ -7,6 +7,11 @@ Each release publishes it as `docker.io/adambiggs/gangline:<version>` with
 that release's `gang`; running it is described in
 [docs/operations.md](../../docs/operations.md#a-team-inside-docker-sandboxes).
 
+The team uses regular internet access unless you choose a restrictive `sbx`
+network policy. Network policy and SSH-agent forwarding are user choices;
+the [operations guide](../../docs/operations.md#a-team-inside-docker-sandboxes)
+describes these optional host settings.
+
 - `gangline-team/gangline-team.yaml`: the kit manifest (Docker's kit schema
   3): network allows, the proxy-managed GitHub token, install and startup
   commands.
