@@ -1,5 +1,17 @@
 # Changelog
 
+## [2.4.0](https://github.com/adambiggs/gangline/compare/gangline-v2.3.0...gangline-v2.4.0) (2026-10-29)
+
+
+### Features
+
+* **sbx:** publish the team kit as an image on Docker Hub ([75a9c03](https://github.com/adambiggs/gangline/commit/75a9c03ec5ed98d1cd1cc81fd0d7dea6bdec37ff))
+
+
+### Bug Fixes
+
+* **sbx:** set a UTF-8 locale in the team image ([80af721](https://github.com/adambiggs/gangline/commit/80af721e14b1cd77a2f732bd83bd4ac03003be36))
+
 ## [2.3.0](https://github.com/adambiggs/gangline/compare/gangline-v2.2.1...gangline-v2.3.0) (2026-10-29)
 
 
