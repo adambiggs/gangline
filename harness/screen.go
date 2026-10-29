@@ -8,6 +8,7 @@ import (
 	"strings"
 
 	"github.com/adambiggs/gangline/substrate"
+	"github.com/mattn/go-runewidth"
 )
 
 var (
@@ -317,6 +318,10 @@ func previousRule(lines []string, before int) (int, bool) {
 			return index, false
 		}
 		if strings.Count(line, "─") > 10 && strings.HasPrefix(line, "─") && strings.HasSuffix(line, "─") {
+			return index, true
+		}
+		namedEdge := strings.HasPrefix(lines[index], "─") || (strings.HasPrefix(lines[index], " ") && !strings.HasPrefix(lines[index], "  "))
+		if namedEdge && runewidth.StringWidth(lines[index]) == closingWidth && strings.HasSuffix(line, "─") && strings.Contains(line, " ─") && strings.Trim(line, "─ ") != "" {
 			return index, true
 		}
 	}

@@ -396,6 +396,47 @@ func testCells(text string, dim bool) []substrate.Cell {
 	return cells
 }
 
+func TestClaudeComposerLongSessionTitle(t *testing.T) {
+	for _, tc := range []struct{ title, opening string }{
+		{"worker@gangline-title-probe: Reply TITLE-OK and wait. Do not run tools.", "────── "},
+		{"worker@gangline-title-probe: Reply TITLE-OK and wait. Do not run tools. Pres…", " "},
+		{"worker@unit: " + strings.Repeat("界", 30), "──── "},
+		{"worker@unit: 👨‍👩‍👧‍👦", strings.Repeat("─", 62) + " "},
+	} {
+		t.Run(tc.title, func(t *testing.T) {
+			screen := testScreen(
+				testCells(tc.opening+tc.title+" ─", false),
+				testCells("❯ ", false),
+				testCells(strings.Repeat("─", 80), false),
+				testCells("  ⏵⏵ auto mode on (shift+tab to cycle) · ← 1 agent", false),
+			)
+			composer, err := ReadComposer(Invocation{Name: "claude-composer"}, screen)
+			if err != nil || composer.Text != "" || composer.Owner != tc.title {
+				t.Fatalf("composer=%+v error=%v", composer, err)
+			}
+		})
+	}
+}
+
+func TestClaudeComposerBorderInsideDraft(t *testing.T) {
+	for _, interior := range []string{"─ label ─", "draft continuation " + strings.Repeat("x", 59) + " ─"} {
+		t.Run(interior, func(t *testing.T) {
+			screen := testScreen(
+				testCells(strings.Repeat("─", 80), false),
+				testCells("❯ operator draft", false),
+				testCells(interior, false),
+				testCells("❯ ", false),
+				testCells(strings.Repeat("─", 80), false),
+				testCells("  ⏵⏵ auto mode on (shift+tab to cycle) · ← 1 agent", false),
+			)
+			composer, err := ReadComposer(Invocation{Name: "claude-composer"}, screen)
+			if err != nil || composer.Text != "operator draft\n"+interior+"\n❯" || composer.Owner != "" {
+				t.Fatalf("composer=%+v error=%v", composer, err)
+			}
+		})
+	}
+}
+
 // A short pane clips the session list and leaves a child session's footer
 // showing a mode line, so only the dim placeholder in the empty prompt row
 // tells a child's composer from the main one.
