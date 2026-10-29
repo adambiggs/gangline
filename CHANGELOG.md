@@ -1,5 +1,22 @@
 # Changelog
 
+## [2.3.0](https://github.com/adambiggs/gangline/compare/gangline-v2.2.1...gangline-v2.3.0) (2026-10-29)
+
+
+### Features
+
+* **packaging:** run a team in a Docker Sandboxes microVM ([1cb35ee](https://github.com/adambiggs/gangline/commit/1cb35ee18826b6d211b49f5a403fbbdf0acf8e35))
+* **watchdog:** arm a detached sleeper where no systemd user manager runs ([29bc1a2](https://github.com/adambiggs/gangline/commit/29bc1a2b4df73cbe3aeb3d06ba8a14ce47a1eb17))
+
+
+### Bug Fixes
+
+* **hitch:** title native sessions at first idle ([2ce6030](https://github.com/adambiggs/gangline/commit/2ce603062c793b14fe708ee811ecced0cc372bf8))
+* **input:** recognize long titled composer borders ([a505bac](https://github.com/adambiggs/gangline/commit/a505bac03e3a543e197b910254e4b6a4e7c8a18c))
+* **packaging:** keep the GitHub token in the sbx proxy and close GitHub ssh ([7dd471b](https://github.com/adambiggs/gangline/commit/7dd471b15e3c2936a43b4e40a1a5c72aa6f24c1b))
+* **peer:** tell a peer sender its receipt is final ([25e750c](https://github.com/adambiggs/gangline/commit/25e750c336d4100d9469f71e3d699453f33578af)), closes [#213](https://github.com/adambiggs/gangline/issues/213)
+* **watchdog:** leave the scheduler lock to the current timer's tick ([e49ba7f](https://github.com/adambiggs/gangline/commit/e49ba7fa55f09af1ebb52a1b201ff7dd0f9ed04b))
+
 ## [2.2.1](https://github.com/adambiggs/gangline/compare/gangline-v2.2.0...gangline-v2.2.1) (2026-10-25)
 
 
