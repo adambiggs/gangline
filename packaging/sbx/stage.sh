@@ -11,7 +11,7 @@ shift
 [ ! -e "$dir" ] || { echo "already exists: $dir" >&2; exit 2; }
 for pair in "$@"; do
   case "$pair" in
-    amd64=*|arm64=*) [ -x "${pair#*=}" ] || { echo "not an executable gang binary: ${pair#*=}" >&2; exit 2; } ;;
+    amd64=*|arm64=*) [ -f "${pair#*=}" ] || { echo "no such gang binary: ${pair#*=}" >&2; exit 2; } ;;
     *) echo "expected amd64=PATH or arm64=PATH: $pair" >&2; exit 2 ;;
   esac
 done
