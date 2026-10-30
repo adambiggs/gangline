@@ -1,3 +1,5 @@
+//go:build acceptance
+
 package acceptance
 
 import (
@@ -27,7 +29,7 @@ func TestLiveCodex(t *testing.T)      { testLiveProvider(t, "codex", "codex", "g
 func testLiveProvider(t *testing.T, collar, cli, cheapest string) {
 	t.Helper()
 	if os.Getenv("GANGLINE_LIVE_PROVIDERS") != "1" {
-		t.Skip("live provider lane runs from test/go.sh with visible output")
+		t.Skip("live provider lane runs from test/acceptance.sh with visible output")
 	}
 	if _, err := exec.LookPath(cli); err != nil {
 		t.Skipf("%s is absent from PATH", cli)

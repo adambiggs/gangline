@@ -1,4 +1,4 @@
-//go:build darwin
+//go:build acceptance && darwin
 
 package tmux
 

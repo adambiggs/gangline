@@ -1,6 +1,9 @@
+//go:build acceptance
+
 package acceptance
 
 import (
+	"context"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -8,7 +11,24 @@ import (
 	"syscall"
 	"testing"
 	"time"
+
+	"github.com/adambiggs/gangline/substrate/tmux"
 )
+
+// The wrapper uses the production reap barrier after its native exit witness.
+func TestBootExitReaper(t *testing.T) {
+	if os.Getenv("GANGLINE_ACCEPTANCE_BOOT_REAPER") != "1" {
+		t.Skip("subprocess fixture")
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), time.Minute)
+	defer cancel()
+	if output, err := tmux.Reaped(ctx, func(ctx context.Context, args ...string) (string, error) {
+		out, err := exec.CommandContext(ctx, "tmux", append([]string{"-S", os.Getenv("GANG_TMUX_SOCKET")}, args...)...).CombinedOutput()
+		return string(out), err
+	}); err != nil {
+		t.Fatalf("reap native exit: %v\n%s", err, output)
+	}
+}
 
 // A native CLI that exits before its startup screen fails the hitch with its
 // own output, records that output as the failure reason, and leaves no pane.
@@ -53,16 +73,10 @@ if [ "$capture$color" = 11 ]; then
 	case "$GANGLINE_ACCEPTANCE_CAPTURE" in
 	fail) echo 'capture refused' >&2; exit 1;;
 	exit) tmux -S "$GANG_TMUX_SOCKET" wait-for -S boot-exit || exit 1;;
-	# The pipe reaches EOF when the native CLI exits, and run-shell makes tmux
-	# reap it, so only the release after the failed startup can see the exit.
-	# The background run-shell commands give a server that lost a SIGCHLD
-	# another child to exit, as tmux.Reaped does, until this script exits.
+	# EOF witnesses the native exit; the reap barrier makes it visible to tmux.
 	fail-exit) tmux -S "$GANG_TMUX_SOCKET" wait-for -S boot-exit || exit 1
 		cat "$GANGLINE_ACCEPTANCE_EXIT_PIPE" >/dev/null
-		( while sleep 0.1 && kill -0 $$ 2>/dev/null; do tmux -S "$GANG_TMUX_SOCKET" run-shell -b true || exit; done ) &
-		kick=$!
-		tmux -S "$GANG_TMUX_SOCKET" run-shell true
-		kill "$kick"
+		GANGLINE_ACCEPTANCE_CMD_HARNESS=0 GANGLINE_ACCEPTANCE_BOOT_REAPER=1 "$GANGLINE_ACCEPTANCE_EXE" -test.run '^TestBootExitReaper$' || exit 1
 		echo 'capture refused' >&2; exit 1;;
 	esac
 fi
@@ -99,7 +113,7 @@ exec tmux "$@"
 			}
 			environment := append(withoutEnvironment(os.Environ(), "TMUX", "TMUX_PANE", "GANG_CONFIG_DIR", "GANG_SESSION", "GANG_STATE_ROOT", "GANG_TMUX_SOCKET", "GANG_COLLARS", "GANG_COLLAR", "GANGLINE_HITCH_ID", "GANG_AGENT_ID", "GANG_AGENT_NONCE", "GANG_AGENT_TOKEN", "GANGLINE_ACCEPTANCE_EXIT_SOCKET", "GANGLINE_ACCEPTANCE_EXIT_PIPE"),
 				"GANG_SESSION="+session, "GANG_CONFIG_DIR="+filepath.Join(team, "config"), "GANG_STATE_ROOT="+filepath.Join(team, "state"), "GANG_TMUX_SOCKET="+socket, "GANG_COLLARS="+collars, "GANG_COLLAR=acceptance",
-				"GANGLINE_ACCEPTANCE_CMD_HARNESS=1", "GANG_TMUX="+wrapper, "GANGLINE_ACCEPTANCE_CAPTURE="+tc.capture)
+				"GANGLINE_ACCEPTANCE_CMD_HARNESS=1", "GANGLINE_ACCEPTANCE_EXE="+exe, "GANG_TMUX="+wrapper, "GANGLINE_ACCEPTANCE_CAPTURE="+tc.capture)
 			var exitWitness *nativeExitWitness
 			if tc.exits {
 				environment = append(environment, "GANGLINE_ACCEPTANCE_BOOT_EXIT="+failure)

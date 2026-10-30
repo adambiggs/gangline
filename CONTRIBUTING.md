@@ -6,12 +6,11 @@ page describes the packages and message path.
 
 ## Build and prepare the checkout
 
-Install the Go toolchain declared in [go.mod](go.mod). On macOS, install `tmux`,
-`flock`, `timeout`, and `python3` for the full gate. Check that the commands are
-available before building; each line prints an executable path:
+Install the Go toolchain declared in [go.mod](go.mod). Check the mandatory
+gate's tools before building; each line prints an executable path:
 
 ```sh
-for tool in go git tmux flock timeout python3; do command -v "$tool" || exit 1; done
+for tool in go git; do command -v "$tool" || exit 1; done
 ```
 
 Build a checkout-local binary and print its command help:
@@ -35,25 +34,40 @@ test/gate.sh
 ```
 
 The pre-push hook runs your global pre-push hook first, if you have one, then
-runs `test/gate.sh` on each pushed tree. The gate runs formatting, vet,
-sum-type, package-boundary, unit, distribution, and private tmux acceptance
-checks, and prints each part's wall time. On macOS, run the gate
-where it can inspect host processes and create private tmux sessions; a
-restricted sandbox can produce `operation not permitted` failures. The live
-provider checks launch Claude Code and Codex when their commands and
-authentication are available. A native trust or hook review prompt can refuse
-the gate and leave its private socket path in the output for review. On Linux,
-the gate reports a skip for bus-dependent acceptance if the systemd user bus
-is unreachable.
+runs `test/gate.sh` on each pushed tree. CI runs the same mandatory lane:
+formatting, vet, sum types, package boundaries, and deterministic tests.
+It prints each part's wall time and the total, without a killing deadline.
 
 A successful baseline ends with:
 
 ```text
-gate: VERDICT PASS (status 0); test/go.sh completed; see acceptance result above.
+gate: VERDICT PASS (status 0); deterministic checks completed.
 ```
 
-The gate checks the working tree and serializes runs on the host. It ends with
-`PASS`, `REFUSED`, or `UNKNOWN`; no verdict line means the result is unknown.
+The gate checks the working tree. It ends with `PASS`, `REFUSED`, or `UNKNOWN`;
+no verdict line means the result is unknown.
+
+Run the pre-release lane with its additional host tools:
+
+```sh
+for tool in tmux flock python3; do command -v "$tool" || exit 1; done
+test/acceptance.sh
+```
+
+The release workflow runs acceptance before building assets and stops on
+failure. This lane runs distribution HTTP fixtures, persistence, subprocess,
+private tmux, and live provider checks, with per-part and total wall times.
+Tests needing real services or writable filesystem fixtures use the
+`acceptance` build tag; `go test -tags=acceptance ./...` includes them alongside
+the deterministic tests. Fake-clock tests use `testing/synctest`.
+
+Acceptance serializes runs on the host. On macOS, run it where it can inspect
+host processes and create private tmux sessions. The provider checks launch
+Claude Code and Codex when their commands and authentication are available;
+skips print their reasons and leave those providers unverified. A native
+prompt can refuse acceptance and leave its private socket path for review.
+On Linux, an unreachable systemd user bus skips the bus-dependent lifecycle
+check with its reason.
 
 The site build needs the Node release pinned in [.nvmrc](.nvmrc) and npm.
 Select that release with your Node manager, then check the active version:

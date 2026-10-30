@@ -7,7 +7,21 @@ on:
 permissions: {}
 
 jobs:
+  check:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-go@v6
+        with:
+          go-version-file: go.mod
+          cache: true
+      - name: Mandatory gate
+        run: test/gate.sh
+
   release-please:
+    needs: [check]
     runs-on: ubuntu-latest
     permissions:
       contents: write
@@ -36,6 +50,10 @@ jobs:
         with:
           go-version-file: go.mod
           cache: true
+      - name: Install acceptance tools
+        run: sudo apt-get update && sudo apt-get install -y tmux python3
+      - name: Pre-release acceptance
+        run: test/acceptance.sh
       - name: Build release assets
         run: packaging/build-release.sh '${{ needs.release-please.outputs.tag_name }}' dist
       - name: Upload release assets

@@ -70,17 +70,19 @@ func TestComposerSettleStopsOnUnsafeSurfaceOrCaptureFailure(t *testing.T) {
 		{"capture", substrate.Screen{}, captureErr, captureErr},
 	} {
 		t.Run(test.name, func(t *testing.T) {
-			ctx, cancel := context.WithCancel(context.Background())
-			if test.capture == nil {
-				cancel()
-			}
-			defer cancel()
-			err := AwaitComposerSettle(ctx, func(context.Context, substrate.PaneID) (substrate.Screen, error) {
-				return test.screen, test.capture
-			}, "%1", collar, 400*time.Millisecond)
-			if !errors.Is(err, test.want) {
-				t.Fatalf("got %v, want %v", err, test.want)
-			}
+			synctest.Test(t, func(t *testing.T) {
+				ctx, cancel := context.WithCancel(context.Background())
+				if test.capture == nil {
+					cancel()
+				}
+				defer cancel()
+				err := AwaitComposerSettle(ctx, func(context.Context, substrate.PaneID) (substrate.Screen, error) {
+					return test.screen, test.capture
+				}, "%1", collar, 400*time.Millisecond)
+				if !errors.Is(err, test.want) {
+					t.Fatalf("got %v, want %v", err, test.want)
+				}
+			})
 		})
 	}
 }
