@@ -60,17 +60,30 @@ func (cmd command) context(args []string) error {
 	if err != nil {
 		return err
 	}
-	a, err = run.latest(a)
-	if err != nil {
-		return err
-	}
 	c, err := loadCollar(a.Collar, run.settings)
 	if err != nil {
 		return err
 	}
+	nativeReading := a.Native.Context
+	if c.Primitives.Telemetry != nil && harness.TelemetryUsesTranscript(*c.Primitives.Telemetry) && a.Native.SessionID != "" && a.Native.Transcript != "" {
+		nativeReading, err = readVerifiedNativeContext(a, *c.Primitives.Telemetry)
+		if err != nil {
+			return err
+		}
+	} else {
+		a, err = run.latest(a)
+		if err != nil {
+			return err
+		}
+		c, err = loadCollar(a.Collar, run.settings)
+		if err != nil {
+			return err
+		}
+		nativeReading = a.Native.Context
+	}
 	c = agentContextCollar(a, c)
 	if c.Primitives.Telemetry != nil {
-		r := a.Native.Context
+		r := nativeReading
 		if r.Status != "observed" || r.Used == nil || r.Limit == nil || r.Percent == nil {
 			return cmd.unknownContext(machine, contextJSON{Name: a.Name, Model: r.Model, Source: "telemetry", Reason: valueOr(r.Reason, "native context has not been observed")})
 		}
@@ -96,6 +109,30 @@ func (cmd command) context(args []string) error {
 	band := harness.ActiveContextBand(c, model, r)
 	percent := r.Percent * 100
 	return cmd.writeContext(machine, contextJSON{Name: a.Name, Model: model, Used: &r.Used, Limit: &r.Limit, Percent: &percent, Band: bandName(band), Source: "screen"})
+}
+
+func readVerifiedNativeContext(a core.Agent, invocation harness.Invocation) (core.Reading, error) {
+	path, err := harness.ResolveTranscript(invocation, a.Native.Transcript, a.Native.SessionID)
+	if err != nil {
+		return core.Reading{}, err
+	}
+	file, err := harness.OpenTranscript(path)
+	if err != nil {
+		return core.Reading{}, err
+	}
+	parsed, err := harness.ReadTranscript(invocation, file, a.Native.SessionID, 0, a.CreatedAt)
+	closeErr := file.Close()
+	if err != nil {
+		return core.Reading{}, err
+	}
+	if closeErr != nil {
+		return core.Reading{}, closeErr
+	}
+	native := core.NativeState{Model: a.Native.Model}
+	for _, reading := range parsed.Readings {
+		acceptReadings(&native, []core.Reading{coreReading(reading)})
+	}
+	return native.Context, nil
 }
 
 func bandName(band *harness.ContextBand) *string {
