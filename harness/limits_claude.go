@@ -48,12 +48,16 @@ func queryClaudeUsage(ctx context.Context, collar Collar) (measuredLimits, error
 	}
 	defer os.RemoveAll(dir)
 	child.Dir = dir
-	output, err := child.Output()
-	if ctx.Err() != nil {
-		return measuredLimits{}, fmt.Errorf("%s limits query: %w", collar.Name, ctx.Err())
-	}
+	stderr, err := newLimitsStderr()
 	if err != nil {
-		return measuredLimits{}, fmt.Errorf("%s limits query exited: %w", collar.Name, err)
+		return measuredLimits{}, fmt.Errorf("%s limits query stderr: %w", collar.Name, err)
+	}
+	defer stderr.Close()
+	child.Stderr = stderr
+	output, err := child.Output()
+	diagnostic, stderrErr := readLimitsStderr(stderr)
+	if err := limitsQueryError(collar.Name, ctx.Err(), stderrErr, err, diagnostic); err != nil {
+		return measuredLimits{}, err
 	}
 	var result struct {
 		IsError *bool  `json:"is_error"`

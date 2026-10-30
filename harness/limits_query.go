@@ -3,11 +3,13 @@ package harness
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"os"
 	"os/exec"
 	"sort"
+	"strings"
 	"time"
 )
 
@@ -38,6 +40,12 @@ func queryProviderLimits(ctx context.Context, collar Collar) (measuredLimits, er
 		return measuredLimits{}, fmt.Errorf("unknown limits-query primitive %q", inv.Name)
 	}
 	child := exec.CommandContext(ctx, collar.Launch.Command, "app-server", "--listen", "stdio://")
+	stderr, err := newLimitsStderr()
+	if err != nil {
+		return measuredLimits{}, fmt.Errorf("%s limits query stderr: %w", collar.Name, err)
+	}
+	defer stderr.Close()
+	child.Stderr = stderr
 	child.Env = os.Environ()
 	for key, value := range collar.Launch.Env {
 		child.Env = append(child.Env, key+"="+value)
@@ -61,17 +69,58 @@ func queryProviderLimits(ctx context.Context, collar Collar) (measuredLimits, er
 	// server that does not close after EOF; Wait reaps it on every path.
 	_ = stdin.Close()
 	err = child.Wait()
-	if ctx.Err() != nil {
-		return measuredLimits{}, fmt.Errorf("%s limits query: %w", collar.Name, ctx.Err())
-	}
-	if queryErr != nil {
-		return measuredLimits{}, queryErr
-	}
-	if err != nil {
-		return measuredLimits{}, fmt.Errorf("%s limits query exited: %w", collar.Name, err)
+	diagnostic, stderrErr := readLimitsStderr(stderr)
+	if err := limitsQueryError(collar.Name, ctx.Err(), errors.Join(queryErr, stderrErr), err, diagnostic); err != nil {
+		return measuredLimits{}, err
 	}
 	// The app server reads the account live.
 	return measuredLimits{windows: limits}, nil
+}
+
+func newLimitsStderr() (*os.File, error) {
+	file, err := os.CreateTemp("", "gangline-limits-stderr-")
+	if err != nil {
+		return nil, err
+	}
+	if err := os.Remove(file.Name()); err != nil {
+		return nil, errors.Join(err, file.Close())
+	}
+	return file, nil
+}
+
+// A descendant may retain stderr after the direct child exits. A file avoids
+// waiting for pipe EOF; ReadAt snapshots it without moving their shared offset.
+func readLimitsStderr(file *os.File) ([]byte, error) {
+	info, err := file.Stat()
+	if err != nil {
+		return nil, fmt.Errorf("stat native limits stderr: %w", err)
+	}
+	data := make([]byte, info.Size())
+	n, err := file.ReadAt(data, 0)
+	if err != nil {
+		return data[:n], fmt.Errorf("read native limits stderr: %w", err)
+	}
+	return data, nil
+}
+
+func limitsQueryError(name string, contextErr, queryErr, processErr error, stderr []byte) error {
+	var causes []error
+	if contextErr != nil {
+		causes = append(causes, fmt.Errorf("%s limits query: %w", name, contextErr))
+	}
+	if queryErr != nil {
+		causes = append(causes, queryErr)
+	}
+	if processErr != nil {
+		causes = append(causes, fmt.Errorf("%s limits query exited: %w", name, processErr))
+	}
+	if len(causes) == 0 {
+		return nil
+	}
+	if diagnostic := strings.TrimSpace(string(stderr)); diagnostic != "" {
+		causes = append(causes, fmt.Errorf("%s limits query stderr: %s", name, diagnostic))
+	}
+	return errors.Join(causes...)
 }
 
 func queryCodexLimits(input io.Reader, output io.Writer) ([]LimitWindow, error) {
