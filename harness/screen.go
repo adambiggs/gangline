@@ -138,11 +138,16 @@ func readCodexComposer(screen substrate.Screen) (Composer, error) {
 				continue
 			}
 			row := index + 1 + offset
+			if screen.Cursor.Visible && screen.Cursor.Row < len(lines)-2 &&
+				row <= screen.Cursor.Row && strings.HasPrefix(rawLines[row], "  ") && strings.TrimSpace(rawLines[row-1]) != "" {
+				composer.Text += "\n" + strings.TrimPrefix(lines[row], "  ")
+				continue
+			}
 			// The input has a blank bottom padding row before the final
 			// status and hint rows. Their contents and styling are configurable;
 			// only a cursor on this input row establishes that layout. Any
 			// continuation before the padding still occupies the composer.
-			if screen.Cursor.Visible && screen.Cursor.Row == index && row >= len(lines)-2 &&
+			if screen.Cursor.Visible && screen.Cursor.Row >= index && screen.Cursor.Row < row-1 && row >= len(lines)-2 &&
 				row > index+1 && strings.TrimSpace(rawLines[row-1]) == "" {
 				composer.end = row - 1
 				break
@@ -150,7 +155,7 @@ func readCodexComposer(screen substrate.Screen) (Composer, error) {
 			composer.TailOccupied = true
 			break
 		}
-		if match := codexCollapsedPastePattern.FindStringSubmatch(text); match != nil {
+		if match := codexCollapsedPastePattern.FindStringSubmatch(composer.Text); match != nil {
 			if !composer.TailOccupied {
 				composer.CollapsedChars, _ = strconv.Atoi(match[1])
 			}
