@@ -147,7 +147,8 @@ func TestPeerSendRelaysEveryPeerOutcome(t *testing.T) {
 	}{
 		{"queued", `{"id":"@ID@","outcome":"queued"}`, "0", exitOK, "queued", ""},
 		{"accepted", `{"id":"@ID@","outcome":"accepted"}`, "0", exitOK, "accepted", "native queue accepted the message; do not resend"},
-		{"failed", `{"id":"@ID@","outcome":"failed","warning":"message x was retained\u001b[2J with failed status"}`, "0", exitOK, "failed", "warning: beta: message x was retained?[2J with failed status\n"},
+		{"failed", `{"id":"@ID@","outcome":"failed","warning":"message x was retained\u001b[2J with failed status"}`, "4", exitNative, "failed", "warning: beta: message x was retained?[2J with failed status\n"},
+		{"failed with zero peer status", `{"id":"@ID@","outcome":"failed"}`, "0", exitNative, "failed", ""},
 		{"unverified", `{"id":"@ID@","outcome":"unverified"}`, "5", exitUnknown, "unverified", ""},
 	} {
 		t.Run(tc.name, func(t *testing.T) {

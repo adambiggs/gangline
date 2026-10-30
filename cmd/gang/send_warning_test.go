@@ -56,16 +56,14 @@ func TestFailedSendWarningAfterWithdrawal(t *testing.T) {
 
 			err := f.cmd.send([]string{"worker", "--from", "operator"})
 			outcome := "failed"
-			if withdrawn {
-				if err != nil {
-					t.Fatal(err)
-				}
-			} else {
+			wantStatus := exitNative
+			if !withdrawn {
 				outcome = "unverified"
-				var ce commandError
-				if !errors.As(err, &ce) || ce.status != exitUnknown {
-					t.Fatalf("unconfirmed withdrawal: %v", err)
-				}
+				wantStatus = exitUnknown
+			}
+			var ce commandError
+			if !errors.As(err, &ce) || ce.status != wantStatus {
+				t.Fatalf("withdrawn=%v: send result %v, want status %d", withdrawn, err, wantStatus)
 			}
 			if !strings.Contains(f.out.String(), outcome) || !strings.Contains(f.errOut.String(), outcome+" status") || strings.Contains(f.errOut.String(), "do not resend") == withdrawn || f.input.submits != 0 {
 				t.Fatalf("out=%q stderr=%q submits=%d", f.out.String(), f.errOut.String(), f.input.submits)

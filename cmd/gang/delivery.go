@@ -749,7 +749,10 @@ func (run *runtime) drainFrom(l *store.LockedAgent, a core.Agent, target core.En
 	}
 }
 func deliveryResult(outcome string) error {
-	if outcome == "unverified" {
+	switch outcome {
+	case "failed":
+		return commandError{status: exitNative, text: "message failed and was not delivered"}
+	case "unverified":
 		return commandError{status: exitUnknown, text: "message input is unverified; inspect the recipient before sending again"}
 	}
 	return nil

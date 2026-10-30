@@ -41,7 +41,7 @@ func TestDeliveryWithdrawsPasteAbandonedBeforeSubmit(t *testing.T) {
 		wantClear   bool
 		wantNotice  string
 	}{
-		{name: "composer never settled", settle: neverSettled, after: pasteShown, wantOutcome: "failed", wantReason: "the pasted input was withdrawn from the composer", wantClear: true, wantNotice: "withdrawn-"},
+		{name: "composer never settled", settle: neverSettled, after: pasteShown, wantStatus: exitNative, wantOutcome: "failed", wantReason: "the pasted input was withdrawn from the composer", wantClear: true, wantNotice: "withdrawn-"},
 		{name: "submit key failed", after: pasteShown, submitErr: errors.New("send-keys failed"), wantStatus: exitUnknown, wantOutcome: "unverified", wantReason: "send-keys failed"},
 		{name: "input blocked", after: func(string) substrate.Screen { return trust }, wantStatus: exitUnknown, wantOutcome: "unverified", wantReason: "the pasted input may remain in the composer behind a native prompt", wantNotice: "held-input-"},
 		{name: "composer emptied then refilled", settle: harness.ErrComposerEmptied, after: func(string) substrate.Screen { return draft }, wantStatus: exitUnknown, wantOutcome: "unverified", wantReason: "emptied before submission"},
@@ -98,10 +98,7 @@ func TestDeliveryWithdrawsPasteAbandonedBeforeSubmit(t *testing.T) {
 			}
 			f.run.cmd = f.cmd
 			f.cmd.stdin = strings.NewReader("hello")
-			err = f.cmd.send([]string{"worker", "--from", "operator"})
-			if ce := (commandError{}); tc.wantStatus == 0 && err != nil || tc.wantStatus != 0 && (!errors.As(err, &ce) || ce.status != tc.wantStatus) {
-				t.Fatalf("send result: %v out=%q keys=%v", err, f.out, f.input.keys)
-			}
+			sendErr := f.cmd.send([]string{"worker", "--from", "operator"})
 			id := core.EnvelopeID(strings.SplitN(f.out.String(), "\t", 2)[0])
 			e, err := p.ReadEnvelope("failed", id)
 			if err != nil {
@@ -109,6 +106,9 @@ func TestDeliveryWithdrawsPasteAbandonedBeforeSubmit(t *testing.T) {
 			}
 			if e.Outcome != tc.wantOutcome || !strings.Contains(e.Reason, tc.wantReason) {
 				t.Fatalf("receipt %s: %q", e.Outcome, e.Reason)
+			}
+			if ce := (commandError{}); !errors.As(sendErr, &ce) || ce.status != tc.wantStatus {
+				t.Fatalf("send result: %v out=%q receipt=%s reason=%q keys=%v", sendErr, f.out, e.Outcome, e.Reason, f.input.keys)
 			}
 			if cleared := slices.Contains(f.input.keys, "C-u"); cleared != tc.wantClear {
 				t.Fatalf("clear keys sent=%v, want %v", cleared, tc.wantClear)

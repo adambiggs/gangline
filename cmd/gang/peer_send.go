@@ -124,7 +124,7 @@ func (run *runtime) sendToPeer(o sendOptions) error {
 		if reply.Outcome == "unverified" {
 			return commandError{status: exitUnknown, text: fmt.Sprintf("message input on %s is unverified; this host can neither inspect the recipient on %s nor learn a later outcome, so ask %s:%s whether it arrived before sending again", o.Host, o.Host, o.Host, o.Name)}
 		}
-		return nil
+		return deliveryResult(reply.Outcome)
 	case replied && refused:
 		sent.Status, sent.Reason = "refused", printable(reply.Error)
 		if err := run.recordPeerSend(sender, sent); err != nil {
