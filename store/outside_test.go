@@ -101,7 +101,7 @@ func TestOutsideMailboxQueueAckAndDurableMetadata(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	e := core.Envelope{ID: "one", To: registration.Name, Recipient: registration.ID, From: core.Sender{Kind: core.SenderAgent, Name: "lead"}, Message: core.Message{Text: "review"}}
+	e := core.Envelope{ID: "one", To: registration.Name, Recipient: registration.ID, From: core.Sender{Kind: core.SenderAgent, Name: "lead"}, Message: core.Message{Text: "review"}, CreatedAt: credentialTestOrigin().At}
 	if err := p.QueueOutside("throwaway", "toby", e); err != nil {
 		t.Fatal(err)
 	}
@@ -116,7 +116,7 @@ func TestOutsideMailboxQueueAckAndDurableMetadata(t *testing.T) {
 		if err := m.Put("receipt", map[string]string{"id": "one"}); err != nil {
 			return err
 		}
-		return m.Ack([]core.EnvelopeID{"one"})
+		return m.Ack([]core.EnvelopeID{"one"}, credentialTestOrigin().At)
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -223,7 +223,7 @@ func TestOutsideSettledRecordsDoNotAffectMailboxOperations(t *testing.T) {
 	if _, err := p.ReadOutsidePending("throwaway", principal); err != nil {
 		t.Fatalf("pending read unrelated history: %v", err)
 	}
-	envelope := core.Envelope{ID: "next", To: registration.Name, Recipient: registration.ID, Message: core.Message{Text: "new mail"}}
+	envelope := core.Envelope{ID: "next", To: registration.Name, Recipient: registration.ID, From: core.Sender{Kind: core.SenderAgent, Name: "lead"}, Message: core.Message{Text: "new mail"}, CreatedAt: credentialTestOrigin().At}
 	if err := p.QueueOutside("throwaway", "toby", envelope); err != nil {
 		t.Fatalf("queue read unrelated history: %v", err)
 	}

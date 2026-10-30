@@ -85,7 +85,7 @@ func (run *runtime) newOutsideService(issuer, clientID, redirect string, roots [
 				for i, id := range ids {
 					values[i] = core.EnvelopeID(id)
 				}
-				return m.Ack(values)
+				return m.Ack(values, run.cmd.now())
 			})
 		},
 		Send: func(p, to, body, key string) (outsidemcp.Receipt, error) {

@@ -11,6 +11,7 @@ import (
 	"path/filepath"
 	"sort"
 	"strings"
+	"time"
 
 	"github.com/adambiggs/gangline/core"
 )
@@ -48,24 +49,39 @@ type OutsideMailbox struct {
 	state         outsideState
 	path          string
 	dataDirectory string
+	team          TeamPaths
 }
 
 func (m *OutsideMailbox) Pending() []core.Envelope {
 	return append([]core.Envelope{}, m.state.Pending...)
 }
-func (m *OutsideMailbox) Ack(ids []core.EnvelopeID) error {
+func (m *OutsideMailbox) Ack(ids []core.EnvelopeID, at time.Time) error {
 	acknowledged := make(map[core.EnvelopeID]bool, len(ids))
 	for _, id := range ids {
 		acknowledged[id] = true
 	}
 	retained := make([]core.Envelope, 0, len(m.state.Pending))
+	var removed []core.Envelope
 	for _, e := range m.state.Pending {
 		if !acknowledged[e.ID] {
 			retained = append(retained, e)
+		} else {
+			removed = append(removed, e)
 		}
 	}
-	m.state.Pending = retained
-	return atomicJSON(m.path, m.state)
+	next := m.state
+	next.Pending = retained
+	if err := atomicJSON(m.path, next); err != nil {
+		return err
+	}
+	m.state = next
+	var failures []error
+	for _, e := range removed {
+		if err := m.team.Append(core.Event{Type: "outside_acknowledged", At: at, Source: "command", HitchID: m.Registration.ID, Name: m.Registration.Name, ID: string(e.ID), Envelope: &e}); err != nil {
+			failures = append(failures, fmt.Errorf("message %s acknowledged, but audit append failed: %w", e.ID, err))
+		}
+	}
+	return errors.Join(failures...)
 }
 
 // Keyed records live separately from the mailbox snapshot, so settled sends
@@ -371,7 +387,7 @@ func (p Paths) WithOutside(team string, principal OutsidePrincipal, fn func(*Out
 		return err
 	}
 	path, _ := t.outsidePath(current.ID)
-	return fn(&OutsideMailbox{Registration: current.OutsideRegistration, state: state, path: path, dataDirectory: filepath.Join(t.Directory, "outside-data", string(current.ID))})
+	return fn(&OutsideMailbox{Registration: current.OutsideRegistration, state: state, path: path, dataDirectory: filepath.Join(t.Directory, "outside-data", string(current.ID)), team: t})
 }
 func (p Paths) QueueOutside(team, name string, e core.Envelope) error {
 	lock, err := p.LockTeam(team)
@@ -401,7 +417,13 @@ func (p Paths) QueueOutside(team, name string, e core.Envelope) error {
 	}
 	state.Pending = append(state.Pending, e)
 	path, _ := t.outsidePath(registration.ID)
-	return atomicJSON(path, state)
+	if err := atomicJSON(path, state); err != nil {
+		return err
+	}
+	if err := t.Append(core.Event{Type: "send_queued", At: e.CreatedAt, Source: "command", HitchID: registration.ID, Name: registration.Name, Envelope: &e}); err != nil {
+		return fmt.Errorf("message %s queued for %s, but audit append failed: %w; do not resend", e.ID, e.To, err)
+	}
+	return nil
 }
 
 // ReadOutsidePending reads an atomic mailbox snapshot without contending with

@@ -243,4 +243,8 @@ func TestOutsideInboundUncertainPublicationDoesNotDuplicate(t *testing.T) {
 	if err != nil || len(pending) != 0 {
 		t.Fatalf("uncertain replay published %+v %v", pending, err)
 	}
+	events := outsideAuditEvents(t, f, "outside_send_unknown")
+	if len(events) != 1 || events[0].Envelope == nil || events[0].Envelope.ID != envelope.ID || events[0].Envelope.Message != envelope.Message {
+		t.Fatalf("uncertain send lost its audit payload: %+v", events)
+	}
 }

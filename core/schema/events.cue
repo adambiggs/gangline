@@ -6,7 +6,7 @@ import "time"
 #Envelope: close({
  id: #ID
  token?: string & =~"^[0-9a-f]{16}$"
- from: close({kind: "agent" | "self_declared" | "gangline", name: #ID, hitch_id?: #ID}) | close({kind: "peer", name: #ID, host: #ID, peer_class?: "registered"}) | close({kind: "registered", name: #ID, hitch_id: #ID})
+ from: close({kind: "agent" | "self_declared" | "gangline", name: #ID, hitch_id?: #ID}) | close({kind: "peer", name: #ID, host: #ID, peer_class?: "registered"}) | close({kind: "registered" | "outside", name: #ID, hitch_id: #ID})
  to: #ID
  recipient: #ID
  message: close({text: #ID})
@@ -58,6 +58,8 @@ import "time"
  compaction_completed: {}, compaction_failed: {}, compaction_unverified: {}, compaction_cancelled: {}, interrupt_requested: {}, interrupt_completed: {}, deadline_checked: {}, drop_started: {}, drop_finished: {}
  curfew_set: {}, curfew_cleared: {}, capacity_detected: {}, capacity_submitted: {}, capacity_cleared: {}, watchdog_available: {}, process_verification_available: {}
  send_queued: {envelope: #Envelope}
+ outside_send_unknown: {envelope: #Envelope}
+ outside_acknowledged: {hitch_id: #ID, name: #ID, id: #ID, envelope: #Envelope}
  peer_sent: {hitch_id: #ID, name: #ID, id: #ID, to: #ID, status: "queued" | "delivered" | "accepted" | "failed" | "unverified" | "refused" | "unknown"}
  context_band_crossed: {id: #ID, hitch_id: #ID, status: #ID, envelope: #Envelope, readings: [#Reading]}
  snooze_scheduled: {id: #ID, hitch_id: #ID, reason: #ID}

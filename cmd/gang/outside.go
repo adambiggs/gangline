@@ -248,6 +248,15 @@ func (run *runtime) outsideSend(principal, to, body, key string) (receipt outsid
 			receipt = outsideReceipt{ID: string(intent.Envelope.ID), Outcome: "queued"}
 			tick = a.ID
 		}
+		kind := "send_queued"
+		if receipt.Outcome == "unknown" {
+			kind = "outside_send_unknown"
+		}
+		// Retain the envelope before settling the intent discards its payload.
+		// A retry of an unsettled intent may repeat this event with the same ID.
+		if err := run.record(a, core.Event{Type: kind, Envelope: intent.Envelope}); err != nil {
+			return fmt.Errorf("message %s outcome %s, but audit append failed: %w; retry with the same idempotency key", receipt.ID, receipt.Outcome, err)
+		}
 		return mailbox.Put("send:"+key, outsideSendIntent{Fingerprint: intent.Fingerprint, Receipt: &receipt})
 	})
 	if result == nil && tick != "" {
