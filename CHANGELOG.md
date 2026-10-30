@@ -1,5 +1,20 @@
 # Changelog
 
+## [2.4.2](https://github.com/adambiggs/gangline/compare/gangline-v2.4.1...gangline-v2.4.2) (2026-10-30)
+
+
+### Bug Fixes
+
+* **auth:** report OAuth persistence failures locally ([308c6ee](https://github.com/adambiggs/gangline/commit/308c6eee2e61c1ac064bae1a6531cf20898ad34a)), closes [#226](https://github.com/adambiggs/gangline/issues/226)
+* **events:** preserve subscriptions on registry read errors ([b7df643](https://github.com/adambiggs/gangline/commit/b7df6437c66683a92b81553ca18f59d8f9f7fd91)), closes [#223](https://github.com/adambiggs/gangline/issues/223)
+* **events:** retain safe callback transport diagnostics ([37a89c8](https://github.com/adambiggs/gangline/commit/37a89c8e4f23a40e9bf92e57951a6d65960e16d0)), closes [#227](https://github.com/adambiggs/gangline/issues/227)
+* **limits:** retain native query failure diagnostics ([936b2bd](https://github.com/adambiggs/gangline/commit/936b2bd9d3d57135026cc0ece010aa3781aaafef)), closes [#225](https://github.com/adambiggs/gangline/issues/225)
+* **outside:** retain mailbox sends and acknowledgements in audit log ([4bd8709](https://github.com/adambiggs/gangline/commit/4bd87091cad10011618598cce9b1d089ea75eec6)), closes [#221](https://github.com/adambiggs/gangline/issues/221)
+* **runtime:** notify hitcher when audit append fails ([352f5e2](https://github.com/adambiggs/gangline/commit/352f5e22c74ab259725872b58d5d58f82598a404)), closes [#224](https://github.com/adambiggs/gangline/issues/224)
+* **sbx:** leave team network policy to users ([c4a0e77](https://github.com/adambiggs/gangline/commit/c4a0e7705521a53970c482a8c5e7feda1b8dfd5f))
+* **send:** return failure for failed delivery receipts ([f251c00](https://github.com/adambiggs/gangline/commit/f251c00f953a736c4e9af2ff2b406ed3d7e7cc1d)), closes [#230](https://github.com/adambiggs/gangline/issues/230)
+* **store:** record credential creation and mutation provenance ([9102a2c](https://github.com/adambiggs/gangline/commit/9102a2cf51a9adfb1ffdb96ca4136c1b12dad4d5)), closes [#222](https://github.com/adambiggs/gangline/issues/222)
+
 ## [2.4.1](https://github.com/adambiggs/gangline/compare/gangline-v2.4.0...gangline-v2.4.1) (2026-10-29)
 
 
