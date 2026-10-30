@@ -54,7 +54,13 @@ func (run *runtime) newOutsideService(issuer, clientID, redirect string, roots [
 	if err != nil {
 		return nil, err
 	}
-	events, err := mcpevents.New(mcpevents.Config{StatePath: filepath.Join(run.team.Directory, "outside-mcp", "events.json"), Now: run.cmd.now, Authorize: func(_ context.Context, p string) bool { return authorize(p) == nil }})
+	events, err := mcpevents.New(mcpevents.Config{StatePath: filepath.Join(run.team.Directory, "outside-mcp", "events.json"), Now: run.cmd.now, Authorize: func(_ context.Context, p string) (bool, error) {
+		err := authorize(p)
+		if errors.Is(err, store.ErrOutsideUnauthorized) {
+			return false, nil
+		}
+		return err == nil, err
+	}})
 	if err != nil {
 		return nil, err
 	}

@@ -36,8 +36,8 @@ const maxBody = 256 * 1024
 type Config struct {
 	StatePath string
 	Now       func() time.Time
-	// Authorize must check that this registration and credential generation remain valid.
-	Authorize func(context.Context, string) bool
+	// Authorize checks the registration and credential generation, returning false only for confirmed revocation.
+	Authorize func(context.Context, string) (bool, error)
 }
 
 type Error struct {
@@ -238,9 +238,22 @@ func parseParameters(raw json.RawMessage) (parameters, error) {
 	return p, nil
 }
 
+func (m *Manager) authorize(ctx context.Context, principal string) error {
+	if principal != "" {
+		authorized, err := m.config.Authorize(ctx, principal)
+		if err != nil {
+			return err
+		}
+		if authorized {
+			return nil
+		}
+	}
+	return &Error{Code: -32001, Message: "Registration is not authorized"}
+}
+
 func (m *Manager) RPC(ctx context.Context, principal, method string, raw json.RawMessage) (any, error) {
-	if principal == "" || !m.config.Authorize(ctx, principal) {
-		return nil, &Error{Code: -32001, Message: "Registration is not authorized"}
+	if err := m.authorize(ctx, principal); err != nil {
+		return nil, err
 	}
 	if method == "events/list" {
 		var p struct {
@@ -310,8 +323,8 @@ func (m *Manager) RPC(ctx context.Context, principal, method string, raw json.Ra
 		}
 		m.verified[cacheKey] = m.config.Now().Add(verificationLifetime)
 	}
-	if !m.config.Authorize(ctx, principal) {
-		return nil, &Error{Code: -32001, Message: "Registration is not authorized"}
+	if err := m.authorize(ctx, principal); err != nil {
+		return nil, err
 	}
 	old, exists := m.state.Subscriptions[id]
 	s := old
@@ -352,7 +365,15 @@ func (m *Manager) ActivePrincipals(ctx context.Context) ([]string, error) {
 	old := m.state.Subscriptions
 	next := make(map[string]subscription, len(old))
 	for id, s := range old {
-		if expired(s, m.config.Now()) || !m.config.Authorize(ctx, s.Principal) {
+		if expired(s, m.config.Now()) {
+			changed = true
+			continue
+		}
+		authorized, err := m.config.Authorize(ctx, s.Principal)
+		if err != nil {
+			return nil, err
+		}
+		if !authorized {
 			changed = true
 			continue
 		}
@@ -446,7 +467,15 @@ func (m *Manager) Deliver(ctx context.Context, principal, eventID string, timest
 			m.mu.Lock()
 			s, exists := m.state.Subscriptions[id]
 			m.mu.Unlock()
-			if !exists || expired(s, m.config.Now()) || s.Receipts[eventID] != "" || timestamp.Before(s.CreatedAt) || !m.config.Authorize(ctx, principal) {
+			if !exists || expired(s, m.config.Now()) || s.Receipts[eventID] != "" || timestamp.Before(s.CreatedAt) {
+				break
+			}
+			authorized, err := m.config.Authorize(ctx, principal)
+			if err != nil {
+				failures = append(failures, err)
+				return errors.Join(failures...)
+			}
+			if !authorized {
 				break
 			}
 			status, _, err := m.post(ctx, s, eventID, body)

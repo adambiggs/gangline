@@ -38,7 +38,7 @@ func testManager(t *testing.T) (*Manager, *time.Time, *bool) {
 	t.Helper()
 	now := time.Date(2026, 10, 14, 12, 0, 0, 0, time.UTC)
 	authorized := true
-	m, err := New(Config{StatePath: filepath.Join(t.TempDir(), "events.json"), Now: func() time.Time { return now }, Authorize: func(context.Context, string) bool { return authorized }})
+	m, err := New(Config{StatePath: filepath.Join(t.TempDir(), "events.json"), Now: func() time.Time { return now }, Authorize: func(context.Context, string) (bool, error) { return authorized, nil }})
 	if err != nil {
 		t.Fatal(err)
 	}
