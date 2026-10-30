@@ -144,8 +144,7 @@ operation refused by the effective policy remain operator responsibilities.
 
 A [Docker Sandboxes](https://docs.docker.com/ai/sandboxes/) microVM can hold a
 whole team, with the VM as the boundary: agents run there without their own
-sandboxes. The team has regular internet access unless you choose a restrictive
-`sbx` network policy. Each
+sandboxes. Network access follows your Docker Sandboxes policy. Each
 release publishes the `gangline-team` workload kit as the image
 `docker.io/adambiggs/gangline`, carrying that release's `gang` with tmux and
 an sshd; Docker's Claude and Codex mixins layer the agents onto it, and each
@@ -228,16 +227,14 @@ manager, so `gang` arms its process watchdog there.
 
 GitHub goes over https with `sbx secret set github`. The kit declares the
 token proxy-managed, so the VM's `GH_TOKEN` holds a sentinel and the proxy
-adds the token, and it rewrites ssh remotes to https. It denies GitHub's ssh
-port, which the Codex mixin's GitHub allows open, so no git traffic goes
-around the proxy's token. The kit also allows the Go, npm and PyPI registries
-and GitHub's download hosts, so builds fetch their dependencies.
+adds the token, and it rewrites ssh remotes to https.
 
 Peer delivery runs over the VM's sshd. On the host, add an ssh alias for the
 published port, enroll the VM in `GANG_PEERS`, and authorize the host's key in
 the VM with `gang peer-authorize`. In the VM, set `GANG_HOST` and `GANG_PEERS`
-in `~/.config/gangline/config`, reach the host as `host.docker.internal`, and
-authorize the VM's key on the host the same way. `sshd` starts each forced
+in `~/.config/gangline/config`, reach the host as `host.docker.internal`
+with `localhost:22` allowed by your network policy, and authorize the VM's
+key on the host the same way. `sshd` starts each forced
 command without the shell's environment, so a team outside the default state
 root needs its `GANG_SESSION`, `GANG_STATE_ROOT` and `GANG_TMUX_SOCKET` set
 in the forced command.

@@ -12,28 +12,6 @@ capabilities:
   - type: com.docker.sandbox/sbx@1
   # The team keeps running with no client attached.
   - type: com.docker.sandbox/long-running@1
-  - type: com.docker.sandbox/network-policy@1
-    config:
-      runtime:
-        allow:
-          # host.docker.internal:22, the host's sshd, for peer delivery.
-          - "localhost:22"
-          - "github.com:443"
-          - "api.github.com:443"
-          # Module, package and release downloads for builds and gates.
-          - "proxy.golang.org:443"
-          - "sum.golang.org:443"
-          - "registry.npmjs.org:443"
-          - "pypi.org:443"
-          - "files.pythonhosted.org:443"
-          - "codeload.github.com:443"
-          - "objects.githubusercontent.com:443"
-          - "release-assets.githubusercontent.com:443"
-        # Allows union across kits, so the Codex mixin's portless GitHub
-        # allows open every port; a deny holds against any kit's allow.
-        # GitHub ssh would bypass the proxy-managed token.
-        deny:
-          - "github.com:22"
   - type: com.docker.sandbox/credential@1
     optional: true
     description: GitHub token for git over https and gh
