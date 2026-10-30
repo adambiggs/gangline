@@ -135,8 +135,8 @@ func AwaitComposerSettle(ctx context.Context, capture captureScreen, pane substr
 
 // AwaitOwnedComposerSettle is AwaitComposerSettle for input typed into a
 // composer that a read before typing found owned by owner. A frame whose
-// footer the input pushed off a short pane is that composer's while its rule
-// still carries owner; an empty owner accepts no such frame.
+// footer the input clipped or replaced with a paste hint is that composer's
+// while its rule still carries owner; an empty owner accepts no such frame.
 func AwaitOwnedComposerSettle(ctx context.Context, capture captureScreen, pane substrate.PaneID, collar Collar, owner string, settle time.Duration) error {
 	ticker := time.NewTicker(25 * time.Millisecond)
 	defer ticker.Stop()
@@ -153,10 +153,7 @@ func AwaitOwnedComposerSettle(ctx context.Context, capture captureScreen, pane s
 			}
 			return err
 		}
-		composer, err := ReadComposer(collar.Primitives.Composer, screen)
-		if errors.Is(err, ErrComposerOwnerClipped) && owner != "" && composer.Owner == owner {
-			err = nil
-		}
+		composer, err := ReadOwnedComposer(collar.Primitives.Composer, screen, owner)
 		if err != nil && !errors.Is(err, ErrNoComposer) && !errors.Is(err, ErrComposerOwnerHidden) {
 			return err
 		}
@@ -164,8 +161,7 @@ func AwaitOwnedComposerSettle(ctx context.Context, capture captureScreen, pane s
 		// A missing frame need not mean the pasted input was lost. Require
 		// a fresh stability window when it returns; never submit a missing
 		// composer or retry input that has already been pasted. A paste hint
-		// hides the composer's owner until it expires, and the owner is
-		// checked again on the frame that follows.
+		// without a matching recorded owner needs the visible session footer.
 		if err != nil {
 			observed.text, observed.since, observed.emptySince = "", time.Time{}, time.Time{}
 		} else if observed.ready(composer.Text, time.Now(), settle) {

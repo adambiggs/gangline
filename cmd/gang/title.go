@@ -157,7 +157,7 @@ func (run *runtime) submitTitle(l *store.LockedAgent, a *core.Agent, c harness.C
 	} else if blocked {
 		return refuseError("title not submitted; native input blocked: %s; inspect the staged composer input", blocker.Evidence)
 	}
-	composer, err = harness.ReadComposer(c.Primitives.Composer, screen)
+	composer, err = harness.ReadOwnedComposer(c.Primitives.Composer, screen, v.Owner)
 	if err != nil {
 		return err
 	}

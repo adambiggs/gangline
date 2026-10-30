@@ -201,6 +201,9 @@ func (run *runtime) prepareRehitch(previous core.Agent, next *core.Agent) (*stor
 		return fail(errRehitchDeferred)
 	}
 	composer, err := harness.ReadComposer(c.Primitives.Composer, screen)
+	if errors.Is(err, harness.ErrComposerOwnerHidden) {
+		return fail(errRehitchDeferred)
+	}
 	if err != nil {
 		return fail(err)
 	}

@@ -92,7 +92,7 @@ func TestRehitchRequiresContinuation(t *testing.T) {
 }
 
 func TestRehitchWaitsForFinishedTurnAndClearComposer(t *testing.T) {
-	for _, variant := range []string{"open turn", "busy", "draft", "permission", "compaction", "input", "unknown finish"} {
+	for _, variant := range []string{"open turn", "busy", "draft", "permission", "compaction", "input", "unknown finish", "paste hint"} {
 		t.Run(variant, func(t *testing.T) {
 			f, a, p := rehitchFixture(t)
 			switch variant {
@@ -110,6 +110,10 @@ func TestRehitchWaitsForFinishedTurnAndClearComposer(t *testing.T) {
 				a.Input = &core.InputIntent{ID: "uncertain"}
 			case "unknown finish":
 				a.Native.FinishedAt = time.Time{}
+			case "paste hint":
+				a.Collar = "claude"
+				f.input.command = "claude"
+				f.input.screen = screenWithText(namedRule("Main session"), "❯ ", strings.Repeat("─", 40), "  40k/200k (20%)", "  paste again to expand")
 			}
 			l, err := p.TryLock()
 			if err != nil {

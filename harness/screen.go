@@ -20,7 +20,7 @@ var (
 	// replaced by Claude Code's paste hint, which a main session's composer
 	// and a child session's show alike. The footer returns when the hint
 	// expires.
-	ErrComposerOwnerHidden = errors.New("paste hint hides which session owns the composer")
+	ErrComposerOwnerHidden = errors.New("paste hint hides which session owns the composer; queued input waits for a tick after the session footer returns")
 	ErrBackgroundComposer  = errors.New("composer creates a background session")
 	// ErrComposerOwnerClipped reports a named composer whose input pushed the
 	// session footer past the bottom of a short pane. A main session's
@@ -105,6 +105,14 @@ func ReadComposer(invocation Invocation, screen substrate.Screen) (Composer, err
 	default:
 		return Composer{}, fmt.Errorf("unknown composer primitive %q", invocation.Name)
 	}
+}
+
+func ReadOwnedComposer(invocation Invocation, screen substrate.Screen, owner string) (Composer, error) {
+	composer, err := ReadComposer(invocation, screen)
+	if (errors.Is(err, ErrComposerOwnerClipped) || errors.Is(err, ErrComposerOwnerHidden)) && owner != "" && composer.Owner == owner {
+		err = nil
+	}
+	return composer, err
 }
 
 var codexCollapsedPastePattern = regexp.MustCompile(`^\[Pasted Content ([1-9][0-9]*) chars\]$`)
@@ -196,14 +204,14 @@ func readClaudeComposer(screen substrate.Screen) (Composer, error) {
 	if first >= 0 && childPlaceholder(lines[first], screenLines(screen, true)[first]) {
 		return Composer{}, ErrForeignComposer
 	}
-	var clipped error
+	var ownershipErr error
 	if named {
 		mode, main := parentConversation(lines[closing+1:])
 		switch {
 		case main && !mode && pasteHint(lines[closing+1:]):
-			return Composer{}, ErrComposerOwnerHidden
+			ownershipErr = ErrComposerOwnerHidden
 		case main && !mode && footerClipped(lines, closing):
-			clipped = ErrComposerOwnerClipped
+			ownershipErr = ErrComposerOwnerClipped
 		case !main || !mode:
 			return Composer{}, ErrForeignComposer
 		}
@@ -231,7 +239,7 @@ func readClaudeComposer(screen substrate.Screen) (Composer, error) {
 	if !named && len(body) == 1 && screen.Cursor.Visible && screen.Cursor.Row == first && screen.Cursor.Column == 2 && strings.HasPrefix(body[0], "Try \"") && strings.HasSuffix(body[0], "\"") {
 		return Composer{first: first, end: closing}, nil
 	}
-	return Composer{Text: strings.TrimRight(strings.Join(body, "\n"), "\n"), Owner: owner, first: first, end: closing}, clipped
+	return Composer{Text: strings.TrimRight(strings.Join(body, "\n"), "\n"), Owner: owner, first: first, end: closing}, ownershipErr
 }
 
 func trustPrompt(name string, lines []string) (string, bool) {
