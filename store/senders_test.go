@@ -13,7 +13,7 @@ func TestSenderAuthenticationBindsRegistration(t *testing.T) {
 	for _, corruption := range []string{"id", "name", "hash", "missing", "native", "removed", "trailing"} {
 		t.Run(corruption, func(t *testing.T) {
 			p := testTeam(t)
-			key, err := p.AddSender("relay")
+			key, err := p.AddSender("relay", credentialTestOrigin())
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -56,7 +56,7 @@ func TestSenderAuthenticationBindsRegistration(t *testing.T) {
 					t.Fatal(err)
 				}
 			case "removed":
-				if err := p.RemoveSender("relay"); err != nil {
+				if err := p.RemoveSender("relay", credentialTestOrigin()); err != nil {
 					t.Fatal(err)
 				}
 			}
@@ -77,7 +77,7 @@ func TestSenderRemovalDoesNotCrossNamespace(t *testing.T) {
 	if err := p.ClaimName("worker", "native"); err != nil {
 		t.Fatal(err)
 	}
-	if err := p.RemoveSender("worker"); !errors.Is(err, ErrSenderUnauthorized) {
+	if err := p.RemoveSender("worker", credentialTestOrigin()); !errors.Is(err, ErrSenderUnauthorized) {
 		t.Fatalf("removed native claim: %v", err)
 	}
 	for _, id := range []core.HitchID{"../sender-x", "native"} {
@@ -85,17 +85,17 @@ func TestSenderRemovalDoesNotCrossNamespace(t *testing.T) {
 			t.Fatalf("accepted id %q", id)
 		}
 	}
-	if _, err := p.AddSender("../escape"); err == nil {
+	if _, err := p.AddSender("../escape", credentialTestOrigin()); err == nil {
 		t.Fatal("accepted path traversal")
 	}
-	if _, err := p.AddSender("worker"); !errors.Is(err, ErrNameTaken) {
+	if _, err := p.AddSender("worker", credentialTestOrigin()); !errors.Is(err, ErrNameTaken) {
 		t.Fatalf("accepted native claim: %v", err)
 	}
 }
 
 func TestSenderRecreationGetsNewIdentity(t *testing.T) {
 	p := testTeam(t)
-	key, err := p.AddSender("relay")
+	key, err := p.AddSender("relay", credentialTestOrigin())
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -107,10 +107,10 @@ func TestSenderRecreationGetsNewIdentity(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := p.RemoveSender("relay"); err != nil {
+	if err := p.RemoveSender("relay", credentialTestOrigin()); err != nil {
 		t.Fatal(err)
 	}
-	key, err = p.AddSender("relay")
+	key, err = p.AddSender("relay", credentialTestOrigin())
 	if err != nil {
 		t.Fatal(err)
 	}

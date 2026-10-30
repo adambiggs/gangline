@@ -199,7 +199,7 @@ func TestOutsideInboundSendIdentityAndIdempotency(t *testing.T) {
 	if _, err := f.run.outsideSend(principal.String(), "worker", "altered after delivery", "request-one"); err == nil {
 		t.Fatal("settled key accepted changed body")
 	}
-	if err := paths.RotateOutside("unit", "toby", filepath.Join(t.TempDir(), "rotated")); err != nil {
+	if err := paths.RotateOutside("unit", "toby", filepath.Join(t.TempDir(), "rotated"), credentialTestOrigin()); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := f.run.outsideSend(principal.String(), "worker", "approved", "request-one"); !errors.Is(err, store.ErrOutsideUnauthorized) {

@@ -234,7 +234,7 @@ func TestOutsideMCPRoundTripAndCredentialRevocation(t *testing.T) {
 	if w.Code == 401 {
 		t.Fatal("restart lost grant")
 	}
-	if err := paths.RotateOutside("unit", "toby", filepath.Join(t.TempDir(), "replacement")); err != nil {
+	if err := paths.RotateOutside("unit", "toby", filepath.Join(t.TempDir(), "replacement"), credentialTestOrigin()); err != nil {
 		t.Fatal(err)
 	}
 	if status, _ := rpc(tokens.Access, "server/discover", map[string]any{}); status != 401 {

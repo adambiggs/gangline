@@ -806,10 +806,14 @@ func (cmd command) drop(args []string) error {
 		return refuseError("%s is a registered sender; use gang sender remove %s", name, name)
 	}
 	if isOutsideID(id) {
-		if err := run.team.RemoveOutside(name); err != nil {
+		origin, err := run.credentialOrigin("gang drop")
+		if err != nil {
 			return err
 		}
-		_, err := fmt.Fprintf(cmd.stdout, "%s outside registration removed\n", name)
+		if err := run.team.RemoveOutside(name, origin); err != nil {
+			return err
+		}
+		_, err = fmt.Fprintf(cmd.stdout, "%s outside registration removed\n", name)
 		return err
 	}
 	p, err := run.team.Agent(id)

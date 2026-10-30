@@ -59,9 +59,16 @@ func (cmd command) senderCommand(args []string) error {
 	}
 	defer lock.Close()
 	name := args[1]
+	origin, err := run.credentialOrigin("gang sender " + action)
+	if err != nil {
+		return err
+	}
 	if action == "remove" {
-		if err := run.team.RemoveSender(name); err != nil {
-			return refuseError("cannot remove registered sender %q: %v; gang sender list shows registered names", name, err)
+		if err := run.team.RemoveSender(name, origin); err != nil {
+			if errors.Is(err, store.ErrSenderUnauthorized) {
+				return refuseError("registered sender %q removal: %v; gang sender list shows registered names", name, err)
+			}
+			return err
 		}
 		_, err = fmt.Fprintf(cmd.stdout, "%s registered sender removed\n", name)
 		return err
@@ -74,7 +81,7 @@ func (cmd command) senderCommand(args []string) error {
 	if strings.EqualFold(run.settings.Host, name) {
 		return refuseError("sender name %q is this host; choose another name", name)
 	}
-	path, err := run.team.AddSender(name)
+	path, err := run.team.AddSender(name, origin)
 	if errors.Is(err, store.ErrNameTaken) {
 		return refuseError("sender name %q is already claimed; choose another name (gang roster and gang sender list show registrations)", name)
 	}

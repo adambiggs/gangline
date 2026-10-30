@@ -19,8 +19,9 @@ var ErrOutsideUnauthorized = errors.New("outside credential is invalid or revoke
 
 // OutsideRegistration shares the team's name namespace, with a mailbox route.
 type OutsideRegistration struct {
-	ID   core.HitchID   `json:"id"`
-	Name core.AgentName `json:"name"`
+	ID      core.HitchID           `json:"id"`
+	Name    core.AgentName         `json:"name"`
+	Created *core.CredentialOrigin `json:"created,omitempty"`
 }
 
 type OutsidePrincipal struct {
@@ -170,7 +171,10 @@ func (p TeamPaths) ListOutside() ([]OutsideRegistration, error) {
 
 // RegisterOutside issues a bearer credential only into a newly created private
 // file. State retains its hash; plaintext is never returned or logged.
-func (p Paths) RegisterOutside(team, name, credentialFile string) (OutsideRegistration, error) {
+func (p Paths) RegisterOutside(team, name, credentialFile string, origin core.CredentialOrigin) (OutsideRegistration, error) {
+	if err := validateCredentialOrigin(origin); err != nil {
+		return OutsideRegistration{}, err
+	}
 	lock, err := p.LockTeam(team)
 	if err != nil {
 		return OutsideRegistration{}, err
@@ -195,7 +199,7 @@ func (p Paths) RegisterOutside(team, name, credentialFile string) (OutsideRegist
 	if err != nil {
 		return OutsideRegistration{}, err
 	}
-	state := outsideState{OutsideRegistration: OutsideRegistration{ID: core.HitchID("outside-" + id), Name: core.AgentName(name)}, Pending: []core.Envelope{}}
+	state := outsideState{OutsideRegistration: OutsideRegistration{ID: core.HitchID("outside-" + id), Name: core.AgentName(name), Created: &origin}, Pending: []core.Envelope{}}
 	if err := os.MkdirAll(filepath.Join(t.Directory, "outside"), 0700); err != nil {
 		return OutsideRegistration{}, err
 	}
@@ -209,7 +213,7 @@ func (p Paths) RegisterOutside(team, name, credentialFile string) (OutsideRegist
 	if err := t.ClaimName(state.Name, state.ID); err != nil {
 		return OutsideRegistration{}, errors.Join(err, os.Remove(path), os.Remove(credentialFile))
 	}
-	return state.OutsideRegistration, nil
+	return state.OutsideRegistration, t.auditCredential("outside_registered", state.ID, state.Name, origin)
 }
 func issueOutsideCredential(state *outsideState, path string) (result error) {
 	if !filepath.IsAbs(path) {
@@ -242,7 +246,10 @@ func issueOutsideCredential(state *outsideState, path string) (result error) {
 	state.CredentialHash, state.Generation = outsideHash(token), generation
 	return nil
 }
-func (p Paths) RotateOutside(team, name, credentialFile string) error {
+func (p Paths) RotateOutside(team, name, credentialFile string, origin core.CredentialOrigin) error {
+	if err := validateCredentialOrigin(origin); err != nil {
+		return err
+	}
 	lock, err := p.LockTeam(team)
 	if err != nil {
 		return err
@@ -267,9 +274,12 @@ func (p Paths) RotateOutside(team, name, credentialFile string) error {
 	if err := atomicJSON(path, state); err != nil {
 		return errors.Join(err, os.Remove(credentialFile))
 	}
-	return nil
+	return t.auditCredential("outside_rotated", state.ID, state.Name, origin)
 }
-func (p TeamPaths) RemoveOutside(name string) error {
+func (p TeamPaths) RemoveOutside(name string, origin core.CredentialOrigin) error {
+	if err := validateCredentialOrigin(origin); err != nil {
+		return err
+	}
 	registration, err := p.ResolveOutside(name)
 	if err != nil {
 		return err
@@ -277,13 +287,12 @@ func (p TeamPaths) RemoveOutside(name string) error {
 	if err := p.RemoveName(registration.Name, registration.ID); err != nil {
 		return err
 	}
-	if err := os.RemoveAll(filepath.Join(p.Directory, "outside-data", string(registration.ID))); err != nil {
-		return err
-	}
+	auditErr := p.auditCredential("outside_removed", registration.ID, registration.Name, origin)
+	dataErr := os.RemoveAll(filepath.Join(p.Directory, "outside-data", string(registration.ID)))
 	path, _ := p.outsidePath(registration.ID)
-	return os.Remove(path)
+	return errors.Join(dataErr, os.Remove(path), auditErr)
 }
-func (p Paths) RemoveOutside(team, name string) error {
+func (p Paths) RemoveOutside(team, name string, origin core.CredentialOrigin) error {
 	lock, err := p.LockTeam(team)
 	if err != nil {
 		return err
@@ -293,7 +302,7 @@ func (p Paths) RemoveOutside(team, name string) error {
 	if err != nil {
 		return err
 	}
-	return t.RemoveOutside(name)
+	return t.RemoveOutside(name, origin)
 }
 func (p Paths) AuthenticateOutside(team, token string) (OutsidePrincipal, error) {
 	t, err := p.Team(team)

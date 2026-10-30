@@ -4,6 +4,7 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"reflect"
 	"strings"
 	"testing"
 
@@ -21,7 +22,7 @@ func outsideFixture(t *testing.T) (Paths, TeamPaths, string, OutsideRegistration
 		t.Fatal(err)
 	}
 	credential := filepath.Join(t.TempDir(), "credential")
-	registration, err := p.RegisterOutside("throwaway", "toby", credential)
+	registration, err := p.RegisterOutside("throwaway", "toby", credential, credentialTestOrigin())
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -59,12 +60,12 @@ func TestOutsideMailboxCredentialLifecycle(t *testing.T) {
 		t.Fatalf("invalid credential: %v", err)
 	}
 	if err := p.WithOutside("throwaway", principal, func(*OutsideMailbox) error {
-		return p.RotateOutside("throwaway", "toby", filepath.Join(t.TempDir(), "busy"))
+		return p.RotateOutside("throwaway", "toby", filepath.Join(t.TempDir(), "busy"), credentialTestOrigin())
 	}); !errors.Is(err, ErrLocked) {
 		t.Fatalf("rotation bypassed auth transaction: %v", err)
 	}
 	rotated := filepath.Join(t.TempDir(), "rotated")
-	if err := p.RotateOutside("throwaway", "toby", rotated); err != nil {
+	if err := p.RotateOutside("throwaway", "toby", rotated, credentialTestOrigin()); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := p.AuthenticateOutside("throwaway", token); !errors.Is(err, ErrOutsideUnauthorized) {
@@ -84,7 +85,7 @@ func TestOutsideMailboxCredentialLifecycle(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := p.RemoveOutside("throwaway", "toby"); err != nil {
+	if err := p.RemoveOutside("throwaway", "toby", credentialTestOrigin()); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := p.ResolveOutsidePrincipal("throwaway", newer.String()); !errors.Is(err, ErrOutsideUnauthorized) {
@@ -136,7 +137,7 @@ func TestOutsideMailboxQueueAckAndDurableMetadata(t *testing.T) {
 		t.Fatal(err)
 	}
 	list, err := team.ListOutside()
-	if err != nil || len(list) != 1 || list[0] != registration {
+	if err != nil || len(list) != 1 || !reflect.DeepEqual(list[0], registration) {
 		t.Fatalf("list %+v %v", list, err)
 	}
 	statePath, _ := team.outsidePath(registration.ID)
@@ -152,13 +153,13 @@ func TestOutsideMailboxQueueAckAndDurableMetadata(t *testing.T) {
 		t.Fatal(err)
 	}
 	// A newly registered identity cannot receive an envelope built for its predecessor.
-	if err := p.RemoveOutside("throwaway", "toby"); err != nil {
+	if err := p.RemoveOutside("throwaway", "toby", credentialTestOrigin()); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := os.Stat(dataDirectory); !errors.Is(err, os.ErrNotExist) {
 		t.Fatalf("registration removal retained keyed records: %v", err)
 	}
-	if _, err := p.RegisterOutside("throwaway", "toby", filepath.Join(t.TempDir(), "replacement")); err != nil {
+	if _, err := p.RegisterOutside("throwaway", "toby", filepath.Join(t.TempDir(), "replacement"), credentialTestOrigin()); err != nil {
 		t.Fatal(err)
 	}
 	if err := p.QueueOutside("throwaway", "toby", e); err == nil {
@@ -167,7 +168,7 @@ func TestOutsideMailboxQueueAckAndDurableMetadata(t *testing.T) {
 }
 func TestOutsideNameAndCredentialFileClaims(t *testing.T) {
 	p, team, credential, registration, _ := outsideFixture(t)
-	if _, err := p.RegisterOutside("throwaway", "toby", filepath.Join(t.TempDir(), "unused")); !errors.Is(err, ErrNameTaken) {
+	if _, err := p.RegisterOutside("throwaway", "toby", filepath.Join(t.TempDir(), "unused"), credentialTestOrigin()); !errors.Is(err, ErrNameTaken) {
 		t.Fatalf("duplicate name: %v", err)
 	}
 	if err := team.ClaimName("toby", "native"); !errors.Is(err, ErrNameTaken) {
@@ -176,13 +177,13 @@ func TestOutsideNameAndCredentialFileClaims(t *testing.T) {
 	if err := team.ClaimName("lead", "native"); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := p.RegisterOutside("throwaway", "lead", filepath.Join(t.TempDir(), "unused")); !errors.Is(err, ErrNameTaken) {
+	if _, err := p.RegisterOutside("throwaway", "lead", filepath.Join(t.TempDir(), "unused"), credentialTestOrigin()); !errors.Is(err, ErrNameTaken) {
 		t.Fatalf("outside bypassed native name: %v", err)
 	}
-	if err := p.RotateOutside("throwaway", "toby", credential); !errors.Is(err, os.ErrExist) {
+	if err := p.RotateOutside("throwaway", "toby", credential, credentialTestOrigin()); !errors.Is(err, os.ErrExist) {
 		t.Fatalf("credential overwrite: %v", err)
 	}
-	if got, err := team.ResolveOutside("toby"); err != nil || got != registration {
+	if got, err := team.ResolveOutside("toby"); err != nil || !reflect.DeepEqual(got, registration) {
 		t.Fatalf("failed rotate changed registration: %+v %v", got, err)
 	}
 }

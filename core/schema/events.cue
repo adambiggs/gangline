@@ -33,6 +33,7 @@ import "time"
  compaction?: "queued" | "submitted" | "completed" | "failed" | "unverified"
 })
 #Binding: close({session_id: #ID, previous_session_id?: #ID, collar: #ID, hitched_by?: #ID})
+#CredentialActor: close({kind: "operator_shell"}) | close({kind: "agent", name: #ID, hitch_id: #ID})
 #Fields: close({
  type: string
  at: #Time
@@ -40,11 +41,17 @@ import "time"
  hitch_id?: #ID, name?: #ID, to?: #ID, pane?: #ID, id?: #ID, reason?: string, status?: string
  activity?: #Activity, deadline?: #Time, envelope?: #Envelope, compaction?: #Compaction
  readings?: [...#Reading], native_event?: string, fingerprint?: #ID, basis?: #Basis, binding?: #Binding
+ actor?: #CredentialActor, command?: #ID
 })
 
 // Indexed by type, so validating an event is one lookup rather than a trial
 // of every type's branch.
 #Types: {
+ sender_added: {hitch_id: #ID, name: #ID, actor: #CredentialActor, command: #ID}
+ sender_removed: {hitch_id: #ID, name: #ID, actor: #CredentialActor, command: #ID}
+ outside_registered: {hitch_id: #ID, name: #ID, actor: #CredentialActor, command: #ID}
+ outside_rotated: {hitch_id: #ID, name: #ID, actor: #CredentialActor, command: #ID}
+ outside_removed: {hitch_id: #ID, name: #ID, actor: #CredentialActor, command: #ID}
  rehitch_requested: {}, rehitch_started: {}, rehitch_failed: {reason: #ID}, rehitch_attention: {reason: #ID}, rehitch_position_lost: {reason: #ID}
  hitch_claimed: {}, hitch_spawned: {}, hitch_ready: {}, hitch_blocked: {}, hitch_failed: {}, boot_reopened: {hitch_id: #ID, deadline: #Time}, renamed: {}, send_cancelled: {}, delivery_accepted: {}
  delivery_succeeded: {}, delivery_failed: {}, delivery_unverified: {}, activity_observed: {}, observation: {}, native_hook: {}, compaction_waiting: {}, compaction_submitted: {}

@@ -16,9 +16,10 @@ var ErrSenderUnauthorized = errors.New("registered sender credential is invalid 
 func IsSenderID(id core.HitchID) bool { return strings.HasPrefix(string(id), "sender-") }
 
 type SenderRegistration struct {
-	ID             core.HitchID   `json:"id"`
-	Name           core.AgentName `json:"name"`
-	CredentialHash string         `json:"credential_hash"`
+	ID             core.HitchID           `json:"id"`
+	Name           core.AgentName         `json:"name"`
+	CredentialHash string                 `json:"credential_hash"`
+	Created        *core.CredentialOrigin `json:"created,omitempty"`
 }
 
 func (p TeamPaths) SenderCredential(id core.HitchID) (string, error) {
@@ -51,7 +52,10 @@ func (p TeamPaths) ReadSender(name string) (SenderRegistration, error) {
 }
 
 // AddSender requires the team lock. ClaimName also fences concurrent renames.
-func (p TeamPaths) AddSender(name string) (path string, result error) {
+func (p TeamPaths) AddSender(name string, origin core.CredentialOrigin) (path string, result error) {
+	if err := validateCredentialOrigin(origin); err != nil {
+		return "", err
+	}
 	if _, err := p.ReadTeam(); err != nil {
 		return "", err
 	}
@@ -63,7 +67,7 @@ func (p TeamPaths) AddSender(name string) (path string, result error) {
 	if err != nil {
 		return "", err
 	}
-	r := SenderRegistration{ID: core.HitchID("sender-" + identity), Name: core.AgentName(name), CredentialHash: outsideHash(token)}
+	r := SenderRegistration{ID: core.HitchID("sender-" + identity), Name: core.AgentName(name), CredentialHash: outsideHash(token), Created: &origin}
 	path, err = p.SenderCredential(r.ID)
 	if err != nil {
 		return "", err
@@ -71,8 +75,9 @@ func (p TeamPaths) AddSender(name string) (path string, result error) {
 	if err := os.MkdirAll(filepath.Dir(path), 0700); err != nil {
 		return "", err
 	}
+	claimed := false
 	defer func() {
-		if result != nil {
+		if result != nil && !claimed {
 			result = errors.Join(result, os.RemoveAll(filepath.Dir(path)))
 		}
 	}()
@@ -84,6 +89,10 @@ func (p TeamPaths) AddSender(name string) (path string, result error) {
 	}
 	if err := p.ClaimName(r.Name, r.ID); err != nil {
 		return path, err
+	}
+	claimed = true
+	if err := p.auditCredential("sender_added", r.ID, r.Name, origin); err != nil {
+		return path, fmt.Errorf("%w; credential file: %s", err, path)
 	}
 	return path, nil
 }
@@ -112,8 +121,14 @@ func (p TeamPaths) ListSenders() ([]SenderRegistration, error) {
 }
 
 // RemoveSender requires the team lock and leaves the claim until cleanup succeeds.
-func (p TeamPaths) RemoveSender(name string) error {
+func (p TeamPaths) RemoveSender(name string, origin core.CredentialOrigin) error {
+	if err := validateCredentialOrigin(origin); err != nil {
+		return err
+	}
 	id, err := p.ResolveName(name)
+	if errors.Is(err, os.ErrNotExist) {
+		return ErrSenderUnauthorized
+	}
 	if err != nil {
 		return err
 	}
@@ -124,7 +139,10 @@ func (p TeamPaths) RemoveSender(name string) error {
 	if err := os.RemoveAll(filepath.Dir(key)); err != nil {
 		return err
 	}
-	return p.RemoveName(core.AgentName(name), id)
+	if err := p.RemoveName(core.AgentName(name), id); err != nil {
+		return err
+	}
+	return p.auditCredential("sender_removed", id, core.AgentName(name), origin)
 }
 
 func (p TeamPaths) AuthenticateSender(name string, credential []byte) (core.Sender, error) {

@@ -11,20 +11,36 @@ type Event struct {
 	HitchID HitchID   `json:"hitch_id,omitempty"`
 	Name    AgentName `json:"name,omitempty"`
 	// To is the HOST:NAME address of a message forwarded to a peer host.
-	To          string         `json:"to,omitempty"`
-	Pane        string         `json:"pane,omitempty"`
-	ID          string         `json:"id,omitempty"`
-	Reason      string         `json:"reason,omitempty"`
-	Status      string         `json:"status,omitempty"`
-	Activity    Activity       `json:"activity,omitempty"`
-	Deadline    time.Time      `json:"deadline,omitzero"`
-	Envelope    *Envelope      `json:"envelope,omitempty"`
-	Compaction  *Compaction    `json:"compaction,omitempty"`
-	Readings    []Reading      `json:"readings,omitempty"`
-	NativeEvent string         `json:"native_event,omitempty"`
-	Fingerprint string         `json:"fingerprint,omitempty"`
-	Basis       *ActivityBasis `json:"basis,omitempty"`
-	Binding     *Binding       `json:"binding,omitempty"`
+	To          string           `json:"to,omitempty"`
+	Pane        string           `json:"pane,omitempty"`
+	ID          string           `json:"id,omitempty"`
+	Reason      string           `json:"reason,omitempty"`
+	Status      string           `json:"status,omitempty"`
+	Activity    Activity         `json:"activity,omitempty"`
+	Deadline    time.Time        `json:"deadline,omitzero"`
+	Envelope    *Envelope        `json:"envelope,omitempty"`
+	Compaction  *Compaction      `json:"compaction,omitempty"`
+	Readings    []Reading        `json:"readings,omitempty"`
+	NativeEvent string           `json:"native_event,omitempty"`
+	Fingerprint string           `json:"fingerprint,omitempty"`
+	Basis       *ActivityBasis   `json:"basis,omitempty"`
+	Binding     *Binding         `json:"binding,omitempty"`
+	Actor       *CredentialActor `json:"actor,omitempty"`
+	Command     string           `json:"command,omitempty"`
+}
+
+// CredentialActor identifies the verified caller or the operator's shell.
+type CredentialActor struct {
+	Kind    string    `json:"kind"`
+	Name    AgentName `json:"name,omitempty"`
+	HitchID HitchID   `json:"hitch_id,omitempty"`
+}
+
+// CredentialOrigin records the command that created or changed a registration.
+type CredentialOrigin struct {
+	At      time.Time       `json:"at"`
+	Actor   CredentialActor `json:"actor"`
+	Command string          `json:"command"`
 }
 
 // Binding records the native session a hitch is bound to, with the collar

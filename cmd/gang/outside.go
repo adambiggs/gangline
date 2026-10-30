@@ -61,13 +61,17 @@ func (cmd command) outside(args []string) error {
 		return err
 	}
 	paths := store.Paths{Root: run.settings.StateRoot}
+	origin, err := run.credentialOrigin("gang outside " + action)
+	if err != nil {
+		return err
+	}
 	switch action {
 	case "register":
-		_, err = paths.RegisterOutside(run.settings.Session, name, o.credentialFile)
+		_, err = paths.RegisterOutside(run.settings.Session, name, o.credentialFile, origin)
 	case "rotate":
-		err = paths.RotateOutside(run.settings.Session, name, o.credentialFile)
+		err = paths.RotateOutside(run.settings.Session, name, o.credentialFile, origin)
 	case "remove":
-		err = paths.RemoveOutside(run.settings.Session, name)
+		err = paths.RemoveOutside(run.settings.Session, name, origin)
 	}
 	if err != nil {
 		return err
