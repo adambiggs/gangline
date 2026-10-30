@@ -19,11 +19,11 @@ collar: {
 		]
 		events: {
 			userpromptsubmit: {event: "turn-started", payload: {session_id: "session_id", transcript_path: "transcript_path", prompt: "prompt", turn_id: "turn_id", agent_id: "agent_id"}}
-			posttooluse: {event: "activity", payload: {session_id: "session_id", transcript_path: "transcript_path", turn_id: "turn_id"}}
+			posttooluse: {event: "activity", payload: {session_id: "session_id", transcript_path: "transcript_path", turn_id: "turn_id", agent_id: "agent_id"}}
 			stop: {event: "turn-finished", payload: {session_id: "session_id", transcript_path: "transcript_path", turn_id: "turn_id"}}
-			permissionrequest: {event: "permission-requested", payload: {session_id: "session_id", turn_id: "turn_id"}}
-			precompact: {event: "compaction-started", payload: {session_id: "session_id", trigger: "trigger", transcript_path: "transcript_path"}}
-			postcompact: {event: "compaction-finished", payload: {session_id: "session_id", trigger: "trigger", transcript_path: "transcript_path"}}
+			permissionrequest: {event: "permission-requested", payload: {session_id: "session_id", turn_id: "turn_id", agent_id: "agent_id"}}
+			precompact: {event: "compaction-started", payload: {session_id: "session_id", trigger: "trigger", transcript_path: "transcript_path", agent_id: "agent_id"}}
+			postcompact: {event: "compaction-finished", payload: {session_id: "session_id", trigger: "trigger", transcript_path: "transcript_path", agent_id: "agent_id"}}
 		}
 	}
 	models: {

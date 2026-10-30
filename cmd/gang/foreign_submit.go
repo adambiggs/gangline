@@ -9,20 +9,16 @@ import (
 	"github.com/adambiggs/gangline/store"
 )
 
-// foreignSubmit says why a submit hook cannot come from the agent's own
-// conversation, or is empty when it may. A native harness can run other
-// sessions in the same process, and their hooks reach the hitch too: a spawned
-// agent names itself, and a session the harness never persists has no
-// transcript. Neither can replace the conversation, so neither is a session
-// change. A different session with a transcript is left to the continuation
-// guard, and the first conversation submit registers its session.
+// foreignSubmit rejects spawned-agent hooks before matching the conversation's
+// session: a child can report its parent's session ID with its own transcript.
+// A submit without a transcript cannot replace the conversation either.
 func foreignSubmit(a core.Agent, event harness.HookEvent) string {
 	session := event.Payload["session_id"]
-	if event.Kind != string(harness.TurnStarted) || session == "" || session == a.Native.SessionID {
-		return ""
-	}
 	if agent := event.Payload["agent_id"]; agent != "" {
 		return fmt.Sprintf("native session %s submitted as spawned agent %s", session, agent)
+	}
+	if event.Kind != string(harness.TurnStarted) || session == "" || session == a.Native.SessionID {
+		return ""
 	}
 	if event.Absent["transcript_path"] {
 		return fmt.Sprintf("native session %s submitted without a transcript", session)
