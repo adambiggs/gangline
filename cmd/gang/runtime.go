@@ -90,17 +90,15 @@ func (run *runtime) apply(l *store.LockedAgent, a *core.Agent, e core.Event) err
 		return err
 	}
 	*a = next
-	if err := run.team.Append(e); err != nil {
-		return err
-	}
+	appendErr := run.team.Append(e)
 	if !wasFailed && a.Status == core.Failed {
 		reason := e.Reason
 		if reason == "" {
 			reason = a.Evidence
 		}
-		return run.notifyHitcherFailed(*a, reason)
+		return errors.Join(appendErr, run.notifyHitcherFailed(*a, reason))
 	}
-	return nil
+	return appendErr
 }
 
 // inactiveRecipient refuses input to an agent that is not active and names
