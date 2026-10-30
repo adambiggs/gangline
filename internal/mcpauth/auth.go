@@ -35,6 +35,7 @@ type Config struct {
 	AuthenticateCredential                  func(string) (string, error)
 	Authorize                               func(string) error
 	Clock                                   func() time.Time
+	ReportError                             func(error)
 }
 
 type grant struct {
@@ -172,6 +173,9 @@ func (s *Server) update(change func()) error {
 	change()
 	if err := s.persist(); err != nil {
 		s.state = before
+		if s.cfg.ReportError != nil {
+			s.cfg.ReportError(fmt.Errorf("persist OAuth state: %w", err))
+		}
 		return err
 	}
 	return nil

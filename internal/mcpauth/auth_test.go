@@ -385,6 +385,28 @@ func blockStateWrites(t *testing.T, cfg Config) func() {
 func TestWriteFailureDoesNotIssueCodeOrTokens(t *testing.T) {
 	f := setup(t)
 	path := filepath.Join(f.cfg.StateDir, "oauth.json")
+	var diagnostics []error
+	f.s.cfg.ReportError = func(err error) { diagnostics = append(diagnostics, err) }
+	secrets := []string{"registration-secret", "client-state", verifier}
+	checkStorageFailure := func(w *httptest.ResponseRecorder) {
+		t.Helper()
+		if w.Code != 500 || strings.TrimSpace(w.Body.String()) != `{"error":"server_error"}` {
+			t.Fatalf("unsafe storage failure response: %d %q", w.Code, w.Body.String())
+		}
+		if len(diagnostics) != 1 {
+			t.Fatalf("storage diagnostics = %v", diagnostics)
+		}
+		var cause *os.LinkError
+		if !errors.As(diagnostics[0], &cause) || cause.Op != "rename" || cause.New != path || !strings.Contains(diagnostics[0].Error(), "persist OAuth state") {
+			t.Fatalf("missing storage operation and cause: %v", diagnostics[0])
+		}
+		for _, secret := range secrets {
+			if strings.Contains(diagnostics[0].Error(), secret) {
+				t.Fatalf("storage diagnostic exposed a secret: %v", diagnostics[0])
+			}
+		}
+		diagnostics = nil
+	}
 	if err := os.Mkdir(path, 0700); err != nil {
 		t.Fatal(err)
 	}
@@ -392,6 +414,7 @@ func TestWriteFailureDoesNotIssueCodeOrTokens(t *testing.T) {
 	if w.Code != 500 || strings.Contains(w.Body.String(), "name=\"request\"") || len(f.s.state.Consent) != 0 {
 		t.Fatal("consent exposed without durable binding")
 	}
+	checkStorageFailure(w)
 	if err := os.Remove(path); err != nil {
 		t.Fatal(err)
 	}
@@ -403,6 +426,7 @@ func TestWriteFailureDoesNotIssueCodeOrTokens(t *testing.T) {
 	if w.Code != 500 || w.Header().Get("Location") != "" || len(f.s.state.Codes) != 0 {
 		t.Fatal("code exposed without durable consent consumption")
 	}
+	checkStorageFailure(w)
 	recoverWrites()
 	w = f.request("POST", "/authorize", form, f.cfg.Issuer)
 	if w.Code != 303 {
@@ -419,6 +443,7 @@ func TestWriteFailureDoesNotIssueCodeOrTokens(t *testing.T) {
 	if w.Code != 500 || strings.Contains(w.Body.String(), "access_token") || len(f.s.state.Access) != 0 || len(f.s.state.Refresh) != 0 {
 		t.Fatal("token exposed without durable code consumption")
 	}
+	checkStorageFailure(w)
 	recoverWrites()
 	_ = f.consent(t, authValues())
 	w = f.request("POST", "/token", exchangeValues(code), "")
@@ -428,12 +453,14 @@ func TestWriteFailureDoesNotIssueCodeOrTokens(t *testing.T) {
 	tokens := decode(t, w)
 	access := tokens["access_token"].(string)
 	refresh := tokens["refresh_token"].(string)
+	secrets = append(secrets, access, refresh, code, request)
 
 	recoverWrites = blockStateWrites(t, f.cfg)
 	w = f.request("POST", "/token", refreshValues(refresh), "")
 	if w.Code != 500 || strings.Contains(w.Body.String(), "access_token") || len(f.s.state.Access) != 1 || len(f.s.state.Refresh) != 1 {
 		t.Fatal("refresh exposed without durable rotation")
 	}
+	checkStorageFailure(w)
 	if _, err := f.s.AuthenticateAccess(access); err != nil {
 		t.Fatal("failed refresh revoked access")
 	}
@@ -452,9 +479,11 @@ func TestWriteFailureDoesNotIssueCodeOrTokens(t *testing.T) {
 	}
 
 	recoverWrites = blockStateWrites(t, f.cfg)
-	if f.request("POST", "/token", refreshValues(refresh), "").Code != 500 {
+	w = f.request("POST", "/token", refreshValues(refresh), "")
+	if w.Code != 500 {
 		t.Fatal("replay revocation unexpectedly persisted")
 	}
+	checkStorageFailure(w)
 	if _, err := f.s.AuthenticateAccess(access); err != nil {
 		t.Fatal("failed revocation changed active records")
 	}

@@ -50,7 +50,8 @@ func (run *runtime) newOutsideService(issuer, clientID, redirect string, roots [
 				return "", err
 			}
 			return p.String(), nil
-		}, Authorize: authorize})
+		}, Authorize: authorize,
+		ReportError: func(err error) { fmt.Fprintf(run.cmd.stderr, "outside OAuth operation failed: %v\n", err) }})
 	if err != nil {
 		return nil, err
 	}
