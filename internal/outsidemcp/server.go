@@ -154,6 +154,9 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		// Event packages expose their protocol error without coupling transports.
 		var eventErr interface{ RPCError() (int, string, any) }
 		if errors.As(callErr, &eventErr) {
+			if errors.Unwrap(callErr) != nil && h.config.ReportError != nil {
+				h.config.ReportError(callErr)
+			}
 			code, message, data := eventErr.RPCError()
 			reply(w, protocolStatus(code), req.ID, nil, &rpcError{code, message, data})
 			return

@@ -44,13 +44,49 @@ type Error struct {
 	Code    int               `json:"code"`
 	Message string            `json:"message"`
 	Data    map[string]string `json:"data,omitempty"`
+	cause   error
 }
 
-func (e *Error) Error() string                { return e.Message }
+func (e *Error) Error() string {
+	if e.cause != nil {
+		return e.Message + ": " + e.cause.Error()
+	}
+	return e.Message
+}
+func (e *Error) Unwrap() error                { return e.cause }
 func (e *Error) RPCError() (int, string, any) { return e.Code, e.Message, e.Data }
 func invalid(message string) error            { return &Error{Code: -32602, Message: message} }
-func callbackError(reason string) error {
-	return &Error{Code: -32015, Message: "Callback endpoint verification failed", Data: map[string]string{"reason": reason}}
+func callbackError(reason string, cause error) error {
+	return &Error{Code: -32015, Message: "Callback endpoint verification failed", Data: map[string]string{"reason": reason}, cause: redactCallbackError(cause)}
+}
+
+type callbackRequestError struct {
+	cause error
+	safe  *url.Error
+}
+
+func (e *callbackRequestError) Error() string { return e.safe.Error() }
+func (e *callbackRequestError) Unwrap() error { return e.cause }
+
+func redactCallbackError(err error) error {
+	var requestErr *url.Error
+	if !errors.As(err, &requestErr) {
+		return err
+	}
+	safe := *requestErr
+	endpoint, parseErr := url.Parse(safe.URL)
+	if parseErr != nil {
+		safe.URL = "[invalid callback URL]"
+	} else {
+		endpoint.User = nil
+		endpoint.RawQuery = ""
+		endpoint.ForceQuery = false
+		endpoint.Fragment = ""
+		endpoint.RawFragment = ""
+		safe.URL = endpoint.String()
+	}
+	safe.Err = redactCallbackError(requestErr.Err)
+	return &callbackRequestError{cause: err, safe: &safe}
 }
 
 type subscription struct {
@@ -488,7 +524,11 @@ func (m *Manager) Deliver(ctx context.Context, principal, eventID string, timest
 			transient := err != nil || status == 408 || status == 429 || status >= 500
 			if !transient || attempt == 2 {
 				reason := responseReason(status, err)
-				failures = append(failures, fmt.Errorf("callback delivery failed: %s", reason))
+				failure := fmt.Errorf("callback delivery failed: %s", reason)
+				if err != nil {
+					failure = fmt.Errorf("%w: %w", failure, redactCallbackError(err))
+				}
+				failures = append(failures, failure)
 				if saveErr := m.settle(id, eventID, reason, status == 410); saveErr != nil {
 					failures = append(failures, saveErr)
 				}
@@ -536,16 +576,16 @@ func (m *Manager) verify(ctx context.Context, id, callback, secret string) error
 	body, _ := json.Marshal(map[string]string{"type": "verification", "challenge": challenge})
 	status, reply, err := m.post(ctx, subscription{ID: id, URL: callback, Secret: secret}, "msg_verification_"+challenge, body)
 	if err != nil {
-		return callbackError(responseReason(status, err))
+		return callbackError(responseReason(status, err), err)
 	}
 	if status < 200 || status >= 300 {
-		return callbackError("http_status")
+		return callbackError("http_status", nil)
 	}
 	var echoed struct {
 		Challenge string `json:"challenge"`
 	}
 	if json.Unmarshal(reply, &echoed) != nil || subtle.ConstantTimeCompare([]byte(echoed.Challenge), []byte(challenge)) != 1 {
-		return callbackError("challenge_failed")
+		return callbackError("challenge_failed", nil)
 	}
 	return nil
 }
