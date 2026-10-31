@@ -1,5 +1,17 @@
 # Changelog
 
+## [2.4.3](https://github.com/adambiggs/gangline/compare/gangline-v2.4.2...gangline-v2.4.3) (2026-10-31)
+
+
+### Bug Fixes
+
+* **collars:** preserve lifecycle behavior under custom names ([a88cabd](https://github.com/adambiggs/gangline/commit/a88cabd5e7e34823d62dace1de77c48831028780))
+* **context:** read verified parent transcript telemetry ([c9ad6d5](https://github.com/adambiggs/gangline/commit/c9ad6d5c91d4af8299b068771cbfe4d30568c961))
+* **hooks:** reject child events before parent writes ([d8e3c17](https://github.com/adambiggs/gangline/commit/d8e3c1763eeddf461f749459c2a6e3a8d898e8e8))
+* **input:** preserve matching ownership after paste ([190347a](https://github.com/adambiggs/gangline/commit/190347a6363d765ddee173f0906b1abfad182511))
+* **input:** read wrapped composer continuations ([ff9302b](https://github.com/adambiggs/gangline/commit/ff9302b70c144663115fc8a9df89b6f79f03bed1))
+* **title:** withdraw failed automatic rename drafts ([fa49f4e](https://github.com/adambiggs/gangline/commit/fa49f4e7fa492dc6f096eab6b52f58e2d450f5af))
+
 ## [2.4.2](https://github.com/adambiggs/gangline/compare/gangline-v2.4.1...gangline-v2.4.2) (2026-10-30)
 
 
