@@ -301,7 +301,7 @@ func (run *runtime) appendEvents(events []core.Event) error {
 // running turn absorbed is judged by that turn. A wake pulled out of the
 // queue into the composer has no turn of its own, and the next turn end fails
 // it; a turn of its own after that still completes it.
-func (run *runtime) observeSnoozeTurn(a core.Agent, boundary harness.Invocation, notice hookNotice, providerBlocked bool) error {
+func (run *runtime) observeSnoozeTurn(a core.Agent, boundary harness.Invocation, telemetry *harness.Invocation, notice hookNotice, providerBlocked bool) error {
 	transcript := notice.Transcript
 	if transcript == "" {
 		transcript = a.Native.Transcript
@@ -360,7 +360,7 @@ func (run *runtime) observeSnoozeTurn(a core.Agent, boundary harness.Invocation,
 			confirmed := false
 			failure := notice.Failure
 			failedTurn := notice.TurnID == s.TurnID && notice.Kind == "turn-failed" && (adopted || a.Native.FailedTurn == s.TurnID)
-			if s.Auto && a.Collar == "codex" && a.Native.TurnID == s.TurnID &&
+			if s.Auto && telemetry != nil && harness.TelemetryUsesTranscript(*telemetry) && a.Native.TurnID == s.TurnID &&
 				!s.SubmittedAt.IsZero() && !a.Native.LastErrorAt.Before(s.SubmittedAt) {
 				failedTurn, failure = true, a.Native.LastError
 			}

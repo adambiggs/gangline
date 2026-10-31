@@ -120,29 +120,34 @@ func TestCodexFolderTrustBlocksStartup(t *testing.T) {
 }
 
 func TestAwaitStartupRejectsTransientCodexComposer(t *testing.T) {
-	synctest.Test(t, func(t *testing.T) {
-		collar, err := EmbeddedCollar("codex")
-		if err != nil {
-			t.Fatal(err)
-		}
-		ready := fixtureScreen(t, "codex-0.151.0-composer.txt")
-		trust := testScreen(
-			testCells("Folder access", false),
-			testCells("Trust this folder? Codex can read files here.", false),
-			testCells("› 1. Trust and continue", false),
-		)
-		captures := 0
-		startup, _, err := AwaitStartup(context.Background(), func(context.Context, substrate.PaneID) (substrate.Screen, error) {
-			captures++
-			if captures <= 90 { // Provisional composer lasts 2250ms; readiness margin is 750ms.
-				return ready, nil
-			}
-			return trust, nil
-		}, "%1", collar)
-		if err != nil || startup.State != StartupTrustRequired || captures != 91 {
-			t.Fatalf("startup = %+v, captures = %d, error = %v", startup, captures, err)
-		}
-	})
+	for _, name := range []string{"codex", "codex-qwen"} {
+		t.Run(name, func(t *testing.T) {
+			synctest.Test(t, func(t *testing.T) {
+				collar, err := EmbeddedCollar("codex")
+				if err != nil {
+					t.Fatal(err)
+				}
+				collar.Name = name
+				ready := fixtureScreen(t, "codex-0.151.0-composer.txt")
+				trust := testScreen(
+					testCells("Folder access", false),
+					testCells("Trust this folder? Codex can read files here.", false),
+					testCells("› 1. Trust and continue", false),
+				)
+				captures := 0
+				startup, _, err := AwaitStartup(context.Background(), func(context.Context, substrate.PaneID) (substrate.Screen, error) {
+					captures++
+					if captures <= 90 { // Provisional composer lasts 2250ms; readiness margin is 750ms.
+						return ready, nil
+					}
+					return trust, nil
+				}, "%1", collar)
+				if err != nil || startup.State != StartupTrustRequired || captures != 91 {
+					t.Fatalf("startup = %+v, captures = %d, error = %v", startup, captures, err)
+				}
+			})
+		})
+	}
 }
 
 func TestInspectStartupDistinguishesPermissionFromUnknownMenu(t *testing.T) {

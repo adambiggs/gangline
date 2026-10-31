@@ -34,7 +34,7 @@ func TestWakeExactSubmitWithoutTurnIdentityRemainsPending(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := f.run.observeSnoozeTurn(a, c.Primitives.TurnBoundary, hookNotice{Kind: "turn-finished", TurnID: "different-turn"}, false); err != nil {
+	if err := f.run.observeSnoozeTurn(a, c.Primitives.TurnBoundary, nil, hookNotice{Kind: "turn-finished", TurnID: "different-turn"}, false); err != nil {
 		t.Fatal(err)
 	}
 	if got := usageSnapshot(t, f.run).Recent[key]; got.ID != recent.ID {

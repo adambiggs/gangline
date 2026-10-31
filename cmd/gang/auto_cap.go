@@ -4,6 +4,7 @@ import (
 	"time"
 
 	"github.com/adambiggs/gangline/core"
+	"github.com/adambiggs/gangline/harness"
 )
 
 // A cap refusal is authoritative; a recent native limits reading supplies its
@@ -19,7 +20,7 @@ func recentNativeReset(r core.Reading, now time.Time) (time.Time, bool) {
 	return reset, err == nil
 }
 
-func (run *runtime) observeAutoCap(a core.Agent, notice hookNotice) error {
+func (run *runtime) observeAutoCap(a core.Agent, telemetry *harness.Invocation, notice hookNotice) error {
 	now := run.cmd.now()
 	key := string(a.ID)
 	var failureAt time.Time
@@ -29,7 +30,7 @@ func (run *runtime) observeAutoCap(a core.Agent, notice hookNotice) error {
 		if failureAt.IsZero() {
 			failureAt = now
 		}
-	} else if a.Collar == "codex" && !a.Native.LastErrorAt.IsZero() &&
+	} else if telemetry != nil && harness.TelemetryUsesTranscript(*telemetry) && !a.Native.LastErrorAt.IsZero() &&
 		!a.Native.SubmittedAt.IsZero() && !a.Native.LastErrorAt.Before(a.Native.SubmittedAt) {
 		failureAt, reason = a.Native.LastErrorAt, a.Native.LastError
 	}

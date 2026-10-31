@@ -146,21 +146,23 @@ func TestNativeCapParksAndResumesWithoutManualSnooze(t *testing.T) {
 			reset := at.Add(5 * time.Hour)
 			a.Native.SubmittedAt = at.Add(-time.Second)
 			a.Native.Limits = core.Reading{Kind: "provider-limits", Status: "observed", At: &at, Limits: []core.LimitWindow{{Label: "five_hour", WindowMinutes: 300, UsedPercent: 100, ResetAt: reset.Unix()}}}
+			var telemetry *harness.Invocation
 			failure := hookNotice{Kind: "turn-failed", TurnID: "native-turn", At: at, Failure: "You have hit your usage limit"}
 			if collar == "claude" {
 				a.Native.FailedTurn = "native-turn"
 			} else {
+				telemetry = &harness.Invocation{Name: "codex-session-log"}
 				failure = hookNotice{}
 				a.Native.LastErrorAt, a.Native.LastError = at, "You have hit your usage limit"
 			}
-			if err := f.run.observeAutoCap(a, failure); err != nil {
+			if err := f.run.observeAutoCap(a, telemetry, failure); err != nil {
 				t.Fatal(err)
 			}
 			parked := usageSnapshot(t, f.run).Snoozes[string(a.ID)]
 			if !parked.Auto || !parked.At.Equal(reset) {
 				t.Fatalf("cap did not park until reset: %+v", parked)
 			}
-			if err := f.run.observeAutoCap(a, failure); err != nil {
+			if err := f.run.observeAutoCap(a, telemetry, failure); err != nil {
 				t.Fatal(err)
 			}
 			if got := usageSnapshot(t, f.run).Snoozes[string(a.ID)].ID; got != parked.ID {
@@ -190,7 +192,7 @@ func TestCapWithoutResetWaitsForNativeReading(t *testing.T) {
 	at := f.cmd.now()
 	a.Native.FailedTurn = "native-turn"
 	failure := hookNotice{Kind: "turn-failed", TurnID: "native-turn", At: at, Failure: "You have hit your usage limit"}
-	if err := f.run.observeAutoCap(a, failure); err != nil {
+	if err := f.run.observeAutoCap(a, nil, failure); err != nil {
 		t.Fatal(err)
 	}
 	f.env["GANGLINE_HITCH_ID"] = string(a.ID)
@@ -201,7 +203,7 @@ func TestCapWithoutResetWaitsForNativeReading(t *testing.T) {
 		t.Fatal("cap without reset submitted a wake")
 	}
 	a.Native.Limits = core.Reading{Kind: "provider-limits", Status: "observed", At: &at, Limits: []core.LimitWindow{{Label: "five_hour", UsedPercent: 100, ResetAt: at.Add(5 * time.Hour).Unix()}}}
-	if err := f.run.observeAutoCap(a, hookNotice{}); err != nil {
+	if err := f.run.observeAutoCap(a, nil, hookNotice{}); err != nil {
 		t.Fatal(err)
 	}
 	if usageSnapshot(t, f.run).Snoozes[string(a.ID)].At.IsZero() {
@@ -218,7 +220,7 @@ func TestGenericCapFailureWaitsForFreshCappedReading(t *testing.T) {
 	a.Native.FailedTurn = "native-turn"
 	a.Native.Limits = core.Reading{Kind: "provider-limits", Status: "observed", At: &at, Limits: []core.LimitWindow{{Label: "five_hour", UsedPercent: 40, ResetAt: at.Add(5 * time.Hour).Unix()}}}
 	failure := hookNotice{Kind: "turn-failed", TurnID: "native-turn", At: at, Failure: "rate_limit"}
-	if err := f.run.observeAutoCap(a, failure); err != nil {
+	if err := f.run.observeAutoCap(a, nil, failure); err != nil {
 		t.Fatal(err)
 	}
 	state := usageSnapshot(t, f.run)
@@ -234,7 +236,7 @@ func TestGenericCapFailureWaitsForFreshCappedReading(t *testing.T) {
 	a.Native.Limits.At = &fresh
 	a.Native.Limits.Limits[0].UsedPercent = 100
 	f.run.cmd.clock = func() time.Time { return fresh }
-	if err := f.run.observeAutoCap(a, hookNotice{}); err != nil {
+	if err := f.run.observeAutoCap(a, nil, hookNotice{}); err != nil {
 		t.Fatal(err)
 	}
 	state = usageSnapshot(t, f.run)
@@ -249,13 +251,13 @@ func TestPostResetLowUsageWakesPendingCapImmediately(t *testing.T) {
 	at := f.cmd.now()
 	a.Native.FailedTurn = "native-turn"
 	failure := hookNotice{Kind: "turn-failed", TurnID: "native-turn", At: at, Failure: "You have hit your usage limit"}
-	if err := f.run.observeAutoCap(a, failure); err != nil {
+	if err := f.run.observeAutoCap(a, nil, failure); err != nil {
 		t.Fatal(err)
 	}
 	later := at.Add(5 * time.Hour)
 	a.Native.Limits = core.Reading{Kind: "provider-limits", Status: "observed", At: &later, Limits: []core.LimitWindow{{Label: "five_hour", UsedPercent: 1, ResetAt: later.Add(5 * time.Hour).Unix()}}}
 	f.run.cmd.clock = func() time.Time { return later }
-	if err := f.run.observeAutoCap(a, hookNotice{}); err != nil {
+	if err := f.run.observeAutoCap(a, nil, hookNotice{}); err != nil {
 		t.Fatal(err)
 	}
 	if got := usageSnapshot(t, f.run).Snoozes[string(a.ID)].At; !got.Equal(later) {
@@ -311,7 +313,7 @@ func TestCodexAutomaticWakeRearmsAfterAnotherCap(t *testing.T) {
 	}); err != nil {
 		t.Fatal(err)
 	}
-	if err := f.run.observeSnoozeTurn(a, harness.Invocation{}, hookNotice{}, false); err != nil {
+	if err := f.run.observeSnoozeTurn(a, harness.Invocation{}, &harness.Invocation{Name: "codex-session-log"}, hookNotice{}, false); err != nil {
 		t.Fatal(err)
 	}
 	next := usageSnapshot(t, f.run).Snoozes[string(a.ID)]
@@ -572,7 +574,7 @@ func TestUnconfirmedUsageInputIsNotResubmittedAfterReceiptEviction(t *testing.T)
 				if state.Snoozes[string(a.ID)].ID != "" || state.Recent[string(a.ID)].TurnID != "wake-turn" {
 					t.Fatalf("late witness did not link wake turn: %+v", state)
 				}
-				if err := f.run.observeSnoozeTurn(a, harness.Invocation{}, hookNotice{Kind: "turn-finished", TurnID: "wake-turn"}, false); err != nil {
+				if err := f.run.observeSnoozeTurn(a, harness.Invocation{}, nil, hookNotice{Kind: "turn-finished", TurnID: "wake-turn"}, false); err != nil {
 					t.Fatal(err)
 				}
 				if len(usageSnapshot(t, f.run).Recent) != 0 {
@@ -814,7 +816,7 @@ func TestAttributableUsageCapFailureRearmsOneWakeAtNativeReset(t *testing.T) {
 	}
 	a.Native.FailedTurn = "wake-turn"
 	failure := hookNotice{Kind: "turn-failed", TurnID: "wake-turn", Failure: "You have hit your usage limit"}
-	if err := f.run.observeSnoozeTurn(a, harness.Invocation{}, failure, false); err != nil {
+	if err := f.run.observeSnoozeTurn(a, harness.Invocation{}, nil, failure, false); err != nil {
 		t.Fatal(err)
 	}
 	state := usageSnapshot(t, f.run)
@@ -822,7 +824,7 @@ func TestAttributableUsageCapFailureRearmsOneWakeAtNativeReset(t *testing.T) {
 	if rearmed.ID == "" || rearmed.ID == old.ID || !rearmed.At.Equal(reset) || rearmed.Note != old.Note || len(state.Recent) != 0 {
 		t.Fatalf("native reset rearm: %+v", state)
 	}
-	if err := f.run.observeSnoozeTurn(a, harness.Invocation{}, failure, false); err != nil {
+	if err := f.run.observeSnoozeTurn(a, harness.Invocation{}, nil, failure, false); err != nil {
 		t.Fatal(err)
 	}
 	if got := usageSnapshot(t, f.run).Snoozes[string(a.ID)].ID; got != rearmed.ID {
@@ -860,7 +862,7 @@ func TestAttributableUsageCapFailureRearmsOneWakeAtNativeReset(t *testing.T) {
 		t.Fatal(err)
 	}
 	a.Native.FailedTurn = "second-turn"
-	if err := f.run.observeSnoozeTurn(a, harness.Invocation{}, hookNotice{Kind: "turn-failed", TurnID: "second-turn", Failure: "Usage limit reached again"}, false); err != nil {
+	if err := f.run.observeSnoozeTurn(a, harness.Invocation{}, nil, hookNotice{Kind: "turn-failed", TurnID: "second-turn", Failure: "Usage limit reached again"}, false); err != nil {
 		t.Fatal(err)
 	}
 	if state := usageSnapshot(t, f.run); len(state.Snoozes) != 0 || len(state.Recent) != 1 || !state.Recent[string(a.ID)].CapRejected {
@@ -885,7 +887,7 @@ func TestNonCapFailureDoesNotRearmWake(t *testing.T) {
 	}); err != nil {
 		t.Fatal(err)
 	}
-	if err := f.run.observeSnoozeTurn(a, harness.Invocation{}, hookNotice{Kind: "turn-failed", TurnID: "wake-turn", Failure: "Login expired"}, false); err != nil {
+	if err := f.run.observeSnoozeTurn(a, harness.Invocation{}, nil, hookNotice{Kind: "turn-failed", TurnID: "wake-turn", Failure: "Login expired"}, false); err != nil {
 		t.Fatal(err)
 	}
 	state := usageSnapshot(t, f.run)
@@ -907,7 +909,7 @@ func TestGenericRateLimitWaitsForNativeCapEvidence(t *testing.T) {
 	}); err != nil {
 		t.Fatal(err)
 	}
-	if err := f.run.observeSnoozeTurn(a, harness.Invocation{}, hookNotice{Kind: "turn-failed", TurnID: "wake-turn", Failure: "rate_limit"}, false); err != nil {
+	if err := f.run.observeSnoozeTurn(a, harness.Invocation{}, nil, hookNotice{Kind: "turn-failed", TurnID: "wake-turn", Failure: "rate_limit"}, false); err != nil {
 		t.Fatal(err)
 	}
 	state := usageSnapshot(t, f.run)
@@ -920,7 +922,7 @@ func TestGenericRateLimitWaitsForNativeCapEvidence(t *testing.T) {
 		t.Fatalf("uncertain throttle status: %q, %v", f.out.String(), err)
 	}
 	a.Native.Limits.Limits[0].UsedPercent = 100
-	if err := f.run.observeSnoozeTurn(a, harness.Invocation{}, hookNotice{}, false); err != nil {
+	if err := f.run.observeSnoozeTurn(a, harness.Invocation{}, nil, hookNotice{}, false); err != nil {
 		t.Fatal(err)
 	}
 	if next := usageSnapshot(t, f.run).Snoozes[string(a.ID)]; next.ID == "" || next.Rearms != 1 {
@@ -940,7 +942,7 @@ func TestOldRateLimitCandidateCannotUseLaterCapReading(t *testing.T) {
 	}); err != nil {
 		t.Fatal(err)
 	}
-	if err := f.run.observeSnoozeTurn(a, harness.Invocation{}, hookNotice{Kind: "turn-failed", TurnID: "wake-turn", Failure: "rate_limit"}, false); err != nil {
+	if err := f.run.observeSnoozeTurn(a, harness.Invocation{}, nil, hookNotice{Kind: "turn-failed", TurnID: "wake-turn", Failure: "rate_limit"}, false); err != nil {
 		t.Fatal(err)
 	}
 	later := at.Add(3 * 24 * time.Hour)
@@ -948,7 +950,7 @@ func TestOldRateLimitCandidateCannotUseLaterCapReading(t *testing.T) {
 	a.Native.Limits.At = &later
 	a.Native.Limits.Limits[0].UsedPercent = 100
 	a.Native.Limits.Limits[0].ResetAt = later.Add(5 * time.Hour).Unix()
-	if err := f.run.observeSnoozeTurn(a, harness.Invocation{}, hookNotice{}, false); err != nil {
+	if err := f.run.observeSnoozeTurn(a, harness.Invocation{}, nil, hookNotice{}, false); err != nil {
 		t.Fatal(err)
 	}
 	state := usageSnapshot(t, f.run)
@@ -1064,7 +1066,7 @@ func TestDeliveredWakeKeepsItsOwnWitness(t *testing.T) {
 		t.Fatalf("delivered wake lost its own witness (submitted %s): %+v", witnessAt, got)
 	}
 	a.Native.LastErrorAt = witnessAt.Add(500 * time.Millisecond)
-	if err := f.run.observeSnoozeTurn(a, harness.Invocation{}, hookNotice{Kind: "turn-finished", TurnID: "wake-turn"}, false); err != nil {
+	if err := f.run.observeSnoozeTurn(a, harness.Invocation{}, nil, hookNotice{Kind: "turn-finished", TurnID: "wake-turn"}, false); err != nil {
 		t.Fatal(err)
 	}
 	if len(usageSnapshot(t, f.run).Recent) != 1 {
@@ -1083,13 +1085,13 @@ func TestSnoozeRequiresMatchingSuccessfulNativeTurn(t *testing.T) {
 			}); err != nil {
 				t.Fatal(err)
 			}
-			if err := f.run.observeSnoozeTurn(a, harness.Invocation{}, hookNotice{Kind: "turn-finished", TurnID: "other-turn"}, false); err != nil {
+			if err := f.run.observeSnoozeTurn(a, harness.Invocation{}, nil, hookNotice{Kind: "turn-finished", TurnID: "other-turn"}, false); err != nil {
 				t.Fatal(err)
 			}
 			if len(usageSnapshot(t, f.run).Recent) != 1 {
 				t.Fatal("another native turn completed the wake")
 			}
-			if err := f.run.observeSnoozeTurn(a, harness.Invocation{}, hookNotice{Kind: "turn-finished", TurnID: "wake-turn"}, false); err != nil {
+			if err := f.run.observeSnoozeTurn(a, harness.Invocation{}, nil, hookNotice{Kind: "turn-finished", TurnID: "wake-turn"}, false); err != nil {
 				t.Fatal(err)
 			}
 			if len(usageSnapshot(t, f.run).Recent) != 0 {
@@ -1108,7 +1110,7 @@ func TestCodexCapacityScreenDoesNotCompleteWake(t *testing.T) {
 	}); err != nil {
 		t.Fatal(err)
 	}
-	if err := f.run.observeSnoozeTurn(a, harness.Invocation{}, hookNotice{Kind: "turn-finished", TurnID: "wake-turn"}, true); err != nil {
+	if err := f.run.observeSnoozeTurn(a, harness.Invocation{}, nil, hookNotice{Kind: "turn-finished", TurnID: "wake-turn"}, true); err != nil {
 		t.Fatal(err)
 	}
 	if s := usageSnapshot(t, f.run).Recent[string(a.ID)]; !s.TurnFailed {
@@ -1127,7 +1129,7 @@ func TestCodexNativeErrorDoesNotCompleteWake(t *testing.T) {
 	}); err != nil {
 		t.Fatal(err)
 	}
-	if err := f.run.observeSnoozeTurn(a, harness.Invocation{}, hookNotice{Kind: "turn-finished", TurnID: "wake-turn"}, false); err != nil {
+	if err := f.run.observeSnoozeTurn(a, harness.Invocation{}, nil, hookNotice{Kind: "turn-finished", TurnID: "wake-turn"}, false); err != nil {
 		t.Fatal(err)
 	}
 	if s := usageSnapshot(t, f.run).Recent[string(a.ID)]; !s.TurnFailed {
@@ -1147,7 +1149,7 @@ func TestCapRejectedWakeWaitsForKnownNativeReset(t *testing.T) {
 	}); err != nil {
 		t.Fatal(err)
 	}
-	if err := f.run.observeSnoozeTurn(a, harness.Invocation{}, hookNotice{Kind: "turn-failed", TurnID: "wake-turn", Failure: "Usage limit reached"}, false); err != nil {
+	if err := f.run.observeSnoozeTurn(a, harness.Invocation{}, nil, hookNotice{Kind: "turn-failed", TurnID: "wake-turn", Failure: "Usage limit reached"}, false); err != nil {
 		t.Fatal(err)
 	}
 	state := usageSnapshot(t, f.run)
@@ -1161,14 +1163,14 @@ func TestCapRejectedWakeWaitsForKnownNativeReset(t *testing.T) {
 	}
 	stale := at.Add(-2 * time.Second)
 	a.Native.Limits = core.Reading{Kind: "provider-limits", Status: "observed", At: &stale, Limits: []core.LimitWindow{{Label: "five_hour", UsedPercent: 100, ResetAt: at.Add(5 * time.Hour).Unix()}}}
-	if err := f.run.observeSnoozeTurn(a, harness.Invocation{}, hookNotice{}, false); err != nil {
+	if err := f.run.observeSnoozeTurn(a, harness.Invocation{}, nil, hookNotice{}, false); err != nil {
 		t.Fatal(err)
 	}
 	if got := usageSnapshot(t, f.run).Snoozes[string(a.ID)].ID; got != "" {
 		t.Fatal("pre-submission native limit reading rearmed rejected wake")
 	}
 	a.Native.Limits.At = &at
-	if err := f.run.observeSnoozeTurn(a, harness.Invocation{}, hookNotice{}, false); err != nil {
+	if err := f.run.observeSnoozeTurn(a, harness.Invocation{}, nil, hookNotice{}, false); err != nil {
 		t.Fatal(err)
 	}
 	if got := usageSnapshot(t, f.run).Snoozes[string(a.ID)].ID; got == "" {
@@ -1597,7 +1599,7 @@ func TestStateAnEarlierReleaseWroteStillDecodes(t *testing.T) {
 	if data, err := os.ReadFile(path); err != nil || strings.Contains(string(data), "joined") || strings.Contains(string(data), "queued_behind") {
 		t.Fatalf("rewritten usage state %s, %v", data, err)
 	}
-	if err := f.run.observeSnoozeTurn(a, harness.Invocation{}, hookNotice{Kind: "turn-finished", TurnID: "wake-turn"}, false); err != nil {
+	if err := f.run.observeSnoozeTurn(a, harness.Invocation{}, nil, hookNotice{Kind: "turn-finished", TurnID: "wake-turn"}, false); err != nil {
 		t.Fatal(err)
 	}
 	if recent := usageSnapshot(t, f.run).Recent; len(recent) != 0 {

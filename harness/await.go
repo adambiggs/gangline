@@ -82,7 +82,7 @@ func (e *StartupUnobservedError) Unwrap() error { return e.Last }
 // AwaitStartup waits for an observable ready or trust-required startup state.
 func AwaitStartup(ctx context.Context, capture captureScreen, pane substrate.PaneID, collar Collar) (Startup, substrate.Screen, error) {
 	readySettle := 400 * time.Millisecond
-	if collar.Name == "codex" {
+	if collar.Primitives.Composer.Name == "codex-composer" {
 		// Codex can paint an empty composer before its folder or hook trust menu.
 		readySettle = 3 * time.Second
 	}

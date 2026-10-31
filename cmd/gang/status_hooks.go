@@ -95,10 +95,10 @@ func (run *runtime) reconcileStatusHooks(l *store.LockedAgent, a *core.Agent, c 
 
 func (run *runtime) observeStatusOutcomes(a core.Agent, c harness.Collar, batch statusHookBatch, blocked bool) error {
 	for _, notice := range batch.notices {
-		if err := run.observeSnoozeTurn(a, c.Primitives.TurnBoundary, notice, blocked); err != nil {
+		if err := run.observeSnoozeTurn(a, c.Primitives.TurnBoundary, c.Primitives.Telemetry, notice, blocked); err != nil {
 			return err
 		}
-		if err := run.observeAutoCap(a, notice); err != nil {
+		if err := run.observeAutoCap(a, c.Primitives.Telemetry, notice); err != nil {
 			return err
 		}
 	}
