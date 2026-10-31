@@ -71,7 +71,7 @@ func (cmd command) title(args []string) (result error) {
 	return run.submitTitle(l, &a, c, title, false)
 }
 
-func (run *runtime) submitTitle(l *store.LockedAgent, a *core.Agent, c harness.Collar, title string, automatic bool) error {
+func (run *runtime) submitTitle(l *store.LockedAgent, a *core.Agent, c harness.Collar, title string, automatic bool) (result error) {
 	action, err := harness.RenderAction(c.Actions.Title, map[string]string{"title": title})
 	if err != nil {
 		return err
@@ -132,6 +132,18 @@ func (run *runtime) submitTitle(l *store.LockedAgent, a *core.Agent, c harness.C
 	if err := l.Save(*a); err != nil {
 		return err
 	}
+	staged := automatic
+	if automatic {
+		defer func() {
+			if staged && result != nil {
+				if err := run.withdrawTitleDraft(*a, b, c, action.Text, v.Owner); err != nil {
+					result = fmt.Errorf("%w; title cleanup unconfirmed: %v", result, err)
+				} else {
+					result = fmt.Errorf("%w; composer clear of staged title command", result)
+				}
+			}
+		}()
+	}
 	if err := sendHarnessKeys(ctx, b, substrate.PaneID(a.Pane), c, input); err != nil {
 		return err
 	}
@@ -181,6 +193,7 @@ func (run *runtime) submitTitle(l *store.LockedAgent, a *core.Agent, c harness.C
 	if err := harness.AwaitComposerText(ctx, b.Capture, substrate.PaneID(a.Pane), c, "", settle); err != nil {
 		return commandError{status: exitUnknown, text: "title submit key sent; native outcome unconfirmed: " + err.Error()}
 	}
+	staged = false
 	screen, err = b.Capture(ctx, substrate.PaneID(a.Pane))
 	if err != nil {
 		return commandError{status: exitUnknown, text: "title submit key sent; native outcome unconfirmed: " + err.Error()}
@@ -193,6 +206,60 @@ func (run *runtime) submitTitle(l *store.LockedAgent, a *core.Agent, c harness.C
 		return commandError{status: exitNative, text: "native title refused: " + strings.TrimSpace(after[len(after)-1])}
 	}
 	return commandError{status: exitUnknown, text: "title command submitted; native title persistence unconfirmed"}
+}
+
+func (run *runtime) withdrawTitleDraft(a core.Agent, b harnessInput, c harness.Collar, text, owner string) error {
+	ctx, cancel := run.cmd.timeout(compactAbortTimeout)
+	defer cancel()
+	screen, err := run.captureRegistered(ctx, b, a)
+	if err != nil {
+		return err
+	}
+	if _, blocked, err := harness.InputBlocked(c, screen); err != nil {
+		return err
+	} else if blocked {
+		return fmt.Errorf("native input blocked; staged input left alone")
+	}
+	composer, err := harness.ReadComposer(c.Primitives.Composer, screen)
+	if err != nil {
+		return err
+	}
+	if composer.TailOccupied || composer.Owner != owner {
+		return fmt.Errorf("native composer changed ownership or has an occupied tail; input left alone")
+	}
+	if composer.Text == "" {
+		return nil
+	}
+	if composer.Text != text {
+		return fmt.Errorf("native composer changed; input left alone")
+	}
+	if c.Actions.TitleClear == nil {
+		return fmt.Errorf("collar declares no title clear keys; staged title command left alone")
+	}
+	pane := substrate.PaneID(a.Pane)
+	if err := sendHarnessKeys(ctx, b, pane, c, c.Actions.TitleClear.Input()); err != nil {
+		return err
+	}
+	if run.cmd.settleInput != nil {
+		err = run.cmd.settleInput(ctx, b, pane, c, compactClearSettle)
+	} else {
+		err = awaitComposerChange(ctx, b, pane, c, composer.Text, compactClearSettle)
+	}
+	if err != nil {
+		return err
+	}
+	screen, err = run.captureRegistered(ctx, b, a)
+	if err != nil {
+		return err
+	}
+	composer, err = harness.ReadComposer(c.Primitives.Composer, screen)
+	if err != nil {
+		return err
+	}
+	if composer.Text != "" || composer.TailOccupied || composer.Owner != owner {
+		return fmt.Errorf("native composer did not read back empty with the same owner; inspect the composer")
+	}
+	return nil
 }
 
 func nativeSessionTitle(name core.AgentName, team, task string) string {

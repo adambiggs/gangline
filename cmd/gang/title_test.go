@@ -10,10 +10,12 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"testing/synctest"
 	"time"
 
 	"github.com/adambiggs/gangline/core"
 	"github.com/adambiggs/gangline/harness"
+	"github.com/adambiggs/gangline/store"
 	"github.com/adambiggs/gangline/substrate"
 )
 
@@ -389,6 +391,124 @@ func TestAutoTitleFailureIsLoggedWithoutReplay(t *testing.T) {
 			if err != nil || strings.Count(string(log), "automatic title:") != 1 || !f.agent(t, "a").NativeTitle.Attempted {
 				t.Fatalf("failure not retained once: %s, %v", log, err)
 			}
+		})
+	}
+}
+
+func TestAutoTitleWithdrawsUnsubmittedCommandAndDrainsQueue(t *testing.T) {
+	for _, failure := range []string{"withheld", "unconsumed"} {
+		t.Run(failure, func(t *testing.T) {
+			synctest.Test(t, func(t *testing.T) {
+				f := autoTitleFixture(t, "codex", true)
+				f.cmd.settleInput = nil
+				p, _ := f.run.team.Agent("a")
+				envelope := core.Envelope{ID: "followup", Token: "0123456789abcdef", Recipient: "a", To: "worker", From: core.Sender{Kind: core.SenderSelfDeclared, Name: "operator"}, Message: core.Message{Text: "continue the work"}, CreatedAt: f.cmd.now()}
+				if err := p.Publish(envelope); err != nil {
+					t.Fatal(err)
+				}
+				var titles, clears int
+				f.input.onKeys = func(keys substrate.Keys) error {
+					if keys.Text != "" {
+						text := strings.TrimSuffix(strings.TrimPrefix(keys.Text, "\x1b[200~"), "\x1b[201~")
+						f.input.screen = screenWithText("READY", "› "+text)
+						if strings.HasPrefix(text, "/rename ") {
+							titles++
+							if failure == "withheld" {
+								f.input.screen = screenWithText("Working (esc to interrupt)", "› "+text)
+							}
+						}
+					}
+					if strings.Join(keys.Names, " ") == "C-u" {
+						clears++
+						f.input.screen = screenWithText("READY", "› ")
+					}
+					return nil
+				}
+				f.input.submit = func(text string) error {
+					if strings.HasPrefix(text, "/rename ") {
+						return nil
+					}
+					f.input.screen = screenWithText("READY", "› ")
+					return p.WriteWitness(store.Witness{ID: "followup-submit", At: f.cmd.now(), Prompt: text, SessionID: "s"})
+				}
+				f.run.cmd = f.cmd
+				started := time.Now()
+				for range 2 {
+					if err := f.run.tickAgent("a", hookNotice{}, false); err != nil {
+						t.Fatal(err)
+					}
+				}
+				collar, err := loadCollar("codex", f.run.settings)
+				if err != nil {
+					t.Fatal(err)
+				}
+				composer, err := harness.ReadComposer(collar.Primitives.Composer, f.input.screen)
+				if err != nil || composer.Text != "" || composer.TailOccupied || clears != 1 {
+					t.Fatalf("stranded automatic title: composer=%+v clears=%d err=%v", composer, clears, err)
+				}
+				if titles != 1 || !f.agent(t, "a").NativeTitle.Attempted {
+					t.Fatalf("automatic title replayed: pastes=%d title=%+v", titles, f.agent(t, "a").NativeTitle)
+				}
+				receipt, err := p.ReadEnvelope("cur", envelope.ID)
+				if err != nil || receipt.Outcome != "delivered" {
+					t.Fatalf("queue remained blocked: receipt=%+v err=%v", receipt, err)
+				}
+				log, err := os.ReadFile(f.run.team.Log)
+				if err != nil || strings.Count(string(log), "automatic title:") != 1 || !strings.Contains(string(log), "composer clear of staged title command") {
+					t.Fatalf("title outcome missing: %s, %v", log, err)
+				}
+				elapsed := time.Since(started)
+				if failure == "unconsumed" {
+					recoveryElapsed := elapsed - operationTimeout
+					if recoveryElapsed < 0 || recoveryElapsed >= compactAbortTimeout {
+						t.Fatalf("unconsumed submit fake elapsed=%s recovery=%s cleanup budget=%s", elapsed, recoveryElapsed, compactAbortTimeout)
+					}
+					t.Logf("fake elapsed=%s; recovery and queue delivery=%s; cleanup budget margin=%s", elapsed, recoveryElapsed, compactAbortTimeout-recoveryElapsed)
+				}
+			})
+		})
+	}
+}
+
+func TestAutoTitleCleanupPreservesChangedComposer(t *testing.T) {
+	for _, changed := range []string{"edited", "whitespace", "newline", "tail", "blocked", "clear unconsumed"} {
+		t.Run(changed, func(t *testing.T) {
+			synctest.Test(t, func(t *testing.T) {
+				f := autoTitleFixture(t, "codex", true)
+				f.input.submit = func(text string) error {
+					switch changed {
+					case "edited":
+						f.input.screen = screenWithText("READY", "› operator edit")
+					case "whitespace":
+						f.input.screen = screenWithText("READY", "› "+strings.ReplaceAll(text, " ", "  "))
+					case "newline":
+						f.input.screen = screenWithText("READY", "› "+text[:20], "  "+text[20:])
+						f.input.screen.Cursor = substrate.Cursor{Row: 2, Column: 5, Visible: true}
+					case "tail":
+						f.input.screen = screenWithText("READY", "› "+text, "  operator edit")
+					case "blocked":
+						f.input.screen = screenWithText("Would you like to run this command?", "› 1. Yes, proceed")
+					}
+					return errors.New("submit failed")
+				}
+				f.run.cmd = f.cmd
+				for range 2 {
+					if err := f.run.tickAgent("a", hookNotice{}, false); err != nil {
+						t.Fatal(err)
+					}
+				}
+				wantKeys := ""
+				if changed == "clear unconsumed" {
+					wantKeys = "C-u"
+				}
+				if got := strings.Join(f.input.keys, " "); got != wantKeys || f.input.submits != 1 {
+					t.Fatalf("input overwritten or title replayed: keys=%q submits=%d", got, f.input.submits)
+				}
+				log, err := os.ReadFile(f.run.team.Log)
+				if err != nil || !strings.Contains(string(log), "title cleanup unconfirmed") || strings.Count(string(log), "automatic title:") != 1 {
+					t.Fatalf("cleanup uncertainty not logged: %s, %v", log, err)
+				}
+			})
 		})
 	}
 }

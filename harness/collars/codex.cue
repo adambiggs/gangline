@@ -60,6 +60,7 @@ collar: {
 	actions: {
 		interrupt: {keys: ["Escape"]}
 		title: {text: "/rename {{title}}", submit: true}
+		title_clear: {keys: ["C-u"]}
 		compact: {
 			text: "/compact"
 			submit: true

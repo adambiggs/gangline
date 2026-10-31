@@ -167,3 +167,15 @@ func TestTitleActionOverlay(t *testing.T) {
 		}
 	}
 }
+
+func TestTitleClearRequiresKeysOnly(t *testing.T) {
+	for _, overlay := range []string{
+		`collar: actions: title_clear: {keys: []}`,
+		`collar: actions: title_clear: {text: "/rename retry"}`,
+		`collar: actions: title_clear: {submit: true}`,
+	} {
+		if _, err := LoadCustomCollar("codex", "custom.cue", []byte(overlay)); err == nil {
+			t.Errorf("invalid title clear accepted: %s", overlay)
+		}
+	}
+}
