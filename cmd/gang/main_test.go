@@ -134,23 +134,34 @@ func TestOptionErrorsStateTheAcceptedForm(t *testing.T) {
 	}
 }
 
-func TestSettingsUseXDGStateRoot(t *testing.T) {
-	cmd := command{
-		getenv: func(name string) string {
-			values := map[string]string{
-				"XDG_STATE_HOME":  "/state",
-				"XDG_CONFIG_HOME": "/config",
+func TestSettingsStateRootResolution(t *testing.T) {
+	for _, test := range []struct {
+		name string
+		env  map[string]string
+		want string
+	}{
+		{"home default", nil, "/workspace/example/.local/state/gangline"},
+		{"xdg default", map[string]string{"XDG_STATE_HOME": "/state"}, "/state/gangline"},
+		{"explicit root", map[string]string{"XDG_STATE_HOME": "/state", "GANG_STATE_ROOT": "/isolated"}, "/isolated"},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			cmd := command{
+				getenv: func(name string) string {
+					if name == "XDG_CONFIG_HOME" {
+						return "/config"
+					}
+					return test.env[name]
+				},
+				userHomeDir: func() (string, error) { return "/workspace/example", nil },
 			}
-			return values[name]
-		},
-		userHomeDir: func() (string, error) { return "/workspace/example", nil },
-	}
-	got, err := cmd.settings()
-	if err != nil {
-		t.Fatal(err)
-	}
-	if got.StateRoot != "/state/gangline" || got.ConfigDir != "/config/gangline" {
-		t.Fatalf("settings = %#v", got)
+			got, err := cmd.settings()
+			if err != nil {
+				t.Fatal(err)
+			}
+			if got.StateRoot != test.want || got.ConfigDir != "/config/gangline" {
+				t.Fatalf("state root = %q, want %q; config = %q, want /config/gangline", got.StateRoot, test.want, got.ConfigDir)
+			}
+		})
 	}
 }
 

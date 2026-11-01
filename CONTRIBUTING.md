@@ -69,6 +69,15 @@ prompt can refuse acceptance and leave its private socket path for review.
 On Linux, an unreachable systemd user bus skips the bus-dependent lifecycle
 check with its reason.
 
+Each live provider check selects its own temporary Gangline state root under
+`TMPDIR` (or the system temporary directory). Its binary, private Codex profile,
+private socket, and team state stay beneath that root; the caller's
+`GANG_STATE_ROOT` and default state directory are not used for fixtures.
+The sandbox must allow the selected temporary root, and its path must be short
+enough for a Unix socket. Setup reports access failures without changing sandbox
+permissions. Successful teardown removes the owned root; a native prompt or
+failed teardown retains it at the reported socket path for inspection.
+
 The site build needs the Node release pinned in [.nvmrc](.nvmrc) and npm.
 Select that release with your Node manager, then check the active version:
 

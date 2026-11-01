@@ -72,14 +72,23 @@ func testLiveProvider(t *testing.T, collar, cli, cheapest string) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	stateHome := os.Getenv("XDG_STATE_HOME")
-	if stateHome == "" {
-		stateHome = filepath.Join(home, ".local", "state")
+	// Select an owned Gangline state root before creating any fixtures. Keep
+	// every asset inside that root, never the caller's live default state.
+	// A short temporary path also keeps the private tmux socket addressable.
+	root, err := os.MkdirTemp("", "gang-provider-")
+	if err != nil {
+		t.Fatal(err)
 	}
-	// Gangline's own state directory, so an agent allowed to write Gangline
-	// state can run this lane.
-	scratch := filepath.Join(stateHome, "gangline", "provider-acceptance")
-	if err := os.MkdirAll(scratch, 0700); err != nil {
+	keepForOperator := false
+	t.Cleanup(func() {
+		if !keepForOperator {
+			if err := os.RemoveAll(root); err != nil {
+				t.Errorf("remove private test state: %v", err)
+			}
+		}
+	})
+	scratch := filepath.Join(root, "provider-acceptance")
+	if err := os.Mkdir(scratch, 0700); err != nil {
 		t.Fatal(err)
 	}
 	if cli == "codex" {
@@ -108,18 +117,6 @@ func testLiveProvider(t *testing.T, collar, cli, cheapest string) {
 			t.Skipf("codex authentication unavailable in isolated CODEX_HOME: %s", strings.TrimSpace(string(out)))
 		}
 	}
-	root, err := os.MkdirTemp(scratch, collar+"-")
-	if err != nil {
-		t.Fatal(err)
-	}
-	keepForOperator := false
-	t.Cleanup(func() {
-		if !keepForOperator {
-			if err := os.RemoveAll(root); err != nil {
-				t.Errorf("remove private test state: %v", err)
-			}
-		}
-	})
 	ctx, cancel := context.WithTimeout(context.Background(), liveProviderTimeout)
 	defer cancel()
 	binary := filepath.Join(scratch, "gang-"+collar)
@@ -145,10 +142,10 @@ func testLiveProvider(t *testing.T, collar, cli, cheapest string) {
 	if override := os.Getenv("GANGLINE_ACCEPTANCE_COLLARS"); override != "" {
 		collarDirectory = override
 	}
-	environment := append(withoutEnvironment(os.Environ(), "TMUX", "TMUX_PANE", "GANG_CONFIG_DIR", "GANG_SESSION", "GANG_STATE_ROOT", "GANG_TMUX_SOCKET", "GANG_COLLARS", "GANG_COLLAR", "GANGLINE_HITCH_ID", "GANG_AGENT_ID", "GANG_AGENT_NONCE", "GANG_AGENT_TOKEN", "GANG_LAUNCH_ARGS", "CODEX_HOME"),
+	environment := append(withoutEnvironment(os.Environ(), "TMUX", "TMUX_PANE", "GANG_TMUX", "GANG_CONFIG_DIR", "GANG_SESSION", "GANG_STATE_ROOT", "GANG_TMUX_SOCKET", "GANG_COLLARS", "GANG_COLLAR", "GANGLINE_HITCH_ID", "GANG_AGENT_ID", "GANG_AGENT_NONCE", "GANG_AGENT_TOKEN", "GANG_LAUNCH_ARGS", "CODEX_HOME"),
 		"GANG_CONFIG_DIR="+filepath.Join(root, "config"),
 		"GANG_SESSION="+session,
-		"GANG_STATE_ROOT="+filepath.Join(root, "state"),
+		"GANG_STATE_ROOT="+root,
 		"GANG_TMUX_SOCKET="+socket,
 		"GANG_COLLARS="+collarDirectory,
 		"GANG_COLLAR="+collar)
@@ -240,7 +237,7 @@ func testLiveProvider(t *testing.T, collar, cli, cheapest string) {
 			t.Fatalf("gang hitch: %v: %s %s\nstatus: %s\nscreen: %s", err, hitch, hitchDiagnostic, status, screen)
 		}
 	}
-	team, err := (store.Paths{Root: filepath.Join(root, "state")}).Team(session)
+	team, err := (store.Paths{Root: root}).Team(session)
 	if err != nil {
 		t.Fatal(err)
 	}
