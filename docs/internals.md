@@ -215,9 +215,21 @@ drop recovery. It can find observable descendants, including separate process
 groups; descendants already reparented out of the recorded tree may be missed.
 
 Provider errors can end a turn without a Stop hook. Tick recognizes such an
-error on screen through the collar's `capacity` primitive, which the Codex
-collar declares, and sends a continuation, backing off within the capacity
-budget. Native choice prompts remain the operator's decision.
+error through the collar's `capacity` primitive, which the Codex collar
+declares, and sends a continuation, backing off within the capacity budget.
+An attributed native failure identifies its session and turn even when tool
+output has scrolled the originating prompt off screen. Without that failure
+record, a known native turn requires its full witnessed, one-time envelope
+on screen; clients without turn identity require the visible originating
+prompt. Unknown failure identity withholds automatic recovery while ordinary
+queued messages remain deliverable.
+
+A continuation requires an idle, empty composer and remains bound to the
+failed turn when delivery is delayed. A newer submitted turn cancels it.
+Busy frames preserve the recovery budget; a successful native boundary or a
+verified new message ends recovery. The deadline stops further continuations
+and reports attention when capacity still blocks work, allowing an already
+running attempt to finish. Native choice prompts remain the operator's decision.
 
 ## Usage notices and scheduled wakes
 

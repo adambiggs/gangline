@@ -38,6 +38,7 @@ collar: {
  telemetry: {name: "codex-session-log"}
 		capacity: {name: "codex-terminal-capacity", params: {
 			error: "Selected model is at capacity. Please try a different model."
+			error_class: "server_overloaded"
 			retrying: "(?i)reconnecting|retrying|retry in"
 		}}
 		mid_turn: true

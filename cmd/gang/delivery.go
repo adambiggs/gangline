@@ -342,6 +342,18 @@ func (run *runtime) deliver(l *store.LockedAgent, a *core.Agent, e core.Envelope
 	if err == nil {
 		err = startupSubmitPossible(l.Paths, &e)
 	}
+	if err == nil && capacityEnvelope(e) {
+		// Paste settling can take long enough for native work to submit.
+		// Recheck its durable identity before Enter, not just before paste.
+		turn, turnErr := capacityTurn(l, *a)
+		if turnErr != nil {
+			err = turnErr
+		} else if turn.Fingerprint() != "" && e.ID != core.EnvelopeID("capacity-"+turn.Fingerprint()) {
+			err = fmt.Errorf("capacity continuation withheld after another native turn submitted; pasted input may remain in the composer")
+		} else if !run.cmd.now().Before(a.Capacity.Deadline) {
+			err = fmt.Errorf("capacity continuation withheld at its deadline; pasted input may remain in the composer")
+		}
+	}
 	submitted := false
 	if err == nil {
 		submitted = true
@@ -556,6 +568,17 @@ func (run *runtime) drainLocked(l *store.LockedAgent, a *core.Agent, target core
 		if next == nil {
 			return result, pending, nil
 		}
+		if capacityEnvelope(*next) {
+			// A delayed synthetic continuation must not outrank newly due
+			// work. Ordinary delivery can use a free mid-turn composer too.
+			for i := range pending {
+				e := &pending[i]
+				if !capacityEnvelope(*e) && !e.NotBefore.After(run.cmd.now()) && (e.NotAfter.IsZero() || e.NotAfter.After(run.cmd.now())) {
+					next = e
+					break
+				}
+			}
+		}
 		if b == nil {
 			c, err = loadCollar(a.Collar, run.settings)
 			if err != nil {
@@ -592,6 +615,18 @@ func (run *runtime) drainLocked(l *store.LockedAgent, a *core.Agent, target core
 				}
 			}
 			return result, pending, nil
+		}
+		if capacityEnvelope(*next) {
+			ready, cancelled, err := run.capacityInput(l, a, b, c, *next)
+			if err != nil {
+				return result, pending, err
+			}
+			if cancelled {
+				continue
+			}
+			if !ready {
+				return result, pending, nil
+			}
 		}
 		outcome, withdrawn, err := run.deliver(l, a, *next, b, c, v.Owner)
 		if next.ID == target {

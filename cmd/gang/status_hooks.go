@@ -129,6 +129,8 @@ func (run *runtime) statusCaptureGap(a core.Agent, c harness.Collar) string {
 		return "compaction refusal and continuation validation"
 	case a.Capacity.Fingerprint != "":
 		return "capacity retry screen validation"
+	case a.Native.FailedTurn != "" && a.Native.FailedTurn == a.Native.TurnID && harness.IsCapacityFailure(c, a.Native.TurnFailure):
+		return "native capacity failure needs idle composer validation"
 	case c.Primitives.Telemetry == nil:
 		return "collar telemetry requires the screen"
 	case a.Native.HookKind == "permission-requested" && c.Primitives.Blocked.Params["permission_hook"] == "screen":
@@ -172,9 +174,6 @@ func (run *runtime) observeHookStatus(l *store.LockedAgent, a *core.Agent) error
 }
 
 func (run *runtime) tickHookStatus(l *store.LockedAgent, a *core.Agent, c harness.Collar, notice hookNotice, batch statusHookBatch) error {
-	if err := run.refreshNative(l, a, c); err != nil {
-		return err
-	}
 	if err := run.acceptContextReadings(a, c, notice.Readings); err != nil {
 		return err
 	}

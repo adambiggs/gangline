@@ -102,7 +102,7 @@ func TestCodexTurnErrorAttribution(t *testing.T) {
 		want                   core.Activity
 		evidence               string
 	}{
-		{"capacity", "t1", "server_overloaded", core.Unknown, "native turn failed: server_overloaded: Selected model is at capacity."},
+		{"capacity", "t1", "server_overloaded", core.Idle, "native turn ended on provider capacity: server_overloaded: Selected model is at capacity."},
 		{"older turn", "t2", "cyber_policy", core.Idle, ""},
 	} {
 		t.Run(tc.name, func(t *testing.T) {

@@ -98,7 +98,22 @@ func (run *runtime) observeScreen(l *store.LockedAgent, a *core.Agent, c harness
 	}
 	if a.Native.TurnFailure != "" {
 		activity, evidence = turnFailureActivity(a.Native.TurnFailure)
+		if harness.IsCapacityFailure(c, a.Native.TurnFailure) && basis.Screen == "idle" {
+			activity, evidence = core.Idle, "native turn ended on provider capacity: "+a.Native.TurnFailure
+			if !a.Capacity.Deadline.IsZero() && !run.cmd.now().Before(a.Capacity.Deadline) {
+				activity, evidence = core.Wedged, "provider capacity recovery deadline elapsed"
+			}
+		}
 		basis.Rule = "turn-failure"
+	}
+	if a.Capacity.Fingerprint != "" && a.LastFailed == core.EnvelopeID("capacity-"+a.Capacity.Fingerprint) {
+		receipt, err := l.Paths.ReadEnvelope("failed", a.LastFailed)
+		if err != nil {
+			return false, err
+		}
+		if receipt.Outcome == "unverified" {
+			activity, evidence, basis.Rule = core.Unknown, "capacity continuation submission unverified: "+receipt.Reason, "unverified-input"
+		}
 	}
 	if a.ScreenFingerprint != fingerprint {
 		a.ScreenFingerprint, a.ScreenSince = fingerprint, run.cmd.now()

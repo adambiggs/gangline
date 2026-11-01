@@ -2,6 +2,7 @@ package harness
 
 import (
 	"crypto/sha256"
+	"errors"
 	"fmt"
 	"regexp"
 	"strings"
@@ -14,10 +15,42 @@ type Capacity struct {
 	Evidence    string
 }
 
+var ErrCapacityIdentity = errors.New("terminal capacity failure identity is unknown")
+
+type CapacityTurn struct {
+	SessionID, TurnID, Failure, Prompt string
+}
+
+func (turn CapacityTurn) Fingerprint() string {
+	if turn.SessionID == "" || turn.TurnID == "" {
+		return ""
+	}
+	digest := sha256.Sum256([]byte("native\x00" + turn.SessionID + "\x00" + turn.TurnID))
+	return fmt.Sprintf("%x", digest)
+}
+
 // DetectCapacity requires the final native history item and its visible user
 // prompt, not an error anywhere in scrollback. A clipped prompt cannot identify
 // a fresh failure, so it is unknown rather than permission to repeat input.
 func DetectCapacity(collar Collar, screen substrate.Screen) (Capacity, bool, error) {
+	return DetectCapacityForTurn(collar, screen, CapacityTurn{})
+}
+
+// IsCapacityFailure matches only the failure declared by this collar. Native
+// error classes survive changes to the provider's explanatory text.
+func IsCapacityFailure(collar Collar, reason string) bool {
+	p := collar.Primitives.Capacity
+	if p == nil || reason == "" {
+		return false
+	}
+	class := p.Params["error_class"]
+	return reason == p.Params["error"] || class != "" && (reason == class || strings.HasPrefix(reason, class+": "))
+}
+
+// DetectCapacityForTurn uses an attributed native failure when a turn identity
+// is available. A newer or unfinished turn must not inherit an old screen
+// error. Legacy clients without turn identity retain the visible-prompt check.
+func DetectCapacityForTurn(collar Collar, screen substrate.Screen, turn CapacityTurn) (Capacity, bool, error) {
 	primitive := collar.Primitives.Capacity
 	if primitive == nil {
 		return Capacity{}, false, nil
@@ -49,6 +82,12 @@ func DetectCapacity(collar Collar, screen substrate.Screen) (Capacity, bool, err
 	if retrying.MatchString(strings.Join(lines[composer+1:], "\n")) {
 		return Capacity{}, false, nil
 	}
+	if turn.TurnID != "" && turn.Failure != "" {
+		if turn.SessionID == "" || !IsCapacityFailure(collar, turn.Failure) {
+			return Capacity{}, false, nil
+		}
+		return Capacity{Fingerprint: turn.Fingerprint(), Evidence: turn.Failure}, true, nil
+	}
 
 	last := composer - 1
 	for last >= 0 && strings.TrimSpace(lines[last]) == "" {
@@ -73,11 +112,21 @@ func DetectCapacity(collar Collar, screen substrate.Screen) (Capacity, bool, err
 		prompt--
 	}
 	if prompt < 0 {
-		return Capacity{}, false, fmt.Errorf("terminal capacity error has no visible originating prompt; failure identity is unknown")
+		return Capacity{}, false, fmt.Errorf("%w: no visible originating prompt", ErrCapacityIdentity)
 	}
 	identity := strings.Join(strings.Fields(strings.Join(lines[prompt:errorStart], " ")), " ")
 	if identity == "›" || strings.Contains(identity, "[Pasted Content") || (strings.Contains(identity, "[gang:") && !strings.Contains(identity, "[/gang:")) {
-		return Capacity{}, false, fmt.Errorf("terminal capacity originating prompt is clipped or collapsed; failure identity is unknown")
+		return Capacity{}, false, fmt.Errorf("%w: originating prompt is clipped or collapsed", ErrCapacityIdentity)
+	}
+	if turn.TurnID != "" {
+		// A one-time envelope binds this visible history to the current
+		// submit witness. Repeated keyboard text cannot distinguish turns.
+		prompt := strings.Join(strings.Fields(turn.Prompt), " ")
+		opener := regexp.MustCompile(`\[gang:([^\]# ]+)#([0-9a-f]{16})( [^\]]+)?\]`).FindStringSubmatch(prompt)
+		if turn.SessionID == "" || len(opener) == 0 || !strings.Contains(prompt, "[/gang:"+opener[1]+"#"+opener[2]+"]") || !strings.HasPrefix(identity, "› "+prompt) {
+			return Capacity{}, false, fmt.Errorf("%w: visible prompt does not identify the current submitted envelope", ErrCapacityIdentity)
+		}
+		return Capacity{Fingerprint: turn.Fingerprint(), Evidence: errorText}, true, nil
 	}
 	digest := sha256.Sum256([]byte(identity + "\n" + errorText))
 	return Capacity{Fingerprint: fmt.Sprintf("%x", digest), Evidence: errorText}, true, nil

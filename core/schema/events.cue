@@ -29,7 +29,7 @@ import "time"
 })
 #Basis: close({
  screen: "blocked" | "compacting" | "idle" | "busy" | "unsubmitted" | "unreadable" | "unread"
- rule: "screen" | "open-turn" | "interrupt-pending" | "compaction-record" | "turn-failure" | "wedge" | "probe-failure" | "permission-request" | "native-hook"
+ rule: "screen" | "open-turn" | "interrupt-pending" | "compaction-record" | "turn-failure" | "wedge" | "probe-failure" | "permission-request" | "native-hook" | "unverified-input"
  compaction?: "queued" | "submitted" | "completed" | "failed" | "unverified"
 })
 #Binding: close({session_id: #ID, previous_session_id?: #ID, collar: #ID, hitched_by?: #ID})

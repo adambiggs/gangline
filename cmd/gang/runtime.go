@@ -523,7 +523,15 @@ func (run *runtime) finishInput(l *store.LockedAgent, a *core.Agent, e core.Enve
 	if err := run.record(*a, core.Event{Type: map[string]string{"accepted": "delivery_accepted", "delivered": "delivery_succeeded", "failed": "delivery_failed", "unverified": "delivery_unverified"}[outcome], ID: string(e.ID), Reason: reason}); err != nil {
 		return err
 	}
-	return run.apply(l, a, core.Event{Type: "input_finished", ID: string(e.ID), Status: outcome, Reason: reason})
+	if err := run.apply(l, a, core.Event{Type: "input_finished", ID: string(e.ID), Status: outcome, Reason: reason}); err != nil {
+		return err
+	}
+	// Verified new input takes over the work. A queued or uncertain receipt
+	// cannot end recovery, and its own continuation keeps the same budget.
+	if outcome == "delivered" && a.Capacity.Fingerprint != "" && e.ID != core.EnvelopeID("capacity-"+a.Capacity.Fingerprint) {
+		return run.apply(l, a, core.Event{Type: "capacity_cleared"})
+	}
+	return nil
 }
 
 func outsideEnvelopeObservation(outside string) string {

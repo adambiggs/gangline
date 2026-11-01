@@ -60,6 +60,9 @@ func (run *runtime) tickAgent(id core.HitchID, notice hookNotice, wait bool) (re
 	if a.Status == core.Failed {
 		return run.mark(a)
 	}
+	if err := run.refreshNative(l, &a, c); err != nil {
+		return err
+	}
 	gap := run.statusCaptureGap(a, c)
 	if gap == "" {
 		needed, err := run.wakeNeedsScreen(a, hooks)
@@ -165,9 +168,6 @@ func (run *runtime) tickAgent(id core.HitchID, notice hookNotice, wait bool) (re
 			return err
 		}
 	}
-	if err := run.refreshNative(l, &a, c); err != nil {
-		return err
-	}
 	if notice.Kind == "compaction-finished" && !notice.At.IsZero() {
 		if err := run.acceptContextReadings(&a, c, []core.Reading{{Kind: "compaction-finished", Source: "native-hook", At: &notice.At}}); err != nil {
 			return err
@@ -211,8 +211,18 @@ func (run *runtime) tickAgent(id core.HitchID, notice hookNotice, wait bool) (re
 	if err := run.startCompaction(l, &a); err != nil {
 		return err
 	}
-	capacity, found, err := harness.DetectCapacity(c, screen)
+	turn, err := capacityTurn(l, a)
 	if err != nil {
+		return err
+	}
+	capacity, found, err := harness.DetectCapacityForTurn(c, screen, turn)
+	if errors.Is(err, harness.ErrCapacityIdentity) {
+		// Unknown failure identity withholds automatic recovery, not ordinary
+		// mail whose composer and submission are independently validated.
+		if err := run.apply(l, &a, core.Event{Type: "activity_observed", Activity: core.Unknown, Reason: err.Error()}); err != nil {
+			return err
+		}
+	} else if err != nil {
 		return run.pendingInput(l, &a, b, c, err)
 	}
 	if a.InputOutage != nil {
@@ -260,7 +270,7 @@ func (run *runtime) tickAgent(id core.HitchID, notice hookNotice, wait bool) (re
 				}
 			}
 		}
-	} else if a.Capacity.Fingerprint != "" && a.Activity == core.Busy {
+	} else if a.Capacity.Fingerprint != "" && a.Native.TurnFailure == "" && !a.Native.FinishedAt.Before(a.Native.SubmittedAt) && !a.Native.FinishedAt.IsZero() {
 		if err := run.apply(l, &a, core.Event{Type: "capacity_cleared"}); err != nil {
 			return err
 		}

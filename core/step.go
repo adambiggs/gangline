@@ -106,6 +106,9 @@ func Step(agent Agent, event Event) (Agent, []Effect) {
 			agent.Capacity.NextAt = event.At.Add(RetryDelay(agent.Capacity.Attempts))
 			agent.Capacity.Submitted = false
 		}
+		if !event.At.Before(agent.Capacity.Deadline) && agent.LastFailed != EnvelopeID("capacity-"+agent.Capacity.Fingerprint) {
+			agent.Activity, agent.Evidence = Wedged, "provider capacity recovery deadline elapsed"
+		}
 	case "capacity_submitted":
 		agent.Capacity.Submitted = true
 		agent.Capacity.Attempts++
@@ -124,9 +127,6 @@ func Step(agent Agent, event Event) (Agent, []Effect) {
 		if c := agent.Compaction; c != nil && c.Status == "submitted" && !event.At.Before(c.Deadline) {
 			c.Status, c.Reason = "unverified", CompactionUnconfirmed
 			agent.Activity, agent.Evidence = Unknown, c.Reason
-		}
-		if !agent.Capacity.Deadline.IsZero() && !event.At.Before(agent.Capacity.Deadline) {
-			agent.Activity, agent.Evidence = Wedged, "provider capacity recovery deadline elapsed"
 		}
 	default:
 		return agent, nil
