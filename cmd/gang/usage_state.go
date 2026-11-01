@@ -703,6 +703,15 @@ func (run *runtime) flushUsageWork() error {
 			if s.At.IsZero() || s.At.After(now) {
 				continue
 			}
+			if recent := state.Recent[key]; recent.ID != "" {
+				// Delivery occupies the caller's outcome slot. Keep a due
+				// follow-up out of the inbox until that outcome is known.
+				if !recent.CapRejected && !recent.TurnFailed {
+					continue
+				}
+				delete(state.Recent, key)
+				events = append(events, wakeEvent("snooze_cleared", recent, now, "superseded by "+string(s.ID)))
+			}
 			if _, exists := active[s.RecipientID]; !exists {
 				if s.RecipientID != "" && s.Submission != "" {
 					id, err := randomID("snooze")

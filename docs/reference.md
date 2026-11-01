@@ -562,13 +562,17 @@ native five-hour or weekly reset from that agent's collar, selecting the
 most-used window. `--at` accepts a duration, local `HH:MM`, or RFC3339
 timestamp. `--note` is delivered with the wake. A manual wake notice names
 its ID, original caller and due time. A pending wake is durable;
-repeating the command replaces it until it is submitted. The due wake is sent
+repeating the command replaces it until it is submitted. After a wake is
+delivered, the agent can schedule a follow-up while its native turn runs.
+The follow-up waits for the earlier wake's outcome before delivery, even if
+its due time passes; both wakes appear in `--status`. The due wake is sent
 to the caller, or the active lead if the caller is gone. `--status` shows
 scheduled, queued, submitted, or failed wakes. For the lead it also lists
 every other agent's wake with its due time and note, and uncertain usage
 notices; `--clear ID` removes a notice or a wake routed to the lead. An
-agent can clear its own wake with `--clear`. A wake still queued
-for native input is withdrawn from the recipient's inbox; clearing cannot
+agent can clear both its scheduled wake and retained outcome with `--clear`.
+A wake still queued for native input is withdrawn from the recipient's inbox;
+clearing cannot
 retract input the harness already accepted.
 
 The team log records each wake stage under the agent that scheduled it, so

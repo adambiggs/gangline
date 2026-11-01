@@ -218,9 +218,10 @@ func (cmd command) snooze(args []string) error {
 				} else {
 					rows = append(rows, fmt.Sprintf("%s\t%s", current.ID, current.At.UTC().Format(time.RFC3339)))
 				}
-			} else if current := state.Recent[key]; current.ID != "" {
+			}
+			if current := state.Recent[key]; current.ID != "" {
 				rows = append(rows, fmt.Sprintf("%s\t%s", current.ID, snoozeStatusText(current, false)))
-			} else if candidate := state.AutoCandidates[key]; !candidate.At.IsZero() {
+			} else if candidate := state.AutoCandidates[key]; state.Snoozes[key].ID == "" && !candidate.At.IsZero() {
 				rows = append(rows, "provider cap unconfirmed; awaiting fresh native usage")
 			}
 			if callerIsLead {
@@ -398,19 +399,20 @@ func (cmd command) snooze(args []string) error {
 		if current.RecipientID != "" && current.Submission != "" {
 			return refuseError("previous wake is already submitted; inspect it with --status or clear it")
 		}
-		if recent := state.Recent[key]; recent.ID != "" && !recent.CapRejected && !recent.TurnFailed {
-			return refuseError("previous wake has an unresolved native outcome; inspect it with --status or clear it")
-		}
 		if err := withdraw(current); err != nil {
 			return err
 		}
-		for _, old := range []usageSnooze{current, state.Recent[key]} {
+		replaced := []usageSnooze{current}
+		if recent := state.Recent[key]; recent.CapRejected || recent.TurnFailed {
+			replaced = append(replaced, recent)
+			delete(state.Recent, key)
+		}
+		for _, old := range replaced {
 			if old.ID != "" {
 				events = append(events, wakeEvent("snooze_cleared", old, now, "replaced by "+string(s.ID)))
 			}
 		}
 		events = append(events, wakeEvent("snooze_scheduled", s, now, reason))
-		delete(state.Recent, key)
 		state.Snoozes[key] = s
 		return nil
 	}); err != nil {
