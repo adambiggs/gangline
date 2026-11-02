@@ -313,3 +313,26 @@ func TestNativeCommitAndTreeWitnessCoverageRemainDistinct(t *testing.T) {
 		t.Fatalf("commit witness: %+v", got)
 	}
 }
+
+func TestNativeCustomToolContentWitness(t *testing.T) {
+	f := fixtureChain()
+	native := string(f.files["native.json"])
+	var changed []string
+	for _, line := range strings.Split(strings.TrimSuffix(native, "\n"), "\n") {
+		var r map[string]any
+		_ = json.Unmarshal([]byte(line), &r)
+		if r["type"] == "response_item" {
+			p := r["payload"].(map[string]any)
+			p["type"] = "custom_tool_call_output"
+			p["output"] = []map[string]string{{"type": "input_text", "text": "test metadata"}, {"type": "input_text", "text": "IMPLEMENTATION_COMMIT " + f.get("code").Code.Commit}}
+			b, _ := json.Marshal(r)
+			line = string(b)
+		}
+		changed = append(changed, line)
+	}
+	f.artifact("native", []byte(strings.Join(changed, "\n")+"\n"))
+	got := f.result()
+	if got.Status != "pass" || got.Coverage["session_code"] != "native_tool_result_commit" {
+		t.Fatalf("real custom-tool shape not joined: %+v", got)
+	}
+}

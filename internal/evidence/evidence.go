@@ -580,9 +580,9 @@ func (v *verifier) witness(id string, c *Code, r *Run) {
 		if entry.Type == "event_msg" && p.Type == "task_started" {
 			active = p.Turn
 		}
-		if active == r.Turn && c.NativeCall != "" && entry.Type == "response_item" && p.Type == "function_call_output" && p.Call == c.NativeCall {
-			var output string
-			if json.Unmarshal(p.Output, &output) == nil {
+		if active == r.Turn && c.NativeCall != "" && entry.Type == "response_item" && (p.Type == "function_call_output" || p.Type == "custom_tool_call_output") && p.Call == c.NativeCall {
+			output, ok := nativeToolText(p.Output)
+			if ok {
 				for _, token := range strings.FieldsFunc(output, func(r rune) bool { return !((r >= 'a' && r <= 'f') || (r >= '0' && r <= '9')) }) {
 					if token == c.Commit {
 						v.result.Coverage["session_code"] = "native_tool_result_commit"
@@ -600,4 +600,27 @@ func (v *verifier) witness(id string, c *Code, r *Run) {
 		}
 	}
 	v.issue(id, "incomplete", "native tool result does not witness code identity in selected turn")
+}
+
+// Codex stores function results as strings and custom-tool results as typed
+// input-text blocks. Other content types do not establish a textual witness.
+func nativeToolText(raw json.RawMessage) (string, bool) {
+	var text string
+	if json.Unmarshal(raw, &text) == nil {
+		return text, true
+	}
+	var blocks []struct {
+		Type string `json:"type"`
+		Text string `json:"text"`
+	}
+	if json.Unmarshal(raw, &blocks) != nil {
+		return "", false
+	}
+	var parts []string
+	for _, block := range blocks {
+		if block.Type == "input_text" {
+			parts = append(parts, block.Text)
+		}
+	}
+	return strings.Join(parts, "\n"), len(parts) > 0
 }
