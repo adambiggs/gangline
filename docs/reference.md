@@ -717,13 +717,42 @@ executions, reviews and CI attempts distinct IDs even when their bytes match.
 | Kind / payload | Fields and checks |
 | --- | --- |
 | `artifact` | `path`, `sha256`, `size`, `status`; optional `checkpoint` names an existing checkpoint. `available` bytes must match their digest and size. `withheld` and `unavailable` sources remain incomplete and are not opened and their path/content is not printed. Checkpoint identifiers are displayed as unverified metadata; they do not replace the bytes or prove code identity. |
-| `run` | `native_artifact`, `harness`, `session`, `turn`, `implementer`; optional `requested_model` and `requested_effort` are imported assertions. The existing Codex reader checks session identity and a successful terminal record for the selected turn. Other formats remain incomplete. Observed model is separate from requested model; backend effort remains unverified. |
+| `run` | `native_artifact`, `harness`, `session`, `turn`, `implementer`; optional `requested_model` and `requested_effort` are imported assertions. The Codex reader checks session identity and a successful terminal record for the selected turn. `harness: claude` reads a retained Claude Code transcript with `sessionId` and selects `turn` by `promptId`; the supported completion and witness rules are below. Other formats remain incomplete. Observed model is separate from requested model; backend effort remains unverified. |
 | `test` | `run`, `result_artifact`. The structured runner result must name the same run and tested input tree, with a successful numeric subprocess exit. Printed success or the outer worker's exit is insufficient. |
 | `code` | `run`, `native_call`, `repository` (`owner/repo`), `commit`, `commit_artifact`, `tree`, and arrays `tests`, `reviews`, `ci`. `target_code` selects this record. The raw Git commit object must hash to the commit and name the tested tree. The selected native turn must contain a tool result with `native_call` whose output names the exact commit or tree. Coverage distinguishes `native_tool_result_commit` from `native_tool_result_tree`. Only a commit match witnesses that commit in the session; a tree match witnesses tested content and does not establish that the session made the commit. Neither authenticates authorship. Record all required checks in the arrays; an empty array is incomplete. |
 | `review` | `result_artifact`. The reviewer attestation must target the exact repository/commit, approve it without unresolved findings, name a reviewer distinct from the implementer after whitespace/case normalization, and retain its report. |
 | `ci` | `jobs_artifact`, `run_id`, `attempt`, `required_jobs`. Retain the GitHub jobs API response. Each required job must have a unique matching name, repository URL, run/attempt, source commit, completed status and successful conclusion. A local gate is not this evidence. |
 | `deployment` | `code`, `result_artifact`. With `--require deployment`, join a structured readback to the selected code and assignment; mismatched candidate, installed and accepted revisions or digests fail. |
 | `usage` | `summary_artifact`, `charges_artifact`; optional `repair_of` names a preceding usage record, and `requested_model`/`requested_effort` are caller-declared request metadata. All imported phases must name one native session. Charge IDs must belong to the phase's declared generations and timestamps must fall within its boundaries. |
+
+For a retained Claude Code transcript, the selected main-session prompt must
+have a matching `promptId`, user role and text content. Its assistant
+`tool_use.id` and user `tool_result.tool_use_id` must match `native_call` within
+that prompt. The result must not be an error; only string content or `text`
+blocks can witness a code identity. Prompt text, tool arguments, assistant
+answers and tool results from other prompts or sidechains cannot supply the
+witness. Compaction summaries do not start a selected prompt.
+
+Success requires an assistant `stop_reason: end_turn` followed by a native
+`system` / `turn_duration` boundary for that prompt. EOF, a status-line sample,
+a stop-hook summary, a tool result alone or a maximum-token stop is insufficient.
+A later continuation of the same prompt must establish its own completed
+sequence. Relevant records require the selected `sessionId` and timestamps;
+conflicting UUID records fail, identical repeats coalesce. Records are ordered
+by timestamp, as queued prompts can be appended out of order. The shared
+transcript reader bounds the inspected tail; an evicted prompt remains
+incomplete rather than being inferred from later output. A partial final line
+also leaves the evidence incomplete.
+
+For Claude, the view's `native` object names the selected harness/session/prompt
+and tool call, available request/message/record IDs, and the tool result's end
+byte in the retained artifact. It never prints prompt, argument or output
+bodies. Native raw bytes, including usage and unknown fields, remain in the
+artifact; this adapter does not derive billing or backend effort from them.
+The existing test/tree, independent review and matching hosted-CI requirements
+still apply. An adapter passing synthetic fixtures does not establish a real
+Claude task's full chain or installed-version format coverage; retain and enroll
+that task's actual artifacts before making those claims.
 
 A deployment result has `version: 1`, `id` matching the deployment record,
 `assignment`, `repository`, an RFC3339 `observed_at`, and these fields:

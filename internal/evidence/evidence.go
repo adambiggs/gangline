@@ -135,6 +135,7 @@ type Check struct {
 	Status   string   `json:"status"`
 }
 type Result struct {
+	Native     *NativeView       `json:"native,omitempty"`
 	Deployment *DeploymentView   `json:"deployment,omitempty"`
 	Usage      *UsageResult      `json:"usage,omitempty"`
 	Checks     []Check           `json:"checks"`
@@ -341,8 +342,12 @@ func Verify(m Manifest, assignment, stage string, read func(string, int64) ([]by
 	v.code(target.ID, c)
 	run, ok := v.record(c.Run, "run")
 	if ok {
-		v.run(run.ID, run.Run)
-		v.witness(target.ID, c, run.Run)
+		if run.Run.Harness == "claude" {
+			v.claudeRun(run.ID, c, run.Run)
+		} else {
+			v.run(run.ID, run.Run)
+			v.witness(target.ID, c, run.Run)
+		}
 	}
 	if len(c.Tests) == 0 {
 		v.issue(target.ID, "incomplete", "tested tree evidence missing")
