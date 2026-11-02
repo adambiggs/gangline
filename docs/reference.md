@@ -604,3 +604,62 @@ and [internals](internals.md#watchdog).
 | `3` | Refused operation. |
 | `4` | Native harness needs attention, including a send with a failed delivery receipt. |
 | `5` | Unknown result, such as input without a confirmed receipt. |
+
+## Private evidence joins
+
+`gang evidence verify --assignment ID [--require ci] MANIFEST.json` checks an
+explicit local evidence chain. `gang evidence show` takes the same arguments
+and prints the same JSON view. Neither command captures a session, installs
+hooks, runs a recorded command, fetches CI, or changes live team state.
+Artifacts must be regular files reachable within the manifest's directory;
+paths and symlinks escaping that directory are refused. Artifact reads stop
+after their declared size plus one byte; oversized or changed content fails
+integrity. The manifest input is bounded to 4 MiB.
+
+`verify` exits zero only for `pass`, refused for `fail`, and unknown for
+`incomplete` or `not_exercised`. `show` exits zero when it successfully produces
+the view; inspect its `status` to learn the evidence verdict. Missing artifacts,
+partial native records and absent results never become a passing chain.
+Only the through-CI stage is supported. Deployment, cost, retention, local
+restore and backend-effort coverage remain explicitly unavailable or not
+exercised; they cannot be inferred from a source check.
+
+A manifest has `version`, `scope`, `target_code`, and `records`. The scope holds
+`host`, `team_instance`, `hitch` and `assignment` identities. Each record has a
+unique `id`, a `kind`, `provenance` (`manual_import` or `producer_export`), and
+one corresponding payload. Optional `required_checks.tests` lists exact argv
+arrays; `required_checks.jobs` lists required CI job names. The verifier checks
+these when supplied and reports the accepted argv/cwd and CI run/attempt/jobs.
+Without such a policy it reports `required_checks: caller_declared`; it does
+not discover repository requirements. Use the schema version accepted by the installed
+reader; unsupported versions and conflicting duplicate record identities fail.
+Identical duplicate imports do not create another attempt. Give distinct test
+executions, reviews and CI attempts distinct IDs even when their bytes match.
+
+| Kind / payload | Fields and checks |
+| --- | --- |
+| `artifact` | `path`, `sha256`, `size`, `status`; optional `checkpoint` names an existing checkpoint. `available` bytes must match their digest and size. `withheld` and `unavailable` sources remain incomplete and are not opened and their path/content is not printed. Checkpoint identifiers are displayed as unverified metadata; they do not replace the bytes or prove code identity. |
+| `run` | `native_artifact`, `harness`, `session`, `turn`, `implementer`; optional `requested_model` and `requested_effort` are imported assertions. The existing Codex reader checks session identity and a successful terminal record for the selected turn. Other formats remain incomplete. Observed model is separate from requested model; backend effort remains unverified. |
+| `test` | `run`, `result_artifact`. The structured runner result must name the same run and tested input tree, with a successful numeric subprocess exit. Printed success or the outer worker's exit is insufficient. |
+| `code` | `run`, `native_call`, `repository` (`owner/repo`), `commit`, `commit_artifact`, `tree`, and arrays `tests`, `reviews`, `ci`. `target_code` selects this record. The raw Git commit object must hash to the commit and name the tested tree. The selected native turn must contain a tool result with `native_call` whose output names the exact commit or tree. Coverage distinguishes `native_tool_result_commit` from `native_tool_result_tree`. Only a commit match witnesses that commit in the session; a tree match witnesses tested content and does not establish that the session made the commit. Neither authenticates authorship. Record all required checks in the arrays; an empty array is incomplete. |
+| `review` | `result_artifact`. The reviewer attestation must target the exact repository/commit, approve it without unresolved findings, name a reviewer distinct from the implementer after whitespace/case normalization, and retain its report. |
+| `ci` | `jobs_artifact`, `run_id`, `attempt`, `required_jobs`. Retain the GitHub jobs API response. Each required job must have a unique matching name, repository URL, run/attempt, source commit, completed status and successful conclusion. A local gate is not this evidence. |
+
+Structured test results have `version`, `id`, `run`, `input_tree`, `argv`, `cwd`,
+`exit_code`, `outcome` and `output_artifact`. The result ID matches the test
+record; successful outcome is `exited` with numeric exit zero. Obtain these
+values from the actual subprocess wrapper. Include all relevant tracked and
+untracked test inputs in the recorded Git tree. A missing exit status remains
+unknown. Do not put credentials in argv or environment records.
+
+Structured review results have `version`, `id`, `repository`, `commit`,
+`reviewer`, `verdict`, `unresolved` and `report_artifact`. Approval is `approved`
+with an empty unresolved-findings array. A review of another revision does not
+approve the target. Retain the original report and its repairs.
+
+This is verification of explicitly imported local evidence, not source
+authentication. Hashes establish byte integrity; they cannot prove that a
+runner, reviewer or CI service authored a file. Retain producer provenance and
+fetch hosted CI through an authorized route. The verifier does not infer that
+your required-check list is complete. The JSON view lists checked source
+locators and missing/broken edges so that another reviewer can refute the join.

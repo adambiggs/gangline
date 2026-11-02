@@ -267,3 +267,27 @@ sbx exec -it -e "TERM=$TERM" team -- gang attach
 
 `gang down` removes the team directory with its registered senders, so a
 service that sends with `--as NAME` registers NAME again after each `gang up`.
+
+## Retain and inspect an implementation's evidence
+
+Use existing native artifacts or verified checkpoint exports and a private
+manifest outside the team state directory and public checkout. Restrict the
+directory and file permissions to the owning account. Collect only the
+explicitly authorized task's material. A private location does not authorize
+copying credentials or unrelated sessions. Mark excluded content `withheld`;
+use only an authorized redacted derivative where required. Destination privacy
+checks do not establish that raw content is safe to disclose.
+
+Keep a snapshot of the exact native bytes, actual structured test result and
+output, raw Git commit object, independent review result/report, and hosted CI
+jobs response. Author the small manifest from those sources, recording manual
+imports honestly. See [private evidence joins](reference.md#private-evidence-joins)
+for fields and verdicts. Existing checkpoint IDs may be attached to artifact
+records; there is no replacement checkpoint or resume mechanism.
+
+Verify the through-CI chain before claiming that milestone. Inspect `show` to
+find incomplete edges and the supporting byte digests. Keep the manifest and
+its referenced artifacts together: these commands do not archive them or
+protect them from teardown, cleanup or expiry. They also do not establish an
+installed deployment or an offsite backup. Preserve delivery receipts and
+native identity separately; missing success evidence never authorizes replay.

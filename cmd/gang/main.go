@@ -240,6 +240,9 @@ func (cmd command) execute(args []string) (result error) {
 	}
 
 	name, arguments := args[0], args[1:]
+	if name == "evidence" {
+		return cmd.evidence(arguments)
+	}
 	team, arguments, err := takeTeam(name, arguments)
 	if err != nil {
 		return err
