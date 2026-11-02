@@ -70,7 +70,7 @@ printf 'synthetic team\n' > "$GANG_STATE_ROOT/teams/$GANG_SESSION/fixture"
 case "$1" in
  models)
   if [ "$FIXTURE_MODE" != prompt ]; then printf 'synthetic model failure\n' >&2; exit 42; fi
-  printf 'sonnet\tlow\ngpt-6-luna\tlow\n';;
+  printf 'sonnet\tlow\ngpt-5.6-luna\tlow\n';;
  hitch) printf 'synthetic trust prompt\n' >&2; exit 42;;
  status|capture) printf 'synthetic trust prompt\n';;
  down)

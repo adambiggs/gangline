@@ -24,7 +24,7 @@ import (
 const liveProviderTimeout = 60 * time.Second
 
 func TestLiveClaudeCode(t *testing.T) { testLiveProvider(t, "claude", "claude", "sonnet") }
-func TestLiveCodex(t *testing.T)      { testLiveProvider(t, "codex", "codex", "gpt-6-luna") }
+func TestLiveCodex(t *testing.T)      { testLiveProvider(t, "codex", "codex", "gpt-5.6-luna") }
 
 func testLiveProvider(t *testing.T, collar, cli, cheapest string) {
 	t.Helper()
