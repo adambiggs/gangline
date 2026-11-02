@@ -3,21 +3,38 @@ package main
 import (
 	"bytes"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
+	"strconv"
 
 	"github.com/adambiggs/gangline/core"
 	"github.com/adambiggs/gangline/store"
 )
 
-type logFilter struct{ Agent, Type string }
+type logFilter struct {
+	Agent, Type string
+	Limit       int // zero explicitly exports all matching events
+}
 
 func parseLogFilter(args []string, allowFile bool) (logFilter, []string, error) {
 	var filter logFilter
-	flags := boundFlagSet("log", map[string]any{"agent": &filter.Agent, "type": &filter.Type})
+	limit := "50"
+	var all bool
+	flags := boundFlagSet("log", map[string]any{"agent": &filter.Agent, "type": &filter.Type, "limit": &limit, "all": &all})
 	files, err := parseOptions(flags, args)
 	if err != nil {
 		return filter, nil, usageError("log: %v", err)
+	}
+	filter.Limit, err = strconv.Atoi(limit)
+	if err != nil || filter.Limit <= 0 {
+		return filter, nil, usageError("log: --limit must be a positive integer; use --all for the full log")
+	}
+	if all {
+		if flagWasSet(flags, "limit") {
+			return filter, nil, usageError("log: --all and --limit cannot be combined")
+		}
+		filter.Limit = 0
 	}
 	if len(files) > 0 && !allowFile {
 		return filter, nil, usageError("unexpected log argument %q", files[0])
@@ -54,6 +71,12 @@ func (filter logFilter) apply(e core.Event) (core.Event, bool) {
 // the log keeps the damage, so failing on it would fail every later export.
 func writeFilteredLog(out, warn io.Writer, in io.Reader, filter logFilter, present func(string) string) error {
 	names := make(map[core.HitchID]core.AgentName)
+	// Scan in order to preserve recorded name resolution and torn-line recovery.
+	// Keep only the requested tail, allocating as records arrive rather than
+	// allocating an arbitrary user-supplied limit up front.
+	var tail [][]byte
+	next := 0
+	truncated := false
 	var write func(line int, data []byte) error
 	write = func(line int, data []byte) error {
 		var peek core.Event
@@ -100,10 +123,30 @@ func writeFilteredLog(out, warn io.Writer, in io.Reader, filter logFilter, prese
 		if err != nil {
 			return err
 		}
+		if filter.Limit > 0 {
+			if len(tail) < filter.Limit {
+				tail = append(tail, data)
+			} else {
+				tail[next] = data
+				next = (next + 1) % filter.Limit
+				truncated = true
+			}
+			return nil
+		}
 		_, err = fmt.Fprintln(out, string(data))
 		return err
 	}
-	return store.ScanLog(in, write)
+	scanErr := store.ScanLog(in, write)
+	for i := range tail {
+		if _, err := fmt.Fprintln(out, string(tail[(next+i)%len(tail)])); err != nil {
+			return errors.Join(scanErr, err)
+		}
+	}
+	if truncated {
+		_, err := fmt.Fprintf(warn, "Showing the latest %d matching events; use --limit N or --all for more.\n", filter.Limit)
+		return errors.Join(scanErr, err)
+	}
+	return scanErr
 }
 
 // appendedEvent returns the valid event that ends a damaged line. A write cut

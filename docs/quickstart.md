@@ -130,7 +130,7 @@ submitted to that recipient. Match the lead's `msg-...` record to the ID
 printed when scout sent its report; `startup-...` records only confirm agent
 launch. The report in the lead's pane should carry a `gang:scout` envelope.
 `accepted` means the native queue owns the input; it does not confirm a
-reply. To read all events for the worker, use `gang log --agent scout`.
+reply. To read all events for the worker, use `gang log --all --agent scout`.
 
 ## Check the result and stop
 
@@ -141,7 +141,7 @@ the named worker in the roster, and a delivery record verify the workflow.
 From your shell, save the log if you want to keep it, then stop the team:
 
 ```sh
-gang log > first-team-log.jsonl
+gang log --all > first-team-log.jsonl
 gang roster
 gang down
 gang teams

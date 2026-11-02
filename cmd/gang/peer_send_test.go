@@ -216,7 +216,7 @@ func TestPeerSendReportsALostReplyAsUnknown(t *testing.T) {
 			f, ssh := peerSender(t)
 			ssh.reply(t, tc.stdout, tc.stderr, tc.status)
 			err := sendPeer(f, "beta:lead", "hi")
-			requireStatus(t, err, exitUnknown, "resend it only once no gang peer-receive runs on beta and its gang queue and gang log both lack it")
+			requireStatus(t, err, exitUnknown, "resend it only once no gang peer-receive runs on beta and its gang queue and gang log --all both lack it")
 			if !strings.Contains(err.Error(), tc.cause) {
 				t.Fatalf("error = %v, want cause %q", err, tc.cause)
 			}

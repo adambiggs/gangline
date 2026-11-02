@@ -29,7 +29,7 @@ set `GANG_HOST`, and authorize each other's key: on each host,
 other host's dedicated public key and the ssh setup that host needs. The
 receiving agent sees the sender as `alpha:lead` and replies the same way. A send
 that prints `unknown` lost its reply: send it again only once no
-`gang peer-receive` runs on that host and its `gang queue` and `gang log` both
+`gang peer-receive` runs on that host and its `gang queue` and `gang log --all` both
 lack the printed ID.
 
 To stop a current turn and follow it with direction:
@@ -155,7 +155,7 @@ does not verify watchdog operation.
 Keep a copy of the audit log, inspect the roster, and end the selected team:
 
 ```sh
-gang log > team-log.jsonl
+gang log --all > team-log.jsonl
 gang roster
 gang down
 gang teams

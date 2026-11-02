@@ -146,7 +146,7 @@ pre-compaction hooks.
 
 Keep a `--note` note short, on one line, and pointed at a state file. Without
 `--note`, the note tells the agent to re-read its brief and durable state and
-names `gang log --agent NAME --type send_queued`, which records the messages
+names `gang log --agent NAME --type send_queued --all`, which records the messages
 queued for it. Every
 failed compaction queues a `[gang:compact#…]` notice to the agent saying whether
 its context was compacted, and a copy to the agent that requested it when the
@@ -195,7 +195,7 @@ A send prints the message ID and `delivered`, `accepted`, `queued`,
 | `gang limits -c\|--collar COLLAR` | Query one collar's account limits without a live agent, if supported. |
 | `gang snooze [--at TIME] [--note TEXT]` | Schedule a wake for the calling agent at its observed native reset, or at an explicit future time. |
 | `gang snooze --status` / `gang snooze --clear [ID]` | Inspect or cancel a pending wake. The lead sees every agent's wake and uncertain notices, and can clear a notice or fallback wake by ID. |
-| `gang log [--agent NAME\|HITCH_ID] [--type TYPE\|KIND] [LOG.jsonl]` | Print JSONL events from a team or saved log, with optional filters. |
+| `gang log [--agent NAME\|HITCH_ID] [--type TYPE\|KIND] [--limit N\|--all] [LOG.jsonl]` | Print recent matching JSONL events from a team or saved log, oldest first. Use `--all` for a full export, including in pipes. See `gang log --help` for the default limit. The command scans the log to select its tail. |
 | `gang whoami` | Print the calling pane's registered identity. |
 
 `--json` on `queue`, `roster`, `status`, and `context` prints one JSON object
@@ -576,7 +576,7 @@ clearing cannot
 retract input the harness already accepted.
 
 The team log records each wake stage under the agent that scheduled it, so
-`gang log --agent NAME` shows the life of NAME's wakes: `snooze_scheduled`
+`gang log --all --agent NAME` shows the life of NAME's wakes: `snooze_scheduled`
 (with its due time once known), `snooze_cleared` (cleared, replaced, or
 superseded), `snooze_rearmed` (given a new ID because its recipient is gone),
 `snooze_completed`, and `snooze_failed`. A wake pulled out of the native

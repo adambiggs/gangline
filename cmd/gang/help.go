@@ -99,7 +99,7 @@ var commandUsage = map[string]string{
 	"compact":    "usage: gang compact [NAME] [--note TEXT] [--team TEAM]\n       gang compact [NAME] --interrupt [--team TEAM]\n",
 	"statusline": "usage: gang statusline [--install]\n",
 	"context":    "usage: gang context [NAME] [--json] [--team TEAM]\n       gang context --widget NAME | --clear [--team TEAM]\n",
-	"log":        "usage: gang log [--agent NAME|HITCH_ID] [--type TYPE|KIND] [--team TEAM]\n       [LOG.jsonl]\n",
+	"log":        "usage: gang log [--agent NAME|HITCH_ID] [--type TYPE|KIND] [--team TEAM]\n       [--limit N | --all] [LOG.jsonl]\n",
 	"limits":     "usage: gang limits [NAME | -c|--collar COLLAR] [--team TEAM]\n",
 	"snooze":     "usage: gang snooze [--at DURATION|HH:MM|RFC3339] [--note TEXT]\n       [--clear [ID] | --status] [--team TEAM]\n",
 	"wait":       "usage: gang wait NAME [--timeout DURATION] [--team TEAM]\n",
@@ -191,6 +191,8 @@ var commandOptions = map[string][]optionSpec{
 	"log": {
 		{"agent", "NAME|HITCH_ID", "filter by agent name or hitch ID (default all)"},
 		{"type", "TYPE|KIND", "show events or readings of this type (default all)"},
+		{"limit", "N", "print the latest N matching events (default 50)"},
+		{"all", "", "print all matching events"},
 	},
 	"limits": {
 		{"c", "COLLAR", "query a collar without an agent"},
@@ -327,7 +329,7 @@ var commandDescription = map[string]string{
 	"statusline": "Read native status-line JSON on stdin; --install fills an absent native\nsetting.\n",
 	"context":    "NAME is a registered agent; omit it for the current pane's agent.\nPrint its native context reading. --widget NAME selects an agent for the\ntmux widget; --clear empties it.\n",
 	"evidence":   "Verify or show explicitly imported private evidence without touching live team state.\nBoth commands print JSON. Verify exits nonzero for failed, incomplete or unsupported claims.\nShow exits zero when the view was produced; its status field is the evidence verdict.\n",
-	"log":        "Print the selected team's durable JSONL event log.\nThe agent filter accepts a registered NAME or a hitch ID.\nWith LOG.jsonl, read that file instead; --team does not apply to it.\n",
+	"log":        "Print recent matching events as JSONL, oldest first within the selection.\nThe default limit also applies to redirected output; use --all for exports.\nThe agent filter accepts a registered NAME or a hitch ID.\nWith LOG.jsonl, read that file instead; --team does not apply to it.\nThe command scans the log to select its tail; it does not follow new events.\n",
 	"limits":     "Without arguments, query every configured collar without an agent; a\nfailed query falls back to the newest reading a team agent recorded. NAME\nreads that agent's recorded limits; --collar queries one collar. Each line\nshows a window's use, elapsed share, pace (use minus elapsed, in points),\nreset, projected exhaustion at the average rate so far, and reading age.\n",
 	"snooze":     "Schedule a wake for the calling agent. Without --at, use the most-used\nfuture native five-hour or weekly reset. A wake completes after its\nmatching native turn succeeds. --status shows queued and uncertain wakes;\nthe lead also sees every agent's wake with its due time and note.\nUse --clear or a new --at to withdraw a wake still queued for input; the\nlead can clear a notice or fallback wake by ID. Clearing cannot retract\nnative input. gang log --agent NAME shows the wakes NAME scheduled,\ncleared, completed, or failed.\n",
 	"wait":       "NAME is the registered agent to watch for a recorded idle boundary.\nA zero timeout checks once.\n",

@@ -73,7 +73,7 @@ func TestTerminatorPreservesOperands(t *testing.T) {
 		t.Fatalf("send = %+v, %v", got, err)
 	}
 	filter, files, err := parseLogFilter([]string{"--", "-events.jsonl"}, true)
-	if err != nil || filter != (logFilter{}) || len(files) != 1 || files[0] != "-events.jsonl" {
+	if err != nil || filter != (logFilter{Limit: 50}) || len(files) != 1 || files[0] != "-events.jsonl" {
 		t.Fatalf("log = %+v, %q, %v", filter, files, err)
 	}
 	if _, files, err := parseLogFilter([]string{"--"}, true); err != nil || len(files) != 0 {
