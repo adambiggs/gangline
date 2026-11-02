@@ -75,6 +75,11 @@ Each live provider check selects its own temporary Gangline state root under
 `TMPDIR` (or the system temporary directory). Its binary, private Codex profile,
 private socket, and team state stay beneath that root; the caller's
 `GANG_STATE_ROOT` and default state directory are not used for fixtures.
+The private Codex configuration preserves the selected provider's connection
+and authentication settings together with the checkout's existing directory
+trust. It excludes unrelated providers, hooks, MCP servers, instructions and
+sandbox settings. Hook trust still requires the native approval for the exact
+fixture callbacks; directory trust does not grant hook trust.
 The sandbox must allow the selected temporary root, and its path must be short
 enough for a Unix socket. Setup reports access failures without changing sandbox
 permissions. Successful teardown removes the owned root; a native prompt or

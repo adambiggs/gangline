@@ -107,15 +107,6 @@ func testLiveProvider(t *testing.T, collar, cli, cheapest string) {
 		} else if err != nil {
 			t.Fatal(err)
 		}
-		isolatedCtx, cancelIsolated := context.WithTimeout(context.Background(), 10*time.Second)
-		defer cancelIsolated()
-		isolated := exec.CommandContext(isolatedCtx, cli, "login", "status")
-		isolated.Env = append(withoutEnvironment(os.Environ(), "CODEX_HOME"), "CODEX_HOME="+profile)
-		if out, err := isolated.CombinedOutput(); isolatedCtx.Err() != nil {
-			t.Fatalf("isolated Codex authentication probe exceeded 10s: %v: %s", err, out)
-		} else if err != nil {
-			t.Skipf("codex authentication unavailable in isolated CODEX_HOME: %s", strings.TrimSpace(string(out)))
-		}
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), liveProviderTimeout)
 	defer cancel()
@@ -132,8 +123,17 @@ func testLiveProvider(t *testing.T, collar, cli, cheapest string) {
 		canonical = filepath.Dir(strings.TrimSpace(string(out)))
 	}
 	if cli == "codex" {
-		if err := seedCodexTrust(filepath.Join(home, ".codex"), filepath.Join(scratch, "codex-home"), canonical); err != nil {
-			t.Fatalf("prepare private Codex trust for %s: %v", canonical, err)
+		if err := seedCodexConfig(filepath.Join(home, ".codex"), filepath.Join(scratch, "codex-home"), canonical); err != nil {
+			t.Fatalf("prepare private Codex configuration for %s: %v", canonical, err)
+		}
+		isolatedCtx, cancelIsolated := context.WithTimeout(context.Background(), 10*time.Second)
+		defer cancelIsolated()
+		isolated := exec.CommandContext(isolatedCtx, cli, "login", "status")
+		isolated.Env = append(withoutEnvironment(os.Environ(), "CODEX_HOME"), "CODEX_HOME="+filepath.Join(scratch, "codex-home"))
+		if out, err := isolated.CombinedOutput(); isolatedCtx.Err() != nil {
+			t.Fatalf("isolated Codex authentication probe exceeded 10s: %v: %s", err, out)
+		} else if err != nil {
+			t.Skipf("codex authentication unavailable in isolated CODEX_HOME: %s", strings.TrimSpace(string(out)))
 		}
 	}
 	session := "gangline-provider-" + strings.ReplaceAll(collar, "-", "")
@@ -449,7 +449,7 @@ func awaitProviderEvents(ctx context.Context, path, secondID, collar string) ([]
 	}
 }
 
-func seedCodexTrust(regularHome, privateHome, cwd string) error {
+func seedCodexConfig(regularHome, privateHome, cwd string) error {
 	regularConfig, err := os.ReadFile(filepath.Join(regularHome, "config.toml"))
 	if err != nil {
 		return fmt.Errorf("read regular Codex config: %w", err)
@@ -481,6 +481,29 @@ func seedCodexTrust(regularHome, privateHome, cwd string) error {
 	}
 	if isolated == nil {
 		isolated = make(map[string]any)
+	}
+	// Authentication belongs to the selected connection. Copying auth.json
+	// without its provider route can send the same login to a different API.
+	if provider, ok := regular["model_provider"].(string); ok && provider != "" {
+		isolated["model_provider"] = provider
+		providers, _ := regular["model_providers"].(map[string]any)
+		if configured, exists := providers[provider]; exists {
+			connection, ok := configured.(map[string]any)
+			if !ok {
+				return fmt.Errorf("selected Codex provider configuration is not a table")
+			}
+			selected := make(map[string]any)
+			for _, key := range []string{
+				"name", "base_url", "wire_api", "env_key", "env_key_instructions",
+				"requires_openai_auth", "experimental_bearer_token", "auth",
+				"http_headers", "env_http_headers", "query_params",
+			} {
+				if value, exists := connection[key]; exists {
+					selected[key] = value
+				}
+			}
+			isolated["model_providers"] = map[string]any{provider: selected}
+		}
 	}
 	projects, ok := isolated["projects"].(map[string]any)
 	if isolated["projects"] != nil && !ok {
