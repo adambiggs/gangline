@@ -35,7 +35,7 @@ next operation for them.
   manual testing, confirm `tmux -S "$GANG_TMUX_SOCKET" list-sessions` shows only
   your disposable test session.
 - `gang down` ends the whole team and `gang drop` ends one agent. Run
-  `gang roster` first.
+  `gang roster --all` first.
 - Never run `tmux kill-server` or `tmux kill-session` without an exact target.
 - Never kill a process just because it holds a lock. Confirm it's yours
   (`/proc/PID/cwd`, or a file only your tree has) in a separate command that

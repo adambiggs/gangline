@@ -19,8 +19,12 @@ import (
 var collarNamePattern = regexp.MustCompile(`^[a-z][a-z0-9-]*$`)
 
 func (cmd command) collars(arguments []string) error {
-	if err := noArguments(arguments, "collars"); err != nil {
+	page, args, err := parseListOptions("collars", arguments, nil)
+	if err != nil {
 		return err
+	}
+	if len(args) != 0 {
+		return usageError("collars: unexpected argument %q", args[0])
 	}
 	settings, err := cmd.settings()
 	if err != nil {
@@ -30,12 +34,7 @@ func (cmd command) collars(arguments []string) error {
 	if err != nil {
 		return err
 	}
-	for _, name := range names {
-		if _, err := fmt.Fprintln(cmd.stdout, name); err != nil {
-			return err
-		}
-	}
-	return nil
+	return page.writeLines(cmd.stdout, cmd.stderr, names)
 }
 
 func (cmd command) models(arguments []string) error {
@@ -43,7 +42,7 @@ func (cmd command) models(arguments []string) error {
 	if err != nil {
 		return err
 	}
-	name, err := parseCollarFlags("models", arguments, settings.Collar)
+	name, page, err := parseModelOptions(arguments, settings.Collar)
 	if err != nil {
 		if err == flag.ErrHelp {
 			return cmd.printHelp("models")
@@ -60,7 +59,7 @@ func (cmd command) models(arguments []string) error {
 	if err != nil {
 		return err
 	}
-	for _, model := range catalog.Models {
+	for _, model := range catalog.Models[:page.count(len(catalog.Models))] {
 		efforts := strings.Join(model.Efforts, ",")
 		if efforts == "" {
 			efforts = "-"
@@ -70,7 +69,10 @@ func (cmd command) models(arguments []string) error {
 		}
 	}
 	_, err = fmt.Fprintln(cmd.stdout, "(the harness may accept model ids its catalog does not list)")
-	return err
+	if err != nil {
+		return err
+	}
+	return page.notice(cmd.stderr, len(catalog.Models))
 }
 
 func collarNames(settings settings) ([]string, error) {
@@ -130,8 +132,12 @@ func loadCollar(name string, settings settings) (harness.Collar, error) {
 }
 
 func (cmd command) roles(arguments []string) error {
-	if err := noArguments(arguments, "roles"); err != nil {
+	page, args, err := parseListOptions("roles", arguments, nil)
+	if err != nil {
 		return err
+	}
+	if len(args) != 0 {
+		return usageError("roles: unexpected argument %q", args[0])
 	}
 	settings, err := cmd.settings()
 	if err != nil {
@@ -173,12 +179,12 @@ func (cmd command) roles(arguments []string) error {
 		names = append(names, name)
 	}
 	sort.Strings(names)
-	for _, name := range names {
+	for _, name := range names[:page.count(len(names))] {
 		if _, err := fmt.Fprintf(cmd.stdout, "%s\t%s\n", name, roles[name].source); err != nil {
 			return err
 		}
 	}
-	return nil
+	return page.notice(cmd.stderr, len(names))
 }
 
 func (cmd command) config(arguments []string) error {

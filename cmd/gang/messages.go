@@ -310,8 +310,7 @@ func (run *runtime) publishMessage(a core.Agent, p store.AgentPaths, l *store.Lo
 }
 func (cmd command) queue(args []string) error {
 	machine := false
-	flags := boundFlagSet("queue", map[string]any{"json": &machine})
-	positionals, err := parseOptions(flags, args)
+	page, positionals, err := parseListOptions("queue", args, map[string]any{"json": &machine})
 	if err != nil {
 		return usageError("queue: %v", err)
 	}
@@ -346,8 +345,13 @@ func (cmd command) queue(args []string) error {
 		}
 		rows = append(rows, pending...)
 	}
+	total := len(rows)
+	rows = rows[:page.count(total)]
 	if machine {
-		return writeJSON(cmd.stdout, queueJSON{Messages: rows})
+		if err := writeJSON(cmd.stdout, queueJSON{Messages: rows, Total: total, Truncated: len(rows) < total}); err != nil {
+			return err
+		}
+		return page.notice(cmd.stderr, total)
 	}
 	if len(rows) == 0 {
 		return nil
@@ -361,7 +365,10 @@ func (cmd command) queue(args []string) error {
 		}
 		fmt.Fprintf(w, "%s\t%s\t%s\t%s\t%s\t%s\t%s\n", row.ID, row.To, senderLabel(row.From), row.Kind, row.State, detail, row.Excerpt)
 	}
-	return w.Flush()
+	if err := w.Flush(); err != nil {
+		return err
+	}
+	return page.notice(cmd.stderr, total)
 }
 
 // Queue states. A ready message's recipient takes input at its next drain;

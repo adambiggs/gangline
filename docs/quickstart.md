@@ -142,20 +142,20 @@ From your shell, save the log if you want to keep it, then stop the team:
 
 ```sh
 gang log --all > first-team-log.jsonl
-gang roster
+gang roster --all
 gang down
-gang teams
+gang teams --all
 unset GANG_SESSION
 ```
 
 `gang down` stops the registered agents and deletes the team's runtime state
-and history. `first-team` should be absent from `gang teams`. For manual
+and history. `first-team` should be absent from `gang teams --all`. For manual
 staffing, messaging, and stopping a turn, continue with the
 [coordination guide](guides.md#coordinate-agents).
 
 ## Uninstall
 
-For each team, run `gang roster --team TEAM` before stopping it with
+For each team, run `gang roster --all --team TEAM` before stopping it with
 `gang down --team TEAM`. Then remove
 the installed `gang` command from `~/.local/bin/gang` and the retained release
 checkout at `~/.local/share/gangline`. Use the paths selected by `GANGLINE_BIN`

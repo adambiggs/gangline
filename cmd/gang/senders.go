@@ -18,6 +18,16 @@ func (cmd command) senderCommand(args []string) error {
 	if action != "add" && action != "list" && action != "remove" {
 		return usageError("sender: unknown action %q", action)
 	}
+	var page listOptions
+	if action == "list" {
+		var remaining []string
+		var err error
+		page, remaining, err = parseListOptions("sender", args[1:], nil)
+		if err != nil {
+			return err
+		}
+		args = append([]string{action}, remaining...)
+	}
 	count := 2
 	if action == "list" {
 		count = 1
@@ -39,12 +49,12 @@ func (cmd command) senderCommand(args []string) error {
 		if err != nil {
 			return err
 		}
-		for _, r := range rows {
+		for _, r := range rows[:page.count(len(rows))] {
 			if _, err := fmt.Fprintln(cmd.stdout, r.Name); err != nil {
 				return err
 			}
 		}
-		return nil
+		return page.notice(cmd.stderr, len(rows))
 	}
 	a, err := run.observedAgent()
 	if err != nil {

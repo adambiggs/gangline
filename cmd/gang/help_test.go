@@ -220,7 +220,12 @@ func TestEveryCommandFlagParserConstructs(t *testing.T) {
 		"down":       func() error { return cmd.down(bad) },
 		"roster":     func() error { return cmd.roster(bad) },
 		"queue":      func() error { return cmd.queue(bad) },
-		"models":     func() error { _, err := parseCollarFlags("models", bad, "codex"); return err },
+		"sender":     func() error { return cmd.senderCommand([]string{"list", "--unlisted"}) },
+		"teams":      func() error { return cmd.teams(bad) },
+		"roles":      func() error { return cmd.roles(bad) },
+		"collars":    func() error { return cmd.collars(bad) },
+		"evidence":   func() error { return cmd.evidence(bad) },
+		"models":     func() error { _, _, err := parseModelOptions(bad, "codex"); return err },
 		"upgrade":    func() error { return cmd.upgrade(bad) },
 		"peer-receive": func() error {
 			receiver := cmd
@@ -230,8 +235,13 @@ func TestEveryCommandFlagParserConstructs(t *testing.T) {
 	}
 	for name, check := range checks {
 		t.Run(name, func(t *testing.T) {
-			if err := check(); err == nil || !strings.Contains(err.Error(), "-unlisted") {
-				t.Fatalf("unlisted option error = %v, want the offending option", err)
+			// Evidence deliberately keeps raw input out of diagnostics.
+			want := "-unlisted"
+			if name == "evidence" {
+				want = "evidence: invalid options (run 'gang help evidence')"
+			}
+			if err := check(); err == nil || !strings.Contains(err.Error(), want) {
+				t.Fatalf("unlisted option error = %v, want %q", err, want)
 			}
 		})
 	}

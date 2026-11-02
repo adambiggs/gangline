@@ -153,7 +153,7 @@ func (run *runtime) sendToPeer(o sendOptions) error {
 	if _, err := fmt.Fprintf(run.cmd.stdout, "%s:%s\tunknown\n", o.Host, remoteID); err != nil {
 		return err
 	}
-	return commandError{status: exitUnknown, text: fmt.Sprintf("peer host %s gave no outcome (%s); message %s may have been published there, so resend it only once no gang peer-receive runs on %s and its gang queue and gang log --all both lack it", o.Host, cause, remoteID, o.Host)}
+	return commandError{status: exitUnknown, text: fmt.Sprintf("peer host %s gave no outcome (%s); message %s may have been published there, so resend it only once no gang peer-receive runs on %s and its gang queue --all and gang log --all both lack it", o.Host, cause, remoteID, o.Host)}
 }
 
 // recordPeerSend logs a forwarded send under the identity that sent it. The

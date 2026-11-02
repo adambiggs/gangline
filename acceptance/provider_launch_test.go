@@ -202,7 +202,7 @@ func testLiveProvider(t *testing.T, collar, cli, cheapest string) {
 			t.Logf("private input setting applied: %s", strings.Join(setting, " "))
 		}
 	}
-	models, diagnostic, err := runGang(ctx, "", "models", "-c", collar)
+	models, diagnostic, err := runGang(ctx, "", "models", "-c", collar, "--all")
 	if err != nil {
 		t.Fatalf("gang models -c %s: %v: %s %s", collar, err, models, diagnostic)
 	}

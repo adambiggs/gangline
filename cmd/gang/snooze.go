@@ -178,8 +178,7 @@ func (run *runtime) withQueuedWake(recipient func(*usageState) core.HitchID, cha
 func (cmd command) snooze(args []string) error {
 	var at, note string
 	var clear, status bool
-	flags := boundFlagSet("snooze", map[string]any{"at": &at, "note": &note, "clear": &clear, "status": &status})
-	positionals, err := parseOptions(flags, args)
+	page, positionals, err := parseListOptions("snooze", args, map[string]any{"at": &at, "note": &note, "clear": &clear, "status": &status})
 	if err != nil {
 		return usageError("snooze: %v", err)
 	}
@@ -188,6 +187,9 @@ func (cmd command) snooze(args []string) error {
 	}
 	if (clear || status) && (at != "" || note != "") || clear && status {
 		return usageError("snooze: --clear and --status take no other options")
+	}
+	if page.set && !status {
+		return usageError("snooze: --limit and --all require --status")
 	}
 	run, err := cmd.runtime()
 	if err != nil {
@@ -254,8 +256,7 @@ func (cmd command) snooze(args []string) error {
 			return err
 		}
 		sort.Strings(rows)
-		_, err = fmt.Fprintln(cmd.stdout, strings.Join(rows, "\n"))
-		return err
+		return page.writeLines(cmd.stdout, cmd.stderr, rows)
 	}
 	if clear {
 		if len(positionals) == 1 {

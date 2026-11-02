@@ -376,8 +376,7 @@ func (run *runtime) observeRoster(agents []core.Agent) ([]core.Agent, error) {
 }
 func (cmd command) roster(args []string) error {
 	machine := false
-	flags := boundFlagSet("roster", map[string]any{"json": &machine})
-	positionals, err := parseOptions(flags, args)
+	page, positionals, err := parseListOptions("roster", args, map[string]any{"json": &machine})
 	if err != nil {
 		return usageError("roster: %v", err)
 	}
@@ -403,6 +402,7 @@ func (cmd command) roster(args []string) error {
 		return err
 	}
 	out := rosterJSON{WatchdogAvailable: !watchdogLimited, Agents: []agentJSON{}}
+	var lines []string
 	for _, a := range agents {
 		row, err := run.agentRow(a)
 		if err != nil {
@@ -420,9 +420,7 @@ func (cmd command) roster(args []string) error {
 			marker += " [watchdog-unavailable]"
 		}
 		line := fmt.Sprintf("%-16s %-10s %-18s %s%s", a.Name, a.Status, activityLabel(row.Activity, row.BackgroundTasks, row.BackgroundSince, run.cmd.now()), a.Collar, marker)
-		if _, err := fmt.Fprintln(cmd.stdout, line+cmd.operatorText(rosterReason(a, rosterReasonLimit(cmd.stdout, line)))); err != nil {
-			return err
-		}
+		lines = append(lines, line+cmd.operatorText(rosterReason(a, rosterReasonLimit(cmd.stdout, line))))
 	}
 	outside, err := run.team.ListOutside()
 	if err != nil {
@@ -433,14 +431,18 @@ func (cmd command) roster(args []string) error {
 			out.Agents = append(out.Agents, agentJSON{Kind: "outside", Name: registration.Name, HitchID: registration.ID, Status: core.Active})
 			continue
 		}
-		if _, err := fmt.Fprintf(cmd.stdout, "%-16s %-10s mailbox            outside\n", registration.Name, "registered"); err != nil {
-			return err
-		}
+		lines = append(lines, fmt.Sprintf("%-16s %-10s mailbox            outside", registration.Name, "registered"))
 	}
 	if machine {
-		return writeJSON(cmd.stdout, out)
+		out.Total = len(out.Agents)
+		out.Agents = out.Agents[:page.count(out.Total)]
+		out.Truncated = len(out.Agents) < out.Total
+		if err := writeJSON(cmd.stdout, out); err != nil {
+			return err
+		}
+		return page.notice(cmd.stderr, out.Total)
 	}
-	return nil
+	return page.writeLines(cmd.stdout, cmd.stderr, lines)
 }
 
 // A long reason keeps its first rosterReasonHead characters, where a native

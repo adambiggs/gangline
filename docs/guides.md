@@ -29,7 +29,7 @@ set `GANG_HOST`, and authorize each other's key: on each host,
 other host's dedicated public key and the ssh setup that host needs. The
 receiving agent sees the sender as `alpha:lead` and replies the same way. A send
 that prints `unknown` lost its reply: send it again only once no
-`gang peer-receive` runs on that host and its `gang queue` and `gang log --all` both
+`gang peer-receive` runs on that host and its `gang queue --all` and `gang log --all` both
 lack the printed ID.
 
 To stop a current turn and follow it with direction:
@@ -156,14 +156,14 @@ Keep a copy of the audit log, inspect the roster, and end the selected team:
 
 ```sh
 gang log --all > team-log.jsonl
-gang roster
+gang roster --all
 gang down
-gang teams
+gang teams --all
 ```
 
 `down` confirms the selected team and agent count on a terminal. Use
 `gang down --yes` in scripts or without a terminal. It stops registered agents
 and deletes the team's state and history. From an agent's pane, including any
 script that agent starts, only the lead may run it. The team should disappear
-from `gang teams`. To stop just one agent, use `gang drop NAME`, then verify
-that it is absent from `gang roster`.
+from `gang teams --all`. To stop just one agent, use `gang drop NAME`, then verify
+that it is absent from `gang roster --all`.

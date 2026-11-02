@@ -108,7 +108,7 @@ the parent's command line where `/proc` shows it, the working directory, and
 | `gang sender remove NAME` | From the operator shell or active lead pane, revoke NAME and delete its key file and registration; queued messages retain their authenticated attribution. |
 | `gang send NAME [OPTIONS] [BODY]` | Send BODY, or read stdin when absent, and report its receipt. |
 | `gang send HOST:NAME [BODY]` | From an active registered agent, or with `--as NAME` and its registered sender credential, forward BODY over ssh to agent NAME on `GANG_PEERS` host HOST, where the forced command of this host's key runs `gang peer-receive` to deliver it, and print `HOST:ID` with that host's receipt. Once ssh has run, the sending host's team log records a `peer_sent` event under the sender with `HOST:NAME`, the message ID, and the outcome, `refused`, or `unknown`. No later outcome on HOST reaches this host. A lost reply prints `unknown` and exits 5. |
-| `gang queue [NAME] [--json]` | List pending messages with ID, recipient, sender, kind, a text excerpt, and state: `ready`, `scheduled` with its due time, `blocked` with the reason, or `unknown` with the reason. |
+| `gang queue [NAME] [--json] [--limit N\|--all]` | List pending messages with ID, recipient, sender, kind, a text excerpt, and state: `ready`, `scheduled` with its due time, `blocked` with the reason, or `unknown` with the reason. |
 | `gang interrupt [NAME] [-m\|--message REASON]` | Interrupt the turn; deliver an optional reason after it stops. |
 | `gang title [NAME] TEXT` | Set the native harness session title when idle with a free composer. Quote TEXT as one argument; omit NAME for the current pane's agent. |
 | `gang compact [NAME] [--note TEXT]` | Compact at native idle; submit the continuation behind compaction, ahead of later input. |
@@ -184,7 +184,7 @@ A send prints the message ID and `delivered`, `accepted`, `queued`,
 
 | Command | Effect |
 | --- | --- |
-| `gang roster [--json]` | Show registered agents and current states, with the recorded reason for a failed agent or a blocked, wedged, or unknown one. The table cuts a long reason to its head and its end so that the row's characters fit the terminal's width; `--json` and `gang status --why` carry the whole text. An idle agent whose last turn ended with native background tasks pending reads `idle (N bg DURATION)`, where DURATION is the time since that turn ended, and `background_tasks` and `background_since` in `--json`; it is still idle for delivery, and the next turn boundary clears the count. |
+| `gang roster [--json] [--limit N\|--all]` | Show registered agents and current states, with the recorded reason for a failed agent or a blocked, wedged, or unknown one. The table cuts a long reason to its head and its end so that the row's characters fit the terminal's width; `--json` and `gang status --why` carry the whole text. An idle agent whose last turn ended with native background tasks pending reads `idle (N bg DURATION)`, where DURATION is the time since that turn ended, and `background_tasks` and `background_since` in `--json`; it is still idle for delivery, and the next turn boundary clears the count. |
 | `gang status [NAME] [--why] [--json]` | Show state; `--why` includes activity and compaction evidence. Pending background tasks qualify idle as in `gang roster`, and `--why` names when the agent went idle with them. |
 | `gang capture [NAME] [-n\|--lines LINES]` | Print the native pane, or only its last LINES lines. |
 | `gang capture --composer [NAME]` | Print draft input from the composer. |
@@ -197,6 +197,19 @@ A send prints the message ID and `delivered`, `accepted`, `queued`,
 | `gang snooze --status` / `gang snooze --clear [ID]` | Inspect or cancel a pending wake. The lead sees every agent's wake and uncertain notices, and can clear a notice or fallback wake by ID. |
 | `gang log [--agent NAME\|HITCH_ID] [--type TYPE\|KIND] [--limit N\|--all] [LOG.jsonl]` | Print recent matching JSONL events from a team or saved log, oldest first. Use `--all` for a full export, including in pipes. See `gang log --help` for the default limit. The command scans the log to select its tail. |
 | `gang whoami` | Print the calling pane's registered identity. |
+
+List commands (`queue`, `roster`, `teams`, `sender list`, `collars`, `models`,
+`roles`, and `snooze --status`) show a bounded prefix in their existing listing
+order. Use `--limit N` to change the limit or `--all` for every entry; each
+command's help states the default. A truncated list reports the displayed
+and total entry counts on stderr. This limit applies to redirected and JSON
+output too. Use `--all` for complete exports, teardown inventories, and checks
+that an entry is absent. Display limits do not limit the underlying state
+scan or change pending work.
+
+Queue and roster JSON include `total` (the full matching entry count) and
+`truncated` (whether entries were omitted). Callers needing complete state
+must pass `--all` or check these fields.
 
 `--json` on `queue`, `roster`, `status`, and `context` prints one JSON object
 for scripts. It carries exact values the human forms abbreviate: queue

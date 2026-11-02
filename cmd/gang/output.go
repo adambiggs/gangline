@@ -13,7 +13,9 @@ import (
 // the human forms may abbreviate and change layout.
 
 type queueJSON struct {
-	Messages []queueRow `json:"messages"`
+	Messages  []queueRow `json:"messages"`
+	Total     int        `json:"total"`
+	Truncated bool       `json:"truncated"`
 }
 
 type queueRow struct {
@@ -32,6 +34,8 @@ type queueRow struct {
 type rosterJSON struct {
 	WatchdogAvailable bool        `json:"watchdog_available"`
 	Agents            []agentJSON `json:"agents"`
+	Total             int         `json:"total"`
+	Truncated         bool        `json:"truncated"`
 }
 
 type agentJSON struct {

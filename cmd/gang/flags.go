@@ -486,17 +486,16 @@ func onlyFlagSet(flags *flag.FlagSet, name string) bool {
 	return only
 }
 
-func parseCollarFlags(commandName string, arguments []string, defaultCollar string) (string, error) {
+func parseModelOptions(arguments []string, defaultCollar string) (string, listOptions, error) {
 	collar := defaultCollar
-	flags := boundFlagSet(commandName, map[string]any{"c": &collar, "collar": &collar})
-	positionals, err := parseOptions(flags, arguments)
+	page, positionals, err := parseListOptions("models", arguments, map[string]any{"c": &collar, "collar": &collar})
 	if err != nil {
-		return "", err
+		return "", page, err
 	}
 	if len(positionals) != 0 {
-		return "", usageError("unexpected argument %q", positionals[0])
+		return "", page, usageError("unexpected argument %q", positionals[0])
 	}
-	return collar, nil
+	return collar, page, nil
 }
 
 // agentNameForm states the names validAgentName accepts.

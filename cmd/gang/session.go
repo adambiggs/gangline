@@ -76,8 +76,12 @@ func (run *runtime) stoppedTeamError() error {
 }
 
 func (cmd command) teams(arguments []string) error {
-	if err := noArguments(arguments, "teams"); err != nil {
+	page, args, err := parseListOptions("teams", arguments, nil)
+	if err != nil {
 		return err
+	}
+	if len(args) != 0 {
+		return usageError("teams: unexpected argument %q", args[0])
 	}
 	settings, err := cmd.settings()
 	if err != nil {
@@ -91,6 +95,7 @@ func (cmd command) teams(arguments []string) error {
 	if err != nil {
 		return fmt.Errorf("list teams: %w", err)
 	}
+	var rows []string
 	for _, entry := range entries {
 		if !entry.IsDir() {
 			continue
@@ -105,11 +110,9 @@ func (cmd command) teams(arguments []string) error {
 			}
 			return fmt.Errorf("inspect team %q: %w", entry.Name(), err)
 		}
-		if _, err := fmt.Fprintln(cmd.stdout, entry.Name()); err != nil {
-			return err
-		}
+		rows = append(rows, entry.Name())
 	}
-	return nil
+	return page.writeLines(cmd.stdout, cmd.stderr, rows)
 }
 
 func (cmd command) upgrade(arguments []string) error {
