@@ -52,7 +52,7 @@ Observe and control:
   capture   read an agent's pane or composer
   context   read native context use
   statusline render or install the native context footer
-  evidence  verify or show private SDLC evidence joins
+  evidence  collect, record, verify or show private evidence
   log       read the event log
   limits    read provider limits and pace
   snooze    schedule a provider-reset or explicit wake
@@ -85,7 +85,7 @@ Commands that act on a team take --team TEAM (default GANG_SESSION).
 `
 
 var commandUsage = map[string]string{
-	"evidence":   "usage: gang evidence verify|show --assignment ID\n                     [--require ci|usage|deployment] MANIFEST.json\n",
+	"evidence":   "usage: gang evidence verify|show --assignment ID\n                     [--require ci|usage|deployment] MANIFEST.json\n       gang evidence collect --assignment ID MANIFEST.json NEW_BUNDLE\n       gang evidence record --assignment ID MANIFEST.json RECORDS.json NEW_BUNDLE\n",
 	"sender":     "usage: gang sender add|remove NAME [--team TEAM]\n       gang sender list [--limit N | --all] [--team TEAM]\n",
 	"outside":    "usage: gang outside register|rotate NAME --credential-file PATH [--team TEAM]\n       gang outside remove NAME [--team TEAM]\n       gang outside serve [OPTIONS] [--team TEAM]\n",
 	"up":         "usage: gang up [NAME] [HITCH OPTIONS] [--team TEAM]\n",
@@ -336,7 +336,7 @@ var commandDescription = map[string]string{
 	"compact":    "NAME is a registered agent; omit it for the current pane's agent.\nQueue the continuation as compaction starts; admit it once when the\nharness submits it.\n",
 	"statusline": "Read native status-line JSON on stdin; --install fills an absent native\nsetting.\n",
 	"context":    "NAME is a registered agent; omit it for the current pane's agent.\nPrint its native context reading. --widget NAME selects an agent for the\ntmux widget; --clear empties it.\n",
-	"evidence":   "Verify or show explicitly imported private evidence without touching live\nteam state. Both commands print JSON. Verify exits nonzero for failed,\nincomplete or unsupported claims. Show exits zero when the view was\nproduced; its status field is the evidence verdict.\n",
+	"evidence":   "Preserve or inspect explicit private evidence without touching live team state.\nCollect copies declared artifacts to a new private bundle. Record first adds\nan explicit JSON array of records; artifact paths use the input manifest directory.\nNeither command overwrites a destination or deletes partial output. Copy the\nwhole bundle to an empty directory to restore it, then verify manifest.json.\nVerify exits nonzero for failed, incomplete or unsupported claims. Show exits\nzero when the view is produced; its status is the evidence verdict. Collection\nis not acceptance. All commands print JSON on success.\n",
 	"log":        "Print recent matching events as JSONL, oldest first within the selection.\nThe default limit also applies to redirected output; use --all for exports.\nThe agent filter accepts a registered NAME or a hitch ID.\nWith LOG.jsonl, read that file instead; --team does not apply to it.\nThe command scans the log to select its tail; it does not follow new events.\n",
 	"limits":     "Without arguments, query every configured collar without an agent; a\nfailed query falls back to the newest reading a team agent recorded. NAME\nreads that agent's recorded limits; --collar queries one collar. Each line\nshows a window's use, elapsed share, pace (use minus elapsed, in points),\nreset, projected exhaustion at the average rate so far, and reading age.\n",
 	"snooze":     "Schedule a wake for the calling agent. Without --at, use the most-used\nfuture native five-hour or weekly reset. A wake completes after its\nmatching native turn succeeds. --status shows queued and uncertain wakes;\nthe lead also sees every agent's wake with its due time and note.\nUse --clear or a new --at to withdraw a wake still queued for input; the\nlead can clear a notice or fallback wake by ID. Clearing cannot retract\nnative input. gang log --agent NAME shows the wakes NAME scheduled,\ncleared, completed, or failed.\n",

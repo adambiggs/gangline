@@ -1,4 +1,4 @@
-// Package evidence verifies explicitly supplied evidence without collecting it.
+// Package evidence verifies and preserves explicitly supplied local evidence.
 package evidence
 
 import (

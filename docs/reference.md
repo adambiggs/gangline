@@ -639,6 +639,66 @@ or CI edge. `--require deployment` checks the full CI chain plus the explicitly
 selected installed readback and acceptance. Retention, local restore and
 backend-effort coverage remain unavailable or not exercised.
 
+### Collect, record and restore locally
+
+Preserve an explicitly enrolled manifest and its declared artifacts in a new
+private directory:
+
+```sh
+gang evidence collect --assignment ID MANIFEST.json NEW_BUNDLE
+```
+
+To add historical records, supply a JSON array using the record schema below:
+
+```sh
+gang evidence record --assignment ID MANIFEST.json RECORDS.json NEW_BUNDLE
+```
+
+`record` appends records using the existing identity rules: identical repeated
+records coalesce; conflicting identities are refused. It does not replace the
+input manifest. Imported artifact paths resolve relative to **MANIFEST.json**,
+not the records file. Both commands copy every declared `available` artifact,
+including metadata not referenced by the selected target. They check declared
+sizes and digests using the same bounded, directory-confined reader as `verify`.
+Unknown payload bytes are copied unchanged. `withheld` and `unavailable`
+references stay in the manifest without opening or copying their paths. Only
+explicit inputs are read; there is no discovery of sessions or live files.
+
+The bundle contains `artifacts/RECORD_ID`, the exact `source-manifest.json`,
+and, for `record`, the exact `imported-records.json`. The self-contained
+`manifest-content.json` rewrites available artifact paths into `artifacts/`.
+After file and directory synchronization succeeds, `manifest.json` is published
+as a no-replace hard link to that content file, then the directory and parent
+are synchronized. Directories are private to their owner, as are bundle files.
+An existing destination is refused. Collection leaves source files unchanged
+and never deletes partial output. Before publication, a failure leaves no
+`manifest.json`; a synchronization failure after publication reports failure
+with durability unconfirmed even if the complete manifest is visible. Inspect
+and retain failed destinations as needed; retry into a new directory.
+
+Success prints JSON with `status: collected`, copied/withheld/unavailable
+artifact counts, and input/output manifest digests. It establishes preservation,
+not acceptance or source authentication. `--require` applies only to
+`verify`/`show`. Missing or changed available inputs stop collection; withheld
+markers do not become complete evidence. A failed chain can still be preserved.
+
+Restore by copying the **whole bundle** to a new empty local directory, then
+use its manifest. For example:
+
+```sh
+mkdir -m 700 RESTORED
+cp -a NEW_BUNDLE/. RESTORED/
+gang evidence verify --assignment ID RESTORED/manifest.json
+gang evidence show --assignment ID RESTORED/manifest.json
+```
+
+These queries need only restored files, not the original manifest, runtime or
+source checkout. Copying and re-verifying preserves the existing verdict and
+coverage; it does not infer retention guarantees, expand enrollment, resume a
+native session or enable automatic teardown. No offsite service is involved.
+
+### Manifest records
+
 A manifest has `version`, `scope`, and `records`; `target_code` is required for
 the through-CI and deployment checks and may be omitted for usage. Deployment
 also requires `target_deployment`, naming one deployment record; it never picks

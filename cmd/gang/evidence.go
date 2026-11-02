@@ -20,6 +20,12 @@ func (cmd command) evidence(arguments []string) error {
 	if err != nil {
 		return usageError("evidence: invalid options (run 'gang help evidence')")
 	}
+	if len(args) > 0 && (args[0] == "collect" || args[0] == "record") {
+		if flagWasSet(flags, "require") {
+			return usageError("evidence: collect and record preserve inputs; use verify to require a stage")
+		}
+		return cmd.collectEvidence(args, assignment)
+	}
 	if len(args) != 2 || (args[0] != "verify" && args[0] != "show") || assignment == "" {
 		return usageError("evidence: expected verify|show, --assignment ID and MANIFEST.json")
 	}
@@ -38,21 +44,7 @@ func (cmd command) evidence(arguments []string) error {
 		return errors.New("evidence: input directory unavailable")
 	}
 	defer root.Close()
-	read := func(path string, size int64) ([]byte, error) {
-		file, err := root.OpenFile(path, os.O_RDONLY|syscall.O_NONBLOCK, 0)
-		if err != nil {
-			return nil, err
-		}
-		defer file.Close()
-		info, err := file.Stat()
-		if err != nil {
-			return nil, err
-		}
-		if !info.Mode().IsRegular() {
-			return nil, errors.New("not a regular file")
-		}
-		return io.ReadAll(io.LimitReader(file, size+1))
-	}
+	read := evidenceReader(root)
 	result := evidence.Verify(manifest, assignment, stage, read)
 	enc := json.NewEncoder(cmd.stdout)
 	enc.SetIndent("", "  ")
@@ -69,6 +61,24 @@ func (cmd command) evidence(arguments []string) error {
 		return commandError{status: exitRefused, text: "evidence: verification failed"}
 	default:
 		return commandError{status: exitUnknown, text: fmt.Sprintf("evidence: verification %s", result.Status)}
+	}
+}
+
+func evidenceReader(root *os.Root) func(string, int64) ([]byte, error) {
+	return func(path string, size int64) ([]byte, error) {
+		file, err := root.OpenFile(path, os.O_RDONLY|syscall.O_NONBLOCK, 0)
+		if err != nil {
+			return nil, err
+		}
+		defer file.Close()
+		info, err := file.Stat()
+		if err != nil {
+			return nil, err
+		}
+		if !info.Mode().IsRegular() {
+			return nil, errors.New("not a regular file")
+		}
+		return io.ReadAll(io.LimitReader(file, size+1))
 	}
 }
 func readEvidenceFile(path string) ([]byte, error) {

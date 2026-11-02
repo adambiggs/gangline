@@ -11,7 +11,7 @@ Gangline is a Go module built into the `gang` binary.
 | `substrate` | Terminal operations, implemented through tmux. |
 | `harness` | Collar loading, native launch, screen interpretation, and readings. |
 | `cmd/gang` | Commands that coordinate these packages. |
-| `internal/evidence` | Read-only artifact integrity and SDLC joins over explicit private manifests; no collection or lifecycle mutation. |
+| `internal/evidence` | Artifact integrity, SDLC joins and explicit immutable bundle collection over private manifests; no lifecycle mutation. |
 | `internal/mcpauth` | Outside-registration OAuth consent and delegated grants. |
 | `internal/mcpevents` | Persistent webhook subscriptions and signed mailbox wakeups. |
 | `internal/outsidemcp` | Authenticated mailbox tools and confined report reads. |
