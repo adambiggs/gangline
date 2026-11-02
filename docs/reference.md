@@ -620,7 +620,7 @@ and [internals](internals.md#watchdog).
 
 ## Private evidence joins
 
-`gang evidence verify --assignment ID [--require ci|usage] MANIFEST.json` checks an
+`gang evidence verify --assignment ID [--require ci|usage|deployment] MANIFEST.json` checks an
 explicit local evidence chain. `gang evidence show` takes the same arguments
 and prints the same JSON view. Neither command captures a session, installs
 hooks, runs a recorded command, fetches CI, or changes live team state.
@@ -635,11 +635,14 @@ the view; inspect its `status` to learn the evidence verdict. Missing artifacts,
 partial native records and absent results never become a passing chain.
 The default stage checks through CI. `--require usage` separately checks
 retained generation charges and phase summaries; it cannot pass a code, review
-or CI edge. Deployment, retention, local restore and backend-effort coverage
-remain explicitly unavailable or not exercised.
+or CI edge. `--require deployment` checks the full CI chain plus the explicitly
+selected installed readback and acceptance. Retention, local restore and
+backend-effort coverage remain unavailable or not exercised.
 
 A manifest has `version`, `scope`, and `records`; `target_code` is required for
-the default through-CI check and may be omitted for usage. The scope holds
+the through-CI and deployment checks and may be omitted for usage. Deployment
+also requires `target_deployment`, naming one deployment record; it never picks
+the newest report implicitly. The scope holds
 `host`, `team_instance`, `hitch` and `assignment` identities. Each record has a
 unique `id`, a `kind`, `provenance` (`manual_import` or `producer_export`), and
 one corresponding payload. Optional `required_checks.tests` lists exact argv
@@ -659,7 +662,42 @@ executions, reviews and CI attempts distinct IDs even when their bytes match.
 | `code` | `run`, `native_call`, `repository` (`owner/repo`), `commit`, `commit_artifact`, `tree`, and arrays `tests`, `reviews`, `ci`. `target_code` selects this record. The raw Git commit object must hash to the commit and name the tested tree. The selected native turn must contain a tool result with `native_call` whose output names the exact commit or tree. Coverage distinguishes `native_tool_result_commit` from `native_tool_result_tree`. Only a commit match witnesses that commit in the session; a tree match witnesses tested content and does not establish that the session made the commit. Neither authenticates authorship. Record all required checks in the arrays; an empty array is incomplete. |
 | `review` | `result_artifact`. The reviewer attestation must target the exact repository/commit, approve it without unresolved findings, name a reviewer distinct from the implementer after whitespace/case normalization, and retain its report. |
 | `ci` | `jobs_artifact`, `run_id`, `attempt`, `required_jobs`. Retain the GitHub jobs API response. Each required job must have a unique matching name, repository URL, run/attempt, source commit, completed status and successful conclusion. A local gate is not this evidence. |
+| `deployment` | `code`, `result_artifact`. With `--require deployment`, join a structured readback to the selected code and assignment; mismatched candidate, installed and accepted revisions or digests fail. |
 | `usage` | `summary_artifact`, `charges_artifact`; optional `repair_of` names a preceding usage record, and `requested_model`/`requested_effort` are caller-declared request metadata. All imported phases must name one native session. Charge IDs must belong to the phase's declared generations and timestamps must fall within its boundaries. |
+
+A deployment result has `version: 1`, `id` matching the deployment record,
+`assignment`, `repository`, an RFC3339 `observed_at`, and these fields:
+
+```json
+{
+  "candidate": {"commit": "FULL_GIT_COMMIT", "sha256": "BINARY_SHA256"},
+  "installed": {"commit": "FULL_GIT_COMMIT", "sha256": "BINARY_SHA256"},
+  "acceptance": {
+    "build": {"commit": "FULL_GIT_COMMIT", "sha256": "BINARY_SHA256"},
+    "status": "pass",
+    "exit_code": 0
+  },
+  "report_artifact": "retained-host-result",
+  "review_artifact": "retained-readback-review"
+}
+```
+
+The example uses placeholders for full lowercase commit/digest values. The
+candidate commit must equal the tested/reviewed/CI commit; installed and
+accepted build identities must equal that candidate. An unknown acceptance or
+missing exit/report/review is incomplete; a failed acceptance or mismatch
+fails. The view includes the observation time, actual reported installed
+identity and acceptance, including mismatches. Missing selected deployment
+evidence never falls back to a CI-only pass.
+
+Import a retained host result into this small schema explicitly, retaining its
+original bytes and readback review as hashed artifacts. The verifier checks
+the structured joins and artifact integrity; it does not interpret prose
+reviews, authenticate host reports, inspect a live binary or prove the import
+faithfully describes its source. Record manual-import provenance and review
+that mapping. A matching historical readback proves the reported outcome at
+that time, not the currently installed version. Existing CI-only manifests
+remain unchanged; older readers reject the new record kind or required stage.
 
 ### Retained usage metadata
 

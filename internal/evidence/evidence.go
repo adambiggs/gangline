@@ -20,11 +20,12 @@ import (
 // Manifest is a private, explicitly imported assignment's evidence. Paths are
 // relative to the manifest, not the live team's state or a native home directory.
 type Manifest struct {
-	Required *Requirements `json:"required_checks,omitempty"`
-	Version  int           `json:"version"`
-	Scope    Scope         `json:"scope"`
-	Target   string        `json:"target_code,omitempty"`
-	Records  []Record      `json:"records"`
+	Required   *Requirements `json:"required_checks,omitempty"`
+	Version    int           `json:"version"`
+	Scope      Scope         `json:"scope"`
+	Target     string        `json:"target_code,omitempty"`
+	Deployment string        `json:"target_deployment,omitempty"`
+	Records    []Record      `json:"records"`
 }
 type Requirements struct {
 	Tests [][]string `json:"tests,omitempty"`
@@ -38,16 +39,17 @@ type Scope struct {
 	Assignment string `json:"assignment"`
 }
 type Record struct {
-	ID         string    `json:"id"`
-	Kind       string    `json:"kind"`
-	Provenance string    `json:"provenance"`
-	Artifact   *Artifact `json:"artifact,omitempty"`
-	Run        *Run      `json:"run,omitempty"`
-	Test       *Test     `json:"test,omitempty"`
-	Code       *Code     `json:"code,omitempty"`
-	Review     *Review   `json:"review,omitempty"`
-	CI         *CI       `json:"ci,omitempty"`
-	Usage      *Usage    `json:"usage,omitempty"`
+	ID         string      `json:"id"`
+	Kind       string      `json:"kind"`
+	Provenance string      `json:"provenance"`
+	Artifact   *Artifact   `json:"artifact,omitempty"`
+	Run        *Run        `json:"run,omitempty"`
+	Test       *Test       `json:"test,omitempty"`
+	Code       *Code       `json:"code,omitempty"`
+	Review     *Review     `json:"review,omitempty"`
+	CI         *CI         `json:"ci,omitempty"`
+	Usage      *Usage      `json:"usage,omitempty"`
+	Deployment *Deployment `json:"deployment,omitempty"`
 }
 type Artifact struct {
 	Path       string `json:"path,omitempty"`
@@ -133,6 +135,7 @@ type Check struct {
 	Status   string   `json:"status"`
 }
 type Result struct {
+	Deployment *DeploymentView   `json:"deployment,omitempty"`
 	Usage      *UsageResult      `json:"usage,omitempty"`
 	Checks     []Check           `json:"checks"`
 	Status     string            `json:"status"`
@@ -174,7 +177,7 @@ func Decode(input []byte) (Manifest, error) {
 			return m, errors.New("invalid evidence identity")
 		}
 	}
-	if m.Target != "" && !identifier.MatchString(m.Target) {
+	if (m.Target != "" && !identifier.MatchString(m.Target)) || (m.Deployment != "" && !identifier.MatchString(m.Deployment)) {
 		return m, errors.New("invalid evidence identity")
 	}
 	seen := map[string][]byte{}
@@ -187,12 +190,12 @@ func Decode(input []byte) (Manifest, error) {
 			return m, errors.New("record provenance required")
 		}
 		count := 0
-		for _, yes := range []bool{r.Artifact != nil, r.Run != nil, r.Test != nil, r.Code != nil, r.Review != nil, r.CI != nil, r.Usage != nil} {
+		for _, yes := range []bool{r.Artifact != nil, r.Run != nil, r.Test != nil, r.Code != nil, r.Review != nil, r.CI != nil, r.Usage != nil, r.Deployment != nil} {
 			if yes {
 				count++
 			}
 		}
-		valid := r.Kind == "artifact" && r.Artifact != nil || r.Kind == "run" && r.Run != nil || r.Kind == "test" && r.Test != nil || r.Kind == "code" && r.Code != nil || r.Kind == "review" && r.Review != nil || r.Kind == "ci" && r.CI != nil || r.Kind == "usage" && r.Usage != nil
+		valid := r.Kind == "artifact" && r.Artifact != nil || r.Kind == "run" && r.Run != nil || r.Kind == "test" && r.Test != nil || r.Kind == "code" && r.Code != nil || r.Kind == "review" && r.Review != nil || r.Kind == "ci" && r.CI != nil || r.Kind == "usage" && r.Usage != nil || r.Kind == "deployment" && r.Deployment != nil
 		if count != 1 || !valid {
 			return m, errors.New("unsupported or inconsistent record kind")
 		}
@@ -312,7 +315,7 @@ func Verify(m Manifest, assignment, stage string, read func(string, int64) ([]by
 		v.issue("", "fail", "assignment mismatch")
 		return v.result
 	}
-	if stage != "ci" && stage != "usage" {
+	if stage != "ci" && stage != "usage" && stage != "deployment" {
 		v.issue("", "not_exercised", "requested stage is not implemented")
 		return v.result
 	}
@@ -383,6 +386,9 @@ func Verify(m Manifest, assignment, stage string, read func(string, int64) ([]by
 				v.issue(target.ID, "incomplete", "required policy CI job absent")
 			}
 		}
+	}
+	if stage == "deployment" {
+		v.deployment(m.Deployment, target.ID, c, m.Scope.Assignment)
 	}
 	return v.result
 }

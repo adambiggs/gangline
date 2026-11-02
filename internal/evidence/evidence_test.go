@@ -32,6 +32,8 @@ func (f *fixture) add(id, kind string, value any) {
 		r.CI = v
 	case *Usage:
 		r.Usage = v
+	case *Deployment:
+		r.Deployment = v
 	}
 	f.m.Records = append(f.m.Records, r)
 }

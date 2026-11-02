@@ -85,7 +85,7 @@ Commands that act on a team take --team TEAM (default GANG_SESSION).
 `
 
 var commandUsage = map[string]string{
-	"evidence":   "usage: gang evidence verify|show --assignment ID\n                     [--require ci|usage] MANIFEST.json\n",
+	"evidence":   "usage: gang evidence verify|show --assignment ID\n                     [--require ci|usage|deployment] MANIFEST.json\n",
 	"sender":     "usage: gang sender add|remove NAME [--team TEAM]\n       gang sender list [--limit N | --all] [--team TEAM]\n",
 	"outside":    "usage: gang outside register|rotate NAME --credential-file PATH [--team TEAM]\n       gang outside remove NAME [--team TEAM]\n       gang outside serve [OPTIONS] [--team TEAM]\n",
 	"up":         "usage: gang up [NAME] [HITCH OPTIONS] [--team TEAM]\n",
@@ -190,7 +190,7 @@ var commandOptions = map[string][]optionSpec{
 	},
 	"evidence": {
 		{"assignment", "ID", "assignment identity to verify"},
-		{"require", "STAGE", "required stage: ci (default) or usage"},
+		{"require", "STAGE", "required stage: ci (default), usage or deployment"},
 	},
 	"log": {
 		{"agent", "NAME|HITCH_ID", "filter by agent name or hitch ID (default all)"},
