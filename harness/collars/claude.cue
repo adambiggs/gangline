@@ -25,7 +25,7 @@ collar: {
 		}
 	}
 	models: {
-		catalog: {name: "claude-help-models", params: {command: "claude", args: "--help"}}
+		catalog: {name: "claude-help-models", params: {command: "claude", args: "--help", extra_aliases: "haiku"}}
 		selected: {name: "claude-screen-model"}
 		option: {args: ["--model", "{{value}}"]}
 	}

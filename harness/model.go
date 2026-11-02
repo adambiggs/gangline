@@ -60,7 +60,7 @@ func ParseModelCatalog(invocation Invocation, output []byte) (ModelCatalog, erro
 	case "codex-debug-models":
 		return parseCodexModels(output)
 	case "claude-help-models":
-		return parseClaudeModels(string(output))
+		return parseClaudeModels(invocation, string(output))
 	default:
 		return ModelCatalog{}, fmt.Errorf("unknown model catalog primitive %q", invocation.Name)
 	}
@@ -157,7 +157,10 @@ func parseCodexModels(output []byte) (ModelCatalog, error) {
 	return ModelCatalog{Models: models}, nil
 }
 
-func parseClaudeModels(output string) (ModelCatalog, error) {
+// claudeAliasPattern matches the native CLI's model aliases, not full model ids.
+var claudeAliasPattern = regexp.MustCompile(`^[a-z][a-z0-9-]*$`)
+
+func parseClaudeModels(invocation Invocation, output string) (ModelCatalog, error) {
 	modelBlock := regexp.MustCompile(`(?s)--model <model>.*?(?:\n\s*-|$)`).FindString(output)
 	if modelBlock == "" {
 		return ModelCatalog{}, errors.New("claude help has no model option")
@@ -181,6 +184,20 @@ func parseClaudeModels(output string) (ModelCatalog, error) {
 		}
 		seen[alias[1]] = true
 		models = append(models, Model{ID: alias[1], Efforts: append([]string(nil), efforts...)})
+	}
+	// The native CLI accepts aliases its help example omits. A collar
+	// declares them in extra_aliases so the catalog lists them. They
+	// carry no effort list, so effort validation stays unknown and the
+	// native CLI keeps judging it.
+	for _, alias := range strings.Fields(invocation.Params["extra_aliases"]) {
+		if !claudeAliasPattern.MatchString(alias) || strings.HasPrefix(alias, "claude-") {
+			return ModelCatalog{}, fmt.Errorf("claude catalog declares extra alias %q that is not a model alias", alias)
+		}
+		if seen[alias] {
+			continue
+		}
+		seen[alias] = true
+		models = append(models, Model{ID: alias})
 	}
 	sort.Slice(models, func(left, right int) bool { return models[left].ID < models[right].ID })
 	return ModelCatalog{Models: models}, nil
