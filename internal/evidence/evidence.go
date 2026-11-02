@@ -23,7 +23,7 @@ type Manifest struct {
 	Required *Requirements `json:"required_checks,omitempty"`
 	Version  int           `json:"version"`
 	Scope    Scope         `json:"scope"`
-	Target   string        `json:"target_code"`
+	Target   string        `json:"target_code,omitempty"`
 	Records  []Record      `json:"records"`
 }
 type Requirements struct {
@@ -47,6 +47,7 @@ type Record struct {
 	Code       *Code     `json:"code,omitempty"`
 	Review     *Review   `json:"review,omitempty"`
 	CI         *CI       `json:"ci,omitempty"`
+	Usage      *Usage    `json:"usage,omitempty"`
 }
 type Artifact struct {
 	Path       string `json:"path,omitempty"`
@@ -132,6 +133,7 @@ type Check struct {
 	Status   string   `json:"status"`
 }
 type Result struct {
+	Usage      *UsageResult      `json:"usage,omitempty"`
 	Checks     []Check           `json:"checks"`
 	Status     string            `json:"status"`
 	Assignment string            `json:"assignment"`
@@ -167,10 +169,13 @@ func Decode(input []byte) (Manifest, error) {
 	if m.Version != 1 {
 		return m, errors.New("unsupported evidence manifest version")
 	}
-	for _, id := range []string{m.Scope.Host, m.Scope.Team, m.Scope.Hitch, m.Scope.Assignment, m.Target} {
+	for _, id := range []string{m.Scope.Host, m.Scope.Team, m.Scope.Hitch, m.Scope.Assignment} {
 		if !identifier.MatchString(id) {
 			return m, errors.New("invalid evidence identity")
 		}
+	}
+	if m.Target != "" && !identifier.MatchString(m.Target) {
+		return m, errors.New("invalid evidence identity")
 	}
 	seen := map[string][]byte{}
 	records := make([]Record, 0, len(m.Records))
@@ -182,12 +187,12 @@ func Decode(input []byte) (Manifest, error) {
 			return m, errors.New("record provenance required")
 		}
 		count := 0
-		for _, yes := range []bool{r.Artifact != nil, r.Run != nil, r.Test != nil, r.Code != nil, r.Review != nil, r.CI != nil} {
+		for _, yes := range []bool{r.Artifact != nil, r.Run != nil, r.Test != nil, r.Code != nil, r.Review != nil, r.CI != nil, r.Usage != nil} {
 			if yes {
 				count++
 			}
 		}
-		valid := r.Kind == "artifact" && r.Artifact != nil || r.Kind == "run" && r.Run != nil || r.Kind == "test" && r.Test != nil || r.Kind == "code" && r.Code != nil || r.Kind == "review" && r.Review != nil || r.Kind == "ci" && r.CI != nil
+		valid := r.Kind == "artifact" && r.Artifact != nil || r.Kind == "run" && r.Run != nil || r.Kind == "test" && r.Test != nil || r.Kind == "code" && r.Code != nil || r.Kind == "review" && r.Review != nil || r.Kind == "ci" && r.CI != nil || r.Kind == "usage" && r.Usage != nil
 		if count != 1 || !valid {
 			return m, errors.New("unsupported or inconsistent record kind")
 		}
@@ -307,12 +312,16 @@ func Verify(m Manifest, assignment, stage string, read func(string, int64) ([]by
 		v.issue("", "fail", "assignment mismatch")
 		return v.result
 	}
-	if stage != "ci" {
+	if stage != "ci" && stage != "usage" {
 		v.issue("", "not_exercised", "requested stage is not implemented")
 		return v.result
 	}
 	for _, r := range m.Records {
 		v.records[r.ID] = r
+	}
+	if stage == "usage" {
+		v.usage(m.Records, m.Scope.Hitch)
+		return v.result
 	}
 	target, ok := v.record(m.Target, "code")
 	if !ok {

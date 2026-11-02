@@ -92,3 +92,57 @@ func TestEvidenceDispatchNeverResolvesSettings(t *testing.T) {
 		t.Fatal(err)
 	}
 }
+
+func TestEvidenceUsageProjectsMetadataAtOutputBoundary(t *testing.T) {
+	const sentinel = "INERT_COMMAND_ARGUMENT_SENTINEL"
+	root := t.TempDir()
+	m := evidence.Manifest{Version: 1, Scope: evidence.Scope{Host: "host", Team: "team", Hitch: "hitch", Assignment: "task"}, Records: []evidence.Record{{ID: "attempt", Kind: "usage", Provenance: "manual_import", Usage: &evidence.Usage{Summary: "summary", Charges: "charges"}}}}
+	writeArtifact := func(id, data string) {
+		t.Helper()
+		if err := os.WriteFile(filepath.Join(root, id+".json"), []byte(data), 0600); err != nil {
+			t.Fatal(err)
+		}
+		sum := sha256.Sum256([]byte(data))
+		r := evidence.Record{ID: id, Kind: "artifact", Provenance: "manual_import", Artifact: &evidence.Artifact{Path: id + ".json", SHA256: hex.EncodeToString(sum[:]), Size: int64(len(data)), Status: "available"}}
+		for i := range m.Records {
+			if m.Records[i].ID == id {
+				m.Records[i] = r
+				return
+			}
+		}
+		m.Records = append(m.Records, r)
+	}
+	writeArtifact("summary", `{"session":{"id":"session"},"boundaries":[{"type":"task_started","utc":"2026-11-02T01:00:00Z"},{"type":"task_complete","utc":"2026-11-02T01:01:00Z"}],"generation_ids":["g"],"commands":[{"arguments":"`+sentinel+`"}],"unknown":"`+sentinel+`"}`)
+	writeArtifact("charges", `{"native_session":"session","phase":"first","complete":true,"rows":[{"id":"g","requested_id":"g","http_status":200,"created_at":"2026-11-02T01:00:01Z","model":"test/model","provider_name":"test","total_cost_usd":"0.001","unknown":"`+sentinel+`"}]}`)
+	path := filepath.Join(root, "usage.json")
+	for _, broken := range []bool{false, true} {
+		if broken {
+			writeArtifact("summary", `{"session":{"id":{"commands":"`+sentinel+`"}}}`)
+		}
+		data, _ := json.Marshal(m)
+		if err := os.WriteFile(path, data, 0600); err != nil {
+			t.Fatal(err)
+		}
+		for _, mode := range []string{"verify", "show"} {
+			var out, stderr bytes.Buffer
+			status := run([]string{"evidence", mode, "--require", "usage", "--assignment", "task", path}, strings.NewReader(""), &out, &stderr)
+			want := exitOK
+			if broken && mode == "verify" {
+				want = exitRefused
+			}
+			if status != want || strings.Contains(out.String()+stderr.String(), sentinel) {
+				t.Fatalf("status %d want %d, safe output required", status, want)
+			}
+			var result evidence.Result
+			if err := json.Unmarshal(out.Bytes(), &result); err != nil {
+				t.Fatal(err)
+			}
+			if !broken && (result.Usage.ActualUSD == nil || *result.Usage.ActualUSD != "0.001") {
+				t.Fatal("supported charge lost")
+			}
+			if broken && result.Status != "fail" {
+				t.Fatal("invalid metadata accepted")
+			}
+		}
+	}
+}

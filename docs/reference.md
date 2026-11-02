@@ -607,7 +607,7 @@ and [internals](internals.md#watchdog).
 
 ## Private evidence joins
 
-`gang evidence verify --assignment ID [--require ci] MANIFEST.json` checks an
+`gang evidence verify --assignment ID [--require ci|usage] MANIFEST.json` checks an
 explicit local evidence chain. `gang evidence show` takes the same arguments
 and prints the same JSON view. Neither command captures a session, installs
 hooks, runs a recorded command, fetches CI, or changes live team state.
@@ -620,11 +620,13 @@ integrity. The manifest input is bounded to 4 MiB.
 `incomplete` or `not_exercised`. `show` exits zero when it successfully produces
 the view; inspect its `status` to learn the evidence verdict. Missing artifacts,
 partial native records and absent results never become a passing chain.
-Only the through-CI stage is supported. Deployment, cost, retention, local
-restore and backend-effort coverage remain explicitly unavailable or not
-exercised; they cannot be inferred from a source check.
+The default stage checks through CI. `--require usage` separately checks
+retained generation charges and phase summaries; it cannot pass a code, review
+or CI edge. Deployment, retention, local restore and backend-effort coverage
+remain explicitly unavailable or not exercised.
 
-A manifest has `version`, `scope`, `target_code`, and `records`. The scope holds
+A manifest has `version`, `scope`, and `records`; `target_code` is required for
+the default through-CI check and may be omitted for usage. The scope holds
 `host`, `team_instance`, `hitch` and `assignment` identities. Each record has a
 unique `id`, a `kind`, `provenance` (`manual_import` or `producer_export`), and
 one corresponding payload. Optional `required_checks.tests` lists exact argv
@@ -644,6 +646,48 @@ executions, reviews and CI attempts distinct IDs even when their bytes match.
 | `code` | `run`, `native_call`, `repository` (`owner/repo`), `commit`, `commit_artifact`, `tree`, and arrays `tests`, `reviews`, `ci`. `target_code` selects this record. The raw Git commit object must hash to the commit and name the tested tree. The selected native turn must contain a tool result with `native_call` whose output names the exact commit or tree. Coverage distinguishes `native_tool_result_commit` from `native_tool_result_tree`. Only a commit match witnesses that commit in the session; a tree match witnesses tested content and does not establish that the session made the commit. Neither authenticates authorship. Record all required checks in the arrays; an empty array is incomplete. |
 | `review` | `result_artifact`. The reviewer attestation must target the exact repository/commit, approve it without unresolved findings, name a reviewer distinct from the implementer after whitespace/case normalization, and retain its report. |
 | `ci` | `jobs_artifact`, `run_id`, `attempt`, `required_jobs`. Retain the GitHub jobs API response. Each required job must have a unique matching name, repository URL, run/attempt, source commit, completed status and successful conclusion. A local gate is not this evidence. |
+| `usage` | `summary_artifact`, `charges_artifact`; optional `repair_of` names a preceding usage record, and `requested_model`/`requested_effort` are caller-declared request metadata. All imported phases must name one native session. Charge IDs must belong to the phase's declared generations and timestamps must fall within its boundaries. |
+
+### Retained usage metadata
+
+Usage imports existing local JSON exports; it makes no provider request. A
+phase summary contains `session.id`, `boundaries` (`task_started` then
+`task_complete`, each with `utc`) and `generation_ids`. Optional `hitch_id`
+must match the manifest. Reported model/effort come from `context.model` and
+`context.effort`, or `requested_native_model`/`requested_native_effort`.
+They are retained summary claims, not backend attestation. Repair summaries
+may carry `repairs`, `frontier_assistance` and `owner_code_edits`; first-result
+summaries may carry `frontier_assistance_before_first_result`. Assistance is
+shown as a classification without repeating its free text. A repair count
+requires a preceding `repair_of` phase in the same session.
+
+A charge export contains `native_session`, `phase`, `complete`, optional
+`failure`, and `rows`. Each row supplies `requested_id`, `id`, `http_status`,
+`created_at`, `model`, `provider_name` and decimal-string `total_cost_usd`.
+Successful matching rows are summed exactly in USD; the export's precomputed
+total is not trusted. Identical rows count once; conflicting same-ID rows,
+generation IDs assigned to multiple phases, or duplicate phases under new
+record IDs fail. Deduplication applies within this explicit manifest, not
+across accounts or manifests. Billing-account identity remains unavailable.
+
+`actual_usd` is populated only when the declared generation coverage passes.
+Missing rows remain incomplete; `known_subtotal_usd` labels the available
+subset, and no known charges means null, not zero. Invalid/conflicting metadata
+suppresses totals. Attempts retain their own charges, missing IDs and assistance
+classification; review-assistance cost remains unavailable. Native cumulative
+token snapshots and explicit phase deltas are shown separately and never
+added together. Estimates and subscription dollar conversions are not
+implemented. These are provider-reported generation charges, not an invoice,
+an authenticated provider assertion or a total for all work on the task.
+
+Only the documented metadata fields are projected into the result. Unknown
+fields, commands, prompts and free-text assistance are not printed or stored in
+the projected records; parse failures use fixed diagnostics. Original artifact
+bytes are still read locally for integrity and remain in their original private
+scope. This is not sanitization of source files or a general secret detector.
+Supply only an explicitly authorized local artifact directory. A usage pass
+does not establish native turn identity or independently bind the caller's
+assignment label, and does not imply through-CI or installed acceptance.
 
 Structured test results have `version`, `id`, `run`, `input_tree`, `argv`, `cwd`,
 `exit_code`, `outcome` and `output_artifact`. The result ID matches the test
