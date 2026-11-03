@@ -10,10 +10,9 @@ import (
 	"github.com/adambiggs/gangline/core"
 )
 
-// An idle agent whose last turn left native background tasks pending shows
-// them as a qualifier on idle; the next turn end without pending tasks
-// clears it.
-func TestRosterQualifiesIdleWithPendingBackgroundTasks(t *testing.T) {
+// An idle agent with a background report shows its count and age as a
+// qualifier on idle; the next turn end without reported tasks clears it.
+func TestRosterQualifiesIdleWithReportedBackgroundTasks(t *testing.T) {
 	f := newStateFixture(t)
 	a := f.add(t, "a", "worker", "claude")
 	f.env["GANGLINE_HITCH_ID"] = string(a.ID)

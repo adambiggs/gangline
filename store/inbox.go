@@ -294,8 +294,8 @@ func (p AgentPaths) ReadCompactionWitness() (CompactionWitness, error) {
 	return w, err
 }
 
-// Background is the number of background tasks the native harness reported
-// pending when its last turn ended. Hooks replace it without the agent lock.
+// Background holds a native hook's reported background task count and receipt
+// time, not verified current task state. Hooks replace it without the agent lock.
 type Background struct {
 	At    time.Time `json:"at"`
 	Tasks int       `json:"tasks"`

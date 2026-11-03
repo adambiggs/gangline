@@ -186,12 +186,11 @@ func (run *runtime) notifyHeldInput(a core.Agent) error {
 	return run.notifyHitcher(a, id, fmt.Sprintf("%s, which you hitched, has held unsubmitted input in its composer since %s; messages to %s wait behind it. gang capture --composer %s shows it.", a.Name, a.ChangedAt.UTC().Format(time.RFC3339), a.Name, a.Name))
 }
 
-// notifyBackgroundIdle tells a's hitcher once a has stayed idle for the
-// configured threshold since a turn that ended with native background tasks
-// pending. The agent reads as idle throughout, so nothing else reaches the
-// hitcher, and work finished before that turn ended waits unreported. The
-// record keeps the announced turn's end, since the hitcher's inbox keeps only
-// its latest delivered receipt, so each such turn is announced once.
+// notifyBackgroundIdle tells a's hitcher when a reads as idle and its stored
+// background report is at least the configured age. The report does not prove
+// those tasks are still pending. The record keeps the announced receipt time,
+// since the hitcher's inbox keeps only its latest delivered receipt. A new
+// report receipt, even from a delayed callback, can trigger another notice.
 func (run *runtime) notifyBackgroundIdle(l *store.LockedAgent, a *core.Agent) error {
 	if a.Activity != core.Idle {
 		return nil
@@ -201,8 +200,8 @@ func (run *runtime) notifyBackgroundIdle(l *store.LockedAgent, a *core.Agent) er
 		return err
 	}
 	id := core.EnvelopeID(fmt.Sprintf("background-idle-%s-%d", a.ID, background.At.UnixNano()))
-	reason := fmt.Sprintf("idle since %s with %s pending", background.At.UTC().Format(time.RFC3339), backgroundTaskCount(background.Tasks))
-	published, err := run.noticeHitcher(*a, id, fmt.Sprintf("%s, which you hitched, has been %s. gang status %s --why shows its record and gang capture %s its pane.", a.Name, reason, a.Name, a.Name))
+	reason := fmt.Sprintf("background report received at %s listed %s; current task state is unknown", background.At.UTC().Format(time.RFC3339), backgroundTaskCount(background.Tasks))
+	published, err := run.noticeHitcher(*a, id, fmt.Sprintf("%s, which you hitched, is idle. A %s. gang status %s --why shows its record and gang capture %s its pane.", a.Name, reason, a.Name, a.Name))
 	if err != nil || !published {
 		return err
 	}
@@ -213,7 +212,7 @@ func (run *runtime) notifyBackgroundIdle(l *store.LockedAgent, a *core.Agent) er
 	return run.record(*a, core.Event{Type: "background_idle", ID: string(id), Reason: reason})
 }
 
-// backgroundTaskCount names a count of native background tasks.
+// backgroundTaskCount names a reported count of native background tasks.
 func backgroundTaskCount(tasks int) string {
 	if tasks == 1 {
 		return "1 background task"

@@ -23,8 +23,9 @@ Team files live under `STATE_ROOT/teams/TEAM/`. `team.json` holds the curfew;
 `log.jsonl` is the append-only audit log. Name claims in `names/` point to
 immutable hitch IDs. Each `agents/ID/` contains `agent.json`, a `lock`,
 a submit `witness`, and `inbox/{tmp,new,cur,failed}/`. A turn-end hook
-leaves a `background` count when native background tasks are still pending,
-and the next turn boundary removes it. A permission-request hook leaves a
+leaves a `background` count and receipt time when it reports background tasks,
+and the next turn boundary removes it. Delayed hooks can replace that report;
+its count does not establish current task state. A permission-request hook leaves a
 `permission` witness that any later hook or an idle screen removes.
 An unverified native session change fails the hitch and saves the rejected
 normalized witness and registered session in `native-session-conflict`.

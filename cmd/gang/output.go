@@ -50,10 +50,10 @@ type agentJSON struct {
 	ProcessAvailable bool              `json:"process_available"`
 	Evidence         string            `json:"evidence"`
 	Compaction       *compactionJSON   `json:"compaction,omitempty"`
-	// BackgroundTasks qualifies idle with the native background tasks the
-	// last turn left pending. It never marks the agent busy.
+	// BackgroundTasks qualifies idle with a stored background report's count,
+	// not a verified current task count. It never marks the agent busy.
 	BackgroundTasks int `json:"background_tasks,omitempty"`
-	// BackgroundSince is when the turn that left them pending ended.
+	// BackgroundSince is when the background report was received.
 	BackgroundSince *time.Time `json:"background_since,omitempty"`
 }
 

@@ -114,11 +114,9 @@ func (f *backgroundIdleFixture) tickAt(t *testing.T, at time.Time) {
 	}
 }
 
-// An agent that stays idle for the threshold after a turn ended with native
-// background tasks pending is reported to its hitcher once per such turn,
-// with an event in the log, since it reads as idle throughout and nothing
-// else reaches the hitcher.
-func TestBackgroundIdleNotifiesHitcherOncePerTurn(t *testing.T) {
+// An idle agent with a report older than the threshold is reported to its
+// hitcher once per stored receipt time, with an event in the log.
+func TestBackgroundIdleNotifiesHitcherOncePerReport(t *testing.T) {
 	f := newBackgroundIdleFixture(t, "claude")
 	f.input.command = "claude"
 	f.input.screen = screenWithText("────────", "❯ ", "────────")
@@ -147,15 +145,15 @@ func TestBackgroundIdleNotifiesHitcherOncePerTurn(t *testing.T) {
 		}
 	}
 	notice := f.notices(t)[0]
-	if notice.From.Kind != core.SenderGangline || notice.Recipient != f.lead.ID || !strings.Contains(notice.Message.Text, "worker, which you hitched, has been idle since 2026-09-22T10:00:00Z with 1 background task pending") {
+	if notice.From.Kind != core.SenderGangline || notice.Recipient != f.lead.ID || !strings.Contains(notice.Message.Text, "worker, which you hitched, is idle. A background report received at 2026-09-22T10:00:00Z listed 1 background task; current task state is unknown") {
 		t.Fatalf("notice = %+v", notice)
 	}
-	if event := f.events(t)[0]; event.HitchID != f.worker.ID || event.ID != string(notice.ID) || event.Reason != "idle since 2026-09-22T10:00:00Z with 1 background task pending" {
+	if event := f.events(t)[0]; event.HitchID != f.worker.ID || event.ID != string(notice.ID) || event.Reason != "background report received at 2026-09-22T10:00:00Z listed 1 background task; current task state is unknown" {
 		t.Fatalf("event = %+v", event)
 	}
 
 	// The hitcher receives the notice and then another message. Its inbox
-	// keeps only the latest delivered receipt, and the stretch is still
+	// keeps only the latest delivered receipt, and the report is still
 	// announced once.
 	f.settle(t, notice)
 	f.settle(t, core.Envelope{ID: "later", Recipient: f.lead.ID, To: f.lead.Name, From: core.Sender{Kind: core.SenderGangline, Name: "test"}, Message: core.Message{Text: "later"}, CreatedAt: start})
@@ -164,7 +162,7 @@ func TestBackgroundIdleNotifiesHitcherOncePerTurn(t *testing.T) {
 		t.Fatalf("after the hitcher's later delivery: woken = %v, events = %+v, notices = %+v", f.woken, f.events(t), f.notices(t))
 	}
 
-	// A later turn that ends with tasks pending is a new idle stretch.
+	// A report with a later receipt time can trigger another notice.
 	later := start.Add(4 * threshold)
 	if err := p.WriteBackground(store.Background{At: later, Tasks: 2}); err != nil {
 		t.Fatal(err)
@@ -174,31 +172,30 @@ func TestBackgroundIdleNotifiesHitcherOncePerTurn(t *testing.T) {
 		t.Fatalf("before the second threshold: woken = %v, events = %+v", f.woken, f.events(t))
 	}
 	f.tickAt(t, later.Add(threshold))
-	if got := f.notices(t); len(got) != 1 || len(f.woken) != 2 || len(f.events(t)) != 2 || !strings.Contains(got[0].Message.Text, "with 2 background tasks pending") {
+	if got := f.notices(t); len(got) != 1 || len(f.woken) != 2 || len(f.events(t)) != 2 || !strings.Contains(got[0].Message.Text, "listed 2 background tasks; current task state is unknown") {
 		t.Fatalf("after the second threshold: notices = %+v, woken = %v, events = %+v", got, f.woken, f.events(t))
 	}
 }
 
-// A busy agent, an idle one with no tasks pending, and one with no hitcher
-// produce no notice and no event however long they stay that way.
-func TestBackgroundIdleSkipsBusyUnpendingAndUnhitched(t *testing.T) {
+// Busy agents, agents without a positive report, and agents without a distinct
+// hitcher produce no notice, wake or event however long they stay that way.
+func TestBackgroundIdleSkipsBusyUnreportedAndSelfOrUnhitched(t *testing.T) {
 	for _, tc := range []struct {
-		name   string
-		screen []string
-		tasks  int
-		orphan bool
+		name    string
+		screen  []string
+		tasks   int
+		hitcher core.HitchID
 	}{
-		{"busy", []string{"✻ Working… (3s · esc to interrupt)", "────────", "❯ ", "────────"}, 1, false},
-		{"no tasks", []string{"────────", "❯ ", "────────"}, 0, false},
-		{"no hitcher", []string{"────────", "❯ ", "────────"}, 1, true},
+		{"busy", []string{"✻ Working… (3s · esc to interrupt)", "────────", "❯ ", "────────"}, 1, "l"},
+		{"no tasks", []string{"────────", "❯ ", "────────"}, 0, "l"},
+		{"no hitcher", []string{"────────", "❯ ", "────────"}, 1, ""},
+		{"self hitcher", []string{"────────", "❯ ", "────────"}, 1, "a"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			f := newBackgroundIdleFixture(t, "claude")
 			f.input.command = "claude"
 			f.input.screen = screenWithText(tc.screen...)
-			if tc.orphan {
-				f.worker = f.setAgent(t, f.worker, func(a *core.Agent) { a.HitchedBy = "" })
-			}
+			f.worker = f.setAgent(t, f.worker, func(a *core.Agent) { a.HitchedBy = tc.hitcher })
 			p, err := f.run.team.Agent(f.worker.ID)
 			if err != nil {
 				t.Fatal(err)
@@ -210,8 +207,8 @@ func TestBackgroundIdleSkipsBusyUnpendingAndUnhitched(t *testing.T) {
 				}
 			}
 			f.tickAt(t, start.Add(10*f.run.settings.BackgroundIdleNotice))
-			if got := f.notices(t); len(got) != 0 || len(f.events(t)) != 0 || f.errOut.String() != "" {
-				t.Fatalf("notices = %+v, events = %+v, stderr = %q, worker = %+v", got, f.events(t), f.errOut.String(), f.agent(t, f.worker.ID))
+			if got := f.notices(t); len(got) != 0 || len(f.woken) != 0 || len(f.events(t)) != 0 || f.errOut.String() != "" {
+				t.Fatalf("notices = %+v, wakes = %v, events = %+v, stderr = %q, worker = %+v", got, f.woken, f.events(t), f.errOut.String(), f.agent(t, f.worker.ID))
 			}
 		})
 	}
@@ -246,9 +243,9 @@ func TestBackgroundIdleNoticeFromFreshHooks(t *testing.T) {
 	}
 }
 
-// Roster and status show how long an agent has been idle with tasks pending,
-// and the JSON forms carry when that began.
-func TestBackgroundIdleDurationInRosterAndStatus(t *testing.T) {
+// Roster and status show the stored report count and age without changing the
+// compact label or JSON fields. Status explains that current task state is unknown.
+func TestBackgroundReportAgeInRosterAndStatus(t *testing.T) {
 	f := newBackgroundIdleFixture(t, "claude")
 	f.input.command = "claude"
 	f.input.screen = screenWithText("────────", "❯ ", "────────")
@@ -273,7 +270,7 @@ func TestBackgroundIdleDurationInRosterAndStatus(t *testing.T) {
 	if out := read("roster"); !strings.Contains(out, "worker           active     idle (1 bg 7h09m)  claude") {
 		t.Fatalf("roster = %q", out)
 	}
-	if out := read("status", "worker", "--why"); !strings.Contains(out, "\tidle (1 bg 7h09m)\n") || !strings.Contains(out, "idle since 2026-09-22T10:00:00Z (7h09m) with 1 background task pending\n") {
+	if out := read("status", "worker", "--why"); !strings.Contains(out, "\tidle (1 bg 7h09m)\n") || !strings.Contains(out, "background report received at 2026-09-22T10:00:00Z (7h09m ago): 1 background task; current task state is unknown\n") {
 		t.Fatalf("status --why = %q", out)
 	}
 	f.out.Reset()

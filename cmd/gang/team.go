@@ -523,8 +523,8 @@ func (run *runtime) agentRow(a core.Agent) (agentJSON, error) {
 	return row, nil
 }
 
-// background is the native background tasks an idle agent's last turn left
-// pending and when that turn ended; a busy agent shows none.
+// background returns an idle agent's stored background report and its receipt
+// time, without certifying current task state; a busy agent shows none.
 func (run *runtime) background(a core.Agent) (store.Background, error) {
 	if a.Activity != core.Idle {
 		return store.Background{}, nil
@@ -537,8 +537,8 @@ func (run *runtime) background(a core.Agent) (store.Background, error) {
 	return background, err
 }
 
-// activityLabel is an activity with the background tasks the agent left
-// pending and how long it has been idle with them, as in "idle (2 bg 1h05m)".
+// activityLabel adds the background report count and age to an activity, as in
+// "idle (2 bg 1h05m)". The age is not the duration of verified idle or pending work.
 func activityLabel(activity core.Activity, tasks int, since *time.Time, now time.Time) string {
 	if tasks > 0 && since != nil {
 		return fmt.Sprintf("%s (%d bg %s)", activity, tasks, idleDuration(now.Sub(*since)))
@@ -605,7 +605,7 @@ func (cmd command) status(args []string) error {
 		}
 	}
 	if why && background.Tasks > 0 {
-		if _, err := fmt.Fprintf(cmd.stdout, "idle since %s (%s) with %s pending\n", background.At.UTC().Format(time.RFC3339), idleDuration(now.Sub(background.At)), backgroundTaskCount(background.Tasks)); err != nil {
+		if _, err := fmt.Fprintf(cmd.stdout, "background report received at %s (%s ago): %s; current task state is unknown\n", background.At.UTC().Format(time.RFC3339), idleDuration(now.Sub(background.At)), backgroundTaskCount(background.Tasks)); err != nil {
 			return err
 		}
 	}
