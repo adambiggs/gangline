@@ -3,11 +3,18 @@ name: release
 on:
   push:
     branches: [main]
+  workflow_dispatch:
+    inputs:
+      site_sha:
+        description: Full reviewed commit SHA to publish to GitHub Pages
+        required: true
+        type: string
 
 permissions: {}
 
 jobs:
   check:
+    if: github.event_name == 'push'
     runs-on: ubuntu-latest
     permissions:
       contents: read
@@ -100,7 +107,7 @@ jobs:
             docker.io/adambiggs/gangline:latest
 
   pages:
-    if: needs.release-please.outputs.release_created == 'true'
+    if: ${{ always() && !cancelled() && (github.event_name == 'workflow_dispatch' || needs.release-please.outputs.release_created == 'true') }}
     needs: [release-please]
     runs-on: ubuntu-latest
     permissions:
@@ -115,9 +122,21 @@ jobs:
       name: github-pages
       url: ${{ steps.deployment.outputs.page_url }}
     steps:
+      - name: Validate manual site revision
+        if: github.event_name == 'workflow_dispatch'
+        env:
+          SITE_SHA: ${{ inputs.site_sha }}
+        run: '[[ "$SITE_SHA" =~ ^[0-9a-f]{40}$ ]]'
+
       - uses: actions/checkout@v5
         with:
-          ref: ${{ needs.release-please.outputs.tag_name }}
+          ref: ${{ inputs.site_sha || needs.release-please.outputs.tag_name }}
+
+      - name: Verify manual checkout
+        if: github.event_name == 'workflow_dispatch'
+        env:
+          SITE_SHA: ${{ inputs.site_sha }}
+        run: 'test "$(git rev-parse HEAD)" = "$SITE_SHA"'
 
       - uses: actions/setup-node@v4
         with:

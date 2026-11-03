@@ -117,7 +117,18 @@ npm run build --prefix site
 
 The install populates Git-ignored `site/node_modules/`. The build writes
 Git-ignored `site/dist/` and reports the local link and navigation checks.
-GitHub Pages publishes the site when a release is created.
+GitHub Pages publishes the site when a release is created. For a site-only
+change, pass the normal gate and push the reviewed commit, then manually run the
+`release` workflow with `site_sha` set to that full commit SHA:
+
+```sh
+gh workflow run release.yml --ref main -f site_sha=FULL_REVIEWED_COMMIT_SHA
+```
+
+The manual route verifies the checkout and runs only the existing Pages build
+and deployment job; it does not create a release, binaries, or a Docker image.
+Check the workflow result and the actual page at https://gangline.ai/ after
+publication.
 
 ## Commit
 
