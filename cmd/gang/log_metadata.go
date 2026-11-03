@@ -72,12 +72,18 @@ func (cmd command) logMetadata(path string, filter logFilter) error {
 	if err != nil {
 		return err
 	}
+	if filter.Summary {
+		return writeJSON(cmd.stdout, summarizeLogMetadata(page))
+	}
 	return writeJSON(cmd.stdout, page)
 }
 
 // Read only this page and one boundary byte. A page is independently evidenced;
 // its offsets/hash do not establish identity or continuity with another file.
 func readLogMetadata(in io.ReaderAt, size int64, filter logFilter, now time.Time) (logMetadataPage, error) {
+	if filter.Summary {
+		filter.Offset = max(0, size-filter.MaxBytes)
+	}
 	page := logMetadataPage{Schema: "gangline.observability-log.v1", ReadAt: now, Size: size,
 		Offset: filter.Offset, Next: filter.Offset, Events: []logMetadataEvent{}, Gaps: []logMetadataGap{},
 		Limitations: []string{"host_and_team_scope_not_in_file", "cross_page_continuity_unverified",
@@ -85,13 +91,17 @@ func readLogMetadata(in io.ReaderAt, size int64, filter logFilter, now time.Time
 	if filter.Offset > size {
 		return page, fmt.Errorf("log --metadata: offset exceeds file size; source may have been truncated or replaced")
 	}
+	partialStart := false
 	if filter.Offset > 0 {
 		var previous [1]byte
 		if _, err := in.ReadAt(previous[:], filter.Offset-1); err != nil {
 			return page, fmt.Errorf("log --metadata: cannot read page boundary")
 		}
 		if previous[0] != '\n' {
-			return page, fmt.Errorf("log --metadata: offset is not a record boundary")
+			if !filter.Summary {
+				return page, fmt.Errorf("log --metadata: offset is not a record boundary")
+			}
+			partialStart = true
 		}
 	}
 	count := min(filter.MaxBytes, size-filter.Offset)
@@ -102,8 +112,18 @@ func readLogMetadata(in io.ReaderAt, size int64, filter logFilter, now time.Time
 	}
 	page.ReadEnd = filter.Offset + int64(n)
 	page.SHA256 = fmt.Sprintf("%x", sha256.Sum256(data))
+	cursor := 0
+	if partialStart {
+		page.Gaps = append(page.Gaps, logMetadataGap{filter.Offset, "tail_starts_inside_record"})
+		if newline := bytes.IndexByte(data, '\n'); newline >= 0 {
+			cursor = newline + 1
+			page.Next = filter.Offset + int64(cursor)
+		} else {
+			cursor = len(data)
+		}
+	}
 	var prior time.Time
-	for cursor := 0; cursor < len(data); {
+	for cursor < len(data) {
 		newline := bytes.IndexByte(data[cursor:], '\n')
 		if newline < 0 {
 			kind := "incomplete_tail"

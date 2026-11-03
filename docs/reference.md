@@ -345,6 +345,43 @@ next complete-record offset, read time, `more`, events and structured gaps.
 `--agent` and `--type` can filter the page; prefer hitch identity to a reused
 display name. `--all`, `--limit` and `--team` do not apply in metadata mode.
 
+For an interactive view of the latest bounded audit window, use:
+
+```sh
+gang log --summary --max-bytes 65536 LOG.jsonl
+```
+
+The `gangline.observability-summary.v1` result reads only the file's tail within
+the same byte budget, plus one boundary byte. It skips an initial partial record
+with a `tail_starts_inside_record` gap and marks excluded earlier history with
+`omitted_head`. Read offsets, hash, read time and gaps have the same meanings as
+the metadata page. `more` means bytes remain after the last complete record,
+not an instruction to poll; this command performs one read, without pagination.
+It does not accept `--metadata`, `--offset`, `--agent`, `--type`, `--all`,
+`--limit` or `--team`.
+
+`subjects` groups observations by hitch identity, never by name. It returns the
+last activity observation and the last usage observation for each distinct
+source/session pair in append order, retaining their record offsets and original
+timestamps. A later unknown reading replaces an earlier known reading in the
+same pair; missing identity readings remain separate. All selected lifecycle and
+outage markers remain in `boundaries`. Subjects are sorted by hitch, and usage
+groups by source/session key, not time. Within each identified group, "last"
+means the greatest append offset. Missing-identity entries and boundaries can
+grow to the read budget; no fixed entry count is promised. A hitch seen only in
+a boundary has an empty usage list and null activity. These observations may predate a drop,
+session change or gap. Match them to an independently verified current roster
+before presenting current subjects; the summary itself does not establish
+current registration, session, freshness or continuity. An absent subject means
+only that this window contains no projected record for it.
+
+Cumulative readings are not added or subtracted. `window_usage` and
+`state_duration_seconds` are null: a bounded tail does not establish attributable
+usage baselines or uninterrupted state intervals. The last event time is not
+extended to read time, and a quiet audit is not evidence of liveness. A caller
+must use its authorized fixed file and host/team scope and fit this one read
+within its existing collection budget; no per-subject requests are needed.
+
 An unterminated tail or record cut by the budget is left unconsumed and named in
 `gaps`; retry from `next_offset`, increasing the budget if a record exceeds it.
 A first record larger than the page is marked `record_exceeds_budget`. If that

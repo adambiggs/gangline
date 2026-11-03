@@ -34,6 +34,21 @@ func TestLogMetadataCommandReadsNamedFileWithoutRuntime(t *testing.T) {
 	if err := cmd.log([]string{"--metadata", root}); err == nil {
 		t.Fatal("directory accepted as audit")
 	}
+	out.Reset()
+	if err := cmd.log([]string{"--summary", path}); err != nil {
+		t.Fatal(err)
+	}
+	var summary logSummary
+	if err := json.Unmarshal(out.Bytes(), &summary); err != nil || len(summary.Subjects) != 1 || summary.Schema != "gangline.observability-summary.v1" {
+		t.Fatal("named-file summary failed", err)
+	}
+	after, err = os.ReadFile(path)
+	if err != nil || !bytes.Equal(data, after) {
+		t.Fatal("summary changed source audit")
+	}
+	if err := cmd.log([]string{"--summary", root}); err == nil {
+		t.Fatal("directory accepted for summary")
+	}
 	cmd.team = "other"
 	if err := cmd.log([]string{"--metadata", path}); err == nil {
 		t.Fatal("saved file accepted a conflicting team scope")
