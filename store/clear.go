@@ -122,7 +122,7 @@ func (p AgentPaths) AdmitClear(id core.EnvelopeID, session, registration string)
 // WriteDisplayHook serializes display side files with clear confirmation. A
 // hook already running when clear completes cannot remove the new session's
 // permission request or restore the old session's background count.
-func (p AgentPaths) WriteDisplayHook(n StatusHook, background *int, observedSession string) error {
+func (p AgentPaths) WriteDisplayHook(n StatusHook, background *int, observedSession string, later func(string, string) (bool, error)) (result error) {
 	lock, err := p.lockStatusHooks()
 	if err != nil {
 		return err
@@ -145,6 +145,23 @@ func (p AgentPaths) WriteDisplayHook(n StatusHook, background *int, observedSess
 			return nil
 		}
 	}
+	if n.Kind == "turn-finished" || n.Kind == "turn-failed" {
+		w, err := p.ReadWitness()
+		if err != nil && !errors.Is(err, os.ErrNotExist) {
+			return err
+		}
+		records, err := p.ReadStatusHooks()
+		if err != nil {
+			return err
+		}
+		current, err := displayBoundaryAllowed(n, a, w, records, later)
+		if !current {
+			return err
+		}
+		// Unavailable ordering must not freeze a current callback's display
+		// effects. Preserve the prior behavior while reporting the read error.
+		defer func() { result = errors.Join(result, err) }()
+	}
 	if n.Kind == "permission-requested" {
 		if err := p.WritePermissionWitness(PermissionWitness{At: n.At, SessionID: n.SessionID}); err != nil {
 			return err
@@ -162,4 +179,61 @@ func (p AgentPaths) WriteDisplayHook(n StatusHook, background *int, observedSess
 		return nil
 	}
 	return p.RemoveBackground()
+}
+
+// displayBoundaryAllowed keeps an asynchronous terminal hook from replacing
+// newer display evidence when native order proves it obsolete. Differing
+// prompt IDs alone do not distinguish an old turn from a later queued turn.
+// Unavailable order retains the existing display behavior, not an idle proof.
+func displayBoundaryAllowed(n StatusHook, a core.Agent, w Witness, records []StatusHook, later func(string, string) (bool, error)) (bool, error) {
+	session, turn := a.Native.SessionID, a.Native.TurnID
+	if w.SessionID != "" && (session == "" || w.At.After(a.Native.SubmittedAt)) {
+		session, turn = w.SessionID, w.TurnID
+	}
+	if session != "" && n.SessionID != session {
+		return false, nil
+	}
+	current := func(reference string) (bool, error) {
+		if reference == "" || reference == n.TurnID {
+			return true, nil
+		}
+		if n.TurnID == "" {
+			return false, nil
+		}
+		if later == nil {
+			return true, nil
+		}
+		newer, err := later(n.TurnID, reference)
+		return !newer, err
+	}
+	if ok, err := current(turn); err != nil || !ok {
+		return ok, err
+	}
+	// An already reconciled failure can belong to a queued turn newer than
+	// the last submit witness. A new synchronous submit supersedes it.
+	if !w.At.After(a.Native.SubmittedAt) {
+		if ok, err := current(a.Native.FailedTurn); err != nil || !ok {
+			return ok, err
+		}
+	}
+	var submitted uint64
+	for _, r := range records {
+		if r.Kind == "turn-started" && r.SessionID == session && r.TurnID == turn && r.Sequence > submitted {
+			submitted = r.Sequence
+		}
+	}
+	for _, r := range records {
+		if r.Sequence <= submitted || r.SessionID != session || (r.Kind != "turn-finished" && r.Kind != "turn-failed") {
+			continue
+		}
+		// Retained callbacks may themselves be stale. Only a demonstrably
+		// later queued turn can supersede an otherwise current boundary.
+		if r.TurnID != "" && r.TurnID != n.TurnID && later != nil {
+			newer, err := later(n.TurnID, r.TurnID)
+			if err != nil || newer {
+				return !newer, err
+			}
+		}
+	}
+	return true, nil
 }

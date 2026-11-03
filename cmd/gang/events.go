@@ -145,8 +145,23 @@ func (cmd command) handleHook(args []string) (result error) {
 	if tasks, ok := event.Counts["background_tasks"]; ok {
 		background = &tasks
 	}
-	displayErr := p.WriteDisplayHook(store.StatusHook{Kind: event.Kind, At: cmd.now(), SessionID: event.Payload["session_id"]}, background, observedSession)
-	defer func() { result = errors.Join(result, displayErr) }()
+	display := store.StatusHook{Kind: event.Kind, At: cmd.now(), SessionID: event.Payload["session_id"], TurnID: event.Payload["turn_id"]}
+	displayWritten := false
+	writeDisplay := func() error {
+		displayWritten = true
+		transcript := event.Payload["transcript_path"]
+		if transcript == "" {
+			transcript = a.Native.Transcript
+		}
+		return p.WriteDisplayHook(display, background, observedSession, func(earlier, later string) (bool, error) {
+			return harness.TurnRanAfter(c.Primitives.TurnBoundary, transcript, earlier, later)
+		})
+	}
+	defer func() {
+		if !displayWritten {
+			result = errors.Join(result, writeDisplay())
+		}
+	}()
 	if event.Kind == "turn-started" {
 		for _, value := range []string{event.Payload["session_id"], event.Payload["turn_id"], event.Payload["transcript_path"], event.NativeEvent} {
 			if len(value) > 4096 {
@@ -206,10 +221,11 @@ func (cmd command) handleHook(args []string) (result error) {
 		if err := p.WriteStatusHook(statusHook(n)); err != nil {
 			return err
 		}
+		displayErr := writeDisplay()
 		if cmd.detach != nil {
-			return cmd.detach(string(id), n)
+			return errors.Join(displayErr, cmd.detach(string(id), n))
 		}
-		return cmd.detachTick(string(id), n, run.settings)
+		return errors.Join(displayErr, cmd.detachTick(string(id), n, run.settings))
 	case "turn-finished", "turn-failed", "compaction-finished", "activity", "permission-requested", "compaction-started":
 		n := hookNotice{Kind: event.Kind, NativeEvent: event.NativeEvent, At: cmd.now(), SessionID: event.Payload["session_id"], TurnID: event.Payload["turn_id"], Transcript: event.Payload["transcript_path"], Failure: failure}
 		for _, value := range []string{n.SessionID, n.TurnID, n.Transcript, n.NativeEvent} {
@@ -225,10 +241,11 @@ func (cmd command) handleHook(args []string) (result error) {
 		if err := p.WriteStatusHook(statusHook(n)); err != nil {
 			return err
 		}
+		displayErr := writeDisplay()
 		if cmd.detach != nil {
-			return cmd.detach(string(id), n)
+			return errors.Join(displayErr, cmd.detach(string(id), n))
 		}
-		return cmd.detachTick(string(id), n, run.settings)
+		return errors.Join(displayErr, cmd.detachTick(string(id), n, run.settings))
 	}
 	return nil
 }
