@@ -396,6 +396,9 @@ func (cmd command) log(args []string) error {
 		}
 		path = run.team.Log
 	}
+	if filter.Metadata {
+		return cmd.logMetadata(path, filter)
+	}
 	f, err := os.Open(path)
 	if err != nil {
 		return err

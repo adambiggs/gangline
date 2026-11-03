@@ -101,7 +101,7 @@ var commandUsage = map[string]string{
 	"compact":    "usage: gang compact [NAME] [--note TEXT] [--team TEAM]\n       gang compact [NAME] --interrupt [--team TEAM]\n",
 	"statusline": "usage: gang statusline [--install]\n",
 	"context":    "usage: gang context [NAME] [--json] [--team TEAM]\n       gang context --widget NAME | --clear [--team TEAM]\n",
-	"log":        "usage: gang log [--agent NAME|HITCH_ID] [--type TYPE|KIND] [--team TEAM]\n       [--limit N | --all] [LOG.jsonl]\n",
+	"log":        "usage: gang log [--agent NAME|HITCH_ID] [--type TYPE|KIND] [--team TEAM]\n       [--limit N | --all] [LOG.jsonl]\n       gang log --metadata [--offset BYTE] [--max-bytes N] LOG.jsonl\n",
 	"limits":     "usage: gang limits [NAME | -c|--collar COLLAR] [--team TEAM]\n",
 	"snooze":     "usage: gang snooze [--at DURATION|HH:MM|RFC3339] [--note TEXT]\n       [--clear [ID] | --status [--limit N | --all]] [--team TEAM]\n",
 	"wait":       "usage: gang wait NAME [--timeout DURATION] [--team TEAM]\n",
@@ -201,6 +201,9 @@ var commandOptions = map[string][]optionSpec{
 		{"type", "TYPE|KIND", "show events or readings of this type (default all)"},
 		{"limit", "N", "print the latest N matching events (default 50)"},
 		{"all", "", "print all matching events"},
+		{"metadata", "", "read an allowlisted metadata page from LOG.jsonl"},
+		{"offset", "BYTE", "metadata page record boundary (default 0)"},
+		{"max-bytes", "N", "metadata read budget (default 65536, maximum 1048576)"},
 	},
 	"limits": {
 		{"c", "COLLAR", "query a collar without an agent"},

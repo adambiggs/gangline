@@ -321,6 +321,49 @@ records, provide a heartbeat, or establish duration, uninterrupted coverage or
 exactly-once delivery. Retained history is unchanged; the receipt is removable
 runtime state and no retention expiry is introduced.
 
+For an allowlisted metadata page without message bodies or free-text diagnostics,
+use the same audit reader with an explicit file:
+
+```sh
+gang log --metadata --offset 0 --max-bytes 65536 LOG.jsonl
+```
+
+The `gangline.observability-log.v1` JSON result contains activity observations,
+native session bindings, cumulative token readings and lifecycle/outage markers.
+It excludes envelopes, reasons, prompts, tool payloads and compaction continuation
+text. Unknown usage fields remain absent; an observed zero stays zero. Host,
+team and task attribution are not inferred from names or a file path. The caller
+must supply its separately verified source scope. This is a file reader, not a
+new collector or a live roster endpoint.
+
+The default read budget is 64 KiB, with an explicit maximum of one MiB.
+This keeps schema-validation work bounded as well as file I/O; callers can
+request smaller pages for interactive views.
+Each request reads at most that budget plus one record-boundary byte. It returns
+the file size at open, requested offset, read end, SHA-256 of those read bytes,
+next complete-record offset, read time, `more`, events and structured gaps.
+`--agent` and `--type` can filter the page; prefer hitch identity to a reused
+display name. `--all`, `--limit` and `--team` do not apply in metadata mode.
+
+An unterminated tail or record cut by the budget is left unconsumed and named in
+`gaps`; retry from `next_offset`, increasing the budget if a record exceeds it.
+A first record larger than the page is marked `record_exceeds_budget`. If that
+offset does not advance, do not poll indefinitely: the source needs a complete
+record or a larger allowed page. A record beyond the maximum budget remains
+unavailable through this mode; the reader does not silently skip it. Invalid complete records are skipped
+with a gap rather than their decoder error or contents. Within-page observation
+time disorder is also reported; concurrent writers can append out of timestamp
+order, so that marker alone does not prove clock failure or damaged data. A non-boundary offset or offset past the
+current end is refused. Nonregular files are refused.
+
+Pages do not prove continuity across file replacement, restart, compaction or
+clock changes. The page hash witnesses only its returned byte range; it is not
+a team incarnation or global source identity. Records can be missing before,
+between or after pages, and empty results do not establish zero usage. Activity
+timestamps mark observations, not continuous busy/idle time or exact compute.
+Session cumulative snapshots must not be summed. This projection supplies no
+duration totals, cross-page deduplication or historical task assignment.
+
 `gang log --type session_bound` joins native sessions to hitches. Gangline
 logs a `session_bound` event whenever it binds a hitch to a native session
 it did not hold before, once the native harness reports that session with

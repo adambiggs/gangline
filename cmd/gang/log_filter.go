@@ -15,13 +15,18 @@ import (
 type logFilter struct {
 	Agent, Type string
 	Limit       int // zero explicitly exports all matching events
+	Metadata    bool
+	Offset      int64
+	MaxBytes    int64
 }
 
 func parseLogFilter(args []string, allowFile bool) (logFilter, []string, error) {
 	var filter logFilter
 	limit := "50"
 	var all bool
-	flags := boundFlagSet("log", map[string]any{"agent": &filter.Agent, "type": &filter.Type, "limit": &limit, "all": &all})
+	offset, maxBytes := "0", "65536"
+	flags := boundFlagSet("log", map[string]any{"agent": &filter.Agent, "type": &filter.Type, "limit": &limit, "all": &all,
+		"metadata": &filter.Metadata, "offset": &offset, "max-bytes": &maxBytes})
 	files, err := parseOptions(flags, args)
 	if err != nil {
 		return filter, nil, usageError("log: %v", err)
@@ -41,6 +46,21 @@ func parseLogFilter(args []string, allowFile bool) (logFilter, []string, error) 
 	}
 	if len(files) > 1 {
 		return filter, nil, usageError("unexpected log argument %q", files[1])
+	}
+	if filter.Metadata {
+		if !allowFile || len(files) != 1 || all || flagWasSet(flags, "limit") {
+			return filter, nil, usageError("log --metadata requires one LOG.jsonl and does not accept --all or --limit")
+		}
+		filter.Offset, err = strconv.ParseInt(offset, 10, 64)
+		if err != nil || filter.Offset < 0 {
+			return filter, nil, usageError("log --metadata: --offset must be nonnegative")
+		}
+		filter.MaxBytes, err = strconv.ParseInt(maxBytes, 10, 64)
+		if err != nil || filter.MaxBytes < 1 || filter.MaxBytes > 1024*1024 {
+			return filter, nil, usageError("log --metadata: --max-bytes must be between 1 and 1048576")
+		}
+	} else if flagWasSet(flags, "offset") || flagWasSet(flags, "max-bytes") {
+		return filter, nil, usageError("log: --offset and --max-bytes require --metadata")
 	}
 	return filter, files, nil
 }
