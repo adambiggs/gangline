@@ -510,6 +510,13 @@ func (run *runtime) agentRow(a core.Agent) (agentJSON, error) {
 		paneName = string(a.Name)
 	}
 	row := agentJSON{Kind: "native", InputOutage: a.InputOutage, Name: a.Name, HitchID: a.ID, Status: a.Status, Activity: a.Activity, Collar: a.Collar, Pane: paneName, ProcessAvailable: available, Evidence: run.cmd.operatorText(a.Evidence)}
+	row.ConfiguredModel, row.ConfiguredEffort = optionalModelValue(a.ConfiguredModel), optionalModelValue(a.ConfiguredEffort)
+	row.ObservedModel, row.ObservedEffort = optionalModelValue(a.Native.Model), optionalModelValue(a.Native.Effort)
+	if a.Native.Context.Source == "status-line" {
+		// Claude reports its model in the existing status-line payload but
+		// does not report effort there. Screen labels are not native IDs.
+		row.ObservedModel, row.ObservedEffort = optionalModelValue(a.Native.Context.Model), nil
+	}
 	if a.Compaction != nil {
 		row.Compaction = &compactionJSON{ID: a.Compaction.ID, Status: a.Compaction.Status, Reason: run.cmd.operatorText(a.Compaction.Reason)}
 	}
@@ -521,6 +528,13 @@ func (run *runtime) agentRow(a core.Agent) (agentJSON, error) {
 		row.BackgroundTasks, row.BackgroundSince = background.Tasks, &background.At
 	}
 	return row, nil
+}
+
+func optionalModelValue(value string) *string {
+	if value == "" {
+		return nil
+	}
+	return &value
 }
 
 // background returns an idle agent's stored background report and its receipt

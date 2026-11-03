@@ -46,6 +46,10 @@ type agentJSON struct {
 	Status           core.Status       `json:"status"`
 	Activity         core.Activity     `json:"activity"`
 	Collar           string            `json:"collar"`
+	ConfiguredModel  *string           `json:"configured_model"`
+	ConfiguredEffort *string           `json:"configured_effort"`
+	ObservedModel    *string           `json:"observed_model"`
+	ObservedEffort   *string           `json:"observed_effort"`
 	Pane             string            `json:"pane"`
 	ProcessAvailable bool              `json:"process_available"`
 	Evidence         string            `json:"evidence"`

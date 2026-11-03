@@ -138,6 +138,8 @@ func TestClearNativeAndContinuationOrder(t *testing.T) {
 		t.Run(map[bool]string{false: "immediate", true: "lazy"}[lazy], func(t *testing.T) {
 			f, a, p := clearFixture(t)
 			a.HitchedBy = "parent"
+			a.ConfiguredModel, a.ConfiguredEffort = "vendor/configured", "high"
+			a.Native.Model, a.Native.Effort = "vendor/observed", "low"
 			saveClearAgent(t, p, a)
 			child := f.add(t, "child", "child", "codex")
 			child.HitchedBy = a.ID
@@ -204,6 +206,9 @@ func TestClearNativeAndContinuationOrder(t *testing.T) {
 			}
 			if a.Clear.Status != "completed" || a.Native.SessionID != "new-session" || a.ID != before.ID || a.Pane != before.Pane || a.Process != before.Process || a.Registration != before.Registration || a.HitchedBy != before.HitchedBy {
 				t.Fatalf("continuity=%+v", a)
+			}
+			if a.ConfiguredModel != "vendor/configured" || a.ConfiguredEffort != "high" || a.Native.Model != "" || a.Native.Effort != "" {
+				t.Fatalf("clear lost launch configuration or retained old model observations: %+v", a)
 			}
 			if len(pending) != 1 || pending[0].ID != "future" {
 				t.Fatalf("remaining=%+v", pending)

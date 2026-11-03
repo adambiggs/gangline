@@ -32,11 +32,15 @@ const (
 	Wedged       Activity = "wedged"
 )
 
-// Agent contains only the facts needed to operate one harness.
+// Agent contains only the facts needed to operate one harness. ConfiguredModel
+// and ConfiguredEffort retain explicit hitch options; empty values leave native
+// defaults unknown, including records from older builds.
 type Agent struct {
 	ID                    HitchID                `json:"id"`
 	Name                  AgentName              `json:"name"`
 	Collar                string                 `json:"collar"`
+	ConfiguredModel       string                 `json:"configured_model,omitempty"`
+	ConfiguredEffort      string                 `json:"configured_effort,omitempty"`
 	Clear                 *ClearRequest          `json:"clear,omitempty"`
 	Rehitch               *Message               `json:"rehitch,omitempty"`
 	Role                  string                 `json:"role,omitempty"`
@@ -266,6 +270,7 @@ type NativeState struct {
 	Context              Reading   `json:"context,omitzero"`
 	Limits               Reading   `json:"limits,omitzero"`
 	Model                string    `json:"model,omitempty"`
+	Effort               string    `json:"effort,omitempty"`
 }
 
 type Reading struct {
@@ -284,6 +289,9 @@ type Reading struct {
 	Limit        *int64        `json:"limit,omitempty"`
 	Percent      *float64      `json:"percent,omitempty"`
 	Limits       []LimitWindow `json:"limits,omitempty"`
+	// Effort updates the saved native snapshot without extending the audit
+	// reading schema consumed by older metadata readers.
+	Effort string `json:"-"`
 }
 type LimitWindow struct {
 	Label         string  `json:"label"`

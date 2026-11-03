@@ -147,6 +147,7 @@ func (cmd command) hitchReplacing(args []string, supersede bool, previous *core.
 	}
 	now := cmd.now()
 	a := core.Agent{ID: core.HitchID(id), Name: core.AgentName(o.Name), Collar: o.Collar, Role: o.Role, HitchedBy: hitcher, Directory: dir, Status: core.Starting, Activity: core.Unknown, CreatedAt: now, ChangedAt: now, BootDeadline: now.Add(bootTimeout), ContextBandThresholds: bandThresholds}
+	a.ConfiguredModel, a.ConfiguredEffort = o.Model, o.Effort
 	if previous != nil {
 		a.ID, a.HitchedBy, a.CreatedAt = previous.ID, previous.HitchedBy, previous.CreatedAt
 		a.ContextBandThresholds = previous.ContextBandThresholds

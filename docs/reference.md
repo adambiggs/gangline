@@ -281,6 +281,32 @@ timestamps and context token counts. Availability conditions such as
 reading prints `status` `unknown` with its `reason` and null counts, and the
 command still exits unknown. The human forms may change layout.
 
+Native agent rows in `roster --json` and `status --json` include
+`configured_model`, `configured_effort`, `observed_model`, and
+`observed_effort`. Each is a string or explicit `null`; outside registrations
+have null values. Configured values are the explicit hitch `--model` and
+`--effort` options, retained for new launches. Missing options and older
+records remain null. Model identifiers are preserved in full, including any
+provider namespace; an alias such as `haiku` is not expanded into a guessed ID.
+Launch-policy arguments or native defaults may differ from those hitch options.
+
+Observed values are the last retained native metadata, not a guarantee of
+current backend settings. Codex supplies model and optional effort through
+`turn_context`; an omitted effort clears the preceding effort observation.
+Claude's status-line payload supplies a model ID but no effort. Screen labels,
+collar names, process environments and personal profiles are not model sources.
+No routing provider is inferred from a model namespace. A clear preserves the
+configured launch values and resets native observations; a rehitch records
+only options explicitly passed to that new launch. Rehitch preserves the native
+conversation's last observations, which can be stale until a new reading arrives.
+After Claude compaction or clear, its observed model can be null until a new
+status-line payload arrives; null is not evidence of a model change.
+
+These saved launch values and native effort extend agent state. Once written,
+older binaries that reject unknown state fields cannot read that state. Keep
+a compatible executable for recovery; do not roll back to an older binary
+after the new state has been written. The audit reading schema is unchanged.
+
 Native `observation` events can also carry `token-usage` readings. These retain
 session-cumulative input/output counters from the status-line payload or the
 session log, separately from context occupancy and provider quota utilization.

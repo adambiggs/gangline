@@ -22,6 +22,7 @@ type Reading struct {
 	Reason       string        `json:"reason,omitempty"`
 	TurnID       string        `json:"turn_id,omitempty"`
 	Model        string        `json:"model,omitempty"`
+	Effort       string        `json:"effort,omitempty"`
 	Used         *int64        `json:"used,omitempty"`
 	Limit        *int64        `json:"limit,omitempty"`
 	Percent      *float64      `json:"percent,omitempty"`
@@ -194,6 +195,7 @@ func readTranscriptRecords(input io.Reader, session string, offset int64, before
 		}
 		var p struct {
 			Model   string `json:"model"`
+			Effort  string `json:"effort"`
 			Type    string `json:"type"`
 			Message string `json:"message"`
 			Reason  string `json:"reason"`
@@ -226,7 +228,7 @@ func readTranscriptRecords(input io.Reader, session string, offset int64, before
 			if p.Model == "" {
 				return Transcript{}, fmt.Errorf("native turn_context carries no model")
 			}
-			result.Readings = append(result.Readings, Reading{Kind: "model", Source: "session-log", NativeEvent: "turn_context", At: &record.At, Status: "observed", Model: p.Model})
+			result.Readings = append(result.Readings, Reading{Kind: "model", Source: "session-log", NativeEvent: "turn_context", At: &record.At, Status: "observed", Model: p.Model, Effort: p.Effort})
 			continue
 		}
 		if record.Type == "compacted" {

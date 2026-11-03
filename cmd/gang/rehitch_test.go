@@ -140,6 +140,8 @@ func TestRehitchWaitsForFinishedTurnAndClearComposer(t *testing.T) {
 
 func TestRehitchRetainsInboxAndNativeCursor(t *testing.T) {
 	f, a, p := rehitchFixture(t)
+	a.ConfiguredModel, a.ConfiguredEffort = "vendor/configured", "high"
+	a.Native.Model, a.Native.Effort = "vendor/last-observed", "low"
 	a.Native.Offset = 123
 	a.Native.HookSequence = 4
 	l, err := p.TryLock()
@@ -166,6 +168,9 @@ func TestRehitchRetainsInboxAndNativeCursor(t *testing.T) {
 	got, err := p.Read()
 	if err != nil || got.Rehitch != nil || got.Status != core.Starting || got.Pane != "" || got.Native.SessionID != "s" || got.Native.Offset != 123 || got.Native.HookSequence != 4 {
 		t.Fatalf("prepared state = %+v: %v", got, err)
+	}
+	if got.ConfiguredModel != "" || got.ConfiguredEffort != "" || got.Native.Model != "vendor/last-observed" || got.Native.Effort != "low" {
+		t.Fatalf("rehitch model provenance = %+v", got)
 	}
 	pending, err := p.ListNew()
 	if err != nil || len(pending) != 1 || pending[0].ID != e.ID {

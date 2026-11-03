@@ -12,7 +12,7 @@ import (
 )
 
 func coreReading(r harness.Reading) core.Reading {
-	out := core.Reading{Kind: r.Kind, Source: r.Source, NativeEvent: r.NativeEvent, At: r.At, Status: r.Status, Reason: r.Reason, TurnID: r.TurnID, Model: r.Model, Used: r.Used, Limit: r.Limit, Percent: r.Percent}
+	out := core.Reading{Kind: r.Kind, Source: r.Source, NativeEvent: r.NativeEvent, At: r.At, Status: r.Status, Reason: r.Reason, TurnID: r.TurnID, Model: r.Model, Effort: r.Effort, Used: r.Used, Limit: r.Limit, Percent: r.Percent}
 	out.SessionID, out.SourceOffset = r.SessionID, r.SourceOffset
 	if u := r.Usage; u != nil {
 		out.Usage = &core.TokenUsage{Semantics: u.Semantics, Fields: u.Fields, CacheInclusion: u.CacheInclusion, Input: u.Input, Output: u.Output, CachedInput: u.CachedInput}
@@ -37,6 +37,9 @@ func acceptReadings(n *core.NativeState, readings []core.Reading) {
 			}
 		case "model":
 			n.Model = r.Model
+			// An omitted effort on a newer model reading is unknown, not the
+			// effort previously observed for this session.
+			n.Effort = r.Effort
 		case "context":
 			if n.Context.At != nil && (r.At == nil || r.At.Before(*n.Context.At)) {
 				continue
