@@ -28,13 +28,17 @@ func parseTitle(args []string) (name, title string, err error) {
 	default:
 		return "", "", usageError("title: expected [NAME] TEXT; quote TEXT as one argument")
 	}
-	if strings.TrimSpace(title) == "" || strings.ContainsAny(title, "\n\t") {
-		return "", "", refuseError("title requires a nonempty single line without tabs")
-	}
-	if err := validateMessageText(title); err != nil {
+	if err := validateNativeTitle(title); err != nil {
 		return "", "", err
 	}
 	return name, title, nil
+}
+
+func validateNativeTitle(title string) error {
+	if strings.TrimSpace(title) == "" || strings.ContainsAny(title, "\n\t") {
+		return refuseError("title requires a nonempty single line without tabs")
+	}
+	return validateMessageText(title)
 }
 
 func (cmd command) title(args []string) (result error) {

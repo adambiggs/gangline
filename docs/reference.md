@@ -73,6 +73,7 @@ its window and pane position; it is not adopted or removed automatically.
 | `-e`, `--effort EFFORT` | Native reasoning effort; requires `--model`. Refused when `gang models` lists the model without this effort. |
 | `--context-bands EARLY,LATE` | Set this agent's context-band thresholds as percentages, for example `--context-bands 10,20`. Requires a collar with an early and late band for every model selector. |
 | `-t`, `--task TASK` | Startup assignment. |
+| `--title TEXT` | Explicit native session display title; also accepted by `up`. Must be a nonempty single line without tabs or control characters. |
 | `-r`, `--role ROLE` | Role brief; `up` defaults to `lead`. |
 | `--stdin` | Read the assignment from stdin. |
 | `--split NAME` | Place the new agent beside the named agent in its window; the target must already have a registered pane in the selected team. Without this option, create a new window. |
@@ -117,8 +118,11 @@ the parent's command line where `/proc` shows it, the working directory, and
 | `gang tick [--agent NAME\|HITCH_ID]` | Check deadlines, recover native failures, and drain due messages, for every agent or the one `--agent` names. |
 | `gang wait NAME [--timeout DURATION]` | Wait up to DURATION (default 30s) for a recorded idle boundary; a zero timeout checks once. |
 
-After startup, an idle tick submits the collar's native title action with
-`NAME@TEAM: TASK`, using a shortened first line of the task. Without a task,
+After startup, an idle tick submits the collar's native title action with the
+exact `--title TEXT` value when supplied. For example, `gang hitch worker
+--title 'worker@ser5: cache refresh'` names the native session without changing
+the hitch name or routing. When omitted, the title is `NAME@TEAM: TASK`, using
+a shortened first line of the task. Without a task,
 the title is `NAME@TEAM`. Submission waits for a free composer and a finished
 native turn. Gangline records the attempt before typing and does not repeat
 it automatically; internal rehitch preserves the record for the resumed

@@ -13,6 +13,7 @@ func TestUpStartupTaskForResumedLead(t *testing.T) {
 		name  string
 		args  []string
 		stdin string
+		title string
 		want  string
 	}{
 		{name: "resume", args: []string{"--resume", "retained-session"}, want: "This is a resumed session. Re-read your brief and durable state, then continue your work or report that you are waiting for an assignment."},
@@ -23,6 +24,7 @@ func TestUpStartupTaskForResumedLead(t *testing.T) {
 		{name: "empty short task", args: []string{"--resume", "retained-session", "-t="}, want: "No assignment was supplied."},
 		{name: "stdin task", args: []string{"--resume", "retained-session", "--stdin"}, stdin: "Read the saved report.", want: "Read the saved report."},
 		{name: "fresh", want: "No assignment was supplied."},
+		{name: "explicit title", args: []string{"--title", "lead@ser5: delivery", "--task", "Other task"}, title: "lead@ser5: delivery", want: "Other task"},
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			name := "lead"
@@ -52,7 +54,11 @@ func TestUpStartupTaskForResumedLead(t *testing.T) {
 			if titleTask == "No assignment was supplied." {
 				titleTask = ""
 			}
-			if a.NativeTitle == nil || a.NativeTitle.Attempted || a.NativeTitle.Text != nativeSessionTitle(a.Name, "unit", titleTask) {
+			wantTitle := nativeSessionTitle(a.Name, "unit", titleTask)
+			if test.title != "" {
+				wantTitle = test.title
+			}
+			if a.NativeTitle == nil || a.NativeTitle.Attempted || a.NativeTitle.Text != wantTitle {
 				t.Fatalf("hitch title = %+v", a.NativeTitle)
 			}
 			e := envelopes[0]

@@ -5,6 +5,13 @@ daily tasks and [troubleshooting](troubleshooting.md) for observable failures.
 
 ## Native session titles
 
+Set an explicit display title at launch with `gang hitch NAME --title TEXT`
+(or `gang up --title TEXT`). Include a machine name when your teams share
+names, for example `worker@ser5: cache refresh`. The title does not change
+registration identity or mailbox routing. Omit the option for the generated
+agent/team/task title. Rehitch retains the deliberate title and its attempt
+state.
+
 Gangline titles Claude Code and Codex sessions at the first idle tick with a
 free composer after startup. Titles identify the agent, team and the task's
 first line so native session lists distinguish them. Drafts, native prompts,
