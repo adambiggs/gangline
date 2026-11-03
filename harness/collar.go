@@ -93,6 +93,7 @@ type Primitives struct {
 }
 
 type Actions struct {
+	Clear             *Action  `json:"clear,omitempty"`
 	Title             Action   `json:"title"`
 	TitleClear        *Action  `json:"title_clear,omitempty"`
 	Interrupt         Action   `json:"interrupt"`

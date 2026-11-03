@@ -241,7 +241,38 @@ type Ignored struct{}
 
 func (*Ignored) UnmarshalJSON([]byte) error { return nil }
 
-func (p AgentPaths) WriteWitness(w Witness) error { return atomicJSON(p.Witness, w) }
+func (p AgentPaths) WriteWitness(w Witness) error { return p.writeWitness(w, nil) }
+
+// WriteNativeWitness rejects a hook whose initial session binding was replaced
+// while it ran, without taking the delivery lock.
+func (p AgentPaths) WriteNativeWitness(w Witness, observedSession string) error {
+	return p.writeWitness(w, &observedSession)
+}
+
+func (p AgentPaths) writeWitness(w Witness, observedSession *string) error {
+	lock, err := p.lockStatusHooks()
+	if err != nil {
+		return err
+	}
+	defer lock.Close()
+	a, err := p.Read()
+	if err != nil {
+		return err
+	}
+	if a.Clear != nil {
+		n, readErr := p.ReadSessionStart()
+		if readErr != nil && !errors.Is(readErr, os.ErrNotExist) {
+			return readErr
+		}
+		if observedSession != nil && *observedSession != a.Native.SessionID && w.SessionID != a.Native.SessionID && !(readErr == nil && n.ClearID == a.Clear.Envelope.ID && w.SessionID == n.SessionID) {
+			return fmt.Errorf("submit hook's native session binding changed before its witness")
+		}
+		if readErr == nil && n.ClearID == a.Clear.Envelope.ID && n.SessionID != a.Clear.PreviousSession && w.SessionID == a.Clear.PreviousSession {
+			return fmt.Errorf("submit witness belongs to the retired native session")
+		}
+	}
+	return atomicJSON(p.Witness, w)
+}
 func (p AgentPaths) ReadWitness() (Witness, error) {
 	var w Witness
 	err := readJSON(p.Witness, &w)

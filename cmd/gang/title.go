@@ -281,6 +281,9 @@ func nativeSessionTitle(name core.AgentName, team, task string) string {
 }
 
 func (run *runtime) autoTitle(l *store.LockedAgent, a *core.Agent, c harness.Collar) error {
+	if clearPending(*a) {
+		return nil
+	}
 	if a.NativeTitle == nil || a.NativeTitle.Attempted || a.Status != core.Active || a.Activity != core.Idle || a.Input != nil ||
 		a.Native.SubmittedAt.IsZero() || a.Native.SubmittedAt.After(a.Native.FinishedAt) {
 		return nil

@@ -130,7 +130,7 @@ func envelopeText(e core.Envelope) (string, error) {
 }
 
 func startupEnvelopeText(sections *core.StartupSections, sender, token, purpose, message string) (string, error) {
-	if sections.Contract == "" || message == "" || purpose != "assignment" && purpose != "startup" {
+	if sections.Contract == "" || message == "" || purpose != "assignment" && purpose != "startup" && purpose != "clear" {
 		return "", fmt.Errorf("invalid startup sections")
 	}
 	var parts []string
@@ -422,6 +422,9 @@ func (run *runtime) deliver(l *store.LockedAgent, a *core.Agent, e core.Envelope
 		e.Witnessed = ""
 		outcome, reason = "accepted", "native queue shows sender and one-time token; do not resend"
 	} else {
+		if err := run.reconcileClear(l, a); err != nil {
+			return "unverified", false, err
+		}
 		if same, err := followNativeSession(c, a, witness.SessionID, witness.Transcript); err != nil {
 			outcome, reason = "unverified", err.Error()
 		} else if !same {
@@ -520,6 +523,13 @@ func (run *runtime) withdrawPaste(a core.Agent, b harnessInput, c harness.Collar
 // identities to distinguish existing blocked work from arrivals during unlock.
 func (run *runtime) drainLocked(l *store.LockedAgent, a *core.Agent, target core.EnvelopeID) (string, []core.Envelope, error) {
 	result := "queued"
+	if err := run.advanceClear(l, a); err != nil {
+		return result, nil, err
+	}
+	if clearPending(*a) && a.Clear.Status != "continuing" {
+		pending, err := l.Paths.ListNew()
+		return result, pending, err
+	}
 	if err := run.checkDeadlines(l, a); err != nil {
 		return result, nil, err
 	}
@@ -538,10 +548,21 @@ func (run *runtime) drainLocked(l *store.LockedAgent, a *core.Agent, target core
 			return result, nil, err
 		}
 		var next *core.Envelope
+		if clearPending(*a) {
+			for i := range pending {
+				if pending[i].ID == a.Clear.Envelope.ID {
+					next = &pending[i]
+					break
+				}
+			}
+			if next == nil {
+				return result, pending, nil
+			}
+		}
 		// The continuation was reserved ahead of later native input when
 		// compaction started, including messages with the same queue timestamp.
 		for i := range pending {
-			if completedResume(*a, pending[i]) || isStartupEnvelope(pending[i]) {
+			if next == nil && (completedResume(*a, pending[i]) || isStartupEnvelope(pending[i])) {
 				next = &pending[i]
 				break
 			}

@@ -12,7 +12,7 @@ import "time"
  message: close({text: #ID})
  startup?: close({contract: #ID, doctrine?: string, role?: string})
  paste_only?: close({witness_id: string})
- purpose?: "startup" | "assignment" | "resume"
+ purpose?: "startup" | "assignment" | "resume" | "clear"
  created_at: #Time
  measured_at?: #Time
  not_before?: #Time
@@ -52,6 +52,7 @@ import "time"
  outside_registered: {hitch_id: #ID, name: #ID, actor: #CredentialActor, command: #ID}
  outside_rotated: {hitch_id: #ID, name: #ID, actor: #CredentialActor, command: #ID}
  outside_removed: {hitch_id: #ID, name: #ID, actor: #CredentialActor, command: #ID}
+ clear_requested: {}, clear_submitted: {}, clear_waiting: {}, clear_completed: {}, clear_unverified: {reason: #ID}
  rehitch_requested: {}, rehitch_started: {}, rehitch_failed: {reason: #ID}, rehitch_attention: {reason: #ID}, rehitch_position_lost: {reason: #ID}
  hitch_claimed: {}, hitch_spawned: {}, hitch_ready: {}, hitch_blocked: {}, hitch_failed: {}, boot_reopened: {hitch_id: #ID, deadline: #Time}, renamed: {}, send_cancelled: {}, delivery_accepted: {}
  delivery_succeeded: {}, delivery_failed: {}, delivery_unverified: {}, activity_observed: {}, observation: {}, native_hook: {}, compaction_waiting: {}, compaction_submitted: {}

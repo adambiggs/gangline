@@ -12,9 +12,10 @@ collar: {
 	hooks: {
 		install_args: [
 			"--settings",
-			"{\"statusLine\":{\"type\":\"command\",\"command\":{{statusline.command.json}}},\"hooks\":{\"UserPromptSubmit\":[{\"hooks\":[{\"type\":\"command\",\"command\":{{hook.command.json}}}]}],\"PostToolUse\":[{\"matcher\":\"*\",\"hooks\":[{\"type\":\"command\",\"command\":{{hook.command.json}}}]}],\"StopFailure\":[{\"hooks\":[{\"type\":\"command\",\"command\":{{hook.command.json}},\"async\":true}]}],\"Stop\":[{\"hooks\":[{\"type\":\"command\",\"command\":{{hook.command.json}},\"async\":true}]}],\"PermissionRequest\":[{\"hooks\":[{\"type\":\"command\",\"command\":{{hook.command.json}}}]}],\"PreCompact\":[{\"hooks\":[{\"type\":\"command\",\"command\":{{hook.command.json}}}]}],\"PostCompact\":[{\"hooks\":[{\"type\":\"command\",\"command\":{{hook.command.json}},\"timeout\":30}]}]}}",
+			"{\"statusLine\":{\"type\":\"command\",\"command\":{{statusline.command.json}}},\"hooks\":{\"SessionStart\":[{\"hooks\":[{\"type\":\"command\",\"command\":{{hook.command.json}}}]}],\"UserPromptSubmit\":[{\"hooks\":[{\"type\":\"command\",\"command\":{{hook.command.json}}}]}],\"PostToolUse\":[{\"matcher\":\"*\",\"hooks\":[{\"type\":\"command\",\"command\":{{hook.command.json}}}]}],\"StopFailure\":[{\"hooks\":[{\"type\":\"command\",\"command\":{{hook.command.json}},\"async\":true}]}],\"Stop\":[{\"hooks\":[{\"type\":\"command\",\"command\":{{hook.command.json}},\"async\":true}]}],\"PermissionRequest\":[{\"hooks\":[{\"type\":\"command\",\"command\":{{hook.command.json}}}]}],\"PreCompact\":[{\"hooks\":[{\"type\":\"command\",\"command\":{{hook.command.json}}}]}],\"PostCompact\":[{\"hooks\":[{\"type\":\"command\",\"command\":{{hook.command.json}},\"timeout\":30}]}]}}",
 		]
 		events: {
+			sessionstart: {event: "session-started", payload: {session_id: "session_id", transcript_path: "transcript_path", source: "source"}}
 			userpromptsubmit: {event: "turn-started", payload: {session_id: "session_id", transcript_path: "transcript_path", prompt: "prompt", turn_id: "prompt_id"}}
 			posttooluse: {event: "activity", payload: {session_id: "session_id", transcript_path: "transcript_path"}}
 			stopfailure: {event: "turn-failed", payload: {session_id: "session_id", transcript_path: "transcript_path", turn_id: "prompt_id", error: "error", error_details: "error_details"}}
@@ -51,6 +52,7 @@ collar: {
 		wedge: {name: "stable-busy-screen", params: {busy: "esc to interrupt|Retrying in [0-9]+s|API Error: 529 Overloaded\\.|▰|▱|(?m)^[·✢✳✶✻✽*] \\p{Lu}[\\p{L}'-]+…", after: "5m"}}
 	}
 	actions: {
+		clear: {text: "/clear", submit: true}
 		interrupt: {keys: ["Escape"]}
 		title: {text: "/rename {{title}}", submit: true}
 		title_clear: {keys: ["C-u"]}

@@ -206,6 +206,9 @@ func (run *runtime) acquireAgent(id core.HitchID, lock func(store.AgentPaths) (*
 		err = l.CleanResult(&a)
 	}
 	if err == nil {
+		err = run.reconcileClear(l, &a)
+	}
+	if err == nil {
 		err = run.recoverInput(l, &a)
 	}
 	if err == nil {
@@ -525,6 +528,19 @@ func (run *runtime) finishInput(l *store.LockedAgent, a *core.Agent, e core.Enve
 	}
 	if err := run.apply(l, a, core.Event{Type: "input_finished", ID: string(e.ID), Status: outcome, Reason: reason}); err != nil {
 		return err
+	}
+	if a.Clear != nil && a.Clear.Envelope.ID == e.ID {
+		status := "unverified"
+		if outcome == "delivered" {
+			status = "completed"
+			reason = "continuation delivered in native session " + a.Native.SessionID
+		}
+		if reason == "" {
+			reason = "clear continuation outcome " + outcome
+		}
+		if err := run.clearState(l, a, status, reason); err != nil {
+			return err
+		}
 	}
 	// Verified new input takes over the work. A queued or uncertain receipt
 	// cannot end recovery, and its own continuation keeps the same budget.

@@ -42,6 +42,7 @@ Talk to agents:
   queue     read waiting messages
   interrupt stop an agent's current turn
   compact   compact an agent's context
+  clear     start a clean native conversation
   title     set the native harness session title
 
 Observe and control:
@@ -91,6 +92,7 @@ var commandUsage = map[string]string{
 	"up":         "usage: gang up [NAME] [HITCH OPTIONS] [--team TEAM]\n",
 	"hitch":      "usage: gang hitch NAME [-c COLLAR] [-d DIR] [-m MODEL] [-e EFFORT]\n       [-t TASK] [-r ROLE] [--title TEXT] [--resume SESSION] [--stdin]\n       [--split NAME] [--vertical] [--window INDEX] [--team TEAM]\n       gang hitch NAME --recover [--team TEAM]\n",
 	"title":      "usage: gang title [NAME] TEXT [--team TEAM]\n",
+	"clear":      "usage: gang clear --note TEXT [--team TEAM]\n",
 	"rehitch":    "usage: gang rehitch --note TEXT [--upgrade] [--team TEAM]\n",
 	"rename":     "usage: gang rename OLD NEW [--team TEAM]\n",
 	"send":       "usage: gang send NAME [--from SENDER | --as SENDER] [--credential FILE]\n       [--live-only] [--supersede] [--at DURATION|HH:MM|RFC3339]\n       [--team TEAM] [BODY]\n       gang send NAME --clear [--team TEAM]\n       gang send HOST:NAME [--as SENDER] [--credential FILE]\n       [--team TEAM] [BODY]\n       Without BODY, read stdin. Use -- before BODY when it begins with -.\n",
@@ -165,6 +167,7 @@ var commandOptions = map[string][]optionSpec{
 		{"vertical", "", "split top/bottom; requires --split NAME"},
 		{"window", "INDEX", "create the window at this free tmux window index"},
 	},
+	"clear":   {{"note", "TEXT", "small continuation with current change/revision/state"}},
 	"rehitch": {{"note", "TEXT", "saved-work continuation"}, {"upgrade", "", "update the harness before queuing its restart"}},
 	"send": {
 		{"from", "SENDER", "outside sender identity"},
@@ -263,7 +266,7 @@ func optionsFor(name string) []optionSpec {
 // the team when the option is absent.
 var teamCommands = map[string]bool{
 	"sender": true, "outside": true, "up": true, "hitch": true, "rehitch": true, "rename": true, "send": true, "queue": true,
-	"interrupt": true, "compact": true, "title": true, "context": true, "log": true,
+	"interrupt": true, "compact": true, "clear": true, "title": true, "context": true, "log": true,
 	"limits": true, "snooze": true, "wait": true, "curfew": true,
 	"status": true, "tick": true, "capture": true, "whoami": true,
 	"roster": true, "attach": true, "drop": true, "down": true,
@@ -334,6 +337,7 @@ var commandDescription = map[string]string{
 	"send":       "NAME is the recipient agent's registered name in the selected team.\nSend BODY or read stdin. An exact native hook proves delivery; a native\nqueue receipt proves acceptance. Otherwise input stays queued or unverified.\nHOST:NAME forwards this sender to NAME on GANG_PEERS host HOST over ssh and\nprints that host's receipt; a lost reply is unknown, so do not resend it.\nNo later outcome on HOST reaches this host.\n",
 	"queue":      "NAME filters pending work to one registered agent. Omit it to select\npending work for every agent in the selected team. Each message shows\nwhether it is ready, scheduled, blocked, or unknown, with its due time or\nthe reason it waits. JSON includes total and truncated; use --all for a\ncomplete inventory.\n",
 	"interrupt":  "NAME is a registered agent; omit it for the current pane's agent.\nInterrupt its native turn and optionally deliver a reason afterward.\n",
+	"clear":      "Run inside your own hitched harness. Keep the same logical agent and\nchildren while native /clear starts a new conversation. The required\nsmall note follows current role guidance and precedes retained mail.\nFinish this turn after queuing; inspect gang status --why for blockers.\n",
 	"compact":    "NAME is a registered agent; omit it for the current pane's agent.\nQueue the continuation as compaction starts; admit it once when the\nharness submits it.\n",
 	"statusline": "Read native status-line JSON on stdin; --install fills an absent native\nsetting.\n",
 	"context":    "NAME is a registered agent; omit it for the current pane's agent.\nPrint its native context reading. --widget NAME selects an agent for the\ntmux widget; --clear empties it.\n",

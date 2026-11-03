@@ -12,6 +12,9 @@ import (
 // Retained uncertain and accepted receipts may become delivered on exact hook
 // proof. Reconciliation never sends keys or infers full submission from a screen.
 func (run *runtime) reconcileDelivery(l *store.LockedAgent, a *core.Agent) error {
+	if err := run.reconcileClear(l, a); err != nil {
+		return err
+	}
 	if (a.LastFailed == "" && a.LastAccepted == "") || a.Input != nil {
 		return nil
 	}

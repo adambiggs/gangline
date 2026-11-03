@@ -112,6 +112,7 @@ the parent's command line where `/proc` shows it, the working directory, and
 | `gang queue [NAME] [--json] [--limit N\|--all]` | List pending messages with ID, recipient, sender, kind, a text excerpt, and state: `ready`, `scheduled` with its due time, `blocked` with the reason, or `unknown` with the reason. |
 | `gang interrupt [NAME] [-m\|--message REASON]` | Interrupt the turn; deliver an optional reason after it stops. |
 | `gang title [NAME] TEXT` | Set the native harness session title when idle with a free composer. Quote TEXT as one argument; omit NAME for the current pane's agent. |
+| `gang clear --note TEXT` | Start a clean native conversation at a confirmed safe boundary; reload current standing guidance and role before the required continuation, then release retained mail. Self only. |
 | `gang compact [NAME] [--note TEXT]` | Compact at native idle; submit the continuation behind compaction, ahead of later input. |
 | `gang compact NAME --interrupt` | Cancel a queued, unsubmitted compaction. Interrupt a submitted or unconfirmed compaction with the collar's recovery keys while the pane shows it running. A failed deferred compaction can instead clear its exact staged command from an idle composer and retry queued delivery; edited input remains untouched. It records an interrupted compaction as unconfirmed and reports the screen it left. |
 | `gang curfew [DURATION\|HH:MM\|RFC3339\|clear]` | Show, set, or clear the team deadline. |
@@ -155,6 +156,44 @@ queued for it. Every
 failed compaction queues a `[gang:compact#…]` notice to the agent saying whether
 its context was compacted, and a copy to the agent that requested it when the
 failure comes after its command returned.
+
+### Clear at a phase boundary
+
+Use `gang compact` within continuing work. Use `gang clear --note TEXT` for a
+major phase change that needs a clean context in the same logical agent.
+`gang rehitch` restarts the harness and resumes its existing conversation.
+Clear uses the collar's native `/clear` without restarting the process or pane;
+identity, routing, children, configured model and permissions stay in place.
+
+Before clear or compact, bring the relevant planning state up to date. Keep the
+clear note small: name the authoritative change or document, its current
+revision/state, the next action, and any essential unsaved or in-flight context.
+For a project using OpenSpec, point to the relevant change and revision instead
+of copying its plan or the conversation history. For example:
+
+```sh
+gang clear --note 'Continue change cache-refresh at revision abc123, implementation complete; next: verify the documented acceptance. One child review is pending.'
+```
+
+The note is required. Finish the current turn after queuing clear. Mail waits
+immediately, while existing native work finishes. Drafts, native queued input,
+permission prompts and unresolved accepted or unverified receipts prevent clear.
+The running process must already have emitted its SessionStart hook; updating a
+collar does not install hooks into an older process. Unsupported sessions refuse
+before native clear is submitted.
+
+The first new-context prompt contains the current delivery contract, configured
+doctrine and role, followed by the continuation. Its synchronous submit hook
+requires a clear-source SessionStart with a different native ID and admits that
+exact continuation once. Only its verified submission releases retained due
+mail; future scheduling and expiry still apply. The old transcript remains on
+disk but is not transferred into the new context.
+
+`gang status --why` reports the clear phase and blocker; `gang status --json`
+includes the previous native ID and current binding. An uncertain command or
+continuation is held rather than automatically repeated. See
+[clear recovery](operations.md#clear-recovery). Clear does not operate on a
+named peer and has no relaunch fallback.
 
 Send options:
 

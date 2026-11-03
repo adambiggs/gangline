@@ -69,11 +69,17 @@ func (cmd command) handleHook(args []string) (result error) {
 	}
 	blockedWritten := false
 	resumeAdmitted := false
+	clearAdmitted := false
 	resumeCandidate := json.Unmarshal(payload, &submitted) == nil && submitted.Event == "UserPromptSubmit" && resumePromptPattern.MatchString(submitted.Prompt)
-	if resumeCandidate {
+	clearCandidate := submitted.Event == "UserPromptSubmit" && clearPromptPattern.MatchString(submitted.Prompt)
+	if resumeCandidate || clearCandidate {
 		defer func() {
-			if result != nil && !blockedWritten && !resumeAdmitted {
-				blockErr := json.NewEncoder(cmd.stdout).Encode(map[string]string{"decision": "block", "reason": "compaction continuation could not be verified"})
+			if result != nil && !blockedWritten && !resumeAdmitted && !clearAdmitted {
+				reason := "compaction continuation could not be verified"
+				if clearCandidate {
+					reason = "clear continuation could not be verified"
+				}
+				blockErr := json.NewEncoder(cmd.stdout).Encode(map[string]string{"decision": "block", "reason": reason})
 				result = errors.Join(result, blockErr)
 			}
 		}()
@@ -91,6 +97,7 @@ func (cmd command) handleHook(args []string) (result error) {
 	if err != nil {
 		return err
 	}
+	observedSession := a.Native.SessionID
 	token := cmd.environment("GANG_AGENT_NONCE")
 	if token == "" || tokenHash(token) != a.Registration.TokenHash {
 		return refuseError("hitch token does not match the registered pane")
@@ -103,18 +110,42 @@ func (cmd command) handleHook(args []string) (result error) {
 	if err != nil {
 		return err
 	}
+	if event.Kind == "session-started" {
+		if err := p.WriteSessionStart(store.SessionStart{At: cmd.now(), SessionID: event.Payload["session_id"], Transcript: event.Payload["transcript_path"], Source: event.Payload["source"], Registration: a.Registration.Generation}); err != nil {
+			return err
+		}
+		return run.record(a, core.Event{Type: "native_hook", NativeEvent: event.NativeEvent, Status: event.Kind})
+	}
+	if event.Kind == "turn-started" && (clearPending(a) || clearPromptPattern.MatchString(event.Payload["prompt"])) {
+		if admissionErr := run.admitClearPrompt(p, a, c, event.Payload["prompt"], event.Payload["session_id"]); admissionErr != nil {
+			blockErr := json.NewEncoder(cmd.stdout).Encode(map[string]string{"decision": "block", "reason": admissionErr.Error()})
+			blockedWritten = blockErr == nil
+			return errors.Join(blockErr, run.record(a, core.Event{Type: "native_hook", NativeEvent: event.NativeEvent, Status: "clear-blocked", Reason: admissionErr.Error()}))
+		}
+		clearAdmitted = true
+	}
+	if clearedSession(a) && !clearAdmitted && event.Payload["session_id"] != "" && event.Payload["session_id"] != a.Native.SessionID {
+		same, moveErr := followNativeSession(c, &a, event.Payload["session_id"], event.Payload["transcript_path"])
+		if moveErr != nil || !same {
+			return run.record(a, core.Event{Type: "native_hook", NativeEvent: event.NativeEvent, Status: "retired-session", Reason: "hook does not belong to the current native conversation"})
+		}
+	}
 	if reason := foreignSubmit(a, event); reason != "" {
 		if event.Kind == "turn-started" {
 			return run.recordForeignSubmit(a, event, payload, reason)
 		}
 		return run.record(a, core.Event{Type: "native_hook", NativeEvent: event.NativeEvent, Status: "foreign-session", Reason: reason})
 	}
-	if resumeCandidate && event.Kind != "turn-started" {
-		return fmt.Errorf("compaction continuation did not map to a submit boundary")
+	if (resumeCandidate || clearCandidate) && event.Kind != "turn-started" {
+		return fmt.Errorf("continuation did not map to a submit boundary")
 	}
 	// Display state never gates the hook's own handling: a failure to keep it
 	// is reported once the hook has done its work.
-	displayErr := errors.Join(recordPermission(p, event, cmd.now()), recordBackground(p, event, cmd.now()))
+	var background *int
+	if tasks, ok := event.Counts["background_tasks"]; ok {
+		background = &tasks
+	}
+	displayErr := p.WriteDisplayHook(store.StatusHook{Kind: event.Kind, At: cmd.now(), SessionID: event.Payload["session_id"]}, background, observedSession)
 	defer func() { result = errors.Join(result, displayErr) }()
 	if event.Kind == "turn-started" {
 		for _, value := range []string{event.Payload["session_id"], event.Payload["turn_id"], event.Payload["transcript_path"], event.NativeEvent} {
@@ -166,7 +197,7 @@ func (cmd command) handleHook(args []string) (result error) {
 	switch event.Kind {
 	case "turn-started":
 		w := store.Witness{ID: receipt, At: cmd.now(), Prompt: event.Payload["prompt"], SessionID: event.Payload["session_id"], TurnID: event.Payload["turn_id"], Transcript: event.Payload["transcript_path"]}
-		if err := p.WriteWitness(w); err != nil {
+		if err := p.WriteNativeWitness(w, observedSession); err != nil {
 			return err
 		}
 		// Always reconcile: a concurrent failure tick may have read the old
@@ -200,32 +231,6 @@ func (cmd command) handleHook(args []string) (result error) {
 		return cmd.detachTick(string(id), n, run.settings)
 	}
 	return nil
-}
-
-// recordBackground keeps the background-task count from the last turn's end.
-// A turn boundary without a count leaves none, so a stale count is never shown.
-func recordBackground(p store.AgentPaths, event harness.HookEvent, now time.Time) error {
-	switch event.Kind {
-	case "turn-finished":
-		if tasks, ok := event.Counts["background_tasks"]; ok && tasks > 0 {
-			return p.WriteBackground(store.Background{At: now, Tasks: tasks})
-		}
-	case "turn-started", "turn-failed":
-	default:
-		return nil
-	}
-	return p.RemoveBackground()
-}
-
-// recordPermission keeps a native permission request until any later hook or
-// an idle screen. Answering a request fires a hook only when its tool
-// finishes, and dismissing it fires none, so the witness cannot wait for a
-// closing hook.
-func recordPermission(p store.AgentPaths, event harness.HookEvent, now time.Time) error {
-	if event.Kind == "permission-requested" {
-		return p.WritePermissionWitness(store.PermissionWitness{At: now, SessionID: event.Payload["session_id"]})
-	}
-	return p.RemovePermissionWitness()
 }
 
 func boundedFailureReason(reason string) string {

@@ -98,3 +98,43 @@ func dimContent(row []substrate.Cell) bool {
 	}
 	return true
 }
+
+// NativeInputPending checks the collar's native queue, including input entered
+// outside Gangline. A quiet composer alone does not establish an empty queue.
+func NativeInputPending(c Collar, screen substrate.Screen, transcript, turn string) (bool, error) {
+	if c.Primitives.QueueWitness != nil {
+		if c.Primitives.QueueWitness.Name != "codex-pending-input" {
+			return false, fmt.Errorf("unknown queue witness %q", c.Primitives.QueueWitness.Name)
+		}
+		lines := screenLines(screen, true)
+		end := -1
+		for i := len(lines) - 1; i >= 0; i-- {
+			if strings.HasPrefix(lines[i], "›") {
+				end = i
+				break
+			}
+		}
+		if end < 0 {
+			return false, fmt.Errorf("native queue has no visible composer boundary")
+		}
+		for i := end - 1; i >= 0; i-- {
+			line := lines[i]
+			if queueHeader(line) {
+				return true, nil
+			}
+			if strings.TrimSpace(line) == "" || queueHeaderContinuation(line) || strings.HasPrefix(line, "  ↳ ") || strings.HasPrefix(line, "    ") || strings.HasPrefix(line, "  (press ") {
+				continue
+			}
+			break
+		}
+		return false, nil
+	}
+	source, err := queuedTurnSource(c.Primitives.TurnBoundary)
+	if err != nil {
+		return false, err
+	}
+	if source == "" || transcript == "" {
+		return false, fmt.Errorf("native queue evidence is unavailable")
+	}
+	return QueuedTurnPending(c.Primitives.TurnBoundary, transcript, turn)
+}

@@ -31,7 +31,7 @@ func awaitHitchStartup(ctx context.Context, capture func(context.Context, substr
 }
 
 func isStartupEnvelope(e core.Envelope) bool {
-	return e.Purpose == "startup" || e.Purpose == "assignment"
+	return e.Purpose == "startup" || e.Purpose == "assignment" || e.Purpose == "clear"
 }
 
 func retainedStartup(p store.AgentPaths, dir string, id core.EnvelopeID) (core.Envelope, bool, error) {
@@ -185,6 +185,21 @@ func (run *runtime) recoverStartup(name string) (result error) {
 		path, _ := l.Paths.EnvelopePath("failed", e.ID)
 		return commandError{status: exitUnknown, text: fmt.Sprintf("startup submit witness changed after paste; input remains unverified; retained startup: %s", path)}
 	}
+	if e.Purpose == "clear" {
+		if a.Clear == nil || a.Clear.Envelope.ID != e.ID || (a.Clear.Status != "unverified" && a.Clear.Status != "continuing") {
+			return refuseError("clear continuation is not pending recovery")
+		}
+		admission, err := l.Paths.ReadClearAdmission()
+		if err != nil && !errors.Is(err, os.ErrNotExist) {
+			return err
+		}
+		if admission.ID == e.ID {
+			return refuseError("clear continuation was already admitted; await its exact witness instead of resubmitting")
+		}
+		if err := run.clearState(l, &a, "continuing", "explicit recovery verified the unsubmitted continuation"); err != nil {
+			return err
+		}
+	}
 	// Record the new submit intent before moving the prior receipt. A crash at
 	// either boundary stays unverified through normal input-owner recovery.
 	if err := run.reopenUnverified(l, &a, e); err != nil {
@@ -214,14 +229,22 @@ func (run *runtime) recoverStartup(name string) (result error) {
 		if replaceCollapsed {
 			reason = "startup draft replacement incomplete; if the composer is empty, re-hitch with the retained assignment: " + reason
 		}
-	} else if same, err := followNativeSession(c, &a, witness.SessionID, witness.Transcript); err != nil {
-		outcome, reason = "unverified", err.Error()
-	} else if !same {
-		outcome, reason = "unverified", "submit witness belongs to another native session"
-	} else {
-		a.Native.SessionID = witness.SessionID
-		a.Native.TurnID = witness.TurnID
-		a.Native.Transcript = witness.Transcript
+	}
+	if err == nil {
+		if err := run.reconcileClear(l, &a); err != nil {
+			return err
+		}
+	}
+	if err == nil {
+		if same, err := followNativeSession(c, &a, witness.SessionID, witness.Transcript); err != nil {
+			outcome, reason = "unverified", err.Error()
+		} else if !same {
+			outcome, reason = "unverified", "submit witness belongs to another native session"
+		} else {
+			a.Native.SessionID = witness.SessionID
+			a.Native.TurnID = witness.TurnID
+			a.Native.Transcript = witness.Transcript
+		}
 	}
 	if err := run.finishInput(l, &a, e, outcome, reason, witness); err != nil {
 		return err

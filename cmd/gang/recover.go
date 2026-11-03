@@ -21,6 +21,7 @@ func (run *runtime) tickAgent(id core.HitchID, notice hookNotice, wait bool) (re
 	if err != nil {
 		return err
 	}
+
 	defer func() {
 		closeErr := run.unlock(l)
 		if closeErr != nil {
@@ -30,6 +31,12 @@ func (run *runtime) tickAgent(id core.HitchID, notice hookNotice, wait bool) (re
 			result = run.rehitchPending(id)
 		}
 	}()
+	if err := run.reconcileClear(l, &a); err != nil {
+		return err
+	}
+	if clearedSession(a) && notice.SessionID != "" && notice.SessionID != a.Native.SessionID {
+		notice = hookNotice{}
+	}
 	if err := run.checkDeadlines(l, &a); err != nil {
 		return err
 	}
@@ -298,6 +305,12 @@ func (run *runtime) reconcileNativeBoundary(l *store.LockedAgent, a *core.Agent,
 	if run.afterWitnessRead != nil {
 		run.afterWitnessRead()
 	}
+	if witnessErr == nil && clearedSession(*a) && witness.SessionID != a.Native.SessionID {
+		same, err := followNativeSession(c, a, witness.SessionID, witness.Transcript)
+		if err != nil || !same {
+			witnessErr = os.ErrNotExist
+		}
+	}
 	if witnessErr == nil {
 		session := a.Native.SessionID
 		same, err := followNativeSession(c, a, witness.SessionID, witness.Transcript)
@@ -342,6 +355,9 @@ func (run *runtime) reconcileNativeBoundary(l *store.LockedAgent, a *core.Agent,
 		return witnessErr
 	}
 	if notice.SessionID != "" && a.Native.SessionID != "" && notice.SessionID != a.Native.SessionID {
+		if clearedSession(*a) {
+			return nil
+		}
 		return fmt.Errorf("hook boundary belongs to another native session")
 	}
 	if a.Native.SessionID == "" {

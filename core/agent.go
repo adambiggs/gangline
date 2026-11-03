@@ -37,6 +37,7 @@ type Agent struct {
 	ID                    HitchID                `json:"id"`
 	Name                  AgentName              `json:"name"`
 	Collar                string                 `json:"collar"`
+	Clear                 *ClearRequest          `json:"clear,omitempty"`
 	Rehitch               *Message               `json:"rehitch,omitempty"`
 	Role                  string                 `json:"role,omitempty"`
 	HitchedBy             HitchID                `json:"hitched_by,omitempty"`
@@ -75,6 +76,16 @@ type Agent struct {
 	// BackgroundNoticed is the turn end of the background record whose idle
 	// stretch the hitcher was last told about.
 	BackgroundNoticed time.Time `json:"background_noticed,omitzero"`
+}
+
+// ClearRequest retains one native clear and its guarded continuation. A submitted
+// command or uncertain continuation is never automatically replayed.
+type ClearRequest struct {
+	Envelope        Envelope  `json:"envelope"`
+	PreviousSession string    `json:"previous_session"`
+	Status          string    `json:"status"`
+	StartedAt       time.Time `json:"started_at,omitzero"`
+	Reason          string    `json:"reason,omitempty"`
 }
 
 type ContextBandThresholds struct {

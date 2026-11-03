@@ -294,6 +294,8 @@ func (cmd command) execute(args []string) (result error) {
 		return cmd.queue(arguments)
 	case "interrupt":
 		return cmd.interrupt(arguments)
+	case "clear":
+		return cmd.clear(arguments)
 	case "compact":
 		return cmd.compact(arguments)
 	case "title":

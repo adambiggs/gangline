@@ -10,6 +10,7 @@ collar: {
 	}
 	hooks: {
 		install_args: [
+			"-c", "hooks.SessionStart=[{ hooks = [{ type = \"command\", command = {{hook.command.json}} }] }]",
 			"-c", "hooks.UserPromptSubmit=[{ hooks = [{ type = \"command\", command = {{hook.command.json}} }] }]",
 			"-c", "hooks.PostToolUse=[{ hooks = [{ type = \"command\", command = {{hook.command.json}} }] }]",
 			"-c", "hooks.Stop=[{ hooks = [{ type = \"command\", command = {{hook.command.json}}, async = true, timeout = {{hook.timeout}} }] }]",
@@ -18,6 +19,7 @@ collar: {
 			"-c", "hooks.PostCompact=[{ hooks = [{ type = \"command\", command = {{hook.command.json}}, timeout = 30 }] }]",
 		]
 		events: {
+			sessionstart: {event: "session-started", payload: {session_id: "session_id", transcript_path: "transcript_path", source: "source"}}
 			userpromptsubmit: {event: "turn-started", payload: {session_id: "session_id", transcript_path: "transcript_path", prompt: "prompt", turn_id: "turn_id", agent_id: "agent_id"}}
 			posttooluse: {event: "activity", payload: {session_id: "session_id", transcript_path: "transcript_path", turn_id: "turn_id", agent_id: "agent_id"}}
 			stop: {event: "turn-finished", payload: {session_id: "session_id", transcript_path: "transcript_path", turn_id: "turn_id"}}
@@ -59,6 +61,7 @@ collar: {
 		wedge: {name: "stable-busy-screen", params: {busy: "esc to interrupt", after: "5m"}}
 	}
 	actions: {
+		clear: {text: "/clear", submit: true}
 		interrupt: {keys: ["Escape"]}
 		title: {text: "/rename {{title}}", submit: true}
 		title_clear: {keys: ["C-u"]}

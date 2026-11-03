@@ -607,6 +607,11 @@ func (cmd command) status(args []string) error {
 			return err
 		}
 	}
+	if a.Clear != nil {
+		if _, err := fmt.Fprintf(cmd.stdout, "clear %s (previous native %s): %s\n", a.Clear.Status, a.Clear.PreviousSession, cmd.operatorText(a.Clear.Reason)); err != nil {
+			return err
+		}
+	}
 	if why && a.Compaction != nil {
 		if _, err := fmt.Fprintf(cmd.stdout, "compaction %s: %s\n", a.Compaction.Status, cmd.operatorText(a.Compaction.Reason)); err != nil {
 			return err

@@ -114,7 +114,7 @@ func (run *runtime) publishContextNotes(l *store.LockedAgent, a *core.Agent) err
 			if !isContextBandNotice(e) {
 				continue
 			}
-			const reason = "context band was queued before compaction completed"
+			const reason = "context band was queued before the native context reset"
 			if err := l.Withdraw(e.ID); err != nil {
 				return err
 			}

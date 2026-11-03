@@ -30,6 +30,12 @@ type statusHookBatch struct {
 // Reconcile retained hooks even when their detached refresh could not run.
 // Terminal boundaries remain pending until their recovery effects complete.
 func (run *runtime) reconcileStatusHooks(l *store.LockedAgent, a *core.Agent, c harness.Collar, notice hookNotice) (statusHookBatch, error) {
+	if err := run.reconcileClear(l, a); err != nil {
+		return statusHookBatch{}, err
+	}
+	if clearedSession(*a) && notice.SessionID != "" && notice.SessionID != a.Native.SessionID {
+		notice = hookNotice{}
+	}
 	batch := statusHookBatch{sequence: a.Native.HookSequence}
 	records, err := l.Paths.ReadStatusHooks()
 	if err != nil {

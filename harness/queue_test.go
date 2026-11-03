@@ -1,6 +1,9 @@
 package harness
 
-import "testing"
+import (
+	"github.com/adambiggs/gangline/substrate"
+	"testing"
+)
 
 func TestCodexQueueAcceptsWrappedHeader(t *testing.T) {
 	collar, err := EmbeddedCollar("codex")
@@ -19,5 +22,34 @@ func TestCodexQueueAcceptsWrappedHeader(t *testing.T) {
 	accepted, err := NativeQueueAccepted(collar, screen, opener)
 	if err != nil || !accepted {
 		t.Fatalf("wrapped native queue = %t, %v; want accepted", accepted, err)
+	}
+}
+
+func TestNativeInputPendingReadsCurrentQueue(t *testing.T) {
+	c, err := EmbeddedCollar("codex")
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, tt := range []struct {
+		name    string
+		lines   []string
+		pending bool
+		unknown bool
+	}{
+		{"empty", []string{"READY", "› "}, false, false},
+		{"manual", []string{"• Queued follow-up inputs", "  ↳ manual input", "", "› "}, true, false},
+		{"history", []string{"• Queued follow-up inputs", "old conversation output", "› "}, false, false},
+		{"no composer", []string{"unreadable"}, false, true},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			var rows [][]substrate.Cell
+			for _, line := range tt.lines {
+				rows = append(rows, testCells(line, false))
+			}
+			got, err := NativeInputPending(c, testScreen(rows...), "", "")
+			if got != tt.pending || (err != nil) != tt.unknown {
+				t.Fatalf("pending=%t err=%v", got, err)
+			}
+		})
 	}
 }

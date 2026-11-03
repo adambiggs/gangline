@@ -45,6 +45,9 @@ func (cmd command) rehitch(args []string) (result error) {
 	if a.Status != core.Active {
 		return refuseError("rehitch: harness must be active; inspect gang status %s --why", a.Name)
 	}
+	if clearPending(a) {
+		return refuseError("rehitch: native clear is pending; inspect gang status --why")
+	}
 	if a.Rehitch != nil {
 		return refuseError("rehitch: a restart is already queued for %s", a.Name)
 	}

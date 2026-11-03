@@ -593,6 +593,9 @@ func (cmd command) compact(args []string) (result error) {
 	if err != nil {
 		return err
 	}
+	if clearPending(a) {
+		return refuseError("compact: native clear is pending; inspect gang status --why")
+	}
 	name := a.Name
 	l, a, err := run.acquireBounded(a.ID)
 	if errors.Is(err, store.ErrLocked) {

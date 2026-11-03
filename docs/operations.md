@@ -22,6 +22,29 @@ reason. A failed or unconfirmed attempt leaves the agent running and is not
 retried automatically. Check the native session list for persistence; use
 `gang title NAME 'TEXT'` at idle to retry or choose another title.
 
+## Clear recovery
+
+A queued `gang clear --note TEXT` holds incoming mail while the old native turn
+finishes. Inspect `gang status --why`, `gang queue`, and `gang capture --composer`
+for the stated blocker. Resolve a native prompt or draft through its normal
+owner; do not discard accepted or uncertain input to force a clear.
+
+Once native clear input is reserved, Gangline does not automatically repeat it.
+`submitted` means the command may have run; `unverified` preserves a reported
+submission failure. `continuing` waits for the exact new-context continuation
+receipt. These states retain the logical agent, children and inbox. Missing
+proof is not evidence that nothing happened. Keep the state directory and both
+native transcripts when investigating an uncertain transition.
+
+A late exact continuation witness can settle an unverified receipt. Where the
+original startup envelope is demonstrably still unsubmitted in the composer,
+`gang hitch NAME --recover` uses the existing guarded startup recovery. It does
+not replay an admitted continuation, infer a clear from an empty composer, or
+restart the harness. Check its reported receipt and clear status afterward.
+
+Install hook support only through the normal launch lifecycle. Do not replace
+an executable with an older release while a clear transition is pending.
+
 ## Continue through a provider cap
 
 Gangline reads the collar's native five-hour and weekly usage windows. When one of

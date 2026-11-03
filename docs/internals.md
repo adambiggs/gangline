@@ -159,6 +159,33 @@ before the resume enters, Gangline fails the operation and withholds its
 continuation rather than submitting it late. Recovery cancels a published
 resume that has no recorded native submission.
 
+## Clean native context
+
+Clear retains the logical registration and inbox while replacing native
+conversation state. A persisted request holds later delivery before the old
+turn ends. Under the ordinary input lock, a safe idle composer and empty native
+queue permit one `/clear` submission. Intent is saved before keys are sent.
+
+`session-start` records native SessionStart source, identity and registration.
+An observed record for the current conversation proves installed hook support
+before clear; a new clear-source record binds the transition. Claude emits this
+record immediately. Codex emits it when the first new prompt is submitted.
+Only the saved contract/role/continuation envelope can enter that gap.
+
+Synchronous submit admission checks that exact envelope and the new-session
+proof, then reserves `clear-admission` once under the short hook-side lock.
+It never acquires the agent lock that delivery holds while awaiting the hook.
+Early validation errors block the continuation. Exact delivery releases retained
+mail. Neither an unknown command outcome nor an uncertain receipt is replayed.
+
+Clear confirmation resets conversation cursors, turn/context observations and
+native title state. Old-session hooks and witnesses cannot restore retired
+state; display writes share the hook-side lock with confirmation. The old
+transcript and audit history remain available. `clear_requested`,
+`clear_submitted`, `clear_waiting`, `clear_unverified` and `clear_completed`
+record the transition. These side files are bounded per agent and are removed
+with its registration; work depends on pending mail, not transcript history.
+
 ## Watchdog
 
 A whole-team tick replaces a transient user-scheduler timer and re-arms it
@@ -271,7 +298,7 @@ match `collar.name`. Unknown fields or primitive names fail before launch.
 | `models` | Model discovery and selection. |
 | `options` | Effort and role-prompt-file argument templates. |
 | `primitives` | Built-in native behaviors, readings, queue witnesses, and optional limits queries. |
-| `actions` | Interrupt, compact, and recovery key sequences; optional refusal and running-compaction patterns. |
+| `actions` | Interrupt, compact, optional clear, and recovery key sequences; optional refusal and running-compaction patterns. |
 | `context_bands` | Named context thresholds by model. |
 | `usage_bands` | Named native provider-usage thresholds by window. |
 

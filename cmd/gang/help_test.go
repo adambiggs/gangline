@@ -207,6 +207,7 @@ func TestEveryCommandFlagParserConstructs(t *testing.T) {
 		"rehitch":    func() error { return cmd.rehitch(bad) },
 		"interrupt":  func() error { return cmd.interrupt(bad) },
 		"compact":    func() error { _, err := parseCompact(bad); return err },
+		"clear":      func() error { return cmd.clear(bad) },
 		"title":      func() error { _, _, err := parseTitle(bad); return err },
 		"statusline": func() error { return cmd.statusline(bad) },
 		"context":    func() error { return cmd.context(bad) },
@@ -237,6 +238,9 @@ func TestEveryCommandFlagParserConstructs(t *testing.T) {
 		t.Run(name, func(t *testing.T) {
 			// Evidence deliberately keeps raw input out of diagnostics.
 			want := "-unlisted"
+			if name == "clear" {
+				want = "clear: expected --note TEXT"
+			}
 			if name == "evidence" {
 				want = "evidence: invalid options (run 'gang help evidence')"
 			}

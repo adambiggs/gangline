@@ -9,7 +9,7 @@ package harness
 })
 
 #Hook: close({
-	event: "turn-started" | "turn-finished" | "permission-requested" | "compaction-started" | "compaction-finished" | "activity" | "turn-failed"
+	event: "session-started" | "turn-started" | "turn-finished" | "permission-requested" | "compaction-started" | "compaction-finished" | "activity" | "turn-failed"
 	payload?: [string]: string
 	counts?: [string]: string
 })
@@ -90,6 +90,7 @@ package harness
 		wedge:         #Invocation
 	})
 	actions: close({
+		clear?: #Action
 		interrupt: #Action
 		title: #Action
 		title_clear?: #Action
