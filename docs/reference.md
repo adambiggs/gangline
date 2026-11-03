@@ -430,12 +430,53 @@ before presenting current subjects; the summary itself does not establish
 current registration, session, freshness or continuity. An absent subject means
 only that this window contains no projected record for it.
 
-Cumulative readings are not added or subtracted. `window_usage` and
-`state_duration_seconds` are null: a bounded tail does not establish attributable
-usage baselines or uninterrupted state intervals. The last event time is not
-extended to read time, and a quiet audit is not evidence of liveness. A caller
-must use its authorized fixed file and host/team scope and fit this one read
-within its existing collection budget; no per-subject requests are needed.
+Each subject also returns a `projected_observation_window`: the first and last
+projected event's observation time and byte offset in append order, plus the
+projected record count. It excludes event types not supported by the metadata
+projection; these are not all appends or a registration lifetime. Coverage is
+`partial`, freshness is `unknown`, and coverage before the first and after the
+last projected event is `unknown`, even when the complete file fits.
+`observation_times_ordered` describes only this hitch's projected timestamps;
+it is false for a regression or missing timestamp. Equal timestamps do not
+establish native event order. The page's `observation_time_out_of_order` gaps
+instead compare all decoded records, including other hitches and unprojected
+events. Neither check establishes continuous observation.
+
+For callers using the single bounded summary instead of reconstructing metadata
+pages, `state_intervals` retains adjacent activity observations in append order,
+with compact endpoints (activity, original offsets and timestamps; subject
+identity belongs to the containing subject). Each pair includes counts of
+intervening projected boundaries (this hitch or no hitch) and gap records (any
+hitch, since gap records lack subject identity), by offset after the first
+endpoint through the second. These counts do not count omitted/unprojected
+lifecycle facts or unseen gaps. `observation_spacing_seconds` is only the spacing
+between increasing endpoint timestamps. It is null for any intervening counted
+break, equal/missing endpoint times, a disorder in this hitch's projected window,
+or an endpoint after `read_at`. Writer observation times and reader `read_at`
+can come from different clocks; this refusal does not diagnose clock failure.
+Usage `source_at` remains the source-supplied time when available; activity
+events do not supply a separate source timestamp.
+
+Every pair has `coverage: "unknown"` and null `state_duration_seconds`:
+change-only observations cannot establish that either state held throughout the
+interval, even when the activities match or no gap was detected. Lifecycle,
+compaction and outage boundaries and detected gaps remain separately visible in
+the same result. No interval is extended to read time or to omitted history. No
+spacing is summed or attributed to busy, idle, runtime-blocked, compute or
+semantic task-blocker time. A runtime-blocked observation is not a task blocker.
+
+Cumulative readings are not added or subtracted. `window_usage` and aggregate
+`state_duration_seconds` remain null: the selected evidence does not establish
+attributable usage baselines or uninterrupted state intervals. Replays and
+session/source groups are not additive; missing counters remain unknown and
+cache inclusion retains its recorded meaning. The extra projection uses only
+the already bounded page, with no additional file reads. Each selected activity
+record participates in at most two endpoint pairs; the output can grow with
+records inside the byte budget, rather than only with subjects. The byte budget
+limits input reads, not serialized response bytes. Building coverage takes time
+and memory linear in the projected records and gap records. A caller must use its authorized fixed
+file and host/team scope and fit this one read within its existing collection
+budget; no per-subject requests are needed.
 
 An unterminated tail or record cut by the budget is left unconsumed and named in
 `gaps`; retry from `next_offset`, increasing the budget if a record exceeds it.

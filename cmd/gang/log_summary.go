@@ -16,12 +16,15 @@ type logSummaryUsage struct {
 }
 
 type logSummarySubject struct {
-	HitchID       core.HitchID      `json:"hitch_id"`
-	Name          core.AgentName    `json:"name,omitempty"`
-	Activity      *logMetadataEvent `json:"last_activity_observation"`
-	Usage         []logSummaryUsage `json:"last_usage_observations"`
-	WindowUsage   *core.TokenUsage  `json:"window_usage"`
-	StateDuration *float64          `json:"state_duration_seconds"`
+	HitchID        core.HitchID       `json:"hitch_id"`
+	Name           core.AgentName     `json:"name,omitempty"`
+	Activity       *logMetadataEvent  `json:"last_activity_observation"`
+	Usage          []logSummaryUsage  `json:"last_usage_observations"`
+	WindowUsage    *core.TokenUsage   `json:"window_usage"`
+	StateDuration  *float64           `json:"state_duration_seconds"`
+	Window         *logSummaryWindow  `json:"projected_observation_window"`
+	StateIntervals []logStateInterval `json:"state_intervals"`
+	coverageCursor logCoverageCursor
 }
 
 type logSummary struct {
@@ -50,22 +53,32 @@ func summarizeLogMetadata(p logMetadataPage) logSummary {
 		Boundaries: []logMetadataEvent{}, Gaps: p.Gaps,
 		Limitations: append(append([]string{}, p.Limitations...),
 			"last_records_in_append_order_not_current_roster", "audit_silence_is_not_freshness",
-			"window_usage_and_state_durations_unknown", "session_and_source_groups_not_additive")}
+			"window_usage_and_state_durations_unknown", "session_and_source_groups_not_additive",
+			"state_intervals_are_discrete_observation_pairs_not_state_durations",
+			"before_first_and_after_last_observations_unknown")}
 	subjects := map[core.HitchID]*logSummarySubject{}
 	usage := map[core.HitchID]map[string]logSummaryUsage{}
+	gapIndex, globalBoundaries := 0, 0
 	for _, e := range p.Events {
-		if e.Type != "observation" && e.Type != "activity_observed" || len(e.NativeBoundaries) > 0 {
+		for gapIndex < len(p.Gaps) && p.Gaps[gapIndex].Offset <= e.Offset {
+			gapIndex++
+		}
+		if isLogSummaryBoundary(e) {
 			s.Boundaries = append(s.Boundaries, e)
 		}
 		if e.HitchID == "" {
+			if isLogSummaryBoundary(e) {
+				globalBoundaries++
+			}
 			continue
 		}
 		a := subjects[e.HitchID]
 		if a == nil {
-			a = &logSummarySubject{HitchID: e.HitchID, Usage: []logSummaryUsage{}}
+			a = &logSummarySubject{HitchID: e.HitchID, Usage: []logSummaryUsage{}, StateIntervals: []logStateInterval{}}
 			subjects[e.HitchID] = a
 			usage[e.HitchID] = map[string]logSummaryUsage{}
 		}
+		a.observeWindow(e, gapIndex, globalBoundaries)
 		if e.Name != "" {
 			a.Name = e.Name
 		}
@@ -79,7 +92,7 @@ func summarizeLogMetadata(p logMetadataPage) logSummary {
 			if r.SessionID == "" || r.Source == "unknown" {
 				key = fmt.Sprintf("unknown:%d:%d", e.Offset, i)
 			}
-			usage[e.HitchID][key] = logSummaryUsage{e.At, e.Offset, e.End, r}
+			usage[e.HitchID][key] = logSummaryUsage{ObservedAt: e.At, Offset: e.Offset, End: e.End, Reading: r}
 		}
 	}
 	ids := make([]string, 0, len(subjects))
@@ -89,6 +102,7 @@ func summarizeLogMetadata(p logMetadataPage) logSummary {
 	sort.Strings(ids)
 	for _, id := range ids {
 		a := subjects[core.HitchID(id)]
+		a.finishCoverage(p.ReadAt)
 		keys := make([]string, 0, len(usage[a.HitchID]))
 		for key := range usage[a.HitchID] {
 			keys = append(keys, key)
