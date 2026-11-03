@@ -25,7 +25,7 @@ agents in the selected team.
 | `gang rehitch --note TEXT [--upgrade]` | Restart your harness at the next confirmed idle boundary and resume its native conversation. |
 | `gang rename OLD NEW` | Change a registered name and its pane's display title. |
 | `gang drop NAME` | Stop an agent and fail its pending messages. An unregistered `NAME` is refused. |
-| `gang down [-y, --yes]` | Confirm on a terminal (`[y/N]`, default no), then drop the selected team's agents and delete its runtime state and history. Before dropping any agent, it appends who ran it to `downs.jsonl` in the state root. Use `--yes` without a terminal. |
+| `gang down [-y, --yes]` | Confirm on a terminal (`[y/N]`, default no), then retain its audit log, drop the selected team's agents and delete only its runtime state. Before dropping any agent, it appends who ran it to `downs.jsonl` in the state root. Use `--yes` without a terminal. |
 | `gang attach [NAME]` | Attach to the named agent's pane in the selected team. Without `NAME`, select the lead, or the first registered agent if there is no lead. |
 | `gang teams` | List teams in the configured state root. |
 
@@ -95,10 +95,26 @@ that authority. A hitch run from an agent's pane records that agent as the hitch
 which gets a `[gang:hitch#…]` notice when the agent fails, recovers, holds
 undelivered input, or sits idle with native background tasks pending.
 
-Each line of `downs.jsonl` records the time, team, agent count, the caller's
+Each line of `downs.jsonl` records the time, team, retained log path, agent count, the caller's
 agent name and inherited `GANG_AGENT_ID`, its process and parent process IDs,
 the parent's command line where `/proc` shows it, the working directory, and
 `TMUX_PANE`.
+
+Audit logs survive `down` under `STATE_ROOT/logs/TEAM/LOG_ID.jsonl`.
+The command prints the retained path and records it as `retained_log` in
+`STATE_ROOT/downs.jsonl` before stopping agents. Read it with
+`gang log --all LOG.jsonl`; the active log path is unchanged. A private marker
+in runtime state makes retries reuse the same retained log, while a recreated
+team gets a separate identity. The name and log ID do not establish task or
+cross-host attribution. Final teardown events and late writes to the same
+open log remain in the retained file. If retention fails, teardown stops.
+
+Failed pane-hold diagnostics are retained beside the audit as
+`LOG_ID-hold-HITCH_ID-ATTEMPT.log`, before their original temporary path is
+removed or reused. These are the existing startup error bytes, not native
+transcripts. Successful holds produce no diagnostic log. No retention period
+or automatic expiry is configured: logs remain until an explicit retention
+policy removes them. Runtime teardown is not such a policy.
 
 ## Message and control
 

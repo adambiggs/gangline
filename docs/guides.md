@@ -152,7 +152,7 @@ does not verify watchdog operation.
 
 ## Stop a team
 
-Keep a copy of the audit log, inspect the roster, and end the selected team:
+Optionally export the audit log, inspect the roster, and end the selected team:
 
 ```sh
 gang log --all > team-log.jsonl
@@ -163,7 +163,8 @@ gang teams --all
 
 `down` confirms the selected team and agent count on a terminal. Use
 `gang down --yes` in scripts or without a terminal. It stops registered agents
-and deletes the team's state and history. From an agent's pane, including any
+and removes runtime state while retaining the audit at the printed path.
+Read a retained audit with `gang log --all LOG.jsonl`. From an agent's pane, including any
 script that agent starts, only the lead may run it. The team should disappear
 from `gang teams --all`. To stop just one agent, use `gang drop NAME`, then verify
 that it is absent from `gang roster --all`.

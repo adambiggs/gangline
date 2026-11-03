@@ -138,7 +138,7 @@ Read the lead's answer and open the files it names. You should be able to
 connect its recommended command to the repository's test setup. That answer,
 the named worker in the roster, and a delivery record verify the workflow.
 
-From your shell, save the log if you want to keep it, then stop the team:
+From your shell, optionally export the log, then stop the team:
 
 ```sh
 gang log --all > first-team-log.jsonl
@@ -149,7 +149,8 @@ unset GANG_SESSION
 ```
 
 `gang down` stops the registered agents and deletes the team's runtime state
-and history. `first-team` should be absent from `gang teams --all`. For manual
+while retaining its audit at the printed path. Read it with
+`gang log --all LOG.jsonl`. `first-team` should be absent from `gang teams --all`. For manual
 staffing, messaging, and stopping a turn, continue with the
 [coordination guide](guides.md#coordinate-agents).
 

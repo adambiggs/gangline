@@ -382,7 +382,11 @@ func (cmd command) hitchReplacing(args []string, supersede bool, previous *core.
 	// exits at boot leaves its status and final output for the hitch error.
 	spec.KeepExited = true
 	spec.HoldLog = filepath.Join(l.Paths.Directory, "hold")
-	defer func() { _ = os.Remove(spec.HoldLog) }()
+	if err := run.team.RetainHoldLog(a.ID); err != nil {
+		err = fmt.Errorf("retain previous pane-hold log: %w", err)
+		return errors.Join(err, run.apply(l, &a, core.Event{Type: "hitch_failed", Reason: err.Error()}))
+	}
+	defer func() { result = errors.Join(result, run.team.RetainHoldLog(a.ID)) }()
 	// A pane that could not hold itself closes before the native CLI starts, so
 	// the error that finds it gone carries what the hold printed.
 	holdFailed := func(err error) (error, bool) {
@@ -874,6 +878,9 @@ func (run *runtime) dropAgent(id core.HitchID, wait bool, reason string) error {
 	a, err := p.Read()
 	if err != nil {
 		return err
+	}
+	if err := run.team.RetainHoldLog(a.ID); err != nil {
+		return fmt.Errorf("retain pane-hold log: %w", err)
 	}
 	if _, err := run.endNative(l, &a); err != nil {
 		return err

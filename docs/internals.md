@@ -45,7 +45,14 @@ their latest outcome, while the audit log retains history.
 
 Commands work over requested agents and pending work, independently of settled
 history. Each agent has its own lock. `gang drop` removes the registration and
-its files; `gang down` removes the team directory. Registration, drop, and
+its files; `gang down` removes the team runtime directory after retaining its
+audit outside it. `logs/TEAM/LOG_ID.jsonl` is a hard link to the active audit,
+so retention copies no bytes and includes final appends. A private
+`log-id.json` marker makes retries stable without changing the event or team
+state schema. Recreated teams get different retained paths. Failed pane-hold
+logs also survive registration removal in that directory; recovery witnesses
+and coalesced status hooks remain removable runtime state. No automatic log
+expiry exists. Registration, drop, and
 whole-team teardown share a nonblocking lock under `STATE_ROOT/team-locks/`
 so the agent list cannot change while the confirmation prompt is open.
 

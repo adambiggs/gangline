@@ -254,11 +254,12 @@ func (run *runtime) sendHitcherNotice(a core.Agent, id core.EnvelopeID, text str
 }
 
 // downRecord names who ended a team and from where. Down deletes the team's
-// directory and its event log, and its own drops can end the process running
+// runtime directory, and its own drops can end the process running
 // it, so the record is written to the state root before any agent is dropped.
 type downRecord struct {
 	At            time.Time `json:"at"`
 	Team          string    `json:"team"`
+	RetainedLog   string    `json:"retained_log"`
 	Agents        int       `json:"agents"`
 	Caller        string    `json:"caller,omitempty"`
 	HitchIdentity string    `json:"hitch_identity,omitempty"`
@@ -269,8 +270,8 @@ type downRecord struct {
 	TmuxPane      string    `json:"tmux_pane,omitempty"`
 }
 
-func (run *runtime) recordDown(agents int) error {
-	r := downRecord{At: run.cmd.now(), Team: run.settings.Session, Agents: agents, HitchIdentity: run.cmd.environment("GANG_AGENT_ID"), PID: os.Getpid(), ParentPID: os.Getppid(), TmuxPane: run.cmd.environment("TMUX_PANE")}
+func (run *runtime) recordDown(agents int, retainedLog string) error {
+	r := downRecord{At: run.cmd.now(), Team: run.settings.Session, RetainedLog: retainedLog, Agents: agents, HitchIdentity: run.cmd.environment("GANG_AGENT_ID"), PID: os.Getpid(), ParentPID: os.Getppid(), TmuxPane: run.cmd.environment("TMUX_PANE")}
 	if caller, err := run.callerInTeam(); err == nil && caller != nil {
 		r.Caller = string(caller.Name)
 	}

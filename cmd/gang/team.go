@@ -117,7 +117,14 @@ func (cmd command) down(args []string) (err error) {
 			return err
 		}
 	}
-	if err := run.recordDown(len(agents)); err != nil {
+	retainedLog, err := run.team.RetainLog()
+	if err != nil {
+		return fmt.Errorf("retain team log: %w", err)
+	}
+	if _, err := fmt.Fprintf(cmd.stdout, "retained team log: %s\n", retainedLog); err != nil {
+		return err
+	}
+	if err := run.recordDown(len(agents), retainedLog); err != nil {
 		return err
 	}
 	// Self-teardown can lose the output reader; retain returned failures in

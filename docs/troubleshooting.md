@@ -2,7 +2,8 @@
 
 Start with `gang status NAME --why` and `gang capture NAME`. Keep the error
 output and the team directory if you need to report a failure. `gang down`
-deletes the team's history.
+retains audit and failed pane-hold logs, but removes runtime recovery state.
+Read the retained audit at its printed path with `gang log --all LOG.jsonl`.
 
 ## The shell cannot find `gang`
 

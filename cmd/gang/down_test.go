@@ -5,6 +5,7 @@ package main
 import (
 	"bytes"
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"os"
@@ -141,6 +142,131 @@ func TestDownYesFlagsWithoutTerminal(t *testing.T) {
 			}
 			if _, err := os.Stat(f.run.team.Directory); !errors.Is(err, os.ErrNotExist) {
 				t.Fatalf("team directory remains or cannot be checked: %v", err)
+			}
+		})
+	}
+}
+
+func TestDownRetainsAuditAndSeparatesReusedTeam(t *testing.T) {
+	f := newStateFixture(t)
+	var paths []string
+	for _, id := range []string{"first", "second"} {
+		if err := f.run.team.Create(); err != nil {
+			t.Fatal(err)
+		}
+		f.add(t, id, "worker", "codex")
+		if err := f.run.team.Append(core.Event{Type: "observation", At: f.cmd.now(), HitchID: core.HitchID(id), Reason: "retained proof"}); err != nil {
+			t.Fatal(err)
+		}
+		before, err := os.ReadFile(f.run.team.Log)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if err := f.cmd.down([]string{"--yes"}); err != nil {
+			t.Fatal(err)
+		}
+		root := filepath.Dir(filepath.Dir(f.run.team.Directory))
+		all, err := filepath.Glob(filepath.Join(root, "logs", filepath.Base(f.run.team.Directory), "*.jsonl"))
+		if err != nil || len(all) != len(paths)+1 {
+			t.Fatalf("archives: %v, %v", all, err)
+		}
+		var current string
+		for _, path := range all {
+			if len(paths) == 0 || path != paths[0] {
+				current = path
+			}
+		}
+		retained, err := os.ReadFile(current)
+		if err != nil || !bytes.HasPrefix(retained, before) || !bytes.Contains(retained, []byte(`"type":"drop_finished"`)) {
+			t.Fatalf("audit missing original or final teardown: %q, %v", retained, err)
+		}
+		if id == "second" && bytes.Contains(retained, []byte(`"hitch_id":"first"`)) {
+			t.Fatal("reused team mixed incarnations")
+		}
+		data, err := os.ReadFile(filepath.Join(root, "downs.jsonl"))
+		if err != nil {
+			t.Fatal(err)
+		}
+		lines := bytes.Split(bytes.TrimSpace(data), []byte("\n"))
+		var record downRecord
+		if err := json.Unmarshal(lines[len(lines)-1], &record); err != nil || record.RetainedLog != current {
+			t.Fatalf("retained path absent from shutdown audit: %+v, %v", record, err)
+		}
+		f.out.Reset()
+		if err := f.cmd.log([]string{"--all", current}); err != nil {
+			t.Fatal(err)
+		}
+		if !strings.Contains(f.out.String(), `"type":"drop_finished"`) || !strings.Contains(f.out.String(), "retained proof") {
+			t.Fatalf("saved-log reader lost events: %s", f.out.String())
+		}
+		paths = append(paths, current)
+	}
+}
+
+func TestDownRetentionFailureLeavesAgentAndAudit(t *testing.T) {
+	f := newStateFixture(t)
+	a := f.add(t, "a", "worker", "codex")
+	if err := f.run.team.Append(core.Event{Type: "observation", At: f.cmd.now(), HitchID: a.ID}); err != nil {
+		t.Fatal(err)
+	}
+	before, err := os.ReadFile(f.run.team.Log)
+	if err != nil {
+		t.Fatal(err)
+	}
+	root := filepath.Dir(filepath.Dir(f.run.team.Directory))
+	if err := os.WriteFile(filepath.Join(root, "logs"), []byte("not a directory"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	if err := f.cmd.down([]string{"--yes"}); err == nil || !strings.Contains(err.Error(), "retain team log") {
+		t.Fatalf("down error: %v", err)
+	}
+	if got, err := os.ReadFile(f.run.team.Log); err != nil || !bytes.Equal(got, before) {
+		t.Fatalf("audit changed: %q, %v", got, err)
+	}
+	if _, err := f.run.team.ResolveName("worker"); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestDropPreservesHoldDiagnosticOrRefusesBeforeStopping(t *testing.T) {
+	for _, blocked := range []bool{false, true} {
+		t.Run(fmt.Sprint(blocked), func(t *testing.T) {
+			f := newStateFixture(t)
+			a := f.add(t, "a", "worker", "codex")
+			p, err := f.run.team.Agent(a.ID)
+			if err != nil {
+				t.Fatal(err)
+			}
+			body := []byte("hold could not set pane option\nexit status 1\n")
+			source := filepath.Join(p.Directory, "hold")
+			if err := os.WriteFile(source, body, 0600); err != nil {
+				t.Fatal(err)
+			}
+			root := filepath.Dir(filepath.Dir(f.run.team.Directory))
+			if blocked {
+				if err := os.WriteFile(filepath.Join(root, "logs"), []byte("blocked"), 0600); err != nil {
+					t.Fatal(err)
+				}
+			}
+			err = f.cmd.drop([]string{"worker"})
+			if blocked {
+				if err == nil || f.input.releases != 0 {
+					t.Fatalf("drop did not stop before teardown: %v, releases %d", err, f.input.releases)
+				}
+				if got, err := os.ReadFile(source); err != nil || !bytes.Equal(got, body) {
+					t.Fatalf("original diagnostic changed: %q, %v", got, err)
+				}
+				return
+			}
+			if err != nil {
+				t.Fatal(err)
+			}
+			paths, err := filepath.Glob(filepath.Join(root, "logs", filepath.Base(f.run.team.Directory), "*-hold-a-*.log"))
+			if err != nil || len(paths) != 1 {
+				t.Fatalf("retained diagnostics: %v, %v", paths, err)
+			}
+			if got, err := os.ReadFile(paths[0]); err != nil || !bytes.Equal(got, body) {
+				t.Fatalf("retained diagnostic changed: %q, %v", got, err)
 			}
 		})
 	}
