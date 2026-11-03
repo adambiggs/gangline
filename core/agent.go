@@ -269,18 +269,21 @@ type NativeState struct {
 }
 
 type Reading struct {
-	Kind        string        `json:"kind"`
-	Source      string        `json:"source"`
-	NativeEvent string        `json:"native_event,omitempty"`
-	At          *time.Time    `json:"at,omitempty"`
-	Status      string        `json:"status"`
-	Reason      string        `json:"reason,omitempty"`
-	TurnID      string        `json:"turn_id,omitempty"`
-	Model       string        `json:"model,omitempty"`
-	Used        *int64        `json:"used,omitempty"`
-	Limit       *int64        `json:"limit,omitempty"`
-	Percent     *float64      `json:"percent,omitempty"`
-	Limits      []LimitWindow `json:"limits,omitempty"`
+	SessionID    string        `json:"session_id,omitempty"`
+	SourceOffset int64         `json:"source_offset,omitempty"`
+	Usage        *TokenUsage   `json:"usage,omitempty"`
+	Kind         string        `json:"kind"`
+	Source       string        `json:"source"`
+	NativeEvent  string        `json:"native_event,omitempty"`
+	At           *time.Time    `json:"at,omitempty"`
+	Status       string        `json:"status"`
+	Reason       string        `json:"reason,omitempty"`
+	TurnID       string        `json:"turn_id,omitempty"`
+	Model        string        `json:"model,omitempty"`
+	Used         *int64        `json:"used,omitempty"`
+	Limit        *int64        `json:"limit,omitempty"`
+	Percent      *float64      `json:"percent,omitempty"`
+	Limits       []LimitWindow `json:"limits,omitempty"`
 }
 type LimitWindow struct {
 	Label         string  `json:"label"`
@@ -309,4 +312,15 @@ type PaneRegistration struct {
 	// Held says the pane keeps a native exit open for gang to read. The hitch
 	// that spawns the pane sets it, and whoever ends the hold clears it.
 	Held bool `json:"held,omitempty"`
+}
+
+// TokenUsage preserves source counters; it is not an additive task total.
+// Cache inclusion is explicit because adding cache counters may double count.
+type TokenUsage struct {
+	Semantics      string `json:"semantics"`
+	Fields         string `json:"fields"`
+	CacheInclusion string `json:"cache_inclusion"`
+	Input          *int64 `json:"input_tokens,omitempty"`
+	Output         *int64 `json:"output_tokens,omitempty"`
+	CachedInput    *int64 `json:"cached_input_tokens,omitempty"`
 }

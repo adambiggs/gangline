@@ -277,6 +277,24 @@ timestamps and context token counts. Availability conditions such as
 reading prints `status` `unknown` with its `reason` and null counts, and the
 command still exits unknown. The human forms may change layout.
 
+Native `observation` events can also carry `token-usage` readings. These retain
+session-cumulative input/output counters from the status-line payload or the
+session log, separately from context occupancy and provider quota utilization.
+Each reading names its native session, source fields and counter semantics;
+session-log readings also carry their source timestamp and ending byte offset.
+An absent source timestamp stays absent. The enclosing event records when
+Gangline observed it.
+
+Missing counters remain absent with `unknown` or `partial` status. A reported
+zero is retained as zero. An invalid usage counter becomes an unknown usage
+reading without discarding valid context readings or stalling the source cursor.
+Cache inclusion is `unverified`, so a cached-input
+counter must not be added to input tokens. Repeated snapshots are not additive;
+lower values or a new session need separate coverage segments. These raw
+counters alone do not establish task usage, complete session coverage, costs
+or per-agent time. The existing `gang log --all LOG.jsonl` reader preserves
+them; no new polling or event publication path is introduced.
+
 `gang log --type session_bound` joins native sessions to hitches. Gangline
 logs a `session_bound` event whenever it binds a hitch to a native session
 it did not hold before, once the native harness reports that session with

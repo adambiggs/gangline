@@ -13,6 +13,10 @@ import (
 
 func coreReading(r harness.Reading) core.Reading {
 	out := core.Reading{Kind: r.Kind, Source: r.Source, NativeEvent: r.NativeEvent, At: r.At, Status: r.Status, Reason: r.Reason, TurnID: r.TurnID, Model: r.Model, Used: r.Used, Limit: r.Limit, Percent: r.Percent}
+	out.SessionID, out.SourceOffset = r.SessionID, r.SourceOffset
+	if u := r.Usage; u != nil {
+		out.Usage = &core.TokenUsage{Semantics: u.Semantics, Fields: u.Fields, CacheInclusion: u.CacheInclusion, Input: u.Input, Output: u.Output, CachedInput: u.CachedInput}
+	}
 	for _, w := range r.Limits {
 		out.Limits = append(out.Limits, core.LimitWindow{Label: w.Label, UsedPercent: w.UsedPercent, ResetAt: w.ResetAt, WindowMinutes: w.WindowMinutes})
 	}

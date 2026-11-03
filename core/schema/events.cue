@@ -23,6 +23,8 @@ import "time"
 })
 #Compaction: close({id: #ID, resume: close({text: string}), resume_from?: close({kind: "agent" | "self_declared" | "gangline", name: #ID, hitch_id?: #ID}), requester?: close({kind: "agent", name: #ID, hitch_id: #ID}), started_at: #Time, deadline: #Time, status: "queued" | "submitted" | "completed" | "failed" | "unverified", continuation?: bool, resume_token?: string, resume_admitted?: bool, completed_at?: #Time, refusal_before?: int & >=0, reason?: string})
 #Reading: close({
+ session_id?: #ID, source_offset?: int & >0
+ usage?: close({semantics: "session-cumulative", fields: #ID, cache_inclusion: "unverified", input_tokens?: int & >=0, output_tokens?: int & >=0, cached_input_tokens?: int & >=0})
  kind: string, source: string, native_event?: string, at?: #Time, status: string, reason?: string, turn_id?: string, model?: string
  used?: int & >=0, limit?: int & >0, percent?: number & >=0
  limits?: [...close({label: #ID, used_percent: number & >=0, reset_at: int & >0, window_minutes?: int & >0})]

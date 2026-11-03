@@ -11,18 +11,21 @@ import (
 // Reading is a native observation, not a lifecycle transition. At is absent
 // when the native payload supplies no measurement timestamp.
 type Reading struct {
-	Kind        string        `json:"kind"`
-	Source      string        `json:"source"`
-	NativeEvent string        `json:"native_event,omitempty"`
-	At          *time.Time    `json:"at,omitempty"`
-	Status      string        `json:"status"`
-	Reason      string        `json:"reason,omitempty"`
-	TurnID      string        `json:"turn_id,omitempty"`
-	Model       string        `json:"model,omitempty"`
-	Used        *int64        `json:"used,omitempty"`
-	Limit       *int64        `json:"limit,omitempty"`
-	Percent     *float64      `json:"percent,omitempty"`
-	Limits      []LimitWindow `json:"limits,omitempty"`
+	SessionID    string        `json:"session_id,omitempty"`
+	SourceOffset int64         `json:"source_offset,omitempty"`
+	Usage        *TokenUsage   `json:"usage,omitempty"`
+	Kind         string        `json:"kind"`
+	Source       string        `json:"source"`
+	NativeEvent  string        `json:"native_event,omitempty"`
+	At           *time.Time    `json:"at,omitempty"`
+	Status       string        `json:"status"`
+	Reason       string        `json:"reason,omitempty"`
+	TurnID       string        `json:"turn_id,omitempty"`
+	Model        string        `json:"model,omitempty"`
+	Used         *int64        `json:"used,omitempty"`
+	Limit        *int64        `json:"limit,omitempty"`
+	Percent      *float64      `json:"percent,omitempty"`
+	Limits       []LimitWindow `json:"limits,omitempty"`
 }
 
 type LimitWindow struct {
@@ -53,8 +56,10 @@ func ReadStatusline(data []byte) (string, []Reading, error) {
 			ID string `json:"id"`
 		} `json:"model"`
 		Context *struct {
-			Limit *int64 `json:"context_window_size"`
-			Usage *struct {
+			Limit       *int64          `json:"context_window_size"`
+			TotalInput  json.RawMessage `json:"total_input_tokens"`
+			TotalOutput json.RawMessage `json:"total_output_tokens"`
+			Usage       *struct {
 				Input    *int64 `json:"input_tokens"`
 				Creation *int64 `json:"cache_creation_input_tokens"`
 				Read     *int64 `json:"cache_read_input_tokens"`
@@ -105,7 +110,8 @@ func ReadStatusline(data []byte) (string, []Reading, error) {
 		limits.Status = "observed"
 		limits.Reason = ""
 	}
-	return p.SessionID, []Reading{r, limits}, nil
+	usage := tokenUsageReading("status-line", p.SessionID, "context_window.total_input_tokens,total_output_tokens", p.Context.TotalInput, p.Context.TotalOutput, nil)
+	return p.SessionID, []Reading{r, limits, usage}, nil
 }
 
 type Transcript struct {
@@ -182,6 +188,11 @@ func ReadTranscript(invocation Invocation, input io.ReadSeeker, session string, 
 				Class   json.RawMessage `json:"codex_error_info"`
 			} `json:"error"`
 			Info *struct {
+				TotalUsage *struct {
+					Input       json.RawMessage `json:"input_tokens"`
+					Output      json.RawMessage `json:"output_tokens"`
+					CachedInput json.RawMessage `json:"cached_input_tokens"`
+				} `json:"total_token_usage"`
 				Usage *struct {
 					Total *int64 `json:"total_tokens"`
 				} `json:"last_token_usage"`
@@ -220,6 +231,13 @@ func ReadTranscript(invocation Invocation, input io.ReadSeeker, session string, 
 				r.At = &record.At
 				r.NativeEvent = p.Type
 				result.Readings = append(result.Readings, r)
+				var input, output, cached json.RawMessage
+				if u := p.Info.TotalUsage; u != nil {
+					input, output, cached = u.Input, u.Output, u.CachedInput
+				}
+				usage := tokenUsageReading("session-log", session, "info.total_token_usage", input, output, cached)
+				usage.At, usage.NativeEvent, usage.SourceOffset = &record.At, p.Type, result.Offset
+				result.Readings = append(result.Readings, usage)
 			}
 			if p.RateLimits != nil {
 				base.Kind = "provider-limits"
@@ -374,4 +392,46 @@ func StatuslineMeasurementTime(data []byte, r Reading) (*time.Time, error) {
 
 func TelemetryUsesTranscript(invocation Invocation) bool {
 	return invocation.Name == "codex-session-log"
+}
+
+// TokenUsage preserves source counters; it is not an additive task total.
+// Cache inclusion is explicit because adding cache counters may double count.
+type TokenUsage struct {
+	Semantics      string `json:"semantics"`
+	Fields         string `json:"fields"`
+	CacheInclusion string `json:"cache_inclusion"`
+	Input          *int64 `json:"input_tokens,omitempty"`
+	Output         *int64 `json:"output_tokens,omitempty"`
+	CachedInput    *int64 `json:"cached_input_tokens,omitempty"`
+}
+
+// Native totals are session snapshots. Preserve individual missing fields and
+// leave cache inclusion unverified until that producer contract is established.
+func tokenUsageReading(source, session, fields string, rawInput, rawOutput, rawCached json.RawMessage) Reading {
+	var input, output, cached *int64
+	values := []**int64{&input, &output, &cached}
+	invalid := false
+	for i, raw := range []json.RawMessage{rawInput, rawOutput, rawCached} {
+		if len(raw) == 0 {
+			continue
+		}
+		if err := json.Unmarshal(raw, values[i]); err != nil || (*values[i] != nil && **values[i] < 0) {
+			invalid = true
+		}
+	}
+	if invalid {
+		return Reading{Kind: "token-usage", Source: source, SessionID: session, Status: "unknown", Reason: "native cumulative token counter invalid",
+			Usage: &TokenUsage{Semantics: "session-cumulative", Fields: fields, CacheInclusion: "unverified"}}
+	}
+	r := Reading{Kind: "token-usage", Source: source, SessionID: session, Status: "observed",
+		Usage: &TokenUsage{Semantics: "session-cumulative", Fields: fields, CacheInclusion: "unverified", Input: input, Output: output, CachedInput: cached}}
+	if input == nil || output == nil {
+		r.Status = "partial"
+		r.Reason = "native cumulative input or output counter unavailable"
+	}
+	if input == nil && output == nil && cached == nil {
+		r.Status = "unknown"
+		r.Reason = "native cumulative token counters unavailable"
+	}
+	return r
 }
