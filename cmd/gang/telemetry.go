@@ -101,6 +101,11 @@ func (run *runtime) refreshNative(l *store.LockedAgent, a *core.Agent, c harness
 	if err != nil {
 		return err
 	}
+	w := a.Native.Context
+	comparison := harness.CompareTranscriptContext(f, a.Native.SessionID, a.Native.Offset, harness.Reading{
+		Kind: w.Kind, Source: w.Source, NativeEvent: w.NativeEvent, Status: w.Status,
+		SessionID: w.SessionID, SourceOffset: w.SourceOffset, At: w.At, Used: w.Used, Limit: w.Limit,
+	})
 	parsed, err := harness.ReadTranscript(*c.Primitives.Telemetry, f, a.Native.SessionID, a.Native.Offset, a.CreatedAt)
 	closeErr := f.Close()
 	if err != nil {
@@ -109,10 +114,15 @@ func (run *runtime) refreshNative(l *store.LockedAgent, a *core.Agent, c harness
 	if closeErr != nil {
 		return closeErr
 	}
-	if parsed.Offset == a.Native.Offset {
+	if parsed.Offset == a.Native.Offset && comparison != "mismatch" {
 		return nil
 	}
 	var readings []core.Reading
+	if comparison == "mismatch" {
+		readings = append(readings, core.Reading{Kind: "observation-gap", Source: "session-log",
+			SessionID: a.Native.SessionID, SourceOffset: w.SourceOffset,
+			NativeEvent: "source-context-mismatch", Status: "unknown"})
+	}
 	for _, r := range parsed.Readings {
 		readings = append(readings, coreReading(r))
 	}
@@ -120,17 +130,29 @@ func (run *runtime) refreshNative(l *store.LockedAgent, a *core.Agent, c harness
 	// A state-write failure can replay the same source offsets on retry, but
 	// an audit failure must not permanently skip those observations.
 	if len(readings) > 0 {
-		if err := run.record(*a, core.Event{Type: "observation", Readings: readings}); err != nil {
+		// Context identity is a saved-state witness. Its paired usage already
+		// carries the identity in history; avoid growing every context audit.
+		auditReadings := append([]core.Reading(nil), readings...)
+		for i := range auditReadings {
+			if auditReadings[i].Kind == "context" && auditReadings[i].Source == "session-log" {
+				auditReadings[i].SessionID, auditReadings[i].SourceOffset = "", 0
+			}
+		}
+		if err := run.record(*a, core.Event{Type: "observation", Readings: auditReadings}); err != nil {
 			return err
 		}
 	}
-	if err := run.acceptContextReadings(a, c, readings); err != nil {
-		return err
-	}
-	if err := acceptTurnFailures(l, a, readings); err != nil {
-		return err
-	}
 	next := *a
+	if comparison == "mismatch" {
+		next.Native.Context = core.Reading{Kind: "context", Source: "session-log", Status: "unknown",
+			Reason: "saved context source record changed; waiting for a newer native measurement"}
+	}
+	if err := run.acceptContextReadings(&next, c, readings); err != nil {
+		return err
+	}
+	if err := acceptTurnFailures(l, &next, readings); err != nil {
+		return err
+	}
 	next.Native.Offset = parsed.Offset
 	if err := l.Save(next); err != nil {
 		return err

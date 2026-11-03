@@ -30,8 +30,11 @@ func newLogUsageContinuity() logUsageContinuity {
 func (c logUsageContinuity) observe(e logMetadataEvent) []logMetadataGap {
 	var gaps []logMetadataGap
 	for _, b := range e.NativeBoundaries {
-		if b.Kind == "source-window-skipped" {
+		switch b.Kind {
+		case "source-window-skipped":
 			gaps = append(gaps, logMetadataGap{e.Offset, "source_window_skipped"})
+		case "source-context-mismatch":
+			gaps = append(gaps, logMetadataGap{e.Offset, "source_context_mismatch"})
 		}
 	}
 	for _, r := range e.Usage {

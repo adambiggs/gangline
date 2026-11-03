@@ -296,6 +296,38 @@ An interrupted cursor save can repeat the same gap with the same source
 identity. Older binaries can decode these readings but their metadata views
 omit the new boundary kinds; use a reader that projects them for this coverage.
 
+The saved session-log context reading also carries its session and ending byte
+offset as a partial source witness. Each refresh with an eligible witness reads
+at most 64 KiB ending at that offset, through the same open file as the normal
+bounded suffix read, even if no new bytes arrived. It decodes only that complete
+record with the native decoder and compares its timestamp, context used count
+and context limit. A changed measurement retains `source-context-mismatch` as an
+unknown observation gap before resetting the stale context to unknown; metadata
+and summary expose `source_context_mismatch`. Later suffix measurements can
+supply a new context. The already consumed prefix is not replayed or recovered.
+
+This comparison detects only a changed, decodable context record at the saved
+position. It does not identify a replacement generation, compare other bytes,
+or detect rewrites preserving that measurement. Missing or legacy unbound
+context, compaction-reset context, wrong-session context, oversized or malformed
+records and records without a complete terminating newline stay unverifiable;
+none certifies continuity. Existing size/session refusals still apply. An older
+saved context acquires the binding only after a new context reading. The extra
+read is bounded independently of transcript length, in addition to the existing
+header and tail budgets. Concurrent rewrites are not an atomic snapshot.
+
+The binding uses reading fields introduced in commit `80d70795`. After a bound
+context is saved, rollback to a binary predating that commit is unsupported:
+its strict decoder rejects those fields and leaves agent state unreadable.
+Context audit copies omit the binding; paired usage already carries its own
+identity. Compatible predecessors at or after that commit accept the state and
+raw gap kind but do not perform this check or project its gap. They can discard
+the binding when saving a later context. Failed audit writes keep the witness
+and cursor pending. Failed state saves can repeat the gap; after a successful reset,
+an unchanged source adds no further mismatch. A retained compatible reader is
+still needed to project this gap after rollback. No counters are summed, and a
+matching witness or absent gap never proves continuity.
+
 Missing counters remain absent with `unknown` or `partial` status. A reported
 zero is retained as zero. An invalid usage counter becomes an unknown usage
 reading without discarding valid context readings or stalling the source cursor.

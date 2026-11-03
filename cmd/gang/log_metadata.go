@@ -183,7 +183,7 @@ func projectLogMetadata(e core.Event) (logMetadataEvent, bool) {
 				case "compaction-checkpoint", "compaction-finished":
 					kind = r.Kind
 				case "observation-gap":
-					if r.NativeEvent == "source-window-skipped" {
+					if r.NativeEvent == "source-window-skipped" || r.NativeEvent == "source-context-mismatch" {
 						kind = r.NativeEvent
 					}
 				}

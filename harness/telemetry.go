@@ -150,14 +150,22 @@ func ReadTranscript(invocation Invocation, input io.ReadSeeker, session string, 
 	if _, err := input.Seek(offset, io.SeekStart); err != nil {
 		return Transcript{}, err
 	}
-	result := Transcript{Offset: offset}
-	if offset > requestedOffset {
-		// A bounded read can skip unread history after a pause or restart.
-		// Retain that loss through the ordinary audit before saving the cursor.
-		result.Readings = append(result.Readings, Reading{Kind: "observation-gap", Source: "session-log",
-			SessionID: session, SourceOffset: offset, NativeEvent: "source-window-skipped", Status: "unknown"})
+	result, err := readTranscriptRecords(io.LimitReader(input, size-offset), session, offset, before)
+	if err != nil {
+		return Transcript{}, err
 	}
-	reader := bufio.NewReader(io.LimitReader(input, size-offset))
+	if offset > requestedOffset {
+		// Retain skipped unread history before saving the source cursor.
+		gap := Reading{Kind: "observation-gap", Source: "session-log", SessionID: session,
+			SourceOffset: offset, NativeEvent: "source-window-skipped", Status: "unknown"}
+		result.Readings = append([]Reading{gap}, result.Readings...)
+	}
+	return result, nil
+}
+
+func readTranscriptRecords(input io.Reader, session string, offset int64, before time.Time) (Transcript, error) {
+	result := Transcript{Offset: offset}
+	reader := bufio.NewReader(input)
 	for {
 		line, err := reader.ReadBytes('\n')
 		if err == io.EOF {
@@ -237,6 +245,7 @@ func ReadTranscript(invocation Invocation, input io.ReadSeeker, session string, 
 				}
 				r.At = &record.At
 				r.NativeEvent = p.Type
+				r.SessionID, r.SourceOffset = session, result.Offset
 				result.Readings = append(result.Readings, r)
 				var input, output, cached json.RawMessage
 				if u := p.Info.TotalUsage; u != nil {
