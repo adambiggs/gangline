@@ -142,6 +142,7 @@ func ReadTranscript(invocation Invocation, input io.ReadSeeker, session string, 
 	if offset == 0 {
 		offset = headerEnd
 	}
+	requestedOffset := offset
 	offset, err = boundedTranscriptStart(input, offset, size)
 	if err != nil {
 		return Transcript{}, err
@@ -150,6 +151,12 @@ func ReadTranscript(invocation Invocation, input io.ReadSeeker, session string, 
 		return Transcript{}, err
 	}
 	result := Transcript{Offset: offset}
+	if offset > requestedOffset {
+		// A bounded read can skip unread history after a pause or restart.
+		// Retain that loss through the ordinary audit before saving the cursor.
+		result.Readings = append(result.Readings, Reading{Kind: "observation-gap", Source: "session-log",
+			SessionID: session, SourceOffset: offset, NativeEvent: "source-window-skipped", Status: "unknown"})
+	}
 	reader := bufio.NewReader(io.LimitReader(input, size-offset))
 	for {
 		line, err := reader.ReadBytes('\n')
@@ -267,9 +274,11 @@ func ReadTranscript(invocation Invocation, input io.ReadSeeker, session string, 
 			}
 		case "compaction_checkpoint":
 			base.Kind = "compaction-checkpoint"
+			base.SessionID, base.SourceOffset = session, result.Offset
 			result.Readings = append(result.Readings, base)
 		case "context_compacted":
 			base.Kind = "compaction-finished"
+			base.SessionID, base.SourceOffset = session, result.Offset
 			result.Readings = append(result.Readings, base)
 		case "task_started":
 			base.Kind = "turn-started"

@@ -23,16 +23,25 @@ type logMetadataUsage struct {
 	Usage        *core.TokenUsage `json:"usage,omitempty"`
 }
 
+type logMetadataBoundary struct {
+	Kind         string     `json:"kind"`
+	Source       string     `json:"source"`
+	SessionID    string     `json:"session_id,omitempty"`
+	SourceOffset int64      `json:"source_offset,omitempty"`
+	SourceAt     *time.Time `json:"source_at,omitempty"`
+}
+
 type logMetadataEvent struct {
-	Offset   int64              `json:"offset"`
-	End      int64              `json:"end_offset"`
-	Type     string             `json:"type"`
-	At       time.Time          `json:"observed_at"`
-	HitchID  core.HitchID       `json:"hitch_id,omitempty"`
-	Name     core.AgentName     `json:"name,omitempty"`
-	Activity core.Activity      `json:"activity,omitempty"`
-	Binding  *core.Binding      `json:"binding,omitempty"`
-	Usage    []logMetadataUsage `json:"usage,omitempty"`
+	Offset           int64                 `json:"offset"`
+	End              int64                 `json:"end_offset"`
+	Type             string                `json:"type"`
+	At               time.Time             `json:"observed_at"`
+	HitchID          core.HitchID          `json:"hitch_id,omitempty"`
+	Name             core.AgentName        `json:"name,omitempty"`
+	Activity         core.Activity         `json:"activity,omitempty"`
+	Binding          *core.Binding         `json:"binding,omitempty"`
+	Usage            []logMetadataUsage    `json:"usage,omitempty"`
+	NativeBoundaries []logMetadataBoundary `json:"native_boundaries,omitempty"`
 }
 
 type logMetadataGap struct {
@@ -123,6 +132,7 @@ func readLogMetadata(in io.ReaderAt, size int64, filter logFilter, now time.Time
 		}
 	}
 	var prior time.Time
+	continuity := newLogUsageContinuity()
 	for cursor < len(data) {
 		newline := bytes.IndexByte(data[cursor:], '\n')
 		if newline < 0 {
@@ -153,6 +163,7 @@ func readLogMetadata(in io.ReaderAt, size int64, filter logFilter, now time.Time
 		if filtered, ok := filter.apply(e); ok {
 			if projection, ok := projectLogMetadata(filtered); ok {
 				projection.Offset, projection.End = startOffset, page.Next
+				page.Gaps = append(page.Gaps, continuity.observe(projection)...)
 				page.Events = append(page.Events, projection)
 			}
 		}
@@ -166,6 +177,20 @@ func projectLogMetadata(e core.Event) (logMetadataEvent, bool) {
 	switch e.Type {
 	case "observation":
 		for _, r := range e.Readings {
+			if r.Source == "session-log" {
+				kind := ""
+				switch r.Kind {
+				case "compaction-checkpoint", "compaction-finished":
+					kind = r.Kind
+				case "observation-gap":
+					if r.NativeEvent == "source-window-skipped" {
+						kind = r.NativeEvent
+					}
+				}
+				if kind != "" {
+					p.NativeBoundaries = append(p.NativeBoundaries, logMetadataBoundary{kind, "session-log", r.SessionID, r.SourceOffset, r.At})
+				}
+			}
 			if r.Kind != "token-usage" {
 				continue
 			}
@@ -186,7 +211,7 @@ func projectLogMetadata(e core.Event) (logMetadataEvent, bool) {
 			}
 			p.Usage = append(p.Usage, u)
 		}
-		return p, len(p.Usage) > 0
+		return p, len(p.Usage) > 0 || len(p.NativeBoundaries) > 0
 	case "activity_observed":
 		p.Activity = e.Activity
 	case "session_bound":

@@ -285,6 +285,17 @@ session-log readings also carry their source timestamp and ending byte offset.
 An absent source timestamp stays absent. The enclosing event records when
 Gangline observed it.
 
+When the bounded session-log reader skips unread source bytes, it retains an
+`observation-gap` reading with `source-window-skipped`, the native session and
+the first readable byte offset. It has no inferred source timestamp. Native
+compaction readings also retain their session and source offset. These records
+use the existing audit-before-cursor-save path; no extra collector is started.
+On an initial resumed read, a skipped window may contain history from before
+the current hitch; the gap does not prove missed work during that hitch.
+An interrupted cursor save can repeat the same gap with the same source
+identity. Older binaries can decode these readings but their metadata views
+omit the new boundary kinds; use a reader that projects them for this coverage.
+
 Missing counters remain absent with `unknown` or `partial` status. A reported
 zero is retained as zero. An invalid usage counter becomes an unknown usage
 reading without discarding valid context readings or stalling the source cursor.
@@ -342,6 +353,16 @@ request smaller pages for interactive views.
 Each request reads at most that budget plus one record-boundary byte. It returns
 the file size at open, requested offset, read end, SHA-256 of those read bytes,
 next complete-record offset, read time, `more`, events and structured gaps.
+Observation events can include `native_boundaries` for session-log compaction
+checkpoints, completion and skipped source windows. Only fixed boundary kinds,
+source identities, offsets and supplied timestamps are projected.
+Within the selected page and hitch/source/session scope, comparable counter
+decreases, source-offset rewinds and conflicting replays produce explicit gaps.
+An identical replay at a previously seen source offset does not establish a
+reset. These comparisons cannot distinguish every replacement or restart;
+absence of a gap is not proof of continuity. Unknown readings and a new page
+do not provide a usage baseline, and no historical bytes outside the budget
+are scanned to establish one.
 `--agent` and `--type` can filter the page; prefer hitch identity to a reused
 display name. `--all`, `--limit` and `--team` do not apply in metadata mode.
 
@@ -365,8 +386,10 @@ last activity observation and the last usage observation for each distinct
 source/session pair in append order, retaining their record offsets and original
 timestamps. A later unknown reading replaces an earlier known reading in the
 same pair; missing identity readings remain separate. All selected lifecycle and
-outage markers remain in `boundaries`. Subjects are sorted by hitch, and usage
-groups by source/session key, not time. Within each identified group, "last"
+outage markers, including observations carrying `native_boundaries`, remain in
+`boundaries`. Boundary copies retain the same event offsets and are not
+additional measurements. Subjects are sorted by hitch, and usage groups by
+source/session key, not time. Within each identified group, "last"
 means the greatest append offset. Missing-identity entries and boundaries can
 grow to the read budget; no fixed entry count is promised. A hitch seen only in
 a boundary has an empty usage list and null activity. These observations may predate a drop,

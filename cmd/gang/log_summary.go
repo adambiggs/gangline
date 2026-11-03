@@ -54,7 +54,7 @@ func summarizeLogMetadata(p logMetadataPage) logSummary {
 	subjects := map[core.HitchID]*logSummarySubject{}
 	usage := map[core.HitchID]map[string]logSummaryUsage{}
 	for _, e := range p.Events {
-		if e.Type != "observation" && e.Type != "activity_observed" {
+		if e.Type != "observation" && e.Type != "activity_observed" || len(e.NativeBoundaries) > 0 {
 			s.Boundaries = append(s.Boundaries, e)
 		}
 		if e.HitchID == "" {

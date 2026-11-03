@@ -8,6 +8,7 @@ import (
 	"os"
 	"path/filepath"
 	"reflect"
+	"strings"
 	"testing"
 
 	"github.com/adambiggs/gangline/core"
@@ -81,6 +82,86 @@ func TestNativeAuditFailureDoesNotAdvanceCursor(t *testing.T) {
 	again, err := os.ReadFile(f.run.team.Log)
 	if err != nil || !bytes.Equal(data, again) {
 		t.Fatal("unchanged cursor appended another observation")
+	}
+}
+
+func TestNativeSkippedWindowSurvivesStateFailureAndRuntimeReload(t *testing.T) {
+	f := newStateFixture(t)
+	f.add(t, "a", "worker", "codex")
+	header := "{\"type\":\"session_meta\",\"payload\":{\"id\":\"s\"}}\n"
+	// One source record larger than the existing tail window has no complete
+	// reading in the selected tail. The skipped-window marker must still persist.
+	records := header + `{"type":"response_item","body":"` + strings.Repeat("x", 4<<20) + "\"}\n"
+	if err := os.WriteFile(f.transcript, []byte(records), 0600); err != nil {
+		t.Fatal(err)
+	}
+	saveAgent(t, f, "a", func(a *core.Agent) { a.Native.SessionID, a.Native.Transcript = "s", f.transcript })
+	c, err := harness.EmbeddedCollar("codex")
+	if err != nil {
+		t.Fatal(err)
+	}
+	for attempt := range 3 {
+		// Reconstruct runtime and reload saved cursor, without touching a host,
+		// watchdog, real process or native session.
+		run, err := f.cmd.runtime()
+		if err != nil {
+			t.Fatal(err)
+		}
+		l, a, err := run.acquire("a", false)
+		if err != nil {
+			t.Fatal(err)
+		}
+		backup := l.Paths.State + ".before"
+		if attempt == 0 {
+			if err := os.Rename(l.Paths.State, backup); err != nil {
+				t.Fatal(err)
+			}
+			if err := os.Mkdir(l.Paths.State, 0700); err != nil {
+				t.Fatal(err)
+			}
+		}
+		err = run.refreshNative(l, &a, c)
+		closeErr := l.Close()
+		if attempt == 0 {
+			if err == nil || closeErr != nil || a.Native.Offset != 0 {
+				t.Fatal("failed state save acknowledged the skipped source window", err, closeErr)
+			}
+			if err := os.Remove(l.Paths.State); err != nil { // Empty fixture directory only.
+				t.Fatal(err)
+			}
+			if err := os.Rename(backup, l.Paths.State); err != nil {
+				t.Fatal(err)
+			}
+			continue
+		}
+		if err != nil || closeErr != nil || a.Native.Offset != int64(len(records)) {
+			t.Fatal("gap/cursor persistence failed", err, closeErr)
+		}
+	}
+	data, err := os.ReadFile(f.run.team.Log)
+	if err != nil {
+		t.Fatal(err)
+	}
+	s := summarizeLogMetadata(metadataPage(t, string(data), 0, int64(len(data))))
+	skips := 0
+	for _, gap := range s.Gaps {
+		if gap.Kind == "source_window_skipped" {
+			skips++
+		} else if gap.Kind != "observation_time_out_of_order" {
+			t.Fatalf("unexpected audit gap: %+v", gap)
+		}
+	}
+	// Failed cursor persistence can replay the same gap, but a successful
+	// persisted cursor suppresses further reads even after runtime reload.
+	if skips != 2 || bytes.Count(data, []byte("source-window-skipped")) != 2 {
+		t.Fatalf("gap lost or repeated across runtime reload: %+v", s.Gaps)
+	}
+	var boundaries []logMetadataBoundary
+	for _, e := range s.Boundaries {
+		boundaries = append(boundaries, e.NativeBoundaries...)
+	}
+	if len(boundaries) != 2 || !reflect.DeepEqual(boundaries[0], boundaries[1]) {
+		t.Fatal("replayed gap lost its stable source identity")
 	}
 }
 
