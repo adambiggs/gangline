@@ -295,6 +295,13 @@ counters alone do not establish task usage, complete session coverage, costs
 or per-agent time. The existing `gang log --all LOG.jsonl` reader preserves
 them; no new polling or event publication path is introduced.
 
+The session-log cursor and derived native state advance only after observations
+are appended to the audit; an audit failure deliberately leaves them pending.
+If saving the cursor then fails, retry can repeat an observation
+with the same native session and source offset. Consumers must deduplicate
+those source identities; append-before-save is not exactly-once delivery or
+a power-loss durability guarantee.
+
 `gang log --type session_bound` joins native sessions to hitches. Gangline
 logs a `session_bound` event whenever it binds a hitch to a native session
 it did not hold before, once the native harness reports that session with

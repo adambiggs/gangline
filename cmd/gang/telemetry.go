@@ -116,23 +116,30 @@ func (run *runtime) refreshNative(l *store.LockedAgent, a *core.Agent, c harness
 	for _, r := range parsed.Readings {
 		readings = append(readings, coreReading(r))
 	}
+	// Do not acknowledge source bytes before their observations are retained.
+	// A state-write failure can replay the same source offsets on retry, but
+	// an audit failure must not permanently skip those observations.
+	if len(readings) > 0 {
+		if err := run.record(*a, core.Event{Type: "observation", Readings: readings}); err != nil {
+			return err
+		}
+	}
 	if err := run.acceptContextReadings(a, c, readings); err != nil {
 		return err
 	}
 	if err := acceptTurnFailures(l, a, readings); err != nil {
 		return err
 	}
-	a.Native.Offset = parsed.Offset
-	if err := l.Save(*a); err != nil {
+	next := *a
+	next.Native.Offset = parsed.Offset
+	if err := l.Save(next); err != nil {
 		return err
 	}
+	*a = next
 	if err := run.publishContextNotes(l, a); err != nil {
 		return err
 	}
 	if len(readings) > 0 {
-		if err := run.record(*a, core.Event{Type: "observation", Readings: readings}); err != nil {
-			return err
-		}
 		return run.publishContext(*a)
 	}
 	return nil
