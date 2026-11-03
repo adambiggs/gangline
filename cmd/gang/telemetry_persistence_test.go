@@ -10,10 +10,122 @@ import (
 	"reflect"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/adambiggs/gangline/core"
 	"github.com/adambiggs/gangline/harness"
 )
+
+func TestNativeCompactionStateFailurePreservesPendingCompletion(t *testing.T) {
+	for _, status := range []string{"submitted", "unverified"} {
+		for _, reload := range []bool{false, true} {
+			name := status + "/same-runtime"
+			if reload {
+				name = status + "/reloaded-runtime"
+			}
+			t.Run(name, func(t *testing.T) {
+				f := newStateFixture(t)
+				f.add(t, "a", "worker", "codex")
+				records := []byte(`{"type":"session_meta","payload":{"id":"s"}}
+{"timestamp":"2026-09-22T10:00:01Z","type":"event_msg","payload":{"type":"context_compacted"}}
+`)
+				if err := os.WriteFile(f.transcript, records, 0600); err != nil {
+					t.Fatal(err)
+				}
+				saveAgent(t, f, "a", func(a *core.Agent) {
+					a.Native.SessionID, a.Native.Transcript = "s", f.transcript
+					a.Compaction = &core.Compaction{ID: "c", Status: status, StartedAt: f.cmd.now(), Deadline: f.cmd.now().Add(time.Minute)}
+				})
+				run := f.run
+				l, a, err := run.acquire("a", false)
+				if err != nil {
+					t.Fatal(err)
+				}
+				defer func() { _ = l.Close() }()
+				before := a
+				pending := *a.Compaction // Do not let an alias hide premature mutation.
+				before.Compaction = &pending
+				stateBytes, err := os.ReadFile(l.Paths.State)
+				if err != nil {
+					t.Fatal(err)
+				}
+				c, err := harness.EmbeddedCollar("codex")
+				if err != nil {
+					t.Fatal(err)
+				}
+				backup := l.Paths.State + ".before"
+				if err := os.Rename(l.Paths.State, backup); err != nil {
+					t.Fatal(err)
+				}
+				if err := os.Mkdir(l.Paths.State, 0700); err != nil {
+					t.Fatal(err)
+				}
+				if err := run.refreshNative(l, &a, c); err == nil {
+					t.Fatal("state-save failure was ignored")
+				}
+				if err := os.Remove(l.Paths.State); err != nil { // Empty fixture directory only.
+					t.Fatal(err)
+				}
+				if err := os.Rename(backup, l.Paths.State); err != nil {
+					t.Fatal(err)
+				}
+				afterBytes, err := os.ReadFile(l.Paths.State)
+				if err != nil || !bytes.Equal(stateBytes, afterBytes) {
+					t.Fatal("failed save changed retained durable state", err)
+				}
+				if !reflect.DeepEqual(a, before) {
+					t.Fatalf("failed save changed pending completion in memory: before=%v after=%v", before.Compaction.CompletedAt, a.Compaction.CompletedAt)
+				}
+				if reload {
+					if err := l.Close(); err != nil {
+						t.Fatal(err)
+					}
+					run, err = f.cmd.runtime()
+					if err != nil {
+						t.Fatal(err)
+					}
+					l, a, err = run.acquire("a", false)
+					if err != nil {
+						t.Fatal(err)
+					}
+					if !reflect.DeepEqual(a, before) {
+						t.Fatal("reloaded state differs from pre-failure state")
+					}
+				}
+				if err := run.refreshNative(l, &a, c); err != nil {
+					t.Fatal(err)
+				}
+				completed := f.cmd.now().Add(time.Second)
+				saved, err := l.Paths.Read()
+				if err != nil || saved.Compaction == nil || !saved.Compaction.CompletedAt.Equal(completed) ||
+					!a.Compaction.CompletedAt.Equal(completed) || saved.Native.Offset != int64(len(records)) || a.Native.Offset != saved.Native.Offset {
+					t.Fatal("retry did not persist compaction completion and cursor together", err)
+				}
+				data, err := os.ReadFile(run.team.Log)
+				if err != nil {
+					t.Fatal(err)
+				}
+				summary := summarizeLogMetadata(metadataPage(t, string(data), 0, int64(len(data))))
+				var boundaries []logMetadataBoundary
+				for _, event := range summary.Boundaries {
+					boundaries = append(boundaries, event.NativeBoundaries...)
+				}
+				if len(boundaries) != 2 || !reflect.DeepEqual(boundaries[0], boundaries[1]) ||
+					boundaries[0].Kind != "compaction-finished" || boundaries[0].SessionID != "s" ||
+					boundaries[0].SourceOffset != int64(len(records)) {
+					t.Fatalf("failed save replay lost stable compaction identity: %+v", boundaries)
+				}
+				if err := run.refreshNative(l, &a, c); err != nil {
+					t.Fatal(err)
+				}
+				again, err := os.ReadFile(run.team.Log)
+				if err != nil || !bytes.Equal(data, again) {
+					t.Fatal("persisted cursor repeated the compaction observation", err)
+				}
+			})
+		}
+	}
+}
 
 func TestNativeAuditFailureDoesNotAdvanceCursor(t *testing.T) {
 	f := newStateFixture(t)

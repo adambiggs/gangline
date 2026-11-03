@@ -143,6 +143,12 @@ func (run *runtime) refreshNative(l *store.LockedAgent, a *core.Agent, c harness
 		}
 	}
 	next := *a
+	// Native completion mutates the pending compaction. Keep that update
+	// private until the cursor and completion have been saved together.
+	if a.Compaction != nil {
+		pending := *a.Compaction
+		next.Compaction = &pending
+	}
 	if comparison == "mismatch" {
 		next.Native.Context = core.Reading{Kind: "context", Source: "session-log", Status: "unknown",
 			Reason: "saved context source record changed; waiting for a newer native measurement"}
