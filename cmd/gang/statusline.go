@@ -1,6 +1,8 @@
 package main
 
 import (
+	"crypto/sha256"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
@@ -97,7 +99,11 @@ func (cmd command) statusline(args []string) (result error) {
 		for i, value := range readings {
 			converted[i] = coreReading(value)
 		}
-		if err := run.record(a, core.Event{Type: "observation", Readings: converted}); err != nil {
+		key, err := statuslineObservationKey(a, session, converted)
+		if err != nil {
+			return err
+		}
+		if err := p.AppendObservation(core.Event{Type: "observation", At: cmd.now(), HitchID: a.ID, Name: a.Name, Readings: converted}, key); err != nil {
 			return err
 		}
 		if cmd.statuslineLock != nil {
@@ -155,4 +161,25 @@ func (cmd command) statusline(args []string) (result error) {
 		_, err = fmt.Fprintln(cmd.stdout, contextUsageText(*r.Used, *r.Limit, *r.Percent))
 	}
 	return err
+}
+
+func statuslineObservationKey(a core.Agent, session string, readings []core.Reading) (string, error) {
+	stable := append([]core.Reading(nil), readings...)
+	for i := range stable {
+		// Only quota At is synthesized by this adapter on every invocation.
+		// Preserve context/source timestamps, unknowns and counter changes.
+		if stable[i].Kind == "provider-limits" {
+			stable[i].At = nil
+		}
+	}
+	data, err := json.Marshal(struct {
+		Hitch        core.HitchID
+		Registration string
+		Session      string
+		Readings     []core.Reading
+	}{a.ID, a.Registration.Generation, session, stable})
+	if err != nil {
+		return "", err
+	}
+	return fmt.Sprintf("%x", sha256.Sum256(data)), nil
 }

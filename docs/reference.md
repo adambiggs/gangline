@@ -302,6 +302,25 @@ with the same native session and source offset. Consumers must deduplicate
 those source identities; append-before-save is not exactly-once delivery or
 a power-loss durability guarantee.
 
+Status-line observations append only when readings change. Returning to an
+earlier state appends again: writes follow actual changes, not repeated samples.
+The comparison
+includes the hitch, registration, native session, unknown reasons and source
+timestamps; it excludes only the quota timestamp generated on each invocation.
+A private receipt under the existing short hook lock records the last audit
+location and record. Suppression requires those exact bytes still to exist in
+that log, so a missing, truncated or replaced stream cannot inherit a marker
+without its evidence. A restored stream containing the exact record remains
+valid evidence. Work per observation is bounded by that snapshot's size, not
+the accumulated history. The native input lock is not required.
+
+The audit append precedes receipt replacement. Receipt failure is reported and
+retry may append a duplicate; losing the receipt also permits a duplicate.
+An unreadable receipt fails visibly. This does not repair existing partial log
+records, provide a heartbeat, or establish duration, uninterrupted coverage or
+exactly-once delivery. Retained history is unchanged; the receipt is removable
+runtime state and no retention expiry is introduced.
+
 `gang log --type session_bound` joins native sessions to hitches. Gangline
 logs a `session_bound` event whenever it binds a hitch to a native session
 it did not hold before, once the native harness reports that session with
