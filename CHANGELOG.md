@@ -1,5 +1,12 @@
 # Changelog
 
+## [3.0.1](https://github.com/adambiggs/gangline/compare/gangline-v3.0.0...gangline-v3.0.1) (2026-11-04)
+
+
+### Bug Fixes
+
+* preserve repeat teardown and help contracts ([a33dbcf](https://github.com/adambiggs/gangline/commit/a33dbcf730f9efa824e70bdbb2b5b39ef37a0a12))
+
 ## [3.0.0](https://github.com/adambiggs/gangline/compare/gangline-v2.4.2...gangline-v3.0.0) (2026-11-04)
 
 
