@@ -279,7 +279,7 @@ func (run *runtime) publishMessage(a core.Agent, p store.AgentPaths, l *store.Lo
 	if err != nil {
 		return "", "", nil, err
 	}
-	if err := requireHarnessForeground(context.Background(), run.registeredInput(a, b), substrate.PaneID(a.Pane), c); err != nil {
+	if err := requireHarnessForeground(context.Background(), b, substrate.PaneID(a.Pane), c); err != nil {
 		return "", "", nil, err
 	}
 	if err := p.PublishNew(e); err != nil {

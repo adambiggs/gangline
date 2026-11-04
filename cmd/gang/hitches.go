@@ -200,8 +200,7 @@ func (cmd command) hitchReplacing(args []string, supersede bool, previous *core.
 			return refuseError("%v", err)
 		}
 	}
-	resolvedLaunch, err := resolveLaunchCommand(launch.Name)
-	if err != nil {
+	if _, err := exec.LookPath(launch.Name); err != nil {
 		if errors.Is(err, exec.ErrNotFound) {
 			return refuseError("%s: not found in PATH", launch.Name)
 		}
@@ -487,7 +486,7 @@ func (cmd command) hitchReplacing(args []string, supersede bool, previous *core.
 	if stopped {
 		a.Process = core.ProcessIdentity{}
 	}
-	a.Registration = core.PaneRegistration{Generation: registration.Generation, Session: registration.Session, TokenHash: tokenHash(agentToken), LaunchCommand: filepath.Base(resolvedLaunch), Held: true}
+	a.Registration = core.PaneRegistration{Generation: registration.Generation, Session: registration.Session, TokenHash: tokenHash(agentToken), Held: true}
 	exitedUnread := false
 	defer func() {
 		if registered {

@@ -3,7 +3,6 @@
 package tmux
 
 import (
-	"bytes"
 	"context"
 	"fmt"
 	"os"
@@ -23,6 +22,7 @@ const (
 	procAllPIDs          = 1
 	procPIDTBSDInfo      = 3
 	procPIDTShortBSDInfo = 13
+	kernProcArgs2        = 49
 )
 
 type darwinBSDInfo struct {
@@ -45,18 +45,12 @@ type darwinShortBSDInfo struct {
 	SavedUID, SavedGID, Reserved    uint32
 }
 
-func readProcessTable(ctx context.Context, root int, complete bool) (map[int]processRecord, error) {
+func readProcessTable(ctx context.Context, root int) (map[int]processRecord, error) {
 	pids, err := listDarwinPIDs(ctx)
 	if err != nil {
 		return nil, err
 	}
-	read := readDarwinBSDProcess
-	if complete {
-		// The shell-only preflight needs ancestry and names, not tty or
-		// start-time data. Short records remain readable across users.
-		read = readDarwinPaneProcess
-	}
-	return collectProcessRecords(ctx, root, pids, complete, read)
+	return collectProcessRecords(ctx, root, pids, readDarwinBSDProcess)
 }
 
 func listDarwinPIDs(ctx context.Context) ([]int, error) {
@@ -118,7 +112,7 @@ func (info darwinBSDInfo) command() string {
 }
 
 func darwinCommand(command []byte) string {
-	if end := bytes.IndexByte(command, 0); end >= 0 {
+	if end := indexZero(command); end >= 0 {
 		command = command[:end]
 	}
 	return string(command)
@@ -156,11 +150,32 @@ func ProcessOwner(pid int) (Owner, error) {
 	return Owner{PID: pid, ParentPID: int(info.ParentPID), UID: info.UID, RealUID: info.RealUID, Command: darwinCommand(info.Command[:])}, nil
 }
 
-// readDarwinPaneProcess supplies only the fields used by PaneProcesses.
-func readDarwinPaneProcess(pid int) (processRecord, error) {
-	owner, err := ProcessOwner(pid)
+func foregroundCommand(process substrate.Process) string {
+	command, err := readDarwinArgv0(process.PID)
 	if err != nil {
-		return processRecord{}, err
+		return process.Command
 	}
-	return processRecord{Process: substrate.Process{PID: owner.PID, ParentPID: owner.ParentPID, Command: owner.Command}}, nil
+	return command
+}
+
+func readDarwinArgv0(pid int) (string, error) {
+	maxArgs, err := syscall.SysctlUint32("kern.argmax")
+	if err != nil {
+		return "", err
+	}
+	if maxArgs < 8 {
+		return "", fmt.Errorf("native process arguments have invalid capacity %d", maxArgs)
+	}
+	buffer := make([]byte, maxArgs)
+	mib := [3]int32{1, kernProcArgs2, int32(pid)} // CTL_KERN, KERN_PROCARGS2, pid.
+	length := uintptr(len(buffer))
+	_, _, errno := syscall.Syscall6(syscall.SYS___SYSCTL, uintptr(unsafe.Pointer(&mib[0])), uintptr(len(mib)),
+		uintptr(unsafe.Pointer(&buffer[0])), uintptr(unsafe.Pointer(&length)), 0, 0)
+	if errno != 0 {
+		return "", errno
+	}
+	if length > uintptr(len(buffer)) {
+		return "", fmt.Errorf("native process arguments exceeded allocated capacity")
+	}
+	return parseDarwinArgv0(buffer[:length])
 }

@@ -337,7 +337,7 @@ func TestProcessTableSelectsOnlyPaneForegroundGroup(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	records, err := readProcessTable(context.Background(), pid, false)
+	records, err := readProcessTable(context.Background(), pid)
 	if err != nil {
 		t.Fatal(err)
 	}

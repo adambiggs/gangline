@@ -4,24 +4,31 @@ package tmux
 
 import (
 	"context"
+	"fmt"
 	"os"
+	"os/exec"
 	"strconv"
+	"strings"
+
+	"github.com/adambiggs/gangline/substrate"
 )
 
-func readProcessTable(ctx context.Context, root int, complete bool) (map[int]processRecord, error) {
-	entries, err := os.ReadDir("/proc")
+func foregroundCommand(process substrate.Process) string {
+	data, err := os.ReadFile("/proc/" + strconv.Itoa(process.PID) + "/cmdline")
+	if err == nil {
+		if command, _, ok := strings.Cut(string(data), "\x00"); ok && command != "" {
+			return command
+		}
+	}
+	return process.Command
+}
+
+func readProcessTable(ctx context.Context, _ int) (map[int]processRecord, error) {
+	command := exec.CommandContext(ctx, "ps", "-axo", "pid=,ppid=,pgid=,tpgid=,lstart=,comm=")
+	command.Env = append(os.Environ(), "LC_ALL=C")
+	data, err := command.Output()
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("read process tree: %w", err)
 	}
-	pids := make([]int, 0, len(entries))
-	for _, entry := range entries {
-		if !entry.IsDir() {
-			continue
-		}
-		pid, err := strconv.Atoi(entry.Name())
-		if err == nil && pid > 0 {
-			pids = append(pids, pid)
-		}
-	}
-	return collectProcessRecords(ctx, root, pids, complete, readCurrentProcess)
+	return parseProcessTable(string(data))
 }

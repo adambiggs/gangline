@@ -3,15 +3,19 @@
 package main
 
 import (
+	"context"
+	"errors"
 	"fmt"
 	"net"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/adambiggs/gangline/substrate"
 )
 
-func TestHitchRefusesUnidentifiedOperatorPane(t *testing.T) {
+func TestHitchAllowsUnregisteredOperatorPane(t *testing.T) {
 	for _, command := range []string{"zsh", "vim"} {
 		t.Run(command, func(t *testing.T) {
 			f := newStateFixture(t)
@@ -49,11 +53,55 @@ esac
 				t.Fatal(err)
 			}
 			err = f.cmd.hitch([]string{"worker", "-c", "codex"})
-			// Even when tmux reports a shell, this tree contains the test
-			// executable; it cannot exclude an unknown background harness.
-			if err == nil || !strings.Contains(err.Error(), "unregistered pane") {
-				t.Fatalf("hitch error = %v, want unidentified pane refusal", err)
+			// Creation is deliberately refused by the fixture. Getting there
+			// establishes that the operator pane did not refuse the hitch.
+			if err == nil || !strings.Contains(err.Error(), "spawn pane") {
+				t.Fatalf("hitch error = %v, want spawn pane", err)
 			}
 		})
+	}
+}
+
+type unregisteredFixture struct {
+	command   string
+	visible   bool
+	processes []substrate.Process
+	err       error
+}
+
+func (f unregisteredFixture) ForegroundCommand(context.Context, substrate.PaneID) (string, error) {
+	return f.command, nil
+}
+func (f unregisteredFixture) ProcessVisibility(context.Context, substrate.PaneID) (bool, error) {
+	return f.visible, nil
+}
+func (f unregisteredFixture) PaneProcesses(context.Context, substrate.PaneID) ([]substrate.Process, error) {
+	return f.processes, f.err
+}
+
+func TestUnregisteredAgentChecksBackgroundAndInvokedName(t *testing.T) {
+	commands := map[string]bool{"codex": true, "claude": true, "custom": true}
+	for _, tc := range []struct {
+		name string
+		f    unregisteredFixture
+		want bool
+	}{
+		{"shell", unregisteredFixture{command: "zsh", visible: true}, false},
+		{"foreground", unregisteredFixture{command: "codex"}, true},
+		{"background", unregisteredFixture{command: "zsh", visible: true, processes: []substrate.Process{{PID: 3, GroupID: 3, Command: "/bin/codex"}}}, true},
+		{"symlink", unregisteredFixture{command: "version", visible: true, processes: []substrate.Process{{Command: "/bin/claude", Name: "version"}}}, true},
+		{"custom", unregisteredFixture{command: "custom"}, true},
+		{"private namespace", unregisteredFixture{command: "zsh", err: errors.New("must not read")}, false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			got, err := unregisteredAgent(context.Background(), tc.f, "%1", commands)
+			if err != nil || got != tc.want {
+				t.Fatalf("running=%v err=%v, want %v", got, err, tc.want)
+			}
+		})
+	}
+	_, err := unregisteredAgent(context.Background(), unregisteredFixture{command: "zsh", visible: true, err: errors.New("tree unavailable")}, "%1", commands)
+	if err == nil || !strings.Contains(err.Error(), "tree unavailable") {
+		t.Fatalf("unknown process tree accepted: %v", err)
 	}
 }

@@ -89,20 +89,7 @@ func parseProcStat(data string) (processRecord, error) {
 	if _, err := strconv.ParseUint(fields[19], 10, 64); err != nil {
 		return record, fmt.Errorf("read process identity: start ticks: %w", err)
 	}
-	group, err := strconv.Atoi(fields[2])
-	if err != nil {
-		return record, fmt.Errorf("read process group: %w", err)
-	}
-	foreground, err := strconv.Atoi(fields[5])
-	if err != nil {
-		return record, fmt.Errorf("read foreground process group: %w", err)
-	}
-	if parent < 0 || group < 0 || foreground < -1 {
-		return record, fmt.Errorf("read process identity: invalid parent or process group")
-	}
 	record.PID, record.ParentPID, record.started = pid, parent, fields[19]
-	record.Command = data[left+1 : right]
-	record.GroupID, record.foregroundGroup = group, foreground
 	return record, nil
 }
 
@@ -165,17 +152,9 @@ func waitPIDFD(ctx context.Context, pidfd int) error {
 }
 
 func readCurrentProcess(pid int) (processRecord, error) {
-	return readProcessStat(pid, os.ReadFile)
-}
-
-func readProcessStat(pid int, read func(string) ([]byte, error)) (processRecord, error) {
-	path := fmt.Sprintf("/proc/%d/stat", pid)
-	data, err := read(path)
+	data, err := os.ReadFile(fmt.Sprintf("/proc/%d/stat", pid))
 	if err != nil {
 		return processRecord{}, err
-	}
-	if len(data) == 0 {
-		return processRecord{}, &os.PathError{Op: "read", Path: path, Err: os.ErrNotExist}
 	}
 	return parseProcStat(string(data))
 }

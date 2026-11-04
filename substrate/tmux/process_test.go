@@ -30,7 +30,7 @@ func TestSelectForegroundProcessesExcludesBackgroundAndUnrelatedGroups(t *testin
 		300: {Process: substrate.Process{PID: 300, ParentPID: 200, GroupID: 300, Command: "background"}},
 		400: {Process: substrate.Process{PID: 400, ParentPID: 1, GroupID: 200, Command: "unrelated"}},
 	}
-	got, err := selectForegroundProcesses(100, records)
+	got, err := selectForegroundProcesses(100, records, func(process substrate.Process) string { return process.Command })
 	if err != nil || len(got) != 2 || got[0].Command != "harness" || got[1].Command != "helper" {
 		t.Fatalf("foreground selection = %+v, %v", got, err)
 	}
@@ -43,12 +43,12 @@ func TestSelectPaneProcessesIncludesBackgroundButNotOtherPanes(t *testing.T) {
 		201: {Process: substrate.Process{PID: 201, ParentPID: 200, GroupID: 200, Command: "helper"}},
 		300: {Process: substrate.Process{PID: 300, ParentPID: 1, GroupID: 300, Command: "claude"}},
 	}
-	got, err := selectPaneProcesses(100, records)
+	got, err := selectPaneProcesses(100, records, func(p substrate.Process) string { return p.Command })
 	if err != nil || len(got) != 3 || got[0].Command != "zsh" || got[1].Command != "codex" || got[2].Command != "helper" {
 		t.Fatalf("pane selection = %+v, %v", got, err)
 	}
 	delete(records, 100)
-	if _, err := selectPaneProcesses(100, records); err == nil {
+	if _, err := selectPaneProcesses(100, records, func(p substrate.Process) string { return p.Command }); err == nil {
 		t.Fatal("absent root accepted")
 	}
 }
@@ -303,7 +303,7 @@ func TestCollectProcessRecordsKeepsPaneLineageAndSkipsInaccessiblePIDs(t *testin
 		100: {Process: substrate.Process{PID: 100, ParentPID: 1, GroupID: 100, Command: "sh"}, foregroundGroup: 200},
 		200: {Process: substrate.Process{PID: 200, ParentPID: 100, GroupID: 200, Command: "agent"}, foregroundGroup: 200},
 	}
-	records, err := collectProcessRecords(context.Background(), 100, []int{0, 100, 200, 300}, false, func(pid int) (processRecord, error) {
+	records, err := collectProcessRecords(context.Background(), 100, []int{0, 100, 200, 300}, func(pid int) (processRecord, error) {
 		seen = append(seen, pid)
 		if pid == 300 {
 			return processRecord{}, syscall.EPERM
@@ -316,13 +316,13 @@ func TestCollectProcessRecordsKeepsPaneLineageAndSkipsInaccessiblePIDs(t *testin
 	if len(seen) != 3 || seen[0] != 100 || seen[1] != 200 || seen[2] != 300 {
 		t.Fatalf("observed PIDs = %v", seen)
 	}
-	_, err = collectProcessRecords(context.Background(), 100, []int{100}, false, func(int) (processRecord, error) {
+	_, err = collectProcessRecords(context.Background(), 100, []int{100}, func(int) (processRecord, error) {
 		return processRecord{}, syscall.EPERM
 	})
 	if !errors.Is(err, syscall.EPERM) {
 		t.Fatalf("pane process denial = %v", err)
 	}
-	records, err = collectProcessRecords(context.Background(), 100, []int{100, 200}, false, func(pid int) (processRecord, error) {
+	records, err = collectProcessRecords(context.Background(), 100, []int{100, 200}, func(pid int) (processRecord, error) {
 		if pid == 100 {
 			return processRecord{}, syscall.ESRCH
 		}
@@ -330,6 +330,17 @@ func TestCollectProcessRecordsKeepsPaneLineageAndSkipsInaccessiblePIDs(t *testin
 	})
 	if _, ok := records[100]; err != nil || ok || records[200] != want[200] {
 		t.Fatalf("exited pane process: table = %+v, err=%v", records, err)
+	}
+}
+
+func TestParseDarwinArgv0KeepsInvokedSymlinkName(t *testing.T) {
+	data := append([]byte{1, 0, 0, 0}, []byte("/resolved/versioned-binary\x00\x00\x00/opt/tools/claude\x00extra")...)
+	got, err := parseDarwinArgv0(data)
+	if err != nil || got != "/opt/tools/claude" {
+		t.Fatalf("argv[0] = %q, %v", got, err)
+	}
+	if _, err := parseDarwinArgv0([]byte{1, 0, 0, 0, 'x'}); err == nil {
+		t.Fatal("unterminated executable path passed")
 	}
 }
 
@@ -434,27 +445,4 @@ func TestWaitExitEventRetriesInterruptedWait(t *testing.T) {
 			t.Fatalf("unbounded calls = %d, error = %v", unbounded, err)
 		}
 	})
-}
-
-// A skipped PID might be a background harness. The preflight cannot infer
-// that a partial table showing only its shell is a shell-only process tree.
-func TestCompleteProcessTableRefusesUnreadableCandidate(t *testing.T) {
-	for _, denial := range []error{syscall.EACCES, syscall.EPERM} {
-		read := func(pid int) (processRecord, error) {
-			if pid == 200 {
-				return processRecord{}, denial
-			}
-			return processRecord{Process: substrate.Process{PID: pid, ParentPID: 1, Command: "zsh"}}, nil
-		}
-		records, err := collectProcessRecords(context.Background(), 100, []int{100, 200}, true, read)
-		if !errors.Is(err, denial) || records != nil {
-			t.Fatalf("partial preflight table = %v, %v", records, err)
-		}
-		// The teardown candidate scan still tolerates unrelated denied PIDs;
-		// retained identity and ancestry decide what it may signal.
-		records, err = collectProcessRecords(context.Background(), 100, []int{100, 200}, false, read)
-		if err != nil || len(records) != 1 {
-			t.Fatalf("ownership scan changed: %v, %v", records, err)
-		}
-	}
 }

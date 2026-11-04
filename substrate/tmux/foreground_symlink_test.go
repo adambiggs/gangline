@@ -16,7 +16,7 @@ import (
 
 // A harness launched through a symlink, as a native Claude Code install is
 // (claude -> versions/<version>), is recognisable from the process table under
-// the kernel short name tmux reports. The command layer resolves launch aliases.
+// both the name tmux reports and the name it was invoked as.
 func TestForegroundProcessesNameSymlinkedHarness(t *testing.T) {
 	binary, err := exec.LookPath("tmux")
 	if err != nil {
@@ -58,10 +58,11 @@ func TestForegroundProcessesNameSymlinkedHarness(t *testing.T) {
 		t.Fatal(err)
 	}
 	// tmux names the foreground group's leader: by its invoked name on Linux,
-	// by its executable file on macOS. Neither requires process argument reads.
+	// by its executable file on macOS. Either way the process table carries
+	// that name beside the invoked one.
 	for _, process := range processes {
 		if process.PID == process.GroupID {
-			if process.Name != command || process.Command != process.Name {
+			if process.Name != command || filepath.Base(process.Command) != "claude" {
 				t.Fatalf("foreground leader %+v; tmux reports %q", process, command)
 			}
 			return

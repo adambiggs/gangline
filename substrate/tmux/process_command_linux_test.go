@@ -8,9 +8,11 @@ import (
 	"os/exec"
 	"path/filepath"
 	"testing"
+
+	"github.com/adambiggs/gangline/substrate"
 )
 
-func TestPaneCommandUsesKernelShortName(t *testing.T) {
+func TestPaneCommandRetainsLongInvokedName(t *testing.T) {
 	// The test binary, not a system tool: a multicall coreutils refuses to
 	// run under a name other than its own.
 	executable, err := os.Executable()
@@ -39,13 +41,14 @@ func TestPaneCommandUsesKernelShortName(t *testing.T) {
 			t.Error(err)
 		}
 	})
-	// The fixture byte establishes that the child has started.
+	// Exec has completed at Start, but the kernel can still expose an empty
+	// cmdline before the child first runs. The fixture's byte proves it ran.
 	ready := make([]byte, 1)
 	if _, err := io.ReadFull(output, ready); err != nil {
 		t.Fatal(err)
 	}
-	got, err := readCurrentProcess(cmd.Process.Pid)
-	if err != nil || got.Command != "custom-agent-co" {
-		t.Fatalf("kernel command = %q, %v", got.Command, err)
+	got := foregroundCommand(substrate.Process{PID: cmd.Process.Pid, Command: "custom-agent-co"})
+	if got != launch {
+		t.Fatalf("invoked command = %q, want %q", got, launch)
 	}
 }

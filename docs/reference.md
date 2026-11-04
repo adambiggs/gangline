@@ -93,13 +93,9 @@ gang attach helper
 ```
 
 Capture, delivery, status and individual drops address the named agent's pane
-in either layout. An unregistered operator pane is allowed only when its
-foreground and visible process tree contain plain shells. A configured harness,
-an unknown foreground or descendant, or an unreadable process-table entry refuses
-hitching: a denied entry cannot establish that it is unrelated to the pane.
-Inspect the identified pane and close it or name its agent before retrying;
-Gangline does not adopt or remove it automatically. This also catches an older
-harness still running after its launch symlink was updated.
+in either layout. An operator shell split is allowed. A pane running a
+configured agent without registration refuses hitching and is identified by
+its window and pane position; it is not adopted or removed automatically.
 
 `up` and `hitch` accept:
 
@@ -138,8 +134,8 @@ receipt of the notice do not repeat the warning for that stored report.
 
 Each line of `downs.jsonl` records the time, team, retained log path, agent count, the caller's
 agent name and inherited `GANG_AGENT_ID`, its process and parent process IDs,
-the working directory, and `TMUX_PANE`. Parent command arguments are not read
-or retained.
+the parent's command line where `/proc` shows it, the working directory, and
+`TMUX_PANE`.
 
 Audit logs survive `down` under `STATE_ROOT/logs/TEAM/LOG_ID.jsonl`.
 The command prints the retained path and records it as `retained_log` in
@@ -718,13 +714,10 @@ These variables are environment-only:
 
 Identity and delivery use tmux's pane registration and foreground command,
 so they work when the caller cannot see host PIDs. tmux on macOS names the
-foreground process after its executable file. At hitch, Gangline resolves the
-launch command through PATH and symlinks and saves its basename in the pane
-registration. Later alias checks use that saved name against the kernel short
-name of the foreground-group leader, even after a symlink update; that needs
-the host process namespace visible. Old registrations without a saved name
-accept only the configured command name, not a resolved alias. Unmatched or
-truncated aliases are refused. Process arguments are not read to recover an alias. Native ancestry checks and
+foreground process after its executable file, so a harness launched through a
+symlink, such as a native Claude Code install, is recognised from the process
+table by the name it was invoked as; that needs the host process namespace
+visible. Native ancestry checks and
 detached-descendant cleanup remain enabled when the host process namespace is
 visible. Otherwise `process_verification_unavailable` records the skipped
 checks. `roster` and `status --json` report current process visibility from
