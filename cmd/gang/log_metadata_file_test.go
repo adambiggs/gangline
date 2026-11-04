@@ -50,7 +50,9 @@ func TestLogMetadataCommandReadsNamedFileWithoutRuntime(t *testing.T) {
 		t.Fatal("directory accepted for summary")
 	}
 	cmd.team = "other"
-	if err := cmd.log([]string{"--metadata", path}); err == nil {
-		t.Fatal("saved file accepted a conflicting team scope")
+	for _, mode := range []string{"--metadata", "--summary"} {
+		if err := cmd.log([]string{mode, path}); err == nil || err.Error() != "log: --team does not apply to LOG.jsonl" {
+			t.Fatalf("%s with team scope: %v", mode, err)
+		}
 	}
 }

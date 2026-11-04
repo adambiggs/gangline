@@ -406,3 +406,61 @@ func TestDownRefusalStatusSurvivesAnEarlierFailure(t *testing.T) {
 		t.Fatalf("down error lines = %q, status %d", lines, errorStatus(err))
 	}
 }
+
+func TestDownAbsentTeamPreservesRetainedHistory(t *testing.T) {
+	for _, previouslyDown := range []bool{false, true} {
+		t.Run(fmt.Sprint(previouslyDown), func(t *testing.T) {
+			f := newStateFixture(t)
+			root := filepath.Dir(filepath.Dir(f.run.team.Directory))
+			if previouslyDown {
+				if err := f.cmd.down([]string{"--yes"}); err != nil {
+					t.Fatal(err)
+				}
+			} else if err := os.RemoveAll(f.run.team.Directory); err != nil {
+				t.Fatal(err)
+			}
+			history := map[string]string{}
+			logs, err := filepath.Glob(filepath.Join(root, "logs", "unit", "*.jsonl"))
+			if err != nil {
+				t.Fatal(err)
+			}
+			if previouslyDown && len(logs) != 1 {
+				t.Fatalf("retained logs: %v", logs)
+			}
+			for _, path := range append(logs, filepath.Join(root, "downs.jsonl")) {
+				data, err := os.ReadFile(path)
+				if errors.Is(err, os.ErrNotExist) {
+					continue
+				}
+				if err != nil {
+					t.Fatal(err)
+				}
+				history[path] = string(data)
+			}
+			f.out.Reset()
+			if err := f.cmd.down([]string{"--yes"}); err != nil {
+				t.Fatalf("absent team down: %v", err)
+			}
+			if f.out.String() != "" {
+				t.Fatalf("invented retained log: %s", f.out.String())
+			}
+			if _, err := os.Lstat(f.run.team.Directory); !errors.Is(err, os.ErrNotExist) {
+				t.Fatalf("recreated runtime state: %v", err)
+			}
+			after, err := filepath.Glob(filepath.Join(root, "logs", "unit", "*.jsonl"))
+			if err != nil || len(after) != len(logs) {
+				t.Fatalf("retained logs changed: %v, %v", after, err)
+			}
+			for path, want := range history {
+				if got, err := os.ReadFile(path); err != nil || string(got) != want {
+					t.Fatalf("history changed: %s: %v", path, err)
+				}
+			}
+			if !previouslyDown {
+				if _, err := os.Stat(filepath.Join(root, "downs.jsonl")); !errors.Is(err, os.ErrNotExist) {
+					t.Fatalf("invented teardown audit: %v", err)
+				}
+			}
+		})
+	}
+}

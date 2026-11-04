@@ -189,8 +189,19 @@ func TestHelpStatesAgentAndTeamSeparately(t *testing.T) {
 		}
 		_, team := teamSelectorCommands[name]
 		usage := commandUsage[name]
-		if got := strings.Count(usage, "[--team TEAM]"); team && got != strings.Count(usage, "gang "+name) || !team && got != 0 {
-			t.Errorf("help %s shows [--team TEAM] in %d of its forms", name, got)
+		for _, form := range strings.Split(usage, "gang "+name)[1:] {
+			// Required audit-file operands do not select a live team's log.
+			fileOnly := name == "log" && (strings.Contains(form, "--metadata") || strings.Contains(form, "--summary"))
+			if fileOnly && !strings.HasSuffix(strings.TrimSpace(form), " LOG.jsonl") {
+				t.Errorf("help log file form must require LOG.jsonl: %q", form)
+			}
+			want := 0
+			if team && !fileOnly {
+				want = 1
+			}
+			if got := strings.Count(form, "[--team TEAM]"); got != want {
+				t.Errorf("help %s form %q shows [--team TEAM] %d times, want %d", name, form, got, want)
+			}
 		}
 		if got := helpHasOptionRow(help, optionSpec{"team", "TEAM", "team to act on"}); got != team {
 			t.Errorf("help %s lists --team: %v", name, got)
