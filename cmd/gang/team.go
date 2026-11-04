@@ -116,6 +116,13 @@ func (cmd command) down(args []string) (err error) {
 			return err
 		}
 	}
+	// The team lock also covers absent state: a repeated down must not create
+	// a new log identity after the previous teardown retained the original.
+	if _, err := os.Lstat(run.team.Directory); errors.Is(err, os.ErrNotExist) {
+		return nil
+	} else if err != nil {
+		return err
+	}
 	retainedLog, err := run.team.RetainLog()
 	if err != nil {
 		return fmt.Errorf("retain team log: %w", err)
