@@ -1,5 +1,3 @@
-//go:build acceptance
-
 package main
 
 import (
@@ -10,6 +8,40 @@ import (
 	"testing"
 	"unicode/utf8"
 )
+
+// teamSelectorCommands lists every command that acts on one team, with
+// operands that its own parser accepts.
+var teamSelectorCommands = map[string][]string{
+	"rehitch":   {"--note", "continue"},
+	"sender":    {"list"},
+	"outside":   {"remove", "worker"},
+	"up":        {"lead"},
+	"hitch":     {"worker"},
+	"rename":    {"worker", "scout"},
+	"send":      {"worker", "body"},
+	"queue":     {},
+	"interrupt": {"worker"},
+	"compact":   {"worker"},
+	"clear":     {"--note", "continue"},
+	"title":     {"worker", "title"},
+	"context":   {"worker"},
+	"log":       {},
+	"limits":    {"worker"},
+	"snooze":    {"--status"},
+	"wait":      {"worker", "--timeout", "0"},
+	"curfew":    {},
+	"status":    {"worker"},
+	"tick":      {},
+	"capture":   {"worker"},
+	"whoami":    {},
+	"roster":    {},
+	"attach":    {},
+	"drop":      {"worker"},
+	"down":      {"--yes"},
+
+	"peer-receive":   {"--peer", "alpha"},
+	"peer-authorize": {"alpha", "key.pub"},
+}
 
 func helpOptionCounts(output string) map[string]int {
 	counts := map[string]int{}
