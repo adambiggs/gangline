@@ -172,42 +172,60 @@ func (p AgentPaths) Read() (core.Agent, error) {
 	return a, nil
 }
 func (p TeamPaths) ListAgents() ([]core.Agent, error) {
+	agents, _, err := p.listAgents(false)
+	return agents, err
+}
+
+// ListAgentsForRoster retains readable agents and counts native state reads
+// that failed. Missing records retain ListAgents' skip behavior. Enumeration
+// and name-binding failures remain fatal; callers must report incomplete
+// coverage whenever failedReads is nonzero.
+func (p TeamPaths) ListAgentsForRoster() (agents []core.Agent, failedReads int, err error) {
+	return p.listAgents(true)
+}
+
+func (p TeamPaths) listAgents(allowPartial bool) ([]core.Agent, int, error) {
 	entries, err := os.ReadDir(p.Agents)
 	if errors.Is(err, os.ErrNotExist) {
-		return nil, nil
+		return nil, 0, nil
 	}
 	if err != nil {
-		return nil, err
+		return nil, 0, err
 	}
 	var agents []core.Agent
+	failedReads := 0
 	for _, entry := range entries {
 		if !entry.IsDir() {
 			continue
 		}
 		ap, err := p.Agent(core.HitchID(entry.Name()))
 		if err != nil {
-			return nil, err
+			return nil, 0, err
 		}
 		a, err := ap.Read()
 		if errors.Is(err, os.ErrNotExist) {
 			continue
 		}
 		if err != nil {
-			return nil, err
+			if allowPartial {
+				failedReads++
+				continue
+			}
+			return nil, 0, err
 		}
 		id, err := p.ResolveName(string(a.Name))
 		if errors.Is(err, os.ErrNotExist) {
 			continue
 		}
 		if err != nil {
-			return nil, err
+			return nil, 0, err
 		}
 		if id == a.ID {
 			agents = append(agents, a)
 		}
 	}
 	sort.Slice(agents, func(i, j int) bool { return agents[i].Name < agents[j].Name })
-	return agents, nil
+	return agents, failedReads, nil
 }
 func (p TeamPaths) FinishRename(l *LockedAgent, a *core.Agent) error {
 	if a.RenameTo == "" {

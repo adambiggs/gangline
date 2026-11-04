@@ -292,39 +292,47 @@ func (cmd command) whoami(args []string) error {
 	return err
 }
 func (run *runtime) observeRoster(agents []core.Agent) ([]core.Agent, error) {
+	observed, _, err := run.observeRosterPartial(agents, false)
+	return observed, err
+}
+
+func (run *runtime) observeRosterPartial(agents []core.Agent, allowPartial bool) ([]core.Agent, []rosterError, error) {
 	b, err := run.cmd.tmux(run.settings)
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
 	listedPanes, err := b.Panes(context.Background())
 	listed := err == nil
 	if err != nil {
 		exists, checkErr := b.SessionExists(context.Background())
 		if checkErr != nil {
-			return nil, checkErr
+			return nil, nil, checkErr
 		}
 		if exists {
-			return nil, err
+			return nil, nil, err
 		}
 	}
 	panes := map[string]tmux.PaneInfo{}
 	for _, w := range listedPanes {
 		panes[string(w.Pane.ID)] = w
 	}
-	for i, a := range agents {
+	observed := make([]core.Agent, 0, len(agents))
+	diagnostics := []rosterError{}
+	for _, a := range agents {
 		l, current, err := run.acquire(a.ID, false)
 		if errors.Is(err, store.ErrLocked) {
 			// The operation holding the lock maintains the record, so the row
 			// is the record as saved, with its deadlines read against now.
-			agents[i], _ = core.Step(a, core.Event{Type: "deadline_checked", At: run.cmd.now(), HitchID: a.ID})
+			saved, _ := core.Step(a, core.Event{Type: "deadline_checked", At: run.cmd.now(), HitchID: a.ID})
+			observed = append(observed, saved)
 			continue
 		}
 		if err != nil {
-			return nil, err
+			return nil, nil, err
 		}
 		if err := run.checkDeadlines(l, &current); err != nil {
 			_ = run.unlock(l)
-			return nil, err
+			return nil, nil, err
 		}
 		// A new server reuses pane ids, so a listed id is the record's pane
 		// only under the record's registration.
@@ -352,39 +360,47 @@ func (run *runtime) observeRoster(agents []core.Agent) ([]core.Agent, error) {
 			}
 			if err != nil {
 				_ = run.unlock(l)
-				return nil, err
+				return nil, nil, err
 			}
 		}
 		if present && current.Status == core.Active {
 			c, err := loadCollar(current.Collar, run.settings)
 			if err != nil {
-				_ = run.unlock(l)
-				return nil, err
+				if closeErr := run.unlock(l); closeErr != nil {
+					return nil, nil, errors.Join(err, closeErr)
+				}
+				if !allowPartial {
+					return nil, nil, err
+				}
+				diagnostics = append(diagnostics, rosterError{
+					Kind: "native", HitchID: &current.ID, Name: &current.Name, Stage: "collar_load",
+				})
+				continue
 			}
 			if err := run.observeRosterStatus(l, &current, c); err != nil {
 				_ = run.unlock(l)
-				return nil, err
+				return nil, nil, err
 			}
 		}
-		agents[i] = current
 		if unlisted && current.Status != core.Failed {
-			agents[i].Activity, agents[i].Evidence = core.Unknown, "tmux lists no team session"
+			current.Activity, current.Evidence = core.Unknown, "tmux lists no team session"
 		}
 		if present && pane.Title != paneTitle(current) {
 			if err := run.mark(current); err != nil {
 				_ = run.unlock(l)
-				return nil, err
+				return nil, nil, err
 			}
 		}
 		if err := run.release(l); err != nil {
-			return nil, err
+			return nil, nil, err
 		}
+		observed = append(observed, current)
 	}
-	return agents, nil
+	return observed, diagnostics, nil
 }
 func (cmd command) roster(args []string) error {
-	machine := false
-	page, positionals, err := parseListOptions("roster", args, map[string]any{"json": &machine})
+	machine, allowPartial := false, false
+	page, positionals, err := parseListOptions("roster", args, map[string]any{"json": &machine, "allow-partial": &allowPartial})
 	if err != nil {
 		return usageError("roster: %v", err)
 	}
@@ -395,13 +411,22 @@ func (cmd command) roster(args []string) error {
 	if err != nil {
 		return err
 	}
-	agents, err := run.team.ListAgents()
+	var agents []core.Agent
+	failedReads := 0
+	if allowPartial {
+		agents, failedReads, err = run.team.ListAgentsForRoster()
+	} else {
+		agents, err = run.team.ListAgents()
+	}
 	if err != nil {
 		return err
 	}
-	agents, err = run.observeRoster(agents)
+	agents, diagnostics, err := run.observeRosterPartial(agents, allowPartial)
 	if err != nil {
 		return err
+	}
+	for range failedReads {
+		diagnostics = append(diagnostics, rosterError{Kind: "native", Stage: "state_read"})
 	}
 	watchdogLimited := false
 	if _, err := os.Stat(filepath.Join(run.team.Directory, "watchdog-unavailable")); err == nil {
@@ -445,12 +470,29 @@ func (cmd command) roster(args []string) error {
 		out.Total = len(out.Agents)
 		out.Agents = out.Agents[:page.count(out.Total)]
 		out.Truncated = len(out.Agents) < out.Total
-		if err := writeJSON(cmd.stdout, out); err != nil {
+		var result any = out
+		if allowPartial {
+			result = partialRosterJSON{rosterJSON: out, Partial: len(diagnostics) > 0, Errors: diagnostics}
+		}
+		if err := writeJSON(cmd.stdout, result); err != nil {
 			return err
 		}
 		return page.notice(cmd.stderr, out.Total)
 	}
-	return page.writeLines(cmd.stdout, cmd.stderr, lines)
+	if err := page.writeLines(cmd.stdout, cmd.stderr, lines); err != nil {
+		return err
+	}
+	if len(diagnostics) > 0 {
+		if _, err := fmt.Fprintln(cmd.stdout, "Agent inventory incomplete; some native entries could not be read:"); err != nil {
+			return err
+		}
+		for _, diagnostic := range diagnostics {
+			if _, err := fmt.Fprintln(cmd.stdout, "  native: "+diagnostic.Stage); err != nil {
+				return err
+			}
+		}
+	}
+	return nil
 }
 
 // A long reason keeps its first rosterReasonHead characters, where a native

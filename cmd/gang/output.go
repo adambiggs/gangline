@@ -38,6 +38,21 @@ type rosterJSON struct {
 	Truncated         bool        `json:"truncated"`
 }
 
+// partialRosterJSON is emitted only when the caller explicitly accepts partial
+// coverage. The strict roster contract keeps its original shape.
+type partialRosterJSON struct {
+	rosterJSON
+	Partial bool          `json:"partial"`
+	Errors  []rosterError `json:"errors"`
+}
+
+type rosterError struct {
+	Kind    string          `json:"kind"`
+	HitchID *core.HitchID   `json:"hitch_id"`
+	Name    *core.AgentName `json:"name"`
+	Stage   string          `json:"stage"`
+}
+
 type agentJSON struct {
 	Kind             string            `json:"kind"`
 	InputOutage      *core.InputOutage `json:"input_outage,omitempty"`

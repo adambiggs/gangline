@@ -247,7 +247,7 @@ A send prints the message ID and `delivered`, `accepted`, `queued`,
 
 | Command | Effect |
 | --- | --- |
-| `gang roster [--json] [--limit N\|--all]` | Show registered agents and current states, with the recorded reason for a failed agent or a blocked, wedged, or unknown one. The table cuts a long reason to its head and its end so that the row's characters fit the terminal's width; `--json` and `gang status --why` carry the whole text. An idle agent with a stored background report reads `idle (N bg DURATION)`: N is the reported task count and DURATION is time since receipt, not verified pending work or idle duration. JSON fields `background_tasks` and `background_since` carry that count and receipt time. The agent remains idle for delivery; the next turn boundary clears the report, but delayed hooks can replace it. An absent count does not certify that no background work remains. |
+| `gang roster [--json] [--allow-partial] [--limit N\|--all]` | Show registered agents and current states, with the recorded reason for a failed agent or a blocked, wedged, or unknown one. The table cuts a long reason to its head and its end so that the row's characters fit the terminal's width; `--json` and `gang status --why` carry the whole text. An idle agent with a stored background report reads `idle (N bg DURATION)`: N is the reported task count and DURATION is time since receipt, not verified pending work or idle duration. JSON fields `background_tasks` and `background_since` carry that count and receipt time. The agent remains idle for delivery; the next turn boundary clears the report, but delayed hooks can replace it. An absent count does not certify that no background work remains. |
 | `gang status [NAME] [--why] [--json]` | Show state; `--why` includes activity and compaction evidence. Background reports qualify idle as in `gang roster`; `--why` names the report's receipt time, age and count, and states that current task state is unknown. |
 | `gang capture [NAME] [-n\|--lines LINES]` | Print the native pane, or only its last LINES lines. |
 | `gang capture --composer [NAME]` | Print draft input from the composer. |
@@ -273,6 +273,40 @@ scan or change pending work.
 Queue and roster JSON include `total` (the full matching entry count) and
 `truncated` (whether entries were omitted). Callers needing complete state
 must pass `--all` or check these fields.
+
+`roster --allow-partial` opts into incomplete inventory when a native agent's
+initial state read fails or its active, present pane's collar cannot be loaded.
+The command omits those entries, retains readable peers, and exits successfully.
+Without the flag, roster remains strict; `status` and other commands remain
+strict too. The text form prints an incomplete-inventory notice and failure
+stages. JSON adds `partial` (boolean) and `errors` (array), always present with
+the flag, including `false` and `[]` when neither isolated failure occurs.
+The default JSON shape is unchanged.
+
+Each error has exactly `kind`, `hitch_id`, `name`, and `stage`. `kind` is
+`native`; `stage` is `state_read` or `collar_load`. A state-read error has null
+identity fields: even its directory name is not reported as an identity.
+A collar-load error uses the successfully read record's hitch ID and name.
+Raw errors, paths and collar contents are not included. Failed entries do not
+become fabricated failed-state rows. Collar loading can fail after deadline
+or recovery updates, so a partial result does not mean state was untouched.
+
+Errors cover the full attempted native inventory before pagination, with one
+entry per isolated failure; their count is not an authoritative missing-agent
+count. `total` counts successfully projected rows, including outside
+registrations, before pagination. `truncated` describes pagination alone;
+`partial`, `truncated`, and `watchdog_available` are independent. An all-failed
+native scan can return `agents: []`, `total: 0`, `partial: true`; that does not
+establish an empty team. Missing state and stale name bindings retain their
+existing skip behavior, and a locked agent still uses its saved row. Shared
+inventory, name-binding, later state reread, projection, outside-registration,
+mutation, audit, cleanup and output failures remain fatal.
+
+Consumers must install a producer supporting the flag before requesting it.
+A caller that requests partial results must treat `partial: true`, nonempty
+`errors`, or missing, malformed or inconsistent partial fields as incomplete
+coverage. Healthy rows can remain visible, but incomplete coverage must not
+be presented as a complete team or used to establish absence.
 
 `--json` on `queue`, `roster`, `status`, and `context` prints one JSON object
 for scripts. It carries exact values the human forms abbreviate: queue
