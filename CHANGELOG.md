@@ -1,5 +1,12 @@
 # Changelog
 
+## [3.0.3](https://github.com/adambiggs/gangline/compare/gangline-v3.0.2...gangline-v3.0.3) (2026-11-04)
+
+
+### Bug Fixes
+
+* keep stopped recovery help within its display contract ([21c628b](https://github.com/adambiggs/gangline/commit/21c628bfa3c413446901bb20a160ff9ca4e925a4))
+
 ## [3.0.2](https://github.com/adambiggs/gangline/compare/gangline-v3.0.1...gangline-v3.0.2) (2026-11-04)
 
 
