@@ -14,11 +14,17 @@ import (
 
 func (cmd command) rehitch(args []string) (result error) {
 	var note string
-	var upgrade bool
-	flags := boundFlagSet("rehitch", map[string]any{"note": &note, "upgrade": &upgrade})
+	var upgrade, stopped bool
+	flags := boundFlagSet("rehitch", map[string]any{"note": &note, "upgrade": &upgrade, "stopped": &stopped})
 	positionals, err := parseOptions(flags, args)
 	if err != nil {
 		return usageError("rehitch: %v", err)
+	}
+	if stopped {
+		if len(positionals) != 1 || strings.TrimSpace(note) == "" || upgrade {
+			return usageError("rehitch: expected NAME --stopped --note TEXT (without --upgrade)")
+		}
+		return cmd.rehitchStopped(positionals[0], note)
 	}
 	if len(positionals) != 0 || strings.TrimSpace(note) == "" {
 		return usageError("rehitch: expected --note TEXT")
@@ -120,7 +126,7 @@ func (run *runtime) rehitchPending(id core.HitchID) error {
 	if a.Role != "" {
 		args = append(args, "-r", a.Role)
 	}
-	err = run.cmd.hitchReplacing(args, false, &a)
+	err = run.cmd.hitchReplacing(args, false, &a, false)
 	if errors.Is(err, errRehitchDeferred) {
 		return nil
 	}

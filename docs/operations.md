@@ -278,9 +278,12 @@ systemctl --user enable --now gangline-sbx@team.service
 ```
 
 Enable lingering for the account so the unit starts at boot. The unit brings
-back the VM, its sshd and its ports, not the team: start the team inside with
-`gang up`, as on a host after a reboot, and resume an agent's conversation with
-`--resume SESSION`.
+back the VM, its sshd and its ports, not the team. To preserve a stopped team's
+hitch identities and queued mail, recover each retained name with
+`gang rehitch NAME --stopped --note TEXT`, starting with the lead. The
+[recovery prerequisites](reference.md) require the old execution location to be
+stopped and the complete state and native session stores to be available.
+Use `gang up` for a new team; its stale-claim supersession creates a new identity.
 
 `sbx exec` starts its command from the image environment, so a host terminal
 joins a pane with its own terminal type passed along:

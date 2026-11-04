@@ -23,6 +23,7 @@ agents in the selected team.
 | `gang hitch NAME [OPTIONS]` | Launch an agent and deliver startup instructions and any task. |
 | `gang hitch NAME --recover` | Recover retained startup from its visible draft or a lone collapsed paste, or resume a queued startup its boot deadline failed once the pane shows an idle composer or a recognized prompt. |
 | `gang rehitch --note TEXT [--upgrade]` | Restart your harness at the next confirmed idle boundary and resume its native conversation. |
+| `gang rehitch NAME --stopped --note TEXT` | Recover a retained hitch after its previous execution location has stopped; preserve its identity, native session and queued mail. |
 | `gang rename OLD NEW` | Change a registered name and its pane's display title. |
 | `gang drop NAME` | Stop an agent and fail its pending messages. An unregistered `NAME` is refused. |
 | `gang down [-y, --yes]` | Confirm on a terminal (`[y/N]`, default no), then retain its audit log, drop the selected team's agents and delete only its runtime state. Before dropping any agent, it appends who ran it to `downs.jsonl` in the state root. Use `--yes` without a terminal. |
@@ -41,6 +42,39 @@ log records why in a `rehitch_position_lost` event. The harness
 executable is resolved from PATH; use `--upgrade` to update it before requesting
 a restart. `--upgrade` runs the collar's harness update command first; an update
 failure leaves the current harness running.
+
+To recover a stopped team, first stop its previous execution location and copy
+its complete state, native session stores, configuration and working directories
+without writers. Keep the same paths and team selection. Then recover each
+retained name, starting with the lead:
+
+```sh
+gang rehitch lead --stopped --note 'Continue from saved work.'
+gang rehitch worker --stopped --note 'Continue from saved work.'
+```
+
+`--stopped` is your confirmation that the old location is stopped. A different
+PID namespace does not prove that. Recovery refuses a matching live pane or a
+visible live native process, and never signals the old process. A wholly absent
+native process witness (for example, a harness outside the visible PID namespace)
+relies on your stop confirmation and is recorded as unverified; a partial witness
+refuses. Each command
+keeps its hitch ID, owner, role, native session, receipts and queued mail. Peers
+can recover after the first member recreates tmux; reused numeric pane IDs do
+not authorize access to another generation's panes. New windows use tmux's
+normal placement.
+
+Validated saved model/effort metadata becomes explicit launch options. Missing
+or invalid metadata leaves the collar/native defaults unknown. The native CLI
+must still be able to resume the saved session; a source-level recovery check
+does not establish that its copied session files are complete.
+
+Unfinished input, clear, compaction, queued rehitch, rename, receipt cleanup or
+teardown refuses without rewriting the record. Inspect and reconcile that
+operation before recovery; do not use `drop` to clear it when preserving mail.
+A failed launch retains the hitch and inbox. A launch failure before startup submission files only its new startup
+note as failed, so an explicit retry cannot replay that note. Recovery is never retried automatically. A live pane at a native
+prompt uses the normal `hitch NAME --recover` path instead.
 
 Agents are independent panes. Their names and status appear on their own
 borders, so they can share a window without overwriting each other's titles.

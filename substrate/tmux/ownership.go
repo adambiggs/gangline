@@ -55,8 +55,18 @@ func (b *Backend) identity(ctx context.Context, pane substrate.PaneID, observe f
 // CanReadIdentity requires a saved witness that the numeric PID belongs to the
 // caller's process namespace. Older identities without a witness are unknown.
 func CanReadIdentity(expected Identity) bool {
+	matches, err := IdentityNamespaceMatches(expected)
+	return err == nil && matches
+}
+
+// IdentityNamespaceMatches compares the saved namespace witness with this caller.
+// An unreadable or missing witness is unknown, not a foreign namespace.
+func IdentityNamespaceMatches(expected Identity) (bool, error) {
+	if expected.Namespace == "" {
+		return false, fmt.Errorf("recorded process namespace is unknown")
+	}
 	namespace, err := nativeProcessNamespace()
-	return err == nil && expected.Namespace != "" && expected.Namespace == namespace
+	return expected.Namespace == namespace, err
 }
 
 type Owned struct {

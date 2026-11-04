@@ -32,10 +32,10 @@ func (cmd command) hitch(args []string) error {
 }
 
 func (cmd command) hitchWithStaleClaim(args []string, supersede bool) error {
-	return cmd.hitchReplacing(args, supersede, nil)
+	return cmd.hitchReplacing(args, supersede, nil, false)
 }
 
-func (cmd command) hitchReplacing(args []string, supersede bool, previous *core.Agent) (result error) {
+func (cmd command) hitchReplacing(args []string, supersede bool, previous *core.Agent, stopped bool) (result error) {
 	run, err := cmd.runtime()
 	if err != nil {
 		return err
@@ -145,6 +145,9 @@ func (cmd command) hitchReplacing(args []string, supersede bool, previous *core.
 	} else {
 		sender = core.Sender{Kind: core.SenderGangline, Name: "startup"}
 	}
+	if stopped {
+		purpose = "startup"
+	}
 	now := cmd.now()
 	a := core.Agent{ID: core.HitchID(id), Name: core.AgentName(o.Name), Collar: o.Collar, Role: o.Role, HitchedBy: hitcher, Directory: dir, Status: core.Starting, Activity: core.Unknown, CreatedAt: now, ChangedAt: now, BootDeadline: now.Add(bootTimeout), ContextBandThresholds: bandThresholds}
 	a.ConfiguredModel, a.ConfiguredEffort = o.Model, o.Effort
@@ -152,7 +155,9 @@ func (cmd command) hitchReplacing(args []string, supersede bool, previous *core.
 		a.ID, a.HitchedBy, a.CreatedAt = previous.ID, previous.HitchedBy, previous.CreatedAt
 		a.ContextBandThresholds = previous.ContextBandThresholds
 		a.LastAccepted, a.LastDelivered, a.LastFailed = previous.LastAccepted, previous.LastDelivered, previous.LastFailed
-		sender = core.Sender{Kind: core.SenderAgent, Name: a.Name, HitchID: a.ID}
+		if !stopped {
+			sender = core.Sender{Kind: core.SenderAgent, Name: a.Name, HitchID: a.ID}
+		}
 	}
 	run.hitching = a.ID
 	a.Native.SessionID = o.Resume
@@ -205,6 +210,9 @@ func (cmd command) hitchReplacing(args []string, supersede bool, previous *core.
 	if previous != nil {
 		lock, err = (store.Paths{Root: run.settings.StateRoot}).LockTeam(run.settings.Session)
 		if errors.Is(err, store.ErrLocked) {
+			if stopped {
+				return refuseError("rehitch: team is locked by another operation")
+			}
 			return errRehitchDeferred
 		}
 	} else {
@@ -226,7 +234,7 @@ func (cmd command) hitchReplacing(args []string, supersede bool, previous *core.
 	// an unreadable position only costs the restart its place.
 	var position *tmux.WindowPosition
 	positionLost := ""
-	if previous != nil {
+	if previous != nil && !stopped {
 		read, cancel := context.WithTimeout(context.Background(), operationTimeout)
 		at, ok, err := b.WindowPosition(read, paneIdentity(*previous))
 		cancel()
@@ -328,6 +336,8 @@ func (cmd command) hitchReplacing(args []string, supersede bool, previous *core.
 	var l *store.LockedAgent
 	if previous == nil {
 		l, err = run.team.CreateAgent(a)
+	} else if stopped {
+		l, err = run.prepareStoppedRehitch(boot, b, *previous, &a)
 	} else {
 		l, err = run.prepareRehitch(*previous, &a)
 	}
@@ -363,9 +373,15 @@ func (cmd command) hitchReplacing(args []string, supersede bool, previous *core.
 			return errors.Join(err, run.apply(l, &a, core.Event{Type: "hitch_failed", Reason: err.Error()}))
 		}
 	}
+	registered, startupAttempted := false, false
 	if err := l.Paths.Publish(e); err != nil {
 		return err
 	}
+	defer func() {
+		if stopped && result != nil && !registered && !startupAttempted {
+			result = errors.Join(result, l.FileFailure(e, "failed", "recovery startup was not submitted: launch failed"))
+		}
+	}()
 	if err := run.record(a, core.Event{Type: "send_queued", Envelope: &e}); err != nil {
 		return err
 	}
@@ -401,7 +417,6 @@ func (cmd command) hitchReplacing(args []string, supersede bool, previous *core.
 	if run.settings.CollarDir != "" {
 		spec.Env["GANG_COLLARS"] = run.settings.CollarDir
 	}
-	registered := false
 	fail := func(err error, reason string) error {
 		registered = false
 		return errors.Join(err, run.apply(l, &a, core.Event{Type: "hitch_failed", Reason: reason}))
@@ -452,8 +467,7 @@ func (cmd command) hitchReplacing(args []string, supersede bool, previous *core.
 		pane, err = b.CreateSession(boot, spec)
 	}
 	if err != nil {
-		_ = run.apply(l, &a, core.Event{Type: "hitch_failed", Reason: err.Error()})
-		return err
+		return errors.Join(err, run.apply(l, &a, core.Event{Type: "hitch_failed", Reason: err.Error()}))
 	}
 	registration, err := b.RegisterPane(boot, pane.ID)
 	if pane.ID != "" && cmd.presentation != nil {
@@ -468,6 +482,9 @@ func (cmd command) hitchReplacing(args []string, supersede bool, previous *core.
 		cleanupErr := b.KillUnregisteredPane(removal, pane.ID)
 		cancel()
 		return errors.Join(err, cleanupErr, run.apply(l, &a, core.Event{Type: "hitch_failed", Reason: err.Error()}))
+	}
+	if stopped {
+		a.Process = core.ProcessIdentity{}
 	}
 	a.Registration = core.PaneRegistration{Generation: registration.Generation, Session: registration.Session, TokenHash: tokenHash(agentToken), Held: true}
 	exitedUnread := false
@@ -627,6 +644,7 @@ func (cmd command) hitchReplacing(args []string, supersede bool, previous *core.
 	if err := run.mark(a); err != nil {
 		return err
 	}
+	startupAttempted = true
 	outcome, err := run.drainFrom(l, a, e.ID)
 	if err != nil {
 		return err
