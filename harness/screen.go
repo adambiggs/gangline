@@ -227,7 +227,7 @@ func readClaudeComposer(screen substrate.Screen) (Composer, error) {
 	// Pasting a wrapped message expands the input frame. A tall frame needs
 	// the active cursor inside its body to distinguish it from conversation
 	// history; height alone does not identify a non-composer surface.
-	if !named && closing-opening > 6 && (!screen.Cursor.Visible || screen.Cursor.Row < first || screen.Cursor.Row >= closing) {
+	if !named && closing-opening > 6 && !claudeInputCursor(screen, first, closing) {
 		return Composer{}, ErrNoComposer
 	}
 	body := append([]string(nil), lines[first:closing]...)
@@ -240,6 +240,35 @@ func readClaudeComposer(screen substrate.Screen) (Composer, error) {
 		return Composer{first: first, end: closing}, nil
 	}
 	return Composer{Text: strings.TrimRight(strings.Join(body, "\n"), "\n"), Owner: owner, first: first, end: closing}, ownershipErr
+}
+
+// claudeInputCursor also recognizes Claude Code's software cursor: it hides
+// the terminal cursor and paints one reverse-video blank at that position.
+// A hidden cursor alone or a selection does not identify an active input.
+func claudeInputCursor(screen substrate.Screen, first, end int) bool {
+	cursor := screen.Cursor
+	if cursor.Row < first || cursor.Row >= end {
+		return false
+	}
+	if cursor.Visible {
+		return true
+	}
+	if cursor.Row >= len(screen.Rows) || cursor.Column < 0 || cursor.Column >= len(screen.Rows[cursor.Row]) {
+		return false
+	}
+	cell := screen.Rows[cursor.Row][cursor.Column]
+	if cell.Text != " " || !cell.Attributes.Reverse || cell.Attributes.Dim {
+		return false
+	}
+	reversed := 0
+	for _, row := range screen.Rows[first:end] {
+		for _, cell := range row {
+			if cell.Attributes.Reverse {
+				reversed++
+			}
+		}
+	}
+	return reversed == 1
 }
 
 func trustPrompt(name string, lines []string) (string, bool) {
