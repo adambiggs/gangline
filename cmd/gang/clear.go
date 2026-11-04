@@ -322,7 +322,7 @@ func (run *runtime) reconcileClear(l *store.LockedAgent, a *core.Agent) error {
 		a.Native = core.NativeState{SessionID: n.SessionID, Transcript: n.Transcript, BoundSession: bound, HookSequence: sequence, HookAt: n.At}
 		a.Compaction, a.Capacity = nil, core.Capacity{}
 		a.ContextBands = core.ContextBandState{Sequence: a.ContextBands.Sequence, DiscardQueued: true}
-		a.NativeTitle = &core.NativeTitle{Text: nativeSessionTitle(a.Name, run.settings.Session, a.Clear.Envelope.Message.Text)}
+		a.NativeTitle = nil
 		a.Activity, a.ScreenFingerprint, a.ScreenSince = core.Idle, "", time.Time{}
 		a.Evidence, a.StatusProbeAt, a.BackgroundNoticed = "", time.Time{}, time.Time{}
 		if err := l.Save(*a); err != nil {

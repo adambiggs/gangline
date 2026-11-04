@@ -28,7 +28,6 @@ func (cmd command) up(args []string) error {
 		"m": &options.Model, "model": &options.Model,
 		"e": &options.Effort, "effort": &options.Effort,
 		"context-bands": &options.ContextBands,
-		"title":         &options.Title,
 		"t":             &options.Task, "task": &options.Task,
 		"r": &options.Role, "role": &options.Role,
 		"resume": &options.Resume, "recover": &options.Recover, "stdin": &options.Stdin,

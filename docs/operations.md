@@ -5,22 +5,16 @@ daily tasks and [troubleshooting](troubleshooting.md) for observable failures.
 
 ## Native session titles
 
-Set an explicit display title at launch with `gang hitch NAME --title TEXT`
-(or `gang up --title TEXT`). Include a machine name when your teams share
-names, for example `worker@ser5: cache refresh`. The title does not change
-registration identity or mailbox routing. Omit the option for the generated
-agent/team/task title. Rehitch retains the deliberate title and its attempt
-state.
+Use `gang title NAME 'TEXT'` at idle to change a native session's display title.
+Include a machine name when your teams share names, for example
+`gang title worker 'worker@ser5: cache refresh'`. The title does not change
+registration identity or mailbox routing.
 
-Gangline titles Claude Code and Codex sessions at the first idle tick with a
-free composer after startup. Titles identify the agent, team and the task's
-first line so native session lists distinguish them. Drafts, native prompts,
-open turns and compaction defer the attempt.
-
-Automatic title outcomes appear in `gang log` with an `automatic title:`
-reason. A failed or unconfirmed attempt leaves the agent running and is not
-retried automatically. Check the native session list for persistence; use
-`gang title NAME 'TEXT'` at idle to retry or choose another title.
+Gangline does not rename sessions automatically. Remove `--title` from existing
+`gang hitch` or `gang up` commands and invoke `gang title` separately when a
+rename is wanted. Drafts, native prompts, open turns and compaction prevent
+manual submission. Check the native session list to confirm persistence; a
+submitted command alone does not prove that the title was saved.
 
 ## Clear recovery
 

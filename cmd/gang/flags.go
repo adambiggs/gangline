@@ -19,7 +19,6 @@ type hitchOptions struct {
 	Model        string
 	Effort       string
 	ContextBands string
-	Title        string
 	Task         string
 	Role         string
 	Resume       string
@@ -62,7 +61,6 @@ func parseHitch(arguments []string, defaultCollar, defaultDirectory string) (hit
 		"m": &options.Model, "model": &options.Model,
 		"e": &options.Effort, "effort": &options.Effort,
 		"context-bands": &options.ContextBands,
-		"title":         &options.Title,
 		"t":             &options.Task, "task": &options.Task,
 		"r": &options.Role, "role": &options.Role,
 		"resume": &options.Resume, "recover": &options.Recover, "stdin": &options.Stdin,
@@ -92,11 +90,6 @@ func parseHitch(arguments []string, defaultCollar, defaultDirectory string) (hit
 	}
 	if options.ContextBands == "" && flagWasSet(flags, "context-bands") {
 		return hitchOptions{}, usageError("hitch: --context-bands requires EARLY,LATE percentages")
-	}
-	if flagWasSet(flags, "title") {
-		if err := validateNativeTitle(options.Title); err != nil {
-			return hitchOptions{}, err
-		}
 	}
 	if options.Recover && !onlyFlagSet(flags, "recover") {
 		return hitchOptions{}, usageError("hitch: --recover takes only NAME")
