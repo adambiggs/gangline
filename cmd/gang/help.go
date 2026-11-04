@@ -167,7 +167,7 @@ var commandOptions = map[string][]optionSpec{
 		{"window", "INDEX", "create the window at this free tmux window index"},
 	},
 	"clear":   {{"note", "TEXT", "small continuation with current change/revision/state"}},
-	"rehitch": {{"note", "TEXT", "saved-work continuation"}, {"stopped", "", "recover NAME after its previous execution location has been stopped"}, {"upgrade", "", "update the harness before queuing its restart"}},
+	"rehitch": {{"note", "TEXT", "saved-work continuation"}, {"stopped", "", "recover NAME after its old location has stopped"}, {"upgrade", "", "update the harness before queuing its restart"}},
 	"send": {
 		{"from", "SENDER", "outside sender identity"},
 		{"as", "SENDER", "registered sender identity"},
@@ -334,7 +334,7 @@ var commandDescription = map[string]string{
 	"up":         "NAME names the lead agent (default lead). Start the selected team and attach,\nor use --recover to recover that existing agent's startup.\n",
 	"hitch":      "NAME is an agent's registered name in the selected team.\nLaunch in a new window by default. --split NAME places a sibling beside\nthat agent; --vertical splits top/bottom. Use --recover for retained startup.\n",
 	"title":      "NAME is a registered agent; omit it for the current pane's agent.\nQuote TEXT as one argument. Submit the native title command when idle.\n",
-	"rehitch":    "Restart your harness at the next confirmed idle boundary and resume its\nnative conversation.\nSave unfinished work first and name it in --note TEXT.\nThe harness executable is resolved from PATH; use --upgrade to update it\nbefore requesting a restart. --upgrade runs the collar's harness update\ncommand first; an update failure leaves the current harness running.\nFor a stopped team, use NAME --stopped --note TEXT for each retained agent.\n--stopped confirms the old execution location is stopped and its complete\nstate and native sessions are available here. Never use it on a live copy.\nRecovery keeps the hitch ID and queued mail; unresolved operations refuse.\n",
+	"rehitch":    "Restart your harness at the next confirmed idle boundary and resume its\nnative conversation.\nSave unfinished work first and name it in --note TEXT.\nThe harness executable is resolved from PATH; use --upgrade to update it\nbefore requesting a restart. --upgrade runs the collar's harness update\ncommand first; an update failure leaves the current harness running.\nFor a stopped team, use NAME --stopped --note TEXT for each retained agent.\nThe --stopped flag confirms the old execution location is stopped.\nIts complete state and native sessions must be available here.\nNever use it on a live copy.\nRecovery keeps the hitch ID and queued mail; unresolved operations refuse.\n",
 	"rename":     "OLD and NEW are registered agent names in the selected team.\nRename the agent without restarting its harness.\n",
 	"sender":     "Add or remove a sender from the operator shell or active lead pane.\nList registered names. Same-user processes can read the keys.\n",
 	"send":       "NAME is the recipient agent's registered name in the selected team.\nSend BODY or read stdin. An exact native hook proves delivery; a native\nqueue receipt proves acceptance. Otherwise input stays queued or unverified.\nHOST:NAME forwards this sender to NAME on GANG_PEERS host HOST over ssh and\nprints that host's receipt; a lost reply is unknown, so do not resend it.\nNo later outcome on HOST reaches this host.\n",
