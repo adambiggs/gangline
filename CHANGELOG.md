@@ -1,5 +1,14 @@
 # Changelog
 
+## [3.0.4](https://github.com/adambiggs/gangline/compare/gangline-v3.0.3...gangline-v3.0.4) (2026-11-04)
+
+
+### Bug Fixes
+
+* inspect process ownership without argument reads ([6521115](https://github.com/adambiggs/gangline/commit/6521115d34c7e3bc4651bb3388e9cf9e3c7c46a8))
+* recognize Claude software cursor in tall input ([079bf0b](https://github.com/adambiggs/gangline/commit/079bf0bd2a8210621b3c52aa4f38446e5096fce6))
+* restore process recognition with record compatibility ([633479b](https://github.com/adambiggs/gangline/commit/633479b95c0dcc29d2e1144a0bfe834b6fd7d6bb))
+
 ## [3.0.3](https://github.com/adambiggs/gangline/compare/gangline-v3.0.2...gangline-v3.0.3) (2026-11-04)
 
 
