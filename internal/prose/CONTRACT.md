@@ -22,9 +22,8 @@ You are one agent in a Gangline team.
   next action, keeping essential unsaved context. Finish this turn and wait;
   do not repeat an uncertain clear.
 - `gang hitch NAME` and `gang drop NAME`: start and stop an agent you hitch.
-- `gang title 'TEXT'`: name your session for the work in hand. Run it when
-  you read your assignment and whenever the arc changes; TEXT names the
-  outcome, not your role.
+- `gang title NAME 'TEXT'`: manually rename an idle native session from
+  another pane or the operator shell, with a free composer and no open turn.
 - `gang help COMMAND`: options for any command.
 
 ## Messages
