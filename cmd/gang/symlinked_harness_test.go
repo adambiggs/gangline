@@ -71,7 +71,7 @@ func TestInputReachesHarnessLaunchedThroughSymlink(t *testing.T) {
 		t.Fatalf("helper readiness = %q, %v", line, err)
 	}
 
-	claude := harness.Collar{Launch: harness.Launch{Command: "claude"}}
+	claude := harness.Collar{Launch: harness.Launch{Command: launch}}
 	if err := requireHarnessForeground(ctx, b, pane.ID, claude); err != nil {
 		t.Fatalf("symlinked harness refused: %v", err)
 	}
@@ -84,7 +84,7 @@ func TestInputReachesHarnessLaunchedThroughSymlink(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	input := paneInput{harnessInput: b, registry: b, identity: registration, launch: "claude"}
+	input := paneInput{harnessInput: b, registry: b, identity: registration, launch: launch, resolved: filepath.Base(executable)}
 	if err := sendHarnessKeys(ctx, input, pane.ID, claude, substrate.Keys{Text: "typed", Submit: true}); err != nil {
 		t.Fatalf("registered input to symlinked harness: %v", err)
 	}

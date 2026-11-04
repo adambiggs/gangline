@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
 	"time"
@@ -24,37 +25,60 @@ type harnessInput interface {
 }
 
 func requireHarnessForeground(ctx context.Context, b harnessInput, pane substrate.PaneID, c harness.Collar) error {
-	_, err := harnessForeground(ctx, b, pane, filepath.Base(c.Launch.Command))
+	_, err := harnessForeground(ctx, b, pane, c.Launch.Command)
 	return err
 }
 
-// harnessForeground returns the name tmux reports for the pane's foreground
-// process while that process is the harness launched as launch, and refuses
-// otherwise. tmux on macOS names a process by its executable file, so a
-// harness launched through a symlink (claude -> versions/<version>) is reported
-// under the link target's name. The process table then identifies it: the
-// leader of the foreground process group, which is the process tmux names,
-// carries that name and was invoked as launch.
+// Resolve only the configured launch path, never a process's arguments.
+func launchCommandNames(launch string, resolve func(string) (string, error)) map[string]bool {
+	names := map[string]bool{filepath.Base(launch): true}
+	if resolved, err := resolve(launch); err == nil {
+		names[filepath.Base(resolved)] = true
+	}
+	return names
+}
+
+func resolveLaunchCommand(launch string) (string, error) {
+	path, err := exec.LookPath(launch)
+	if err != nil {
+		return "", err
+	}
+	return filepath.EvalSymlinks(path)
+}
+
+// The configured executable's resolved name handles versioned symlinks.
+// A name mismatch remains a refusal; short kernel names are never expanded
+// by reading argv, and a matching descendant must lead the foreground group.
 func harnessForeground(ctx context.Context, b harnessInput, pane substrate.PaneID, launch string) (string, error) {
+	switch input := b.(type) {
+	case paneInput:
+		return input.foreground(ctx, pane)
+	case failedPaneInput:
+		return "", input.err
+	}
+	return harnessForegroundNamed(ctx, b, pane, launch, launchCommandNames(launch, resolveLaunchCommand))
+}
+
+func harnessForegroundNamed(ctx context.Context, b harnessInput, pane substrate.PaneID, launch string, names map[string]bool) (string, error) {
 	command, err := b.ForegroundCommand(ctx, pane)
 	if err != nil {
 		return "", err
 	}
-	if filepath.Base(command) == launch {
-		return launch, nil
+	if filepath.Base(command) == filepath.Base(launch) {
+		return command, nil
 	}
 	processes, err := b.ForegroundProcesses(ctx, pane)
-	for _, p := range processes {
-		if p.PID == p.GroupID && p.Name == command && filepath.Base(p.Command) == launch {
-			return command, nil
+	if err == nil {
+		for _, p := range processes {
+			if p.PID == p.GroupID && p.Name == command && names[p.Name] {
+				return command, nil
+			}
 		}
 	}
 	refusal := fmt.Errorf("refuse input: harness %q is not in the pane foreground; tmux reports %q", launch, command)
-	if err != nil {
-		return "", errors.Join(refusal, err)
-	}
-	return "", refusal
+	return "", errors.Join(refusal, err)
 }
+
 func sendHarnessKeys(ctx context.Context, b harnessInput, pane substrate.PaneID, c harness.Collar, keys substrate.Keys) error {
 	if err := requireHarnessForeground(ctx, b, pane, c); err != nil {
 		return err
@@ -190,6 +214,7 @@ func continuationQueued(c core.Compaction, now time.Time) bool {
 // inputState observes the composer even during a running turn. A permission
 // prompt or foreign foreground process never qualifies as a free composer.
 func (run *runtime) inputState(l *store.LockedAgent, a *core.Agent, b harnessInput, c harness.Collar) (inputVerdict, error) {
+	b = run.registeredInput(*a, b)
 	if err := run.checkRecipient(*a); err != nil {
 		return inputVerdict{}, err
 	}

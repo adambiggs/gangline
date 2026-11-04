@@ -22,7 +22,7 @@ func (run *runtime) pendingInput(l *store.LockedAgent, a *core.Agent, b harnessI
 	if err != harness.ErrNoComposer || a.Input != nil {
 		return err
 	}
-	if foregroundErr := requireHarnessForeground(context.Background(), b, substrate.PaneID(a.Pane), c); foregroundErr != nil {
+	if foregroundErr := requireHarnessForeground(context.Background(), run.registeredInput(*a, b), substrate.PaneID(a.Pane), c); foregroundErr != nil {
 		return errors.Join(err, foregroundErr)
 	}
 	queued, readErr := l.Paths.ListNew()

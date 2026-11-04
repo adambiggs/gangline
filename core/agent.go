@@ -314,6 +314,9 @@ type PaneRegistration struct {
 	Generation string `json:"generation"`
 	Session    string `json:"session"`
 	TokenHash  string `json:"token_hash,omitempty"`
+	// LaunchCommand is the resolved executable basename captured for this
+	// registration, so a later symlink update cannot change its identity.
+	LaunchCommand string `json:"launch_command,omitempty"`
 	// Server is the process of the tmux server that registered the pane. Its
 	// exit closes every pane of that server.
 	Server ProcessIdentity `json:"server,omitzero"`

@@ -264,7 +264,6 @@ type downRecord struct {
 	HitchIdentity string    `json:"hitch_identity,omitempty"`
 	PID           int       `json:"pid"`
 	ParentPID     int       `json:"parent_pid"`
-	ParentCommand string    `json:"parent_command,omitempty"`
 	Directory     string    `json:"directory,omitempty"`
 	TmuxPane      string    `json:"tmux_pane,omitempty"`
 }
@@ -273,10 +272,6 @@ func (run *runtime) recordDown(agents int, retainedLog string) error {
 	r := downRecord{At: run.cmd.now(), Team: run.settings.Session, RetainedLog: retainedLog, Agents: agents, HitchIdentity: run.cmd.environment("GANG_AGENT_ID"), PID: os.Getpid(), ParentPID: os.Getppid(), TmuxPane: run.cmd.environment("TMUX_PANE")}
 	if caller, err := run.callerInTeam(); err == nil && caller != nil {
 		r.Caller = string(caller.Name)
-	}
-	// Linux names the parent's command line; elsewhere the record keeps its pid.
-	if argv, err := os.ReadFile(fmt.Sprintf("/proc/%d/cmdline", r.ParentPID)); err == nil {
-		r.ParentCommand = strings.TrimSpace(strings.ReplaceAll(string(argv), "\x00", " "))
 	}
 	if dir, err := run.cmd.getwd(); err == nil {
 		r.Directory = dir

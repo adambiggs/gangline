@@ -105,7 +105,7 @@ func (run *runtime) verifyCaller(a core.Agent) error {
 	if err != nil {
 		return err
 	}
-	if err := requireHarnessForeground(context.Background(), input, substrate.PaneID(a.Pane), c); err != nil {
+	if err := requireHarnessForeground(context.Background(), run.registeredInput(a, input), substrate.PaneID(a.Pane), c); err != nil {
 		return err
 	}
 	if visible && tmux.CanReadIdentity(nativeIdentity(a.Process)) {
@@ -193,13 +193,22 @@ type paneInput struct {
 	registry paneRegistry
 	identity tmux.PaneIdentity
 	launch   string
+	resolved string
+}
+
+func (b paneInput) foreground(ctx context.Context, pane substrate.PaneID) (string, error) {
+	if string(pane) != b.identity.Pane {
+		return "", refuseError("input pane differs from registered pane")
+	}
+	names := map[string]bool{filepath.Base(b.launch): true}
+	if b.resolved != "" {
+		names[b.resolved] = true
+	}
+	return harnessForegroundNamed(ctx, b.harnessInput, pane, b.launch, names)
 }
 
 func (b paneInput) SendKeys(ctx context.Context, pane substrate.PaneID, keys substrate.Keys) error {
-	if string(pane) != b.identity.Pane {
-		return refuseError("input pane differs from registered pane")
-	}
-	command, err := harnessForeground(ctx, b.harnessInput, pane, b.launch)
+	command, err := b.foreground(ctx, pane)
 	if err != nil {
 		return err
 	}
@@ -218,7 +227,11 @@ func (run *runtime) registeredInput(a core.Agent, input harnessInput) harnessInp
 	if err != nil {
 		return failedPaneInput{harnessInput: input, err: err}
 	}
-	return paneInput{input, b, paneIdentity(a), filepath.Base(c.Launch.Command)}
+	// Rebinding must discard the previous registration and its launch name.
+	if previous, ok := input.(paneInput); ok {
+		input = previous.harnessInput
+	}
+	return paneInput{harnessInput: input, registry: b, identity: paneIdentity(a), launch: c.Launch.Command, resolved: a.Registration.LaunchCommand}
 }
 
 type failedPaneInput struct {

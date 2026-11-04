@@ -67,14 +67,14 @@ func (backend *Backend) PaneProcesses(ctx context.Context, pane substrate.PaneID
 	if err != nil {
 		return nil, err
 	}
-	records, err := readProcessTable(ctx, root)
+	records, err := readProcessTable(ctx, root, true)
 	if err != nil {
 		return nil, err
 	}
-	return selectPaneProcesses(root, records, foregroundCommand)
+	return selectPaneProcesses(root, records)
 }
 
-func selectPaneProcesses(root int, records map[int]processRecord, command func(substrate.Process) string) ([]substrate.Process, error) {
+func selectPaneProcesses(root int, records map[int]processRecord) ([]substrate.Process, error) {
 	if _, ok := records[root]; !ok {
 		return nil, fmt.Errorf("read process tree: pane process %d was not present", root)
 	}
@@ -83,7 +83,6 @@ func selectPaneProcesses(root int, records map[int]processRecord, command func(s
 		if descendsFrom(pid, root, records) {
 			process := record.Process
 			process.Name = record.Command
-			process.Command = command(process)
 			result = append(result, process)
 		}
 	}
@@ -107,14 +106,14 @@ func (backend *Backend) foregroundProcesses(ctx context.Context, pane substrate.
 	if err != nil {
 		return nil, err
 	}
-	records, err := readProcessTable(ctx, root)
+	records, err := readProcessTable(ctx, root, false)
 	if err != nil {
 		return nil, err
 	}
-	return selectForegroundProcesses(root, records, foregroundCommand)
+	return selectForegroundProcesses(root, records)
 }
 
-func selectForegroundProcesses(root int, records map[int]processRecord, command func(substrate.Process) string) ([]substrate.Process, error) {
+func selectForegroundProcesses(root int, records map[int]processRecord) ([]substrate.Process, error) {
 	rootRecord, ok := records[root]
 	if !ok {
 		return nil, fmt.Errorf("read process tree: pane process %d was not present", root)
@@ -128,7 +127,6 @@ func selectForegroundProcesses(root int, records map[int]processRecord, command 
 		if record.GroupID == rootRecord.foregroundGroup && descendsFrom(pid, root, records) {
 			process := record.Process
 			process.Name = record.Command
-			process.Command = command(process)
 			result = append(result, process)
 		}
 	}
@@ -212,7 +210,7 @@ func (backend *Backend) ownedProcesses(ctx context.Context, pane substrate.PaneI
 			owned = nil
 		}
 	}()
-	enumerated, err := readProcessTable(ctx, root)
+	enumerated, err := readProcessTable(ctx, root, false)
 	if err != nil {
 		return nil, err
 	}
@@ -242,7 +240,7 @@ func processGone(err error) bool {
 	return errors.Is(err, os.ErrNotExist) || errors.Is(err, syscall.ESRCH)
 }
 
-func collectProcessRecords(ctx context.Context, root int, pids []int, read func(int) (processRecord, error)) (map[int]processRecord, error) {
+func collectProcessRecords(ctx context.Context, root int, pids []int, complete bool, read func(int) (processRecord, error)) (map[int]processRecord, error) {
 	records := make(map[int]processRecord, len(pids))
 	for _, pid := range pids {
 		if err := ctx.Err(); err != nil {
@@ -253,8 +251,9 @@ func collectProcessRecords(ctx context.Context, root int, pids []int, read func(
 		}
 		record, err := read(pid)
 		if err != nil {
-			// A pane root that exited is absent, as from any process table.
-			if processGone(err) || pid != root && (errors.Is(err, syscall.EPERM) || errors.Is(err, syscall.EACCES)) {
+			// Exited processes are gone. A complete preflight table cannot
+			// skip a denied PID: its ancestry and command remain unknown.
+			if processGone(err) || !complete && pid != root && (errors.Is(err, syscall.EPERM) || errors.Is(err, syscall.EACCES)) {
 				continue
 			}
 			return nil, fmt.Errorf("read process tree: inspect process %d: %w", pid, err)
@@ -453,32 +452,6 @@ func signalProcesses(processes []processIdentity, signal syscall.Signal) error {
 		}
 	}
 	return nil
-}
-
-func parseProcessTable(output string) (map[int]processRecord, error) {
-	records := make(map[int]processRecord)
-	for lineNumber, line := range strings.Split(strings.TrimSpace(output), "\n") {
-		fields := strings.Fields(line)
-		if len(fields) < 10 {
-			return nil, fmt.Errorf("read process tree: line %d has %d fields", lineNumber+1, len(fields))
-		}
-		values := make([]int, 4)
-		for index := range values {
-			value, err := strconv.Atoi(fields[index])
-			if err != nil {
-				return nil, fmt.Errorf("read process tree: line %d field %d: %w", lineNumber+1, index+1, err)
-			}
-			values[index] = value
-		}
-		records[values[0]] = processRecord{
-			Process: substrate.Process{
-				PID: values[0], ParentPID: values[1], GroupID: values[2], Command: strings.Join(fields[9:], " "),
-			},
-			foregroundGroup: values[3],
-			started:         strings.Join(fields[4:9], " "),
-		}
-	}
-	return records, nil
 }
 
 func descendsFrom(pid, root int, records map[int]processRecord) bool {

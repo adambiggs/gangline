@@ -234,7 +234,7 @@ func (run *runtime) tickAgent(id core.HitchID, notice hookNotice, wait bool) (re
 	}
 	if a.InputOutage != nil {
 		if _, composerErr := harness.ReadComposer(c.Primitives.Composer, screen); composerErr == nil {
-			if err := requireHarnessForeground(ctx, b, substrate.PaneID(a.Pane), c); err != nil {
+			if err := requireHarnessForeground(ctx, run.registeredInput(a, b), substrate.PaneID(a.Pane), c); err != nil {
 				return err
 			}
 			if err := run.clearInputOutage(l, &a); err != nil {
