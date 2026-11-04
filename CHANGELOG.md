@@ -1,5 +1,58 @@
 # Changelog
 
+## [3.0.0](https://github.com/adambiggs/gangline/compare/gangline-v2.4.2...gangline-v3.0.0) (2026-11-04)
+
+
+### ⚠ BREAKING CHANGES
+
+* hitch --title and up --title are no longer accepted. Use gang title NAME 'TEXT' separately when the native session is idle.
+* background warnings, status --why and background_idle audit reasons now describe a received report with unknown current task state. Consumers parsing the previous human text must adapt; JSON shapes and the compact roster label are unchanged.
+* **cli:** list output is bounded even when redirected or requested as JSON. Use --all for complete inventories and exports.
+* **log:** gang log now limits redirected output too. Add --all to scripts that require the complete event history.
+
+### Features
+
+* accept explicit native titles at hitch ([be0c6e9](https://github.com/adambiggs/gangline/commit/be0c6e985fb36d48491728baa3e5ad02bf488660))
+* allow partial roster observations ([f4e3121](https://github.com/adambiggs/gangline/commit/f4e3121f4b54f9d50437afcc86f51e13c39f0936))
+* clear native context with logical continuity ([2ae8189](https://github.com/adambiggs/gangline/commit/2ae81891b5a2f43145a3c1e1823dfdecfd17f4f5))
+* **evidence:** collect explicit durable bundles ([e34516e](https://github.com/adambiggs/gangline/commit/e34516eba491f2300778a6846bd8a5f5ad3e5728))
+* **evidence:** join installed acceptance to code ([7e636c2](https://github.com/adambiggs/gangline/commit/7e636c2d8f8e66095fb16f5eb74413dc877d30fd))
+* **evidence:** verify private SDLC evidence joins ([a0888ff](https://github.com/adambiggs/gangline/commit/a0888ff4b16184c77910ecb395ef8dbbe06ac00a))
+* **evidence:** verify retained Claude turn joins ([b63d93f](https://github.com/adambiggs/gangline/commit/b63d93fcb6e3f2b9dbd0806e82e5c3df23f6b6cd))
+* **evidence:** verify retained generation charges ([3224e65](https://github.com/adambiggs/gangline/commit/3224e65ae7267e577fd8bc3ae2f0b8f395a3e108))
+* expose bounded audit metadata pages ([ead6da6](https://github.com/adambiggs/gangline/commit/ead6da672aa84a02dcdf390640a4b6cb2f277492))
+* expose bounded observation coverage ([11869d9](https://github.com/adambiggs/gangline/commit/11869d9fe5d342bf5929402853bd0b1b1596ceda))
+* report configured and observed model settings ([9d9fd2d](https://github.com/adambiggs/gangline/commit/9d9fd2d74dba68edc0647d6cae5d9951b9dde55a))
+* retain native session token counters in audit readings ([80d7079](https://github.com/adambiggs/gangline/commit/80d7079545758e759a9853c8fd0052e6467e6604))
+* summarize bounded audit metadata tails ([1b603e3](https://github.com/adambiggs/gangline/commit/1b603e3b7b61875701079ee015fbb6cec33e89ae))
+
+
+### Bug Fixes
+
+* **acceptance:** isolate provider fixture state ([e00ca2f](https://github.com/adambiggs/gangline/commit/e00ca2fa168d2177cbf850b0910b89272de4336f)), closes [#216](https://github.com/adambiggs/gangline/issues/216)
+* **catalog:** advertise omitted Claude model aliases ([d442213](https://github.com/adambiggs/gangline/commit/d442213559acc617233c361905244adc98f967f0))
+* **cli:** bound default list output ([d608bac](https://github.com/adambiggs/gangline/commit/d608bac18ea152a2ddd462e623fa3bc415315f84))
+* **collars:** preserve lifecycle behavior under custom names ([a88cabd](https://github.com/adambiggs/gangline/commit/a88cabd5e7e34823d62dace1de77c48831028780))
+* **context:** read verified parent transcript telemetry ([c9ad6d5](https://github.com/adambiggs/gangline/commit/c9ad6d5c91d4af8299b068771cbfe4d30568c961))
+* detect changed native context source records ([c4d25b8](https://github.com/adambiggs/gangline/commit/c4d25b8b7e8160bcdd5d9be079db639f66b1044e))
+* **evidence:** join custom-tool result witnesses ([13b3abe](https://github.com/adambiggs/gangline/commit/13b3abeff65c80bed7543bab676eb44dd6381a55))
+* **hooks:** reject child events before parent writes ([d8e3c17](https://github.com/adambiggs/gangline/commit/d8e3c1763eeddf461f749459c2a6e3a8d898e8e8))
+* **input:** preserve matching ownership after paste ([190347a](https://github.com/adambiggs/gangline/commit/190347a6363d765ddee173f0906b1abfad182511))
+* **input:** read wrapped composer continuations ([ff9302b](https://github.com/adambiggs/gangline/commit/ff9302b70c144663115fc8a9df89b6f79f03bed1))
+* keep roster metadata compatible with old readers ([e4cfa57](https://github.com/adambiggs/gangline/commit/e4cfa5728e07c14b4eebc0b5ab6517eebc3db5f2))
+* **log:** bound default output to recent events ([a079dd2](https://github.com/adambiggs/gangline/commit/a079dd286f615269cff3d1a44a704ed5f9ba790f))
+* preserve audit and diagnostic logs across teardown ([512b964](https://github.com/adambiggs/gangline/commit/512b964b7c8e5180ab78c22da8292ef6a3b1a977))
+* preserve pending compaction on failed save ([f322c8e](https://github.com/adambiggs/gangline/commit/f322c8e0d2f9b6b5f12d882ce37cb2e402527aee))
+* qualify background reports in warnings and status ([a2b0685](https://github.com/adambiggs/gangline/commit/a2b068524a630fcc8fc25403cdcb272f2aa3c98c))
+* **recovery:** bind capacity continuations to native turns ([2ccf6b5](https://github.com/adambiggs/gangline/commit/2ccf6b530f0dbdbe0b34aba483c9e09533a69752)), closes [#18](https://github.com/adambiggs/gangline/issues/18)
+* retain native observations before advancing their cursor ([934a2d7](https://github.com/adambiggs/gangline/commit/934a2d7546fd61e3e9a7df55917a8e7fbe054f26))
+* retain observation continuity gaps ([4a702bb](https://github.com/adambiggs/gangline/commit/4a702bba66d8ec09b63f1eebf4fb80bb6d65133b))
+* **site:** render Docker command as copyable block ([31dd49f](https://github.com/adambiggs/gangline/commit/31dd49f0fccbc9bb9775d87f76efa2d8b2f4af79))
+* **snooze:** retain active wake when scheduling follow-up ([c74b0ba](https://github.com/adambiggs/gangline/commit/c74b0ba2cf0bb15e13bcca3589b89460ec9a8343)), closes [#231](https://github.com/adambiggs/gangline/issues/231)
+* stop automatically renaming native sessions ([41c7aa6](https://github.com/adambiggs/gangline/commit/41c7aa6c17b7a5ff6d2162e06acaa55a063a5fc2))
+* suppress unchanged status-line audit observations ([2369e4f](https://github.com/adambiggs/gangline/commit/2369e4f8fbbf40432ef947a59989542c7b0d5762))
+* **title:** withdraw failed automatic rename drafts ([fa49f4e](https://github.com/adambiggs/gangline/commit/fa49f4e7fa492dc6f096eab6b52f58e2d450f5af))
+
 ## [2.4.2](https://github.com/adambiggs/gangline/compare/gangline-v2.4.1...gangline-v2.4.2) (2026-10-30)
 
 
