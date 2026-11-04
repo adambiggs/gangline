@@ -4,7 +4,6 @@ import (
 	"errors"
 	"fmt"
 	"strings"
-	"unicode/utf8"
 
 	"github.com/adambiggs/gangline/core"
 	"github.com/adambiggs/gangline/harness"
@@ -72,10 +71,10 @@ func (cmd command) title(args []string) (result error) {
 	if err != nil {
 		return err
 	}
-	return run.submitTitle(l, &a, c, title, false)
+	return run.submitTitle(l, &a, c, title)
 }
 
-func (run *runtime) submitTitle(l *store.LockedAgent, a *core.Agent, c harness.Collar, title string, automatic bool) (result error) {
+func (run *runtime) submitTitle(l *store.LockedAgent, a *core.Agent, c harness.Collar, title string) (result error) {
 	action, err := harness.RenderAction(c.Actions.Title, map[string]string{"title": title})
 	if err != nil {
 		return err
@@ -93,9 +92,6 @@ func (run *runtime) submitTitle(l *store.LockedAgent, a *core.Agent, c harness.C
 		return err
 	}
 	if !v.Free {
-		if automatic {
-			return nil
-		}
 		return refuseError("title not submitted: %s", v.Reason)
 	}
 	ctx, cancel := run.cmd.timeout(operationTimeout)
@@ -108,9 +104,6 @@ func (run *runtime) submitTitle(l *store.LockedAgent, a *core.Agent, c harness.C
 		return err
 	}
 	if a.Activity != core.Idle {
-		if automatic {
-			return nil
-		}
 		return refuseError("title requires native idle: %s %s", a.Activity, a.Evidence)
 	}
 	composer, err := harness.ReadComposer(c.Primitives.Composer, screen)
@@ -118,9 +111,6 @@ func (run *runtime) submitTitle(l *store.LockedAgent, a *core.Agent, c harness.C
 		return err
 	}
 	if composer.Text != "" || composer.TailOccupied || composer.Owner != v.Owner {
-		if automatic {
-			return nil
-		}
 		return refuseError("title not submitted: native composer is occupied or changed ownership")
 	}
 	before, err := harness.ActionRefusals(c.Actions.Title, screen)
@@ -135,18 +125,6 @@ func (run *runtime) submitTitle(l *store.LockedAgent, a *core.Agent, c harness.C
 	a.NativeTitle = &core.NativeTitle{Text: title, Attempted: true}
 	if err := l.Save(*a); err != nil {
 		return err
-	}
-	staged := automatic
-	if automatic {
-		defer func() {
-			if staged && result != nil {
-				if err := run.withdrawTitleDraft(*a, b, c, action.Text, v.Owner); err != nil {
-					result = fmt.Errorf("%w; title cleanup unconfirmed: %v", result, err)
-				} else {
-					result = fmt.Errorf("%w; composer clear of staged title command", result)
-				}
-			}
-		}()
 	}
 	if err := sendHarnessKeys(ctx, b, substrate.PaneID(a.Pane), c, input); err != nil {
 		return err
@@ -197,7 +175,6 @@ func (run *runtime) submitTitle(l *store.LockedAgent, a *core.Agent, c harness.C
 	if err := harness.AwaitComposerText(ctx, b.Capture, substrate.PaneID(a.Pane), c, "", settle); err != nil {
 		return commandError{status: exitUnknown, text: "title submit key sent; native outcome unconfirmed: " + err.Error()}
 	}
-	staged = false
 	screen, err = b.Capture(ctx, substrate.PaneID(a.Pane))
 	if err != nil {
 		return commandError{status: exitUnknown, text: "title submit key sent; native outcome unconfirmed: " + err.Error()}
@@ -210,95 +187,4 @@ func (run *runtime) submitTitle(l *store.LockedAgent, a *core.Agent, c harness.C
 		return commandError{status: exitNative, text: "native title refused: " + strings.TrimSpace(after[len(after)-1])}
 	}
 	return commandError{status: exitUnknown, text: "title command submitted; native title persistence unconfirmed"}
-}
-
-func (run *runtime) withdrawTitleDraft(a core.Agent, b harnessInput, c harness.Collar, text, owner string) error {
-	ctx, cancel := run.cmd.timeout(compactAbortTimeout)
-	defer cancel()
-	screen, err := run.captureRegistered(ctx, b, a)
-	if err != nil {
-		return err
-	}
-	if _, blocked, err := harness.InputBlocked(c, screen); err != nil {
-		return err
-	} else if blocked {
-		return fmt.Errorf("native input blocked; staged input left alone")
-	}
-	composer, err := harness.ReadComposer(c.Primitives.Composer, screen)
-	if err != nil {
-		return err
-	}
-	if composer.TailOccupied || composer.Owner != owner {
-		return fmt.Errorf("native composer changed ownership or has an occupied tail; input left alone")
-	}
-	if composer.Text == "" {
-		return nil
-	}
-	if composer.Text != text {
-		return fmt.Errorf("native composer changed; input left alone")
-	}
-	if c.Actions.TitleClear == nil {
-		return fmt.Errorf("collar declares no title clear keys; staged title command left alone")
-	}
-	pane := substrate.PaneID(a.Pane)
-	if err := sendHarnessKeys(ctx, b, pane, c, c.Actions.TitleClear.Input()); err != nil {
-		return err
-	}
-	if run.cmd.settleInput != nil {
-		err = run.cmd.settleInput(ctx, b, pane, c, compactClearSettle)
-	} else {
-		err = awaitComposerChange(ctx, b, pane, c, composer.Text, compactClearSettle)
-	}
-	if err != nil {
-		return err
-	}
-	screen, err = run.captureRegistered(ctx, b, a)
-	if err != nil {
-		return err
-	}
-	composer, err = harness.ReadComposer(c.Primitives.Composer, screen)
-	if err != nil {
-		return err
-	}
-	if composer.Text != "" || composer.TailOccupied || composer.Owner != owner {
-		return fmt.Errorf("native composer did not read back empty with the same owner; inspect the composer")
-	}
-	return nil
-}
-
-func nativeSessionTitle(name core.AgentName, team, task string) string {
-	title := string(name) + "@" + team
-	first, _, _ := strings.Cut(task, "\n")
-	first = strings.Join(strings.Fields(first), " ")
-	// Keep the task excerpt readable in native session lists, preserving identity.
-	if utf8.RuneCountInString(first) > 60 {
-		first = string([]rune(first)[:59]) + "…"
-	}
-	if first != "" {
-		title += ": " + first
-	}
-	return title
-}
-
-func (run *runtime) autoTitle(l *store.LockedAgent, a *core.Agent, c harness.Collar) error {
-	if clearPending(*a) {
-		return nil
-	}
-	if a.NativeTitle == nil || a.NativeTitle.Attempted || a.Status != core.Active || a.Activity != core.Idle || a.Input != nil ||
-		a.Native.SubmittedAt.IsZero() || a.Native.SubmittedAt.After(a.Native.FinishedAt) {
-		return nil
-	}
-	if a.Compaction != nil && a.Compaction.Status != "failed" && !a.Compaction.ResumeAdmitted {
-		return nil
-	}
-	err := run.submitTitle(l, a, c, a.NativeTitle.Text, true)
-	if err == nil {
-		return nil
-	}
-	status := "failed"
-	var ce commandError
-	if errors.As(err, &ce) && ce.status == exitUnknown {
-		status = "unconfirmed"
-	}
-	return run.record(*a, core.Event{Type: "observation", Status: status, Reason: "automatic title: " + err.Error()})
 }

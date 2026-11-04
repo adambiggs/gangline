@@ -97,8 +97,8 @@ type ContextBandThresholds struct {
 	Late  float64 `json:"late"`
 }
 
-// NativeTitle records the intended session title and whether native input was
-// attempted. An ambiguous attempt must not be replayed automatically.
+// NativeTitle retains a manual title request or title metadata from an older
+// installation. It never schedules native input.
 type NativeTitle struct {
 	Text      string `json:"text"`
 	Attempted bool   `json:"attempted,omitempty"`

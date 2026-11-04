@@ -93,8 +93,9 @@ type Primitives struct {
 }
 
 type Actions struct {
-	Clear             *Action  `json:"clear,omitempty"`
-	Title             Action   `json:"title"`
+	Clear *Action `json:"clear,omitempty"`
+	Title Action  `json:"title"`
+	// TitleClear remains decodable for old collars; no runtime action invokes it.
 	TitleClear        *Action  `json:"title_clear,omitempty"`
 	Interrupt         Action   `json:"interrupt"`
 	Compact           Action   `json:"compact"`
