@@ -4,6 +4,8 @@ package main
 
 import (
 	"encoding/json"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 )
@@ -20,7 +22,11 @@ func TestHitchPersistsExplicitModelOptions(t *testing.T) {
 	if len(agents) != 1 {
 		t.Fatalf("records: %+v", agents)
 	}
-	data, err := json.Marshal(agents[0])
+	p, err := f.run.team.Agent(agents[0].ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	data, err := os.ReadFile(filepath.Join(p.Directory, "model-metadata.json"))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -30,5 +36,8 @@ func TestHitchPersistsExplicitModelOptions(t *testing.T) {
 	}
 	if saved["configured_model"] != "vendor/model" || saved["configured_effort"] != "high" {
 		t.Fatalf("saved launch options: %s", data)
+	}
+	if agents[0].ConfiguredModel != "" || agents[0].ConfiguredEffort != "" {
+		t.Fatal("failed launch without a registration attributed configuration")
 	}
 }

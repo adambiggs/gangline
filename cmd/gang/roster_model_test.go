@@ -29,6 +29,19 @@ func TestRosterModelFieldsKeepConfiguredAndObservedSeparate(t *testing.T) {
 			if err := json.Unmarshal([]byte(tc.state), &agent); err != nil {
 				t.Fatal(err)
 			}
+			// These fields are hydrated by the store's optional side record, not
+			// decoded from the strict lifecycle schema.
+			var metadata struct {
+				Model  string `json:"configured_model"`
+				Effort string `json:"configured_effort"`
+				Native struct {
+					Effort string `json:"effort"`
+				} `json:"native"`
+			}
+			if err := json.Unmarshal([]byte(tc.state), &metadata); err != nil {
+				t.Fatal(err)
+			}
+			agent.ConfiguredModel, agent.ConfiguredEffort, agent.Native.Effort = metadata.Model, metadata.Effort, metadata.Native.Effort
 			agent.Name, agent.ID, agent.Activity = "worker", "fixture", core.Busy
 			row, err := (&runtime{}).agentRow(agent)
 			if err != nil {
@@ -77,8 +90,8 @@ func TestNativeEffortIsClearedWhenNextModelReadingOmitsIt(t *testing.T) {
 	if err := json.Unmarshal(data, &fields); err != nil {
 		t.Fatal(err)
 	}
-	if fields["effort"] != "high" {
-		t.Fatalf("native effort lost: %s", data)
+	if state.Effort != "high" || fields["effort"] != nil {
+		t.Fatalf("effort lost or strict state extended: %+v / %s", state, data)
 	}
 	acceptReadings(&state, []core.Reading{{Kind: "model", Source: "session-log", Model: "vendor/next"}})
 	data, _ = json.Marshal(state)
@@ -86,7 +99,7 @@ func TestNativeEffortIsClearedWhenNextModelReadingOmitsIt(t *testing.T) {
 	if err := json.Unmarshal(data, &fields); err != nil {
 		t.Fatal(err)
 	}
-	if fields["effort"] != nil {
+	if state.Effort != "" || fields["effort"] != nil {
 		t.Fatalf("old effort carried into unknown turn: %s", data)
 	}
 }

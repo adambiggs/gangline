@@ -302,10 +302,15 @@ conversation's last observations, which can be stale until a new reading arrives
 After Claude compaction or clear, its observed model can be null until a new
 status-line payload arrives; null is not evidence of a model change.
 
-These saved launch values and native effort extend agent state. Once written,
-older binaries that reject unknown state fields cannot read that state. Keep
-a compatible executable for recovery; do not roll back to an older binary
-after the new state has been written. The audit reading schema is unchanged.
+Launch values and native effort live in an optional per-agent side record;
+the lifecycle state and audit schemas remain readable by older binaries.
+Missing, unreadable or unsupported metadata leaves these values unknown and
+does not block inventory or lifecycle commands.
+Values attach only to the matching registered launch. Native effort also
+requires an exact match to the saved state snapshot. An older writer's state
+change can therefore make effort unknown until a new observation is retained,
+while configuration stays bound to the same launch. A failed launch without a
+registration reports nulls. The side record is removed with its agent.
 
 Native `observation` events can also carry `token-usage` readings. These retain
 session-cumulative input/output counters from the status-line payload or the

@@ -1,6 +1,7 @@
 package store
 
 import (
+	"bytes"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -157,12 +158,17 @@ func (p TeamPaths) CreateAgent(a core.Agent) (*LockedAgent, error) {
 }
 func (p AgentPaths) Read() (core.Agent, error) {
 	var a core.Agent
-	if err := readJSON(p.State, &a); err != nil {
+	data, err := os.ReadFile(p.State)
+	if err != nil {
+		return a, fmt.Errorf("read %s: %w", p.State, err)
+	}
+	if err := decodeJSON(p.State, bytes.NewReader(data), &a); err != nil {
 		return a, err
 	}
 	if string(a.ID) != filepath.Base(p.Directory) || a.Name == "" || a.Collar == "" {
 		return a, fmt.Errorf("decode %s: invalid agent identity", p.State)
 	}
+	p.readModelMetadata(data, &a)
 	return a, nil
 }
 func (p TeamPaths) ListAgents() ([]core.Agent, error) {
@@ -238,7 +244,10 @@ func readJSON(path string, out any) error {
 		return fmt.Errorf("read %s: %w", path, err)
 	}
 	defer f.Close()
-	d := json.NewDecoder(f)
+	return decodeJSON(path, f, out)
+}
+func decodeJSON(path string, r io.Reader, out any) error {
+	d := json.NewDecoder(r)
 	d.DisallowUnknownFields()
 	if err := d.Decode(out); err != nil {
 		return fmt.Errorf("decode %s: %w", path, err)

@@ -169,8 +169,11 @@ func TestRehitchRetainsInboxAndNativeCursor(t *testing.T) {
 	if err != nil || got.Rehitch != nil || got.Status != core.Starting || got.Pane != "" || got.Native.SessionID != "s" || got.Native.Offset != 123 || got.Native.HookSequence != 4 {
 		t.Fatalf("prepared state = %+v: %v", got, err)
 	}
-	if got.ConfiguredModel != "" || got.ConfiguredEffort != "" || got.Native.Model != "vendor/last-observed" || got.Native.Effort != "low" {
+	if got.ConfiguredModel != "" || got.ConfiguredEffort != "" || got.Native.Model != "vendor/last-observed" || got.Native.Effort != "" {
 		t.Fatalf("rehitch model provenance = %+v", got)
+	}
+	if next.Native.Effort != "low" {
+		t.Fatal("in-memory observation lost before the new registration")
 	}
 	pending, err := p.ListNew()
 	if err != nil || len(pending) != 1 || pending[0].ID != e.ID {

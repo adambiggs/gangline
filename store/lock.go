@@ -75,7 +75,7 @@ func (l *LockedAgent) Save(a core.Agent) error {
 		}
 		a.Native.BoundSession = a.Native.SessionID
 	}
-	if err := atomicJSON(l.Paths.State, a); err != nil {
+	if err := l.Paths.saveModelState(a, atomicJSON); err != nil {
 		return err
 	}
 	l.bound = &a.Native.BoundSession

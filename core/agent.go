@@ -39,8 +39,8 @@ type Agent struct {
 	ID                    HitchID                `json:"id"`
 	Name                  AgentName              `json:"name"`
 	Collar                string                 `json:"collar"`
-	ConfiguredModel       string                 `json:"configured_model,omitempty"`
-	ConfiguredEffort      string                 `json:"configured_effort,omitempty"`
+	ConfiguredModel       string                 `json:"-"`
+	ConfiguredEffort      string                 `json:"-"`
 	Clear                 *ClearRequest          `json:"clear,omitempty"`
 	Rehitch               *Message               `json:"rehitch,omitempty"`
 	Role                  string                 `json:"role,omitempty"`
@@ -270,7 +270,7 @@ type NativeState struct {
 	Context              Reading   `json:"context,omitzero"`
 	Limits               Reading   `json:"limits,omitzero"`
 	Model                string    `json:"model,omitempty"`
-	Effort               string    `json:"effort,omitempty"`
+	Effort               string    `json:"-"`
 }
 
 type Reading struct {
