@@ -1,5 +1,12 @@
 # Changelog
 
+## [3.0.2](https://github.com/adambiggs/gangline/compare/gangline-v3.0.1...gangline-v3.0.2) (2026-11-04)
+
+
+### Bug Fixes
+
+* recover stopped hitches without replacing identities ([c7ec295](https://github.com/adambiggs/gangline/commit/c7ec2950f30c0b44d97b66aaeafea2f91509f4df))
+
 ## [3.0.1](https://github.com/adambiggs/gangline/compare/gangline-v3.0.0...gangline-v3.0.1) (2026-11-04)
 
 
