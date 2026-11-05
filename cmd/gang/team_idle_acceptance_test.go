@@ -3,14 +3,17 @@
 package main
 
 import (
+	"context"
 	"errors"
 	"os"
 	"path/filepath"
+	"sync"
 	"testing"
 	"time"
 
 	"github.com/adambiggs/gangline/core"
 	"github.com/adambiggs/gangline/store"
+	"github.com/adambiggs/gangline/substrate"
 )
 
 type idleFixture struct {
@@ -51,6 +54,34 @@ func (f *idleFixture) reserve(t *testing.T) *store.IdleNotice {
 	}
 	return n
 }
+
+// advance keeps probe freshness separate from the activity evidence used by
+// the timer. Five-second steps model the normal watchdog cadence without sleep.
+func (f *idleFixture) advance(t *testing.T, delta time.Duration) {
+	t.Helper()
+	now := f.cmd.now().Add(delta)
+	f.cmd.clock = func() time.Time { return now }
+	f.run.cmd = f.cmd
+	agents, err := f.run.team.ListAgents()
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, a := range agents {
+		f.setAgent(t, a, func(a *core.Agent) { a.StatusProbeAt = now })
+	}
+}
+func (f *idleFixture) mature(t *testing.T) *store.IdleNotice {
+	t.Helper()
+	f.reserve(t)
+	var n *store.IdleNotice
+	for elapsed := time.Duration(0); elapsed < f.run.settings.TeamIdleMinDuration; {
+		step := min(5*time.Second, f.run.settings.TeamIdleMinDuration-elapsed)
+		f.advance(t, step)
+		n = f.reserve(t)
+		elapsed += step
+	}
+	return n
+}
 func (f *idleFixture) work(t *testing.T, id string, due time.Time) core.Envelope {
 	t.Helper()
 	p, _ := f.run.team.Agent(f.worker.ID)
@@ -85,7 +116,7 @@ func TestTeamIdleLastWorkerNoRepeatRestartPruningAndRearm(t *testing.T) {
 		t.Fatal("busy worker notified")
 	}
 	f.worker = f.setAgent(t, f.worker, func(a *core.Agent) { a.Activity = core.Idle })
-	n := f.reserve(t)
+	n := f.mature(t)
 	if n == nil {
 		t.Fatal("last idle worker did not notify")
 	}
@@ -127,6 +158,7 @@ func TestTeamIdleLastWorkerNoRepeatRestartPruningAndRearm(t *testing.T) {
 		t.Fatal(err)
 	}
 	for _, turn := range []string{"new", "old", "new"} {
+		f.worker = f.agent(t, f.worker.ID)
 		f.worker = f.setAgent(t, f.worker, func(a *core.Agent) { a.Native.TurnID = turn; a.Activity = core.Busy })
 		f.reserve(t)
 		f.worker = f.setAgent(t, f.worker, func(a *core.Agent) { a.Activity = core.Idle })
@@ -135,7 +167,7 @@ func TestTeamIdleLastWorkerNoRepeatRestartPruningAndRearm(t *testing.T) {
 		}
 	}
 	f.work(t, "work-two", time.Time{})
-	if got := f.reserve(t); got == nil || got.Envelope.ID == n.Envelope.ID {
+	if got := f.mature(t); got == nil || got.Envelope.ID == n.Envelope.ID {
 		t.Fatal("new completed input between sweeps did not rearm")
 	}
 }
@@ -145,6 +177,12 @@ func TestTeamIdleSnapshotRacesAndBlockers(t *testing.T) {
 			f := newIdleFixture(t)
 			f.reserve(t)
 			f.work(t, "work", time.Time{})
+			f.reserve(t)
+			for range 23 {
+				f.advance(t, 5*time.Second)
+				f.reserve(t)
+			}
+			f.advance(t, 5*time.Second)
 			s := f.sweep(t)
 			p, _ := f.run.team.Agent(f.worker.ID)
 			switch mode {
@@ -216,7 +254,7 @@ func TestTeamIdleFutureMixedMembershipAndRecipientReplacement(t *testing.T) {
 	f.setAgent(t, other, func(a *core.Agent) { a.Collar = "claude"; a.StatusProbeAt = f.cmd.now() })
 	f.reserve(t)
 	e := f.work(t, "future", f.cmd.now().Add(time.Hour))
-	n := f.reserve(t)
+	n := f.mature(t)
 	if n == nil {
 		t.Fatal("future work vetoed")
 	}
@@ -245,7 +283,7 @@ func TestTeamIdlePublicationRecoveryUsesNormalDeliveryOnce(t *testing.T) {
 	f := newIdleFixture(t)
 	f.reserve(t)
 	f.work(t, "work", time.Time{})
-	n := f.reserve(t)
+	n := f.mature(t)
 	if n == nil {
 		t.Fatal("missing intent")
 	}
@@ -315,8 +353,24 @@ func TestTeamIdleExplicitWakePublicationOnly(t *testing.T) {
 	}
 }
 
+// Full ticks probe workers concurrently. Serialize the shared fake backend's
+// capture counter without changing production concurrency.
+type idleSweepInput struct {
+	*inputFixture
+	mu sync.Mutex
+}
+
+func (b *idleSweepInput) Capture(ctx context.Context, pane substrate.PaneID) (substrate.Screen, error) {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	return b.inputFixture.Capture(ctx, pane)
+}
+
 func TestTeamIdleFullSweepConcurrentWorkers(t *testing.T) {
 	f := newIdleFixture(t)
+	backend := &idleSweepInput{inputFixture: f.input}
+	f.cmd.paneBackend, f.cmd.inputBackend = backend, backend
+	f.run.cmd = f.cmd
 	f.env["GANGLINE_HITCH_ID"] = string(f.lead.ID)
 	for _, a := range []core.Agent{f.lead, f.worker, f.addHitched(t, "other", "other", "", f.worker.ID)} {
 		f.setAgent(t, a, func(a *core.Agent) {
@@ -335,9 +389,35 @@ func TestTeamIdleFullSweepConcurrentWorkers(t *testing.T) {
 	if err := f.cmd.tick(nil); err != nil {
 		t.Fatal(err)
 	}
+	if n, err := f.run.readIdleNotice(); err != nil || n != nil {
+		t.Fatalf("single full sweep %+v %v", n, err)
+	}
+	// Allow the initial hook observation to age into the pane fallback, then
+	// prove a quiet worker can mature across 5-second ticks without field churn.
+	var baseline core.Agent
+	for step := 1; step <= 36; step++ {
+		now := f.cmd.now().Add(5 * time.Second)
+		f.cmd.clock = func() time.Time { return now }
+		f.run.cmd = f.cmd
+		if err := f.cmd.tick(nil); err != nil {
+			t.Fatal(err)
+		}
+		p, _ := f.run.team.Agent(f.worker.ID)
+		a, err := p.Read()
+		if err != nil {
+			t.Fatal(err)
+		}
+		if step == 12 {
+			baseline = a
+		}
+		if step > 12 && (!a.ChangedAt.Equal(baseline.ChangedAt) || !a.ScreenSince.Equal(baseline.ScreenSince)) {
+			t.Fatalf("quiet worker evidence churn on tick %d: before=%+v after=%+v", step, baseline, a)
+		}
+	}
 	if n, err := f.run.readIdleNotice(); err != nil || n == nil || n.Outcome != "delivered" {
 		t.Fatalf("full sweep %+v %v", n, err)
 	}
+	t.Log("36 real full ticks at fake 5-second spacing; quiet-worker evidence stable for final 2m")
 }
 
 func TestTeamIdleUncertainOldRecipientDoesNotBlockNewWork(t *testing.T) {
@@ -346,7 +426,7 @@ func TestTeamIdleUncertainOldRecipientDoesNotBlockNewWork(t *testing.T) {
 			f := newIdleFixture(t)
 			f.reserve(t)
 			f.work(t, "one", time.Time{})
-			n := f.reserve(t)
+			n := f.mature(t)
 			if err := f.run.settleIdleNotice(n.Envelope, outcome); err != nil {
 				t.Fatal(err)
 			}
@@ -356,7 +436,7 @@ func TestTeamIdleUncertainOldRecipientDoesNotBlockNewWork(t *testing.T) {
 			}
 			f.reserve(t) // new membership baseline
 			f.work(t, "two", time.Time{})
-			if next := f.reserve(t); next == nil || next.Envelope.ID == n.Envelope.ID {
+			if next := f.mature(t); next == nil || next.Envelope.ID == n.Envelope.ID {
 				t.Fatal("old uncertainty blocked new episode")
 			}
 		})
@@ -367,7 +447,7 @@ func TestTeamIdleQueuedNoticeCannotReachReplacementViaDrain(t *testing.T) {
 	f := newIdleFixture(t)
 	f.reserve(t)
 	f.work(t, "work", time.Time{})
-	n := f.reserve(t)
+	n := f.mature(t)
 	p, _ := f.run.team.Agent(f.lead.ID)
 	if err := p.Publish(n.Envelope); err != nil {
 		t.Fatal(err)
@@ -398,7 +478,7 @@ func TestTeamIdleCrashDuringInputNeverReplays(t *testing.T) {
 	f := newIdleFixture(t)
 	f.reserve(t)
 	f.work(t, "work", time.Time{})
-	n := f.reserve(t)
+	n := f.mature(t)
 	p, _ := f.run.team.Agent(f.lead.ID)
 	if err := p.Publish(n.Envelope); err != nil {
 		t.Fatal(err)
@@ -459,6 +539,12 @@ func TestTeamIdleConcurrentReservations(t *testing.T) {
 	f := newIdleFixture(t)
 	f.reserve(t)
 	f.work(t, "work", time.Time{})
+	f.reserve(t)
+	for elapsed := time.Duration(0); elapsed < f.run.settings.TeamIdleMinDuration-5*time.Second; elapsed += 5 * time.Second {
+		f.advance(t, 5*time.Second)
+		f.reserve(t)
+	}
+	f.advance(t, 5*time.Second)
 	first, second := f.sweep(t), f.sweep(t)
 	results := make(chan error, 2)
 	go func() { results <- f.run.reserveIdleNotice(first) }()

@@ -308,7 +308,14 @@ func (run *runtime) reserveIdleNotice(sweep *idleSweep) error {
 			ready = false
 		}
 	}
-	if ready {
+	windowMembers := make([]store.IdleWindowMember, 0, len(members))
+	for _, a := range agents {
+		if a.ID != lead.ID {
+			windowMembers = append(windowMembers, store.IdleWindowMember{Member: idleMember(a, s.Work[a.ID]), HookSequence: a.Native.HookSequence, ChangedAt: a.ChangedAt, ScreenSince: a.ScreenSince})
+		}
+	}
+	window, mature := advanceIdleWindow(l.ReadWindow(), store.IdleWindow{Since: now, Last: now, Minimum: run.settings.TeamIdleMinDuration, Lead: idleMember(lead, 0), Members: windowMembers}, ready)
+	if mature {
 		id, err := randomID("team-idle")
 		if err != nil {
 			return err
@@ -317,10 +324,39 @@ func (run *runtime) reserveIdleNotice(sweep *idleSweep) error {
 		if err != nil {
 			return err
 		}
-		s.Notice = &store.IdleNotice{Generation: lead.Registration.Generation, Session: lead.Native.SessionID, Envelope: core.Envelope{ID: core.EnvelopeID(id), Token: token, Recipient: lead.ID, To: lead.Name, From: core.Sender{Kind: core.SenderGangline, Name: "team-idle"}, CreatedAt: now, Message: core.Message{Text: idleNoticeText(run.settings.Session, members, sweep.start, now, future, next)}}}
+		s.Notice = &store.IdleNotice{Generation: lead.Registration.Generation, Session: lead.Native.SessionID, Envelope: core.Envelope{ID: core.EnvelopeID(id), Token: token, Recipient: lead.ID, To: lead.Name, From: core.Sender{Kind: core.SenderGangline, Name: "team-idle"}, CreatedAt: now, Message: core.Message{Text: idleNoticeText(run.settings.Session, members, window.Since, now, future, next)}}}
 		s.Armed = false
+		window = nil
 	}
-	return l.Save(s)
+	// Disarm durably before clearing the cache. An interrupted cleanup cannot
+	// reserve another notice, even if the previous window was already mature.
+	if err := l.Save(s); err != nil {
+		return err
+	}
+	return l.SaveWindow(window)
+}
+
+// advanceIdleWindow measures repeated observations, not native completion.
+// Unevaluated sweeps never call it and cannot extend the observation window.
+func advanceIdleWindow(previous *store.IdleWindow, current store.IdleWindow, ready bool) (*store.IdleWindow, bool) {
+	if !ready {
+		return nil, false
+	}
+	same := previous != nil && !previous.Since.IsZero() && !previous.Last.Before(previous.Since) && !current.Last.Before(previous.Last) && current.Last.Sub(previous.Last) < statusHookFreshness && previous.Minimum == current.Minimum && previous.Lead == current.Lead && len(previous.Members) == len(current.Members)
+	if same {
+		for i, a := range current.Members {
+			b := previous.Members[i]
+			if a.Member != b.Member || a.HookSequence != b.HookSequence || !a.ChangedAt.Equal(b.ChangedAt) || !a.ScreenSince.Equal(b.ScreenSince) {
+				same = false
+				break
+			}
+		}
+	}
+	if !same {
+		return &current, false
+	}
+	current.Since = previous.Since
+	return &current, current.Minimum > 0 && current.Last.Sub(current.Since) >= current.Minimum
 }
 
 func idleNoticeSettled(n *store.IdleNotice) bool {
@@ -336,7 +372,7 @@ func idleNoticeText(team string, members []store.IdleMember, start, end time.Tim
 	if future > 0 {
 		context = fmt.Sprintf("%d pending; next due %s", future, next.UTC().Format(time.RFC3339Nano))
 	}
-	return fmt.Sprintf("Gangline observed all %d registered workers in %s as idle during its sweep %s–%s: %s. This is a roster observation: quiet gaps can look idle, and native child/background work may still be running. It does not mean assignments are complete or authorize resuming held work. Future scheduled work: %s.", len(members), team, start.UTC().Format(time.RFC3339Nano), end.UTC().Format(time.RFC3339Nano), strings.Join(names, ", "), context)
+	return fmt.Sprintf("Gangline observed all %d registered workers in %s as idle across repeated observations %s–%s: %s. This is not proof of continuous native idleness: quiet gaps can look idle, and native child/background work may still be running. It does not mean assignments are complete or authorize resuming held work. Future scheduled work: %s.", len(members), team, start.UTC().Format(time.RFC3339Nano), end.UTC().Format(time.RFC3339Nano), strings.Join(names, ", "), context)
 }
 
 func (run *runtime) readIdleNotice() (*store.IdleNotice, error) {

@@ -1,5 +1,12 @@
 # Changelog
 
+## [3.1.2](https://github.com/adambiggs/gangline/compare/gangline-v3.1.1...gangline-v3.1.2) (2026-11-05)
+
+
+### Bug Fixes
+
+* wait for sustained observed idle before notifying ([f43a4c5](https://github.com/adambiggs/gangline/commit/f43a4c5b1e03c42aa0104c3e72084341842be021))
+
 ## [3.1.1](https://github.com/adambiggs/gangline/compare/gangline-v3.1.0...gangline-v3.1.1) (2026-11-05)
 
 

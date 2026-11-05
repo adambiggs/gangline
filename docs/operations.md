@@ -322,11 +322,12 @@ native identity separately; missing success evidence never authorizes replay.
 ## Observed idle notifications
 
 After new worker input, a full Gangline tick can send the unique active lead a
-`team-idle` notice when all registered workers read idle. It includes nested
+`team-idle` notice after repeated observations of all registered workers as
+idle span `GANG_TEAM_IDLE_MIN_DURATION` (default `2m`). It includes nested
 workers and all collars. The lead's own foreground turn is excluded. Startup
 establishes a baseline without an initial alert; an empty team never alerts.
 
-The notice names the workers and the sweep interval. It always explains that
+The notice names the workers and the observation window. It always explains that
 quiet gaps can look idle, native child or background work may still run, and
 assignments are not declared complete. It does not authorize resuming held
 work. This is an observation of the roster, not continuous or simultaneous
@@ -337,6 +338,21 @@ as do due or uncertain input and known composer drafts. A mailbox-only worker
 has no native activity observation and therefore inhibits an all-worker
 notice. Contended or incomplete sweeps defer evaluation. Future scheduled
 input is included as context and is not delivered early.
+
+The first qualifying sweep starts the delay; even a very small configured
+minimum requires another qualifying sweep. Worker activity evidence, new work,
+changed membership or duration, and backward time restart it. Evaluated busy,
+unknown or blocked state clears it. Consecutive qualifying observations must
+be less than 30 seconds apart, so a watchdog outage cannot count as idle time.
+An incomplete sweep cannot extend the window. Fresh probe timestamps and lead
+activity alone do not reset it. Activity that leaves no retained observation
+can still be missed; a longer window does not prove native work stopped.
+
+Set `GANG_TEAM_IDLE_MIN_DURATION=5m`, for example, in the existing config file
+or environment. Refresh the watchdog with an unscoped `gang tick` in the team's
+runtime context after changing the value; its environment retains the value
+from its last refresh and overrides the file. Existing watchdog units without
+the key use the default or current config until refreshed.
 
 A new ordinary message publication, including `gang send --at`, can arm the
 next notice. The first publication of an explicit snooze wake also counts;
@@ -353,7 +369,15 @@ replay. A replacement lead does not receive a redirected copy; new work under
 the new registration can arm a new notice. Ordinary team teardown removes this
 state. Preserve it when investigating uncertain delivery.
 
-Older binaries ignore these files but cannot maintain the new publication
+The separate `idle-window.json` caches only the current observation window
+under `idle.lock`; a missing or unreadable cache starts a fresh window. Existing
+publication records do not change. Binaries with the earlier notifier ignore
+the window file and can still send messages, but resume single-sweep notices.
+Before rolling back, remove `GANG_TEAM_IDLE_MIN_DURATION` from the config file:
+older config readers reject unknown keys. Refresh the older watchdog after the
+swap. An environment-only value is ignored by the older binary.
+
+Binaries predating the notifier ignore these files but cannot maintain the new publication
 revisions or enforce a queued notice's recipient binding. Before downgrading,
 resolve any pending `team-idle` input and retain a copy of the stopped team's
 state. Do not downgrade with an uncertain or queued notice. Work performed
