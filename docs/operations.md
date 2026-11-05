@@ -337,17 +337,14 @@ idle span `GANG_TEAM_IDLE_MIN_DURATION` (default `30m`). It includes nested
 workers and all collars. The lead's own foreground turn is excluded. Startup
 establishes a baseline without an initial alert; an empty team never alerts.
 
-The notice names the workers and the observation window. It always explains that
-quiet gaps can look idle, native child or background work may still run, and
-assignments are not declared complete. It does not authorize resuming held
-work. This is an observation of the roster, not continuous or simultaneous
-native idleness. No last-output time is inferred from screen sampling.
+The notice names the workers and the start of the idle window in one sentence:
+`All 3 workers idle since 2026-11-05T22:40:00Z: alpha, beta, gamma.`
 
 Unknown, stale, failed, blocked or transitional workers inhibit the notice,
 as do due or uncertain input and known composer drafts. A mailbox-only worker
 has no native activity observation and therefore inhibits an all-worker
 notice. Contended or incomplete sweeps defer evaluation. Future scheduled
-input is included as context and is not delivered early.
+input does not block the notice and is not delivered early.
 
 The first qualifying sweep starts the delay; even a very small configured
 minimum requires another qualifying sweep. Worker activity evidence, new work,

@@ -266,8 +266,6 @@ func (run *runtime) reserveIdleNotice(sweep *idleSweep) error {
 	if now.Before(sweep.start) {
 		ready = false
 	}
-	future := 0
-	var next time.Time
 	for i, a := range agents {
 		if a.ID == lead.ID {
 			continue
@@ -311,10 +309,6 @@ func (run *runtime) reserveIdleNotice(sweep *idleSweep) error {
 				ready = false
 				continue
 			}
-			future++
-			if next.IsZero() || e.NotBefore.Before(next) {
-				next = e.NotBefore
-			}
 		}
 	}
 	// Snoozes not yet in inboxes still carry due or uncertain worker work.
@@ -325,10 +319,6 @@ func (run *runtime) reserveIdleNotice(sweep *idleSweep) error {
 		if wake.Submission != "" || wake.At.IsZero() || !wake.At.After(now) {
 			ready = false
 			continue
-		}
-		future++
-		if next.IsZero() || wake.At.Before(next) {
-			next = wake.At
 		}
 	}
 	for _, wake := range usage.Recent {
@@ -358,7 +348,7 @@ func (run *runtime) reserveIdleNotice(sweep *idleSweep) error {
 		if err != nil {
 			return err
 		}
-		s.Notice = &store.IdleNotice{Generation: lead.Registration.Generation, Session: lead.Native.SessionID, Envelope: core.Envelope{ID: core.EnvelopeID(id), Token: token, Recipient: lead.ID, To: lead.Name, From: core.Sender{Kind: core.SenderGangline, Name: "team-idle"}, CreatedAt: now, Message: core.Message{Text: idleNoticeText(run.settings.Session, members, window.Since, now, future, next)}}}
+		s.Notice = &store.IdleNotice{Generation: lead.Registration.Generation, Session: lead.Native.SessionID, Envelope: core.Envelope{ID: core.EnvelopeID(id), Token: token, Recipient: lead.ID, To: lead.Name, From: core.Sender{Kind: core.SenderGangline, Name: "team-idle"}, CreatedAt: now, Message: core.Message{Text: idleNoticeText(members, window.Since)}}}
 		s.Armed = false
 		window = nil
 	}
@@ -397,16 +387,16 @@ func idleNoticeSettled(n *store.IdleNotice) bool {
 	return n == nil || n.Outcome == "delivered" || n.Outcome == "failed" || n.Outcome == "recipient-gone" || n.Outcome == "recipient-changed"
 }
 
-func idleNoticeText(team string, members []store.IdleMember, start, end time.Time, future int, next time.Time) string {
+func idleNoticeText(members []store.IdleMember, since time.Time) string {
 	names := make([]string, 0, len(members))
 	for _, m := range members {
-		names = append(names, fmt.Sprintf("%s (%s)", m.Name, m.ID))
+		names = append(names, string(m.Name))
 	}
-	context := "none observed"
-	if future > 0 {
-		context = fmt.Sprintf("%d pending; next due %s", future, next.UTC().Format(time.RFC3339Nano))
+	workers := "workers"
+	if len(members) == 1 {
+		workers = "worker"
 	}
-	return fmt.Sprintf("Gangline observed all %d registered workers in %s as idle across repeated observations %s–%s: %s. This is not proof of continuous native idleness: quiet gaps can look idle, and native child/background work may still be running. It does not mean assignments are complete or authorize resuming held work. Future scheduled work: %s.", len(members), team, start.UTC().Format(time.RFC3339Nano), end.UTC().Format(time.RFC3339Nano), strings.Join(names, ", "), context)
+	return fmt.Sprintf("All %d %s idle since %s: %s.", len(members), workers, since.UTC().Format(time.RFC3339), strings.Join(names, ", "))
 }
 
 func (run *runtime) readIdleNotice() (*store.IdleNotice, error) {

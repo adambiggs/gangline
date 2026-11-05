@@ -5,6 +5,7 @@ package main
 import (
 	"encoding/json"
 	"errors"
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
@@ -329,7 +330,7 @@ func TestHitchFailureNotifiesHitcher(t *testing.T) {
 				t.Fatalf("notices = %+v", got)
 			}
 			e := got[0]
-			if e.From.Kind != core.SenderGangline || e.Recipient != lead.ID || !strings.Contains(e.Message.Text, "owner, which you hitched, failed: "+reason) || !strings.Contains(e.Message.Text, "gang status owner --why shows its record") {
+			if e.From.Kind != core.SenderGangline || e.Recipient != lead.ID || e.Message.Text != fmt.Sprintf("owner failed at %s: %s.", owner.ChangedAt.UTC().Format(time.RFC3339), reason) {
 				t.Fatalf("notice = %+v", e)
 			}
 			if len(woken) != 1 || woken[0] != "l" {

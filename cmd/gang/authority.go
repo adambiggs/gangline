@@ -155,7 +155,7 @@ func (run *runtime) noticeHitcher(a core.Agent, id core.EnvelopeID, text string)
 // new failure.
 func (run *runtime) notifyHitcherFailed(a core.Agent, reason string) error {
 	id := core.EnvelopeID(fmt.Sprintf("hitch-failed-%s-%d", a.ID, a.ChangedAt.UnixNano()))
-	return run.notifyHitcher(a, id, fmt.Sprintf("%s, which you hitched, failed: %s. gang status %s --why shows its record.", a.Name, reason, a.Name))
+	return run.notifyHitcher(a, id, fmt.Sprintf("%s failed at %s: %s.", a.Name, a.ChangedAt.UTC().Format(time.RFC3339), reason))
 }
 
 // notifyHitcherRecovered tells a's hitcher that recovery returned a to
@@ -168,7 +168,7 @@ func (run *runtime) notifyHitcherRecovered(a core.Agent) error {
 		return err
 	}
 	id := core.EnvelopeID(fmt.Sprintf("hitch-recovered-%s-%d", a.ID, a.ChangedAt.UnixNano()))
-	return run.notifyHitcher(a, id, fmt.Sprintf("%s, which you hitched, recovered from its failure (%s) and resumed startup; its original contract and assignment are retained. gang status %s --why shows its record.", a.Name, core.BootDeadlineElapsed, a.Name))
+	return run.notifyHitcher(a, id, fmt.Sprintf("%s resumed startup at %s after %s.", a.Name, a.ChangedAt.UTC().Format(time.RFC3339), core.BootDeadlineElapsed))
 }
 
 // notifyBackgroundIdle tells a's hitcher when a reads as idle and its stored
@@ -186,7 +186,7 @@ func (run *runtime) notifyBackgroundIdle(l *store.LockedAgent, a *core.Agent) er
 	}
 	id := core.EnvelopeID(fmt.Sprintf("background-idle-%s-%d", a.ID, background.At.UnixNano()))
 	reason := fmt.Sprintf("background report received at %s listed %s; current task state is unknown", background.At.UTC().Format(time.RFC3339), backgroundTaskCount(background.Tasks))
-	published, err := run.noticeHitcher(*a, id, fmt.Sprintf("%s, which you hitched, is idle. A %s. gang status %s --why shows its record and gang capture %s its pane.", a.Name, reason, a.Name, a.Name))
+	published, err := run.noticeHitcher(*a, id, fmt.Sprintf("%s is idle with a report of %s received at %s.", a.Name, backgroundTaskCount(background.Tasks), background.At.UTC().Format(time.RFC3339)))
 	if err != nil || !published {
 		return err
 	}

@@ -87,7 +87,7 @@ func TestHeldComposerInputNotifiesHitcher(t *testing.T) {
 		}
 	}
 	for _, e := range notices() {
-		if e.From.Kind != core.SenderGangline || e.Recipient != lead.ID || !strings.Contains(e.Message.Text, "worker, which you hitched, has held unsubmitted input in its composer since ") {
+		if e.From.Kind != core.SenderGangline || e.Recipient != lead.ID || !strings.Contains(e.Message.Text, "worker has unchanged input in its composer since ") {
 			t.Fatalf("notice = %+v", e)
 		}
 	}
