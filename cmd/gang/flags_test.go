@@ -1,9 +1,21 @@
 package main
 
 import (
+	"strings"
 	"testing"
 	"time"
 )
+
+func TestHitchReservesTeamIdleSenderButAllowsRecovery(t *testing.T) {
+	for _, name := range []string{"team-idle", "TEAM-IDLE"} {
+		if _, err := parseHitch([]string{name}, "codex", "/work"); err == nil || !strings.Contains(err.Error(), "reserved") {
+			t.Errorf("hitch %s = %v; want reserved-name error", name, err)
+		}
+		if options, err := parseHitch([]string{name, "--recover"}, "codex", "/work"); err != nil || options.Name != name || !options.Recover {
+			t.Errorf("recover %s = %+v, %v; want existing agent recovery", name, options, err)
+		}
+	}
+}
 
 func TestParseHitchUsesNameBeforeStdlibFlags(t *testing.T) {
 	got, err := parseHitch([]string{"worker", "-c", "codex", "-d", "/work", "-m", "gpt", "--context-bands", "10,20", "--stdin"}, "claude", "/default")

@@ -22,7 +22,7 @@ import (
 // Gangline itself emits. An agent already holding such a name stays reachable
 // by commands that name it.
 func TestAgentsCannotTakeAGanglineSenderName(t *testing.T) {
-	for _, name := range []string{"usage-band", "Usage-Band", "compact", "contract", "operator", "Hitch"} {
+	for _, name := range []string{"usage-band", "Usage-Band", "compact", "contract", "operator", "Hitch", "team-idle", "TEAM-IDLE"} {
 		t.Run(name, func(t *testing.T) {
 			_, err := parseHitch([]string{name}, "claude", "/work")
 			if commandErr, ok := err.(commandError); !ok || commandErr.status != exitUsage || !strings.Contains(commandErr.text, strconv.Quote(name)) {
