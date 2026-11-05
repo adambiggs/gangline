@@ -79,7 +79,8 @@ type Agent struct {
 	CurfewNoticeDeadline time.Time `json:"curfew_notice_deadline,omitzero"`
 	// BackgroundNoticed is the receipt time of the background report the
 	// hitcher was last told about.
-	BackgroundNoticed time.Time `json:"background_noticed,omitzero"`
+	BackgroundNoticed      time.Time `json:"background_noticed,omitzero"`
+	StartupPromptNoticedAt time.Time `json:"startup_prompt_noticed_at,omitzero"`
 }
 
 // ClearRequest retains one native clear and its guarded continuation. A submitted

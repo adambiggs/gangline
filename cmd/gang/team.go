@@ -661,6 +661,13 @@ func (cmd command) status(args []string) error {
 	if _, err := fmt.Fprintf(cmd.stdout, "%s\t%s\t%s\n", a.Name, a.Status, activityLabel(a.Activity, background.Tasks, &background.At, now)); err != nil {
 		return err
 	}
+	if !why {
+		if reason := rosterReason(a, rosterReasonWidth); reason != "" {
+			if _, err := fmt.Fprintln(cmd.stdout, cmd.operatorText(strings.TrimSpace(reason))); err != nil {
+				return err
+			}
+		}
+	}
 	if why && a.Evidence != "" {
 		if _, err := fmt.Fprintln(cmd.stdout, cmd.operatorText(a.Evidence)); err != nil {
 			return err

@@ -141,6 +141,9 @@ func (run *runtime) tickAgent(id core.HitchID, notice hookNotice, wait bool) (re
 						return err
 					}
 				}
+				if err := run.notifyStartupPrompt(l, &a); err != nil {
+					return err
+				}
 				return run.mark(a)
 			}
 			return nil
