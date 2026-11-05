@@ -16,6 +16,7 @@ func Step(agent Agent, event Event) (Agent, []Effect) {
 	case "hitch_ready":
 		agent.Status, agent.Activity, agent.BootDeadline = Active, Idle, time.Time{}
 	case "hitch_blocked":
+		agent.StartupPromptNoticedAt = time.Time{}
 		agent.Activity, agent.Evidence, agent.BootDeadline = Blocked, event.Reason, time.Time{}
 	case "boot_reopened":
 		// Only the boot deadline's verdict is revisited: the pane may have been

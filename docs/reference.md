@@ -670,6 +670,12 @@ that turn failed. Delivery does not establish that the assignment completed.
 | `gang peer-authorize HOST PUBKEY_FILE` | Print the `~/.ssh/authorized_keys` line that binds enrolled `GANG_PEERS` host HOST's public key to `gang peer-receive` for the selected team: `command="GANG peer-receive --team TEAM --peer HOST",restrict TYPE KEY gangline-peer-HOST`, where GANG is this `gang`'s path. PUBKEY_FILE holds exactly one OpenSSH public key line with no options; its comment is dropped. Stderr names the setup steps on HOST. A dedicated restricted key supplies the binding; unrestricted SSH access to the receiving account can invoke `peer-receive --peer` directly. |
 | `gang peer-receive --peer HOST` | The forced command `gang peer-authorize` prints; its dedicated restricted-key setup binds HOST to an enrolled host. It runs only under this account's sshd session beneath a root sshd; that check does not authenticate the key or distinguish host-root from namespace-local root UIDs; receiving-account shell and state access are trusted. Read one JSON request (`host`, `team`, `id`, `from`, `to`, `body`, and optional `class`) from stdin and deliver it from sender `HOST:NAME` or `HOST:registered:NAME` as message `peer-HOST.ID`. Print one JSON line with the message ID and outcome, or the error that published nothing. Delivery of a repeated ID is at-least-once: one that arrives after the first copy is delivered, or after a later message's receipt replaces its receipt, is delivered again. [Peer labels](concepts.md#messages-and-envelopes) states what the binding leaves open. |
 
+A recognized prompt that blocks startup sends the hitcher a `gangline:hitch`
+notice with the prompt text. While it remains blocked, a reminder is sent at
+most once every fifteen minutes. Plain `gang status NAME` includes a concise
+reason for blocked, failed, unknown, or wedged state; `--why` retains the full
+reason.
+
 ## Configuration
 
 Settings come from `$GANG_CONFIG_DIR/config`, one `NAME=VALUE` per line.
