@@ -73,6 +73,9 @@ func (run *runtime) tickAgent(id core.HitchID, notice hookNotice, wait bool) (re
 	if err := run.refreshNative(l, &a, c); err != nil {
 		return err
 	}
+	if err := run.notifyStartupFailure(l, &a, c); err != nil {
+		return err
+	}
 	gap := run.statusCaptureGap(a, c)
 	if gap == "" {
 		needed, err := run.wakeNeedsScreen(a, hooks)

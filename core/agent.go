@@ -272,6 +272,8 @@ type NativeState struct {
 	Limits               Reading   `json:"limits,omitzero"`
 	Model                string    `json:"model,omitempty"`
 	Effort               string    `json:"-"`
+
+	StartupFailureNoticed string `json:"startup_failure_noticed,omitempty"`
 }
 
 type Reading struct {

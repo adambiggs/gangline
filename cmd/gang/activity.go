@@ -104,6 +104,11 @@ func (run *runtime) observeScreen(l *store.LockedAgent, a *core.Agent, c harness
 				activity, evidence = core.Wedged, "provider capacity recovery deadline elapsed"
 			}
 		}
+		if startup, err := startupTurnFailed(l, *a, c); err != nil {
+			return false, err
+		} else if startup && activity != core.Wedged {
+			activity, evidence = core.Blocked, "native startup turn failed: "+a.Native.TurnFailure
+		}
 		basis.Rule = "turn-failure"
 	}
 	if a.Capacity.Fingerprint != "" && a.LastFailed == core.EnvelopeID("capacity-"+a.Capacity.Fingerprint) {

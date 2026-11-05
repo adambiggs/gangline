@@ -171,6 +171,15 @@ func (run *runtime) observeHookStatus(l *store.LockedAgent, a *core.Agent) error
 	}
 	if a.Native.TurnFailure != "" {
 		activity, evidence = turnFailureActivity(a.Native.TurnFailure)
+		c, err := loadCollar(a.Collar, run.settings)
+		if err != nil {
+			return err
+		}
+		if startup, err := startupTurnFailed(l, *a, c); err != nil {
+			return err
+		} else if startup {
+			activity, evidence = core.Blocked, "native startup turn failed: "+a.Native.TurnFailure
+		}
 	}
 	if a.Activity == activity && a.Evidence == evidence {
 		return nil
