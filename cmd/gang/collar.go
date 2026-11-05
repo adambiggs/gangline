@@ -205,12 +205,18 @@ func (cmd command) probeTrust(ctx context.Context, backend *tmux.Backend, collar
 	return results, nil
 }
 
-func (cmd command) probeActive(ctx context.Context, backend *tmux.Backend, collar harness.Collar, settings settings, directory, workdir string) (map[string]harness.ProbeResult, error) {
-	results := make(map[string]harness.ProbeResult)
+func (cmd command) probeActive(ctx context.Context, backend *tmux.Backend, collar harness.Collar, settings settings, directory, workdir string) (results map[string]harness.ProbeResult, result error) {
+	results = make(map[string]harness.ProbeResult)
 	fifo := filepath.Join(directory, "hook.fifo")
 	if err := syscall.Mkfifo(fifo, 0o600); err != nil {
 		return nil, err
 	}
+	const prompt = "Reply with exactly READY."
+	probe, err := startNativeHookProbe(fifo, collar, prompt)
+	if err != nil {
+		return nil, err
+	}
+	defer func() { result = errors.Join(result, probe.Close()) }()
 	exe, err := os.Executable()
 	if err != nil {
 		return nil, err
@@ -269,10 +275,10 @@ func (cmd command) probeActive(ctx context.Context, backend *tmux.Backend, colla
 	// Type through the guarded input real delivery uses, which also dismisses
 	// an output viewer that tmux opens over the pane.
 	typing := paneInput{harnessInput: backend, registry: backend, identity: registration, launch: filepath.Base(collar.Launch.Command)}
-	action, _ := harness.Submit(collar.Primitives.Submit, "Reply with exactly READY.")
+	action, _ := harness.Submit(collar.Primitives.Submit, prompt)
 	settle, _ := harness.SubmitSettle(collar.Primitives.Submit)
 	input, _ := harness.SubmitInput(collar.Primitives.Submit, action.Text)
-	payload, err := awaitNativeHook(ctx, fifo, func() error {
+	payload, err := probe.await(ctx, func() error {
 		if err := sendHarnessKeys(ctx, typing, pane.ID, collar, input); err != nil {
 			return err
 		}
@@ -282,21 +288,16 @@ func (cmd command) probeActive(ctx context.Context, backend *tmux.Backend, colla
 		return sendHarnessKeys(ctx, typing, pane.ID, collar, substrate.Keys{Names: action.Keys, Submit: action.Submit})
 	})
 	if err != nil {
-		results[harness.ProbeSubmit] = probeErrorResult(ctx, harness.ProbeSubmit, err, backend.SessionExists)
+		if payload != nil {
+			results[harness.ProbeHook] = failedProbe(harness.ProbeHook, err.Error())
+		} else {
+			results[harness.ProbeSubmit] = probeErrorResult(ctx, harness.ProbeSubmit, err, backend.SessionExists)
+		}
 		return results, nil
 	}
-	results[harness.ProbeSubmit] = passedProbe(harness.ProbeSubmit, "native submit produced a hook witness")
-	boundary, _, err := harness.DetectTurnBoundary(collar, payload)
-	if err != nil {
-		results[harness.ProbeHook] = failedProbe(harness.ProbeHook, err.Error())
-		return results, nil
-	}
+	results[harness.ProbeSubmit] = passedProbe(harness.ProbeSubmit, "native submit produced a matching turn-start hook witness")
 	results[harness.ProbeHook] = passedProbe(harness.ProbeHook, "native hook payload decoded")
-	if boundary == harness.TurnStarted {
-		results[harness.ProbeTurnBoundary] = passedProbe(harness.ProbeTurnBoundary, "native turn-start boundary decoded")
-	} else {
-		results[harness.ProbeTurnBoundary] = failedProbe(harness.ProbeTurnBoundary, fmt.Sprintf("first native hook decoded as %q", boundary))
-	}
+	results[harness.ProbeTurnBoundary] = passedProbe(harness.ProbeTurnBoundary, "native turn-start boundary decoded")
 	return results, nil
 }
 
