@@ -318,3 +318,44 @@ its referenced artifacts together: these commands do not archive them or
 protect them from teardown, cleanup or expiry. They also do not establish an
 installed deployment or an offsite backup. Preserve delivery receipts and
 native identity separately; missing success evidence never authorizes replay.
+
+## Observed idle notifications
+
+After new worker input, a full Gangline tick can send the unique active lead a
+`team-idle` notice when all registered workers read idle. It includes nested
+workers and all collars. The lead's own foreground turn is excluded. Startup
+establishes a baseline without an initial alert; an empty team never alerts.
+
+The notice names the workers and the sweep interval. It always explains that
+quiet gaps can look idle, native child or background work may still run, and
+assignments are not declared complete. It does not authorize resuming held
+work. This is an observation of the roster, not continuous or simultaneous
+native idleness. No last-output time is inferred from screen sampling.
+
+Unknown, stale, failed, blocked or transitional workers inhibit the notice,
+as do due or uncertain input and known composer drafts. A mailbox-only worker
+has no native activity observation and therefore inhibits an all-worker
+notice. Contended or incomplete sweeps defer evaluation. Future scheduled
+input is included as context and is not delivered early.
+
+A new ordinary message publication, including `gang send --at`, can arm the
+next notice. The first publication of an explicit snooze wake also counts;
+automatic cap retries and observation notices do not. The same work reading
+busy and idle again, delayed native callbacks, and the lead handling its notice
+do not rearm it. Autonomous work with no new identified Gangline input may
+finish without another notice. Registration changes establish a new baseline;
+dropping a worker alone does not announce completion.
+
+The optional `idle.json` file and `idle.lock` in the team runtime directory keep
+work revisions and one exact notice intent across process restarts and receipt
+pruning. Accepted or unverified notice delivery is retained without automatic
+replay. A replacement lead does not receive a redirected copy; new work under
+the new registration can arm a new notice. Ordinary team teardown removes this
+state. Preserve it when investigating uncertain delivery.
+
+Older binaries ignore these files but cannot maintain the new publication
+revisions or enforce a queued notice's recipient binding. Before downgrading,
+resolve any pending `team-idle` input and retain a copy of the stopped team's
+state. Do not downgrade with an uncertain or queued notice. Work performed
+while downgraded may not produce a notice after upgrade. Existing agent,
+message and usage records retain their previous formats.

@@ -129,6 +129,33 @@ reports the saved record without probing the pane. A draft holds message
 delivery; its pane symbol remains idle unless a witnessed turn is open.
 Observation never submits it.
 
+## Observed idle episodes
+
+The existing full tick records which registered agents it actually visited.
+It compares membership and publication revisions before and after the sweep,
+then takes the membership lock and nonblocking agent locks to recheck the
+snapshot. It reads usage state before taking the short idle-state lock; this
+matches wake withdrawal's lock order. No pane capture or native delivery runs
+under the snapshot locks. Freshness uses existing hook/probe observations;
+the notification text states their quiet-gap and native-background limits.
+
+`PublishNew` reserves a pending publication in optional `idle.json` before
+linking the envelope into the inbox. Under `idle.lock`, the next reader resolves
+that transaction from the exact inbox identity. A pre-existing queued ID never
+advances work. Receipt pruning and withdrawal resolve pending publication first.
+Only current registration counters are retained; native callback IDs and
+observation timestamps do not become work identities. Ordinary messages and
+first explicit snooze publications use this path. Automatic observations and
+recovery continuations retain their existing publication path.
+
+The evaluator saves one exact envelope, recipient binding and token before
+publication. Normal input recovery and delivery handle it after snapshot locks
+are released. Every drain checks a queued notice against its current durable
+intent and recipient binding. Settlement records its outcome before receipt
+pruning, so a missing old receipt cannot cause another paste. These guarantees
+cover process interruption using the store's existing atomic replacement
+semantics; they do not add a power-loss durability guarantee.
+
 ## Context and compaction
 
 Readings are recorded as `observation` events with a kind, source, and status.

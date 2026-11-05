@@ -575,6 +575,7 @@ func (run *runtime) publishUsageEnvelope(e core.Envelope) (bool, error) {
 		return false, nil
 	}
 	ready := false
+	explicitWake := false
 	if err := run.withUsageState(func(state *usageState) error {
 		if e.From.Name == "usage-band" {
 			for _, n := range state.Notices {
@@ -587,6 +588,7 @@ func (run *runtime) publishUsageEnvelope(e core.Envelope) (bool, error) {
 			for _, s := range state.Snoozes {
 				if s.ID == e.ID && s.RecipientID == a.ID && s.Submission == "" {
 					ready = true
+					explicitWake = !s.Auto && s.Rearms == 0
 					break
 				}
 			}
@@ -598,7 +600,18 @@ func (run *runtime) publishUsageEnvelope(e core.Envelope) (bool, error) {
 	if !ready {
 		return false, nil
 	}
-	if err := run.publishOnce(l, &a, e); err != nil {
+	if explicitWake {
+		if published, err := envelopePublished(l.Paths, e.ID); err != nil {
+			return false, err
+		} else if !published {
+			if err := l.Paths.PublishNew(e); err != nil && !errors.Is(err, store.ErrEnvelopeQueued) {
+				return false, err
+			}
+			if err := run.record(a, core.Event{Type: "send_queued", Envelope: &e}); err != nil {
+				return false, err
+			}
+		}
+	} else if err := run.publishOnce(l, &a, e); err != nil {
 		return false, err
 	}
 	if _, err := run.drainFrom(l, a, e.ID); err != nil {

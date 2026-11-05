@@ -22,6 +22,7 @@ const (
 )
 
 type runtime struct {
+	idleSweep        *idleSweep
 	cmd              command
 	settings         settings
 	team             store.TeamPaths
@@ -518,6 +519,9 @@ func (run *runtime) finishInput(l *store.LockedAgent, a *core.Agent, e core.Enve
 		}
 	}
 	if err := run.acknowledgeUsageDelivery(l, *a, e, outcome, witnessed...); err != nil {
+		return err
+	}
+	if err := run.settleIdleNotice(e, outcome); err != nil {
 		return err
 	}
 	if err := l.Settle(a, e, outcome, reason); err != nil {

@@ -30,6 +30,9 @@ func (run *runtime) tickAgent(id core.HitchID, notice hookNotice, wait bool) (re
 		if result == nil {
 			result = run.rehitchPending(id)
 		}
+		if result == nil && run.idleSweep != nil {
+			run.idleSweep.observedAgent(id)
+		}
 	}()
 	if err := run.reconcileClear(l, &a); err != nil {
 		return err

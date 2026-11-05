@@ -50,6 +50,18 @@ func (p AgentPaths) PublishNew(e core.Envelope) error {
 		return err
 	}
 	defer os.Remove(tmp)
+	if _, err := os.Stat(path); err == nil {
+		return ErrEnvelopeQueued
+	} else if !errors.Is(err, os.ErrNotExist) {
+		return err
+	}
+	idle, err := p.prepareIdlePublication(e)
+	if err != nil {
+		return err
+	}
+	if idle != nil {
+		defer idle.Close()
+	}
 	if err := os.Link(tmp, path); errors.Is(err, os.ErrExist) {
 		return ErrEnvelopeQueued
 	} else if err != nil {
@@ -61,6 +73,9 @@ func (p AgentPaths) PublishNew(e core.Envelope) error {
 // Withdraw removes an undelivered envelope without a result, so the agent's
 // retained receipts are untouched. The team log keeps its audit history.
 func (l *LockedAgent) Withdraw(id core.EnvelopeID) error {
+	if err := l.Paths.resolveIdlePublication(); err != nil {
+		return err
+	}
 	path, err := l.Paths.EnvelopePath("new", id)
 	if err != nil {
 		return err
@@ -126,6 +141,9 @@ func (l *LockedAgent) CleanResult(a *core.Agent) error {
 	if a.Cleanup == nil {
 		return nil
 	}
+	if err := l.Paths.resolveIdlePublication(); err != nil {
+		return err
+	}
 	p, err := l.Paths.EnvelopePath(a.Cleanup.Directory, a.Cleanup.ID)
 	if err != nil {
 		return err
@@ -140,6 +158,9 @@ func (l *LockedAgent) CleanResult(a *core.Agent) error {
 // Settle records the prior result until deletion succeeds, so a crash cannot
 // accumulate terminal envelopes. Audit history remains in the team log.
 func (l *LockedAgent) Settle(a *core.Agent, e core.Envelope, outcome, reason string) error {
+	if err := l.Paths.resolveIdlePublication(); err != nil {
+		return err
+	}
 	if err := l.CleanResult(a); err != nil {
 		return err
 	}
@@ -193,6 +214,9 @@ func (l *LockedAgent) fileResult(e core.Envelope, dir, outcome, reason string) e
 	return os.Rename(from, to)
 }
 func (l *LockedAgent) ClearScheduled(sender core.Sender) ([]core.Envelope, error) {
+	if err := l.Paths.resolveIdlePublication(); err != nil {
+		return nil, err
+	}
 	envelopes, err := l.Paths.ListNew()
 	if err != nil {
 		return nil, err
@@ -211,6 +235,9 @@ func (l *LockedAgent) ClearScheduled(sender core.Sender) ([]core.Envelope, error
 	return removed, nil
 }
 func (l *LockedAgent) SealInbox() ([]core.Envelope, error) {
+	if err := l.Paths.resolveIdlePublication(); err != nil {
+		return nil, err
+	}
 	from, to := filepath.Join(l.Paths.Inbox, "new"), filepath.Join(l.Paths.Inbox, "tmp", "drop")
 	if err := os.Rename(from, to); err != nil {
 		if !errors.Is(err, os.ErrNotExist) {

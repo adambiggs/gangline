@@ -547,6 +547,17 @@ func (run *runtime) drainLocked(l *store.LockedAgent, a *core.Agent, target core
 		if err != nil {
 			return result, nil, err
 		}
+		kept := pending[:0]
+		for _, e := range pending {
+			retired, err := run.retireIdleEnvelope(l, *a, e)
+			if err != nil {
+				return result, pending, err
+			}
+			if !retired {
+				kept = append(kept, e)
+			}
+		}
+		pending = kept
 		var next *core.Envelope
 		if clearPending(*a) {
 			for i := range pending {

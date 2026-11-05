@@ -332,9 +332,25 @@ func (cmd command) tick(args []string) (result error) {
 	if err != nil {
 		return run.tickFailed(source, "", err)
 	}
-	return errors.Join(eachAgent(agents, func(a core.Agent) error {
-		return run.tickFailed(source, a.ID, run.tickAgent(a.ID, hookNotice{}, false))
-	}), run.tickFailed(source, "", run.flushUsageWork()))
+	run.idleSweep, err = run.startIdleSweep(agents)
+	if err != nil {
+		return run.tickFailed(source, "", err)
+	}
+	sweepErr := eachAgent(agents, func(a core.Agent) error {
+		// Deferred notices belong to this worker's lock lifetime. Parallel
+		// workers must not drain or mutate one another's wake queues.
+		agentRun := *run
+		agentRun.wake = nil
+		return agentRun.tickFailed(source, a.ID, agentRun.tickAgent(a.ID, hookNotice{}, false))
+	})
+	usageErr := run.tickFailed(source, "", run.flushUsageWork())
+	if sweepErr != nil || usageErr != nil {
+		return errors.Join(sweepErr, usageErr)
+	}
+	if err := run.reserveIdleNotice(run.idleSweep); err != nil {
+		return run.tickFailed(source, "", err)
+	}
+	return run.tickFailed(source, "", run.flushIdleNotice())
 }
 
 // tickTarget resolves --agent. Hooks pass a hitch ID and operators pass a
