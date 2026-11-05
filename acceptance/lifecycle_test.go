@@ -83,6 +83,10 @@ func TestCommandLifecycleOnPrivateTmux(t *testing.T) {
 	runner := tmuxRunner{binary: "tmux", socket: socket, env: environment}
 	runner.newSession(t, session)
 	t.Cleanup(func() { _, _ = runner.run("kill-session", "-t", session) })
+	control, err := runner.run("list-panes", "-s", "-t", "="+session, "-F", "#{pane_id}")
+	if err != nil || len(strings.Fields(control)) != 1 {
+		t.Fatalf("private control pane: %q %v", control, err)
+	}
 	if out, err := runner.run("list-sessions", "-F", "#{session_name}"); err != nil || strings.TrimSpace(out) != session {
 		t.Fatalf("private server contains unexpected sessions: %q %v", out, err)
 	}
@@ -539,7 +543,9 @@ printf '{"id":"peer-alpha.%s","outcome":"queued"}\n' "$id"
 		downs, downErr := os.ReadFile(filepath.Join(root, "state", "downs.jsonl"))
 		t.Fatalf("team state remains after the lead's down: %v; agents %+v; panes %q; audit (%v):\n%s\ndown callers (%v):\n%s", err, left, panes, logErr, log, downErr, downs)
 	}
-	if out, err := runner.run("list-panes", "-s", "-t", session, "-F", "#{pane_id}"); err != nil || strings.Contains(out, lead.Pane+"\n") || strings.Contains(out, second.Pane+"\n") {
-		t.Fatalf("lead's down left agent panes alive: %q %v", out, err)
+	// Down owns registered agent panes, not this test's unregistered control
+	// pane. A surviving session is expected and must contain only that pane.
+	if out, err := runner.run("list-panes", "-s", "-t", "="+session, "-F", "#{pane_id}"); err != nil || out != control {
+		t.Fatalf("down must remove all agents and retain only control pane %q: got %q %v", control, out, err)
 	}
 }
