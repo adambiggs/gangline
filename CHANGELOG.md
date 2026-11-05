@@ -1,5 +1,12 @@
 # Changelog
 
+## [3.1.0](https://github.com/adambiggs/gangline/compare/gangline-v3.0.4...gangline-v3.1.0) (2026-11-05)
+
+
+### Features
+
+* notify leads of observed worker idleness ([d5cf42d](https://github.com/adambiggs/gangline/commit/d5cf42d43d632a80baaec4d057c4d0ceafc7dd51))
+
 ## [3.0.4](https://github.com/adambiggs/gangline/compare/gangline-v3.0.3...gangline-v3.0.4) (2026-11-04)
 
 
