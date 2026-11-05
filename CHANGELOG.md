@@ -1,5 +1,12 @@
 # Changelog
 
+## [3.1.1](https://github.com/adambiggs/gangline/compare/gangline-v3.1.0...gangline-v3.1.1) (2026-11-05)
+
+
+### Bug Fixes
+
+* reserve the team-idle notice sender name ([01e7f57](https://github.com/adambiggs/gangline/commit/01e7f577c7842ccce6347baf08caf358f969f59e))
+
 ## [3.1.0](https://github.com/adambiggs/gangline/compare/gangline-v3.0.4...gangline-v3.1.0) (2026-11-05)
 
 
