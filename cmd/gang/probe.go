@@ -172,6 +172,8 @@ func (probe *nativeHookProbe) await(ctx context.Context, trigger func() error) (
 	}
 }
 
+var errProbeTurnFailed = errors.New("native probe turn failed")
+
 func readProbeTurn(input io.Reader, collar harness.Collar, prompt string) ([]byte, error) {
 	scanner := bufio.NewScanner(input)
 	// The hook budget is the existing native payload bound, plus its newline
@@ -187,7 +189,7 @@ func readProbeTurn(input io.Reader, collar harness.Collar, prompt string) ([]byt
 			return frame, err
 		}
 		if boundary == harness.TurnFailed {
-			return frame, fmt.Errorf("native probe turn failed: %s", event.Payload["error"])
+			return frame, fmt.Errorf("%w: %s", errProbeTurnFailed, event.Payload["error"])
 		}
 		if boundary != harness.TurnStarted {
 			continue
