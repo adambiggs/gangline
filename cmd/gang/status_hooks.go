@@ -276,7 +276,7 @@ func (run *runtime) observeRosterStatus(l *store.LockedAgent, a *core.Agent, c h
 	// The roster already matched the pane's registration in its team listing.
 	screen, err := input.Capture(context.Background(), substrate.PaneID(a.Pane))
 	if err != nil {
-		if err := run.observeProbeFailure(l, a, err); err != nil {
+		if err := run.observeProbeFailure(l, a, c, err); err != nil {
 			return err
 		}
 		if run.cmd.stderr != nil {

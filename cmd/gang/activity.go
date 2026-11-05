@@ -195,20 +195,28 @@ func (run *runtime) openTurn(l *store.LockedAgent, a *core.Agent, c harness.Coll
 }
 
 // A failed probe breaks the observation window; it cannot diagnose native work.
-func (run *runtime) observeProbeFailure(l *store.LockedAgent, a *core.Agent, cause error) error {
+func (run *runtime) observeProbeFailure(l *store.LockedAgent, a *core.Agent, c harness.Collar, cause error) error {
 	reason := "native activity probe failed: " + cause.Error()
 	if errors.Is(cause, context.DeadlineExceeded) {
 		reason = "native activity probe timed out: " + cause.Error()
 	}
+	activity := core.Unknown
 	if a.Native.TurnFailure != "" {
-		reason = "native turn failed: " + a.Native.TurnFailure + "; " + reason
+		if startup, err := startupTurnFailed(l, *a, c); err != nil {
+			return err
+		} else if startup {
+			activity = core.Blocked
+			reason = "native startup turn failed: " + a.Native.TurnFailure + "; " + reason
+		} else {
+			reason = "native turn failed: " + a.Native.TurnFailure + "; " + reason
+		}
 	}
 	a.ScreenFingerprint, a.ScreenSince = "", time.Time{}
 	if err := l.Save(*a); err != nil {
 		return err
 	}
 	basis := activityBasis(*a, "unread", "probe-failure")
-	if err := run.apply(l, a, core.Event{Type: "activity_observed", Activity: core.Unknown, Reason: reason, Basis: &basis}); err != nil {
+	if err := run.apply(l, a, core.Event{Type: "activity_observed", Activity: activity, Reason: reason, Basis: &basis}); err != nil {
 		return err
 	}
 	return run.mark(*a)

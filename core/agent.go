@@ -273,6 +273,10 @@ type NativeState struct {
 	Model                string    `json:"model,omitempty"`
 	Effort               string    `json:"-"`
 
+	// Startup keeps the verified native binding after queued input replaces
+	// the latest submit witness's prompt under the same running turn ID.
+	StartupSessionID      string `json:"startup_session_id,omitempty"`
+	StartupTurnID         string `json:"startup_turn_id,omitempty"`
 	StartupFailureNoticed string `json:"startup_failure_noticed,omitempty"`
 }
 

@@ -112,7 +112,7 @@ func (run *runtime) tickAgent(id core.HitchID, notice hookNotice, wait bool) (re
 		// A pane closed outside gang ends the agent; nothing is left to probe.
 		closed, checkErr := run.forgetClosedPane(l, &a)
 		if checkErr != nil || !closed {
-			return errors.Join(err, checkErr, run.observeProbeFailure(l, &a, err))
+			return errors.Join(err, checkErr, run.observeProbeFailure(l, &a, c, err))
 		}
 		return nil
 	}
