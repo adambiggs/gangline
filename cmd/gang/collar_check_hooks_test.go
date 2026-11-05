@@ -154,7 +154,7 @@ func TestHookHandsACollarCheckPayloadToTheCheck(t *testing.T) {
 	if err := f.cmd.hook(nil); err != nil {
 		t.Fatal(err)
 	}
-	if got, err := io.ReadAll(reader); err != nil || !bytes.Equal(got, payload) {
+	if got, err := io.ReadAll(reader); err != nil || !bytes.Equal(got, append(payload, '\n')) {
 		t.Errorf("check received %q, want %q", got, payload)
 	}
 	if after := collarCheckHookState(t, f); after != before {
