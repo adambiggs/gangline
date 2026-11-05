@@ -776,7 +776,7 @@ func (run *runtime) startCompaction(l *store.LockedAgent, a *core.Agent) (result
 	pane := substrate.PaneID(a.Pane)
 	screen, err := run.captureRegistered(ctx, b, *a)
 	if err != nil {
-		return errors.Join(err, run.observeProbeFailure(l, a, err))
+		return errors.Join(err, run.observeProbeFailure(l, a, c, err))
 	}
 	screenIdle, err := run.observeScreen(l, a, c, screen)
 	if err != nil {

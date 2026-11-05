@@ -524,6 +524,13 @@ func (run *runtime) finishInput(l *store.LockedAgent, a *core.Agent, e core.Enve
 	if err := run.settleIdleNotice(e, outcome); err != nil {
 		return err
 	}
+	if outcome == "delivered" && isStartupEnvelope(e) && len(witnessed) > 0 {
+		w := witnessed[0]
+		if a.Native.StartupSessionID != w.SessionID || a.Native.StartupTurnID != w.TurnID {
+			a.Native.StartupSessionID, a.Native.StartupTurnID = w.SessionID, w.TurnID
+			a.Native.StartupFailureNoticed = ""
+		}
+	}
 	if err := l.Settle(a, e, outcome, reason); err != nil {
 		return err
 	}

@@ -26,6 +26,11 @@ func startupTurnFailed(l *store.LockedAgent, a core.Agent, c harness.Collar) (bo
 	if w.TurnID != a.Native.FailedTurn || w.SessionID != a.Native.SessionID {
 		return false, nil
 	}
+	if a.Native.StartupTurnID != "" {
+		return a.Native.StartupSessionID == w.SessionID && a.Native.StartupTurnID == w.TurnID, nil
+	}
+	// Earlier records carry no startup binding; the retained exact receipt
+	// can still establish it while that startup's witness remains current.
 	e, startup, err := retainedStartup(l.Paths, "cur", a.LastDelivered)
 	if err != nil || !startup {
 		return false, err

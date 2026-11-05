@@ -12,7 +12,7 @@ import (
 	"github.com/adambiggs/gangline/store"
 )
 
-func deliveredStartup(t *testing.T, f *stateFixture, a core.Agent) (core.Agent, string) {
+func deliveredStartup(t *testing.T, f *stateFixture, a core.Agent, turns ...string) (core.Agent, string) {
 	t.Helper()
 	e := core.Envelope{ID: "startup-original", Token: "0123456789abcdef", Recipient: a.ID, To: a.Name, From: core.Sender{Kind: core.SenderGangline, Name: "startup"}, Purpose: "startup", Message: core.Message{Text: "Do the assignment."}, Startup: startupSections(string(a.Name), startupProse{Contract: []byte("Report completion.")}), CreatedAt: a.CreatedAt}
 	p, _ := f.run.team.Agent(a.ID)
@@ -23,14 +23,26 @@ func deliveredStartup(t *testing.T, f *stateFixture, a core.Agent) (core.Agent, 
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := l.Settle(&a, e, "delivered", "native submit witness"); err != nil {
+	wire, err := envelopeText(e)
+	if err != nil {
+		t.Fatal(err)
+	}
+	turn := "t1"
+	if len(turns) > 0 {
+		turn = turns[0]
+	}
+	w := store.Witness{ID: "startup-witness", At: a.CreatedAt, SessionID: "s", TurnID: turn, Prompt: wire, Transcript: a.Native.Transcript}
+	a.Native.SessionID, a.Native.TurnID = w.SessionID, w.TurnID
+	if err := p.WriteWitness(w); err != nil {
+		t.Fatal(err)
+	}
+	if err := f.run.apply(l, &a, core.Event{Type: "input_started", ID: string(e.ID), Status: "envelope"}); err != nil {
+		t.Fatal(err)
+	}
+	if err := f.run.finishInput(l, &a, e, "delivered", "native submit witness", w); err != nil {
 		t.Fatal(err)
 	}
 	if err := l.Close(); err != nil {
-		t.Fatal(err)
-	}
-	wire, err := envelopeText(e)
-	if err != nil {
 		t.Fatal(err)
 	}
 	return a, wire
@@ -107,7 +119,11 @@ func TestLaterFailedTurnDoesNotFailStartup(t *testing.T) {
 	f, a := codexTurnErrorFixture(t, "t1", "t1", "model_not_found", "unsupported model")
 	lead := f.addHitched(t, "l", "lead", "lead", "")
 	a = f.setAgent(t, a, func(a *core.Agent) { a.HitchedBy = lead.ID })
-	deliveredStartup(t, f, a)
+	deliveredStartup(t, f, a, "startup-turn")
+	p, _ := f.run.team.Agent(a.ID)
+	if err := p.WriteWitness(store.Witness{ID: "later-witness", At: f.run.cmd.now(), SessionID: "s", TurnID: "t1", Prompt: "later prompt", Transcript: a.Native.Transcript}); err != nil {
+		t.Fatal(err)
+	}
 	// The receipt is still startup, but this witness belongs to a later prompt.
 	if err := f.run.tickAgent(a.ID, hookNotice{}, false); err != nil {
 		t.Fatal(err)
