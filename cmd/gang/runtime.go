@@ -87,6 +87,13 @@ func (run *runtime) apply(l *store.LockedAgent, a *core.Agent, e core.Event) err
 			return refuseError("%s", effect.Reason)
 		}
 	}
+	// Retain activity before consuming the observation, so a failed latch
+	// update is retried while the worker still has its previous state.
+	if e.Type == "activity_observed" && e.Activity == core.Busy && next.Status == core.Active {
+		if err := run.noteIdleActivity(next, e.At); err != nil {
+			return err
+		}
+	}
 	if err := l.Save(next); err != nil {
 		return err
 	}

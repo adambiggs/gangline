@@ -184,7 +184,7 @@ func TestTeamIdleMinimumSettingAndWatchdog(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if cfg.TeamIdleMinDuration != 2*time.Minute {
+	if cfg.TeamIdleMinDuration != 30*time.Minute {
 		t.Fatalf("default=%s", cfg.TeamIdleMinDuration)
 	}
 	if err := os.MkdirAll(cfg.ConfigDir, 0700); err != nil {

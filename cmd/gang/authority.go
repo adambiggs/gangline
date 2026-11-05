@@ -13,8 +13,6 @@ import (
 	"github.com/adambiggs/gangline/store"
 )
 
-const heldInputNoticeAfter = time.Minute
-
 // callerInTeam returns the agent of the selected team whose hitch identity
 // this process inherited, or nil when it carries none there: the operator at
 // a keyboard, or an agent of another team acting on a team it selected.
@@ -171,19 +169,6 @@ func (run *runtime) notifyHitcherRecovered(a core.Agent) error {
 	}
 	id := core.EnvelopeID(fmt.Sprintf("hitch-recovered-%s-%d", a.ID, a.ChangedAt.UnixNano()))
 	return run.notifyHitcher(a, id, fmt.Sprintf("%s, which you hitched, recovered from its failure (%s) and resumed startup; its original contract and assignment are retained. gang status %s --why shows its record.", a.Name, core.BootDeadlineElapsed, a.Name))
-}
-
-// notifyHeldInput tells a's hitcher once a has read as holding unsubmitted
-// composer input for the notice threshold. Messages
-// to a wait behind that input, and a cannot report it. The record's last change
-// names the reading, so a reading is announced once unless another event
-// changes the record while it lasts.
-func (run *runtime) notifyHeldInput(a core.Agent) error {
-	if a.Status != core.Active || a.Activity != core.Blocked || a.Evidence != heldInputEvidence || run.cmd.now().Before(a.ChangedAt.Add(heldInputNoticeAfter)) {
-		return nil
-	}
-	id := core.EnvelopeID(fmt.Sprintf("held-input-%s-%d", a.ID, a.ChangedAt.UnixNano()))
-	return run.notifyHitcher(a, id, fmt.Sprintf("%s, which you hitched, has held unsubmitted input in its composer since %s; messages to %s wait behind it. gang capture --composer %s shows it.", a.Name, a.ChangedAt.UTC().Format(time.RFC3339), a.Name, a.Name))
 }
 
 // notifyBackgroundIdle tells a's hitcher when a reads as idle and its stored

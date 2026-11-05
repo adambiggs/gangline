@@ -23,6 +23,10 @@ type idleFixture struct {
 
 func newIdleFixture(t *testing.T) *idleFixture {
 	f := &idleFixture{stateFixture: newStateFixture(t)}
+	// Existing continuity fixtures use a shorter explicit duration; the default
+	// and full thirty-minute boundary are checked separately.
+	f.env["GANG_TEAM_IDLE_MIN_DURATION"] = "2m"
+	f.run.settings.TeamIdleMinDuration = 2 * time.Minute
 	f.lead = f.addHitched(t, "lead-id", "coordinator", "lead", "")
 	f.worker = f.addHitched(t, "worker-id", "worker", "", f.lead.ID)
 	f.worker = f.setAgent(t, f.worker, func(a *core.Agent) { a.StatusProbeAt = f.cmd.now() })
@@ -82,7 +86,7 @@ func (f *idleFixture) mature(t *testing.T) *store.IdleNotice {
 	}
 	return n
 }
-func (f *idleFixture) work(t *testing.T, id string, due time.Time) core.Envelope {
+func (f *idleFixture) publication(t *testing.T, id string, due time.Time) core.Envelope {
 	t.Helper()
 	p, _ := f.run.team.Agent(f.worker.ID)
 	e := core.Envelope{ID: core.EnvelopeID(id), Recipient: f.worker.ID, To: f.worker.Name, CreatedAt: f.cmd.now(), NotBefore: due, From: core.Sender{Kind: core.SenderAgent, HitchID: f.lead.ID}}
@@ -102,6 +106,16 @@ func (f *idleFixture) work(t *testing.T, id string, due time.Time) core.Envelope
 			t.Fatal(err)
 		}
 		_ = l.Close()
+	}
+	return e
+}
+func (f *idleFixture) work(t *testing.T, id string, due time.Time) core.Envelope {
+	t.Helper()
+	e := f.publication(t, id, due)
+	if due.IsZero() {
+		f.advance(t, time.Nanosecond)
+		f.activity(t, core.Busy)
+		f.activity(t, core.Idle)
 	}
 	return e
 }
@@ -253,6 +267,7 @@ func TestTeamIdleFutureMixedMembershipAndRecipientReplacement(t *testing.T) {
 	other := f.addHitched(t, "nested-id", "nested", "", f.worker.ID)
 	f.setAgent(t, other, func(a *core.Agent) { a.Collar = "claude"; a.StatusProbeAt = f.cmd.now() })
 	f.reserve(t)
+	f.work(t, "observed-work", time.Time{})
 	e := f.work(t, "future", f.cmd.now().Add(time.Hour))
 	n := f.mature(t)
 	if n == nil {

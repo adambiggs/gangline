@@ -53,7 +53,7 @@ func sameIdleIdentity(a, b store.IdleMember) bool {
 	return a == b
 }
 
-// advanceIdleEpisode is independent of native turn IDs and activity flicker.
+// advanceIdleEpisode preserves the activity latch for unchanged membership.
 // Changes of membership establish a baseline, never completion by subtraction.
 func advanceIdleEpisode(s *store.IdleState, lead store.IdleMember, members []store.IdleMember) {
 	same := s.Initialized && sameIdleIdentity(s.Lead, lead) && len(s.Members) == len(members)
@@ -67,16 +67,45 @@ func advanceIdleEpisode(s *store.IdleState, lead store.IdleMember, members []sto
 	}
 	if !same {
 		s.Armed = false
-	} else {
-		for i := range members {
-			if members[i].Work > s.Members[i].Work {
-				s.Armed = true
-			}
-		}
 	}
 	s.Initialized = true
 	s.Lead = lead
 	s.Members = members
+}
+
+// armIdleActivity uses an observed active worker, never publication alone.
+// Identity and time guards prevent a replaced worker or delayed old boundary
+// from rearming the notice that already covered it.
+func armIdleActivity(s *store.IdleState, a core.Agent, at time.Time) bool {
+	if !s.Initialized || a.Status != core.Active || at.IsZero() || a.ID == s.Lead.ID || s.Notice != nil && !at.After(s.Notice.Envelope.CreatedAt) {
+		return false
+	}
+	for _, member := range s.Members {
+		if sameIdleIdentity(member, idleMember(a, 0)) {
+			s.Armed = true
+			return true
+		}
+	}
+	return false
+}
+
+// Called with the worker lock held, in the same agent -> idle lock order as
+// reservation. Retaining the latch here covers activity wholly between sweeps.
+func (run *runtime) noteIdleActivity(a core.Agent, at time.Time) error {
+	l, err := run.team.LockIdle()
+	if err != nil {
+		return err
+	}
+	defer l.Close()
+	s, err := l.Read()
+	if err != nil || !armIdleActivity(&s, a, at) {
+		return err
+	}
+	// Invalidate the earlier quiet window before arming a new period.
+	if err := l.SaveWindow(nil); err != nil {
+		return err
+	}
+	return l.Save(s)
 }
 
 func idleObservation(a core.Agent, now time.Time) bool {
@@ -217,6 +246,11 @@ func (run *runtime) reserveIdleNotice(sweep *idleSweep) error {
 		members = append(members, store.IdleMember{ID: o.ID, Name: o.Name, Generation: "mailbox"})
 	}
 	advanceIdleEpisode(&s, idleMember(lead, 0), members)
+	for _, a := range agents {
+		if a.Activity == core.Busy {
+			armIdleActivity(&s, a, run.cmd.now())
+		}
+	}
 	// Bound retained work to current registrations, after resolving publication.
 	active := make(map[core.HitchID]bool, len(agents))
 	for _, a := range agents {

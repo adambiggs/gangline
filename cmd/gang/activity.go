@@ -141,7 +141,7 @@ func (run *runtime) observeScreen(l *store.LockedAgent, a *core.Agent, c harness
 			return false, err
 		}
 	}
-	return screenIdle, nil
+	return screenIdle, run.observeHeldInput(l, *a, c, screen)
 }
 
 // turnFailureActivity reads a failed native turn. A provider refusal ended the
@@ -196,6 +196,9 @@ func (run *runtime) openTurn(l *store.LockedAgent, a *core.Agent, c harness.Coll
 
 // A failed probe breaks the observation window; it cannot diagnose native work.
 func (run *runtime) observeProbeFailure(l *store.LockedAgent, a *core.Agent, c harness.Collar, cause error) error {
+	if err := resetHeldInputWindow(l); err != nil {
+		return err
+	}
 	reason := "native activity probe failed: " + cause.Error()
 	if errors.Is(cause, context.DeadlineExceeded) {
 		reason = "native activity probe timed out: " + cause.Error()

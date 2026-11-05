@@ -20,31 +20,29 @@ func TestIdleEpisodeIdentity(t *testing.T) {
 	}
 	worker.Work++
 	observe()
-	if !s.Armed {
-		t.Fatal("new identified work did not arm")
-	}
-	s.Armed = false // one reserved notice
-	for range 3 {
-		observe()
-		if s.Armed {
-			t.Fatal("unchanged work rearmed")
-		}
-	}
-	worker.Work-- // older work evidence cannot rearm
-	observe()
 	if s.Armed {
-		t.Fatal("older work rearmed")
+		t.Fatal("publication alone armed a notice")
+	}
+	at := time.Date(2026, 11, 5, 1, 0, 0, 0, time.UTC)
+	a := core.Agent{ID: worker.ID, Status: core.Active, Registration: core.PaneRegistration{Generation: worker.Generation}}
+	if !armIdleActivity(&s, a, at) || !s.Armed {
+		t.Fatal("observed worker activity did not arm")
+	}
+	s.Armed = false
+	s.Notice = &store.IdleNotice{Envelope: core.Envelope{CreatedAt: at}}
+	observe()
+	if s.Armed || armIdleActivity(&s, a, at.Add(-time.Second)) || armIdleActivity(&s, a, at) {
+		t.Fatal("old evidence rearmed")
 	}
 	worker.Generation = "two"
 	worker.Work = 20
 	observe()
-	if s.Armed {
+	if s.Armed || armIdleActivity(&s, a, at.Add(time.Second)) {
 		t.Fatal("replacement manufactured completion")
 	}
-	worker.Work++
-	observe()
-	if !s.Armed {
-		t.Fatal("work after replacement did not rearm")
+	a.Registration.Generation = "two"
+	if !armIdleActivity(&s, a, at.Add(time.Second)) || !s.Armed {
+		t.Fatal("new worker activity did not rearm")
 	}
 	advanceIdleEpisode(&s, lead, nil)
 	if s.Armed {

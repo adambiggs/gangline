@@ -204,9 +204,6 @@ func (run *runtime) tickHookStatus(l *store.LockedAgent, a *core.Agent, c harnes
 	if err := run.observeStatusOutcomes(*a, c, batch, false); err != nil {
 		return err
 	}
-	if err := run.notifyHeldInput(*a); err != nil {
-		return err
-	}
 	if err := run.notifyBackgroundIdle(l, a); err != nil {
 		return err
 	}

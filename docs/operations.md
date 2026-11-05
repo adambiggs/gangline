@@ -321,9 +321,19 @@ native identity separately; missing success evidence never authorizes replay.
 
 ## Observed idle notifications
 
-After new worker input, a full Gangline tick can send the unique active lead a
+The same `GANG_TEAM_IDLE_MIN_DURATION` setting also delays held-composer
+notices to a worker's hitcher. A readable draft must have unchanged text across
+observations for that duration (default `30m`). Editing or submitting it,
+emptying the composer, or losing a readable composer resets its timer. One
+notice is retained per unchanged draft, including after message receipt pruning.
+Only a fingerprint is stored, in the agent's `held-input.json`; draft text is not
+retained there. Hidden or collapsed text cannot establish an unchanged draft.
+This and the team notice share the operator-selected quiet-duration threshold.
+
+
+After observed worker activity, a full Gangline tick can send the unique active lead a
 `team-idle` notice after repeated observations of all registered workers as
-idle span `GANG_TEAM_IDLE_MIN_DURATION` (default `2m`). It includes nested
+idle span `GANG_TEAM_IDLE_MIN_DURATION` (default `30m`). It includes nested
 workers and all collars. The lead's own foreground turn is excluded. Startup
 establishes a baseline without an initial alert; an empty team never alerts.
 
@@ -354,18 +364,19 @@ runtime context after changing the value; its environment retains the value
 from its last refresh and overrides the file. Existing watchdog units without
 the key use the default or current config until refreshed.
 
-A new ordinary message publication, including `gang send --at`, can arm the
-next notice. The first publication of an explicit snooze wake also counts;
-automatic cap retries and observation notices do not. The same work reading
-busy and idle again, delayed native callbacks, and the lead handling its notice
-do not rearm it. Autonomous work with no new identified Gangline input may
-finish without another notice. Registration changes establish a new baseline;
+One notice is sent per observed idle period. After that notice, observed worker
+activity rearms it: a busy observation or a new native submission witness,
+including work started without a Gangline message. The next notice still waits
+for the full idle duration. Publication alone, future scheduled input, unknown
+state, old native boundaries, and the lead handling its notice do not rearm it.
+The activity latch survives process restarts and busy-to-idle turns entirely
+between full sweeps. Registration changes establish a new baseline;
 dropping a worker alone does not announce completion.
 
 The optional `idle.json` file and `idle.lock` in the team runtime directory keep
 work revisions and one exact notice intent across process restarts and receipt
 pruning. Accepted or unverified notice delivery is retained without automatic
-replay. A replacement lead does not receive a redirected copy; new work under
+replay. A replacement lead does not receive a redirected copy; observed activity under
 the new registration can arm a new notice. Ordinary team teardown removes this
 state. Preserve it when investigating uncertain delivery.
 

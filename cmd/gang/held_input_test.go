@@ -62,12 +62,12 @@ func TestHeldComposerInputNotifiesHitcher(t *testing.T) {
 		want   int
 	}{
 		{0, nil, 0},
-		{heldInputNoticeAfter - time.Millisecond, nil, 0},
-		{heldInputNoticeAfter, nil, 1},
-		{2 * heldInputNoticeAfter, nil, 1},
-		{3 * heldInputNoticeAfter, []string{"empty"}, 1},
-		{4 * heldInputNoticeAfter, nil, 1},
-		{5 * heldInputNoticeAfter, nil, 2},
+		{30*time.Minute - time.Millisecond, nil, 0},
+		{30 * time.Minute, nil, 1},
+		{2 * 30 * time.Minute, nil, 1},
+		{3 * 30 * time.Minute, []string{"empty"}, 1},
+		{4 * 30 * time.Minute, nil, 1},
+		{5 * 30 * time.Minute, nil, 2},
 	} {
 		f.input.screen = held
 		if step.screen != nil {
@@ -90,5 +90,107 @@ func TestHeldComposerInputNotifiesHitcher(t *testing.T) {
 		if e.From.Kind != core.SenderGangline || e.Recipient != lead.ID || !strings.Contains(e.Message.Text, "worker, which you hitched, has held unsubmitted input in its composer since ") {
 			t.Fatalf("notice = %+v", e)
 		}
+	}
+}
+
+// Fake-clock ticks exercise the actual composer reader and notice publication.
+func TestHeldComposerDraftContinuity(t *testing.T) {
+	for _, mode := range []string{"changing", "unchanged", "changed-after-notice", "submitted", "unreadable", "unreadable-after-notice", "native-submit"} {
+		t.Run(mode, func(t *testing.T) {
+			f := newStateFixture(t)
+			lead := f.addHitched(t, "l", "lead", "lead", "")
+			a := f.addHitched(t, "a", "worker", "", lead.ID)
+			lp, _ := f.run.team.Agent(lead.ID)
+			start := f.cmd.now()
+			tick := func(at time.Duration, draft string, want int) {
+				t.Helper()
+				f.input.screen = screenWithText("READY", "› "+draft)
+				if draft == "<unreadable>" {
+					f.input.screen = screenWithText("no composer")
+				}
+				now := start.Add(at)
+				f.run.cmd.clock = func() time.Time { return now }
+				if err := f.run.tickAgent(a.ID, hookNotice{}, false); err != nil && !(draft == "<unreadable>" && strings.Contains(err.Error(), "no composer")) {
+					t.Fatal(err)
+				}
+				envelopes, err := lp.ListNew()
+				if err != nil {
+					t.Fatal(err)
+				}
+				count := 0
+				for _, e := range envelopes {
+					if strings.HasPrefix(string(e.ID), "held-input-a-") {
+						count++
+					}
+				}
+				if count != want {
+					t.Fatalf("at %s: got %d notices, want %d", at, count, want)
+				}
+			}
+			tick(0, "draft", 0)
+			switch mode {
+			case "changing":
+				for i := 1; i <= 8; i++ {
+					tick(time.Duration(i)*10*time.Minute, strings.Repeat("x", i), 0)
+				}
+			case "unchanged":
+				tick(30*time.Minute-time.Nanosecond, "draft", 0)
+				tick(30*time.Minute, "draft", 1)
+				tick(60*time.Minute, "draft", 1)
+				var err error
+				f.run, err = f.cmd.runtime()
+				if err != nil {
+					t.Fatal(err)
+				}
+				// Receipt pruning cannot permit another notice for the same draft.
+				envelopes, _ := lp.ListNew()
+				for _, e := range envelopes {
+					if err := os.Remove(filepath.Join(lp.Inbox, "new", string(e.ID)+".json")); err != nil {
+						t.Fatal(err)
+					}
+				}
+				tick(90*time.Minute, "draft", 0)
+			case "unreadable-after-notice":
+				tick(30*time.Minute, "draft", 1)
+				tick(31*time.Minute, "<unreadable>", 1)
+				tick(32*time.Minute, "draft", 1)
+				tick(62*time.Minute, "draft", 1)
+			case "native-submit":
+				tick(29*time.Minute, "draft", 0)
+				p, _ := f.run.team.Agent(a.ID)
+				l, err := p.LockAgent()
+				if err != nil {
+					t.Fatal(err)
+				}
+				current, err := p.Read()
+				if err != nil {
+					t.Fatal(err)
+				}
+				current.Native.SubmittedAt = start.Add(29 * time.Minute)
+				current.Native.FinishedAt = current.Native.SubmittedAt
+				if err := l.Save(current); err != nil {
+					t.Fatal(err)
+				}
+				l.Close()
+				tick(30*time.Minute, "draft", 0)
+				tick(60*time.Minute-time.Nanosecond, "draft", 0)
+				tick(60*time.Minute, "draft", 1)
+			case "changed-after-notice":
+				tick(30*time.Minute, "draft", 1)
+				tick(31*time.Minute, "edited draft", 1)
+				tick(61*time.Minute-time.Nanosecond, "edited draft", 1)
+				tick(61*time.Minute, "edited draft", 2)
+				tick(91*time.Minute, "edited draft", 2)
+			case "submitted", "unreadable":
+				text := ""
+				if mode == "unreadable" {
+					text = "<unreadable>"
+				}
+				tick(29*time.Minute, text, 0)
+				tick(30*time.Minute, "draft", 0)
+				tick(60*time.Minute-time.Nanosecond, "draft", 0)
+				tick(60*time.Minute, "draft", 1)
+			}
+		})
 	}
 }

@@ -120,6 +120,11 @@ func (run *runtime) tickAgent(id core.HitchID, notice hookNotice, wait bool) (re
 	if err := l.Save(a); err != nil {
 		return err
 	}
+	// Observe the composer even if another screen reader below cannot classify
+	// this frame. A hidden draft cannot continue its unchanged-text timer.
+	if err := run.observeHeldInput(l, a, c, screen); err != nil {
+		return err
+	}
 	if a.Status == core.Booting {
 		startup, err := harness.InspectStartup(c, screen)
 		if err != nil {
@@ -210,7 +215,7 @@ func (run *runtime) tickAgent(id core.HitchID, notice hookNotice, wait bool) (re
 	if err := run.observeActivity(l, &a, c, screen); err != nil {
 		return err
 	}
-	if err := run.notifyHeldInput(a); err != nil {
+	if err := run.notifyHeldInput(l, a); err != nil {
 		return err
 	}
 	if err := run.notifyBackgroundIdle(l, &a); err != nil {
@@ -342,6 +347,12 @@ func (run *runtime) reconcileNativeBoundary(l *store.LockedAgent, a *core.Agent,
 		}
 		if witness.At.After(a.Native.SubmittedAt) {
 			a.Native.SessionID, a.Native.TurnID, a.Native.Transcript, a.Native.SubmittedAt = witness.SessionID, witness.TurnID, witness.Transcript, witness.At
+			if err := l.SaveHeldInput(nil); err != nil {
+				return err
+			}
+			if err := run.noteIdleActivity(*a, witness.At); err != nil {
+				return err
+			}
 			if err := l.Save(*a); err != nil {
 				return err
 			}

@@ -97,7 +97,7 @@ func (cmd command) settings() (settings, error) {
 	}
 	capacityTimeout := "5m"
 	backgroundIdleNotice := "30m"
-	teamIdleMinDuration := "2m"
+	teamIdleMinDuration := "30m"
 	values := map[string]*string{
 		"GANG_CAPACITY_TIMEOUT":         &capacityTimeout,
 		"GANG_BACKGROUND_IDLE_NOTICE":   &backgroundIdleNotice,
