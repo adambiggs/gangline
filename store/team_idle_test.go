@@ -4,10 +4,12 @@ package store
 
 import (
 	"errors"
+	"fmt"
 	"os"
 	"path/filepath"
 	"sync"
 	"testing"
+	"time"
 
 	"github.com/adambiggs/gangline/core"
 )
@@ -139,5 +141,49 @@ func TestIdlePublicationWithdrawalAndDroppedCounterCleanup(t *testing.T) {
 	}
 	if s := readIdleFixture(t, p); len(s.Work) != 0 {
 		t.Fatalf("dropped counters retained: %+v", s.Work)
+	}
+}
+
+func TestIdleWindowDoesNotChangePublicationRecords(t *testing.T) {
+	p, l, a := idleStoreFixture(t)
+	lock, err := p.LockIdle()
+	if err != nil {
+		t.Fatal(err)
+	}
+	w := &IdleWindow{Since: time.Date(2026, 11, 5, 0, 0, 0, 0, time.UTC), Last: time.Date(2026, 11, 5, 0, 0, 0, 0, time.UTC), Minimum: time.Minute, Members: []IdleWindowMember{{Member: IdleMember{ID: a.ID}}}}
+	if err := lock.SaveWindow(w); err != nil {
+		t.Fatal(err)
+	}
+	if got := lock.ReadWindow(); got == nil || got.Minimum != time.Minute {
+		t.Fatalf("window=%+v", got)
+	}
+	_ = lock.Close()
+	// Ordinary publication reads only the unchanged strict ledger, even when
+	// the optional timer cache is corrupt or unavailable.
+	for i, data := range []string{"{", `{"future_field":true}`} {
+		if err := os.WriteFile(filepath.Join(p.Directory, "idle-window.json"), []byte(data), 0600); err != nil {
+			t.Fatal(err)
+		}
+		e := core.Envelope{ID: core.EnvelopeID(fmt.Sprintf("work-%d", i)), Recipient: a.ID}
+		if err := l.Paths.PublishNew(e); err != nil {
+			t.Fatal(err)
+		}
+		if s := readIdleFixture(t, p); s.Work[a.ID] != uint64(i+1) {
+			t.Fatalf("work=%v", s.Work)
+		}
+	}
+	lock, err = p.LockIdle()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if lock.ReadWindow() != nil {
+		t.Fatal("invalid cache trusted")
+	}
+	if err := lock.SaveWindow(nil); err != nil {
+		t.Fatal(err)
+	}
+	_ = lock.Close()
+	if _, err := os.Stat(filepath.Join(p.Directory, "idle-window.json")); !errors.Is(err, os.ErrNotExist) {
+		t.Fatal("cache retained")
 	}
 }

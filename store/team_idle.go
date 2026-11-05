@@ -6,6 +6,7 @@ import (
 	"os"
 	"path/filepath"
 	"syscall"
+	"time"
 
 	"github.com/adambiggs/gangline/core"
 )
@@ -196,4 +197,46 @@ func (p AgentPaths) resolveIdlePublication() error {
 	defer l.Close()
 	_, err = l.Read()
 	return err
+}
+
+// IdleWindow is a replaceable observation window, separate from the publication
+// ledger so older binaries can still send input against the same team state.
+type IdleWindow struct {
+	Since   time.Time          `json:"since"`
+	Last    time.Time          `json:"last"`
+	Minimum time.Duration      `json:"minimum"`
+	Lead    IdleMember         `json:"lead"`
+	Members []IdleWindowMember `json:"members"`
+}
+
+type IdleWindowMember struct {
+	Member       IdleMember `json:"member"`
+	HookSequence uint64     `json:"hook_sequence"`
+	ChangedAt    time.Time  `json:"changed_at"`
+	ScreenSince  time.Time  `json:"screen_since"`
+}
+
+// A missing or unreadable cache cannot establish elapsed idle time. Starting
+// over is safe; publication and work identity remain in the separate ledger.
+func (l *LockedIdle) ReadWindow() *IdleWindow {
+	var window IdleWindow
+	if err := readJSON(filepath.Join(l.team.Directory, "idle-window.json"), &window); err != nil {
+		return nil
+	}
+	return &window
+}
+
+func (l *LockedIdle) SaveWindow(window *IdleWindow) error {
+	if l == nil || l.file == nil {
+		return fmt.Errorf("idle lock is not held")
+	}
+	path := filepath.Join(l.team.Directory, "idle-window.json")
+	if window == nil {
+		err := os.Remove(path)
+		if errors.Is(err, os.ErrNotExist) {
+			return nil
+		}
+		return err
+	}
+	return atomicJSON(path, window)
 }

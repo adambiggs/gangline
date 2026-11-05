@@ -109,3 +109,67 @@ func TestIdleNoticeHonesty(t *testing.T) {
 		}
 	}
 }
+
+func TestIdleWindowThresholdAndContinuity(t *testing.T) {
+	at := time.Date(2026, 11, 5, 1, 0, 0, 0, time.UTC)
+	sample := func(offset time.Duration) store.IdleWindow {
+		return store.IdleWindow{Since: at.Add(offset), Last: at.Add(offset), Minimum: time.Minute,
+			Lead: store.IdleMember{ID: "lead"}, Members: []store.IdleWindowMember{{Member: store.IdleMember{ID: "worker", Work: 1}, ChangedAt: at, ScreenSince: at, HookSequence: 4}}}
+	}
+	first, mature := advanceIdleWindow(nil, sample(0), true)
+	if mature {
+		t.Fatal("first observation matured")
+	}
+	window := first
+	for _, offset := range []time.Duration{20 * time.Second, 40 * time.Second, time.Minute - time.Nanosecond} {
+		window, mature = advanceIdleWindow(window, sample(offset), true)
+		if mature {
+			t.Fatalf("matured early at %s", offset)
+		}
+	}
+	window, mature = advanceIdleWindow(window, sample(time.Minute), true)
+	if !mature || !window.Since.Equal(at) {
+		t.Fatal("exact threshold missed")
+	}
+	if _, mature := advanceIdleWindow(window, sample(65*time.Second), true); !mature {
+		t.Fatal("above threshold missed")
+	}
+	for _, tc := range []struct {
+		name  string
+		edit  func(*store.IdleWindow)
+		ready bool
+	}{
+		{"busy", func(*store.IdleWindow) {}, false},
+		{"clock-back", func(w *store.IdleWindow) { w.Last = at.Add(-time.Second) }, true},
+		{"gap-at-freshness", func(w *store.IdleWindow) { w.Last = at.Add(90 * time.Second) }, true},
+		{"minimum", func(w *store.IdleWindow) { w.Minimum = time.Second }, true},
+		{"lead", func(w *store.IdleWindow) { w.Lead.Generation = "new" }, true},
+		{"member", func(w *store.IdleWindow) { w.Members[0].Member.Generation = "new" }, true},
+		{"work", func(w *store.IdleWindow) { w.Members[0].Member.Work++ }, true},
+		{"hook", func(w *store.IdleWindow) { w.Members[0].HookSequence++ }, true},
+		{"state", func(w *store.IdleWindow) { w.Members[0].ChangedAt = at.Add(time.Second) }, true},
+		{"screen", func(w *store.IdleWindow) { w.Members[0].ScreenSince = at.Add(time.Second) }, true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			current := sample(65 * time.Second)
+			tc.edit(&current)
+			next, mature := advanceIdleWindow(window, current, tc.ready)
+			if mature {
+				t.Fatal("changed evidence matured previous window")
+			}
+			if next != nil && !next.Since.Equal(current.Since) {
+				t.Fatal("did not restart delay")
+			}
+		})
+	}
+	tiny := sample(0)
+	tiny.Minimum = time.Nanosecond
+	first, mature = advanceIdleWindow(nil, tiny, true)
+	if mature {
+		t.Fatal("tiny minimum skipped first sweep")
+	}
+	tiny.Last = at.Add(time.Nanosecond)
+	if _, mature = advanceIdleWindow(first, tiny, true); !mature {
+		t.Fatal("tiny minimum not supported")
+	}
+}

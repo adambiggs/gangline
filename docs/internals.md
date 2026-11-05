@@ -139,6 +139,18 @@ matches wake withdrawal's lock order. No pane capture or native delivery runs
 under the snapshot locks. Freshness uses existing hook/probe observations;
 the notification text states their quiet-gap and native-background limits.
 
+Under `idle.lock`, `idle-window.json` retains the first and latest qualifying
+observation, configured minimum, lead and worker identities/work revisions,
+and each worker's hook sequence, changed-at and sampled screen-change time.
+Changed evidence restarts the delay even if activity returned idle between
+sweeps. Fresh probes and lead activity alone do not. At least two qualifying
+sweeps must span the minimum, with gaps below the existing freshness bound.
+Only evaluated sweeps update the window; early exits cannot extend it.
+The evaluator saves the disarmed notice intent before removing the cache, so
+an interrupted cleanup cannot repeat the notice. The sidecar leaves strict
+publication readers compatible; ordinary sends do not read it. State size is
+linear in current workers, with one atomic cache write per qualifying sweep.
+
 `PublishNew` reserves a pending publication in optional `idle.json` before
 linking the envelope into the inbox. Under `idle.lock`, the next reader resolves
 that transaction from the exact inbox identity. A pre-existing queued ID never
