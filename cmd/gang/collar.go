@@ -288,9 +288,13 @@ func (cmd command) probeActive(ctx context.Context, backend *tmux.Backend, colla
 		return sendHarnessKeys(ctx, typing, pane.ID, collar, substrate.Keys{Names: action.Keys, Submit: action.Submit})
 	})
 	if err != nil {
-		if payload != nil {
+		switch {
+		case errors.Is(err, errProbeTurnFailed):
+			results[harness.ProbeHook] = passedProbe(harness.ProbeHook, "native hook payload decoded")
+			results[harness.ProbeTurnBoundary] = failedProbe(harness.ProbeTurnBoundary, err.Error())
+		case payload != nil:
 			results[harness.ProbeHook] = failedProbe(harness.ProbeHook, err.Error())
-		} else {
+		default:
 			results[harness.ProbeSubmit] = probeErrorResult(ctx, harness.ProbeSubmit, err, backend.SessionExists)
 		}
 		return results, nil

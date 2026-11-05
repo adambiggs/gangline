@@ -78,3 +78,18 @@ func TestNativeHookProbeWaitUsesDeadline(t *testing.T) {
 		}
 	})
 }
+
+func TestProbeTurnReportsNativeFailureSeparately(t *testing.T) {
+	collar, err := harness.EmbeddedCollar("claude")
+	if err != nil {
+		t.Fatal(err)
+	}
+	input := `{"hook_event_name":"StopFailure","error":"Login expired"}` + "\n"
+	payload, err := readProbeTurn(strings.NewReader(input), collar, probePrompt)
+	if payload == nil || !errors.Is(err, errProbeTurnFailed) || !strings.Contains(err.Error(), "Login expired") {
+		t.Fatalf("native failure payload=%q err=%v", payload, err)
+	}
+	if _, err := readProbeTurn(strings.NewReader("malformed\n"), collar, probePrompt); err == nil || errors.Is(err, errProbeTurnFailed) {
+		t.Fatalf("malformed hook confused with native failure: %v", err)
+	}
+}
