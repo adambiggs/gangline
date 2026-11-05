@@ -752,12 +752,23 @@ export GANG_TMUX_SOCKET="$GANG_STATE_ROOT/tmux.sock"
 gang up
 ```
 
-`gang down` ends only the agents' panes and keeps the state root. To discard
-the team, end its server and remove the root:
+`gang down` ends only registered agents' panes and keeps the state root.
+Unregistered panes, including an operator shell or test control pane, remain;
+a successful down does not mean the tmux session disappeared. For disposable
+acceptance, check that registered agent panes are gone and any remaining panes
+are the expected control panes:
 
 ```sh
 gang down --yes
-tmux -S "$GANG_TMUX_SOCKET" kill-server
+tmux -S "$GANG_TMUX_SOCKET" list-panes -s -t "=$GANG_SESSION" -F '#{pane_id} #{pane_current_command}'
+```
+
+If no panes remain, tmux reports the session absent. After confirming any
+remaining panes belong to this disposable fixture, remove that session and
+its temporary root:
+
+```sh
+tmux -S "$GANG_TMUX_SOCKET" kill-session -t "=$GANG_SESSION"
 rm -rf "$GANG_STATE_ROOT"
 ```
 
