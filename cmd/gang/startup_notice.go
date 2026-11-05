@@ -24,7 +24,7 @@ func (run *runtime) notifyStartupPrompt(l *store.LockedAgent, a *core.Agent) err
 	// prevents replay after another delivery retires the hitcher's receipt.
 	interval := now.Sub(a.ChangedAt) / startupPromptReminder
 	id := core.EnvelopeID(fmt.Sprintf("startup-blocked-%s-%d-%d", a.ID, a.ChangedAt.UnixNano(), interval))
-	published, err := run.noticeHitcher(*a, id, fmt.Sprintf("%s, which you hitched, is blocked at a native startup prompt: %s. Resolve the prompt, then run gang tick; gang status %s --why shows its record.", a.Name, a.Evidence, a.Name))
+	published, err := run.noticeHitcher(*a, id, fmt.Sprintf("%s blocked at startup since %s: %s.", a.Name, a.ChangedAt.UTC().Format(time.RFC3339), a.Evidence))
 	if err != nil || !published {
 		return err
 	}

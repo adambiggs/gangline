@@ -55,7 +55,7 @@ func (run *runtime) notifyHeldInput(l *store.LockedAgent, a core.Agent) error {
 		return err
 	}
 	id := core.EnvelopeID(fmt.Sprintf("held-input-%s-%d", a.ID, draft.Since.UnixNano()))
-	published, err := run.noticeHitcher(a, id, fmt.Sprintf("%s, which you hitched, has held unsubmitted input in its composer since %s with the same text across observations; messages to %s wait behind it. gang capture --composer %s shows it.", a.Name, draft.Since.UTC().Format(time.RFC3339), a.Name, a.Name))
+	published, err := run.noticeHitcher(a, id, fmt.Sprintf("%s has unchanged input in its composer since %s.", a.Name, draft.Since.UTC().Format(time.RFC3339)))
 	if err != nil {
 		return err
 	}

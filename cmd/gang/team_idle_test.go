@@ -1,7 +1,6 @@
 package main
 
 import (
-	"strings"
 	"testing"
 	"time"
 
@@ -93,14 +92,13 @@ func TestIdleObservationBoundaries(t *testing.T) {
 	}
 }
 
-func TestIdleNoticeHonesty(t *testing.T) {
+func TestIdleNoticeText(t *testing.T) {
 	at := time.Date(2026, 11, 5, 1, 0, 0, 0, time.UTC)
-	text := idleNoticeText("team", []store.IdleMember{{ID: "c", Name: "claude"}, {ID: "x", Name: "codex"}}, at, at.Add(time.Second), 1, at.Add(time.Hour))
-	for _, want := range []string{"all 2 registered workers", "claude (c)", "codex (x)", "2026-11-05T01:00:00Z–2026-11-05T01:00:01Z", "quiet gaps can look idle", "native child/background work may still be running", "does not mean assignments are complete", "1 pending; next due 2026-11-05T02:00:00Z"} {
-		if !strings.Contains(text, want) {
-			t.Errorf("missing %q in %s", want, text)
-		}
+	text := idleNoticeText([]store.IdleMember{{ID: "c", Name: "claude"}, {ID: "x", Name: "codex"}}, at)
+	if want := "All 2 workers idle since 2026-11-05T01:00:00Z: claude, codex."; text != want {
+		t.Errorf("notice = %q, want %q", text, want)
 	}
+
 	for _, outcome := range []string{"", "accepted", "unverified"} {
 		if idleNoticeSettled(&store.IdleNotice{Outcome: outcome}) {
 			t.Errorf("uncertain notice %q treated as settled", outcome)

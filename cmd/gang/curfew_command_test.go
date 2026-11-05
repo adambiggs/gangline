@@ -110,7 +110,7 @@ func TestCurfewDeadlineNotifiesWithoutDropping(t *testing.T) {
 	if err != nil || current.Status != core.Active {
 		t.Fatalf("curfew changed registration: %+v, %v", current, err)
 	}
-	want := "Team unit curfew " + deadline.Format(time.RFC3339) + " has passed. Observed " + deadline.Format(time.RFC3339) + "."
+	want := "Team unit curfew passed at " + deadline.Format(time.RFC3339) + "."
 	if f.input.submits != 1 || !strings.Contains(f.input.pasted, want) {
 		t.Fatalf("curfew notice submits=%d text=%q, want %q", f.input.submits, f.input.pasted, want)
 	}

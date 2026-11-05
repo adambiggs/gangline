@@ -274,7 +274,7 @@ func (run *runtime) noteCurfew(l *store.LockedAgent, a *core.Agent) error {
 	if err := run.publishOnce(l, a, core.Envelope{
 		ID: id, Token: token, Recipient: a.ID, To: a.Name,
 		From: core.Sender{Kind: core.SenderGangline, Name: "curfew"}, CreatedAt: now,
-		Message: core.Message{Text: fmt.Sprintf("Team %s curfew %s has passed. Observed %s.", run.settings.Session, team.Curfew.UTC().Format(time.RFC3339), now.UTC().Format(time.RFC3339))},
+		Message: core.Message{Text: fmt.Sprintf("Team %s curfew passed at %s.", run.settings.Session, team.Curfew.UTC().Format(time.RFC3339))},
 	}); err != nil {
 		return err
 	}

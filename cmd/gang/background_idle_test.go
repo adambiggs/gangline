@@ -145,7 +145,7 @@ func TestBackgroundIdleNotifiesHitcherOncePerReport(t *testing.T) {
 		}
 	}
 	notice := f.notices(t)[0]
-	if notice.From.Kind != core.SenderGangline || notice.Recipient != f.lead.ID || !strings.Contains(notice.Message.Text, "worker, which you hitched, is idle. A background report received at 2026-09-22T10:00:00Z listed 1 background task; current task state is unknown") {
+	if notice.From.Kind != core.SenderGangline || notice.Recipient != f.lead.ID || notice.Message.Text != "worker is idle with a report of 1 background task received at 2026-09-22T10:00:00Z." {
 		t.Fatalf("notice = %+v", notice)
 	}
 	if event := f.events(t)[0]; event.HitchID != f.worker.ID || event.ID != string(notice.ID) || event.Reason != "background report received at 2026-09-22T10:00:00Z listed 1 background task; current task state is unknown" {
@@ -172,7 +172,7 @@ func TestBackgroundIdleNotifiesHitcherOncePerReport(t *testing.T) {
 		t.Fatalf("before the second threshold: woken = %v, events = %+v", f.woken, f.events(t))
 	}
 	f.tickAt(t, later.Add(threshold))
-	if got := f.notices(t); len(got) != 1 || len(f.woken) != 2 || len(f.events(t)) != 2 || !strings.Contains(got[0].Message.Text, "listed 2 background tasks; current task state is unknown") {
+	if got := f.notices(t); len(got) != 1 || len(f.woken) != 2 || len(f.events(t)) != 2 || got[0].Message.Text != "worker is idle with a report of 2 background tasks received at 2026-09-22T11:20:00Z." {
 		t.Fatalf("after the second threshold: notices = %+v, woken = %v, events = %+v", got, f.woken, f.events(t))
 	}
 }

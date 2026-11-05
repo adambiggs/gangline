@@ -4,6 +4,7 @@ import (
 	"errors"
 	"fmt"
 	"os"
+	"time"
 
 	"github.com/adambiggs/gangline/core"
 	"github.com/adambiggs/gangline/harness"
@@ -48,7 +49,7 @@ func (run *runtime) notifyStartupFailure(l *store.LockedAgent, a *core.Agent, c 
 		return err
 	}
 	id := core.EnvelopeID(fmt.Sprintf("startup-turn-failed-%s-%s", a.ID, a.Native.FailedTurn))
-	published, err := run.noticeHitcher(*a, id, fmt.Sprintf("%s, which you hitched, failed its native startup turn: %s. The startup was submitted but its execution failed; gang status %s --why shows its record.", a.Name, a.Native.TurnFailure, a.Name))
+	published, err := run.noticeHitcher(*a, id, fmt.Sprintf("%s startup failure observed at %s: %s.", a.Name, run.cmd.now().UTC().Format(time.RFC3339), a.Native.TurnFailure))
 	if err != nil || !published {
 		return err
 	}
