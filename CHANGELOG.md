@@ -1,5 +1,17 @@
 # Changelog
 
+## [3.1.3](https://github.com/adambiggs/gangline/compare/gangline-v3.1.2...gangline-v3.1.3) (2026-11-05)
+
+
+### Bug Fixes
+
+* **collar:** distinguish native failure from malformed hooks ([139fea8](https://github.com/adambiggs/gangline/commit/139fea802286697003eb76fab00d1afb113af074))
+* **collar:** wait for the matching probe turn-start hook ([0bddfb8](https://github.com/adambiggs/gangline/commit/0bddfb8457a24a7ebd1ae67721b7b98d07bb7879))
+* quiet idle and unchanged composer notices ([c822c6c](https://github.com/adambiggs/gangline/commit/c822c6c8e32919e0b261a0a9fcdc3dae3fc49260))
+* **startup:** notify hitchers of blocked prompts ([9276c5e](https://github.com/adambiggs/gangline/commit/9276c5e278c9ac7fabb8508001dd42398e580dc6))
+* **startup:** report failed native startup turns ([c5aa5f0](https://github.com/adambiggs/gangline/commit/c5aa5f0cc758498106534b07ac64ca52848f1a9c))
+* **startup:** retain failure attribution across queued input ([ddf9bdb](https://github.com/adambiggs/gangline/commit/ddf9bdb391e83955c9258f9d532ad3fea0920f41))
+
 ## [3.1.2](https://github.com/adambiggs/gangline/compare/gangline-v3.1.1...gangline-v3.1.2) (2026-11-05)
 
 
