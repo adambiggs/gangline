@@ -340,6 +340,73 @@ func testLiveProvider(t *testing.T, collar, cli, cheapest string) {
 		t.Fatalf("second hook did not witness envelope and body: %v: %+v", err, lastWitness)
 	}
 	t.Logf("%s PASS startup and second hook, Stop, envelope, paste, mid-turn delivery initial receipt=%s pane=%s", collar, sendFields[1], pane)
+	if collar != "codex" {
+		return
+	}
+	// Idle after a completed turn, Codex takes a message through its own
+	// queue: nothing is typed, and the submit hook proves delivery.
+	third := "Reply with exactly THIRD. Do not use tools."
+	sent, sendDiagnostic, err = runGang(ctx, third, "send", "worker", "--from", "acceptance")
+	if err != nil {
+		t.Fatalf("idle send: %v: %s %s", err, sent, sendDiagnostic)
+	}
+	thirdFields := strings.Fields(sent)
+	// Right after the Stop hook the composer may not be free yet; Gangline
+	// then holds the message and the watchdog's next drain delivers it.
+	if len(thirdFields) < 2 || thirdFields[1] != "accepted" && thirdFields[1] != "queued" {
+		t.Fatalf("unexpected idle send receipt: stdout=%q stderr=%q", sent, sendDiagnostic)
+	}
+	var finished core.Event
+	if err := awaitLoggedEvent(ctx, team.Log, func(event core.Event) bool {
+		if event.Type == "input_finished" && event.ID == thirdFields[0] {
+			finished = event
+			return true
+		}
+		return false
+	}); err != nil || finished.Status != "accepted" || !strings.Contains(finished.Reason, "native queue holds the message") {
+		status, _, _ := runGang(ctx, "", "status", "worker", "--why")
+		screen, _, _ := runGang(ctx, "", "capture", "worker", "-n", "30")
+		t.Fatalf("idle Codex message did not use the native queue: %v: %+v; status=%s screen=%s timeline=%s", err, finished, status, screen, providerTimeline(team.Log))
+	}
+	if err := awaitLoggedEvent(ctx, team.Log, func(event core.Event) bool {
+		return event.Type == "delivery_succeeded" && event.ID == thirdFields[0]
+	}); err != nil {
+		screen, _, _ := runGang(ctx, "", "capture", "worker", "-n", "30")
+		t.Fatalf("queued message was not delivered: %v; screen=%s timeline=%s", err, screen, providerTimeline(team.Log))
+	}
+	if witness, err := awaitProviderWitness(ctx, paths, third); err != nil || !strings.Contains(witness.Prompt, "[gang:") {
+		t.Fatalf("queued message hook did not witness envelope and body: %v: %+v", err, witness)
+	}
+	t.Logf("codex PASS idle delivery through the native queue initial receipt=%s", thirdFields[1])
+}
+
+// awaitLoggedEvent waits for a team log event that match accepts.
+func awaitLoggedEvent(ctx context.Context, path string, match func(core.Event) bool) error {
+	for {
+		watch, err := store.Watch(path)
+		if err != nil {
+			return err
+		}
+		data, err := os.ReadFile(path)
+		if err != nil {
+			_ = watch.Close()
+			return err
+		}
+		for _, line := range bytes.Split(data, []byte("\n")) {
+			var event core.Event
+			if len(line) != 0 && json.Unmarshal(line, &event) == nil && match(event) {
+				_ = watch.Close()
+				return nil
+			}
+		}
+		if err := watch.Wait(ctx); err != nil {
+			_ = watch.Close()
+			return err
+		}
+		if err := watch.Close(); err != nil {
+			return err
+		}
+	}
 }
 
 func liveClaudeInputSettings(options string) [][]string {
