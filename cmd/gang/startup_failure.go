@@ -36,11 +36,8 @@ func startupTurnFailed(l *store.LockedAgent, a core.Agent, c harness.Collar) (bo
 	if err != nil || !startup {
 		return false, err
 	}
-	wire, err := envelopeText(e)
-	if err != nil {
-		return false, err
-	}
-	return harness.SubmittedPromptStartsWith(c.Primitives.SubmitWitness, wire, w.Prompt)
+	matched, _, err := receiptMatches(c.Primitives.SubmitWitness, e, w.Prompt)
+	return matched, err
 }
 
 func (run *runtime) notifyStartupFailure(l *store.LockedAgent, a *core.Agent, c harness.Collar) error {

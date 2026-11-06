@@ -191,6 +191,13 @@ func TestSubmittedEnvelopeMatchesClaudeJoinedStampLine(t *testing.T) {
 			}
 		})
 	}
+	// Clear admission compares the whole prompt and allows the same join.
+	if got, err := SubmittedPromptMatches(claude, sent, strings.Replace(sent, "\n", "", 1)); err != nil || !got {
+		t.Fatalf("whole-prompt joined stamp: %v %v", got, err)
+	}
+	if got, err := SubmittedPromptMatches(claude, sent, strings.Replace(sent, "\n", "", 1)+"x"); err != nil || got {
+		t.Fatalf("whole-prompt suffix accepted: %v %v", got, err)
+	}
 	if got, _ := SubmittedPromptStartsWith(Invocation{Name: "exact-prompt"}, sent, strings.Replace(sent, "\n", "", 1)); got {
 		t.Fatal("exact-prompt witness accepted a changed prompt")
 	}

@@ -191,7 +191,9 @@ The stamp is retained with the envelope before native input, so late receipt
 reconciliation compares the submitted observation.
 
 Messages Gangline emits render without a sender name, `[gang#ID]`, with the
-same kind words (`startup`, `resume`, `clear`, `assignment`). Startup sections
+same kind words, such as `[gang#ID resume]`, `[gang#ID startup]` and an
+operator hitch's `[gang#ID assignment]`. A clear continuation names the agent
+that ran `gang clear`. Startup sections
 carry their name in the ID (`[gang#ID-contract startup]`). The internal sender
 names stay in state, `gang messages` and the log. Peer hosts never forward
 Gangline's own messages, so a host-qualified sender is always a peer agent.

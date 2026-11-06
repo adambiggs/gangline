@@ -5,7 +5,6 @@ import (
 	"os"
 
 	"github.com/adambiggs/gangline/core"
-	"github.com/adambiggs/gangline/harness"
 	"github.com/adambiggs/gangline/store"
 )
 
@@ -45,11 +44,7 @@ func (run *runtime) reconcileDelivery(l *store.LockedAgent, a *core.Agent) error
 		if (e.Outcome != "unverified" && e.Outcome != "accepted") || w.At.Before(e.CreatedAt) {
 			continue
 		}
-		wire, err := envelopeText(e)
-		if err != nil {
-			return err
-		}
-		matched, err := harness.SubmittedPromptStartsWith(c.Primitives.SubmitWitness, wire, w.Prompt)
+		matched, _, err := receiptMatches(c.Primitives.SubmitWitness, e, w.Prompt)
 		if err != nil {
 			return err
 		}

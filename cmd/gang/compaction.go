@@ -32,11 +32,7 @@ func (run *runtime) resumePromptBlock(a core.Agent, c harness.Collar, prompt, se
 	if err != nil {
 		return "compaction continuation could not be verified"
 	}
-	wire, err := envelopeText(e)
-	if err != nil {
-		return "compaction continuation could not be verified"
-	}
-	matched, err := harness.SubmittedPromptStartsWith(c.Primitives.SubmitWitness, wire, prompt)
+	matched, _, err := receiptMatches(c.Primitives.SubmitWitness, e, prompt)
 	if err != nil || !matched {
 		return "stale or altered compaction continuation"
 	}
@@ -81,11 +77,7 @@ func (run *runtime) admitCompactionResume(id core.HitchID, c harness.Collar, pro
 	if err != nil {
 		return "", err
 	}
-	wire, err := envelopeText(e)
-	if err != nil {
-		return "", err
-	}
-	_, outside, err := harness.SubmittedEnvelopeMatches(c.Primitives.SubmitWitness, wire, prompt)
+	_, outside, err := receiptMatches(c.Primitives.SubmitWitness, e, prompt)
 	if err != nil {
 		return "", err
 	}

@@ -189,11 +189,7 @@ func (run *runtime) reconcileUsageSubmission(l *store.LockedAgent, a *core.Agent
 			continue
 		}
 		e := core.Envelope{Token: n.Token, From: core.Sender{Kind: core.SenderGangline, Name: "usage-band"}, Message: core.Message{Text: n.Text}}
-		wire, err := envelopeText(e)
-		if err != nil {
-			return err
-		}
-		matched, outside, err := harness.SubmittedEnvelopeMatches(c.Primitives.SubmitWitness, wire, w.Prompt)
+		matched, outside, err := receiptMatches(c.Primitives.SubmitWitness, e, w.Prompt)
 		if err != nil {
 			return err
 		}
@@ -212,11 +208,7 @@ func (run *runtime) reconcileUsageSubmission(l *store.LockedAgent, a *core.Agent
 			continue
 		}
 		e := core.Envelope{Token: s.Token, From: core.Sender{Kind: core.SenderGangline, Name: "snooze"}, Message: core.Message{Text: s.InputText}}
-		wire, err := envelopeText(e)
-		if err != nil {
-			return err
-		}
-		matched, outside, err := harness.SubmittedEnvelopeMatches(c.Primitives.SubmitWitness, wire, w.Prompt)
+		matched, outside, err := receiptMatches(c.Primitives.SubmitWitness, e, w.Prompt)
 		if err != nil {
 			return err
 		}
@@ -320,6 +312,10 @@ func (run *runtime) observeSnoozeTurn(a core.Agent, boundary harness.Invocation,
 				// transcript. An unreadable transcript leaves the wake with the
 				// turn it was typed into.
 				turns, pending, left, _ := harness.PromptTurn(boundary, transcript, envelopeOpening(envelopeHead("", s.Token), ""))
+				if len(turns) == 0 && !pending && !left {
+					// A wake an earlier version typed named its sender.
+					turns, pending, left, _ = harness.PromptTurn(boundary, transcript, envelopeOpening(envelopeHead("snooze", s.Token), ""))
+				}
 				if pending {
 					continue
 				}
