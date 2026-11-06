@@ -359,6 +359,63 @@ func TestContextStampBatchPreservesEachCrossingAndCustomBands(t *testing.T) {
 	}
 }
 
+// The largest body a send accepts still fits once stamped: band actions that
+// would not fit wait for the next envelope.
+func TestContextStampKeepsAcceptedMessageWithinBudget(t *testing.T) {
+	f := newStateFixture(t)
+	a := f.add(t, "a", "worker", "codex")
+	c, _ := harness.EmbeddedCollar("codex")
+	for i, used := range []int64{800, 950} {
+		if err := f.run.acceptContextReadings(&a, c, []core.Reading{stampReading(f.cmd.now().Add(time.Duration(i)*time.Second), used)}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if len(a.ContextBands.Pending) != 2 {
+		t.Fatalf("crossings = %+v", a.ContextBands)
+	}
+	full := stampMail(a, "full", f.cmd.now())
+	full.Crossed = "0123456789abcdef,fedcba9876543210"
+	low, high := 0, maximumMessageBytes
+	for low < high {
+		mid := (low + high + 1) / 2
+		full.Message.Text = strings.Repeat("x", mid)
+		if _, err := queuedEnvelopeText(full); err == nil {
+			low = mid
+		} else {
+			high = mid - 1
+		}
+	}
+	full.Message.Text = strings.Repeat("x", low)
+	if _, err := envelopeText(full); err != nil {
+		t.Fatal(err)
+	}
+	full.Message.Text += "x"
+	if _, err := queuedEnvelopeText(full); err == nil {
+		t.Fatal("a body with no room for its stamp was accepted")
+	}
+	full.Message.Text = full.Message.Text[1:]
+	p, _ := f.run.team.Agent(a.ID)
+	l, err := p.TryLock()
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer l.Close()
+	e, err := f.run.stampEnvelope(l, &a, full, f.input, c)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := envelopeText(e); err != nil || len(e.ContextStamp.Crossings) != 0 || !strings.Contains(e.ContextStamp.Text, "crossed=0123456789abcdef,fedcba9876543210") {
+		t.Fatalf("stamped %+v: %v", e.ContextStamp, err)
+	}
+	if err := f.run.settleContextStamp(l, &a, e, "delivered"); err != nil {
+		t.Fatal(err)
+	}
+	next, err := f.run.stampEnvelope(l, &a, stampMail(a, "next", f.cmd.now()), f.input, c)
+	if err != nil || next.ContextStamp == nil || len(next.ContextStamp.Crossings) != 2 {
+		t.Fatalf("waiting crossings not carried: %+v %v", next.ContextStamp, err)
+	}
+}
+
 func TestContextStampCrossingRepeatsUntilVerifiedSubmission(t *testing.T) {
 	f := newStateFixture(t)
 	a := f.add(t, "a", "worker", "codex")

@@ -388,7 +388,7 @@ func (cmd command) snooze(args []string) error {
 	// rendered form before accepting a note that could never be delivered.
 	s.RecipientID = "lead-fallback"
 	maximumOverdue := due.Add(time.Duration(1<<63 - 1))
-	if _, err := envelopeText(core.Envelope{ID: s.ID, Token: s.Token, From: core.Sender{Kind: core.SenderGangline, Name: "snooze"}, Message: core.Message{Text: snoozeWakeText(s, maximumOverdue)}}); err != nil {
+	if _, err := queuedEnvelopeText(core.Envelope{ID: s.ID, Token: s.Token, From: core.Sender{Kind: core.SenderGangline, Name: "snooze"}, Message: core.Message{Text: snoozeWakeText(s, maximumOverdue)}}); err != nil {
 		return usageError("snooze: %v", err)
 	}
 	s.RecipientID = ""

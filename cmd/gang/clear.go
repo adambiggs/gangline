@@ -85,7 +85,7 @@ func (cmd command) clear(args []string) (result error) {
 		return err
 	}
 	e := core.Envelope{ID: core.EnvelopeID(id), Token: token, Recipient: a.ID, To: a.Name, From: core.Sender{Kind: core.SenderAgent, Name: a.Name, HitchID: a.ID}, Purpose: "clear", Message: core.Message{Text: note}, Startup: startupSections(string(a.Name), prose), CreatedAt: cmd.now()}
-	wire, err := envelopeText(e)
+	wire, err := queuedEnvelopeText(e)
 	if err != nil {
 		return err
 	}

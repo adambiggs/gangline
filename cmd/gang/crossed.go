@@ -40,11 +40,12 @@ func (run *runtime) unseenFrom(from core.HitchID, to core.Sender, now time.Time)
 // recent team log, drops those that were cancelled or failed, and returns
 // the ones to's transcript does not show. The transcript is that of to's
 // native session, following a move the harness's records prove from to's
-// latest submit witness, as delivery does. A message older than the
-// transcript records Gangline reads is judged only while it is still in
-// Gangline's queue, since its delivery may lie in an earlier session or
-// before the window. The reads take no lock, so a message settling at that
-// moment can be misjudged.
+// latest submit witness, as delivery does. A message that left Gangline's
+// queue is judged only when Gangline typed it, or failing a record of that,
+// created it, no earlier than the first transcript record read, since
+// otherwise its delivery may lie in an earlier session or before the window.
+// The reads take no lock, so a message settling at that moment can be
+// misjudged.
 func (run *runtime) unseenMail(from, to core.HitchID, now time.Time) ([]core.Envelope, error) {
 	p, err := run.team.Agent(to)
 	if err != nil {
@@ -78,9 +79,12 @@ func (run *runtime) unseenMail(from, to core.HitchID, now time.Time) ([]core.Env
 	// are decoded.
 	recipient := []byte(`"hitch_id":"` + string(to) + `"`)
 	ended := map[string]bool{}
+	// typed holds when Gangline last typed each message into to's harness.
+	typed := map[string]time.Time{}
+	kinds := [][]byte{[]byte(`"send_queued"`), []byte(`"delivery_failed"`), []byte(`"send_cancelled"`),
+		[]byte(`"delivery_succeeded"`), []byte(`"delivery_accepted"`), []byte(`"delivery_unverified"`)}
 	err = run.team.ReadRecent(crossedLogWindow, func(line []byte) bool {
-		return bytes.Contains(line, recipient) && (bytes.Contains(line, []byte(`"send_queued"`)) ||
-			bytes.Contains(line, []byte(`"delivery_failed"`)) || bytes.Contains(line, []byte(`"send_cancelled"`)))
+		return bytes.Contains(line, recipient) && slices.ContainsFunc(kinds, func(kind []byte) bool { return bytes.Contains(line, kind) })
 	}, func(event core.Event) error {
 		switch {
 		case event.Type == "send_queued" && event.Envelope != nil:
@@ -92,6 +96,10 @@ func (run *runtime) unseenMail(from, to core.HitchID, now time.Time) ([]core.Env
 			}
 		case event.Type == "delivery_failed" || event.Type == "send_cancelled":
 			ended[event.ID] = true
+		case event.Type == "delivery_succeeded" || event.Type == "delivery_accepted" || event.Type == "delivery_unverified":
+			if event.At.After(typed[event.ID]) {
+				typed[event.ID] = event.At
+			}
 		}
 		return nil
 	})
@@ -135,7 +143,11 @@ func (run *runtime) unseenMail(from, to core.HitchID, now time.Time) ([]core.Env
 		return nil, err
 	}
 	unseen := slices.DeleteFunc(candidates, func(e core.Envelope) bool {
-		return seen[e.Token] || (!inQueue[e.ID] && e.CreatedAt.Before(since))
+		at, ok := typed[string(e.ID)]
+		if !ok {
+			at = e.CreatedAt
+		}
+		return seen[e.Token] || (!inQueue[e.ID] && at.Before(since))
 	})
 	slices.SortStableFunc(unseen, func(a, b core.Envelope) int { return a.CreatedAt.Compare(b.CreatedAt) })
 	return unseen, nil

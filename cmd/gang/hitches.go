@@ -168,7 +168,7 @@ func (cmd command) hitchReplacing(args []string, supersede bool, previous *core.
 	if c.Options.RolePromptFile == nil {
 		e.Startup = startupSections(o.Name, brief)
 	}
-	wire, err := envelopeText(e)
+	wire, err := queuedEnvelopeText(e)
 	if err != nil {
 		return err
 	}

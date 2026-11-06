@@ -843,8 +843,9 @@ closing tag, by a context stamp:
 
 `ctx` is the recipient's context tokens, rounded to the nearest thousand below
 a million and to a tenth of a million from there; `ctx=unknown` means the
-reading is unavailable. `at` is when Gangline stamped the envelope for native
-input, in UTC to the second, without the year. A startup's sections share one
+reading is unavailable. `at` is when Gangline first stamped the envelope for
+native input, in UTC to the second, without the year, so it dates the `ctx`
+reading; a message typed again after a failed attempt keeps its first stamp. A startup's sections share one
 stamp line after the final section. Gangline writes the line only after an
 envelope's closing tag; the same text inside a message body is the sender's.
 
