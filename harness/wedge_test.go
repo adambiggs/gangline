@@ -41,26 +41,18 @@ func TestDetectWedgeRejectsChangedScreen(t *testing.T) {
 	}
 }
 
-// A harness that paints no busy marker on screen still freezes its title
-// spinner when it wedges.
-func TestDetectWedgeAcceptsAFrozenBusyTitle(t *testing.T) {
+// A busy title on a screen without a busy marker does not wedge: the harness
+// may hold one glyph through quiet work.
+func TestDetectWedgeIgnoresAFrozenBusyTitle(t *testing.T) {
 	since := time.Unix(100, 0)
 	wedge := Invocation{Name: "stable-busy-screen", Params: map[string]string{"busy": "esc to interrupt", "after": "5m", "title_busy": "^◐ "}}
-	screen := testScreen(testCells("a reply streaming with no marker", false))
+	screen := testScreen(testCells("a long tool call with no marker", false))
 	screen.Title = "◐ Fix the flaky test"
 	got, err := DetectWedge(wedge, WedgeObservation{
 		Previous: activityFingerprint(wedge, screen), Current: screen, BusySince: since,
-		ObservedAt: since.Add(5 * time.Minute), TurnActive: true,
-	})
-	if err != nil || !got.Detected {
-		t.Fatalf("wedge = %+v, error = %v", got, err)
-	}
-	screen.Title = "✳ Fix the flaky test"
-	got, err = DetectWedge(wedge, WedgeObservation{
-		Previous: activityFingerprint(wedge, screen), Current: screen, BusySince: since,
-		ObservedAt: since.Add(5 * time.Minute), TurnActive: true,
+		ObservedAt: since.Add(10 * time.Minute), TurnActive: true,
 	})
 	if err != nil || got.Detected {
-		t.Fatalf("idle title wedged: %+v, error = %v", got, err)
+		t.Fatalf("frozen busy title wedged: %+v, error = %v", got, err)
 	}
 }

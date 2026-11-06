@@ -67,13 +67,6 @@ func InspectStartup(collar Collar, screen substrate.Screen) (Startup, error) {
 	if err != nil {
 		return Startup{}, err
 	}
-	if !owned {
-		if blocked, found, err := detectBlocked(collar.Primitives.Blocked, lines); err != nil {
-			return Startup{}, err
-		} else if found {
-			return Startup{State: StartupTrustRequired, Prompt: blocked.Evidence}, nil
-		}
-	}
 	// A harness that names a pending choice in its pane title reports it even
 	// where the screen expressions miss the prompt's wording. A recognized
 	// trust prompt keeps its own evidence, and a composer holding the cursor
@@ -81,6 +74,11 @@ func InspectStartup(collar Collar, screen substrate.Screen) (Startup, error) {
 	var titled Blocked
 	titleFound := false
 	if !owned {
+		if blocked, found, err := detectBlocked(collar.Primitives.Blocked, lines); err != nil {
+			return Startup{}, err
+		} else if found {
+			return Startup{State: StartupTrustRequired, Prompt: blocked.Evidence}, nil
+		}
 		if titled, titleFound, err = titleBlocked(collar.Primitives.Blocked, screen.Title); err != nil {
 			return Startup{}, err
 		}
@@ -95,13 +93,13 @@ func InspectStartup(collar Collar, screen substrate.Screen) (Startup, error) {
 				return Startup{State: StartupTrustRequired, Prompt: prompt}, nil
 			}
 		case "claude-composer", "codex-composer":
-			if titleFound {
-				return Startup{State: StartupTrustRequired, Prompt: titled.Evidence}, nil
-			}
-			if _, err := ReadComposer(invocation, screen); err == nil {
-				return Startup{State: StartupReady}, nil
-			} else if !errors.Is(err, ErrNoComposer) {
-				return Startup{State: StartupOccupied, Prompt: err.Error()}, nil
+			// A titled choice outranks the composer but not a trust prompt.
+			if !titleFound {
+				if _, err := ReadComposer(invocation, screen); err == nil {
+					return Startup{State: StartupReady}, nil
+				} else if !errors.Is(err, ErrNoComposer) {
+					return Startup{State: StartupOccupied, Prompt: err.Error()}, nil
+				}
 			}
 		default:
 			return Startup{}, fmt.Errorf("unknown startup primitive %q", invocation.Name)
