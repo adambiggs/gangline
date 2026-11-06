@@ -206,15 +206,20 @@ func AwaitOwnedComposerSettle(ctx context.Context, capture captureScreen, pane s
 	}
 }
 
+// pasteFrame is how often AwaitPasteShown reads the pane.
+const pasteFrame = 25 * time.Millisecond
+
 // AwaitPasteShown waits between a paste and its submit key for a collar
 // that pauses before submitting (see SubmitPauses). It returns once settle
 // has passed since it began and the screen shows the paste (see PasteShown).
 // A paste that showed and then read empty for a settle window returns
-// ErrComposerEmptied. A composer that holds other text for a settle window,
-// or last held it when the deadline passes, returns ErrComposerReplaced, so
-// that text is neither submitted nor cleared.
+// ErrComposerEmptied. A composer that holds other text in every frame of a
+// settle window, and in at least two frames, returns ErrComposerReplaced;
+// an unreadable frame restarts that window. So does a deadline reached when
+// the last readable composer held other text. That text is neither
+// submitted nor cleared.
 func AwaitPasteShown(ctx context.Context, capture captureScreen, pane substrate.PaneID, collar Collar, wire, owner string, settle time.Duration) error {
-	ticker := time.NewTicker(25 * time.Millisecond)
+	ticker := time.NewTicker(pasteFrame)
 	defer ticker.Stop()
 	start := time.Now()
 	var painted, replaced bool
@@ -270,7 +275,7 @@ func AwaitPasteShown(ctx context.Context, capture captureScreen, pane substrate.
 				replacedSince = now
 			}
 			// At least two frames, even with no settle.
-			if now.Sub(replacedSince) >= max(settle, 25*time.Millisecond) {
+			if now.Sub(replacedSince) >= max(settle, pasteFrame) {
 				return ErrComposerReplaced
 			}
 		}
@@ -343,10 +348,13 @@ var longPastePlaceholder = regexp.MustCompile(`^\[(?:Pasted text|\.\.\.Truncated
 // placeholder.
 func beginsPaste(text, wire string) bool {
 	first, _, _ := strings.Cut(text, "\n")
-	if longPastePlaceholder.MatchString(first) {
-		return true
-	}
-	start := strings.Join(strings.Fields(first), "")
+	return longPastePlaceholder.MatchString(first) || beginsWire(first, wire)
+}
+
+// beginsWire reports a row that is the start of wire, ignoring the
+// whitespace that wrapping changes.
+func beginsWire(row, wire string) bool {
+	start := strings.Join(strings.Fields(row), "")
 	return start != "" && strings.HasPrefix(strings.Join(strings.Fields(wire), ""), start)
 }
 
@@ -360,7 +368,9 @@ func pasteStartShown(invocation Invocation, screen substrate.Screen, wire, owner
 	lines := screenLines(screen, false)
 	for index := len(lines) - 1; index > 0; index-- {
 		line := strings.TrimSpace(lines[index])
-		if !strings.HasPrefix(line, "❯") || !beginsPaste(strings.TrimSpace(strings.TrimPrefix(line, "❯")), wire) {
+		// A placeholder carries no one-time token, so it may be an earlier
+		// paste in the transcript.
+		if !strings.HasPrefix(line, "❯") || !beginsWire(strings.TrimPrefix(line, "❯"), wire) {
 			continue
 		}
 		rule := strings.TrimSpace(lines[index-1])

@@ -161,7 +161,10 @@ func TestClaudeReplacedPasteIsNeitherSubmittedNorCleared(t *testing.T) {
 		if !strings.HasPrefix(receipt.Reason, "native composer holds other text") {
 			t.Fatalf("reason = %q", receipt.Reason)
 		}
-		lp, _ := f.run.team.Agent(lead.ID)
+		lp, err := f.run.team.Agent(lead.ID)
+		if err != nil {
+			t.Fatal(err)
+		}
 		if _, err := lp.ReadEnvelope("new", core.EnvelopeID("held-input-"+fields[0])); err != nil {
 			t.Fatalf("held-input notice to the hitcher: %v", err)
 		}
