@@ -80,6 +80,9 @@ func TestPasteShown(t *testing.T) {
 		{name: "tall frame without a cursor", read: ErrNoComposer, screen: textScreen(rule, start, "  message", "  that", "  wraps", "  past", "  the", "  bottom", rule), shown: true},
 		{name: "rule narrower than another row", read: ErrComposerClipped, screen: textScreen("a transcript row wider than the short rule above the prompt", rule, start, "  message"), shown: true},
 		{name: "closing rule below the pane, earlier long paste", read: ErrComposerClipped, screen: textScreen("older output", rule, "❯ [Pasted text #1 +40 lines]", "  message that wraps past the bottom")},
+		// The same row may be this paste; it is not told apart, so it stays
+		// unverified rather than risk the key on an earlier paste.
+		{name: "closing rule below the pane, placeholder only", read: ErrComposerClipped, screen: textScreen("older output", rule, "❯ [Pasted text #2 +40 lines]")},
 		{name: "full-screen view", read: ErrNoComposer, screen: fixtureScreen(t, "claude-code-2.1.287-transcript-view.txt")},
 		{name: "footer clipped, same owner", screen: wrappedScreen(t, wrappedMainOwner), owner: wrappedMainOwner, read: ErrComposerOwnerClipped, shown: true},
 		{name: "footer clipped after an unnamed read", screen: wrappedScreen(t, wrappedMainOwner), read: ErrComposerOwnerClipped, want: ErrForeignComposer},

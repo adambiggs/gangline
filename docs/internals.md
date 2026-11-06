@@ -82,7 +82,9 @@ the key once the screen shows the paste: the composer's first row begins with
 the start of the message or with Claude Code's placeholder for a long paste,
 or, where a short pane clips the composer or its footer, a prompt line begins
 with the start of the message under a rule carrying the session label read
-before the paste. It withholds the key when the screen shows a native prompt,
+before the paste. A clipped placeholder does not count, since an earlier
+paste in the transcript looks the same; a long message to a pane too short
+to show even that one-row composer stays unverified. It withholds the key when the screen shows a native prompt,
 another surface owning input, or a composer of another session. A composer that
 empties, or holds other text such as a draft, gets neither the key nor the
 keys that withdraw a paste. The submit hook confirms what was submitted. When
