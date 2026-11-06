@@ -157,9 +157,7 @@ func (cmd command) send(args []string) (result error) {
 			return err
 		}
 		e = core.Envelope{ID: core.EnvelopeID(id), Token: token, Recipient: a.ID, To: a.Name, From: sender, Message: core.Message{Text: body}, CreatedAt: now, NotBefore: due}
-		if e.Crossed, err = run.undeliveredFrom(a.ID, sender, now); err != nil {
-			return err
-		}
+		e.Crossed = run.undeliveredFrom(a.ID, sender, now)
 		wire, err := envelopeText(e)
 		if err != nil {
 			return err
