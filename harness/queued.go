@@ -42,28 +42,25 @@ func QueuedTurnPending(invocation Invocation, transcript, turnID string) (bool, 
 	if err != nil {
 		return false, err
 	}
-	queued := 0
+	var queue claudeQueue
 	var ended bool
-	var dequeued, turnSeen time.Time
+	var turnSeen time.Time
 	prompts := map[string]bool{}
 	for _, r := range records {
+		if queue.replay(r) {
+			if r.Operation == "dequeue" {
+				ended = false
+			}
+			continue
+		}
 		switch {
-		case r.Type == "queue-operation" && r.Operation == "enqueue":
-			queued++
-		case r.Type == "queue-operation" && r.Operation == "remove":
-			queued = max(queued-1, 0)
-		case r.Type == "queue-operation" && r.Operation == "dequeue":
-			queued = max(queued-1, 0)
-			ended, dequeued = false, r.Timestamp
-		case r.Type == "queue-operation" && r.Operation == "popAll":
-			queued = 0
 		case r.Type == "system" && (r.Subtype == "stop_hook_summary" || r.Subtype == "turn_duration"):
 			ended = true
 		case r.Type == "user" && r.PromptID != "":
 			if !prompts[r.PromptID] {
 				prompts[r.PromptID] = true
 				if ended {
-					queued, ended = 0, false
+					queue.queued, ended = 0, false
 				}
 			}
 			if r.PromptID == turnID {
@@ -72,7 +69,7 @@ func QueuedTurnPending(invocation Invocation, transcript, turnID string) (bool, 
 		}
 	}
 	// The dequeue can land before the finish hook reads the transcript.
-	return queued > 0 || (!turnSeen.IsZero() && dequeued.After(turnSeen)), nil
+	return queue.queued > 0 || (!turnSeen.IsZero() && queue.dequeued.After(turnSeen)), nil
 }
 
 // TurnRanAfter reports whether the transcript records prompt later after
@@ -166,6 +163,31 @@ func dequeuedTogether(records []claudeQueueRecord, i int) []string {
 	return ids
 }
 
+// claudeQueue replays Claude Code's queue records: how many prompts wait in
+// the queue, and when the last one left it to run.
+type claudeQueue struct {
+	queued   int
+	dequeued time.Time
+}
+
+// replay applies r if it is a queue record and reports whether it was one.
+func (q *claudeQueue) replay(r claudeQueueRecord) bool {
+	if r.Type != "queue-operation" {
+		return false
+	}
+	switch r.Operation {
+	case "enqueue":
+		q.queued++
+	case "remove":
+		q.queued = max(q.queued-1, 0)
+	case "dequeue":
+		q.queued, q.dequeued = max(q.queued-1, 0), r.Timestamp
+	case "popAll":
+		q.queued = 0
+	}
+	return true
+}
+
 type claudeQueueRecord struct {
 	Type      string          `json:"type"`
 	Subtype   string          `json:"subtype"`
@@ -174,8 +196,15 @@ type claudeQueueRecord struct {
 	Timestamp time.Time       `json:"timestamp"`
 	Content   json.RawMessage `json:"content"`
 	Message   json.RawMessage `json:"message"`
-	// PromptSource is "queued" on a prompt Claude Code ran from its queue.
+	// PromptSource is "queued" on a prompt Claude Code ran from its queue
+	// and "typed" on one submitted at the composer.
 	PromptSource string `json:"promptSource"`
+	// Sidechain marks a subagent's record, Meta a record Claude Code wrote
+	// itself, and CompactSummary a compaction's summary; none is a prompt
+	// or a turn of the conversation.
+	Sidechain      bool `json:"isSidechain"`
+	Meta           bool `json:"isMeta"`
+	CompactSummary bool `json:"isCompactSummary"`
 	// TurnPosition places a prompt's user record in its turn; Claude Code
 	// gives prompts it dequeues into one turn the same turn index.
 	TurnPosition *struct {

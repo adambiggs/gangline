@@ -20,6 +20,9 @@ func (run *runtime) observeActivity(l *store.LockedAgent, a *core.Agent, c harne
 // heldInputEvidence is the reading of a composer that holds input no submit key
 // sent. Messages to the agent wait behind it.
 const heldInputEvidence = "native composer contains unsubmitted input"
+
+// permissionEvidence is the reading of a native permission request.
+const permissionEvidence = "native permission request awaits an answer"
 const submitPaintWindow = time.Second
 
 // observeScreen is observeActivity that also reports whether the screen alone
@@ -83,7 +86,7 @@ func (run *runtime) observeScreen(l *store.LockedAgent, a *core.Agent, c harness
 		if _, pending, err := l.Paths.ReadPermissionWitness(); err != nil {
 			return false, err
 		} else if pending && basis.Screen == "unreadable" {
-			activity, evidence, basis.Rule = core.Blocked, "native permission request awaits an answer", "permission-request"
+			activity, evidence, basis.Rule = core.Blocked, permissionEvidence, "permission-request"
 		} else if pending {
 			// An idle composer shows the request was dismissed, which fires no
 			// hook. A busy screen does not: it can precede the prompt's render.
@@ -176,9 +179,6 @@ func activityBasis(a core.Agent, screen, rule string) core.ActivityBasis {
 func (run *runtime) openTurn(l *store.LockedAgent, a *core.Agent, c harness.Collar, fingerprint string) (bool, error) {
 	quiet, err := harness.OpenTurnQuiet(c.Primitives.TurnBoundary)
 	if err != nil || !a.InterruptDeadline.IsZero() || !a.Native.SubmittedAt.After(a.Native.FinishedAt) {
-		return false, err
-	}
-	if closed, err := run.closeTranscriptTurn(l, a, c); err != nil || closed {
 		return false, err
 	}
 	if quiet == 0 {

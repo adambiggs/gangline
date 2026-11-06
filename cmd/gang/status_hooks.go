@@ -161,7 +161,7 @@ func (run *runtime) observeHookStatus(l *store.LockedAgent, a *core.Agent) error
 	case harness.TurnFinished, harness.TurnFailed, harness.TurnCompactionStarted, harness.TurnCompactionFinished:
 		finishedAfterHook = false
 	}
-	if a.Native.TurnFailure == "" && !a.Native.HookAt.After(a.StatusProbeAt) && !(finishedAfterHook && a.Native.FinishedAt.After(a.StatusProbeAt)) {
+	if a.Native.TurnFailure == "" && !a.Native.HookAt.After(a.StatusProbeAt) {
 		return nil
 	}
 	activity, evidence := core.Busy, "native hook: "+a.Native.HookKind
@@ -172,11 +172,14 @@ func (run *runtime) observeHookStatus(l *store.LockedAgent, a *core.Agent) error
 			activity = core.Busy
 		}
 	case "permission-requested":
-		activity, evidence = core.Blocked, "native permission request awaits an answer"
+		activity, evidence = core.Blocked, permissionEvidence
 	case "compaction-started":
 		activity = core.Compacting
 	}
 	if finishedAfterHook {
+		if a.Activity == core.Idle {
+			return nil
+		}
 		activity, evidence = core.Idle, "native turn ended after hook: "+a.Native.HookKind
 	}
 	if a.Native.TurnFailure != "" {
@@ -266,7 +269,7 @@ func (run *runtime) observeRosterStatus(l *store.LockedAgent, a *core.Agent, c h
 			return err
 		}
 	}
-	if _, err := run.closeTranscriptTurn(l, a, c); err != nil {
+	if err := run.observeTranscriptTurn(l, a, c); err != nil {
 		return err
 	}
 	gap := run.statusCaptureGap(*a, c)

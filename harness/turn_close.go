@@ -3,6 +3,7 @@ package harness
 import (
 	"encoding/json"
 	"fmt"
+	"slices"
 	"strings"
 	"time"
 )
@@ -32,7 +33,8 @@ type TurnClose struct {
 // ends, which fires no hook; a user record reading "[Request interrupted by
 // user" just before it marks the turn interrupted. A prompt still queued, a
 // dequeue for the next turn, a prompt recorded after the last end, or a turn
-// id the transcript does not hold leaves the turn open.
+// id the transcript does not hold leaves the turn open. Subagent, meta and
+// compaction-summary records are not turns of the conversation.
 func TurnClosed(invocation Invocation, transcript, turnID string) (TurnClose, bool, error) {
 	source, err := turnCloseSource(invocation)
 	if err != nil || source == "" || transcript == "" || turnID == "" {
@@ -42,47 +44,42 @@ func TurnClosed(invocation Invocation, transcript, turnID string) (TurnClose, bo
 	if err != nil {
 		return TurnClose{}, false, err
 	}
-	start := -1
-	for i, r := range records {
-		if r.Type == "user" && r.PromptID == turnID {
-			start = i
-			break
-		}
-	}
-	if start < 0 {
+	if !slices.ContainsFunc(records, func(r claudeQueueRecord) bool {
+		return r.Type == "user" && r.PromptID == turnID && !r.Sidechain
+	}) {
 		return TurnClose{}, false, nil
 	}
-	queued := 0
+	// The whole window is replayed: a prompt queued before turnID began can
+	// still run after it. turnID's first record starts a turn, so an end
+	// recorded after the last prompt to start ends turnID or a later turn.
+	var queue claudeQueue
 	var ended, interrupted bool
 	var closed TurnClose
-	var dequeued, started time.Time
+	var started time.Time
 	prompts := map[string]bool{}
-	for _, r := range records[start:] {
+	for _, r := range records {
+		if r.Sidechain || queue.replay(r) {
+			continue
+		}
 		switch {
-		case r.Type == "queue-operation" && r.Operation == "enqueue":
-			queued++
-		case r.Type == "queue-operation" && r.Operation == "remove":
-			queued = max(queued-1, 0)
-		case r.Type == "queue-operation" && r.Operation == "dequeue":
-			queued, dequeued = max(queued-1, 0), r.Timestamp
-		case r.Type == "queue-operation" && r.Operation == "popAll":
-			queued = 0
 		case r.Type == "system" && r.Subtype == "turn_duration":
 			ended, closed = true, TurnClose{At: r.Timestamp, Interrupted: interrupted}
 		case r.Type == "user":
 			interrupted = r.userInterrupt()
-			if r.PromptID != "" && !prompts[r.PromptID] {
-				prompts[r.PromptID], started = true, r.Timestamp
-				// A queued prompt can leave the queue unrecorded; a new
-				// turn after an end shows the queue it ran from is empty.
-				if ended {
-					queued, ended = 0, false
-				}
+			if r.PromptID == "" || r.Meta || r.CompactSummary || prompts[r.PromptID] {
+				continue
 			}
+			prompts[r.PromptID], started = true, r.Timestamp
+			// A prompt typed after an end shows the queue was empty, even
+			// if a prompt left it unrecorded; one run from the queue does not.
+			if ended && (r.PromptSource == "" || r.PromptSource == "typed") {
+				queue.queued = 0
+			}
+			ended = false
 		}
 	}
 	// The next turn's dequeue can be written before the end of this one.
-	if !ended || queued > 0 || dequeued.After(started) {
+	if !ended || queue.queued > 0 || queue.dequeued.After(started) {
 		return TurnClose{}, false, nil
 	}
 	return closed, true, nil
