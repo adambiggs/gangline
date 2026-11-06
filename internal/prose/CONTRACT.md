@@ -68,7 +68,7 @@ Messages arrive as native input. Never poll for them.
 If a teammate's message crossed one you just sent, say so in your next reply
 and state what is already true before acting on the stale message. Gangline
 marks this case: `crossed=<id>,...` on a message's stamp line names your
-messages that had not been delivered to its sender when it was queued, and
+messages its sender had not yet received as input when it was queued, and
 `crossed=unknown` means Gangline could not tell. To
 correct an earlier message, restate the whole current instruction and name
 the `#` id of the message it replaces; do not send only the change.

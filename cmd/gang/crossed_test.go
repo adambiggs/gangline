@@ -3,7 +3,6 @@
 package main
 
 import (
-	"encoding/json"
 	"os"
 	"path/filepath"
 	"regexp"
@@ -12,196 +11,226 @@ import (
 	"time"
 
 	"github.com/adambiggs/gangline/core"
-	"github.com/adambiggs/gangline/store"
 )
 
 func crossingMail(from core.Agent, to core.Agent, id, token string, at time.Time) core.Envelope {
 	return core.Envelope{ID: core.EnvelopeID(id), Token: token, From: core.Sender{Kind: core.SenderAgent, Name: from.Name, HitchID: from.ID}, Recipient: to.ID, To: to.Name, Message: core.Message{Text: "note"}, CreatedAt: at}
 }
 
-// A message is marked crossed by the recipient's messages to its sender that
-// Gangline had not delivered to the sender when it was queued: queued and
-// due, accepted into the native queue, or typed without a matching witness.
-func TestSendMarksCrossedMessagesUndeliveredAtQueueTime(t *testing.T) {
-	f := newStateFixture(t)
-	lead := f.add(t, "lead-id", "lead", "codex")
-	worker := f.add(t, "worker-id", "worker", "codex")
+// crossingFixture sends from one agent to lead while a draft in lead's
+// composer keeps each message queued, and records lead's messages to that
+// agent as gang send would.
+type crossingFixture struct {
+	*stateFixture
+	lead core.Agent
+}
+
+func (f crossingFixture) send(t *testing.T, from core.Agent, body string) core.Envelope {
+	t.Helper()
+	f.env["GANG_AGENT_ID"], f.env["TMUX_PANE"] = string(from.ID), from.Pane
+	f.cmd.stdin = strings.NewReader(body)
+	// Every fixture agent shares one pane: it shows the sender's harness
+	// while gang checks the sender, then lead's for delivery, which lead's
+	// draft holds.
+	f.input.command = from.Collar
+	f.input.onForeground = func() { f.input.onForeground, f.input.command = func() { f.input.command = "codex" }, from.Collar }
+	defer func() { f.input.command, f.input.onForeground = "codex", nil }()
+	if err := f.cmd.send([]string{"lead"}); err != nil {
+		t.Fatal(err)
+	}
+	lp, err := f.run.team.Agent(f.lead.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	queued, err := lp.ListNew()
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, e := range queued {
+		if e.Message.Text == body {
+			return e
+		}
+	}
+	t.Fatalf("sent %q not queued", body)
+	return core.Envelope{}
+}
+
+func (f crossingFixture) logged(t *testing.T, events ...core.Event) {
+	t.Helper()
+	for _, e := range events {
+		if e.At.IsZero() {
+			e.At = f.cmd.now()
+		}
+		if err := f.run.team.Append(e); err != nil {
+			t.Fatal(err)
+		}
+	}
+}
+
+func queuedEvent(e core.Envelope) core.Event {
+	return core.Event{Type: "send_queued", At: e.CreatedAt, HitchID: e.Recipient, Name: e.To, Envelope: &e}
+}
+
+func (f crossingFixture) bindTranscript(t *testing.T, a core.Agent, path string) {
+	t.Helper()
+	p, err := f.run.team.Agent(a.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	l, err := p.TryLock()
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer l.Close()
+	b, err := p.Read()
+	if err != nil {
+		t.Fatal(err)
+	}
+	b.Native.SessionID, b.Native.Transcript = "s", path
+	if err := l.Save(b); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func appendTranscript(t *testing.T, path string, lines ...string) {
+	t.Helper()
+	f, err := os.OpenFile(path, os.O_CREATE|os.O_APPEND|os.O_WRONLY, 0o600)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer f.Close()
+	if _, err := f.WriteString(strings.Join(lines, "\n") + "\n"); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func wireJSON(t *testing.T, e core.Envelope) string {
+	t.Helper()
+	wire, err := envelopeText(e)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return strings.ReplaceAll(wire, "\n", `\n`)
+}
+
+// A message is marked crossed by the recipient's messages to its sender
+// whose envelopes were not yet in the sender's native transcript when it was
+// queued.
+func TestSendMarksMessagesTheSenderHadNotSeen(t *testing.T) {
+	f := crossingFixture{stateFixture: newStateFixture(t)}
+	f.lead = f.add(t, "lead-id", "lead", "codex")
+	worker := f.add(t, "worker-id", "worker", "claude")
+	other := f.add(t, "other-id", "other", "claude")
 	now := f.cmd.now()
+	f.input.screen = screenWithText("READY", "› draft")
+
+	// With nothing sent to worker, no transcript is needed.
+	if got := f.send(t, worker, "nothing pending"); got.Crossed != "" {
+		t.Fatalf("crossed with nothing pending: %q", got.Crossed)
+	}
+
+	at := func(d time.Duration) time.Time { return now.Add(-d) }
+	turn := crossingMail(f.lead, worker, "msg-turn", "1111111111111111", at(5*time.Minute))
+	mid := crossingMail(f.lead, worker, "msg-mid", "2222222222222222", at(4*time.Minute))
+	enqueued := crossingMail(f.lead, worker, "msg-enqueued", "3333333333333333", at(3*time.Minute))
+	queued := crossingMail(f.lead, worker, "msg-queued", "4444444444444444", at(20*time.Minute))
+	scheduled := crossingMail(f.lead, worker, "msg-scheduled", "5555555555555555", at(2*time.Minute))
+	scheduled.NotBefore = now.Add(time.Hour)
+	failed := crossingMail(f.lead, worker, "msg-failed", "6666666666666666", at(2*time.Minute))
+	cancelled := crossingMail(f.lead, worker, "msg-cancelled", "7777777777777777", at(2*time.Minute))
+	earlier := crossingMail(f.lead, worker, "msg-earlier", "8888888888888888", at(30*time.Minute))
+	declared := crossingMail(f.lead, worker, "msg-declared", "9999999999999999", at(time.Minute))
+	declared.From = core.Sender{Kind: core.SenderSelfDeclared, Name: "lead"}
+	elsewhere := crossingMail(f.lead, other, "msg-elsewhere", "aaaaaaaaaaaaaaaa", at(time.Minute))
 	wp, err := f.run.team.Agent(worker.ID)
 	if err != nil {
 		t.Fatal(err)
 	}
-	lp, err := f.run.team.Agent(lead.ID)
-	if err != nil {
-		t.Fatal(err)
-	}
-	// A draft in lead's composer keeps each message queued.
-	f.input.screen = screenWithText("READY", "› draft")
-	send := func(body string) core.Envelope {
-		t.Helper()
-		f.env["GANG_AGENT_ID"], f.env["TMUX_PANE"] = string(worker.ID), worker.Pane
-		f.cmd.stdin = strings.NewReader(body)
-		if err := f.cmd.send([]string{"lead"}); err != nil {
-			t.Fatal(err)
-		}
-		queued, err := lp.ListNew()
-		if err != nil {
-			t.Fatal(err)
-		}
-		for _, e := range queued {
-			if e.Message.Text == body {
-				return e
-			}
-		}
-		t.Fatalf("sent %q not queued", body)
-		return core.Envelope{}
-	}
-	if got := send("nothing pending"); got.Crossed != "" {
-		t.Fatalf("crossed with nothing pending: %q", got.Crossed)
-	}
-
-	queued := crossingMail(lead, worker, "msg-queued", "1111111111111111", now.Add(-3*time.Second))
-	later := crossingMail(lead, worker, "msg-later", "2222222222222222", now.Add(-2*time.Second))
-	later.NotBefore = now.Add(time.Hour)
-	other := crossingMail(worker, worker, "msg-other", "5555555555555555", now.Add(-time.Second))
-	other.From = core.Sender{Kind: core.SenderSelfDeclared, Name: "lead"}
-	for _, e := range []core.Envelope{queued, later, other} {
+	for _, e := range []core.Envelope{queued, scheduled} {
 		if err := wp.Publish(e); err != nil {
 			t.Fatal(err)
 		}
 	}
-	l, err := wp.TryLock()
-	if err != nil {
-		t.Fatal(err)
+	for _, e := range []core.Envelope{earlier, queued, turn, mid, enqueued, scheduled, failed, cancelled, declared, elsewhere} {
+		f.logged(t, queuedEvent(e))
 	}
-	w, err := wp.Read()
-	if err != nil {
-		t.Fatal(err)
+	f.logged(t,
+		core.Event{Type: "delivery_failed", HitchID: worker.ID, ID: string(failed.ID), Reason: "expired"},
+		core.Event{Type: "send_cancelled", HitchID: worker.ID, ID: string(cancelled.ID), Reason: "sender cleared scheduled delivery"})
+
+	// worker's session began after earlier was sent. It took turn as a
+	// prompt and mid during a running turn; enqueued is only in its queue,
+	// and other records name tokens the model never received as input.
+	transcript := filepath.Join(t.TempDir(), "worker.jsonl")
+	appendTranscript(t, transcript,
+		`{"type":"user","timestamp":"`+at(10*time.Minute).Format(time.RFC3339)+`","message":{"role":"user","content":"start"}}`,
+		`{"type":"user","timestamp":"`+at(5*time.Minute).Format(time.RFC3339)+`","message":{"role":"user","content":"`+wireJSON(t, turn)+`"}}`,
+		`{"type":"queue-operation","operation":"enqueue","timestamp":"`+at(4*time.Minute).Format(time.RFC3339)+`","content":"`+wireJSON(t, mid)+`"}`,
+		`{"type":"attachment","timestamp":"`+at(4*time.Minute).Format(time.RFC3339)+`","attachment":{"type":"queued_command","prompt":"`+wireJSON(t, mid)+`"}}`,
+		`{"type":"queue-operation","operation":"enqueue","timestamp":"`+at(3*time.Minute).Format(time.RFC3339)+`","content":"`+wireJSON(t, enqueued)+`"}`,
+		`{"type":"user","timestamp":"`+at(2*time.Minute).Format(time.RFC3339)+`","message":{"role":"user","content":[{"type":"tool_result","tool_use_id":"t","content":"`+wireJSON(t, queued)+`"}]}}`,
+		`{"type":"last-prompt","lastPrompt":"`+wireJSON(t, queued)+`"}`)
+
+	// Without a bound transcript, worker's view cannot be read.
+	if got := f.send(t, worker, "no transcript"); got.Crossed != "unknown" {
+		t.Fatalf("crossed without a transcript = %q", got.Crossed)
 	}
-	w.Native.SessionID = "s"
-	accepted := crossingMail(lead, worker, "msg-accepted", "3333333333333333", now.Add(-5*time.Second))
-	unverified := crossingMail(lead, worker, "msg-unverified", "4444444444444444", now.Add(-4*time.Second))
-	if err := l.Settle(&w, accepted, "accepted", ""); err != nil {
-		t.Fatal(err)
+	f.bindTranscript(t, worker, transcript+".missing")
+	if got := f.send(t, worker, "transcript missing"); got.Crossed != "unknown" {
+		t.Fatalf("crossed with a missing transcript = %q", got.Crossed)
 	}
-	if err := l.Settle(&w, unverified, "unverified", "submit witness does not match"); err != nil {
-		t.Fatal(err)
-	}
-	l.Close()
-	got := send("several pending")
-	// Oldest first; the scheduled message is not yet due and the
-	// self-declared one is not attributable to lead.
-	if got.Crossed != "3333333333333333,4444444444444444,1111111111111111" {
+	f.bindTranscript(t, worker, transcript)
+	// Oldest first: queued is still in worker's queue, though older than
+	// the transcript, and enqueued waits in the harness's queue. The rest
+	// were seen, are not yet due, failed, were cancelled, predate the
+	// session, are not attributable to lead, or went to another agent.
+	if got := f.send(t, worker, "several unseen"); got.Crossed != "4444444444444444,3333333333333333" {
 		t.Fatalf("crossed = %q", got.Crossed)
 	}
-
-	// A delivered message no longer crosses.
-	l, err = wp.TryLock()
+	// The queued prompt reaches the model.
+	appendTranscript(t, transcript, `{"type":"user","timestamp":"`+at(time.Minute).Format(time.RFC3339)+`","message":{"role":"user","content":"`+wireJSON(t, enqueued)+`"}}`)
+	if got := f.send(t, worker, "one unseen"); got.Crossed != "4444444444444444" {
+		t.Fatalf("crossed after the queued prompt ran = %q", got.Crossed)
+	}
+	// Once it leaves the queue, a message older than the transcript is not
+	// judged: its delivery may lie in an earlier session.
+	l, err := wp.TryLock()
 	if err != nil {
-		t.Fatal(err)
-	}
-	w, _ = wp.Read()
-	// A late witness reopens the unverified receipt and settles it delivered.
-	if err := f.run.reopenReceipt(l, &w, unverified, "failed"); err != nil {
-		t.Fatal(err)
-	}
-	if err := l.Settle(&w, unverified, "delivered", ""); err != nil {
 		t.Fatal(err)
 	}
 	if err := l.Withdraw(queued.ID); err != nil {
 		t.Fatal(err)
 	}
 	l.Close()
-	if got := send("one pending"); got.Crossed != "3333333333333333" {
+	if got := f.send(t, worker, "all seen"); got.Crossed != "" {
 		t.Fatalf("crossed after delivery = %q", got.Crossed)
 	}
-	// A witness of the accepted message, not yet reconciled, delivered it.
-	wire, err := envelopeText(accepted)
-	if err != nil {
-		t.Fatal(err)
+	// A record that could hold an envelope but cannot be read leaves the
+	// answer unknown.
+	appendTranscript(t, transcript, `{"type":"user","message":"[gang:lead#`)
+	if got := f.send(t, worker, "transcript unreadable"); got.Crossed != "unknown" {
+		t.Fatalf("crossed with an unreadable transcript = %q", got.Crossed)
 	}
-	if err := wp.WriteWitness(store.Witness{ID: "w1", At: now, Prompt: wire, SessionID: "s"}); err != nil {
-		t.Fatal(err)
+
+	// Codex records input when it enters the conversation, at a turn's
+	// start or after the step running when it was typed.
+	coder := f.add(t, "coder-id", "coder", "codex")
+	read := crossingMail(f.lead, coder, "msg-read", "bbbbbbbbbbbbbbbb", at(3*time.Minute))
+	steered := crossingMail(f.lead, coder, "msg-steered", "cccccccccccccccc", at(2*time.Minute))
+	pending := crossingMail(f.lead, coder, "msg-pending", "dddddddddddddddd", at(time.Minute))
+	f.logged(t, queuedEvent(read), queuedEvent(steered), queuedEvent(pending))
+	rollout := filepath.Join(t.TempDir(), "rollout.jsonl")
+	appendTranscript(t, rollout,
+		`{"timestamp":"`+at(10*time.Minute).Format(time.RFC3339)+`","type":"session_meta","payload":{"id":"s"}}`,
+		`{"timestamp":"`+at(3*time.Minute).Format(time.RFC3339)+`","type":"response_item","payload":{"type":"message","role":"user","content":[{"type":"input_text","text":"`+wireJSON(t, read)+`"}]}}`,
+		`{"timestamp":"`+at(2*time.Minute).Format(time.RFC3339)+`","type":"response_item","payload":{"type":"function_call_output","output":"`+wireJSON(t, pending)+`"}}`,
+		`{"timestamp":"`+at(2*time.Minute).Format(time.RFC3339)+`","type":"response_item","payload":{"type":"message","role":"user","content":[{"type":"input_text","text":"`+wireJSON(t, steered)+`"}]}}`)
+	f.bindTranscript(t, coder, rollout)
+	if got := f.send(t, coder, "codex unseen"); got.Crossed != "dddddddddddddddd" {
+		t.Fatalf("codex crossed = %q", got.Crossed)
 	}
-	if got := send("answers it"); got.Crossed != "" {
-		t.Fatalf("answered message still crossed: %q", got.Crossed)
-	}
-	// An unrelated older witness leaves a new accepted message in flight.
-	again := crossingMail(lead, worker, "msg-again", "6666666666666666", now)
-	l, err = wp.TryLock()
-	if err != nil {
-		t.Fatal(err)
-	}
-	w, _ = wp.Read()
-	if err := l.Settle(&w, again, "accepted", ""); err != nil {
-		t.Fatal(err)
-	}
-	l.Close()
-	if got := send("still in flight"); got.Crossed != "6666666666666666" {
-		t.Fatalf("crossed with an earlier witness = %q", got.Crossed)
-	}
-	// Once worker has taken later input, an unreconciled receipt is no
-	// longer in flight.
-	filed, err := wp.ReadEnvelope("cur", again.ID)
-	if err != nil || filed.FiledAt.IsZero() {
-		t.Fatalf("receipt filing time: %+v %v", filed, err)
-	}
-	// A later witness from another native session proves nothing.
-	if err := wp.WriteWitness(store.Witness{ID: "w2", At: filed.FiledAt.Add(time.Second), Prompt: "later input", SessionID: "other"}); err != nil {
-		t.Fatal(err)
-	}
-	if got := send("other session"); got.Crossed != "6666666666666666" {
-		t.Fatalf("crossed after a foreign witness = %q", got.Crossed)
-	}
-	if err := wp.WriteWitness(store.Witness{ID: "w3", At: filed.FiledAt.Add(time.Second), Prompt: "later input", SessionID: "s"}); err != nil {
-		t.Fatal(err)
-	}
-	if got := send("after a turn"); got.Crossed != "" {
-		t.Fatalf("stale receipt still crossed: %q", got.Crossed)
-	}
-	// A receipt filed before filing times were recorded ages out on any
-	// later witness of the session.
-	earlier := crossingMail(lead, worker, "msg-earlier", "7777777777777777", now)
-	l, err = wp.TryLock()
-	if err != nil {
-		t.Fatal(err)
-	}
-	w, _ = wp.Read()
-	if err := l.Settle(&w, earlier, "accepted", ""); err != nil {
-		t.Fatal(err)
-	}
-	l.Close()
-	stored, err := wp.ReadEnvelope("cur", earlier.ID)
-	if err != nil {
-		t.Fatal(err)
-	}
-	stored.FiledAt = time.Time{}
-	data, err := json.Marshal(stored)
-	if err != nil {
-		t.Fatal(err)
-	}
-	path, _ := wp.EnvelopePath("cur", earlier.ID)
-	if err := os.WriteFile(path, data, 0o600); err != nil {
-		t.Fatal(err)
-	}
-	if err := wp.WriteWitness(store.Witness{ID: "w4", At: now, Prompt: "later input", SessionID: "s"}); err != nil {
-		t.Fatal(err)
-	}
-	if got := send("after an earlier receipt"); got.Crossed != "" {
-		t.Fatalf("receipt without a filing time still crossed: %q", got.Crossed)
-	}
-	// Unreadable records mark the field unknown and do not stop the send.
-	if err := os.WriteFile(filepath.Join(wp.Inbox, "new", "msg-broken.json"), []byte("{"), 0o600); err != nil {
-		t.Fatal(err)
-	}
-	if got := send("records unreadable"); got.Crossed != "unknown" {
-		t.Fatalf("crossed with unreadable records = %q", got.Crossed)
-	}
-	if err := os.Remove(filepath.Join(wp.Inbox, "new", "msg-broken.json")); err != nil {
-		t.Fatal(err)
-	}
-	// The marker rides on the stamp line when the message is delivered,
-	// whatever has happened since it was queued.
+
+	// The marker rides on the stamp line when the message is delivered.
 	var submitted []string
 	submit := f.input.submit
 	f.input.submit = func(prompt string) error {
@@ -209,27 +238,25 @@ func TestSendMarksCrossedMessagesUndeliveredAtQueueTime(t *testing.T) {
 		return submit(prompt)
 	}
 	f.input.screen = screenWithText("READY", "› ")
-	if _, err := f.run.drain(lead.ID, ""); err != nil {
+	if _, err := f.run.drain(f.lead.ID, ""); err != nil {
 		t.Fatal(err)
 	}
-	want := regexp.MustCompile(`^\[gang:worker#[0-9a-f]{16}\] (.*) \[/gang:worker#[0-9a-f]{16}\]\n\[gang ctx=\S+ at=\S+( crossed=\S+)? /\]$`)
+	want := regexp.MustCompile(`^\[gang:(?:worker|coder)#[0-9a-f]{16}\] (.*) \[/gang:(?:worker|coder)#[0-9a-f]{16}\]\n\[gang ctx=\S+ at=\S+( crossed=\S+)? /\]$`)
 	lines := map[string]string{}
 	for _, prompt := range submitted {
 		if m := want.FindStringSubmatch(prompt); m != nil {
 			lines[m[1]] = m[2]
 		}
 	}
-	// Delivery renders the marker recorded at queue time.
 	for body, crossed := range map[string]string{
-		"nothing pending":          "",
-		"several pending":          " crossed=3333333333333333,4444444444444444,1111111111111111",
-		"one pending":              " crossed=3333333333333333",
-		"answers it":               "",
-		"still in flight":          " crossed=6666666666666666",
-		"other session":            " crossed=6666666666666666",
-		"after a turn":             "",
-		"after an earlier receipt": "",
-		"records unreadable":       " crossed=unknown",
+		"nothing pending":       "",
+		"no transcript":         " crossed=unknown",
+		"transcript missing":    " crossed=unknown",
+		"several unseen":        " crossed=4444444444444444,3333333333333333",
+		"one unseen":            " crossed=4444444444444444",
+		"all seen":              "",
+		"transcript unreadable": " crossed=unknown",
+		"codex unseen":          " crossed=dddddddddddddddd",
 	} {
 		if got, ok := lines[body]; !ok || got != crossed {
 			t.Errorf("%q stamp marker %q (submitted %v), want %q", body, got, ok, crossed)

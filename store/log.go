@@ -72,3 +72,44 @@ func ScanLog(reader io.Reader, visit func(line int, data []byte) error) error {
 		}
 	}
 }
+
+// ReadRecent visits the events in the last window bytes of the team log
+// whose lines pass keep, so the cost of a read does not grow with settled
+// history. A line cut by the window is skipped.
+func (p TeamPaths) ReadRecent(window int64, keep func([]byte) bool, visit func(core.Event) error) error {
+	f, err := os.Open(p.Log)
+	if err != nil {
+		return err
+	}
+	defer f.Close()
+	size, err := f.Seek(0, io.SeekEnd)
+	if err != nil {
+		return err
+	}
+	start := max(size-window, 0)
+	if _, err := f.Seek(start, io.SeekStart); err != nil {
+		return err
+	}
+	r := bufio.NewReader(io.LimitReader(f, size-start))
+	if start > 0 {
+		if _, err := r.ReadBytes('\n'); err != nil {
+			if err == io.EOF {
+				return nil
+			}
+			return err
+		}
+	}
+	return ScanLog(r, func(line int, data []byte) error {
+		if !keep(data) {
+			return nil
+		}
+		e, err := core.DecodeEvent(data)
+		if errors.Is(err, core.ErrUnknownEventType) {
+			return nil
+		}
+		if err != nil {
+			return fmt.Errorf("audit record: %w", err)
+		}
+		return visit(e)
+	})
+}
