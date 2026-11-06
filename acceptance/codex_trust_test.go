@@ -3,6 +3,7 @@
 package acceptance
 
 import (
+	"errors"
 	"os"
 	"path/filepath"
 	"reflect"
@@ -278,9 +279,9 @@ func TestCodexHookReviewStepNamesOperatorAction(t *testing.T) {
 	}
 	step := codexHookReviewStep("/tmp/root", "/tmp/root/s.sock", "gangline-provider-codex", "%3", "/cache/home")
 	for _, want := range []string{
-		`tmux -S /tmp/root/s.sock attach-session -t gangline-provider-codex \; select-window -t %3 \; select-pane -t %3`,
+		`tmux -S '/tmp/root/s.sock' attach-session -t 'gangline-provider-codex' \; select-window -t '%3' \; select-pane -t '%3'`,
 		`"Trust all and continue"`,
-		"tmux -S /tmp/root/s.sock kill-server; rm -r /tmp/root;",
+		"tmux -S '/tmp/root/s.sock' kill-server; rm -r '/tmp/root';",
 		"/cache/home/config.toml only, not in ~/.codex",
 	} {
 		if !strings.Contains(step, want) {
@@ -294,25 +295,35 @@ func TestCodexHookReviewStepNamesOperatorAction(t *testing.T) {
 
 func TestRetainedCodexSessionBlocksUntilItsServerEnds(t *testing.T) {
 	directory := t.TempDir()
-	if err := refuseRetainedCodexSession(directory, func(string) bool { t.Fatal("probed without a record"); return false }); err != nil {
+	if err := refuseRetainedCodexSession(directory, func(string) (bool, error) { t.Fatal("probed without a record"); return false, nil }); err != nil {
 		t.Fatalf("no record: %v", err)
 	}
 	record := retainedCodexSession(directory)
-	if err := os.WriteFile(record, []byte("/tmp/root/tmux.sock\n"), 0600); err != nil {
+	if err := recordRetainedCodexSession(directory, "/tmp/root/tmux.sock"); err != nil {
 		t.Fatal(err)
 	}
 	var probed string
-	err := refuseRetainedCodexSession(directory, func(socket string) bool { probed = socket; return true })
-	if err == nil || !strings.Contains(err.Error(), "/tmp/root/tmux.sock") || probed != "/tmp/root/tmux.sock" {
+	err := refuseRetainedCodexSession(directory, func(socket string) (bool, error) { probed = socket; return true, nil })
+	if err == nil || !strings.Contains(err.Error(), "tmux -S '/tmp/root/tmux.sock' kill-server") || probed != "/tmp/root/tmux.sock" {
 		t.Fatalf("live retained server: probed %q, err %v", probed, err)
 	}
-	if _, err := os.Stat(record); err != nil {
-		t.Fatalf("record removed while its server lives: %v", err)
+	if err := refuseRetainedCodexSession(directory, func(string) (bool, error) { return false, errors.New("permission denied") }); err == nil || !strings.Contains(err.Error(), "cannot tell") {
+		t.Fatalf("unknown server state admitted a run: %v", err)
 	}
-	if err := refuseRetainedCodexSession(directory, func(string) bool { return false }); err != nil {
+	if _, err := os.Stat(record); err != nil {
+		t.Fatalf("record removed while its server may live: %v", err)
+	}
+	if err := refuseRetainedCodexSession(directory, func(string) (bool, error) { return false, nil }); err != nil {
 		t.Fatalf("ended retained server: %v", err)
 	}
 	if _, err := os.Stat(record); !os.IsNotExist(err) {
 		t.Fatalf("record of an ended server kept: %v", err)
+	}
+}
+
+func TestTmuxServerAliveTreatsMissingSocketAsEnded(t *testing.T) {
+	alive, err := tmuxServerAlive(filepath.Join(t.TempDir(), "absent.sock"))
+	if alive || err != nil {
+		t.Fatalf("missing socket: alive=%v err=%v", alive, err)
 	}
 }
