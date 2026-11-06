@@ -198,6 +198,11 @@ carry their name in the ID (`[gang#ID-contract startup]`). The internal sender
 names stay in state, `gang messages` and the log. Peer hosts never forward
 Gangline's own messages, so a host-qualified sender is always a peer agent.
 
+A `crossed=` field on the stamp line is a different event: the recipient's
+undelivered messages to the sender when `gang send` queued the message, read
+from the sender's queue and its last accepted and unverified receipts and
+retained on the envelope.
+
 An upward context-band crossing records its deciding reading in
 `context_band_crossed` and adds a short action to the next envelope’s stamp.
 If no mail carries it within one watchdog interval, the normal notice path
