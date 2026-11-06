@@ -203,3 +203,19 @@ func appendText(path, text string) error {
 	}
 	return file.Close()
 }
+
+// A subagent's turn end and prompt do not end the turn the queue waits behind.
+func TestQueuedTurnPendingSkipsSidechainRecords(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "transcript.jsonl")
+	lines := `{"type":"user","promptId":"p1","timestamp":"2026-11-06T15:00:00Z","message":{"role":"user","content":"go"}}
+{"type":"queue-operation","operation":"enqueue","timestamp":"2026-11-06T15:00:01Z","content":"next"}
+{"type":"system","subtype":"turn_duration","isSidechain":true,"timestamp":"2026-11-06T15:00:02Z"}
+{"type":"user","promptId":"s1","isSidechain":true,"timestamp":"2026-11-06T15:00:03Z","message":{"role":"user","content":"subtask"}}
+`
+	if err := os.WriteFile(path, []byte(lines), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if got, err := QueuedTurnPending(claudeQueuedTurns, path, "p1"); err != nil || !got {
+		t.Fatalf("pending=%v err=%v, want the queued prompt pending", got, err)
+	}
+}

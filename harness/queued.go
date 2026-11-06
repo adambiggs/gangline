@@ -47,6 +47,9 @@ func QueuedTurnPending(invocation Invocation, transcript, turnID string) (bool, 
 	var turnSeen time.Time
 	prompts := map[string]bool{}
 	for _, r := range records {
+		if r.Sidechain {
+			continue
+		}
 		if queue.replay(r) {
 			if r.Operation == "dequeue" {
 				ended = false

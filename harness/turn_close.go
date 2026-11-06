@@ -3,7 +3,6 @@ package harness
 import (
 	"encoding/json"
 	"fmt"
-	"slices"
 	"strings"
 	"time"
 )
@@ -44,21 +43,26 @@ func TurnClosed(invocation Invocation, transcript, turnID string) (TurnClose, bo
 	if err != nil {
 		return TurnClose{}, false, err
 	}
-	if !slices.ContainsFunc(records, func(r claudeQueueRecord) bool {
-		return r.Type == "user" && r.PromptID == turnID && !r.Sidechain
-	}) {
-		return TurnClose{}, false, nil
-	}
 	// The whole window is replayed: a prompt queued before turnID began can
 	// still run after it. turnID's first record starts a turn, so an end
 	// recorded after the last prompt to start ends turnID or a later turn.
 	var queue claudeQueue
-	var ended, interrupted bool
+	var seen, ended, interrupted bool
 	var closed TurnClose
 	var started time.Time
+	// claims counts dequeue records that no prompt run from the queue has
+	// matched yet. A queued prompt with none to match left the queue
+	// unrecorded, so it leaves the count itself.
+	claims := 0
 	prompts := map[string]bool{}
 	for _, r := range records {
-		if r.Sidechain || queue.replay(r) {
+		if r.Sidechain {
+			continue
+		}
+		if queue.replay(r) {
+			if r.Operation == "dequeue" {
+				claims++
+			}
 			continue
 		}
 		switch {
@@ -70,13 +74,21 @@ func TurnClosed(invocation Invocation, transcript, turnID string) (TurnClose, bo
 				continue
 			}
 			prompts[r.PromptID], started = true, r.Timestamp
-			// A prompt typed after an end shows the queue was empty, even
-			// if a prompt left it unrecorded; one run from the queue does not.
-			if ended && (r.PromptSource == "" || r.PromptSource == "typed") {
+			seen = seen || r.PromptID == turnID
+			switch {
+			case r.PromptSource == "queued" && claims > 0:
+				claims--
+			case r.PromptSource == "queued":
+				queue.queued = max(queue.queued-1, 0)
+			case ended && (r.PromptSource == "" || r.PromptSource == "typed"):
+				// A prompt typed after an end shows the queue was empty.
 				queue.queued = 0
 			}
 			ended = false
 		}
+	}
+	if !seen {
+		return TurnClose{}, false, nil
 	}
 	// The next turn's dequeue can be written before the end of this one.
 	if !ended || queue.queued > 0 || queue.dequeued.After(started) {

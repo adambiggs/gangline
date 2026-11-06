@@ -22,6 +22,14 @@ func (run *runtime) observeTranscriptTurn(l *store.LockedAgent, a *core.Agent, c
 	if err != nil || !closed {
 		return nil
 	}
+	// Only an end recorded after the interrupt was sent shows that it
+	// stopped something; an earlier end belongs to a turn already over, and
+	// whatever runs now, such as a compaction the operator typed, may not
+	// write one.
+	interrupt = interrupt && !end.At.Before(a.InterruptDeadline.Add(-operationTimeout))
+	if !open && !interrupt {
+		return nil
+	}
 	reason := "native transcript records the turn's end"
 	if end.Interrupted {
 		reason = "native transcript records the turn interrupted by the user"

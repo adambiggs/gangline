@@ -177,7 +177,7 @@ func (run *runtime) observeHookStatus(l *store.LockedAgent, a *core.Agent) error
 		activity = core.Compacting
 	}
 	if finishedAfterHook {
-		if a.Activity == core.Idle {
+		if a.Activity == core.Idle && a.Native.TurnFailure == "" {
 			return nil
 		}
 		activity, evidence = core.Idle, "native turn ended after hook: "+a.Native.HookKind

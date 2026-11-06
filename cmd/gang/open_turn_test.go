@@ -262,8 +262,9 @@ func TestTranscriptCompletesInterruptOnEscapedPermission(t *testing.T) {
 	if got := f.hookAt(t, a, start.Add(2*time.Second), "permission-requested"); got.Activity != core.Blocked {
 		t.Fatalf("permission request read %s: %s", got.Activity, got.Evidence)
 	}
+	// gang sends the interrupt at 4s.
 	a = f.setAgent(t, f.agent(t, a.ID), func(a *core.Agent) {
-		a.Activity, a.InterruptDeadline = core.Interrupting, start.Add(time.Minute)
+		a.Activity, a.InterruptDeadline = core.Interrupting, start.Add(4*time.Second+operationTimeout)
 	})
 	c, err := loadCollar("claude", f.run.settings)
 	if err != nil {
@@ -338,5 +339,72 @@ func TestTranscriptEndClosesTurnWithFoldedPrompt(t *testing.T) {
 		`{"type":"system","subtype":"turn_duration","timestamp":"`+stamp(6*time.Second+time.Millisecond)+`"}`)
 	if got := f.tickAt(t, a, start.Add(7*time.Second), hookNotice{}); got.Activity != core.Idle {
 		t.Fatalf("ended turn read %s: %s", got.Activity, got.Evidence)
+	}
+}
+
+// An end recorded before the interrupt was sent belongs to a turn already
+// over: it does not show that the interrupt stopped whatever runs now, such
+// as a compaction the operator typed, which fires no submit hook.
+func TestTranscriptEndBeforeInterruptLeavesItPending(t *testing.T) {
+	f, a, start, write, stamp := transcriptTurnFixture(t)
+	write(`{"type":"system","subtype":"turn_duration","timestamp":"` + stamp(3*time.Second) + `"}`)
+	if got := f.tickAt(t, a, start.Add(4*time.Second), hookNotice{}); got.Activity != core.Idle {
+		t.Fatalf("ended turn read %s: %s", got.Activity, got.Evidence)
+	}
+	f.setAgent(t, f.agent(t, a.ID), func(a *core.Agent) {
+		a.Activity, a.InterruptDeadline = core.Interrupting, start.Add(10*time.Second+operationTimeout)
+	})
+	observe := func(at time.Time) core.Agent {
+		t.Helper()
+		f.cmd.clock = func() time.Time { return at }
+		f.run.cmd = f.cmd
+		l, current, err := f.run.acquire(a.ID, false)
+		if err != nil {
+			t.Fatal(err)
+		}
+		c, err := loadCollar(current.Collar, f.run.settings)
+		if err != nil {
+			t.Fatal(err)
+		}
+		err = f.run.observeTranscriptTurn(l, &current, c)
+		if closeErr := f.run.unlock(l); closeErr != nil {
+			t.Fatal(closeErr)
+		}
+		if err != nil {
+			t.Fatal(err)
+		}
+		return f.agent(t, a.ID)
+	}
+	if got := observe(start.Add(11 * time.Second)); got.InterruptDeadline.IsZero() {
+		t.Fatal("an end before the interrupt completed it")
+	}
+	write(`{"type":"system","subtype":"turn_duration","timestamp":"` + stamp(12*time.Second) + `"}`)
+	if got := observe(start.Add(13 * time.Second)); !got.InterruptDeadline.IsZero() {
+		t.Fatalf("an end after the interrupt left it pending: %s", got.Activity)
+	}
+}
+
+// A turn failure recorded after the transcript closed the turn still reads,
+// even though the closed turn already reads idle.
+func TestTurnFailureReadsAfterTranscriptClose(t *testing.T) {
+	f, a, start := openTurnFixture(t)
+	a = f.setAgent(t, f.agent(t, a.ID), func(a *core.Agent) {
+		a.Activity, a.Evidence = core.Idle, ""
+		a.Native.HookAt, a.Native.HookKind = start.Add(time.Second), "activity"
+		a.Native.FinishedAt, a.Native.TurnFailure = start.Add(2*time.Second), "server_error"
+	})
+	l, current, err := f.run.acquire(a.ID, false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	err = f.run.observeHookStatus(l, &current)
+	if closeErr := f.run.unlock(l); closeErr != nil {
+		t.Fatal(closeErr)
+	}
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := f.agent(t, a.ID); got.Activity == core.Idle {
+		t.Fatalf("turn failure hidden: %s (%s)", got.Activity, got.Evidence)
 	}
 }
