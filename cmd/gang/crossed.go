@@ -109,11 +109,16 @@ func (run *runtime) unseenMail(from, to core.HitchID, now time.Time) ([]core.Env
 	if c.Primitives.Seen == nil {
 		return nil, errors.New("collar declares no seen primitive")
 	}
-	if w, err := p.ReadWitness(); err == nil && w.SessionID != b.Native.SessionID {
-		// A witness from a session the records do not show continuing
-		// to's conversation belongs to another, so the bound one stays.
-		if _, err := followNativeSession(c, &b, w.SessionID, w.Transcript); err != nil {
+	if w, err := p.ReadWitness(); err == nil && w.SessionID != "" {
+		// As delivery does, a witness of to's session, or of one the
+		// records show continuing it, supplies the session and transcript;
+		// one from another session leaves the binding as it is.
+		same, err := followNativeSession(c, &b, w.SessionID, w.Transcript)
+		if err != nil {
 			return nil, err
+		}
+		if same && w.Transcript != "" {
+			b.Native.SessionID, b.Native.Transcript = w.SessionID, w.Transcript
 		}
 	} else if err != nil && !errors.Is(err, os.ErrNotExist) {
 		return nil, err
