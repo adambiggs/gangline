@@ -75,20 +75,23 @@ type Invocation struct {
 }
 
 type Primitives struct {
-	Telemetry      *Invocation  `json:"telemetry,omitempty"`
-	Capacity       *Invocation  `json:"capacity,omitempty"`
-	MidTurn        bool         `json:"mid_turn,omitempty"`
-	Startup        []Invocation `json:"startup"`
-	Composer       Invocation   `json:"composer"`
-	Submit         Invocation   `json:"submit"`
-	QueueWitness   *Invocation  `json:"queue_witness,omitempty"`
-	SubmitWitness  Invocation   `json:"submit_witness"`
-	TurnBoundary   Invocation   `json:"turn_boundary"`
-	Blocked        Invocation   `json:"blocked"`
-	Context        Invocation   `json:"context"`
-	ProviderLimits Invocation   `json:"provider_limits"`
-	LimitsQuery    *Invocation  `json:"limits_query,omitempty"`
-	Wedge          Invocation   `json:"wedge"`
+	Telemetry    *Invocation  `json:"telemetry,omitempty"`
+	Capacity     *Invocation  `json:"capacity,omitempty"`
+	MidTurn      bool         `json:"mid_turn,omitempty"`
+	Startup      []Invocation `json:"startup"`
+	Composer     Invocation   `json:"composer"`
+	Submit       Invocation   `json:"submit"`
+	QueueWitness *Invocation  `json:"queue_witness,omitempty"`
+	// Seen names the transcript reader that shows which envelopes the
+	// model has received as input. Without it, crossed= reads unknown.
+	Seen           *Invocation `json:"seen,omitempty"`
+	SubmitWitness  Invocation  `json:"submit_witness"`
+	TurnBoundary   Invocation  `json:"turn_boundary"`
+	Blocked        Invocation  `json:"blocked"`
+	Context        Invocation  `json:"context"`
+	ProviderLimits Invocation  `json:"provider_limits"`
+	LimitsQuery    *Invocation `json:"limits_query,omitempty"`
+	Wedge          Invocation  `json:"wedge"`
 }
 
 type Actions struct {
@@ -300,6 +303,13 @@ func validateCollar(collar Collar) error {
 			value   Invocation
 			allowed []string
 		}{"queue witness", *collar.Primitives.QueueWitness, []string{"codex-pending-input"}})
+	}
+	if collar.Primitives.Seen != nil {
+		checks = append(checks, struct {
+			where   string
+			value   Invocation
+			allowed []string
+		}{"seen", *collar.Primitives.Seen, []string{"claude-transcript", "codex-session-log"}})
 	}
 	if collar.Primitives.Telemetry != nil {
 		checks = append(checks, struct {

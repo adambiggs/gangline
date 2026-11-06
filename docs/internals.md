@@ -199,9 +199,11 @@ names stay in state, `gang messages` and the log. Peer hosts never forward
 Gangline's own messages, so a host-qualified sender is always a peer agent.
 
 A `crossed=` field on the stamp line is a different event: the recipient's
-undelivered messages to the sender when `gang send` queued the message, read
-from the sender's queue, its last accepted and unverified receipts and its
-latest submit witness, and retained on the envelope.
+messages to the sender whose envelope openers were not yet in the sender's
+native transcript when `gang send` queued the message. Candidates come from the
+sender's queue and the recent end of the team log; the collar's `seen` reader
+scans the recent end of the transcript. Both reads are bounded, so their cost
+does not grow with settled history. The result is retained on the envelope.
 
 An upward context-band crossing records its deciding reading in
 `context_band_crossed` and adds a short action to the next envelope’s stamp.
@@ -371,7 +373,7 @@ match `collar.name`. Unknown fields or primitive names fail before launch.
 | `hooks` | Native callback arguments and payload interpretation. |
 | `models` | Model discovery and selection. |
 | `options` | Effort and role-prompt-file argument templates. |
-| `primitives` | Built-in native behaviors, readings, queue witnesses, and optional limits queries. |
+| `primitives` | Built-in native behaviors, readings, queue witnesses, the transcript reader for seen input, and optional limits queries. |
 | `actions` | Interrupt, compact, optional clear, and recovery key sequences; optional refusal and running-compaction patterns. |
 | `context_bands` | Named context thresholds by model. |
 | `usage_bands` | Named native provider-usage thresholds by window. |

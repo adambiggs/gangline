@@ -208,8 +208,8 @@ type Envelope struct {
 	Message      Message       `json:"message"`
 	ContextStamp *ContextStamp `json:"context_stamp,omitempty"`
 	// Crossed lists, comma-separated, the tokens of the recipient's messages
-	// to this sender that had not been delivered to the sender when this one
-	// was queued, or "unknown". A string keeps Envelope comparable.
+	// to this sender that were not yet in the sender's native transcript when
+	// this one was queued, or "unknown". A string keeps Envelope comparable.
 	Crossed    string           `json:"crossed,omitempty"`
 	Startup    *StartupSections `json:"startup,omitempty"`
 	PasteOnly  *StartupPaste    `json:"paste_only,omitempty"`
@@ -219,9 +219,7 @@ type Envelope struct {
 	NotBefore  time.Time        `json:"not_before,omitzero"`
 	NotAfter   time.Time        `json:"not_after,omitzero"`
 	Outcome    string           `json:"outcome,omitempty"`
-	// FiledAt is when the receipt's result was filed.
-	FiledAt time.Time `json:"filed_at,omitzero"`
-	Reason  string    `json:"reason,omitempty"`
+	Reason     string           `json:"reason,omitempty"`
 	// Witnessed keeps the prompt a submit hook reported when it did not
 	// match this envelope, after a later turn replaces the witness.
 	Witnessed string `json:"witnessed,omitempty"`

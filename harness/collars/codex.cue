@@ -49,6 +49,7 @@ collar: {
 		submit: {name: "enter-submit", params: {paste: "bracketed", settle: "400ms"}}
 		submit_witness: {name: "exact-prompt"}
 		queue_witness: {name: "codex-pending-input"}
+		seen: {name: "codex-session-log"}
 		turn_boundary: {name: "hook-boundary"}
 		blocked: {name: "screen-blocked", params: {
 			permission_hook: "screen"

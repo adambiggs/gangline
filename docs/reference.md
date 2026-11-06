@@ -849,29 +849,32 @@ stamp line after the final section. Gangline writes the line only after an
 envelope's closing tag; the same text inside a message body is the sender's.
 
 When one agent sends to another with `gang send`, the stamp line also carries
-`crossed=TOKEN,...` if any of the recipient's messages to that sender had not
-been delivered to the sender at that moment, oldest first:
+`crossed=TOKEN,...` if any of the recipient's messages to that sender were not
+yet seen by the sender at that moment, oldest first:
 
 ```text
 [gang:worker#0123456789abcdef] Done. [/gang:worker#0123456789abcdef]
 [gang ctx=134k/1M at=11-06T09:31:02Z crossed=4d8e67c2aa11bb22 /]
 ```
 
-Gangline decides this when it queues the message, from the sender's queue,
-its last accepted and last unverified receipts, and its latest submit witness.
-Delivered means a submit witness matched the message. A message still queued
-and due has not been delivered; a scheduled one counts once it is due. A
-message accepted into a native queue without a witness, or typed with no
-matching witness (unverified), has not been delivered until the sender's next
-submit witness: one that matches it delivered it, and a later one means the
-sender has taken input since. A witness counts under the session rule delivery
-uses: the sender's bound session or a session the harness shows it moving to,
-or any session while none is bound. The marker stays as recorded when receipts are
-reconciled later. Only messages between agents on this host are compared.
-`crossed=unknown` means the sender's records could not be read; the message
-is still sent. The field is absent when nothing crossed or the sender has no
-records. Gangline reads those records without locking them, so a message
-settling at that moment can be missed.
+A message is seen when its envelope opener appears in the sender's native
+transcript as input the harness gave the model: a prompt that started a turn,
+or one taken during a running turn. A harness queue record, tool output or a
+recalled prompt does not count. The collar's `primitives.seen` names the
+transcript reader (`claude-transcript` or `codex-session-log`); Codex writes a
+user message to its session log when the input enters the conversation, not
+when it is typed.
+
+Gangline decides this when it queues the message. It compares the
+recipient's due messages to the sender that are in the sender's Gangline
+queue or in the recent end of the team log, leaving out those that were
+cancelled or failed, against the recent end of the sender's transcript. A
+message older than the earliest transcript record read is compared only
+while it is still queued, since its delivery may lie in an earlier session.
+Only messages between agents on this host are compared, and the marker stays
+as recorded. `crossed=unknown` means the sender's transcript could not be
+read, or its collar names no reader; the message is still sent. The field is
+absent when nothing crossed.
 
 A band crossing adds a short save-state-and-compact/clear action once, after
 `; ` on the next stamp line. With no mail within one watchdog interval, the
