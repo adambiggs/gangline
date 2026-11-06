@@ -34,6 +34,8 @@ func TestTurnClosed(t *testing.T) {
 		{"the queued turn ends", []string{"0 user p1", "1 queue enqueue", "4 queue dequeue", "3 system turn_duration", "5 user p2", "6 assistant -", "7 system turn_duration"}, true, 7, false},
 		{"a prompt queued before the turn still waits", []string{"0 user p0", "1 queue enqueue", "1.5 queue enqueue", "2 system turn_duration", "3 queue dequeue", "3.1 user p1@2/queued", "4 system turn_duration"}, false, 0, false},
 		{"both prompts queued before the turn ran", []string{"0 user p0", "1 queue enqueue", "1.5 queue enqueue", "2 system turn_duration", "3 queue dequeue", "3.1 user p1@2/queued", "4 system turn_duration", "5 queue dequeue", "5.1 user p2@3/queued", "6 system turn_duration"}, true, 6, false},
+		{"two queued prompts run under one dequeue", []string{"0 user p1", "1 queue enqueue", "1.5 queue enqueue", "2 system turn_duration", "3 queue dequeue", "3.1 user p2@2/queued", "3.2 user p3@2/queued", "4 system turn_duration"}, true, 4, false},
+		{"a queued prompt leaves the queue unrecorded", []string{"0 user p1", "1 queue enqueue", "2 system turn_duration", "3 user p2@2/queued", "4 system turn_duration"}, true, 4, false},
 		{"a typed prompt empties a queue left unrecorded", []string{"0 user p0", "1 queue enqueue", "2 system turn_duration", "3 user p1", "4 system turn_duration"}, true, 4, false},
 		{"an interrupted turn's note does not mark the next", []string{"0 user p1", "1 user p1 [Request interrupted by user]", "1.1 system turn_duration", "2 user p2", "3 system turn_duration"}, true, 3, false},
 	} {
