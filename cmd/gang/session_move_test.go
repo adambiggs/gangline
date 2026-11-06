@@ -467,7 +467,7 @@ func sessionBindings(t *testing.T, f *stateFixture, id core.HitchID) []core.Bind
 	}
 	defer log.Close()
 	var bound []core.Binding
-	if err := store.ReadLog(log, func(e core.Event) error {
+	if _, err := store.ReadLog(log, func(e core.Event) error {
 		if e.Type == "session_bound" && e.HitchID == id {
 			bound = append(bound, *e.Binding)
 		}

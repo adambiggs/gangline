@@ -55,7 +55,7 @@ func checkPartial(t *testing.T, got partialResult, total int, stages ...string) 
 }
 
 func TestRosterPartialStateRead(t *testing.T) {
-	for _, fault := range []string{"malformed", "unknown-field", "io"} {
+	for _, fault := range []string{"malformed", "io"} {
 		t.Run(fault, func(t *testing.T) {
 			f := newStateFixture(t)
 			bad := f.add(t, "private-directory", "untrusted-name", "codex")
@@ -64,15 +64,6 @@ func TestRosterPartialStateRead(t *testing.T) {
 			switch fault {
 			case "malformed":
 				if err := os.WriteFile(p.State, []byte("private broken record"), 0600); err != nil {
-					t.Fatal(err)
-				}
-			case "unknown-field":
-				b, err := os.ReadFile(p.State)
-				if err != nil {
-					t.Fatal(err)
-				}
-				b = []byte(strings.Replace(string(b), `"id":`, `"unsupported":true,"id":`, 1))
-				if err := os.WriteFile(p.State, b, 0600); err != nil {
 					t.Fatal(err)
 				}
 			case "io":
@@ -176,11 +167,10 @@ func TestRosterPartialDoesNotLoadInactiveOrAbsentCollar(t *testing.T) {
 }
 
 func TestRosterPartialRetainsFatalBoundaries(t *testing.T) {
-	for _, fault := range []string{"name-binding", "projection", "outside", "inventory"} {
+	for _, fault := range []string{"name-binding", "outside", "inventory"} {
 		t.Run(fault, func(t *testing.T) {
 			f := newStateFixture(t)
-			a := f.add(t, "good", "healthy", "codex")
-			p, _ := f.run.team.Agent(a.ID)
+			f.add(t, "good", "healthy", "codex")
 			var path string
 			switch fault {
 			case "name-binding":
@@ -188,8 +178,6 @@ func TestRosterPartialRetainsFatalBoundaries(t *testing.T) {
 				if err := os.Remove(path); err != nil {
 					t.Fatal(err)
 				}
-			case "projection":
-				path = p.Background
 			case "outside":
 				path = filepath.Join(f.run.team.Directory, "outside", "outside-fixture.json")
 				if err := os.MkdirAll(filepath.Dir(path), 0700); err != nil {

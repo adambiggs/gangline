@@ -100,7 +100,7 @@ func TestContextBandNotesCrossings(t *testing.T) {
 				t.Fatal(err)
 			}
 			bands, delivered := 0, 0
-			if err := store.ReadLog(strings.NewReader(f.out.String()), func(e core.Event) error {
+			if _, err := store.ReadLog(strings.NewReader(f.out.String()), func(e core.Event) error {
 				if e.Type == "context_band_crossed" {
 					bands++
 					if e.HitchID != a.ID || e.Envelope == nil || e.ID != string(e.Envelope.ID) || len(e.Readings) != 1 || e.Readings[0].Percent == nil {
@@ -415,7 +415,7 @@ collar: {context_bands: {"*": [{name: "early", at: 0.10}, {name: "late", at: 0.2
 				t.Fatal(err)
 			}
 			var got []string
-			if err := store.ReadLog(strings.NewReader(f.out.String()), func(e core.Event) error {
+			if _, err := store.ReadLog(strings.NewReader(f.out.String()), func(e core.Event) error {
 				if e.Type != "context_band_crossed" || e.HitchID != a.ID {
 					return nil
 				}

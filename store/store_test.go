@@ -114,7 +114,7 @@ func TestConcurrentAppendsAreCompleteLinesWithoutAgentLocks(t *testing.T) {
 	}
 	defer f.Close()
 	count := 0
-	if err := ReadLog(f, func(core.Event) error { count++; return nil }); err != nil {
+	if _, err := ReadLog(f, func(core.Event) error { count++; return nil }); err != nil {
 		t.Fatal(err)
 	}
 	if count != 24 {
@@ -172,7 +172,7 @@ func TestWatchSeesAppendToExistingLog(t *testing.T) {
 	}
 	defer file.Close()
 	count := 0
-	if err := ReadLog(file, func(core.Event) error { count++; return nil }); err != nil {
+	if _, err := ReadLog(file, func(core.Event) error { count++; return nil }); err != nil {
 		t.Fatal(err)
 	}
 	if count != 2 {

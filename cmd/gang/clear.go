@@ -324,7 +324,7 @@ func (run *runtime) reconcileClear(l *store.LockedAgent, a *core.Agent) error {
 		a.ContextBands = core.ContextBandState{Sequence: a.ContextBands.Sequence, DiscardQueued: true}
 		a.NativeTitle = nil
 		a.Activity, a.ScreenFingerprint, a.ScreenSince = core.Idle, "", time.Time{}
-		a.Evidence, a.StatusProbeAt, a.BackgroundNoticed = "", time.Time{}, time.Time{}
+		a.Evidence, a.StatusProbeAt = "", time.Time{}
 		if err := l.Save(*a); err != nil {
 			return err
 		}

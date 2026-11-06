@@ -38,7 +38,7 @@ func TestCompactionPastDeadlineIsLoggedUnverified(t *testing.T) {
 	}
 	defer file.Close()
 	var unverified []core.Event
-	if err := store.ReadLog(file, func(e core.Event) error {
+	if _, err := store.ReadLog(file, func(e core.Event) error {
 		if e.Type == "compaction_unverified" {
 			unverified = append(unverified, e)
 		}

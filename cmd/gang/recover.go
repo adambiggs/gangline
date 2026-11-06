@@ -218,9 +218,6 @@ func (run *runtime) tickAgent(id core.HitchID, notice hookNotice, wait bool) (re
 	if err := run.notifyHeldInput(l, a); err != nil {
 		return err
 	}
-	if err := run.notifyBackgroundIdle(l, &a); err != nil {
-		return err
-	}
 	if a.Activity == core.Idle && !a.InterruptDeadline.IsZero() {
 		if err := run.apply(l, &a, core.Event{Type: "interrupt_completed"}); err != nil {
 			return err

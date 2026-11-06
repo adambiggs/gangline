@@ -153,9 +153,8 @@ func (run *runtime) prepareStoppedRehitch(ctx context.Context, b *tmux.Backend, 
 	next.NativeTitle = a.NativeTitle
 	next.ContextBands = a.ContextBands
 	next.Compaction, next.Clear, next.Capacity = a.Compaction, a.Clear, a.Capacity
-	next.BackgroundNoticed = a.BackgroundNoticed
 	next.CurfewNoticeDeadline = a.CurfewNoticeDeadline
-	for _, path := range []string{p.Witness, p.CompactionWitness, p.Background, p.Permission} {
+	for _, path := range []string{p.Witness, p.CompactionWitness, p.Permission} {
 		if err := os.Remove(path); err != nil && !errors.Is(err, os.ErrNotExist) {
 			return fail(err)
 		}

@@ -30,7 +30,7 @@ func wakeEvents(t *testing.T, f *stateFixture, name string) []core.Event {
 		t.Fatal(err)
 	}
 	var events []core.Event
-	if err := store.ReadLog(&filtered, func(e core.Event) error {
+	if _, err := store.ReadLog(&filtered, func(e core.Event) error {
 		if strings.HasPrefix(e.Type, "snooze_") {
 			events = append(events, e)
 		}

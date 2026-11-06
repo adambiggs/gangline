@@ -23,9 +23,6 @@ func TestForeignHookRejectedBeforeMutation(t *testing.T) {
 			if err := paths.WritePermissionWitness(store.PermissionWitness{At: fixture.cmd.now(), SessionID: "parent"}); err != nil {
 				t.Fatal(err)
 			}
-			if err := paths.WriteBackground(store.Background{At: fixture.cmd.now(), Tasks: 2}); err != nil {
-				t.Fatal(err)
-			}
 			before := contextStateSnapshot(t, paths.Directory)
 			fixture.cmd.stdin = strings.NewReader(`{"hook_event_name":"` + native + `","session_id":"parent","agent_id":"child","transcript_path":"/sessions/child.jsonl","turn_id":"child-turn"}`)
 			if err := fixture.cmd.handleHook(nil); err != nil {

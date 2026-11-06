@@ -2,6 +2,7 @@ package store
 
 import (
 	"bufio"
+	"errors"
 	"fmt"
 	"io"
 	"os"
@@ -31,14 +32,22 @@ func appendEvent(path string, event core.Event) error {
 	}
 	return closeErr
 }
-func ReadLog(reader io.Reader, visit func(core.Event) error) error {
-	return ScanLog(reader, func(line int, data []byte) error {
+
+// ReadLog visits known events and returns the number of unknown event kinds
+// skipped. Malformed records still return an error.
+func ReadLog(reader io.Reader, visit func(core.Event) error) (skipped int, err error) {
+	err = ScanLog(reader, func(line int, data []byte) error {
 		e, err := core.DecodeEvent(data)
+		if errors.Is(err, core.ErrUnknownEventType) {
+			skipped++
+			return nil
+		}
 		if err != nil {
 			return fmt.Errorf("audit line %d: %w", line, err)
 		}
 		return visit(e)
 	})
+	return skipped, err
 }
 
 // ScanLog visits each complete line of a log, numbered from 1, without

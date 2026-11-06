@@ -1,6 +1,7 @@
 package core
 
 import (
+	"errors"
 	"reflect"
 	"strings"
 	"testing"
@@ -97,7 +98,7 @@ func TestEventValidationBeforeAppend(t *testing.T) {
 
 func TestUnknownEventTypeRejectionNamesTheType(t *testing.T) {
 	_, err := DecodeEvent([]byte(`{"type":"invented","at":"2026-09-22T00:00:00Z"}`))
-	if err == nil || !strings.Contains(err.Error(), "invented") {
+	if !errors.Is(err, ErrUnknownEventType) || !strings.Contains(err.Error(), "invented") {
 		t.Fatalf("rejection = %v, want it to name the type", err)
 	}
 }

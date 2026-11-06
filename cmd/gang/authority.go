@@ -10,7 +10,6 @@ import (
 	"time"
 
 	"github.com/adambiggs/gangline/core"
-	"github.com/adambiggs/gangline/store"
 )
 
 // callerInTeam returns the agent of the selected team whose hitch identity
@@ -169,40 +168,6 @@ func (run *runtime) notifyHitcherRecovered(a core.Agent) error {
 	}
 	id := core.EnvelopeID(fmt.Sprintf("hitch-recovered-%s-%d", a.ID, a.ChangedAt.UnixNano()))
 	return run.notifyHitcher(a, id, fmt.Sprintf("%s resumed startup at %s after %s.", a.Name, a.ChangedAt.UTC().Format(time.RFC3339), core.BootDeadlineElapsed))
-}
-
-// notifyBackgroundIdle tells a's hitcher when a reads as idle and its stored
-// background report is at least the configured age. The report does not prove
-// those tasks are still pending. The record keeps the announced receipt time,
-// since the hitcher's inbox keeps only its latest delivered receipt. A new
-// report receipt, even from a delayed callback, can trigger another notice.
-func (run *runtime) notifyBackgroundIdle(l *store.LockedAgent, a *core.Agent) error {
-	if a.Activity != core.Idle {
-		return nil
-	}
-	background, ok, err := l.Paths.ReadBackground()
-	if err != nil || !ok || a.BackgroundNoticed.Equal(background.At) || run.cmd.now().Before(background.At.Add(run.settings.BackgroundIdleNotice)) {
-		return err
-	}
-	id := core.EnvelopeID(fmt.Sprintf("background-idle-%s-%d", a.ID, background.At.UnixNano()))
-	reason := fmt.Sprintf("background report received at %s listed %s; current task state is unknown", background.At.UTC().Format(time.RFC3339), backgroundTaskCount(background.Tasks))
-	published, err := run.noticeHitcher(*a, id, fmt.Sprintf("%s is idle with a report of %s received at %s.", a.Name, backgroundTaskCount(background.Tasks), background.At.UTC().Format(time.RFC3339)))
-	if err != nil || !published {
-		return err
-	}
-	a.BackgroundNoticed = background.At
-	if err := l.Save(*a); err != nil {
-		return err
-	}
-	return run.record(*a, core.Event{Type: "background_idle", ID: string(id), Reason: reason})
-}
-
-// backgroundTaskCount names a reported count of native background tasks.
-func backgroundTaskCount(tasks int) string {
-	if tasks == 1 {
-		return "1 background task"
-	}
-	return fmt.Sprintf("%d background tasks", tasks)
 }
 
 // sendHitcherNotice wakes the hitcher only for a notice it publishes, since a

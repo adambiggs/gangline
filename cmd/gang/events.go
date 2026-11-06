@@ -141,11 +141,7 @@ func (cmd command) handleHook(args []string) (result error) {
 	}
 	// Display state never gates the hook's own handling: a failure to keep it
 	// is reported once the hook has done its work.
-	var background *int
-	if tasks, ok := event.Counts["background_tasks"]; ok {
-		background = &tasks
-	}
-	displayErr := p.WriteDisplayHook(store.StatusHook{Kind: event.Kind, At: cmd.now(), SessionID: event.Payload["session_id"]}, background, observedSession)
+	displayErr := p.WriteDisplayHook(store.StatusHook{Kind: event.Kind, At: cmd.now(), SessionID: event.Payload["session_id"]}, observedSession)
 	defer func() { result = errors.Join(result, displayErr) }()
 	if event.Kind == "turn-started" {
 		for _, value := range []string{event.Payload["session_id"], event.Payload["turn_id"], event.Payload["transcript_path"], event.NativeEvent} {

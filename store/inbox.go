@@ -321,27 +321,6 @@ func (p AgentPaths) ReadCompactionWitness() (CompactionWitness, error) {
 	return w, err
 }
 
-// Background holds a native hook's reported background task count and receipt
-// time, not verified current task state. Hooks replace it without the agent lock.
-type Background struct {
-	At    time.Time `json:"at"`
-	Tasks int       `json:"tasks"`
-}
-
-func (p AgentPaths) WriteBackground(b Background) error { return atomicJSON(p.Background, b) }
-
-// ReadBackground reports whether a count is recorded.
-func (p AgentPaths) ReadBackground() (Background, bool, error) {
-	var b Background
-	err := readJSON(p.Background, &b)
-	if errors.Is(err, os.ErrNotExist) {
-		return Background{}, false, nil
-	}
-	return b, err == nil, err
-}
-
-func (p AgentPaths) RemoveBackground() error { return removeIfPresent(p.Background) }
-
 // PermissionWitness records a native permission request that no later hook
 // has followed. Hooks replace it without the agent lock.
 type PermissionWitness struct {

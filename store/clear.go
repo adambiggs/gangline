@@ -67,7 +67,7 @@ func (p AgentPaths) WriteSessionStart(n SessionStart) error {
 			return err
 		}
 		if old.ClearID != n.ClearID {
-			if err := errors.Join(p.RemoveBackground(), p.RemovePermissionWitness()); err != nil {
+			if err := p.RemovePermissionWitness(); err != nil {
 				return err
 			}
 		}
@@ -121,8 +121,8 @@ func (p AgentPaths) AdmitClear(id core.EnvelopeID, session, registration string)
 
 // WriteDisplayHook serializes display side files with clear confirmation. A
 // hook already running when clear completes cannot remove the new session's
-// permission request or restore the old session's background count.
-func (p AgentPaths) WriteDisplayHook(n StatusHook, background *int, observedSession string) error {
+// permission request.
+func (p AgentPaths) WriteDisplayHook(n StatusHook, observedSession string) error {
 	lock, err := p.lockStatusHooks()
 	if err != nil {
 		return err
@@ -152,14 +152,5 @@ func (p AgentPaths) WriteDisplayHook(n StatusHook, background *int, observedSess
 	} else if err := p.RemovePermissionWitness(); err != nil {
 		return err
 	}
-	switch n.Kind {
-	case "turn-finished":
-		if background != nil && *background > 0 {
-			return p.WriteBackground(Background{At: n.At, Tasks: *background})
-		}
-	case "turn-started", "turn-failed":
-	default:
-		return nil
-	}
-	return p.RemoveBackground()
+	return nil
 }

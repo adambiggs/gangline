@@ -149,7 +149,7 @@ func TestSendReportsReceiptReconciledAfterUnlock(t *testing.T) {
 				}
 				defer log.Close()
 				final, succeeded := "", false
-				if err := store.ReadLog(log, func(e core.Event) error {
+				if _, err := store.ReadLog(log, func(e core.Event) error {
 					if e.ID == fields[0] {
 						if e.Type == "delivery_succeeded" {
 							succeeded = true

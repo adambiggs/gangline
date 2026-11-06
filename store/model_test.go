@@ -212,3 +212,53 @@ func TestModelMetadataUnavailableIsUnknown(t *testing.T) {
 		}
 	}
 }
+
+func TestAgentReadIgnoresUnknownFields(t *testing.T) {
+	team := testTeam(t)
+	l, err := team.CreateAgent(testAgent("a", "worker"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer l.Close()
+	data, err := os.ReadFile(l.Paths.State)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var fields map[string]json.RawMessage
+	if err := json.Unmarshal(data, &fields); err != nil {
+		t.Fatal(err)
+	}
+	fields["future_state"] = json.RawMessage(`{"observed_at":"2026-11-05T00:00:00Z"}`)
+	data, err = json.Marshal(fields)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(l.Paths.State, data, 0600); err != nil {
+		t.Fatal(err)
+	}
+	a, err := l.Paths.Read()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := l.Save(a); err != nil {
+		t.Fatal(err)
+	}
+	data, err = os.ReadFile(l.Paths.State)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(string(data), "future_state") {
+		t.Fatal("save retained unknown field")
+	}
+	fields["unexpected"] = json.RawMessage(`true`)
+	data, err = json.Marshal(fields)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(l.Paths.State, data, 0600); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := l.Paths.Read(); err != nil {
+		t.Fatalf("unknown field rejected: %v", err)
+	}
+}

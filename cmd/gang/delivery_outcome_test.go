@@ -271,7 +271,7 @@ func TestUnsendableNoticeDoesNotStopTheOperation(t *testing.T) {
 			}
 			defer log.Close()
 			var failed, finished bool
-			if err := store.ReadLog(log, func(event core.Event) error {
+			if _, err := store.ReadLog(log, func(event core.Event) error {
 				if event.Type == "notice_failed" && event.HitchID == a.ID && event.ID == string(e.ID) && strings.Contains(event.Reason, "permission denied") {
 					failed = true
 				}

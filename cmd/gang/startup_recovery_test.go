@@ -306,7 +306,7 @@ func TestRecoverResumesStartupFailedAtBootDeadline(t *testing.T) {
 		}
 		defer file.Close()
 		var reopened []core.Event
-		if err := store.ReadLog(file, func(e core.Event) error {
+		if _, err := store.ReadLog(file, func(e core.Event) error {
 			if e.Type == "boot_reopened" {
 				reopened = append(reopened, e)
 			}

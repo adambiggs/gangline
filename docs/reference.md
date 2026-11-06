@@ -134,11 +134,7 @@ lead's. The lead is the agent started in the `lead` role by `gang up` or the
 operator; neither its name nor a `--role lead` given by another agent confers
 that authority. A hitch run from an agent's pane records that agent as the hitcher,
 which gets a `[gang:hitch#…]` notice when the agent fails, recovers, holds
-undelivered input, or reads as idle with an aged background report. The background
-notice names the report's count and receipt time; current task state is unknown.
-Its threshold is measured from receipt, so a delayed callback starts a fresh
-clock and can cause another warning. Repeated observations and the hitcher's
-receipt of the notice do not repeat the warning for that stored report.
+undelivered input.
 
 Each line of `downs.jsonl` records the time, team, retained log path, agent count, the caller's
 agent name and inherited `GANG_AGENT_ID`, its process and parent process IDs,
@@ -283,8 +279,8 @@ A send prints the message ID and `delivered`, `accepted`, `queued`,
 
 | Command | Effect |
 | --- | --- |
-| `gang roster [--json] [--allow-partial] [--limit N\|--all]` | Show registered agents and current states, with the recorded reason for a failed agent or a blocked, wedged, or unknown one. The table cuts a long reason to its head and its end so that the row's characters fit the terminal's width; `--json` and `gang status --why` carry the whole text. An idle agent with a stored background report reads `idle (N bg DURATION)`: N is the reported task count and DURATION is time since receipt, not verified pending work or idle duration. JSON fields `background_tasks` and `background_since` carry that count and receipt time. The agent remains idle for delivery; the next turn boundary clears the report, but delayed hooks can replace it. An absent count does not certify that no background work remains. |
-| `gang status [NAME] [--why] [--json]` | Show state; `--why` includes activity and compaction evidence. Background reports qualify idle as in `gang roster`; `--why` names the report's receipt time, age and count, and states that current task state is unknown. |
+| `gang roster [--json] [--allow-partial] [--limit N\|--all]` | Show registered agents and current states, with the recorded reason for a failed agent or a blocked, wedged, or unknown one. The table cuts a long reason to its head and its end so that the row's characters fit the terminal's width; `--json` and `gang status --why` carry the whole text. |
+| `gang status [NAME] [--why] [--json]` | Show state; `--why` includes activity and compaction evidence. |
 | `gang capture [NAME] [-n\|--lines LINES]` | Print the native pane, or only its last LINES lines. |
 | `gang capture --composer [NAME]` | Print draft input from the composer. |
 | `gang context [NAME] [--json]` | Show native context usage or an unknown reading. |
@@ -296,6 +292,9 @@ A send prints the message ID and `delivered`, `accepted`, `queued`,
 | `gang snooze --status` / `gang snooze --clear [ID]` | Inspect or cancel a pending wake. The lead sees every agent's wake and uncertain notices, and can clear a notice or fallback wake by ID. |
 | `gang log [--agent NAME\|HITCH_ID] [--type TYPE\|KIND] [--limit N\|--all] [LOG.jsonl]` | Print recent matching JSONL events from a team or saved log, oldest first. Use `--all` for a full export, including in pipes. See `gang log --help` for the default limit. The command scans the log to select its tail. |
 | `gang whoami` | Print the calling pane's registered identity. |
+
+Audit exports skip unknown event kinds and report their count on stderr.
+Metadata pages report `unknown_event_count` and mark their offsets as gaps.
 
 List commands (`queue`, `roster`, `teams`, `sender list`, `collars`, `models`,
 `roles`, and `snooze --status`) show a bounded prefix in their existing listing
@@ -694,7 +693,6 @@ override file values. Run `gang config` to see effective values and defaults.
 | `GANG_CODEX_PERMISSION_PROFILE` | Codex permission profile name for hitched agents; unset by default. |
 | `GANG_CAPACITY_TIMEOUT` | Positive duration budget for continuations after a capacity error the collar recognizes. |
 | `GANG_TEAM_IDLE_MIN_DURATION` | Minimum observed-idle window before a team notice and unchanged-draft window before a held-composer notice; positive Go duration, default `30m`. Environment overrides the config file. Refresh the team watchdog with an unscoped `gang tick` after changing it; the timer inherits the selected value. |
-| `GANG_BACKGROUND_IDLE_NOTICE` | Positive age of a stored background report before an idle agent's hitcher is told; defaults to `30m`. The warning preserves the reported count and receipt time without certifying current task state. |
 | `GANG_PEERS` | JSON object of enrolled peer host names to `{"ssh": ALIAS, "user": LOGIN, "gang": PATH, "team": TEAM}`: the ssh alias and optional login that reach the host, the absolute path of its `gang`, and its team. An enrolled host's messages are accepted through the forced command `gang peer-authorize` prints for its key. `gang send HOST:NAME` runs `ssh ALIAS PATH peer-receive --team TEAM`; HOST runs its forced command for the key in its place. No two host names may differ only by case. Unset means no peers. |
 | `GANG_HOST` | This host's name as its peers enroll it in their `GANG_PEERS` and authorize its key; required to send to a peer, which refuses a request naming any other host. |
 

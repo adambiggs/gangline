@@ -240,7 +240,7 @@ func (run *runtime) prepareRehitch(previous core.Agent, next *core.Agent) (*stor
 	next.Native.HookAt, next.Native.HookKind = run.cmd.now(), ""
 	// Preserve telemetry's cursor and acknowledged hook sequence across the
 	// same native conversation, while requiring a new startup submit witness.
-	for _, path := range []string{p.Witness, p.CompactionWitness, p.Background, p.Permission} {
+	for _, path := range []string{p.Witness, p.CompactionWitness, p.Permission} {
 		if err := os.Remove(path); err != nil && !errors.Is(err, os.ErrNotExist) {
 			return fail(err)
 		}

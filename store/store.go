@@ -16,7 +16,7 @@ import (
 
 type Paths struct{ Root string }
 type TeamPaths struct{ Directory, State, Log, Names, Agents string }
-type AgentPaths struct{ Directory, State, Lock, Witness, CompactionWitness, Inbox, Background, Permission, Log string }
+type AgentPaths struct{ Directory, State, Lock, Witness, CompactionWitness, Inbox, Permission, Log string }
 
 func segment(value string) error {
 	if value == "" || value == "." || value == ".." || filepath.Base(value) != value || strings.ContainsAny(value, "\\\x00") {
@@ -39,7 +39,7 @@ func (p TeamPaths) Agent(id core.HitchID) (AgentPaths, error) {
 		return AgentPaths{}, err
 	}
 	d := filepath.Join(p.Agents, string(id))
-	return AgentPaths{d, filepath.Join(d, "agent.json"), filepath.Join(d, "lock"), filepath.Join(d, "witness"), filepath.Join(d, "compaction-witness"), filepath.Join(d, "inbox"), filepath.Join(d, "background"), filepath.Join(d, "permission"), p.Log}, nil
+	return AgentPaths{d, filepath.Join(d, "agent.json"), filepath.Join(d, "lock"), filepath.Join(d, "witness"), filepath.Join(d, "compaction-witness"), filepath.Join(d, "inbox"), filepath.Join(d, "permission"), p.Log}, nil
 }
 func (p TeamPaths) Create() error {
 	for _, d := range []string{p.Names, p.Agents} {
@@ -266,7 +266,10 @@ func readJSON(path string, out any) error {
 }
 func decodeJSON(path string, r io.Reader, out any) error {
 	d := json.NewDecoder(r)
-	d.DisallowUnknownFields()
+	// Persisted registrations must remain readable across upgrades.
+	if _, agentState := out.(*core.Agent); !agentState {
+		d.DisallowUnknownFields()
+	}
 	if err := d.Decode(out); err != nil {
 		return fmt.Errorf("decode %s: %w", path, err)
 	}
