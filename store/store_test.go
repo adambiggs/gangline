@@ -68,7 +68,7 @@ func TestNamesAreClaimedExactlyOnce(t *testing.T) {
 		t.Fatalf("claims: success=%d refused=%d agents=%d dirs=%d", success, refused, len(agents), len(dirs))
 	}
 }
-func TestStrictAgentDecodeNamesFile(t *testing.T) {
+func TestAgentDecodeErrorNamesFile(t *testing.T) {
 	p := testTeam(t)
 	l, err := p.CreateAgent(testAgent("a", "worker"))
 	if err != nil {
@@ -79,7 +79,7 @@ func TestStrictAgentDecodeNamesFile(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	data = []byte(strings.Replace(string(data), `"id":"a"`, `"id":"a","extra":true`, 1))
+	data = []byte(strings.Replace(string(data), `"id":"a"`, `"id":42`, 1))
 	if err := os.WriteFile(l.Paths.State, data, 0600); err != nil {
 		t.Fatal(err)
 	}
