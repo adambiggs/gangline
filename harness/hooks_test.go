@@ -170,6 +170,32 @@ func TestSubmittedEnvelopeMatchesRecordsOutsideBytes(t *testing.T) {
 	}
 }
 
+// Claude Code's witness can drop the generated line break before the context
+// stamp line; nothing else in the envelope may change.
+func TestSubmittedEnvelopeMatchesClaudeJoinedStampLine(t *testing.T) {
+	sent := "[gang#0123456789abcdef] note [/gang#0123456789abcdef]\n[gang ctx=1k/1M at=01-02T03:04:05Z /]"
+	claude := Invocation{Name: "claude-pasted-content"}
+	for _, tc := range []struct {
+		name, witness string
+		want          bool
+	}{
+		{"as sent", sent, true},
+		{"joined", strings.Replace(sent, "]\n[gang ctx", "][gang ctx", 1), true},
+		{"joined and wrapped", "<pasted_content id=\"p\">\n" + strings.Replace(sent, "\n", "", 1) + "\n</pasted_content id=\"p\">\n", true},
+		{"altered stamp", strings.Replace(sent, "1k", "2k", 1), false},
+		{"stamp missing", "[gang#0123456789abcdef] note [/gang#0123456789abcdef]", false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			if got, err := SubmittedPromptStartsWith(claude, sent, tc.witness); err != nil || got != tc.want {
+				t.Fatalf("got %v, %v; want %v", got, err, tc.want)
+			}
+		})
+	}
+	if got, _ := SubmittedPromptStartsWith(Invocation{Name: "exact-prompt"}, sent, strings.Replace(sent, "\n", "", 1)); got {
+		t.Fatal("exact-prompt witness accepted a changed prompt")
+	}
+}
+
 // Claude Code turns every tab of a paste into four spaces, whatever its column,
 // and leaves the rest of the text, newlines included, unchanged.
 func TestSubmittedEnvelopeMatchesClaudeTabRewrite(t *testing.T) {

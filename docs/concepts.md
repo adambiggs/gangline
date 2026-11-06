@@ -49,8 +49,10 @@ a pane directly. User-namespace processes can also satisfy the ancestry
 screen with namespace-local root UIDs; the screen does not establish host-root
 ownership across namespaces.
 
-A system sender such as `usage-band` identifies a message emitted by Gangline. Text supplied
-by the caller, such as an interrupt reason, still has an unverified author.
+An envelope with no sender name, `[gang#…]`, is a message Gangline emits.
+Text supplied by the caller, such as an interrupt reason, still has an
+unverified author. Gangline's internal sender names, such as `usage-band`,
+label these messages in `gang messages` and the log.
 Text typed directly into a window is operator input without a teammate's
 envelope.
 

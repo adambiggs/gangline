@@ -17,12 +17,12 @@ func TestEnvelopeBudgetIncludesEscapingAndFraming(t *testing.T) {
 			t.Fatalf("oversized encoded envelope was not refused with state-file guidance: %v", err)
 		}
 	}
-	empty, err := renderEnvelope("operator", "msg-123", "", "")
+	one, err := renderEnvelope("operator", "msg-123", "", "x")
 	if err != nil {
 		t.Fatal(err)
 	}
-	overhead, _ := json.Marshal(empty)
-	wire, err := renderEnvelope("operator", "msg-123", "", strings.Repeat("x", maximumMessageBytes-len(overhead)))
+	overhead, _ := json.Marshal(one)
+	wire, err := renderEnvelope("operator", "msg-123", "", strings.Repeat("x", maximumMessageBytes-len(overhead)+1))
 	if err != nil {
 		t.Fatal(err)
 	}

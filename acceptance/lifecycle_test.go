@@ -197,7 +197,7 @@ func TestCommandLifecycleOnPrivateTmux(t *testing.T) {
 	if err != nil || string(gotPrompt) != wantPrompt {
 		t.Fatalf("native prompt file differs from composed prose: %v", err)
 	}
-	if !regexp.MustCompile(`^\[gang:hitch#[0-9a-f]{16} assignment\]`).Match(received) || !strings.Contains(string(received), "Assignment: acceptance assignment") {
+	if !regexp.MustCompile(`^\[gang#[0-9a-f]{16} assignment\]`).Match(received) || !strings.Contains(string(received), "Assignment: acceptance assignment") {
 		t.Fatalf("startup lacks Gangline attribution or assignment: %q", received)
 	}
 	// runInPane has the agent in pane run gang with its own environment, as a
@@ -279,7 +279,7 @@ func TestCommandLifecycleOnPrivateTmux(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !regexp.MustCompile(`\[gang:startup#[0-9a-f]{16} startup\] ctx=unknown No assignment was supplied\.`).Match(received) {
+	if !regexp.MustCompile(`\[gang#[0-9a-f]{16} startup\] No assignment was supplied\. \[/gang#[0-9a-f]{16}\]\n\[gang ctx=unknown at=\d\d-\d\dT\d\d:\d\d:\d\dZ /\]`).Match(received) {
 		t.Fatalf("taskless startup lacks Gangline attribution or invents an assignment: %q", received)
 	}
 	wp, err := team.Agent(worker.ID)

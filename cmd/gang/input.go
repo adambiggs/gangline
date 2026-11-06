@@ -103,7 +103,8 @@ func envelopeKeyword(text string) bool {
 		}
 		text = text[size:]
 	}
-	return strings.HasPrefix(strings.TrimLeftFunc(text, unicode.IsSpace), ":")
+	text = strings.TrimLeftFunc(text, unicode.IsSpace)
+	return strings.HasPrefix(text, ":") || strings.HasPrefix(text, "#")
 }
 
 func openingEnvelopeBracket(r rune) bool {
@@ -182,26 +183,46 @@ func defangEnvelopeTags(body string) string {
 	return result.String()
 }
 
+// renderEnvelope wraps body in tags naming sender and nonce.
 func renderEnvelope(sender, nonce, marker, body string) (string, error) {
 	if !envelopeTokenPattern.MatchString(sender) {
 		return "", fmt.Errorf("envelope sender %q is invalid", sender)
 	}
+	return renderEnvelopeHead(sender, nonce, marker, body)
+}
+
+// renderGanglineEnvelope wraps a message Gangline itself emits in tags that
+// name no sender: [gang#NONCE] ... [/gang#NONCE]. Only Gangline's own senders
+// use it, so no agent or outside name can render this form.
+func renderGanglineEnvelope(nonce, marker, body string) (string, error) {
+	return renderEnvelopeHead("", nonce, marker, body)
+}
+
+func renderEnvelopeHead(sender, nonce, marker, body string) (string, error) {
 	if !envelopeTokenPattern.MatchString(nonce) {
 		return "", fmt.Errorf("envelope nonce %q is invalid", nonce)
 	}
-	return renderEnvelopeTag(sender+"#"+nonce, marker, body)
+	return renderEnvelopeTag(envelopeHead(sender, nonce), marker, body)
 }
 
-// envelopeOpening is the opening tag every envelope with this tag and marker
-// starts with. A body cannot repeat it: rendering defangs tag-shaped text.
-func envelopeOpening(tag, marker string) string {
-	if marker != "" {
-		return "[gang:" + tag + " " + marker + "]"
+// envelopeHead is the tag text shared by an envelope's opening and closing.
+func envelopeHead(sender, nonce string) string {
+	if sender == "" {
+		return "gang#" + nonce
 	}
-	return "[gang:" + tag + "]"
+	return "gang:" + sender + "#" + nonce
 }
 
-func renderEnvelopeTag(tag, marker, body string) (string, error) {
+// envelopeOpening is the opening tag every envelope with this head and marker
+// starts with. A body cannot repeat it: rendering defangs tag-shaped text.
+func envelopeOpening(head, marker string) string {
+	if marker != "" {
+		return "[" + head + " " + marker + "]"
+	}
+	return "[" + head + "]"
+}
+
+func renderEnvelopeTag(head, marker, body string) (string, error) {
 	if err := validateMessageText(body); err != nil {
 		return "", err
 	}
@@ -209,15 +230,22 @@ func renderEnvelopeTag(tag, marker, body string) (string, error) {
 		return "", fmt.Errorf("envelope marker %q is invalid", marker)
 	}
 	body = defangEnvelopeTags(body)
-	wire := fmt.Sprintf("%s %s [/gang:%s]", envelopeOpening(tag, marker), body, tag)
+	if body != "" {
+		body += " "
+	}
+	wire := fmt.Sprintf("%s %s[/%s]", envelopeOpening(head, marker), body, head)
+	return wire, checkEnvelopeBudget(wire)
+}
+
+func checkEnvelopeBudget(wire string) error {
 	encoded, err := json.Marshal(wire)
 	if err != nil {
-		return "", err
+		return err
 	}
 	if len(encoded) > maximumMessageBytes {
-		return "", refuseError("message exceeds the %d-byte encoded envelope budget; put details in a state file and send its path", maximumMessageBytes)
+		return refuseError("message exceeds the %d-byte encoded envelope budget; put details in a state file and send its path", maximumMessageBytes)
 	}
-	return wire, nil
+	return nil
 }
 
 var clockPattern = regexp.MustCompile(`^([01][0-9]|2[0-3]):([0-5][0-9])$`)

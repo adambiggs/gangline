@@ -14,7 +14,7 @@ import (
 	"github.com/adambiggs/gangline/substrate"
 )
 
-var clearPromptPattern = regexp.MustCompile(`(?m)^\[gang:[^]\n]+ clear\]`)
+var clearPromptPattern = regexp.MustCompile(`(?m)^\[gang[:#][^]\n]+ clear\]`)
 
 func clearPending(a core.Agent) bool { return a.Clear != nil && a.Clear.Status != "completed" }
 

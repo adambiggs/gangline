@@ -15,7 +15,7 @@ import (
 	"github.com/adambiggs/gangline/substrate"
 )
 
-var resumePromptPattern = regexp.MustCompile(`(?m)^\[gang:[^]\n]+ resume\]`)
+var resumePromptPattern = regexp.MustCompile(`(?m)^\[gang[:#][^]\n]+ resume\]`)
 
 func (run *runtime) resumePromptBlock(a core.Agent, c harness.Collar, prompt, session string) string {
 	if !resumePromptPattern.MatchString(prompt) {
@@ -56,7 +56,7 @@ func pendingResumeNote(c *core.Compaction, prompt string) bool {
 	if c == nil || c.ResumeToken == "" || c.ResumeAdmitted || c.Status == "failed" {
 		return false
 	}
-	return regexp.MustCompile(`(?m)^\[gang:[^]\n]*#` + regexp.QuoteMeta(c.ResumeToken) + ` resume\]`).MatchString(prompt)
+	return regexp.MustCompile(`(?m)^\[gang(:[^]\n]*)?#` + regexp.QuoteMeta(c.ResumeToken) + ` resume\]`).MatchString(prompt)
 }
 
 func (run *runtime) admitCompactionResume(id core.HitchID, c harness.Collar, prompt, session string) (string, error) {

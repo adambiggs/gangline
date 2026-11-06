@@ -44,7 +44,7 @@ func compactionFixture(t *testing.T) (*stateFixture, core.Agent, store.AgentPath
 func witnessFailureNotices(f *stateFixture, p store.AgentPaths) *[]string {
 	submit, notices := f.input.submit, &[]string{}
 	f.input.submit = func(prompt string) error {
-		if strings.HasPrefix(prompt, "[gang:compact#") && strings.Contains(prompt, " failed: ") {
+		if strings.HasPrefix(prompt, "[gang#") && strings.Contains(prompt, " failed: ") {
 			*notices = append(*notices, prompt)
 			return p.WriteWitness(store.Witness{ID: fmt.Sprintf("failure-notice-%d", len(*notices)), At: f.cmd.now(), Prompt: prompt, SessionID: "s"})
 		}

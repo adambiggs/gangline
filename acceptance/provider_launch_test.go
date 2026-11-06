@@ -254,7 +254,7 @@ func testLiveProvider(t *testing.T, collar, cli, cheapest string) {
 		t.Fatal(err)
 	}
 	startupWitness, err := awaitProviderWitness(ctx, paths, assignment)
-	if err != nil || !strings.Contains(startupWitness.Prompt, "[gang:") {
+	if err != nil || !strings.Contains(startupWitness.Prompt, "[gang#") || !strings.Contains(startupWitness.Prompt, "[gang ctx=") {
 		diagnosticCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 		defer cancel()
 		status, _, _ := runGang(diagnosticCtx, "", "status", "worker", "--why")

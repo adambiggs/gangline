@@ -21,6 +21,14 @@ type CapacityTurn struct {
 	SessionID, TurnID, Failure, Prompt string
 }
 
+// Envelope tags name a sender after "gang:", or none for Gangline's own
+// messages; the context stamp line "[gang ctx=..." matches neither.
+var (
+	envelopeOpenerPattern = regexp.MustCompile(`\[gang[:#]`)
+	envelopeCloserPattern = regexp.MustCompile(`\[/gang[:#]`)
+	currentEnvelopeOpener = regexp.MustCompile(`\[gang(:[^\]# ]+)?#([0-9a-f]{16})( [^\]]+)?\]`)
+)
+
 func (turn CapacityTurn) Fingerprint() string {
 	if turn.SessionID == "" || turn.TurnID == "" {
 		return ""
@@ -115,15 +123,15 @@ func DetectCapacityForTurn(collar Collar, screen substrate.Screen, turn Capacity
 		return Capacity{}, false, fmt.Errorf("%w: no visible originating prompt", ErrCapacityIdentity)
 	}
 	identity := strings.Join(strings.Fields(strings.Join(lines[prompt:errorStart], " ")), " ")
-	if identity == "›" || strings.Contains(identity, "[Pasted Content") || (strings.Contains(identity, "[gang:") && !strings.Contains(identity, "[/gang:")) {
+	if identity == "›" || strings.Contains(identity, "[Pasted Content") || (envelopeOpenerPattern.MatchString(identity) && !envelopeCloserPattern.MatchString(identity)) {
 		return Capacity{}, false, fmt.Errorf("%w: originating prompt is clipped or collapsed", ErrCapacityIdentity)
 	}
 	if turn.TurnID != "" {
 		// A one-time envelope binds this visible history to the current
 		// submit witness. Repeated keyboard text cannot distinguish turns.
 		prompt := strings.Join(strings.Fields(turn.Prompt), " ")
-		opener := regexp.MustCompile(`\[gang:([^\]# ]+)#([0-9a-f]{16})( [^\]]+)?\]`).FindStringSubmatch(prompt)
-		if turn.SessionID == "" || len(opener) == 0 || !strings.Contains(prompt, "[/gang:"+opener[1]+"#"+opener[2]+"]") || !strings.HasPrefix(identity, "› "+prompt) {
+		opener := currentEnvelopeOpener.FindStringSubmatch(prompt)
+		if turn.SessionID == "" || len(opener) == 0 || !strings.Contains(prompt, "[/gang"+opener[1]+"#"+opener[2]+"]") || !strings.HasPrefix(identity, "› "+prompt) {
 			return Capacity{}, false, fmt.Errorf("%w: visible prompt does not identify the current submitted envelope", ErrCapacityIdentity)
 		}
 		return Capacity{Fingerprint: turn.Fingerprint(), Evidence: errorText}, true, nil

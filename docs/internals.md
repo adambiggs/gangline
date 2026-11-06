@@ -177,10 +177,24 @@ status line. Codex uses `last_token_usage.total_tokens` and
 `model_context_window` from native `token_count` records. These native formats
 are parsed explicitly; unavailable or invalid readings are not estimated.
 
-Every delivered envelope carries the recipient’s context stamp: exact used and
-window token counts from the same verified reading as `gang context`, or
-`ctx=unknown`. The stamp is retained with the envelope before native input, so
-late receipt reconciliation compares the submitted observation.
+Every delivered envelope is followed by the recipient’s context stamp line,
+`[gang ctx=USED/WINDOW at=MM-DDTHH:MM:SSZ /]`: used and window token counts
+from the same verified reading as `gang context`, or `ctx=unknown`, and the
+UTC time Gangline stamped it. Counts below a million round to the nearest
+thousand (`103k`); larger counts round to a tenth of a million (`1M`, `1.1M`).
+Gangline stamps an envelope when it types it into native input, which may
+queue it behind a running turn; the time lets the recipient judge how old the
+reading is when it reads the message. The line follows only a genuine closing
+tag, which a message body cannot contain. Claude Code's submit witness can
+drop the line break before it, and the witness comparison allows exactly that.
+The stamp is retained with the envelope before native input, so late receipt
+reconciliation compares the submitted observation.
+
+Messages Gangline emits render without a sender name, `[gang#ID]`, with the
+same kind words (`startup`, `resume`, `clear`, `assignment`). Startup sections
+carry their name in the ID (`[gang#ID-contract startup]`). The internal sender
+names stay in state, `gang messages` and the log. Peer hosts never forward
+Gangline's own messages, so a host-qualified sender is always a peer agent.
 
 An upward context-band crossing records its deciding reading in
 `context_band_crossed` and adds a short action to the next envelope’s stamp.

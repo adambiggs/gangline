@@ -133,7 +133,7 @@ a `curfew` change, and dropping an agent the caller did not hitch are the
 lead's. The lead is the agent started in the `lead` role by `gang up` or the
 operator; neither its name nor a `--role lead` given by another agent confers
 that authority. A hitch run from an agent's pane records that agent as the hitcher,
-which gets a `[gang:hitch#…]` notice when the agent fails, recovers, holds
+which gets a `[gang#…]` notice when the agent fails, recovers, holds
 undelivered input.
 
 Each line of `downs.jsonl` records the time, team, retained log path, agent count, the caller's
@@ -205,7 +205,7 @@ Keep a `--note` note short, on one line, and pointed at a state file. Without
 `--note`, the note tells the agent to re-read its brief and durable state and
 names `gang log --agent NAME --type send_queued --all`, which records the messages
 queued for it. Every
-failed compaction queues a `[gang:compact#…]` notice to the agent saying whether
+failed compaction queues a `[gang#…]` notice to the agent saying whether
 its context was compacted, and a copy to the agent that requested it when the
 failure comes after its command returned.
 
@@ -832,12 +832,27 @@ the native CLI reads it as a system prompt. Claude Code uses
 standing instructions in the startup message instead. The prompt file is
 removed with the agent's state on drop. The assignment remains in the startup
 message either way.
-Incoming envelopes include `ctx=USED/WINDOW` in exact tokens for the recipient,
-or `ctx=unknown` when the reading is unavailable. A band crossing adds a short
-save-state-and-compact/clear action once, on the next envelope. With no mail
-within one watchdog interval, the same stamp is delivered alone through the
-normal notice path. Drafts and native dialogs retain the existing input guards.
-The stamp describes context occupancy, not cumulative token consumption.
+
+Each delivered envelope is followed, on its own line directly after the
+closing tag, by a context stamp:
+
+```text
+[gang:lead#0123456789abcdef] Status? [/gang:lead#0123456789abcdef]
+[gang ctx=134k/1M at=11-06T08:43:09Z /]
+```
+
+`ctx` is the recipient's context tokens, rounded to the nearest thousand below
+a million and to a tenth of a million from there; `ctx=unknown` means the
+reading is unavailable. `at` is when Gangline stamped the envelope for native
+input, in UTC to the second, without the year. A startup's sections share one
+stamp line after the final section. Gangline writes the line only after an
+envelope's closing tag; the same text inside a message body is the sender's.
+
+A band crossing adds a short save-state-and-compact/clear action once, after
+`; ` on the next stamp line. With no mail within one watchdog interval, the
+same stamp follows an empty Gangline envelope through the normal notice path.
+Drafts and native dialogs retain the existing input guards. The stamp
+describes context occupancy, not cumulative token consumption.
 
 An agent hitched with `--context-bands` keeps its thresholds until re-hitched;
 Gangline reads band names, messages, and model selectors from the collar for

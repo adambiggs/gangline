@@ -122,3 +122,17 @@ func TestCapacityNativeTurnIdentityAndInputEligibility(t *testing.T) {
 		t.Fatal("distinct native failures share a receipt identity")
 	}
 }
+
+func TestCapacityReadsUnnamedGanglineEnvelope(t *testing.T) {
+	collar, _ := EmbeddedCollar("codex")
+	nonce := "0123456789abcdef"
+	prompt := "[gang#" + nonce + "] Continue [/gang#" + nonce + "]"
+	got, found, err := DetectCapacity(collar, testScreen(testCells("› "+prompt, false), testCells("■ Selected model is at capacity. Please try a different model.", false), testCells("› ", false)))
+	if err != nil || !found || got.Fingerprint == "" {
+		t.Fatalf("found=%v error=%v", found, err)
+	}
+	// An unnamed opener whose closing tag is off screen is clipped.
+	if _, found, err := DetectCapacity(collar, testScreen(testCells("› [gang#"+nonce+"] Continue", false), testCells("■ Selected model is at capacity. Please try a different model.", false), testCells("› ", false))); found || err == nil {
+		t.Fatalf("clipped unnamed envelope: found=%v err=%v", found, err)
+	}
+}

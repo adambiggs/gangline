@@ -53,3 +53,24 @@ func TestNativeInputPendingReadsCurrentQueue(t *testing.T) {
 		})
 	}
 }
+
+func TestCodexQueueAcceptsUnnamedGanglineOpener(t *testing.T) {
+	collar, err := EmbeddedCollar("codex")
+	if err != nil {
+		t.Fatal(err)
+	}
+	opener := "[gang#f88fbd8cf1bfb451]"
+	screen := testScreen(
+		testCells("• Messages to be submitted after next tool call (press esc to interrupt and send", false),
+		testCells("  immediately)", false),
+		testCells("  ↳ "+opener+" Your scheduled wake was due.", true),
+		testCells("", false),
+		append(testCells("› ", false), testCells("Ask Codex to do anything", true)...),
+	)
+	if accepted, err := NativeQueueAccepted(collar, screen, opener); err != nil || !accepted {
+		t.Fatalf("unnamed opener = %t, %v; want accepted", accepted, err)
+	}
+	if _, err := NativeQueueAccepted(collar, screen, "[gang ctx=1k/1M at=01-02T03:04:05Z /]"); err == nil {
+		t.Fatal("stamp line accepted as an envelope opener")
+	}
+}

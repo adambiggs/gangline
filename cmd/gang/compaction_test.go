@@ -356,7 +356,7 @@ func TestCompactionOccupiedComposerFailsWithoutLateResume(t *testing.T) {
 		t.Fatal(err)
 	}
 	// The one later submit is the failure notice, never the continuation.
-	if f.input.submits != 2 || !strings.HasPrefix(f.input.pasted, "[gang:compact#") || !strings.Contains(f.input.pasted, "composer occupied") || !strings.Contains(f.input.pasted, "may have run") {
+	if f.input.submits != 2 || !strings.HasPrefix(f.input.pasted, "[gang#") || !strings.Contains(f.input.pasted, "composer occupied") || !strings.Contains(f.input.pasted, "may have run") {
 		t.Fatalf("continuation ran after ordering failed: submits=%d pasted=%q", f.input.submits, f.input.pasted)
 	}
 	if e, err := p.ReadEnvelope("failed", core.EnvelopeID("resume-"+got.Compaction.ID)); err != nil || e.Outcome != "cancelled" {

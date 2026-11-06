@@ -17,7 +17,7 @@ func NativeQueueAccepted(c Collar, screen substrate.Screen, opener string) (bool
 	if c.Primitives.QueueWitness.Name != "codex-pending-input" {
 		return false, fmt.Errorf("unknown queue witness %q", c.Primitives.QueueWitness.Name)
 	}
-	if !strings.HasPrefix(opener, "[gang:") || !strings.HasSuffix(opener, "]") {
+	if !strings.HasPrefix(opener, "[gang:") && !strings.HasPrefix(opener, "[gang#") || !strings.HasSuffix(opener, "]") {
 		return false, fmt.Errorf("queue witness requires a complete envelope opener")
 	}
 	if _, blocked, err := InputBlocked(c, screen); err != nil || blocked {

@@ -6,6 +6,7 @@ import (
 	"context"
 	"errors"
 	"os"
+	"regexp"
 	"strings"
 	"testing"
 	"time"
@@ -20,8 +21,10 @@ func deliveryContext(a core.Agent, c harness.Collar, b harnessInput) core.Readin
 	return r
 }
 
+// stampReading observes used thousandths of a one-million-token window.
 func stampReading(at time.Time, used int64) core.Reading {
-	limit, percent := int64(1000), float64(used)/10
+	limit, percent := int64(1_000_000), float64(used)/10
+	used *= 1000
 	return core.Reading{Kind: "context", Source: "fixture", Status: "observed", Model: "gpt-test", At: &at, Used: &used, Limit: &limit, Percent: &percent}
 }
 
@@ -66,7 +69,7 @@ func TestContextStampRecipientDeliveryAndOnceOnlyCrossings(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if got.ContextStamp == nil || len(got.ContextStamp.Crossings) != 2 || !strings.Contains(f.input.pasted, "ctx=950/1000; yellow 75% crossed: save state and compact/clear; red 90% crossed") || !strings.HasPrefix(f.input.pasted, "[gang:peer:lead#") {
+	if got.ContextStamp == nil || len(got.ContextStamp.Crossings) != 2 || !strings.Contains(f.input.pasted, "[/gang:peer:lead#0123456789abcdef]\n[gang ctx=950k/1M at=09-22T10:00:00Z; yellow 75% crossed: save state and compact/clear; red 90% crossed") || !strings.HasSuffix(f.input.pasted, " /]") || !strings.HasPrefix(f.input.pasted, "[gang:peer:lead#") {
 		t.Fatalf("recipient stamp: %s %+v", f.input.pasted, got)
 	}
 	if len(a.ContextBands.Pending) != 0 {
@@ -132,7 +135,7 @@ func TestContextStampFallbackWaitsOneTickAndRespectsComposer(t *testing.T) {
 	if _, err := f.run.drain(a.ID, ""); err != nil {
 		t.Fatal(err)
 	}
-	if f.input.submits != 1 || !strings.Contains(f.input.pasted, "ctx=800/1000; yellow 75% crossed") || strings.Contains(f.input.pasted, "Context band") {
+	if f.input.submits != 1 || !regexp.MustCompile(`^\[gang#[0-9a-f]{16}\] \[/gang#[0-9a-f]{16}\]\n\[gang ctx=800k/1M at=\d\d-\d\dT\d\d:\d\d:\d\dZ; yellow 75% crossed[^\n]* /\]$`).MatchString(f.input.pasted) || strings.Contains(f.input.pasted, "Context band") {
 		t.Fatalf("stamp-only fallback: %s (%d)", f.input.pasted, f.input.submits)
 	}
 	if _, err := f.run.drain(a.ID, ""); err != nil {
@@ -161,12 +164,12 @@ func TestContextStampUnknownStartupAndRetainedResume(t *testing.T) {
 		t.Fatal(err)
 	}
 	wire, err := envelopeText(e)
-	if err != nil || strings.Count(wire, "ctx=unknown") != 4 {
+	if err != nil || strings.Count(wire, "ctx=unknown") != 1 || !strings.HasSuffix(wire, "[/gang:peer:lead#0123456789abcdef]\n[gang ctx=unknown at=09-22T10:00:00Z /]") {
 		t.Fatalf("startup stamps %s %v", wire, err)
 	}
-	e.ContextStamp = &core.ContextStamp{Text: "ctx=800/1000; yellow crossed: save state and compact/clear"}
+	e.ContextStamp = &core.ContextStamp{Text: "ctx=800k/1M at=09-22T10:00:00Z; yellow crossed: save state and compact/clear"}
 	wire, err = envelopeText(e)
-	if err != nil || strings.Count(wire, "ctx=800/1000") != 4 || strings.Count(wire, "yellow crossed") != 1 {
+	if err != nil || strings.Count(wire, "ctx=800k/1M") != 1 || strings.Count(wire, "yellow crossed") != 1 || !strings.HasSuffix(wire, "\n[gang ctx=800k/1M at=09-22T10:00:00Z; yellow crossed: save state and compact/clear /]") {
 		t.Fatalf("startup crossing repeated: %s %v", wire, err)
 	}
 	a.Compaction = &core.Compaction{ID: "c", Resume: core.Message{Text: "resume"}, ResumeToken: "aaaaaaaaaaaaaaaa", ResumeFrom: core.Sender{Kind: core.SenderGangline, Name: "compact"}}
@@ -256,7 +259,7 @@ func TestContextStampDirectCompactionContinuation(t *testing.T) {
 		t.Fatal(err)
 	}
 	e, err := p.ReadEnvelope("failed", "resume-c")
-	if err != nil || e.ContextStamp == nil || !strings.Contains(f.input.pasted, "ctx=800/1000; yellow 75% crossed") {
+	if err != nil || e.ContextStamp == nil || !strings.Contains(f.input.pasted, "\n[gang ctx=800k/1M at=09-22T10:00:00Z; yellow 75% crossed") {
 		t.Fatalf("unstamped continuation: %+v %s %v", e, f.input.pasted, err)
 	}
 	wire, err := envelopeText(e)
@@ -284,8 +287,8 @@ func TestContextStampUsesVerifiedIncrementalTranscript(t *testing.T) {
 	if a.Native.Offset == 0 {
 		t.Fatal("fixture has no retained cursor")
 	}
-	if got := contextStampText(deliveryContext(a, c, f.input)); got != "ctx=150/1000" {
-		t.Fatal(got)
+	if got := deliveryContext(a, c, f.input); got.Used == nil || *got.Used != 150 || *got.Limit != 1000 {
+		t.Fatalf("%+v", got)
 	}
 	file, err := os.OpenFile(a.Native.Transcript, os.O_APPEND|os.O_WRONLY, 0600)
 	if err != nil {
@@ -296,8 +299,8 @@ func TestContextStampUsesVerifiedIncrementalTranscript(t *testing.T) {
 	if err != nil || closeErr != nil {
 		t.Fatalf("append %v %v", err, closeErr)
 	}
-	if got := contextStampText(deliveryContext(a, c, f.input)); got != "ctx=300/1000" {
-		t.Fatal(got)
+	if got := deliveryContext(a, c, f.input); got.Used == nil || *got.Used != 300 || *got.Limit != 1000 {
+		t.Fatalf("%+v", got)
 	}
 }
 
@@ -413,7 +416,7 @@ func TestContextStampTranscriptResetDiscardsOldCrossing(t *testing.T) {
 		t.Fatalf("append %v %v", err, closeErr)
 	}
 	e, err := f.run.stampEnvelope(l, &a, stampMail(a, "reset-tail", f.cmd.now()), f.input, c)
-	if err != nil || e.ContextStamp == nil || len(e.ContextStamp.Crossings) > 0 || e.ContextStamp.Text != "ctx=unknown" {
+	if err != nil || e.ContextStamp == nil || len(e.ContextStamp.Crossings) > 0 || e.ContextStamp.Text != "ctx=unknown at=09-22T10:00:00Z" {
 		t.Fatalf("stale reset action %+v %v", e, err)
 	}
 }

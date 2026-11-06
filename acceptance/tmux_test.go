@@ -626,7 +626,7 @@ func runCommandHarness() int {
 		}
 		if value != '\r' {
 			input.WriteByte(value)
-			if strings.HasSuffix(input.String(), "]") && strings.Contains(input.String(), "[/gang:") {
+			if strings.HasSuffix(input.String(), "]") && (strings.Contains(input.String(), "[/gang:") || strings.Contains(input.String(), "[/gang#")) {
 				renderCommandComposer(input.String())
 			}
 			continue

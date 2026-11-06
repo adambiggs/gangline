@@ -44,18 +44,19 @@ func TestAgentsCannotTakeAGanglineSenderName(t *testing.T) {
 	}
 }
 
-// Every label Gangline renders for itself must be a name no agent can take,
-// so a new Gangline sender cannot ship without its reservation.
+// Gangline's own messages render unnamed, but their internal sender names
+// still label them in listings and logs; no agent may take one, so a new
+// Gangline sender cannot ship without its reservation.
 func TestEveryGanglineSenderLabelIsReserved(t *testing.T) {
 	labels := ganglineSenderNames(t)
-	wire, err := startupEnvelopeText(&core.StartupSections{Contract: "c", Doctrine: "d", Role: "r"}, "lead", "0123456789abcdef", "startup", "m")
+	wire, err := startupEnvelopeText(&core.StartupSections{Contract: "c", Doctrine: "d", Role: "r"}, "lead", false, "0123456789abcdef", "startup", "m")
 	if err != nil {
 		t.Fatal(err)
 	}
-	for _, match := range regexp.MustCompile(`\[gang:([^#\]]+)#`).FindAllStringSubmatch(wire, -1) {
-		labels = append(labels, match[1])
+	if regexp.MustCompile(`\[gang:`).MatchString(wire) {
+		t.Fatalf("Gangline startup sections carry a sender name: %q", wire)
 	}
-	for _, want := range []string{"usage-band", "contract", "startup"} {
+	for _, want := range []string{"usage-band", "startup"} {
 		found := false
 		for _, label := range labels {
 			found = found || label == want

@@ -6,6 +6,8 @@ import (
 	"fmt"
 	"os"
 	"slices"
+	"strconv"
+	"time"
 
 	"github.com/adambiggs/gangline/core"
 	"github.com/adambiggs/gangline/harness"
@@ -65,11 +67,30 @@ func deliveryReadings(a core.Agent, c harness.Collar, b harnessInput) (core.Read
 	return core.Reading{Kind: "context", Status: "observed", Model: model, Used: &reading.Used, Limit: &reading.Limit, Percent: &percent}, nil
 }
 
+// envelopeStampText renders the recipient's context reading in rounded token
+// units and when Gangline stamped the envelope, in UTC to the second.
+func envelopeStampText(at time.Time, r core.Reading) string {
+	return contextStampText(r) + " at=" + at.UTC().Format("01-02T15:04:05Z")
+}
+
 func contextStampText(r core.Reading) string {
 	if r.Status != "observed" || r.Used == nil || r.Limit == nil || r.Percent == nil {
 		return "ctx=unknown"
 	}
-	return fmt.Sprintf("ctx=%d/%d", *r.Used, *r.Limit)
+	return "ctx=" + tokenUnits(*r.Used) + "/" + tokenUnits(*r.Limit)
+}
+
+// tokenUnits rounds to the nearest thousand below one million and to the
+// nearest tenth of a million from there, so 102950 is 103k and 1000000 is 1M.
+func tokenUnits(n int64) string {
+	if k := (n + 500) / 1000; k < 1000 {
+		return strconv.FormatInt(k, 10) + "k"
+	}
+	tenths := (n + 50000) / 100000
+	if tenths%10 == 0 {
+		return strconv.FormatInt(tenths/10, 10) + "M"
+	}
+	return fmt.Sprintf("%d.%dM", tenths/10, tenths%10)
 }
 
 func (run *runtime) stampEnvelope(l *store.LockedAgent, a *core.Agent, e core.Envelope, b harnessInput, c harness.Collar) (core.Envelope, error) {
@@ -96,7 +117,7 @@ func (run *runtime) stampEnvelope(l *store.LockedAgent, a *core.Agent, e core.En
 			return e, err
 		}
 	}
-	stamp := &core.ContextStamp{Text: contextStampText(r)}
+	stamp := &core.ContextStamp{Text: envelopeStampText(run.cmd.now(), r)}
 	for _, note := range a.ContextBands.Pending {
 		stamp.Crossings = append(stamp.Crossings, note.Envelope.ID)
 		// The crossing owns its evaluated threshold and rendered action. A later
