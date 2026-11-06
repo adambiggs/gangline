@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/adambiggs/gangline/core"
+	"github.com/adambiggs/gangline/harness"
 )
 
 // undeliveredFrom lists, oldest first and comma-separated, the tokens of
@@ -33,9 +34,11 @@ func (run *runtime) undeliveredFrom(from core.HitchID, to core.Sender, now time.
 // undeliveredMail reads to's queue and its last accepted and unverified
 // receipts. Delivered means a submit witness matched. A queued message
 // counts once due. An accepted or unverified receipt counts until to's
-// next submit witness in its current native session: one that matches it
-// delivered it, and one after the receipt was filed means to has taken
-// input since, so it is no longer in flight.
+// next submit witness in its native session, judged as delivery judges
+// it: one that matches it delivered it, and one after the receipt was
+// filed means to has taken input since, so it is no longer in flight.
+// The reads take no lock, so a message settling at that moment can be
+// missed.
 func (run *runtime) undeliveredMail(from, to core.HitchID, now time.Time) ([]core.Envelope, error) {
 	p, err := run.team.Agent(to)
 	if err != nil {
@@ -44,12 +47,7 @@ func (run *runtime) undeliveredMail(from, to core.HitchID, now time.Time) ([]cor
 	sent := func(e core.Envelope) bool {
 		return e.From.Kind == core.SenderAgent && e.From.HitchID == from && e.Token != ""
 	}
-	// Read the queue before the receipts: a message settled in between
-	// then appears in both, never in neither.
 	queued, err := p.ListNew()
-	if errors.Is(err, os.ErrNotExist) {
-		return nil, nil
-	}
 	if err != nil {
 		return nil, err
 	}
@@ -67,13 +65,22 @@ func (run *runtime) undeliveredMail(from, to core.HitchID, now time.Time) ([]cor
 		}
 	}
 	witness, err := p.ReadWitness()
-	witnessed := err == nil && witness.SessionID != "" && witness.SessionID == b.Native.SessionID
+	witnessed := err == nil
 	if err != nil && !errors.Is(err, os.ErrNotExist) {
 		return nil, err
 	}
-	c, err := loadCollar(b.Collar, run.settings)
-	if err != nil {
-		return nil, err
+	var c harness.Collar
+	collar := func() (harness.Collar, error) {
+		if c.Name != "" {
+			return c, nil
+		}
+		loaded, err := loadCollar(b.Collar, run.settings)
+		if err == nil && witnessed {
+			bound := b
+			witnessed, err = followNativeSession(loaded, &bound, witness.SessionID, witness.Transcript)
+		}
+		c = loaded
+		return c, err
 	}
 	for _, r := range []struct {
 		dir, outcome string
@@ -92,13 +99,22 @@ func (run *runtime) undeliveredMail(from, to core.HitchID, now time.Time) ([]cor
 		if !sent(e) || e.Outcome != r.outcome || slices.ContainsFunc(pending, func(q core.Envelope) bool { return q.ID == e.ID }) {
 			continue
 		}
-		if witnessed {
-			matched, _, err := receiptMatches(c.Primitives.SubmitWitness, e, witness.Prompt)
+		// A witness older than the message cannot carry its token.
+		if witnessed && !witness.At.Before(e.CreatedAt) {
+			c, err := collar()
 			if err != nil {
 				return nil, err
 			}
-			if matched || !e.FiledAt.IsZero() && witness.At.After(e.FiledAt) {
-				continue
+			if witnessed {
+				matched, _, err := receiptMatches(c.Primitives.SubmitWitness, e, witness.Prompt)
+				if err != nil {
+					return nil, err
+				}
+				// A receipt filed before filing times were recorded ages
+				// out on any later witness of the session.
+				if matched || e.FiledAt.IsZero() || witness.At.After(e.FiledAt) {
+					continue
+				}
 			}
 		}
 		pending = append(pending, e)

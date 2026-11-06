@@ -198,7 +198,11 @@ func (l *LockedAgent) FileFailure(e core.Envelope, outcome, reason string) error
 	return l.fileResult(e, "failed", outcome, reason)
 }
 func (l *LockedAgent) fileResult(e core.Envelope, dir, outcome, reason string) error {
-	e.Outcome, e.Reason, e.FiledAt = outcome, reason, time.Now()
+	// A receipt filed again with its outcome keeps its first filing time.
+	if e.Outcome != outcome || e.FiledAt.IsZero() {
+		e.FiledAt = time.Now()
+	}
+	e.Outcome, e.Reason = outcome, reason
 	// A mismatched prompt is evidence only for the unverified result it explains.
 	if outcome != "unverified" {
 		e.Witnessed = ""

@@ -868,7 +868,9 @@ sender has taken input since. Only a witness from the sender's current native
 session counts. The marker stays as recorded when receipts are
 reconciled later. Only messages between agents on this host are compared.
 `crossed=unknown` means the sender's records could not be read; the message
-is still sent. The field is absent when nothing crossed.
+is still sent. The field is absent when nothing crossed or the sender has no
+records. Gangline reads those records without locking them, so a message
+settling at that moment can be missed.
 
 A band crossing adds a short save-state-and-compact/clear action once, after
 `; ` on the next stamp line. With no mail within one watchdog interval, the
