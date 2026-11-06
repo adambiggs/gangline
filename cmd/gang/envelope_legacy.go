@@ -1,6 +1,7 @@
 package main
 
 import (
+	"fmt"
 	"regexp"
 	"strings"
 
@@ -11,50 +12,49 @@ import (
 // currentStamp matches stamp text this version writes. A stored stamp
 // without it, or no stamp at all, may belong to input an earlier version
 // submitted before an upgrade.
-var currentStamp = regexp.MustCompile(`^ctx=\S+ at=\d\d-\d\dT\d\d:\d\d:\d\dZ(;|$)`)
-
-// receiptWires is every wire e may have been submitted as: the current
-// rendering and, for a receipt an earlier version may have typed, that
-// version's rendering, which named Gangline's senders and put the stamp
-// at the start of the body.
-func receiptWires(e core.Envelope) ([]string, error) {
-	wire, err := envelopeText(e)
-	if err != nil {
-		return nil, err
-	}
-	wires := []string{wire}
-	if e.ContextStamp == nil || !currentStamp.MatchString(e.ContextStamp.Text) {
-		if legacy, err := legacyEnvelopeText(e); err == nil && legacy != wire {
-			wires = append(wires, legacy)
-		}
-	}
-	return wires, nil
-}
+var currentStamp = regexp.MustCompile(`^ctx=\S+ at=\d\d-\d\dT\d\d:\d\d:\d\dZ( |;|$)`)
 
 // receiptMatches reports whether witnessed starts with a wire e may have
-// been submitted as, and the bytes outside that envelope. Gangline's own
-// stamp line is not outside input.
+// been submitted as, and the bytes outside that envelope. It tries the
+// current rendering, then, for a receipt an earlier version may have typed,
+// that version's rendering, which named Gangline's senders and put the stamp
+// at the start of the body.
 func receiptMatches(primitive harness.Invocation, e core.Envelope, witnessed string) (bool, string, error) {
-	wires, err := receiptWires(e)
+	var outside string
+	matched, err := anyReceiptWire(e, func(wire string) (bool, error) {
+		matched, rest, err := harness.SubmittedEnvelopeMatches(primitive, wire, witnessed)
+		outside = rest
+		return matched, err
+	})
+	if matched && e.ContextStamp == nil {
+		// A wire rebuilt without its stored stamp is followed by the
+		// stamp line that delivery added; that line is not typed input.
+		outside = leadingStampLine.ReplaceAllString(outside, "")
+	}
+	return matched, outside, err
+}
+
+// anyReceiptWire calls match with each wire e may have been submitted as
+// until one matches.
+func anyReceiptWire(e core.Envelope, match func(string) (bool, error)) (bool, error) {
+	wire, err := envelopeText(e)
 	if err != nil {
-		return false, "", err
+		return false, err
 	}
-	for _, wire := range wires {
-		matched, outside, err := harness.SubmittedEnvelopeMatches(primitive, wire, witnessed)
-		if err != nil || matched {
-			return matched, withoutStampLine(outside), err
-		}
+	if matched, err := match(wire); err != nil || matched {
+		return matched, err
 	}
-	return false, "", nil
+	if e.ContextStamp != nil && currentStamp.MatchString(e.ContextStamp.Text) {
+		return false, nil
+	}
+	legacy, err := legacyEnvelopeText(e)
+	if err != nil || legacy == wire {
+		return false, nil
+	}
+	return match(legacy)
 }
 
-var leadingStampLine = regexp.MustCompile(`^\n?\[gang [^\n]* /\]`)
-
-// withoutStampLine drops a stamp line that follows a wire rebuilt without
-// its stored stamp.
-func withoutStampLine(outside string) string {
-	return leadingStampLine.ReplaceAllString(outside, "")
-}
+var leadingStampLine = regexp.MustCompile(`^\n?\[gang [^\n\]]* /\]`)
 
 func legacyEnvelopeText(e core.Envelope) (string, error) {
 	sender := senderLabel(e.From)
@@ -67,7 +67,7 @@ func legacyEnvelopeText(e core.Envelope) (string, error) {
 		}
 	}
 	if e.Startup == nil {
-		return renderEnvelope(sender, e.Token, e.Purpose, legacyStampedBody(stamp, message))
+		return legacyRenderEnvelope(sender, e.Token, e.Purpose, legacyStampedBody(stamp, message))
 	}
 	occupancy, _, _ := strings.Cut(stamp, ";")
 	var parts []string
@@ -79,7 +79,7 @@ func legacyEnvelopeText(e core.Envelope) (string, error) {
 		if section.body == "" {
 			continue
 		}
-		part, err := renderEnvelope(section.name, e.Token+"-"+section.name, "startup", legacyStampedBody(occupancy, section.body))
+		part, err := legacyRenderEnvelope(section.name, e.Token+"-"+section.name, "startup", legacyStampedBody(occupancy, section.body))
 		if err != nil {
 			return "", err
 		}
@@ -88,7 +88,7 @@ func legacyEnvelopeText(e core.Envelope) (string, error) {
 	if e.Purpose == "startup" {
 		sender = "startup"
 	}
-	part, err := renderEnvelope(sender, e.Token, e.Purpose, legacyStampedBody(stamp, message))
+	part, err := legacyRenderEnvelope(sender, e.Token, e.Purpose, legacyStampedBody(stamp, message))
 	if err != nil {
 		return "", err
 	}
@@ -100,4 +100,21 @@ func legacyStampedBody(stamp, body string) string {
 		return stamp + body
 	}
 	return stamp + " " + body
+}
+
+// legacyRenderEnvelope is the earlier renderer: it defanged only "gang:"
+// tags and always framed the body with one space on each side.
+func legacyRenderEnvelope(sender, nonce, marker, body string) (string, error) {
+	if !envelopeTokenPattern.MatchString(sender) || !envelopeTokenPattern.MatchString(nonce) {
+		return "", fmt.Errorf("envelope sender %q or nonce %q is invalid", sender, nonce)
+	}
+	if err := validateMessageText(body); err != nil {
+		return "", err
+	}
+	if marker != "" && !envelopeMarkerPattern.MatchString(marker) {
+		return "", fmt.Errorf("envelope marker %q is invalid", marker)
+	}
+	head := envelopeHead(sender, nonce)
+	body = defangTagsWith(body, func(text string) bool { return envelopeKeywordBefore(text, ":") })
+	return fmt.Sprintf("%s %s [/%s]", envelopeOpening(head, marker), body, head), nil
 }

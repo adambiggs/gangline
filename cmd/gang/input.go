@@ -93,6 +93,11 @@ var envelopeMarkerPattern = regexp.MustCompile(`^[a-z][a-z-]*$`)
 // Non-ASCII letters in the keyword positions are treated as lookalikes;
 // refusing the shape does not depend on a confusable-letter table.
 func envelopeKeyword(text string) bool {
+	return envelopeKeywordBefore(text, ":#")
+}
+
+// envelopeKeywordBefore reports a gang keyword followed by one of separators.
+func envelopeKeywordBefore(text, separators string) bool {
 	text = strings.TrimLeftFunc(text, unicode.IsSpace)
 	text = strings.TrimPrefix(text, "/")
 	text = strings.TrimLeftFunc(text, unicode.IsSpace)
@@ -104,7 +109,8 @@ func envelopeKeyword(text string) bool {
 		text = text[size:]
 	}
 	text = strings.TrimLeftFunc(text, unicode.IsSpace)
-	return strings.HasPrefix(text, ":") || strings.HasPrefix(text, "#")
+	r, _ := utf8.DecodeRuneInString(text)
+	return text != "" && strings.ContainsRune(separators, r)
 }
 
 func openingEnvelopeBracket(r rune) bool {
@@ -133,6 +139,10 @@ func canonicalEnvelopeText(text string) string {
 }
 
 func defangEnvelopeTags(body string) string {
+	return defangTagsWith(body, envelopeKeyword)
+}
+
+func defangTagsWith(body string, keyword func(string) bool) string {
 	type prefix struct{ start, end, slashes int }
 	var pending []prefix
 	var result strings.Builder
@@ -156,7 +166,7 @@ func defangEnvelopeTags(body string) string {
 		if strings.HasPrefix(trimmed, "/") {
 			slash = 1
 		}
-		if envelopeKeyword(candidate) {
+		if keyword(candidate) {
 			// Remove enclosing prefixes too: deleting only the inner bracket exposes a new tag.
 			first := len(pending)
 			for first > 0 && slash+pending[first-1].slashes <= 1 {

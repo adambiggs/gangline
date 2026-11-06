@@ -146,11 +146,17 @@ func envelopeText(e core.Envelope) (string, error) {
 		return wire, err
 	}
 	// Band actions come from collar text. Hold the stamp to one line that
-	// cannot carry controls or tags.
+	// carries no controls and no brackets, so it cannot close early or
+	// hold a tag; Gangline's own fields use none.
 	if err := validateMessageText(stamp); err != nil {
 		return "", err
 	}
-	stamp = strings.Join(strings.Fields(defangEnvelopeTags(stamp)), " ")
+	stamp = strings.Join(strings.Fields(strings.Map(func(r rune) rune {
+		if envelopeBracket(r) {
+			return -1
+		}
+		return r
+	}, stamp)), " ")
 	wire += "\n" + stampLine(stamp)
 	return wire, checkEnvelopeBudget(wire)
 }
