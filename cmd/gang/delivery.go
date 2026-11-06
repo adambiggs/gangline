@@ -120,6 +120,29 @@ func senderLabel(s core.Sender) string {
 	return string(s.Name)
 }
 
+// queuedEnvelopeText renders e as it is queued, and refuses it unless it also
+// fits the budget once delivery appends its stamp line at its longest without
+// band actions. Delivery adds a band action only while it fits, so a message
+// accepted here cannot be refused when it is typed.
+func queuedEnvelopeText(e core.Envelope) (string, error) {
+	wire, err := envelopeText(e)
+	if err != nil || e.ContextStamp != nil {
+		return wire, err
+	}
+	stamped := e
+	stamped.ContextStamp = &core.ContextStamp{Text: envelopeStampText(time.Time{}, longestStampReading(), e.Crossed)}
+	if _, err := envelopeText(stamped); err != nil {
+		return "", err
+	}
+	return wire, nil
+}
+
+// longestStampReading rounds to a longer context than any harness reports.
+func longestStampReading() core.Reading {
+	tokens, percent := int64(999_900_000), 100.0
+	return core.Reading{Kind: "context", Status: "observed", Used: &tokens, Limit: &tokens, Percent: &percent}
+}
+
 func envelopeText(e core.Envelope) (string, error) {
 	// Messages Gangline emits name no sender; their internal names stay in
 	// state, logs and listings.

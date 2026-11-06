@@ -222,6 +222,15 @@ func TestSendMarksMessagesTheSenderHadNotSeen(t *testing.T) {
 	if got := f.send(t, worker, "after clear"); got.Crossed != "" {
 		t.Fatalf("crossed after a session move = %q", got.Crossed)
 	}
+	// A message created before the new session but typed into it after its
+	// first record, and waiting in the harness's queue, is judged by when it
+	// was typed.
+	late := crossingMail(f.lead, worker, "msg-late", "abababababababab", at(10*time.Minute))
+	f.logged(t, queuedEvent(late), core.Event{Type: "delivery_accepted", At: at(20 * time.Second), HitchID: worker.ID, Name: worker.Name, ID: string(late.ID), Reason: "native queue shows sender and one-time token; do not resend"})
+	if got := f.send(t, worker, "typed into the window"); got.Crossed != "abababababababab" {
+		t.Fatalf("crossed for a message typed after the window began = %q", got.Crossed)
+	}
+	appendTranscript(t, cleared, `{"type":"user","sessionId":"s2","timestamp":"`+at(10*time.Second).Format(time.RFC3339)+`","message":{"role":"user","content":"`+wireJSON(t, late)+`"}}`)
 	// A record that could hold an envelope but cannot be read leaves the
 	// answer unknown.
 	appendTranscript(t, cleared, `{"type":"user","message":"[gang:lead#`)
@@ -292,6 +301,7 @@ func TestSendMarksMessagesTheSenderHadNotSeen(t *testing.T) {
 		"one unseen":            " crossed=4444444444444444",
 		"all seen":              "",
 		"after clear":           "",
+		"typed into the window": " crossed=abababababababab",
 		"first session":         "",
 		"transcript unreadable": " crossed=unknown",
 		"codex unseen":          " crossed=dddddddddddddddd",

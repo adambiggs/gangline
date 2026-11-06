@@ -105,7 +105,7 @@ func (run *runtime) sendOutside(o sendOptions, registration store.OutsideRegistr
 		return err
 	}
 	envelope := core.Envelope{ID: core.EnvelopeID(id), Token: token, To: registration.Name, Recipient: registration.ID, From: sender, Message: core.Message{Text: body}, CreatedAt: run.cmd.now()}
-	if _, err := envelopeText(envelope); err != nil {
+	if _, err := queuedEnvelopeText(envelope); err != nil {
 		return err
 	}
 	if err := (store.Paths{Root: run.settings.StateRoot}).QueueOutside(run.settings.Session, string(registration.Name), envelope); err != nil {
@@ -181,7 +181,7 @@ func (run *runtime) outsideSend(principal, to, body, key string) (receipt outsid
 				return err
 			}
 			envelope := core.Envelope{ID: core.EnvelopeID(id), Token: token, From: identity.Sender(), To: a.Name, Recipient: a.ID, Message: core.Message{Text: body}, CreatedAt: run.cmd.now()}
-			wire, err := envelopeText(envelope)
+			wire, err := queuedEnvelopeText(envelope)
 			if err != nil {
 				return err
 			}

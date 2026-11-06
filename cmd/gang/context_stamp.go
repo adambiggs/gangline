@@ -124,14 +124,23 @@ func (run *runtime) stampEnvelope(l *store.LockedAgent, a *core.Agent, e core.En
 	}
 	stamp := &core.ContextStamp{Text: envelopeStampText(run.cmd.now(), r, e.Crossed)}
 	for _, note := range a.ContextBands.Pending {
-		stamp.Crossings = append(stamp.Crossings, note.Envelope.ID)
 		// The crossing owns its evaluated threshold and rendered action. A later
 		// delivery may load a different collar; it cannot relabel this event.
 		action := note.Envelope.Message.Text
 		if action == "" {
 			action = fmt.Sprintf("%s crossed: save state and compact/clear", note.Band)
 		}
-		stamp.Text += "; " + action
+		// A band action that would carry the envelope past its budget
+		// waits, with those after it, for a later envelope.
+		trial := e
+		trial.ContextStamp = &core.ContextStamp{Text: stamp.Text + "; " + action, Crossings: append(slices.Clone(stamp.Crossings), note.Envelope.ID)}
+		if wire, err := envelopeText(trial); err != nil {
+			if wire != "" && checkEnvelopeBudget(wire) != nil {
+				break
+			}
+			return e, err
+		}
+		stamp = trial.ContextStamp
 	}
 	e.ContextStamp = stamp
 	// The receipt owns the submitted wire, including when the process exits

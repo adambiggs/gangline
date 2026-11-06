@@ -152,7 +152,7 @@ func (cmd command) peerReceive(args []string) (result error) {
 		from.PeerClass = core.SenderRegistered
 	}
 	e := core.Envelope{ID: id, Token: token, Recipient: a.ID, To: a.Name, From: from, Message: core.Message{Text: request.Body}, CreatedAt: cmd.now()}
-	wire, err := envelopeText(e)
+	wire, err := queuedEnvelopeText(e)
 	if err != nil {
 		return err
 	}

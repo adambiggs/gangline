@@ -158,7 +158,7 @@ func (cmd command) send(args []string) (result error) {
 		}
 		e = core.Envelope{ID: core.EnvelopeID(id), Token: token, Recipient: a.ID, To: a.Name, From: sender, Message: core.Message{Text: body}, CreatedAt: now, NotBefore: due}
 		e.Crossed = run.unseenFrom(a.ID, sender, now)
-		wire, err := envelopeText(e)
+		wire, err := queuedEnvelopeText(e)
 		if err != nil {
 			return err
 		}
@@ -689,7 +689,7 @@ func (cmd command) compact(args []string) (result error) {
 	if err != nil {
 		return err
 	}
-	if _, err := envelopeText(core.Envelope{Token: "0123456789abcdef", From: resumeFrom, Message: core.Message{Text: resume}}); err != nil {
+	if _, err := queuedEnvelopeText(core.Envelope{Token: "0123456789abcdef", From: resumeFrom, Message: core.Message{Text: resume}}); err != nil {
 		return err
 	}
 	now := cmd.now()
