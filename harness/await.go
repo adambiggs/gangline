@@ -215,9 +215,9 @@ const pasteFrame = 25 * time.Millisecond
 // A paste that showed and then read empty for a settle window returns
 // ErrComposerEmptied. A composer that holds other text in every frame of a
 // settle window, and in at least two frames, returns ErrComposerReplaced;
-// an unreadable frame restarts that window. So does a deadline reached when
-// the last readable composer held other text. That text is neither
-// submitted nor cleared.
+// an unreadable frame restarts that window. A deadline reached when the
+// last readable composer held other text also returns ErrComposerReplaced.
+// That text is neither submitted nor cleared.
 func AwaitPasteShown(ctx context.Context, capture captureScreen, pane substrate.PaneID, collar Collar, wire, owner string, settle time.Duration) error {
 	ticker := time.NewTicker(pasteFrame)
 	defer ticker.Stop()
