@@ -34,7 +34,9 @@ func (run *runtime) queueNative(ctx context.Context, a core.Agent, c harness.Col
 	if err != nil {
 		return nativeQueueRefused, "native queue unavailable: " + err.Error()
 	}
-	if !ok {
+	// An expired operation leaves the message to the typing path, which
+	// reports the deadline itself.
+	if !ok || ctx.Err() != nil {
 		return nativeQueueUnused, ""
 	}
 	queue := run.cmd.nativeQueue
@@ -42,8 +44,7 @@ func (run *runtime) queueNative(ctx context.Context, a core.Agent, c harness.Col
 		queue = runNativeQueue
 	}
 	output, err := queue(ctx, call.Argv, call.Env)
-	// ErrWaitDelay follows a zero exit: only a descendant's output was cut.
-	if err == nil || errors.Is(err, exec.ErrWaitDelay) {
+	if err == nil {
 		return nativeQueueHeld, ""
 	}
 	detail := err.Error()
@@ -53,7 +54,7 @@ func (run *runtime) queueNative(ctx context.Context, a core.Agent, c harness.Col
 	var exit *exec.ExitError
 	switch {
 	case errors.Is(err, errNativeQueueNotStarted):
-		return nativeQueueRefused, "native queue " + detail
+		return nativeQueueRefused, detail
 	case errors.As(err, &exit) && exit.ExitCode() > 0 && ctx.Err() == nil:
 		return nativeQueueRefused, "native queue refused the message: " + detail
 	default:
@@ -61,9 +62,10 @@ func (run *runtime) queueNative(ctx context.Context, a core.Agent, c harness.Col
 	}
 }
 
-// errNativeQueueNotStarted marks a queue command that never ran, such as one
-// whose message exceeds the platform's argument limit.
-var errNativeQueueNotStarted = errors.New("did not start")
+// errNativeQueueNotStarted marks a queue command that never ran, such as a
+// missing command or one whose message exceeds the platform's argument limit.
+// Its text begins the receipt reason.
+var errNativeQueueNotStarted = errors.New("native queue did not start")
 
 // nativeQueueOutputBytes bounds the output kept for the receipt's last line.
 const nativeQueueOutputBytes = 4096
@@ -73,12 +75,18 @@ func runNativeQueue(ctx context.Context, argv, env []string) ([]byte, error) {
 	child := exec.CommandContext(ctx, argv[0], argv[1:]...)
 	child.Env = env
 	child.Stdout, child.Stderr = output, output
-	// A descendant left holding the output must not hold the agent lock for
-	// longer than this after the command exits or the deadline passes.
+	// Bounds how long a descendant left holding the output can keep Wait,
+	// and so the agent lock, after the command exits or is killed.
 	child.WaitDelay = time.Second
 	if err := child.Start(); err != nil {
 		return nil, fmt.Errorf("%w: %w", errNativeQueueNotStarted, err)
 	}
 	err := child.Wait()
+	// A zero exit queued the message, even when Wait also reports a
+	// descendant's open output (ErrWaitDelay) or a deadline that fired after
+	// the exit.
+	if child.ProcessState != nil && child.ProcessState.Success() {
+		err = nil
+	}
 	return output.data, err
 }

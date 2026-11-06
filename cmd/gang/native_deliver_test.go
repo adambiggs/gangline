@@ -13,6 +13,7 @@ import (
 	"testing"
 
 	"github.com/adambiggs/gangline/core"
+	"github.com/adambiggs/gangline/harness"
 	"github.com/adambiggs/gangline/store"
 )
 
@@ -56,16 +57,22 @@ func codexQueueRecipient(t *testing.T, turns string) (*stateFixture, core.Agent,
 	return f, a, p, home
 }
 
+func mustCodexCollar(t *testing.T, f *stateFixture) harness.Collar {
+	t.Helper()
+	c, err := loadCollar("codex", f.run.settings)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return c
+}
+
 func deliverDirect(t *testing.T, f *stateFixture, a core.Agent, p store.AgentPaths, e core.Envelope) string {
 	t.Helper()
 	if err := p.Publish(e); err != nil {
 		t.Fatal(err)
 	}
 	f.run.cmd = f.cmd
-	c, err := loadCollar("codex", f.run.settings)
-	if err != nil {
-		t.Fatal(err)
-	}
+	c := mustCodexCollar(t, f)
 	l, err := p.TryLock()
 	if err != nil {
 		t.Fatal(err)
@@ -140,19 +147,6 @@ func TestCodexQueueAcceptanceStaysAcceptedWithoutItsHook(t *testing.T) {
 	}
 }
 
-func TestCodexQueueZeroExitWithLingeringOutputIsHeld(t *testing.T) {
-	f, a, p, _ := codexQueueRecipient(t, turnStarted+turnCompleted)
-	// Wait reports ErrWaitDelay after a zero exit whose descendant kept the
-	// output open.
-	f.cmd.nativeQueue = func(context.Context, []string, []string) ([]byte, error) {
-		return nil, exec.ErrWaitDelay
-	}
-	e := operatorMessage(a, f, "lingering")
-	if outcome := deliverDirect(t, f, a, p, e); outcome != "accepted" || f.input.submits != 0 {
-		t.Fatalf("outcome = %s submits=%d", outcome, f.input.submits)
-	}
-}
-
 func TestCodexQueueRefusalTypesTheMessage(t *testing.T) {
 	exit := exec.Command("sh", "-c", "exit 1").Run()
 	for name, err := range map[string]error{
@@ -176,6 +170,19 @@ func TestCodexQueueRefusalTypesTheMessage(t *testing.T) {
 				t.Fatalf("receipt = %+v %v calls=%d submits=%d", got, rerr, calls, f.input.submits)
 			}
 		})
+	}
+}
+
+func TestCodexQueueIsNotTriedAfterTheDeadline(t *testing.T) {
+	f, a, _, _ := codexQueueRecipient(t, turnStarted+turnCompleted)
+	f.cmd.nativeQueue = func(context.Context, []string, []string) ([]byte, error) {
+		t.Fatal("native queue tried after the deadline")
+		return nil, nil
+	}
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	if result, note := f.run.queueNative(ctx, a, mustCodexCollar(t, f), "wire"); result != nativeQueueUnused || note != "" {
+		t.Fatalf("result = %v %q", result, note)
 	}
 }
 
@@ -253,6 +260,12 @@ func TestRunNativeQueueSeparatesNotStartedFromExit(t *testing.T) {
 	}
 	if _, err := runNativeQueue(context.Background(), []string{plain, "queue"}, nil); !errors.Is(err, errNativeQueueNotStarted) {
 		t.Fatalf("non-executable command: %v", err)
+	}
+	if _, err := runNativeQueue(context.Background(), []string{filepath.Join(dir, "missing"), "queue"}, nil); !errors.Is(err, errNativeQueueNotStarted) {
+		t.Fatalf("missing command: %v", err)
+	}
+	if _, err := runNativeQueue(context.Background(), []string{"/bin/sh", "-c", "echo queued"}, nil); err != nil {
+		t.Fatalf("zero exit: %v", err)
 	}
 	output, err := runNativeQueue(context.Background(), []string{"/bin/sh", "-c", "echo refused >&2; exit 3"}, nil)
 	var exit *exec.ExitError
