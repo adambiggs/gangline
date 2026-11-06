@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/adambiggs/gangline/substrate"
+	"github.com/mattn/go-runewidth"
 )
 
 type captureScreen func(context.Context, substrate.PaneID) (substrate.Screen, error)
@@ -206,48 +207,141 @@ func AwaitOwnedComposerSettle(ctx context.Context, capture captureScreen, pane s
 	}
 }
 
-// PasteShown reads a screen captured after the pause that precedes a paste's
-// submit key (see SubmitPauses). The composer read empty before the paste and
-// was owned by owner, so a composer of that owner holding text holds the
-// paste; the submit hook confirms what is submitted. A short pane can clip the
-// composer or its footer so that it cannot be read in full. The paste is then
-// shown when a prompt line begins with the start of wire, the text pasted,
-// directly under a rule that carries owner, the label read before the paste.
-// It returns an error on evidence that the submit key would act on something
-// else: another surface owning input, a background-session composer, or a
-// composer of another session. Otherwise false means not shown yet.
+// AwaitPasteShown waits between a paste and its submit key for a collar
+// that pauses before submitting (see SubmitPauses). It returns once settle
+// has passed since it began and the screen shows the paste (see PasteShown).
+// A paste that showed and then read empty for a settle window returns
+// ErrComposerEmptied. A deadline reached while the composer holds other text
+// returns ErrComposerReplaced, so that text is neither submitted nor cleared.
+func AwaitPasteShown(ctx context.Context, capture captureScreen, pane substrate.PaneID, collar Collar, wire, owner string, settle time.Duration) error {
+	ticker := time.NewTicker(25 * time.Millisecond)
+	defer ticker.Stop()
+	start := time.Now()
+	observed := composerStability{}
+	var replaced error
+	for {
+		screen, err := capture(ctx, pane)
+		if err != nil {
+			// A capture cut short by the operation deadline says nothing
+			// about the pane; the paste never showed in time.
+			if ctxErr := ctx.Err(); ctxErr != nil {
+				return fmt.Errorf("pasted input did not appear in the composer: %w", errors.Join(ctxErr, replaced))
+			}
+			return fmt.Errorf("read the composer after the paste: %w", err)
+		}
+		view, err := readPaste(collar, screen, wire, owner)
+		if err != nil {
+			return err
+		}
+		now := time.Now()
+		replaced = nil
+		switch view {
+		case pasteShown:
+			if now.Sub(start) >= settle {
+				return nil
+			}
+			observed.emptied("shown", now, settle)
+		case pasteEmpty:
+			if observed.emptied("", now, settle) {
+				return ErrComposerEmptied
+			}
+		case pasteReplaced:
+			replaced = ErrComposerReplaced
+			observed.emptySince = time.Time{}
+		default:
+			observed.emptySince = time.Time{}
+		}
+		select {
+		case <-ctx.Done():
+			return fmt.Errorf("pasted input did not appear in the composer: %w", errors.Join(ctx.Err(), replaced))
+		case <-ticker.C:
+		}
+	}
+}
+
+// PasteShown reads a screen captured after a paste into an empty composer
+// that a read before the paste found owned by owner. A composer of that owner
+// shows the paste when its text begins with the start of wire, the text
+// pasted, or with the placeholder Claude Code shows for a long paste; the
+// submit hook confirms what is submitted. A short pane can clip the composer
+// or its footer so that it cannot be read in full. The paste is then shown
+// when a prompt line begins with the start of wire directly under a
+// full-width rule that carries owner. It returns an error on evidence that
+// the submit key would act on something else: another surface owning input,
+// a background-session composer, or a composer of another session. Otherwise
+// false means not shown yet.
 func PasteShown(collar Collar, screen substrate.Screen, wire, owner string) (bool, error) {
+	view, err := readPaste(collar, screen, wire, owner)
+	return view == pasteShown, err
+}
+
+type pasteView int
+
+const (
+	pasteUnseen pasteView = iota
+	pasteShown
+	pasteEmpty
+	// pasteReplaced is a composer holding text that does not begin with
+	// the paste, such as a draft typed after the paste was cleared.
+	pasteReplaced
+)
+
+func readPaste(collar Collar, screen substrate.Screen, wire, owner string) (pasteView, error) {
 	composer, err := ReadOwnedComposer(collar.Primitives.Composer, screen, owner)
 	switch {
 	case err == nil:
-		return composer.Text != "", nil
+		switch {
+		case composer.Text == "":
+			return pasteEmpty, nil
+		case beginsPaste(composer.Text, wire):
+			return pasteShown, nil
+		}
+		return pasteReplaced, nil
 	case errors.Is(err, ErrComposerOwnerHidden):
 		// The paste hint expires and the session footer returns.
-		return false, nil
+		return pasteUnseen, nil
 	case errors.Is(err, ErrComposerOwnerClipped):
-		return false, fmt.Errorf("%w: its rule names %q, not %q", ErrForeignComposer, composer.Owner, owner)
+		return pasteUnseen, fmt.Errorf("%w: its rule names %q, not %q", ErrForeignComposer, composer.Owner, owner)
 	case errors.Is(err, ErrComposerClipped), errors.Is(err, ErrNoComposer):
-		return pasteStartShown(collar.Primitives.Composer, screen, wire, owner), nil
+		if pasteStartShown(collar.Primitives.Composer, screen, wire, owner) {
+			return pasteShown, nil
+		}
+		return pasteUnseen, nil
 	}
-	return false, err
+	return pasteUnseen, err
+}
+
+// beginsPaste reports text whose first row is the start of wire, ignoring
+// the whitespace that wrapping changes, or begins with a paste placeholder.
+func beginsPaste(text, wire string) bool {
+	first, _, _ := strings.Cut(text, "\n")
+	if location := pastePlaceholder.FindStringIndex(first); location != nil && location[0] == 0 {
+		return true
+	}
+	start := strings.Join(strings.Fields(first), "")
+	return start != "" && strings.HasPrefix(strings.Join(strings.Fields(wire), ""), start)
 }
 
 // pasteStartShown reports a prompt line that begins with the start of wire
-// directly under a composer rule labelled owner.
+// directly under a composer rule labelled owner. The composer's rule spans
+// the pane, so no other row is wider.
 func pasteStartShown(invocation Invocation, screen substrate.Screen, wire, owner string) bool {
 	if invocation.Name != "claude-composer" {
 		return false
 	}
-	pasted := strings.Join(strings.Fields(wire), "")
 	lines := screenLines(screen, false)
+	widest := 0
+	for _, line := range lines {
+		widest = max(widest, runewidth.StringWidth(strings.TrimRight(line, " ")))
+	}
 	for index := len(lines) - 1; index > 0; index-- {
 		line := strings.TrimSpace(lines[index])
-		start := strings.Join(strings.Fields(strings.TrimPrefix(line, "❯")), "")
-		if !strings.HasPrefix(line, "❯") || start == "" || !strings.HasPrefix(pasted, start) {
+		if !strings.HasPrefix(line, "❯") || !beginsPaste(strings.TrimSpace(strings.TrimPrefix(line, "❯")), wire) {
 			continue
 		}
 		rule := strings.TrimSpace(lines[index-1])
-		if strings.HasPrefix(rule, "─") && strings.HasSuffix(rule, "─") && strings.Trim(rule, "─ ") == owner {
+		if strings.HasPrefix(rule, "─") && strings.HasSuffix(rule, "─") && strings.Trim(rule, "─ ") == owner &&
+			runewidth.StringWidth(strings.TrimRight(lines[index-1], " ")) >= widest {
 			return true
 		}
 	}
@@ -257,6 +351,11 @@ func pasteStartShown(invocation Invocation, screen substrate.Screen, wire, owner
 // ErrComposerEmptied reports pasted input that left the composer before it
 // was submitted: something other than gang cleared or consumed it.
 var ErrComposerEmptied = errors.New("native composer emptied before submission")
+
+// ErrComposerReplaced reports a composer that holds text that does not begin
+// with the paste: something other than gang replaced the paste, and the text
+// may be another author's draft.
+var ErrComposerReplaced = errors.New("native composer holds other text before submission")
 
 type composerStability struct {
 	text  string

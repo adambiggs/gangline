@@ -102,6 +102,40 @@ func TestClaudePasteNeverShownWithholdsSubmit(t *testing.T) {
 	})
 }
 
+// A composer that holds other text in place of the paste, such as a draft
+// typed after the paste was cleared, gets neither the submit key nor the
+// keys that withdraw a paste.
+func TestClaudeReplacedPasteIsNeitherSubmittedNorCleared(t *testing.T) {
+	synctest.Test(t, func(t *testing.T) {
+		f := newStateFixture(t)
+		a := f.add(t, "a", "worker", "claude")
+		f.env["GANGLINE_HITCH_ID"] = string(a.ID)
+		f.input.command = "claude"
+		rule := strings.Repeat("─", 40)
+		f.input.screen = screenWithText(rule, "❯ ", rule, "  ? for shortcuts")
+		var after []string
+		pasted := false
+		f.input.onKeys = func(keys substrate.Keys) error {
+			if keys.Text != "" {
+				pasted = true
+				f.input.screen = screenWithText(rule, "❯ a draft of my own", rule, "  ? for shortcuts")
+			} else if pasted {
+				after = append(after, keys.Names...)
+			}
+			return nil
+		}
+		f.cmd.settleInput = nil
+		f.run.cmd = f.cmd
+		f.cmd.stdin = strings.NewReader("hello")
+		if err := f.cmd.send([]string{"worker", "--from", "operator"}); err == nil {
+			t.Fatal("send into a replaced composer succeeded")
+		}
+		if f.input.submits != 0 || len(after) != 0 || !strings.Contains(f.out.String(), "unverified") {
+			t.Fatalf("submits=%d keys after paste=%q output=%s errors=%s", f.input.submits, after, f.out, f.errOut)
+		}
+	})
+}
+
 // When the submit hook never reports a submitted message, the receipt says
 // the submit key was sent, so the sender knows the input is not left waiting
 // in the composer for a key.
@@ -115,7 +149,8 @@ func TestClaudeSubmitWithoutHookReportsStall(t *testing.T) {
 		f.input.screen = screenWithText(rule, "❯ ", rule, "  ? for shortcuts")
 		f.input.onKeys = func(keys substrate.Keys) error {
 			if keys.Text != "" {
-				f.input.screen = screenWithText(rule, "❯ hello", rule, "  ? for shortcuts")
+				first, _, _ := strings.Cut(strings.TrimPrefix(keys.Text, "\x1b[200~"), " ")
+				f.input.screen = screenWithText(rule, "❯ "+first, rule, "  ? for shortcuts")
 			}
 			return nil
 		}

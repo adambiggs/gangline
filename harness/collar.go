@@ -270,8 +270,11 @@ func validateCollar(collar Collar) error {
 	if _, err := SubmitSettle(collar.Primitives.Submit); err != nil {
 		return err
 	}
-	if _, err := SubmitPauses(collar.Primitives.Submit); err != nil {
+	if pauses, err := SubmitPauses(collar.Primitives.Submit); err != nil {
 		return err
+	} else if pauses && collar.Primitives.Composer.Name != "claude-composer" {
+		// Only the Claude Code composer reader recognises a clipped paste.
+		return fmt.Errorf("submit before_submit pause needs the claude-composer composer, not %q", collar.Primitives.Composer.Name)
 	}
 	if _, err := SubmitInput(collar.Primitives.Submit, ""); err != nil {
 		return err
