@@ -28,7 +28,10 @@ func (run *runtime) resumePromptBlock(a core.Agent, c harness.Collar, prompt, se
 	if pending.ResumeAdmitted {
 		return "compaction continuation already admitted"
 	}
-	e := core.Envelope{ID: core.EnvelopeID("resume-" + pending.ID), Token: pending.ResumeToken, From: pending.ResumeFrom, Message: pending.Resume, Purpose: "resume"}
+	e, err := run.retainedResume(a)
+	if err != nil {
+		return "compaction continuation could not be verified"
+	}
 	wire, err := envelopeText(e)
 	if err != nil {
 		return "compaction continuation could not be verified"
@@ -74,7 +77,11 @@ func (run *runtime) admitCompactionResume(id core.HitchID, c harness.Collar, pro
 		}
 		return reason, run.failCompaction(l, &a, phase, "resume note blocked: "+reason)
 	}
-	wire, err := envelopeText(core.Envelope{Token: a.Compaction.ResumeToken, From: a.Compaction.ResumeFrom, Message: a.Compaction.Resume, Purpose: "resume"})
+	e, err := run.retainedResume(a)
+	if err != nil {
+		return "", err
+	}
+	wire, err := envelopeText(e)
 	if err != nil {
 		return "", err
 	}
@@ -216,6 +223,10 @@ func (run *runtime) queueCompactionResume(l *store.LockedAgent, a *core.Agent, b
 	window, cancelWindow := run.cmd.timeout(compactStartWindow)
 	defer cancelWindow()
 	screen, err := awaitCompactionComposer(ctx, window, b, pane, c, compactText, a.Compaction.RefusalBefore)
+	if err != nil {
+		return err
+	}
+	e, err = run.stampEnvelope(l, a, e, b, c)
 	if err != nil {
 		return err
 	}

@@ -267,7 +267,9 @@ func readJSON(path string, out any) error {
 func decodeJSON(path string, r io.Reader, out any) error {
 	d := json.NewDecoder(r)
 	// Persisted registrations must remain readable across upgrades.
-	if _, agentState := out.(*core.Agent); !agentState {
+	switch out.(type) {
+	case *core.Agent, *core.Envelope:
+	default:
 		d.DisallowUnknownFields()
 	}
 	if err := d.Decode(out); err != nil {

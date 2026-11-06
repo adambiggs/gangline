@@ -172,7 +172,7 @@ func TestOutsideInboundSendIdentityAndIdempotency(t *testing.T) {
 	if err != nil || delivered.From != principal.Sender() || f.input.submits != 1 {
 		t.Fatalf("native consumer delivery %+v submits %d err %v", delivered, f.input.submits, err)
 	}
-	if !strings.HasPrefix(f.input.pasted, "[gang:toby#"+delivered.Token+"] approved") {
+	if !strings.HasPrefix(f.input.pasted, "[gang:toby#"+delivered.Token+"] ctx=unknown approved") {
 		t.Fatalf("native envelope %q", f.input.pasted)
 	}
 	mailboxState, err := os.ReadFile(filepath.Join(f.run.team.Directory, "outside", string(principal.ID)+".json"))

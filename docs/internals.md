@@ -177,12 +177,20 @@ status line. Codex uses `last_token_usage.total_tokens` and
 `model_context_window` from native `token_count` records. These native formats
 are parsed explicitly; unavailable or invalid readings are not estimated.
 
-An upward context-band crossing queues a notice and records the deciding
-reading in `context_band_crossed`. Publication intent is persisted beside the
-native cursor so interrupted publication can resume. Unknown readings do not
-reset crossings. A lower reading or model change permits later crossings.
-After a notice and completed compaction, the next reading establishes a new
-baseline.
+Every delivered envelope carries the recipient’s context stamp: exact used and
+window token counts from the same verified reading as `gang context`, or
+`ctx=unknown`. The stamp is retained with the envelope before native input, so
+late receipt reconciliation compares the submitted observation.
+
+An upward context-band crossing records its deciding reading in
+`context_band_crossed` and adds a short action to the next envelope’s stamp.
+If no mail carries it within one watchdog interval, the normal notice path
+queues a stamp-only envelope. A crossing remains pending
+until a carrier’s submission is verified. Other composed carriers repeat the
+same action while submission is uncertain.
+Unknown readings do not reset crossings. A lower reading or model change
+permits later crossings. Completed compaction clears old crossing actions;
+the next reading establishes a new baseline.
 
 Compaction waits for freshly observed native idle and a recorded finish for
 any witnessed native turn. Gangline submits the resume

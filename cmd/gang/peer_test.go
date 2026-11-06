@@ -129,7 +129,7 @@ func TestPeerReceiveDeliversHostQualifiedSender(t *testing.T) {
 	if !e.CreatedAt.Equal(f.cmd.now()) || len(e.Token) != 16 {
 		t.Fatalf("envelope = %+v", e)
 	}
-	if !strings.HasPrefix(f.input.pasted, "[gang:alpha:lead#"+e.Token+"] status report") {
+	if !strings.HasPrefix(f.input.pasted, "[gang:alpha:lead#"+e.Token+"] ctx=unknown status report") {
 		t.Fatalf("pasted = %q", f.input.pasted)
 	}
 	if strings.Contains(f.input.pasted, "self-declared") {
