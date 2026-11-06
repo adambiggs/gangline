@@ -206,26 +206,52 @@ func AwaitOwnedComposerSettle(ctx context.Context, capture captureScreen, pane s
 	}
 }
 
-// PausedSubmitRefusal checks a screen captured after the pause that precedes
-// a paste's submit key (see SubmitPauses). The composer read empty before the
-// paste, so whatever it holds now is the paste, and a composer the screen
-// clips or cannot show is no reason to withhold the key: the submit hook
-// confirms what was submitted. It refuses only on evidence that the key would
-// act on something else: another surface owning input, a background-session
-// composer, or a composer whose rule names a session other than owner, the
-// label read before the paste.
-func PausedSubmitRefusal(collar Collar, screen substrate.Screen, owner string) error {
-	composer, err := ReadComposer(collar.Primitives.Composer, screen)
+// PasteShown reads a screen captured after the pause that precedes a paste's
+// submit key (see SubmitPauses). The composer read empty before the paste and
+// was owned by owner, so a composer of that owner holding text holds the
+// paste; the submit hook confirms what is submitted. A short pane can clip the
+// composer or its footer so that it cannot be read in full. The paste is then
+// shown when a prompt line begins with the start of wire, the text pasted,
+// directly under a rule that carries owner, the label read before the paste.
+// It returns an error on evidence that the submit key would act on something
+// else: another surface owning input, a background-session composer, or a
+// composer of another session. Otherwise false means not shown yet.
+func PasteShown(collar Collar, screen substrate.Screen, wire, owner string) (bool, error) {
+	composer, err := ReadOwnedComposer(collar.Primitives.Composer, screen, owner)
 	switch {
-	case err == nil, errors.Is(err, ErrComposerOwnerClipped), errors.Is(err, ErrComposerOwnerHidden):
-		if owner != "" && composer.Owner != "" && composer.Owner != owner {
-			return fmt.Errorf("%w: its rule names %q, not %q", ErrForeignComposer, composer.Owner, owner)
-		}
-		return nil
+	case err == nil:
+		return composer.Text != "", nil
+	case errors.Is(err, ErrComposerOwnerHidden):
+		// The paste hint expires and the session footer returns.
+		return false, nil
+	case errors.Is(err, ErrComposerOwnerClipped):
+		return false, fmt.Errorf("%w: its rule names %q, not %q", ErrForeignComposer, composer.Owner, owner)
 	case errors.Is(err, ErrComposerClipped), errors.Is(err, ErrNoComposer):
-		return nil
+		return pasteStartShown(collar.Primitives.Composer, screen, wire, owner), nil
 	}
-	return err
+	return false, err
+}
+
+// pasteStartShown reports a prompt line that begins with the start of wire
+// directly under a composer rule labelled owner.
+func pasteStartShown(invocation Invocation, screen substrate.Screen, wire, owner string) bool {
+	if invocation.Name != "claude-composer" {
+		return false
+	}
+	pasted := strings.Join(strings.Fields(wire), "")
+	lines := screenLines(screen, false)
+	for index := len(lines) - 1; index > 0; index-- {
+		line := strings.TrimSpace(lines[index])
+		start := strings.Join(strings.Fields(strings.TrimPrefix(line, "❯")), "")
+		if !strings.HasPrefix(line, "❯") || start == "" || !strings.HasPrefix(pasted, start) {
+			continue
+		}
+		rule := strings.TrimSpace(lines[index-1])
+		if strings.HasPrefix(rule, "─") && strings.HasSuffix(rule, "─") && strings.Trim(rule, "─ ") == owner {
+			return true
+		}
+	}
+	return false
 }
 
 // ErrComposerEmptied reports pasted input that left the composer before it

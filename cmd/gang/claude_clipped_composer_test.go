@@ -15,9 +15,12 @@ import (
 // A message pasted into the empty composer of a short pane can leave a screen
 // on which the composer cannot be read back: its closing rule below the pane,
 // or a tall frame whose cursor the screen does not show. Delivery still
-// submits it after the collar's pause, and the submit hook confirms it.
+// submits it after the collar's pause once the start of the message shows
+// under the composer's rule, and the submit hook confirms it.
 func TestClaudeMessageInClippedComposerIsSubmitted(t *testing.T) {
 	rule := strings.Repeat("─", 40)
+	empty := screenWithText(rule, "❯ ", rule, "  ? for shortcuts")
+	namedEmpty := screenWithText(namedRule("probe main"), "❯ ", rule, "  40k/200k (20%)", "  ⏸ manual mode on · ← 1 agent")
 	wrap := func(text string) []string {
 		lines := []string{"❯ " + text[:36]}
 		for remaining := text[36:]; remaining != ""; {
@@ -29,12 +32,16 @@ func TestClaudeMessageInClippedComposerIsSubmitted(t *testing.T) {
 	}
 	for _, test := range []struct {
 		name  string
+		empty substrate.Screen
 		paint func(text string) substrate.Screen
 	}{
-		{name: "closing rule below the pane", paint: func(text string) substrate.Screen {
+		{name: "closing rule below the pane", empty: empty, paint: func(text string) substrate.Screen {
 			return screenWithText(append([]string{"earlier reply", rule}, wrap(text)...)...)
 		}},
-		{name: "tall frame without a cursor", paint: func(text string) substrate.Screen {
+		{name: "named composer's closing rule below the pane", empty: namedEmpty, paint: func(text string) substrate.Screen {
+			return screenWithText(append([]string{"earlier reply", namedRule("probe main")}, wrap(text)...)...)
+		}},
+		{name: "tall frame without a cursor", empty: empty, paint: func(text string) substrate.Screen {
 			lines := append([]string{rule}, wrap(text)...)
 			return screenWithText(append(lines, rule, "  ? for shortcuts")...)
 		}},
@@ -45,7 +52,7 @@ func TestClaudeMessageInClippedComposerIsSubmitted(t *testing.T) {
 				a := f.add(t, "a", "worker", "claude")
 				f.env["GANGLINE_HITCH_ID"] = string(a.ID)
 				f.input.command = "claude"
-				f.input.screen = screenWithText(rule, "❯ ", rule, "  ? for shortcuts")
+				f.input.screen = test.empty
 				f.input.onKeys = func(keys substrate.Keys) error {
 					if keys.Text != "" {
 						f.input.screen = test.paint(strings.TrimSuffix(strings.TrimPrefix(keys.Text, "\x1b[200~"), "\x1b[201~"))
@@ -66,6 +73,35 @@ func TestClaudeMessageInClippedComposerIsSubmitted(t *testing.T) {
 	}
 }
 
+// A screen that never shows the paste, such as a full-screen view the paste
+// left behind, gets no submit key: the message stays unverified, as it did
+// when delivery required a composer read-back.
+func TestClaudePasteNeverShownWithholdsSubmit(t *testing.T) {
+	synctest.Test(t, func(t *testing.T) {
+		f := newStateFixture(t)
+		a := f.add(t, "a", "worker", "claude")
+		f.env["GANGLINE_HITCH_ID"] = string(a.ID)
+		f.input.command = "claude"
+		rule := strings.Repeat("─", 40)
+		f.input.screen = screenWithText(rule, "❯ ", rule, "  ? for shortcuts")
+		f.input.onKeys = func(keys substrate.Keys) error {
+			if keys.Text != "" {
+				f.input.screen = screenWithText("Transcript view", "  earlier reply", "  ctrl+o to return")
+			}
+			return nil
+		}
+		f.cmd.settleInput = nil
+		f.run.cmd = f.cmd
+		f.cmd.stdin = strings.NewReader("hello")
+		if err := f.cmd.send([]string{"worker", "--from", "operator"}); err == nil {
+			t.Fatal("send to an unseen paste succeeded")
+		}
+		if f.input.submits != 0 || !strings.Contains(f.out.String(), "unverified") {
+			t.Fatalf("submits=%d output=%s errors=%s", f.input.submits, f.out, f.errOut)
+		}
+	})
+}
+
 // When the submit hook never reports a submitted message, the receipt says
 // the submit key was sent, so the sender knows the input is not left waiting
 // in the composer for a key.
@@ -77,6 +113,12 @@ func TestClaudeSubmitWithoutHookReportsStall(t *testing.T) {
 		f.input.command = "claude"
 		rule := strings.Repeat("─", 40)
 		f.input.screen = screenWithText(rule, "❯ ", rule, "  ? for shortcuts")
+		f.input.onKeys = func(keys substrate.Keys) error {
+			if keys.Text != "" {
+				f.input.screen = screenWithText(rule, "❯ hello", rule, "  ? for shortcuts")
+			}
+			return nil
+		}
 		f.input.submit = func(string) error { return nil } // no submit hook fires
 		// The witness wait reaches the operation deadline without a change.
 		f.cmd.newWatch = func(string) (changeWait, error) {
@@ -100,7 +142,7 @@ func TestClaudeSubmitWithoutHookReportsStall(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		if !strings.HasPrefix(receipt.Reason, "submit key sent but the harness reported no submitted prompt in time") {
+		if !strings.HasPrefix(receipt.Reason, "submit key sent; no submit hook confirmed this message in time") {
 			t.Fatalf("reason = %q", receipt.Reason)
 		}
 	})
