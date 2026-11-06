@@ -201,8 +201,9 @@ Gangline's own messages, so a host-qualified sender is always a peer agent.
 A `crossed=` field on the stamp line is a different event: the recipient's
 messages to the sender whose envelope openers were not yet in the sender's
 native transcript when `gang send` queued the message. Candidates come from the
-sender's queue and the recent end of the team log; the collar's `seen` reader
-scans the recent end of the transcript. Both reads are bounded, so their cost
+sender's queue and the recipient's events at the recent end of the team log;
+the collar's `seen` reader scans the recent end of the transcript of the
+sender's native session, following moves as delivery does. Both reads are bounded, so their cost
 does not grow with settled history. The result is retained on the envelope.
 
 An upward context-band crossing records its deciding reading in

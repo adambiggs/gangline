@@ -9,7 +9,7 @@ import (
 	"time"
 )
 
-func writeTranscript(t *testing.T, lines ...string) string {
+func writeSeenTranscript(t *testing.T, lines ...string) string {
 	t.Helper()
 	path := filepath.Join(t.TempDir(), "transcript.jsonl")
 	if err := os.WriteFile(path, []byte(strings.Join(lines, "\n")+"\n"), 0o600); err != nil {
@@ -33,8 +33,11 @@ func TestSeenTokensCountsOnlyInputTheModelReceived(t *testing.T) {
 		hook     = "7777777777777777"
 		image    = "8888888888888888"
 		quoted   = "9999999999999999"
+		summary  = "aaaaaaaaaaaaaaaa"
+		startup  = "bbbbbbbbbbbbbbbb"
+		resume   = "cccccccccccccccc"
 	)
-	all := []string{turn, midTurn, enqueued, tool, recalled, subagent, hook, image, quoted}
+	all := []string{turn, midTurn, enqueued, tool, recalled, subagent, hook, image, quoted, summary, startup, resume}
 	for _, tc := range []struct {
 		name  string
 		seen  Invocation
@@ -78,7 +81,7 @@ func TestSeenTokensCountsOnlyInputTheModelReceived(t *testing.T) {
 		},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			seen, since, err := SeenTokens(tc.seen, writeTranscript(t, tc.lines...), all)
+			seen, since, err := SeenTokens(tc.seen, writeSeenTranscript(t, tc.lines...), "s", all)
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -99,7 +102,7 @@ func TestSeenTokensCountsOnlyInputTheModelReceived(t *testing.T) {
 func TestSeenTokensReadsCompleteRecordsInTheWindow(t *testing.T) {
 	const token = "abcdefabcdefabcd"
 	record := `{"type":"user","timestamp":"2026-11-06T10:00:00Z","message":{"role":"user","content":"` + envelopeFor(token) + `"}}`
-	path := writeTranscript(t, record)
+	path := writeSeenTranscript(t, record)
 	partial := strings.Replace(record, "10:00:00", "10:00:09", 1)
 	f, err := os.OpenFile(path, os.O_APPEND|os.O_WRONLY, 0)
 	if err != nil {
@@ -111,7 +114,7 @@ func TestSeenTokensReadsCompleteRecordsInTheWindow(t *testing.T) {
 		t.Fatal(err)
 	}
 	f.Close()
-	seen, since, err := SeenTokens(Invocation{Name: "claude-transcript"}, path, []string{token, "0000000000000000"})
+	seen, since, err := SeenTokens(Invocation{Name: "claude-transcript"}, path, "s", []string{token, "0000000000000000"})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -123,16 +126,50 @@ func TestSeenTokensReadsCompleteRecordsInTheWindow(t *testing.T) {
 	}
 }
 
-func TestSeenTokensRefusesUnknownReaders(t *testing.T) {
-	path := writeTranscript(t, `{"type":"user"}`)
-	if _, _, err := SeenTokens(Invocation{Name: "screen"}, path, []string{"1111111111111111"}); err == nil {
-		t.Fatal("unknown reader accepted")
+// A Codex log bound to another session is resolved to the session's own log
+// beside it, as context reading resolves it.
+func TestSeenTokensReadsTheBoundSessionsCodexLog(t *testing.T) {
+	const token = "abcdefabcdefabcd"
+	dir := t.TempDir()
+	meta := func(id string) string {
+		return `{"timestamp":"2026-11-06T10:00:00Z","type":"session_meta","payload":{"id":"` + id + `"}}`
 	}
-	if _, _, err := SeenTokens(Invocation{Name: "claude-transcript"}, path+".missing", []string{"1111111111111111"}); err == nil {
-		t.Fatal("missing transcript accepted")
+	user := `{"timestamp":"2026-11-06T10:00:01Z","type":"response_item","payload":{"type":"message","role":"user","content":[{"type":"input_text","text":"` + envelopeFor(token) + `"}]}}`
+	parent := filepath.Join(dir, "rollout-2026-11-06T10-00-00-parent.jsonl")
+	own := filepath.Join(dir, "rollout-2026-11-06T10-00-00-s.jsonl")
+	for path, lines := range map[string][]string{parent: {meta("parent")}, own: {meta("s"), user}} {
+		if err := os.WriteFile(path, []byte(strings.Join(lines, "\n")+"\n"), 0o600); err != nil {
+			t.Fatal(err)
+		}
 	}
-	broken := writeTranscript(t, `{"type":"user"`)
-	if _, _, err := SeenTokens(Invocation{Name: "claude-transcript"}, broken, []string{"1111111111111111"}); err == nil {
-		t.Fatal("malformed record accepted")
+	seen, _, err := SeenTokens(Invocation{Name: "codex-session-log"}, parent, "s", []string{token})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !seen[token] {
+		t.Fatalf("seen = %v, want the token from the session's own log", seen)
+	}
+	if _, _, err := SeenTokens(Invocation{Name: "codex-session-log"}, parent, "missing", []string{token}); err == nil {
+		t.Fatal("log of another session accepted")
 	}
 }
+
+func TestSeenTokensRefusesUnreadableEvidence(t *testing.T) {
+	claude := Invocation{Name: "claude-transcript"}
+	tokens := []string{"1111111111111111"}
+	path := writeSeenTranscript(t, `{"type":"user","timestamp":"2026-11-06T10:00:00Z"}`)
+	for name, err := range map[string]error{
+		"unknown reader":     second(SeenTokens(Invocation{Name: "screen"}, path, "s", tokens)),
+		"no session":         second(SeenTokens(claude, path, "", tokens)),
+		"missing transcript": second(SeenTokens(claude, path+".missing", "s", tokens)),
+		"malformed record":   second(SeenTokens(claude, writeSeenTranscript(t, `{"type":"user"`), "s", tokens)),
+		"another session":    second(SeenTokens(claude, writeSeenTranscript(t, `{"type":"user","sessionId":"other","timestamp":"2026-11-06T10:00:00Z"}`), "s", tokens)),
+		"no timed record":    second(SeenTokens(claude, writeSeenTranscript(t, `{"type":"file-history-snapshot","messageId":"m"}`), "s", tokens)),
+	} {
+		if err == nil {
+			t.Errorf("%s accepted", name)
+		}
+	}
+}
+
+func second(_ map[string]bool, _ time.Time, err error) error { return err }
