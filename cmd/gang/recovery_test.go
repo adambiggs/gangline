@@ -576,7 +576,7 @@ func TestStatusMarksExpiredDeadlineFromTheObservedPaneTitle(t *testing.T) {
  capture-pane) printf 'still launching\n';;
  display-message) case "$*" in
   *session_id*) printf '$1\n';;
-  *) printf '0,0,0,0,\n';;
+  *) printf '0,0,0,0,,\n';;
   esac;;
  if-shell) printf '%s\n' "$*" > "$(dirname "$0")/marked";;
  *) exit 91;;
