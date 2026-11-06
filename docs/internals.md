@@ -78,11 +78,14 @@ Gangline pastes only into a composer it has read as empty, then waits before
 the submit key. By default it waits until the composer reads back stable for
 the collar's `submit` `settle` duration. With `before_submit: "pause"`, as
 in the Claude Code collar, message delivery pauses for that duration and sends
-the key once the screen shows the paste: the composer holds text, or, where a
-short pane clips the composer or its footer, a prompt line begins with the
-start of the message under the rule read before the paste. It withholds the
-key when the screen shows a native prompt, another surface owning input, or a
-composer of another session. The submit hook confirms what was submitted. When
+the key once the screen shows the paste: the composer's first row begins with
+the start of the message or with Claude Code's placeholder for a long paste,
+or, where a short pane clips the composer or its footer, a prompt line begins
+with the start of the message under the full-width rule read before the
+paste. It withholds the key when the screen shows a native prompt, another
+surface owning input, or a composer of another session. A composer that
+empties, or holds other text such as a draft, gets neither the key nor the
+keys that withdraw a paste. The submit hook confirms what was submitted. When
 no hook arrives after the key, the message stays unverified and its reason
 says the key was sent. Other typed input, such as titles, clear and
 compaction, still waits for the read-back.

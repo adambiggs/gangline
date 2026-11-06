@@ -470,9 +470,9 @@ func (run *runtime) deliver(l *store.LockedAgent, a *core.Agent, e core.Envelope
 		// Startup recovery resubmits a startup paste the composer still holds.
 		// A usage wake reads a failed receipt as never submitted yet cannot
 		// republish under the same ID, so Gangline's own input stays
-		// unverified. A composer emptied by something else may hold input
-		// that is not the paste.
-		if !submitted && withdrawable(e) && !errors.Is(err, harness.ErrComposerEmptied) {
+		// unverified. A composer emptied or replaced by something else may
+		// hold input that is not the paste.
+		if !submitted && withdrawable(e) && !errors.Is(err, harness.ErrComposerEmptied) && !errors.Is(err, harness.ErrComposerReplaced) {
 			outcome, reason, held = run.withdrawPaste(*a, b, c, reason)
 			withdrawn = outcome == "failed"
 		}
@@ -544,34 +544,10 @@ func (run *runtime) settlePaste(ctx context.Context, b harnessInput, pane substr
 	case run.cmd.settleInput != nil:
 		// A test seam that stands in for the whole wait.
 		return run.cmd.settleInput(ctx, b, pane, c, settle)
-	case !pauses:
-		return harness.AwaitOwnedComposerSettle(ctx, b.Capture, pane, c, owner, settle)
+	case pauses:
+		return harness.AwaitPasteShown(ctx, b.Capture, pane, c, wire, owner, settle)
 	}
-	for err = sleepContext(ctx, settle); err == nil; {
-		var screen substrate.Screen
-		if screen, err = b.Capture(ctx, pane); err != nil {
-			break
-		}
-		var shown bool
-		if shown, err = harness.PasteShown(c, screen, wire, owner); err != nil || shown {
-			break
-		}
-		if err = sleepContext(ctx, 25*time.Millisecond); err != nil {
-			err = fmt.Errorf("pasted input did not appear in the composer: %w", err)
-		}
-	}
-	return err
-}
-
-func sleepContext(ctx context.Context, d time.Duration) error {
-	timer := time.NewTimer(d)
-	defer timer.Stop()
-	select {
-	case <-ctx.Done():
-		return ctx.Err()
-	case <-timer.C:
-		return nil
-	}
+	return harness.AwaitOwnedComposerSettle(ctx, b.Capture, pane, c, owner, settle)
 }
 
 // withdrawable reports whether a paste of e abandoned before its submit key
