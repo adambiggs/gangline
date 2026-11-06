@@ -1,5 +1,12 @@
 # Changelog
 
+## [3.1.5](https://github.com/adambiggs/gangline/compare/gangline-v3.1.4...gangline-v3.1.5) (2026-11-06)
+
+
+### Bug Fixes
+
+* repair acceptance after agent decoding change ([d696540](https://github.com/adambiggs/gangline/commit/d696540a744ad4b7830018ca7f4ea4ada025506e))
+
 ## [3.1.4](https://github.com/adambiggs/gangline/compare/gangline-v3.1.3...gangline-v3.1.4) (2026-11-06)
 
 
