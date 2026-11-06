@@ -510,11 +510,7 @@ func (run *runtime) finishInput(l *store.LockedAgent, a *core.Agent, e core.Enve
 		if err != nil {
 			return err
 		}
-		wire, err := envelopeText(e)
-		if err != nil {
-			return err
-		}
-		matched, outside, err := harness.SubmittedEnvelopeMatches(c.Primitives.SubmitWitness, wire, witnessed[0].Prompt)
+		matched, outside, err := receiptMatches(c.Primitives.SubmitWitness, e, witnessed[0].Prompt)
 		if err != nil {
 			return err
 		}

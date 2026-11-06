@@ -145,6 +145,12 @@ func envelopeText(e core.Envelope) (string, error) {
 	if err != nil || stamp == "" {
 		return wire, err
 	}
+	// Band actions come from collar text. Hold the stamp to one line that
+	// cannot carry controls or tags.
+	if err := validateMessageText(stamp); err != nil {
+		return "", err
+	}
+	stamp = strings.Join(strings.Fields(defangEnvelopeTags(stamp)), " ")
 	wire += "\n" + stampLine(stamp)
 	return wire, checkEnvelopeBudget(wire)
 }

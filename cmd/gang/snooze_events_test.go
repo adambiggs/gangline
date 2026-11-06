@@ -374,6 +374,10 @@ func wakePromptText(text string) string {
 	if text == "wake" {
 		return envelopeOpening(envelopeHead("", wakeFixtureToken), "") + " Your scheduled wake was due. [/gang#" + wakeFixtureToken + "]"
 	}
+	if text == "earlier-wake" {
+		// The tag an earlier version typed, before an upgrade.
+		return envelopeOpening(envelopeHead("snooze", wakeFixtureToken), "") + " Your scheduled wake was due. [/gang:snooze#" + wakeFixtureToken + "]"
+	}
 	return text
 }
 
@@ -432,6 +436,7 @@ func TestWakeQueuedBehindARunningTurnIsJudgedByItsOwnTurn(t *testing.T) {
 		steps      []step
 	}{
 		{"finished", false, false, false, []step{{"p2", "wake", "", "", hookNotice{Kind: "turn-finished", TurnID: "p2"}, "snooze_completed queued-wake"}}},
+		{"typed by an earlier version", false, false, false, []step{{"p2", "earlier-wake", "", "", hookNotice{Kind: "turn-finished", TurnID: "p2"}, "snooze_completed queued-wake"}}},
 		{"failed", false, false, false, []step{
 			{"p2", "wake", "", "", hookNotice{Kind: "turn-failed", TurnID: "p2", Failure: "Login expired"}, "snooze_failed queued-wake"},
 			{"p3", "later", "", "", hookNotice{Kind: "turn-finished", TurnID: "p3"}, "snooze_failed queued-wake"},
@@ -489,7 +494,11 @@ func TestWakeQueuedBehindARunningTurnIsJudgedByItsOwnTurn(t *testing.T) {
 			if tc.ahead {
 				tr.queue(-500*time.Millisecond, "enqueue", "ahead")
 			}
-			tr.queue(0, "enqueue", "wake")
+			wake := "wake"
+			if tc.steps[0].text == "earlier-wake" {
+				wake = "earlier-wake"
+			}
+			tr.queue(0, "enqueue", wake)
 			first := hookNotice{Kind: "turn-finished", TurnID: "p1", Transcript: tr.path}
 			if tc.firstFails {
 				first = hookNotice{Kind: "turn-failed", TurnID: "p1", Failure: "Login expired", Transcript: tr.path}

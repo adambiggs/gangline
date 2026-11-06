@@ -107,6 +107,18 @@ func DecodeHook(collar Collar, data []byte) (HookEvent, error) {
 // identifier is harness-owned, but the pasted bytes remain authoritative,
 // wrapped or not, apart from the escape described at consumePastedBody.
 func SubmittedPromptMatches(primitive Invocation, sent, witnessed string) (bool, error) {
+	if primitive.Name == "claude-pasted-content" {
+		// See SubmittedEnvelopeMatches: the stamp line may arrive joined.
+		if joined, ok := joinStampLine(sent); ok {
+			if matched, err := submittedPromptMatches(primitive, joined, witnessed); err != nil || matched {
+				return matched, err
+			}
+		}
+	}
+	return submittedPromptMatches(primitive, sent, witnessed)
+}
+
+func submittedPromptMatches(primitive Invocation, sent, witnessed string) (bool, error) {
 	switch primitive.Name {
 	case "exact-prompt":
 		return witnessed == sent, nil
