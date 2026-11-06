@@ -77,6 +77,7 @@ func TestSendMarksCrossedMessagesUndeliveredAtQueueTime(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	w.Native.SessionID = "s"
 	accepted := crossingMail(lead, worker, "msg-accepted", "3333333333333333", now.Add(-5*time.Second))
 	unverified := crossingMail(lead, worker, "msg-unverified", "4444444444444444", now.Add(-4*time.Second))
 	if err := l.Settle(&w, accepted, "accepted", ""); err != nil {
@@ -140,12 +141,18 @@ func TestSendMarksCrossedMessagesUndeliveredAtQueueTime(t *testing.T) {
 	}
 	// Once worker has taken later input, an unreconciled receipt is no
 	// longer in flight.
-	path, _ := wp.EnvelopePath("cur", again.ID)
-	info, err := os.Stat(path)
-	if err != nil {
+	filed, err := wp.ReadEnvelope("cur", again.ID)
+	if err != nil || filed.FiledAt.IsZero() {
+		t.Fatalf("receipt filing time: %+v %v", filed, err)
+	}
+	// A later witness from another native session proves nothing.
+	if err := wp.WriteWitness(store.Witness{ID: "w2", At: filed.FiledAt.Add(time.Second), Prompt: "later input", SessionID: "other"}); err != nil {
 		t.Fatal(err)
 	}
-	if err := wp.WriteWitness(store.Witness{ID: "w2", At: info.ModTime().Add(time.Second), Prompt: "later input", SessionID: "s"}); err != nil {
+	if got := send("other session"); got.Crossed != "6666666666666666" {
+		t.Fatalf("crossed after a foreign witness = %q", got.Crossed)
+	}
+	if err := wp.WriteWitness(store.Witness{ID: "w3", At: filed.FiledAt.Add(time.Second), Prompt: "later input", SessionID: "s"}); err != nil {
 		t.Fatal(err)
 	}
 	if got := send("after a turn"); got.Crossed != "" {
@@ -180,12 +187,19 @@ func TestSendMarksCrossedMessagesUndeliveredAtQueueTime(t *testing.T) {
 			lines[m[1]] = m[2]
 		}
 	}
-	for _, body := range []string{"nothing pending", "several pending", "one pending", "answers it", "still in flight", "after a turn", "records unreadable"} {
-		if _, ok := lines[body]; !ok {
-			t.Fatalf("%q not submitted: %q", body, submitted)
+	// Delivery renders the marker recorded at queue time.
+	for body, crossed := range map[string]string{
+		"nothing pending":    "",
+		"several pending":    " crossed=3333333333333333,4444444444444444,1111111111111111",
+		"one pending":        " crossed=3333333333333333",
+		"answers it":         "",
+		"still in flight":    " crossed=6666666666666666",
+		"other session":      " crossed=6666666666666666",
+		"after a turn":       "",
+		"records unreadable": " crossed=unknown",
+	} {
+		if got, ok := lines[body]; !ok || got != crossed {
+			t.Errorf("%q stamp marker %q (submitted %v), want %q", body, got, ok, crossed)
 		}
-	}
-	if lines["nothing pending"] != "" || lines["records unreadable"] != " crossed=unknown" || lines["several pending"] != " crossed=3333333333333333,4444444444444444,1111111111111111" || lines["one pending"] != " crossed=3333333333333333" {
-		t.Fatalf("stamp lines: %q from %q", lines, submitted)
 	}
 }

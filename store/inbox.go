@@ -198,7 +198,7 @@ func (l *LockedAgent) FileFailure(e core.Envelope, outcome, reason string) error
 	return l.fileResult(e, "failed", outcome, reason)
 }
 func (l *LockedAgent) fileResult(e core.Envelope, dir, outcome, reason string) error {
-	e.Outcome, e.Reason = outcome, reason
+	e.Outcome, e.Reason, e.FiledAt = outcome, reason, time.Now()
 	// A mismatched prompt is evidence only for the unverified result it explains.
 	if outcome != "unverified" {
 		e.Witnessed = ""

@@ -33,21 +33,30 @@ func (run *runtime) undeliveredFrom(from core.HitchID, to core.Sender, now time.
 // undeliveredMail reads to's queue and its last accepted and unverified
 // receipts. Delivered means a submit witness matched. A queued message
 // counts once due. An accepted or unverified receipt counts until to's
-// next submit witness: one that matches it delivered it, and a later one
-// means to has taken input since, so it is no longer in flight.
+// next submit witness in its current native session: one that matches it
+// delivered it, and one after the receipt was filed means to has taken
+// input since, so it is no longer in flight.
 func (run *runtime) undeliveredMail(from, to core.HitchID, now time.Time) ([]core.Envelope, error) {
 	p, err := run.team.Agent(to)
-	if err != nil {
-		return nil, err
-	}
-	b, err := p.Read()
 	if err != nil {
 		return nil, err
 	}
 	sent := func(e core.Envelope) bool {
 		return e.From.Kind == core.SenderAgent && e.From.HitchID == from && e.Token != ""
 	}
+	// Read the queue before the receipts: a message settled in between
+	// then appears in both, never in neither.
 	queued, err := p.ListNew()
+	if errors.Is(err, os.ErrNotExist) {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, err
+	}
+	b, err := p.Read()
+	if errors.Is(err, os.ErrNotExist) {
+		return nil, nil
+	}
 	if err != nil {
 		return nil, err
 	}
@@ -58,8 +67,12 @@ func (run *runtime) undeliveredMail(from, to core.HitchID, now time.Time) ([]cor
 		}
 	}
 	witness, err := p.ReadWitness()
-	witnessed := err == nil
+	witnessed := err == nil && witness.SessionID != "" && witness.SessionID == b.Native.SessionID
 	if err != nil && !errors.Is(err, os.ErrNotExist) {
+		return nil, err
+	}
+	c, err := loadCollar(b.Collar, run.settings)
+	if err != nil {
 		return nil, err
 	}
 	for _, r := range []struct {
@@ -76,25 +89,15 @@ func (run *runtime) undeliveredMail(from, to core.HitchID, now time.Time) ([]cor
 		if err != nil {
 			return nil, err
 		}
-		if !sent(e) || e.Outcome != r.outcome {
+		if !sent(e) || e.Outcome != r.outcome || slices.ContainsFunc(pending, func(q core.Envelope) bool { return q.ID == e.ID }) {
 			continue
 		}
-		if witnessed && !witness.At.Before(e.CreatedAt) {
-			path, _ := p.EnvelopePath(r.dir, r.id)
-			info, err := os.Stat(path)
-			if err != nil {
-				return nil, err
-			}
-			c, err := loadCollar(b.Collar, run.settings)
-			if err != nil {
-				return nil, err
-			}
+		if witnessed {
 			matched, _, err := receiptMatches(c.Primitives.SubmitWitness, e, witness.Prompt)
 			if err != nil {
 				return nil, err
 			}
-			// The receipt file is written when its result is filed.
-			if matched || witness.At.After(info.ModTime()) {
+			if matched || !e.FiledAt.IsZero() && witness.At.After(e.FiledAt) {
 				continue
 			}
 		}
