@@ -214,16 +214,34 @@ func SubmittedEnvelopeMatches(primitive Invocation, sent, witnessed string) (boo
 		return ok, rest, nil
 	case "claude-pasted-content":
 		// Claude Code turns each tab of a paste into four spaces, whatever
-		// its column; the paste matches as sent or so rewritten.
-		for _, text := range []string{sent, strings.ReplaceAll(sent, "\t", "    ")} {
-			if rest, ok := matchClaudePaste(text, witnessed); ok {
-				return true, rest, nil
+		// its column; the paste matches as sent or so rewritten. Its witness
+		// can also drop generated line breaks, so the context stamp line may
+		// arrive joined to the closing tag before it.
+		variants := []string{sent}
+		if joined, ok := joinStampLine(sent); ok {
+			variants = append(variants, joined)
+		}
+		for _, variant := range variants {
+			for _, text := range []string{variant, strings.ReplaceAll(variant, "\t", "    ")} {
+				if rest, ok := matchClaudePaste(text, witnessed); ok {
+					return true, rest, nil
+				}
 			}
 		}
 		return false, "", nil
 	default:
 		return false, "", fmt.Errorf("unknown submit-witness primitive %q", primitive.Name)
 	}
+}
+
+// joinStampLine removes the line break before a trailing "[gang ... /]"
+// context stamp line, which Gangline renders after an envelope's closing tag.
+func joinStampLine(sent string) (string, bool) {
+	i := strings.LastIndex(sent, "\n[gang ")
+	if i < 0 || !strings.HasSuffix(sent, " /]") || strings.Contains(sent[i+1:], "\n") || !strings.HasSuffix(sent[:i], "]") {
+		return "", false
+	}
+	return sent[:i] + sent[i+1:], true
 }
 
 // matchClaudePaste matches sent against a prompt Claude Code reports for a

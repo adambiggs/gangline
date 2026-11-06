@@ -319,7 +319,7 @@ func (run *runtime) observeSnoozeTurn(a core.Agent, boundary harness.Invocation,
 				// Only a turn's end can judge a wake, so only it reads the
 				// transcript. An unreadable transcript leaves the wake with the
 				// turn it was typed into.
-				turns, pending, left, _ := harness.PromptTurn(boundary, transcript, envelopeOpening("snooze#"+s.Token, ""))
+				turns, pending, left, _ := harness.PromptTurn(boundary, transcript, envelopeOpening(envelopeHead("", s.Token), ""))
 				if pending {
 					continue
 				}

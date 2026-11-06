@@ -332,7 +332,7 @@ func rehitchHarness() error {
 		}
 		if value != '\r' {
 			input.WriteByte(value)
-			if strings.HasSuffix(input.String(), "]") && strings.Contains(input.String(), "[/gang:") {
+			if strings.HasSuffix(input.String(), "]") && (strings.Contains(input.String(), "[/gang:") || strings.Contains(input.String(), "[/gang#")) {
 				renderResumeComposer(input.String())
 			}
 			continue

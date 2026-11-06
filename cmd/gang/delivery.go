@@ -2,7 +2,6 @@ package main
 
 import (
 	"context"
-	"encoding/json"
 	"errors"
 	"fmt"
 	"os"
@@ -122,6 +121,9 @@ func senderLabel(s core.Sender) string {
 }
 
 func envelopeText(e core.Envelope) (string, error) {
+	// Messages Gangline emits name no sender; their internal names stay in
+	// state, logs and listings.
+	system := e.From.Kind == core.SenderGangline
 	sender := senderLabel(e.From)
 	message := e.Message.Text
 	stamp := ""
@@ -131,32 +133,34 @@ func envelopeText(e core.Envelope) (string, error) {
 			message = ""
 		}
 	}
+	var wire string
+	var err error
 	if e.Startup != nil {
-		return startupEnvelopeText(e.Startup, sender, e.Token, e.Purpose, message, stamp)
+		wire, err = startupEnvelopeText(e.Startup, sender, system, e.Token, e.Purpose, message)
+	} else if system {
+		wire, err = renderGanglineEnvelope(e.Token, e.Purpose, message)
+	} else {
+		wire, err = renderEnvelope(sender, e.Token, e.Purpose, message)
 	}
-	return renderEnvelope(sender, e.Token, e.Purpose, stampedBody(stamp, message))
+	if err != nil || stamp == "" {
+		return wire, err
+	}
+	wire += "\n" + stampLine(stamp)
+	return wire, checkEnvelopeBudget(wire)
 }
 
-func stampedBody(stamp, body string) string {
-	if stamp == "" {
-		return body
-	}
-	if body == "" {
-		return stamp
-	}
-	return stamp + " " + body
+// stampLine renders the recipient's context stamp on its own line. Gangline
+// writes it only directly after an envelope's closing tag; a look-alike in a
+// message body sits before that tag.
+func stampLine(stamp string) string {
+	return "[gang " + stamp + " /]"
 }
 
-func startupEnvelopeText(sections *core.StartupSections, sender, token, purpose, message string, stamps ...string) (string, error) {
+func startupEnvelopeText(sections *core.StartupSections, sender string, system bool, token, purpose, message string) (string, error) {
 	if sections.Contract == "" || message == "" || purpose != "assignment" && purpose != "startup" && purpose != "clear" {
 		return "", fmt.Errorf("invalid startup sections")
 	}
 	var parts []string
-	stamp, occupancy := "", ""
-	if len(stamps) > 0 {
-		stamp = stamps[0]
-		occupancy, _, _ = strings.Cut(stamp, ";")
-	}
 	for _, section := range []struct{ name, body string }{
 		{"contract", sections.Contract},
 		{"doctrine", sections.Doctrine},
@@ -165,29 +169,25 @@ func startupEnvelopeText(sections *core.StartupSections, sender, token, purpose,
 		if section.body == "" {
 			continue
 		}
-		part, err := renderEnvelope(section.name, token+"-"+section.name, "startup", stampedBody(occupancy, section.body))
+		part, err := renderGanglineEnvelope(token+"-"+section.name, "startup", section.body)
 		if err != nil {
 			return "", err
 		}
 		parts = append(parts, part)
 	}
-	if purpose == "startup" {
-		sender = "startup"
+	var part string
+	var err error
+	if system || purpose == "startup" {
+		part, err = renderGanglineEnvelope(token, purpose, message)
+	} else {
+		part, err = renderEnvelope(sender, token, purpose, message)
 	}
-	part, err := renderEnvelope(sender, token, purpose, stampedBody(stamp, message))
 	if err != nil {
 		return "", err
 	}
 	parts = append(parts, part)
 	wire := strings.Join(parts, "\n\n")
-	encoded, err := json.Marshal(wire)
-	if err != nil {
-		return "", err
-	}
-	if len(encoded) > maximumMessageBytes {
-		return "", refuseError("message exceeds the %d-byte encoded envelope budget; put details in a state file and send its path", maximumMessageBytes)
-	}
-	return wire, nil
+	return wire, checkEnvelopeBudget(wire)
 }
 
 // inputVerdict says whether the recipient's composer can take input now and,

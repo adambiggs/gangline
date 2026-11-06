@@ -372,7 +372,7 @@ func (w wakeTranscript) line(at time.Duration, record map[string]any) {
 
 func wakePromptText(text string) string {
 	if text == "wake" {
-		return envelopeOpening("snooze#"+wakeFixtureToken, "") + " Your scheduled wake was due. [/gang:snooze#" + wakeFixtureToken + "]"
+		return envelopeOpening(envelopeHead("", wakeFixtureToken), "") + " Your scheduled wake was due. [/gang#" + wakeFixtureToken + "]"
 	}
 	return text
 }
