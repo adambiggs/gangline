@@ -243,8 +243,13 @@ func AwaitPasteShown(ctx context.Context, capture captureScreen, pane substrate.
 		if view != pasteEmpty {
 			emptySince = time.Time{}
 		}
-		if view != pasteReplaced && view != pasteUnseen {
-			replaced, replacedSince = false, time.Time{}
+		// The other text must read for a continuous settle window; the
+		// last readable composer decides the error at the deadline.
+		if view != pasteReplaced {
+			replacedSince = time.Time{}
+		}
+		if view == pasteShown || view == pasteEmpty {
+			replaced = false
 		}
 		switch view {
 		case pasteShown:
@@ -260,10 +265,12 @@ func AwaitPasteShown(ctx context.Context, capture captureScreen, pane substrate.
 				return ErrComposerEmptied
 			}
 		case pasteReplaced:
-			if !replaced {
-				replaced, replacedSince = true, now
+			replaced = true
+			if replacedSince.IsZero() {
+				replacedSince = now
 			}
-			if now.Sub(replacedSince) >= settle {
+			// At least two frames, even with no settle.
+			if now.Sub(replacedSince) >= max(settle, 25*time.Millisecond) {
 				return ErrComposerReplaced
 			}
 		}
@@ -281,8 +288,8 @@ func AwaitPasteShown(ctx context.Context, capture captureScreen, pane substrate.
 // pasted, or with the placeholder Claude Code shows for a long paste; the
 // submit hook confirms what is submitted. A short pane can clip the composer
 // or its footer so that it cannot be read in full. The paste is then shown
-// when a prompt line begins with the start of wire directly under a
-// full-width rule that carries owner. It returns an error on evidence that
+// when a prompt line begins with the start of wire directly under a rule
+// that carries owner. It returns an error on evidence that
 // the submit key would act on something else: another surface owning input,
 // a background-session composer, or a composer of another session. Otherwise
 // false means not shown yet.
@@ -344,8 +351,8 @@ func beginsPaste(text, wire string) bool {
 }
 
 // pasteStartShown reports a prompt line that begins with the start of wire
-// directly under a composer rule labelled owner. The composer's rule spans
-// the pane, so no other row holds more characters.
+// directly under a composer rule labelled owner. Before submission no
+// transcript row repeats the start of this message, with its one-time token.
 func pasteStartShown(invocation Invocation, screen substrate.Screen, wire, owner string) bool {
 	if invocation.Name != "claude-composer" {
 		return false
@@ -357,23 +364,11 @@ func pasteStartShown(invocation Invocation, screen substrate.Screen, wire, owner
 			continue
 		}
 		rule := strings.TrimSpace(lines[index-1])
-		if strings.HasPrefix(rule, "─") && strings.HasSuffix(rule, "─") && strings.Trim(rule, "─ ") == owner && widestRow(lines, lines[index-1]) {
+		if strings.HasPrefix(rule, "─") && strings.HasSuffix(rule, "─") && strings.Trim(rule, "─ ") == owner {
 			return true
 		}
 	}
 	return false
-}
-
-// widestRow reports that no line holds more characters than row. Characters,
-// as previousRule counts a rule, never overstate a row tmux drew.
-func widestRow(lines []string, row string) bool {
-	width := len([]rune(row))
-	for _, line := range lines {
-		if len([]rune(line)) > width {
-			return false
-		}
-	}
-	return true
 }
 
 // ErrComposerEmptied reports pasted input that left the composer before it
