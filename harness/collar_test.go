@@ -179,3 +179,10 @@ func TestTitleClearRequiresKeysOnly(t *testing.T) {
 		}
 	}
 }
+
+func TestCollarRejectsUnknownDeliverPrimitive(t *testing.T) {
+	_, err := LoadCustomCollar("codex", "codex.cue", []byte(`collar: primitives: deliver: name: "paste-queue"`))
+	if err == nil || !strings.Contains(err.Error(), `deliver names unknown primitive "paste-queue"`) {
+		t.Fatalf("unknown deliver primitive: %v", err)
+	}
+}

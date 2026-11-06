@@ -81,6 +81,7 @@ package harness
 		submit:        #Invocation
 		submit_witness: #Invocation
 		queue_witness?: #Invocation
+		deliver?: #Invocation
 		seen?: #Invocation
 		turn_boundary: #Invocation
 		blocked:       #Invocation

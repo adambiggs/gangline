@@ -82,6 +82,9 @@ type Primitives struct {
 	Composer     Invocation   `json:"composer"`
 	Submit       Invocation   `json:"submit"`
 	QueueWitness *Invocation  `json:"queue_witness,omitempty"`
+	// Deliver names a native command that queues a message as user input,
+	// used in place of typing it when the native session is ready for it.
+	Deliver *Invocation `json:"deliver,omitempty"`
 	// Seen names the transcript reader that shows which envelopes the
 	// model has received as input. Without it, crossed= reads unknown.
 	Seen           *Invocation `json:"seen,omitempty"`
@@ -303,6 +306,13 @@ func validateCollar(collar Collar) error {
 			value   Invocation
 			allowed []string
 		}{"queue witness", *collar.Primitives.QueueWitness, []string{"codex-pending-input"}})
+	}
+	if collar.Primitives.Deliver != nil {
+		checks = append(checks, struct {
+			where   string
+			value   Invocation
+			allowed []string
+		}{"deliver", *collar.Primitives.Deliver, deliverPrimitives})
 	}
 	if collar.Primitives.Seen != nil {
 		checks = append(checks, struct {
