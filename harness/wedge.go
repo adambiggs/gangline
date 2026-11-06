@@ -53,6 +53,13 @@ func DetectWedge(invocation Invocation, observation WedgeObservation) (Wedge, er
 	}, nil
 }
 
+// ScreenFingerprint hashes the screen text and the pane title. A harness that
+// animates its title while it works changes the fingerprint, which counts as
+// progress for the wedge and open-turn quiet windows.
 func ScreenFingerprint(screen substrate.Screen) string {
-	return fmt.Sprintf("%x", sha256.Sum256([]byte(strings.Join(screenLines(screen, true), "\n"))))
+	text := strings.Join(screenLines(screen, true), "\n")
+	if screen.Title != "" {
+		text += "\n\x00" + screen.Title
+	}
+	return fmt.Sprintf("%x", sha256.Sum256([]byte(text)))
 }

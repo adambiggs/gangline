@@ -655,7 +655,7 @@ func (backend *Backend) Capture(ctx context.Context, pane substrate.PaneID) (sub
 	if err != nil {
 		return substrate.Screen{}, tmuxError("capture pane", err, raw)
 	}
-	cursor, dead, err := backend.cursor(ctx, pane)
+	cursor, title, dead, err := backend.cursor(ctx, pane)
 	if err != nil {
 		return substrate.Screen{}, err
 	}
@@ -666,6 +666,7 @@ func (backend *Backend) Capture(ctx context.Context, pane substrate.PaneID) (sub
 	if err != nil {
 		return substrate.Screen{}, fmt.Errorf("parse captured pane %q: %w", pane, err)
 	}
+	screen.Title = title
 	return screen, nil
 }
 
@@ -723,31 +724,37 @@ func (backend *Backend) Attach(ctx context.Context, pane substrate.PaneID) error
 
 // cursor also reports whether the pane's process exited; a non-nil status
 // means it did, and holds the exit status, empty until tmux collects one.
-func (backend *Backend) cursor(ctx context.Context, pane substrate.PaneID) (substrate.Cursor, *string, error) {
-	output, err := backend.run(ctx, "display-message", "-p", "-t", string(pane), "#{cursor_x},#{cursor_y},#{cursor_flag},#{pane_dead},#{pane_dead_status}")
+// cursor reads the cursor, the pane title and the pane's exit in one call.
+// The title is last because a program can put commas in it.
+func (backend *Backend) cursor(ctx context.Context, pane substrate.PaneID) (substrate.Cursor, string, *string, error) {
+	output, err := backend.run(ctx, "display-message", "-p", "-t", string(pane), "#{cursor_x},#{cursor_y},#{cursor_flag},#{pane_dead},#{pane_dead_status},#{pane_title}")
 	if err != nil {
-		return substrate.Cursor{}, nil, tmuxError("read cursor", err, output)
+		return substrate.Cursor{}, "", nil, tmuxError("read cursor", err, output)
 	}
-	parts := strings.Split(strings.TrimSpace(output), ",")
-	if len(parts) != 5 {
-		return substrate.Cursor{}, nil, fmt.Errorf("read cursor: tmux returned %q", output)
+	return parseCursor(output)
+}
+
+func parseCursor(output string) (substrate.Cursor, string, *string, error) {
+	parts := strings.SplitN(strings.TrimSuffix(output, "\n"), ",", 6)
+	if len(parts) != 6 {
+		return substrate.Cursor{}, "", nil, fmt.Errorf("read cursor: tmux returned %q", output)
 	}
 	if parts[3] == "1" {
-		return substrate.Cursor{}, &parts[4], nil
+		return substrate.Cursor{}, "", &parts[4], nil
 	}
 	column, err := nonNegative(parts[0])
 	if err != nil {
-		return substrate.Cursor{}, nil, fmt.Errorf("read cursor column: %w", err)
+		return substrate.Cursor{}, "", nil, fmt.Errorf("read cursor column: %w", err)
 	}
 	row, err := nonNegative(parts[1])
 	if err != nil {
-		return substrate.Cursor{}, nil, fmt.Errorf("read cursor row: %w", err)
+		return substrate.Cursor{}, "", nil, fmt.Errorf("read cursor row: %w", err)
 	}
 	visible, err := parseFlag(parts[2])
 	if err != nil {
-		return substrate.Cursor{}, nil, fmt.Errorf("read cursor visibility: %w", err)
+		return substrate.Cursor{}, "", nil, fmt.Errorf("read cursor visibility: %w", err)
 	}
-	return substrate.Cursor{Row: row, Column: column, Visible: visible}, nil, nil
+	return substrate.Cursor{Row: row, Column: column, Visible: visible}, parts[5], nil, nil
 }
 
 func (backend *Backend) run(ctx context.Context, arguments ...string) (string, error) {

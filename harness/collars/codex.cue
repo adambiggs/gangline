@@ -52,13 +52,14 @@ collar: {
 		turn_boundary: {name: "hook-boundary"}
 		blocked: {name: "screen-blocked", params: {
 			permission_hook: "screen"
+			title: "^\\[ [!.] \\] Action Required"
 			prompt: "Would you like to run|Do you want to allow|requires approval|approval required|Hooks need review|Giving this request a little extra[[:space:]]+thought|(?m)^[ \t]*Allow Computer Use to use[[:space:]]"
 			choice: "Yes, proceed|Yes, and don't ask again|Press enter to confirm|(?m)^[ \t]*[› ]?[ \t]*[0-9]+[.] Retry with a faster model|(?m)^[ \t]*[› ]?[ \t]*[0-9]+[.] Allow([ \t]|$)"
 		}}
 		context: {name: "codex-screen-context"}
 		provider_limits: {name: "codex-screen-limits"}
 		limits_query: {name: "codex-app-server-limits"}
-		wedge: {name: "stable-busy-screen", params: {busy: "esc to interrupt", after: "5m"}}
+		wedge: {name: "stable-busy-screen", params: {busy: "esc to interrupt", after: "5m", title_busy: "^[\\x{2801}-\\x{28FF}] "}}
 	}
 	actions: {
 		clear: {text: "/clear", submit: true}

@@ -74,6 +74,13 @@ func InspectStartup(collar Collar, screen substrate.Screen) (Startup, error) {
 			return Startup{State: StartupTrustRequired, Prompt: blocked.Evidence}, nil
 		}
 	}
+	// A harness that names a pending choice in its pane title reports it even
+	// where the screen expressions miss the prompt's wording.
+	if found, err := titleMatches(collar.Primitives.Blocked, "title", screen.Title); err != nil {
+		return Startup{}, err
+	} else if found {
+		return Startup{State: StartupTrustRequired, Prompt: titleBlockedEvidence}, nil
+	}
 	for _, invocation := range collar.Primitives.Startup {
 		switch invocation.Name {
 		case "claude-trust-prompt", "codex-trust-prompt":

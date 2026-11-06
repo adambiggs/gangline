@@ -343,6 +343,12 @@ func validateCollar(collar Collar) error {
 			return err
 		}
 	}
+	if _, err := titleMatches(collar.Primitives.Blocked, "title", "-"); err != nil {
+		return err
+	}
+	if _, err := titleMatches(collar.Primitives.Wedge, "title_busy", "-"); err != nil {
+		return err
+	}
 	for selector, bands := range collar.ContextBands {
 		seen := make(map[string]bool, len(bands))
 		previous := -1.0
