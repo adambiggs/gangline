@@ -380,6 +380,8 @@ decision about the principle or implementation.
   history must not make operations slower.
 - Choose the smallest fix that addresses the cause and state its cost per
   operation and how that cost grows.
+- Support sandboxed Codex with a suitable configuration; do not rely on disabling its sandbox.
+- Work within each native harness’s loop and turn limits.
 - Leave trust, login, approval, and sandbox choices with the operator; collars
   cannot loosen them.
 
