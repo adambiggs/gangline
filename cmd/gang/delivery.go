@@ -389,14 +389,7 @@ func (run *runtime) deliver(l *store.LockedAgent, a *core.Agent, e core.Envelope
 	defer cancel()
 	pane := substrate.PaneID(a.Pane)
 	if err = sendHarnessKeys(ctx, b, pane, c, input); err == nil {
-		settle, settleErr := harness.SubmitSettle(c.Primitives.Submit)
-		if settleErr != nil {
-			err = settleErr
-		} else if run.cmd.settleInput != nil {
-			err = run.cmd.settleInput(ctx, b, pane, c, settle)
-		} else {
-			err = harness.AwaitOwnedComposerSettle(ctx, b.Capture, pane, c, owner, settle)
-		}
+		err = run.settlePaste(ctx, b, pane, c, owner)
 	}
 	if err == nil {
 		err = refuseNativePrompt(ctx, b, pane, c)
@@ -438,6 +431,9 @@ func (run *runtime) deliver(l *store.LockedAgent, a *core.Agent, e core.Envelope
 			}
 		} else {
 			witness, accepted, err = run.cmd.awaitReceipt(ctx, l.Paths, before, queue)
+			if errors.Is(err, context.DeadlineExceeded) {
+				err = fmt.Errorf("submit key sent but the harness reported no submitted prompt in time: %w", err)
+			}
 		}
 		if err != nil || accepted {
 			break
@@ -529,6 +525,42 @@ func (run *runtime) deliver(l *store.LockedAgent, a *core.Agent, e core.Envelope
 		return outcome, withdrawn, err
 	}
 	return outcome, withdrawn, nil
+}
+
+// settlePaste waits between a message's paste and its submit key: a fixed
+// pause where the collar declares one, otherwise a stable read-back of the
+// composer owned by owner.
+func (run *runtime) settlePaste(ctx context.Context, b harnessInput, pane substrate.PaneID, c harness.Collar, owner string) error {
+	settle, err := harness.SubmitSettle(c.Primitives.Submit)
+	if err != nil {
+		return err
+	}
+	pauses, err := harness.SubmitPauses(c.Primitives.Submit)
+	if err != nil {
+		return err
+	}
+	switch {
+	case run.cmd.settleInput != nil:
+		err = run.cmd.settleInput(ctx, b, pane, c, settle)
+	case pauses:
+		timer := time.NewTimer(settle)
+		select {
+		case <-ctx.Done():
+			err = ctx.Err()
+		case <-timer.C:
+		}
+		timer.Stop()
+	default:
+		return harness.AwaitOwnedComposerSettle(ctx, b.Capture, pane, c, owner, settle)
+	}
+	if err != nil || !pauses {
+		return err
+	}
+	screen, err := b.Capture(ctx, pane)
+	if err != nil {
+		return err
+	}
+	return harness.PausedSubmitRefusal(c, screen, owner)
 }
 
 // withdrawable reports whether a paste of e abandoned before its submit key

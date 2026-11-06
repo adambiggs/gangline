@@ -29,6 +29,25 @@ func SubmitSettle(invocation Invocation) (time.Duration, error) {
 	return duration, nil
 }
 
+// SubmitPauses reports whether a message's submit key follows a fixed pause
+// of the settle duration (before_submit: pause) rather than a stable read-back
+// of the whole composer. A pause suits a harness whose submit hook confirms
+// the exact message: a short pane can clip the composer or its footer, and
+// then no read-back can succeed.
+func SubmitPauses(invocation Invocation) (bool, error) {
+	if invocation.Name != "enter-submit" {
+		return false, fmt.Errorf("unknown submit primitive %q", invocation.Name)
+	}
+	switch invocation.Params["before_submit"] {
+	case "":
+		return false, nil
+	case "pause":
+		return true, nil
+	default:
+		return false, fmt.Errorf("unknown submit before_submit mode %q", invocation.Params["before_submit"])
+	}
+}
+
 func SubmitInput(invocation Invocation, text string) (substrate.Keys, error) {
 	if invocation.Name != "enter-submit" {
 		return substrate.Keys{}, fmt.Errorf("unknown submit primitive %q", invocation.Name)
