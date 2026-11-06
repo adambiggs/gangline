@@ -26,7 +26,10 @@ func receiptMatches(primitive harness.Invocation, e core.Envelope, witnessed str
 		outside = rest
 		return matched, err
 	})
-	if matched && e.ContextStamp == nil {
+	if !matched {
+		return false, "", err
+	}
+	if e.ContextStamp == nil {
 		// A wire rebuilt without its stored stamp is followed by the
 		// stamp line that delivery added; that line is not typed input.
 		outside = leadingStampLine.ReplaceAllString(outside, "")
@@ -54,7 +57,7 @@ func anyReceiptWire(e core.Envelope, match func(string) (bool, error)) (bool, er
 	return match(legacy)
 }
 
-var leadingStampLine = regexp.MustCompile(`^\n?\[gang [^\n\]]* /\]`)
+var leadingStampLine = regexp.MustCompile(`^\n?\[gang ctx=\S+ at=\d\d-\d\dT\d\d:\d\d:\d\dZ[^\n\]]* /\]`)
 
 func legacyEnvelopeText(e core.Envelope) (string, error) {
 	sender := senderLabel(e.From)

@@ -857,13 +857,17 @@ been delivered to the sender at that moment, oldest first:
 [gang ctx=134k/1M at=11-06T09:31:02Z crossed=4d8e67c2aa11bb22 /]
 ```
 
-Gangline decides this from the sender's own receipts when it queues the
-message. Delivered means a submit witness matched the message. A message still
-queued and due, accepted into a native queue without a witness, or typed with
-no matching witness (unverified) has not been delivered, even if a later
-witness reconciles it. A scheduled message counts once it is due. Only
-messages between agents on this host are compared. The field is absent when
-nothing crossed.
+Gangline decides this when it queues the message, from the sender's queue,
+its last accepted and last unverified receipts, and its latest submit witness.
+Delivered means a submit witness matched the message. A message still queued
+and due has not been delivered; a scheduled one counts once it is due. A
+message accepted into a native queue without a witness, or typed with no
+matching witness (unverified), has not been delivered until the sender's next
+submit witness: one that matches it delivered it, and a later one means the
+sender has taken input since. The marker stays as recorded when receipts are
+reconciled later. Only messages between agents on this host are compared.
+`crossed=unknown` means the sender's records could not be read; the message
+is still sent. The field is absent when nothing crossed.
 
 A band crossing adds a short save-state-and-compact/clear action once, after
 `; ` on the next stamp line. With no mail within one watchdog interval, the
