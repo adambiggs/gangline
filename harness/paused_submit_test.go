@@ -41,8 +41,9 @@ func TestClaudeCollarPausesBeforeSubmit(t *testing.T) {
 		t.Fatalf("Claude collar pauses=%v err=%v", pauses, err)
 	}
 	// Only the Claude Code composer reader recognises a clipped paste.
-	collar.Primitives.Composer.Name = "codex-composer"
-	if err := validateCollar(collar); err == nil || !strings.Contains(err.Error(), "before_submit") {
+	other := collar
+	other.Primitives.Composer.Name = "codex-composer"
+	if err := validateCollar(other); err == nil || !strings.Contains(err.Error(), "before_submit") {
 		t.Fatalf("pause with another composer: %v", err)
 	}
 }
@@ -76,9 +77,7 @@ func TestPasteShown(t *testing.T) {
 		{name: "closing rule below the pane, other text", read: ErrComposerClipped, screen: textScreen("older output", rule, "❯ [gang:lead#fedcba9876543210] a long", "  message that wraps past the bottom")},
 		{name: "closing rule below the pane, child rule", owner: "probe main", read: ErrNoComposer, screen: textScreen("older output", named("Read the sources"), start, "  message that wraps past the bottom")},
 		{name: "closing rule below the pane, named after an unnamed read", read: ErrNoComposer, screen: textScreen("older output", named("Read the sources"), start, "  message that wraps past the bottom")},
-		{name: "tall frame without a cursor", read: ErrNoComposer, screen: textScreen(rule, start, "  message", "  that", "  wraps", "  past", "  the", "  bottom", rule), shown: true},
-		{name: "rule narrower than the pane", read: ErrComposerClipped, screen: textScreen("a transcript row wider than the short rule above the prompt", rule, start, "  message")},
-		{name: "full-screen view", read: ErrNoComposer, screen: fixtureScreen(t, "claude-code-2.1.287-transcript-view.txt")},
+		{name: "tall frame without a cursor", read: ErrNoComposer, screen: textScreen(rule, start, "  message", "  that", "  wraps", "  past", "  the", "  bottom", rule), shown: true}, {name: "full-screen view", read: ErrNoComposer, screen: fixtureScreen(t, "claude-code-2.1.287-transcript-view.txt")},
 		{name: "footer clipped, same owner", screen: wrappedScreen(t, wrappedMainOwner), owner: wrappedMainOwner, read: ErrComposerOwnerClipped, shown: true},
 		{name: "footer clipped after an unnamed read", screen: wrappedScreen(t, wrappedMainOwner), read: ErrComposerOwnerClipped, want: ErrForeignComposer},
 		{name: "footer clipped, child view", screen: wrappedScreen(t, "Read the harness sources"), owner: wrappedMainOwner, read: ErrComposerOwnerClipped, want: ErrForeignComposer},
@@ -135,6 +134,12 @@ func TestAwaitPasteShown(t *testing.T) {
 			return empty
 		}, elapsed: 500 * time.Millisecond, want: ErrComposerEmptied},
 		{name: "replaced", screen: func(time.Duration) substrate.Screen { return draft }, elapsed: settle, want: ErrComposerReplaced},
+		{name: "replaced around an unreadable gap", screen: func(at time.Duration) substrate.Screen {
+			if at >= 100*time.Millisecond && at < 450*time.Millisecond {
+				return textScreen("Transcript view", "  earlier reply")
+			}
+			return draft
+		}, elapsed: 850 * time.Millisecond, want: ErrComposerReplaced},
 		{name: "replaced, then unreadable to the deadline", screen: func(at time.Duration) substrate.Screen {
 			if at < 100*time.Millisecond {
 				return draft

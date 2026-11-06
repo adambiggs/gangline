@@ -104,11 +104,27 @@ func TestClaudePasteNeverShownWithholdsSubmit(t *testing.T) {
 
 // A composer that holds other text in place of the paste, such as a draft
 // typed after the paste was cleared, gets neither the submit key nor the
-// keys that withdraw a paste.
+// keys that withdraw a paste, and the hitcher hears that later messages wait.
 func TestClaudeReplacedPasteIsNeitherSubmittedNorCleared(t *testing.T) {
 	synctest.Test(t, func(t *testing.T) {
 		f := newStateFixture(t)
+		lead := f.addHitched(t, "l", "lead", "lead", "")
 		a := f.add(t, "a", "worker", "claude")
+		a.HitchedBy = lead.ID
+		{
+			p, _ := f.run.team.Agent(a.ID)
+			l, err := p.LockAgent()
+			if err != nil {
+				t.Fatal(err)
+			}
+			if err := l.Save(a); err != nil {
+				t.Fatal(err)
+			}
+			if err := l.Close(); err != nil {
+				t.Fatal(err)
+			}
+		}
+		f.cmd.detach = func(string, hookNotice) error { return nil }
 		f.env["GANGLINE_HITCH_ID"] = string(a.ID)
 		f.input.command = "claude"
 		rule := strings.Repeat("─", 40)
@@ -144,6 +160,10 @@ func TestClaudeReplacedPasteIsNeitherSubmittedNorCleared(t *testing.T) {
 		}
 		if !strings.HasPrefix(receipt.Reason, "native composer holds other text") {
 			t.Fatalf("reason = %q", receipt.Reason)
+		}
+		lp, _ := f.run.team.Agent(lead.ID)
+		if _, err := lp.ReadEnvelope("new", core.EnvelopeID("held-input-"+fields[0])); err != nil {
+			t.Fatalf("held-input notice to the hitcher: %v", err)
 		}
 	})
 }
