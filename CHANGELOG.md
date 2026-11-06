@@ -1,5 +1,12 @@
 # Changelog
 
+## [3.2.1](https://github.com/adambiggs/gangline/compare/gangline-v3.2.0...gangline-v3.2.1) (2026-11-06)
+
+
+### Bug Fixes
+
+* **ci:** run acceptance before tagging releases ([f7920fc](https://github.com/adambiggs/gangline/commit/f7920fcf07a5e1e314cc5a1633153f02fe56c026))
+
 ## [3.2.0](https://github.com/adambiggs/gangline/compare/gangline-v3.1.5...gangline-v3.2.0) (2026-11-06)
 
 
