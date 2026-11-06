@@ -49,9 +49,40 @@ func TestSeedCodexConfigCopiesOnlyAcceptedDirectory(t *testing.T) {
 	if got := codexTrustLevel(config, "/other"); got != "" {
 		t.Fatalf("copied unrelated trust = %q", got)
 	}
-	tui, ok := config["tui"].(map[string]any)
-	if !ok || tui["screen_reader_detection_done"] != true {
-		t.Fatalf("existing private config was lost: %s", content)
+	if _, kept := config["tui"]; kept {
+		t.Fatalf("private settings from an earlier run were kept: %s", content)
+	}
+}
+
+func TestSeedCodexConfigDropsProviderTheRegularConfigNoLongerSelects(t *testing.T) {
+	root := t.TempDir()
+	regularHome, privateHome := filepath.Join(root, "regular"), filepath.Join(root, "private")
+	for _, dir := range []string{regularHome, privateHome} {
+		if err := os.Mkdir(dir, 0700); err != nil {
+			t.Fatal(err)
+		}
+	}
+	cwd := filepath.Join(root, "checkout")
+	project := "[projects." + strconv.Quote(cwd) + "]\ntrust_level = 'trusted'\n"
+	routed := "model_provider = 'proxy'\n[model_providers.proxy]\nbase_url = 'https://proxy.invalid/v1'\n" + project
+	if err := os.WriteFile(filepath.Join(regularHome, "config.toml"), []byte(routed), 0600); err != nil {
+		t.Fatal(err)
+	}
+	if err := seedCodexConfig(regularHome, privateHome, cwd); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(regularHome, "config.toml"), []byte(project), 0600); err != nil {
+		t.Fatal(err)
+	}
+	if err := seedCodexConfig(regularHome, privateHome, cwd); err != nil {
+		t.Fatal(err)
+	}
+	content, err := os.ReadFile(filepath.Join(privateHome, "config.toml"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(string(content), "proxy") {
+		t.Fatalf("private config kept a provider route the regular config dropped:\n%s", content)
 	}
 }
 
@@ -245,18 +276,43 @@ func TestCodexHookReviewStepNamesOperatorAction(t *testing.T) {
 	if codexHooksAwaitReview("Trust this folder?") {
 		t.Error("folder trust read as hook review")
 	}
-	step := codexHookReviewStep("/tmp/s.sock", "gangline-provider-codex", "%3", "/cache/home")
+	step := codexHookReviewStep("/tmp/root", "/tmp/root/s.sock", "gangline-provider-codex", "%3", "/cache/home")
 	for _, want := range []string{
-		`tmux -S /tmp/s.sock attach-session -t gangline-provider-codex \; select-window -t %3 \; select-pane -t %3`,
+		`tmux -S /tmp/root/s.sock attach-session -t gangline-provider-codex \; select-window -t %3 \; select-pane -t %3`,
 		`"Trust all and continue"`,
-		"tmux -S /tmp/s.sock kill-server",
+		"tmux -S /tmp/root/s.sock kill-server; rm -r /tmp/root;",
 		"/cache/home/config.toml only, not in ~/.codex",
 	} {
 		if !strings.Contains(step, want) {
 			t.Errorf("step lacks %q:\n%s", want, step)
 		}
 	}
-	if !strings.Contains(codexHookReviewStep("/tmp/s.sock", "s", "", "/h"), "select the worker window") {
+	if !strings.Contains(codexHookReviewStep("/r", "/r/s.sock", "s", "", "/h"), "select the worker window") {
 		t.Error("step without a pane does not say which window to select")
+	}
+}
+
+func TestRetainedCodexSessionBlocksUntilItsServerEnds(t *testing.T) {
+	directory := t.TempDir()
+	if err := refuseRetainedCodexSession(directory, func(string) bool { t.Fatal("probed without a record"); return false }); err != nil {
+		t.Fatalf("no record: %v", err)
+	}
+	record := retainedCodexSession(directory)
+	if err := os.WriteFile(record, []byte("/tmp/root/tmux.sock\n"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	var probed string
+	err := refuseRetainedCodexSession(directory, func(socket string) bool { probed = socket; return true })
+	if err == nil || !strings.Contains(err.Error(), "/tmp/root/tmux.sock") || probed != "/tmp/root/tmux.sock" {
+		t.Fatalf("live retained server: probed %q, err %v", probed, err)
+	}
+	if _, err := os.Stat(record); err != nil {
+		t.Fatalf("record removed while its server lives: %v", err)
+	}
+	if err := refuseRetainedCodexSession(directory, func(string) bool { return false }); err != nil {
+		t.Fatalf("ended retained server: %v", err)
+	}
+	if _, err := os.Stat(record); !os.IsNotExist(err) {
+		t.Fatalf("record of an ended server kept: %v", err)
 	}
 }

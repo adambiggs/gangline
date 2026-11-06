@@ -108,6 +108,16 @@ func testLiveProvider(t *testing.T, collar, cli, cheapest string) {
 			t.Fatal(err)
 		}
 		t.Cleanup(release)
+		// Registered after release, so it runs first and records a kept
+		// run before the next run can take the lock.
+		t.Cleanup(func() {
+			if !keepForOperator {
+				return
+			}
+			if err := os.WriteFile(retainedCodexSession(stable), []byte(filepath.Join(root, "tmux.sock")+"\n"), 0600); err != nil {
+				t.Errorf("record retained live Codex session: %v", err)
+			}
+		})
 		binary = filepath.Join(stable, "gang")
 		profile = filepath.Join(stable, "home")
 		if err := resetCodexHome(profile); err != nil {
@@ -248,7 +258,7 @@ func testLiveProvider(t *testing.T, collar, cli, cheapest string) {
 			screen, _, _ := runGang(ctx, "", "capture", "worker", "-n", "30")
 			if cli == "codex" && codexHooksAwaitReview(status+screen+hitchDiagnostic) {
 				keepForOperator = true
-				t.Fatal(codexHookReviewStep(socket, session, workerPane(root, session), profile))
+				t.Fatalf("%s\ngang hitch: %v: %s %s\nstatus: %s\nscreen: %s", codexHookReviewStep(root, socket, session, workerPane(root, session), profile), err, hitch, hitchDiagnostic, status, screen)
 			}
 			if strings.Contains(strings.ToLower(status+screen+hitchDiagnostic), "trust") || strings.Contains(strings.ToLower(status+screen+hitchDiagnostic), "permission") {
 				keepForOperator = true
@@ -282,7 +292,7 @@ func testLiveProvider(t *testing.T, collar, cli, cheapest string) {
 		pending, _, _ := runGang(diagnosticCtx, "", "queue", "worker")
 		if cli == "codex" && codexHooksAwaitReview(status+screen) {
 			keepForOperator = true
-			t.Fatal(codexHookReviewStep(socket, session, workerPane(root, session), profile))
+			t.Fatalf("%s\nstartup witness: %v: %+v\nstatus: %s\nqueue: %s\nscreen: %s", codexHookReviewStep(root, socket, session, string(pane), profile), err, startupWitness, status, pending, screen)
 		}
 		t.Fatalf("startup hook did not witness pasted assignment and envelope: %v: %+v; socket=%s status=%s queue=%s screen=%s", err, startupWitness, socket, status, pending, screen)
 	}
@@ -486,7 +496,43 @@ func liveCodexDirectory(cache string) (string, func(), error) {
 		_ = lock.Close()
 		return "", nil, fmt.Errorf("another live Codex acceptance run holds %s: %w", lock.Name(), err)
 	}
+	if err := refuseRetainedCodexSession(directory, tmuxServerAlive); err != nil {
+		_ = lock.Close()
+		return "", nil, err
+	}
 	return directory, func() { _ = lock.Close() }, nil
+}
+
+// retainedCodexSession names the file that records the socket of a run kept
+// for the operator. That run's Codex still uses the kept binary and home after
+// its test process releases the lock.
+func retainedCodexSession(directory string) string {
+	return filepath.Join(directory, "retained-socket")
+}
+
+// refuseRetainedCodexSession stops a new run while a kept run's tmux server is
+// still alive, so the new build and reset do not change files under it. A
+// record whose server has gone is removed.
+func refuseRetainedCodexSession(directory string, alive func(socket string) bool) error {
+	record := retainedCodexSession(directory)
+	content, err := os.ReadFile(record)
+	if errors.Is(err, os.ErrNotExist) {
+		return nil
+	} else if err != nil {
+		return fmt.Errorf("read retained live Codex session: %w", err)
+	}
+	socket := strings.TrimSpace(string(content))
+	if socket != "" && alive(socket) {
+		return fmt.Errorf("an earlier live Codex acceptance run is still kept for the operator at socket %s and uses %s; finish its printed step (which ends the server) before rerunning", socket, directory)
+	}
+	if err := os.Remove(record); err != nil && !errors.Is(err, os.ErrNotExist) {
+		return fmt.Errorf("remove retained live Codex session record: %w", err)
+	}
+	return nil
+}
+
+func tmuxServerAlive(socket string) bool {
+	return exec.Command("tmux", "-S", socket, "list-sessions").Run() == nil
 }
 
 // resetCodexHome empties the kept private CODEX_HOME of everything a previous
@@ -529,14 +575,14 @@ func workerPane(root, session string) string {
 	return string(agents[0].Pane)
 }
 
-func codexHookReviewStep(socket, session, pane, profile string) string {
+func codexHookReviewStep(root, socket, session, pane, profile string) string {
 	attach := fmt.Sprintf("tmux -S %s attach-session -t %s", socket, session)
 	if pane != "" {
 		attach += fmt.Sprintf(" \\; select-window -t %s \\; select-pane -t %s", pane, pane)
 	} else {
 		attach += " (then select the worker window)"
 	}
-	return fmt.Sprintf("Codex is waiting for the operator to review Gangline's hooks. One-time step: run %s; optionally choose \"Review hooks\" to read them; choose \"Trust all and continue\"; type /quit; run tmux -S %s kill-server; rerun acceptance. The trust is stored in %s only, not in ~/.codex. Repeat when the collar's Codex hooks change.", attach, socket, filepath.Join(profile, "config.toml"))
+	return fmt.Sprintf("Codex is waiting for the operator to review Gangline's hooks. One-time step: run %s; optionally choose \"Review hooks\" to read them; choose \"Trust all and continue\"; type /quit; run tmux -S %s kill-server; rm -r %s; rerun acceptance. The trust is stored in %s only, not in ~/.codex. Repeat when the collar's Codex hooks change.", attach, socket, root, filepath.Join(profile, "config.toml"))
 }
 
 func seedCodexConfig(regularHome, privateHome, cwd string) error {
@@ -552,8 +598,10 @@ func seedCodexConfig(regularHome, privateHome, cwd string) error {
 		return fmt.Errorf("regular Codex config does not trust %s; trust it interactively before running live acceptance", cwd)
 	}
 
+	// Rebuild the private config from the regular one on every run so it
+	// matches a fresh hitch. Only the operator's hook trust carries over.
 	configPath := filepath.Join(privateHome, "config.toml")
-	var isolated map[string]any
+	isolated := make(map[string]any)
 	info, err := os.Lstat(configPath)
 	if err == nil {
 		if !info.Mode().IsRegular() {
@@ -563,14 +611,19 @@ func seedCodexConfig(regularHome, privateHome, cwd string) error {
 		if err != nil {
 			return fmt.Errorf("read private Codex config: %w", err)
 		}
-		if err := toml.Unmarshal(content, &isolated); err != nil {
+		var previous struct {
+			Hooks struct {
+				State map[string]any `toml:"state"`
+			} `toml:"hooks"`
+		}
+		if err := toml.Unmarshal(content, &previous); err != nil {
 			return fmt.Errorf("parse private Codex config: %w", err)
+		}
+		if len(previous.Hooks.State) > 0 {
+			isolated["hooks"] = map[string]any{"state": previous.Hooks.State}
 		}
 	} else if !errors.Is(err, os.ErrNotExist) {
 		return fmt.Errorf("inspect private Codex config: %w", err)
-	}
-	if isolated == nil {
-		isolated = make(map[string]any)
 	}
 	// Authentication belongs to the selected connection. Copying auth.json
 	// without its provider route can send the same login to a different API.
@@ -595,23 +648,7 @@ func seedCodexConfig(regularHome, privateHome, cwd string) error {
 			isolated["model_providers"] = map[string]any{provider: selected}
 		}
 	}
-	projects, ok := isolated["projects"].(map[string]any)
-	if isolated["projects"] != nil && !ok {
-		return fmt.Errorf("private Codex projects config has unexpected type %T", isolated["projects"])
-	}
-	if !ok {
-		projects = make(map[string]any)
-		isolated["projects"] = projects
-	}
-	project, ok := projects[cwd].(map[string]any)
-	if projects[cwd] != nil && !ok {
-		return fmt.Errorf("private Codex project %s has unexpected type %T", cwd, projects[cwd])
-	}
-	if !ok {
-		project = make(map[string]any)
-		projects[cwd] = project
-	}
-	project["trust_level"] = "trusted"
+	isolated["projects"] = map[string]any{cwd: map[string]any{"trust_level": "trusted"}}
 	content, err := toml.Marshal(isolated)
 	if err != nil {
 		return fmt.Errorf("encode private Codex config: %w", err)

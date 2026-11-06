@@ -10,6 +10,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"reflect"
+	"runtime"
 	"strings"
 	"testing"
 )
@@ -28,6 +29,13 @@ func TestProviderFixtureIsolation(t *testing.T) {
 					shims := filepath.Join(root, "shims")
 					xdg := ""
 					defaultState := filepath.Join(home, ".local", "state", "gangline")
+					// Live Codex keeps its binary and profile in the user cache
+					// so operator hook trust lasts; keep that cache in the fixture.
+					cache := filepath.Join(root, "cache")
+					kept := filepath.Join(cache, "gangline-acceptance", "codex")
+					if runtime.GOOS == "darwin" {
+						kept = filepath.Join(home, "Library", "Caches", "gangline-acceptance", "codex")
+					}
 					if state == "xdg" {
 						xdg = filepath.Join(root, "xdg")
 						defaultState = filepath.Join(xdg, "gangline")
@@ -89,8 +97,8 @@ esac
 						testName = "TestLiveCodex"
 					}
 					command := exec.Command(exe, "-test.v", "-test.run=^"+testName+"$")
-					command.Env = append(withoutEnvironment(os.Environ(), "PATH", "HOME", "XDG_STATE_HOME", "GANG_STATE_ROOT", "TMPDIR", "GANGLINE_LIVE_PROVIDERS", "FIXTURE", "FIXTURE_MODE"),
-						"PATH="+shims+string(os.PathListSeparator)+os.Getenv("PATH"), "HOME="+home, "XDG_STATE_HOME="+xdg, "GANG_STATE_ROOT="+inherited, "TMPDIR="+temp,
+					command.Env = append(withoutEnvironment(os.Environ(), "PATH", "HOME", "XDG_STATE_HOME", "GANG_STATE_ROOT", "TMPDIR", "XDG_CACHE_HOME", "GANGLINE_LIVE_PROVIDERS", "FIXTURE", "FIXTURE_MODE"),
+						"PATH="+shims+string(os.PathListSeparator)+os.Getenv("PATH"), "HOME="+home, "XDG_STATE_HOME="+xdg, "GANG_STATE_ROOT="+inherited, "TMPDIR="+temp, "XDG_CACHE_HOME="+cache,
 						"GANGLINE_LIVE_PROVIDERS=1", "FIXTURE="+root, "FIXTURE_MODE="+mode)
 					output, err := command.CombinedOutput()
 					wantFailure := "synthetic model failure"
@@ -130,6 +138,16 @@ esac
 							continue
 						}
 						path := readPath(name)
+						if provider == "codex" && name != "socket" {
+							want := map[string]string{"binary": filepath.Join(kept, "gang"), "profile": filepath.Join(kept, "home")}[name]
+							if path != want {
+								t.Errorf("%s %s, want kept %s", name, path, want)
+							}
+							if _, err := os.Stat(path); err != nil {
+								t.Errorf("kept %s: %v", name, err)
+							}
+							continue
+						}
 						if !strings.HasPrefix(path, selected+string(os.PathSeparator)) {
 							t.Errorf("%s %s is outside selected state %s", name, path, selected)
 						}
