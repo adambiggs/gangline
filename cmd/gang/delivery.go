@@ -389,7 +389,7 @@ func (run *runtime) deliver(l *store.LockedAgent, a *core.Agent, e core.Envelope
 	defer cancel()
 	pane := substrate.PaneID(a.Pane)
 	if err = sendHarnessKeys(ctx, b, pane, c, input); err == nil {
-		err = run.settlePaste(ctx, b, pane, c, owner)
+		err = run.settlePaste(ctx, b, pane, c, wire, owner)
 	}
 	if err == nil {
 		err = refuseNativePrompt(ctx, b, pane, c)
@@ -432,7 +432,7 @@ func (run *runtime) deliver(l *store.LockedAgent, a *core.Agent, e core.Envelope
 		} else {
 			witness, accepted, err = run.cmd.awaitReceipt(ctx, l.Paths, before, queue)
 			if errors.Is(err, context.DeadlineExceeded) {
-				err = fmt.Errorf("submit key sent but the harness reported no submitted prompt in time: %w", err)
+				err = fmt.Errorf("submit key sent; no submit hook confirmed this message in time: %w", err)
 			}
 		}
 		if err != nil || accepted {
@@ -527,10 +527,11 @@ func (run *runtime) deliver(l *store.LockedAgent, a *core.Agent, e core.Envelope
 	return outcome, withdrawn, nil
 }
 
-// settlePaste waits between a message's paste and its submit key: a fixed
-// pause where the collar declares one, otherwise a stable read-back of the
-// composer owned by owner.
-func (run *runtime) settlePaste(ctx context.Context, b harnessInput, pane substrate.PaneID, c harness.Collar, owner string) error {
+// settlePaste waits between a message's paste and its submit key. Where the
+// collar declares a pause, it waits that long and then until the screen shows
+// the paste (harness.PasteShown); otherwise until the composer owned by owner
+// reads back stable.
+func (run *runtime) settlePaste(ctx context.Context, b harnessInput, pane substrate.PaneID, c harness.Collar, wire, owner string) error {
 	settle, err := harness.SubmitSettle(c.Primitives.Submit)
 	if err != nil {
 		return err
@@ -541,26 +542,36 @@ func (run *runtime) settlePaste(ctx context.Context, b harnessInput, pane substr
 	}
 	switch {
 	case run.cmd.settleInput != nil:
-		err = run.cmd.settleInput(ctx, b, pane, c, settle)
-	case pauses:
-		timer := time.NewTimer(settle)
-		select {
-		case <-ctx.Done():
-			err = ctx.Err()
-		case <-timer.C:
-		}
-		timer.Stop()
-	default:
+		// A test seam that stands in for the whole wait.
+		return run.cmd.settleInput(ctx, b, pane, c, settle)
+	case !pauses:
 		return harness.AwaitOwnedComposerSettle(ctx, b.Capture, pane, c, owner, settle)
 	}
-	if err != nil || !pauses {
-		return err
+	for err = sleepContext(ctx, settle); err == nil; {
+		var screen substrate.Screen
+		if screen, err = b.Capture(ctx, pane); err != nil {
+			break
+		}
+		var shown bool
+		if shown, err = harness.PasteShown(c, screen, wire, owner); err != nil || shown {
+			break
+		}
+		if err = sleepContext(ctx, 25*time.Millisecond); err != nil {
+			err = fmt.Errorf("pasted input did not appear in the composer: %w", err)
+		}
 	}
-	screen, err := b.Capture(ctx, pane)
-	if err != nil {
-		return err
+	return err
+}
+
+func sleepContext(ctx context.Context, d time.Duration) error {
+	timer := time.NewTimer(d)
+	defer timer.Stop()
+	select {
+	case <-ctx.Done():
+		return ctx.Err()
+	case <-timer.C:
+		return nil
 	}
-	return harness.PausedSubmitRefusal(c, screen, owner)
 }
 
 // withdrawable reports whether a paste of e abandoned before its submit key
