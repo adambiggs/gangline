@@ -550,7 +550,7 @@ func TestContextStampKeepsEvaluatedThresholdAcrossCollarChanges(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	want := "ctx=200822/1000000; early 20% crossed: save state and compact/clear"
+	want := "ctx=201k/1M at=09-22T10:00:00Z; early 20% crossed: save state and compact/clear"
 	if e.ContextStamp == nil || e.ContextStamp.Text != want {
 		t.Fatalf("crossing relabeled by delivery collar: %+v, want %q", e.ContextStamp, want)
 	}
