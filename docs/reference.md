@@ -848,6 +848,23 @@ input, in UTC to the second, without the year. A startup's sections share one
 stamp line after the final section. Gangline writes the line only after an
 envelope's closing tag; the same text inside a message body is the sender's.
 
+When one agent sends to another with `gang send`, the stamp line also carries
+`crossed=TOKEN,...` if any of the recipient's messages to that sender had not
+been delivered to the sender at that moment, oldest first:
+
+```text
+[gang:worker#0123456789abcdef] Done. [/gang:worker#0123456789abcdef]
+[gang ctx=134k/1M at=11-06T09:31:02Z crossed=4d8e67c2aa11bb22 /]
+```
+
+Gangline decides this from the sender's own receipts when it queues the
+message. Delivered means a submit witness matched the message. A message still
+queued and due, accepted into a native queue without a witness, or typed with
+no matching witness (unverified) has not been delivered, even if a later
+witness reconciles it. A scheduled message counts once it is due. Only
+messages between agents on this host are compared. The field is absent when
+nothing crossed.
+
 A band crossing adds a short save-state-and-compact/clear action once, after
 `; ` on the next stamp line. With no mail within one watchdog interval, the
 same stamp follows an empty Gangline envelope through the normal notice path.

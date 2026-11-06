@@ -37,11 +37,11 @@ func TestEnvelopeStampTextNamesRoundedContextAndUTCSecond(t *testing.T) {
 	at := time.Date(2026, 11, 6, 1, 43, 9, 700_000_000, time.FixedZone("PDT", -7*3600))
 	used, limit, percent := int64(102950), int64(1000000), 10.295
 	observed := core.Reading{Kind: "context", Status: "observed", Used: &used, Limit: &limit, Percent: &percent}
-	if got := envelopeStampText(at, observed); got != "ctx=103k/1M at=11-06T08:43:09Z" {
+	if got := envelopeStampText(at, observed, ""); got != "ctx=103k/1M at=11-06T08:43:09Z" {
 		t.Fatal(got)
 	}
 	padded := time.Date(2027, 1, 2, 3, 4, 5, 0, time.UTC)
-	if got := envelopeStampText(padded, observed); got != "ctx=103k/1M at=01-02T03:04:05Z" {
+	if got := envelopeStampText(padded, observed, ""); got != "ctx=103k/1M at=01-02T03:04:05Z" {
 		t.Fatal(got)
 	}
 	for name, r := range map[string]core.Reading{
@@ -49,7 +49,7 @@ func TestEnvelopeStampTextNamesRoundedContextAndUTCSecond(t *testing.T) {
 		"not observed": {Kind: "context", Status: "unknown", Used: &used, Limit: &limit, Percent: &percent},
 		"no limit":     {Kind: "context", Status: "observed", Used: &used, Percent: &percent},
 	} {
-		if got := envelopeStampText(at, r); got != "ctx=unknown at=11-06T08:43:09Z" {
+		if got := envelopeStampText(at, r, ""); got != "ctx=unknown at=11-06T08:43:09Z" {
 			t.Errorf("%s: %s", name, got)
 		}
 	}
@@ -127,5 +127,18 @@ func TestEarlierRenderingIsReproducedExactly(t *testing.T) {
 	}
 	if matched, outside, err := receiptMatches(exact, e, wire+"[gang x /]"); err != nil || !matched || outside != "[gang x /]" {
 		t.Fatalf("typed text dropped: %v %q %v", matched, outside, err)
+	}
+}
+
+func TestStampLineNamesCrossedMessages(t *testing.T) {
+	at := time.Date(2026, 11, 6, 9, 31, 2, 0, time.UTC)
+	if got := envelopeStampText(at, core.Reading{}, "4d8e67c2aa11bb22"); got != "ctx=unknown at=11-06T09:31:02Z crossed=4d8e67c2aa11bb22" {
+		t.Fatal(got)
+	}
+	if got := envelopeStampText(at, core.Reading{}, "1111111111111111,2222222222222222"); got != "ctx=unknown at=11-06T09:31:02Z crossed=1111111111111111,2222222222222222" {
+		t.Fatal(got)
+	}
+	if !currentStamp.MatchString("ctx=1k/1M at=11-06T09:31:02Z crossed=1111111111111111; yellow crossed") {
+		t.Fatal("a crossed stamp read as an earlier version's")
 	}
 }

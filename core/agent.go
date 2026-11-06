@@ -200,22 +200,26 @@ type ContextStamp struct {
 }
 
 type Envelope struct {
-	ID           EnvelopeID       `json:"id"`
-	Token        string           `json:"token,omitempty"`
-	From         Sender           `json:"from"`
-	To           AgentName        `json:"to"`
-	Recipient    HitchID          `json:"recipient"`
-	Message      Message          `json:"message"`
-	ContextStamp *ContextStamp    `json:"context_stamp,omitempty"`
-	Startup      *StartupSections `json:"startup,omitempty"`
-	PasteOnly    *StartupPaste    `json:"paste_only,omitempty"`
-	Purpose      string           `json:"purpose,omitempty"`
-	CreatedAt    time.Time        `json:"created_at"`
-	MeasuredAt   *time.Time       `json:"measured_at,omitempty"`
-	NotBefore    time.Time        `json:"not_before,omitzero"`
-	NotAfter     time.Time        `json:"not_after,omitzero"`
-	Outcome      string           `json:"outcome,omitempty"`
-	Reason       string           `json:"reason,omitempty"`
+	ID           EnvelopeID    `json:"id"`
+	Token        string        `json:"token,omitempty"`
+	From         Sender        `json:"from"`
+	To           AgentName     `json:"to"`
+	Recipient    HitchID       `json:"recipient"`
+	Message      Message       `json:"message"`
+	ContextStamp *ContextStamp `json:"context_stamp,omitempty"`
+	// Crossed lists, comma-separated, the tokens of the recipient's messages
+	// to this sender that had not been delivered to the sender when this one
+	// was queued. A string keeps Envelope comparable.
+	Crossed    string           `json:"crossed,omitempty"`
+	Startup    *StartupSections `json:"startup,omitempty"`
+	PasteOnly  *StartupPaste    `json:"paste_only,omitempty"`
+	Purpose    string           `json:"purpose,omitempty"`
+	CreatedAt  time.Time        `json:"created_at"`
+	MeasuredAt *time.Time       `json:"measured_at,omitempty"`
+	NotBefore  time.Time        `json:"not_before,omitzero"`
+	NotAfter   time.Time        `json:"not_after,omitzero"`
+	Outcome    string           `json:"outcome,omitempty"`
+	Reason     string           `json:"reason,omitempty"`
 	// Witnessed keeps the prompt a submit hook reported when it did not
 	// match this envelope, after a later turn replaces the witness.
 	Witnessed string `json:"witnessed,omitempty"`

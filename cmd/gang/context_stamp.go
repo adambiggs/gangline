@@ -68,9 +68,14 @@ func deliveryReadings(a core.Agent, c harness.Collar, b harnessInput) (core.Read
 }
 
 // envelopeStampText renders the recipient's context reading in rounded token
-// units and when Gangline stamped the envelope, in UTC to the second.
-func envelopeStampText(at time.Time, r core.Reading) string {
-	return contextStampText(r) + " at=" + at.UTC().Format("01-02T15:04:05Z")
+// units, when Gangline stamped the envelope, in UTC to the second, and the
+// recipient's messages that had not reached the sender when it was queued.
+func envelopeStampText(at time.Time, r core.Reading, crossed string) string {
+	text := contextStampText(r) + " at=" + at.UTC().Format("01-02T15:04:05Z")
+	if crossed != "" {
+		text += " crossed=" + crossed
+	}
+	return text
 }
 
 func contextStampText(r core.Reading) string {
@@ -117,7 +122,7 @@ func (run *runtime) stampEnvelope(l *store.LockedAgent, a *core.Agent, e core.En
 			return e, err
 		}
 	}
-	stamp := &core.ContextStamp{Text: envelopeStampText(run.cmd.now(), r)}
+	stamp := &core.ContextStamp{Text: envelopeStampText(run.cmd.now(), r, e.Crossed)}
 	for _, note := range a.ContextBands.Pending {
 		stamp.Crossings = append(stamp.Crossings, note.Envelope.ID)
 		// The crossing owns its evaluated threshold and rendered action. A later
