@@ -206,6 +206,28 @@ func AwaitOwnedComposerSettle(ctx context.Context, capture captureScreen, pane s
 	}
 }
 
+// PausedSubmitRefusal checks a screen captured after the pause that precedes
+// a paste's submit key (see SubmitPauses). The composer read empty before the
+// paste, so whatever it holds now is the paste, and a composer the screen
+// clips or cannot show is no reason to withhold the key: the submit hook
+// confirms what was submitted. It refuses only on evidence that the key would
+// act on something else: another surface owning input, a background-session
+// composer, or a composer whose rule names a session other than owner, the
+// label read before the paste.
+func PausedSubmitRefusal(collar Collar, screen substrate.Screen, owner string) error {
+	composer, err := ReadComposer(collar.Primitives.Composer, screen)
+	switch {
+	case err == nil, errors.Is(err, ErrComposerOwnerClipped), errors.Is(err, ErrComposerOwnerHidden):
+		if owner != "" && composer.Owner != "" && composer.Owner != owner {
+			return fmt.Errorf("%w: its rule names %q, not %q", ErrForeignComposer, composer.Owner, owner)
+		}
+		return nil
+	case errors.Is(err, ErrComposerClipped), errors.Is(err, ErrNoComposer):
+		return nil
+	}
+	return err
+}
+
 // ErrComposerEmptied reports pasted input that left the composer before it
 // was submitted: something other than gang cleared or consumed it.
 var ErrComposerEmptied = errors.New("native composer emptied before submission")

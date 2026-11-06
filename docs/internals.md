@@ -74,6 +74,16 @@ Gangline records its intent and verifies that the native harness is the pane's
 foreground process. A free composer can receive input during a turn when the
 collar supports it. A native prompt or unsubmitted draft keeps input blocked.
 
+Gangline pastes only into a composer it has read as empty, then waits before
+the submit key. By default it waits until the composer reads back stable for
+the collar's `submit` `settle` duration. With `before_submit: "pause"`, as
+in the Claude Code collar, it pauses for that duration, then withholds the key
+only when the screen shows a native prompt, another surface owning input, or
+a composer whose rule names another session. A composer clipped by a short
+pane, or one whose footer is clipped, does not need to be read back; the
+submit hook confirms what was submitted. When no hook arrives after the key,
+the message stays unverified and its reason says the key was sent.
+
 After submission, an exact native hook witness establishes `delivered`.
 A freshly observed queue entry can establish `accepted` when its declared
 layout includes the sender and full one-time-token opener and the composer

@@ -39,7 +39,7 @@ collar: {
 		mid_turn: true
 		startup: [{name: "claude-trust-prompt"}, {name: "claude-composer"}]
 		composer: {name: "claude-composer"}
-		submit: {name: "enter-submit", params: {paste: "bracketed", settle: "400ms"}}
+		submit: {name: "enter-submit", params: {paste: "bracketed", settle: "400ms", before_submit: "pause"}}
 		submit_witness: {name: "claude-pasted-content"}
 		seen: {name: "claude-transcript"}
 		turn_boundary: {name: "hook-boundary", params: {open_turn_quiet: "60s", queued_turns: "claude-transcript", session_moves: "claude-transcript"}}
