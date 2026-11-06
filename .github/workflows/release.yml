@@ -3,6 +3,8 @@ name: release
 on:
   push:
     branches: [main]
+  pull_request:
+    branches: [main]
   workflow_dispatch:
     inputs:
       site_sha:
@@ -14,7 +16,7 @@ permissions: {}
 
 jobs:
   check:
-    if: github.event_name == 'push'
+    if: github.event_name == 'push' || github.event_name == 'pull_request'
     runs-on: ubuntu-latest
     permissions:
       contents: read
@@ -26,8 +28,15 @@ jobs:
           cache: true
       - name: Mandatory gate
         run: test/gate.sh
+      - name: Install acceptance tools
+        if: github.event_name == 'pull_request'
+        run: sudo apt-get update && sudo apt-get install -y tmux python3
+      - name: Pre-release acceptance
+        if: github.event_name == 'pull_request'
+        run: test/acceptance.sh
 
   release-please:
+    if: github.event_name == 'push'
     needs: [check]
     runs-on: ubuntu-latest
     permissions:
