@@ -10,6 +10,7 @@ import "time"
  to: #ID
  recipient: #ID
  message: close({text: #ID})
+ context_stamp?: close({text: #ID, crossings?: [...#ID]})
  startup?: close({contract: #ID, doctrine?: string, role?: string})
  paste_only?: close({witness_id: string})
  purpose?: "startup" | "assignment" | "resume" | "clear"

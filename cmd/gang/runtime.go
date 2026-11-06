@@ -541,6 +541,9 @@ func (run *runtime) finishInput(l *store.LockedAgent, a *core.Agent, e core.Enve
 	if err := l.Settle(a, e, outcome, reason); err != nil {
 		return err
 	}
+	if err := run.settleContextStamp(l, a, e, outcome); err != nil {
+		return err
+	}
 	if err := run.record(*a, core.Event{Type: map[string]string{"accepted": "delivery_accepted", "delivered": "delivery_succeeded", "failed": "delivery_failed", "unverified": "delivery_unverified"}[outcome], ID: string(e.ID), Reason: reason}); err != nil {
 		return err
 	}

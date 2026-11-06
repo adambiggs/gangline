@@ -123,17 +123,40 @@ func senderLabel(s core.Sender) string {
 
 func envelopeText(e core.Envelope) (string, error) {
 	sender := senderLabel(e.From)
-	if e.Startup != nil {
-		return startupEnvelopeText(e.Startup, sender, e.Token, e.Purpose, e.Message.Text)
+	message := e.Message.Text
+	stamp := ""
+	if e.ContextStamp != nil {
+		stamp = e.ContextStamp.Text
+		if isContextBandNotice(e) {
+			message = ""
+		}
 	}
-	return renderEnvelope(sender, e.Token, e.Purpose, e.Message.Text)
+	if e.Startup != nil {
+		return startupEnvelopeText(e.Startup, sender, e.Token, e.Purpose, message, stamp)
+	}
+	return renderEnvelope(sender, e.Token, e.Purpose, stampedBody(stamp, message))
 }
 
-func startupEnvelopeText(sections *core.StartupSections, sender, token, purpose, message string) (string, error) {
+func stampedBody(stamp, body string) string {
+	if stamp == "" {
+		return body
+	}
+	if body == "" {
+		return stamp
+	}
+	return stamp + " " + body
+}
+
+func startupEnvelopeText(sections *core.StartupSections, sender, token, purpose, message string, stamps ...string) (string, error) {
 	if sections.Contract == "" || message == "" || purpose != "assignment" && purpose != "startup" && purpose != "clear" {
 		return "", fmt.Errorf("invalid startup sections")
 	}
 	var parts []string
+	stamp, occupancy := "", ""
+	if len(stamps) > 0 {
+		stamp = stamps[0]
+		occupancy, _, _ = strings.Cut(stamp, ";")
+	}
 	for _, section := range []struct{ name, body string }{
 		{"contract", sections.Contract},
 		{"doctrine", sections.Doctrine},
@@ -142,7 +165,7 @@ func startupEnvelopeText(sections *core.StartupSections, sender, token, purpose,
 		if section.body == "" {
 			continue
 		}
-		part, err := renderEnvelope(section.name, token+"-"+section.name, "startup", section.body)
+		part, err := renderEnvelope(section.name, token+"-"+section.name, "startup", stampedBody(occupancy, section.body))
 		if err != nil {
 			return "", err
 		}
@@ -151,7 +174,7 @@ func startupEnvelopeText(sections *core.StartupSections, sender, token, purpose,
 	if purpose == "startup" {
 		sender = "startup"
 	}
-	part, err := renderEnvelope(sender, token, purpose, message)
+	part, err := renderEnvelope(sender, token, purpose, stampedBody(stamp, message))
 	if err != nil {
 		return "", err
 	}
@@ -267,6 +290,10 @@ func (run *runtime) deliver(l *store.LockedAgent, a *core.Agent, e core.Envelope
 		return "", false, err
 	}
 	b = run.registeredInput(*a, b)
+	e, err = run.stampEnvelope(l, a, e, b, c)
+	if err != nil {
+		return "", false, err
+	}
 	wire, err := envelopeText(e)
 	if err != nil {
 		return "", false, err

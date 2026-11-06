@@ -832,6 +832,13 @@ the native CLI reads it as a system prompt. Claude Code uses
 standing instructions in the startup message instead. The prompt file is
 removed with the agent's state on drop. The assignment remains in the startup
 message either way.
+Incoming envelopes include `ctx=USED/WINDOW` in exact tokens for the recipient,
+or `ctx=unknown` when the reading is unavailable. A band crossing adds a short
+save-state-and-compact/clear action once, on the next envelope. With no mail
+within one watchdog interval, the same stamp is delivered alone through the
+normal notice path. Drafts and native dialogs retain the existing input guards.
+The stamp describes context occupancy, not cumulative token consumption.
+
 An agent hitched with `--context-bands` keeps its thresholds until re-hitched;
 Gangline reads band names, messages, and model selectors from the collar for
 each later operation. A later selector with a different band count uses its

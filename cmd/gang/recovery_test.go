@@ -284,7 +284,11 @@ func TestCompactionPublicationAcknowledgedBeforeInputIsDelivered(t *testing.T) {
 			if err := f.run.tickAgent(a.ID, hookNotice{}, false); err != nil {
 				t.Fatal(err)
 			}
-			if len(prompts) != 1 || prompts[0] != mustEnvelopeText(t, e) {
+			receipt, receiptErr := p.ReadEnvelope("failed", e.ID)
+			if receiptErr != nil {
+				t.Fatal(receiptErr)
+			}
+			if len(prompts) != 1 || prompts[0] != mustEnvelopeText(t, receipt) {
 				t.Fatalf("resume not first: %q", prompts)
 			}
 			// The submit hook acquires the released input lock before admitting
@@ -300,7 +304,7 @@ func TestCompactionPublicationAcknowledgedBeforeInputIsDelivered(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			if got.Compaction.Status != "completed" || !got.Compaction.ResumeAdmitted || len(prompts) != 2 || prompts[0] != mustEnvelopeText(t, e) || !strings.Contains(prompts[1], "later") {
+			if got.Compaction.Status != "completed" || !got.Compaction.ResumeAdmitted || len(prompts) != 2 || prompts[0] != mustEnvelopeText(t, receipt) || !strings.Contains(prompts[1], "later") {
 				t.Fatalf("resume delivery order: %+v prompts=%q", got.Compaction, prompts)
 			}
 			if err := f.run.tickAgent(a.ID, hookNotice{}, false); err != nil {

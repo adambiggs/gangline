@@ -12,8 +12,8 @@ import (
 
 const contextBandCompactCommand = "gang compact --note 'Resume from FILE'"
 
-const contextBandAdvice = "Context band {{band}} crossed (threshold {{threshold_percent}}%): {{used_tokens}}/{{limit_tokens}} ({{used_percent}}%), model {{model}}. Save your working state to a file and compact at the next good stopping point with `{{compact_command}}`."
-const contextBandOrder = "Context band {{band}} crossed (threshold {{threshold_percent}}%): {{used_tokens}}/{{limit_tokens}} ({{used_percent}}%), model {{model}}. Compact now: save your working state to a file, then run `{{compact_command}}`."
+const contextBandAdvice = "{{band}} {{threshold_percent}}% crossed: save state and compact/clear"
+const contextBandOrder = "{{band}} {{threshold_percent}}% crossed: save state and compact/clear now"
 
 func renderContextBandMessage(band harness.ContextBand, last bool, a *core.Agent, r core.Reading) string {
 	message := band.Message
@@ -94,6 +94,9 @@ func (run *runtime) noteContextBands(a *core.Agent, c harness.Collar) error {
 			Message: core.Message{Text: renderContextBandMessage(band, last != nil && band.Name == last.Name, a, r)},
 		}
 		state.Pending = append(state.Pending, core.ContextBandNote{Band: band.Name, Reading: r, Envelope: e})
+		if err := run.record(*a, core.Event{Type: "context_band_crossed", ID: string(e.ID), Status: band.Name, Envelope: &e, Readings: []core.Reading{r}}); err != nil {
+			return err
+		}
 	}
 	state.Model, state.Percent = r.Model, *r.Percent
 	return nil
@@ -112,6 +115,14 @@ func (run *runtime) publishContextNotes(l *store.LockedAgent, a *core.Agent) err
 		}
 		for _, e := range queued {
 			if !isContextBandNotice(e) {
+				// Unsubmitted mail survives the reset, with a new delivery-time
+				// observation. Receipts of possibly submitted input stay frozen.
+				if e.ContextStamp != nil && len(e.ContextStamp.Crossings) > 0 && e.PasteOnly == nil {
+					e.ContextStamp = nil
+					if err := l.Paths.Publish(e); err != nil {
+						return err
+					}
+				}
 				continue
 			}
 			const reason = "context band was queued before the native context reset"
@@ -127,16 +138,13 @@ func (run *runtime) publishContextNotes(l *store.LockedAgent, a *core.Agent) err
 			return err
 		}
 	}
-	for len(a.ContextBands.Pending) > 0 {
-		note := a.ContextBands.Pending[0]
+	for _, note := range a.ContextBands.Pending {
+		if run.cmd.now().Sub(note.Envelope.CreatedAt) < watchdogTimeout {
+			continue
+		}
+		// Ordinary mail gets one tick to carry the crossing. A quiet recipient
+		// receives one stamp-only fallback through the same guarded inbox.
 		if err := run.publishOnce(l, a, note.Envelope); err != nil {
-			return err
-		}
-		if err := run.record(*a, core.Event{Type: "context_band_crossed", ID: string(note.Envelope.ID), Status: note.Band, Envelope: &note.Envelope, Readings: []core.Reading{note.Reading}}); err != nil {
-			return err
-		}
-		a.ContextBands.Pending = a.ContextBands.Pending[1:]
-		if err := l.Save(*a); err != nil {
 			return err
 		}
 	}
