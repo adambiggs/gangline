@@ -31,7 +31,7 @@ func (run *runtime) observeScreen(l *store.LockedAgent, a *core.Agent, c harness
 		return false, err
 	}
 	activity, evidence := a.Activity, a.Evidence
-	fingerprint := harness.ScreenFingerprint(screen)
+	fingerprint := harness.ActivityFingerprint(c, screen)
 	screenBusy := false
 	compacting, compactErr := harness.CompactionActive(c, screen)
 	basis := activityBasis(*a, "", "screen")

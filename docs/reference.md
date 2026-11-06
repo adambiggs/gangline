@@ -643,9 +643,9 @@ reads the pane and reports blocked only for a visible input choice. An
 unreadable pane stays unknown. An idle screen can confirm dismissal; dismissal
 itself fires no hook. Hook-derived readings carry no screen fingerprint.
 `basis.compaction` is the compaction record's status, and
-`fingerprint` is a hash of the screen and its pane title, so a title the
-harness animates while it works counts as a changed screen. Neither carries
-screen text, and
+`fingerprint` is a hash of the screen, and of its pane title while that
+title reads busy, so a spinner the harness animates in its title counts as a
+changed screen. Neither carries screen text, and
 neither does the reason: a blocked reading names the native prompt by a hash
 of the text the collar matched, so a prompt whose matched text differs logs a
 new reading, and a wedged

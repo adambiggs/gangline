@@ -73,15 +73,27 @@ func TestScreenBlockedEvidenceOutranksTitle(t *testing.T) {
 	}
 }
 
-func TestScreenFingerprintIncludesTitle(t *testing.T) {
+func TestActivityFingerprintCountsOnlyBusyTitles(t *testing.T) {
+	collar, err := EmbeddedCollar("codex")
+	if err != nil {
+		t.Fatal(err)
+	}
 	screen := fixtureScreen(t, "codex-0.151.0-composer.txt")
-	untitled := ScreenFingerprint(screen)
-	screen.Title = "⠸ Run delayed echo command | codex-cwd"
-	first := ScreenFingerprint(screen)
-	screen.Title = "⠼ Run delayed echo command | codex-cwd"
-	second := ScreenFingerprint(screen)
-	if first == untitled || first == second {
-		t.Fatalf("fingerprints untitled=%s first=%s second=%s; want a new fingerprint per title", untitled, first, second)
+	fingerprint := func(title string) string {
+		screen.Title = title
+		return ActivityFingerprint(collar, screen)
+	}
+	untitled := fingerprint("")
+	if untitled != ScreenFingerprint(screen) {
+		t.Fatal("an untitled pane's activity fingerprint differs from its screen fingerprint")
+	}
+	if first, second := fingerprint("⠸ Run delayed echo command | codex-cwd"), fingerprint("⠼ Run delayed echo command | codex-cwd"); first == untitled || first == second {
+		t.Fatalf("spinner frames share a fingerprint: %s %s %s", untitled, first, second)
+	}
+	for _, title := range []string{"[ ! ] Action Required | Create empty probe.txt | cwd", "[ . ] Action Required | Create empty probe.txt | cwd", "Run delayed echo command | codex-cwd", "cwd"} {
+		if fingerprint(title) != untitled {
+			t.Fatalf("title %q changed the activity fingerprint", title)
+		}
 	}
 }
 
