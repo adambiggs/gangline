@@ -632,8 +632,9 @@ Each `activity_observed` event records what its reading was derived from.
 `idle`, `busy`, `unsubmitted`, `unreadable`, or `unread` when no screen was
 read successfully. The reading includes the title the harness sets on its
 pane: a title matching the collar's `primitives.wedge.params.title_busy`
-reads busy, and one matching `primitives.blocked.params.title` reads blocked.
-An empty or unmatched title adds nothing. `basis.rule` is the rule that set the activity: `screen`, `open-turn`,
+reads busy, and one matching `primitives.blocked.params.title` reads blocked
+unless the composer owns input. An empty or unmatched title adds nothing.
+`basis.rule` is the rule that set the activity: `screen`, `open-turn`,
 `interrupt-pending`, `compaction-record`, `turn-failure`, `wedge`,
 `probe-failure`, `native-hook`, or `permission-request`. A fresh native
 permission request reads blocked until a later hook unless the collar sets
@@ -647,9 +648,10 @@ itself fires no hook. Hook-derived readings carry no screen fingerprint.
 title reads busy, so a spinner the harness animates in its title counts as a
 changed screen. Neither carries screen text, and
 neither does the reason: a blocked reading names the native prompt by a hash
-of the text the collar matched, so a prompt whose matched text differs logs a
-new reading, and a wedged
-reading names the collar's threshold. `gang capture NAME` prints the prompt.
+of the text the collar matched, or of the title without its marker when only
+the title reads blocked, so a prompt whose text differs logs a new reading.
+`gang capture NAME` prints the prompt. A wedged reading names the collar's
+threshold.
 
 A native turn that fails reads unknown with the reason
 `native turn failed: CLASS: MESSAGE` under rule `turn-failure`. A turn the
