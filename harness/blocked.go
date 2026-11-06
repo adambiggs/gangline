@@ -14,6 +14,10 @@ type Blocked struct {
 	Evidence string
 }
 
+// titleBlockedEvidence names a blocked reading from the pane title. Like the
+// screen's evidence it carries no title text.
+const titleBlockedEvidence = "native title reports a choice awaits an answer"
+
 func detectBlocked(invocation Invocation, lines []string) (Blocked, bool, error) {
 	if invocation.Name != "screen-blocked" {
 		return Blocked{}, false, fmt.Errorf("unknown blocked primitive %q", invocation.Name)

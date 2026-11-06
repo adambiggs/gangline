@@ -152,7 +152,8 @@ func TestBackendDrivesPrivateTmuxServer(t *testing.T) {
 		t.Fatal(err)
 	}
 	ready, received, done := "backend-ready", "backend-received", "backend-done"
-	script := `"$1" -S "$2" wait-for -S "$3"; IFS= read -r line; printf 'received: %s\n' "$line"; "$1" -S "$2" wait-for -S "$4"; "$1" -S "$2" wait-for "$5"`
+	// The title has a comma: the cursor read splits on commas.
+	script := `printf '\033]2;%s\033\\' '⠸ native, title'; "$1" -S "$2" wait-for -S "$3"; IFS= read -r line; printf 'received: %s\n' "$line"; "$1" -S "$2" wait-for -S "$4"; "$1" -S "$2" wait-for "$5"`
 	pane, err := backend.Spawn(context.Background(), substrate.SpawnSpec{
 		Name:      "worker#S",
 		Directory: root,
@@ -194,6 +195,9 @@ func TestBackendDrivesPrivateTmuxServer(t *testing.T) {
 	}
 	if screen.Cursor.Row < 0 || screen.Cursor.Column < 0 {
 		t.Fatalf("cursor = %#v", screen.Cursor)
+	}
+	if screen.Title != "⠸ native, title" {
+		t.Fatalf("pane title = %q, want the title the program set", screen.Title)
 	}
 	if err := backend.Kill(context.Background(), pane.ID); err != nil {
 		t.Fatal(err)

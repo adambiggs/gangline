@@ -24,6 +24,8 @@ func Idle(collar Collar, screen substrate.Screen) (bool, error) {
 }
 
 // Busy checks native activity even while an action occupies the composer.
+// A pane title that the collar's title_busy expression matches is busy too;
+// a title it does not match adds nothing.
 func Busy(collar Collar, screen substrate.Screen) (bool, error) {
 	pattern := collar.Primitives.Wedge.Params["busy"]
 	if pattern == "" {
@@ -33,7 +35,24 @@ func Busy(collar Collar, screen substrate.Screen) (bool, error) {
 	if err != nil {
 		return false, err
 	}
-	return busy.MatchString(strings.Join(screenLines(screen, true), "\n")), nil
+	if busy.MatchString(strings.Join(screenLines(screen, true), "\n")) {
+		return true, nil
+	}
+	return titleMatches(collar.Primitives.Wedge, "title_busy", screen.Title)
+}
+
+// titleMatches reports whether the collar's named title expression matches
+// the pane title. An absent expression or an empty title matches nothing.
+func titleMatches(invocation Invocation, name, title string) (bool, error) {
+	expression := invocation.Params[name]
+	if expression == "" || title == "" {
+		return false, nil
+	}
+	pattern, err := regexp.Compile(expression)
+	if err != nil {
+		return false, fmt.Errorf("%s primitive %s expression: %w", invocation.Name, name, err)
+	}
+	return pattern.MatchString(title), nil
 }
 
 // AwaitComposerText waits until the native composer shows stable expected text.

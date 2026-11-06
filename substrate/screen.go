@@ -5,6 +5,9 @@ import "strings"
 type Screen struct {
 	Rows   [][]Cell
 	Cursor Cursor
+	// Title is the pane title the program last set, read with the cursor.
+	// Empty means unread or unset; a collar treats it as unknown.
+	Title string
 }
 
 type Cell struct {
