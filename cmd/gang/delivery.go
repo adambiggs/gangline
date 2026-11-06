@@ -388,6 +388,26 @@ func (run *runtime) deliver(l *store.LockedAgent, a *core.Agent, e core.Envelope
 	ctx, cancel := run.cmd.timeout(operationTimeout)
 	defer cancel()
 	pane := substrate.PaneID(a.Pane)
+	// A harness with its own input queue takes the message without typing.
+	// The submit hook later proves it, as it proves a pasted message.
+	var refused string
+	if c.Primitives.Deliver != nil && midTurnMessage && !capacityEnvelope(e) {
+		result, note := run.queueNative(ctx, *a, c, wire)
+		switch result {
+		case nativeQueueHeld:
+			if err := run.finishInput(l, a, e, "accepted", "native queue holds the message; do not resend"); err != nil {
+				return "accepted", false, err
+			}
+			return "accepted", false, run.mark(*a)
+		case nativeQueueUncertain:
+			if err := run.finishInput(l, a, e, "unverified", note+"; do not resend"); err != nil {
+				return "unverified", false, err
+			}
+			return "unverified", false, run.mark(*a)
+		case nativeQueueRefused:
+			refused = note + "; typed instead"
+		}
+	}
 	if err = sendHarnessKeys(ctx, b, pane, c, input); err == nil {
 		settle, settleErr := harness.SubmitSettle(c.Primitives.Submit)
 		if settleErr != nil {
@@ -497,6 +517,9 @@ func (run *runtime) deliver(l *store.LockedAgent, a *core.Agent, e core.Envelope
 			a.Native.TurnID = witness.TurnID
 			a.Native.Transcript = witness.Transcript
 		}
+	}
+	if refused != "" {
+		reason = strings.TrimPrefix(reason+"; "+refused, "; ")
 	}
 	if err := run.finishInput(l, a, e, outcome, reason, witness); err != nil {
 		return outcome, withdrawn, err

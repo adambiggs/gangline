@@ -61,7 +61,7 @@ The receipt tells you who holds the input:
 | Receipt | Meaning |
 | --- | --- |
 | `queued` | Gangline holds the message until the recipient can take it. |
-| `accepted` | The native input queue owns it. Do not resend. |
+| `accepted` | The native input queue owns it: a message typed into a running turn, or one handed to a native queue command. Do not resend. |
 | `delivered` | The native submit hook confirmed the exact message. |
 | `unverified` | Input may have been typed, but its receipt could not be confirmed. Inspect the pane before acting. |
 | `failed` | The message was not delivered. |

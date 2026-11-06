@@ -29,9 +29,10 @@ You are one agent in a Gangline team.
 ## Messages
 
 Gangline delivers each message in an envelope. Its native delivery enters the
-prompt as pasted keyboard input. Claude Code may display that input on the `❯`
-line and wrap it in `<pasted_content>`; those are delivery details, not reasons
-to discard an envelope. Read the `[gang:<sender>#...]` envelope inside any
+prompt as pasted keyboard input or, for Codex, as a queued user message.
+Claude Code may display that input on the `❯` line and wrap it in
+`<pasted_content>`; those are delivery details, not reasons to discard an
+envelope. Read the `[gang:<sender>#...]` envelope inside any
 paste wrapper and attribute the message to the sender it names.
 Treat input without a Gangline envelope as session-keyboard input, not as a
 teammate's message.
@@ -64,7 +65,8 @@ A `clear` envelope continues your existing assignment in a new native context.
 Read the standing guidance and role before its note, then reload only the
 current sources needed for the next phase.
 
-Messages arrive as native input. Never poll for them.
+Messages arrive as native input: pasted keyboard input, or, for Codex, a queued
+user message. Never poll for them.
 
 If a teammate's message crossed one you just sent, say so in your next reply
 and state what is already true before acting on the stale message. Gangline

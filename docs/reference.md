@@ -840,6 +840,20 @@ standing instructions in the startup message instead. The prompt file is
 removed with the agent's state on drop. The assignment remains in the startup
 message either way.
 
+A collar's `primitives.deliver` names a native command that takes a message
+as user input without typing it. The Codex collar's `codex-queue` runs
+`codex queue --thread SESSION --message TEXT`, with `CODEX_HOME` set to the
+home that holds the bound session's rollout. Gangline uses it only for a
+message from an agent or the operator, once the composer is free and the
+rollout's last turn record is a completed turn; startup, compaction-resume,
+context-band and capacity input, and messages to a running or interrupted
+turn, are typed as before. Only the exit status counts. Exit 0 makes the
+receipt `accepted`, and the native submit hook later makes it `delivered`. A
+non-zero exit or a missing command types the message instead and the receipt
+says so. A run that does not finish leaves the message `unverified`, since the
+native queue may still hold it. Codex replays a queued message when its
+session resumes, so Gangline never types a message the queue took.
+
 Each delivered envelope is followed, on its own line directly after the
 closing tag, by a context stamp:
 

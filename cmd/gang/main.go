@@ -73,6 +73,9 @@ type command struct {
 	// processes is the process table peer-receive checks its ssh transport
 	// against; nil means this host's.
 	processes processTable
+	// nativeQueue runs a collar deliver primitive's call; nil runs it as a
+	// child process.
+	nativeQueue func(ctx context.Context, argv, env []string) (output []byte, err error)
 	// executable is the path of this gang binary; nil means os.Executable.
 	executable   func() (string, error)
 	presentation *operatorNames
