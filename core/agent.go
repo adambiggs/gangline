@@ -36,23 +36,25 @@ const (
 // and ConfiguredEffort retain explicit hitch options; empty values leave native
 // defaults unknown, including records from older builds.
 type Agent struct {
-	ID                    HitchID                `json:"id"`
-	Name                  AgentName              `json:"name"`
-	Collar                string                 `json:"collar"`
-	ConfiguredModel       string                 `json:"-"`
-	ConfiguredEffort      string                 `json:"-"`
-	Clear                 *ClearRequest          `json:"clear,omitempty"`
-	Rehitch               *Message               `json:"rehitch,omitempty"`
-	Role                  string                 `json:"role,omitempty"`
-	HitchedBy             HitchID                `json:"hitched_by,omitempty"`
-	Directory             string                 `json:"directory"`
-	Pane                  string                 `json:"pane,omitempty"`
-	Status                Status                 `json:"status"`
-	Activity              Activity               `json:"activity"`
-	CreatedAt             time.Time              `json:"created_at"`
-	ChangedAt             time.Time              `json:"changed_at"`
-	BootDeadline          time.Time              `json:"boot_deadline,omitzero"`
-	InterruptDeadline     time.Time              `json:"interrupt_deadline,omitzero"`
+	ID                HitchID       `json:"id"`
+	Name              AgentName     `json:"name"`
+	Collar            string        `json:"collar"`
+	ConfiguredModel   string        `json:"-"`
+	ConfiguredEffort  string        `json:"-"`
+	Clear             *ClearRequest `json:"clear,omitempty"`
+	Rehitch           *Message      `json:"rehitch,omitempty"`
+	Role              string        `json:"role,omitempty"`
+	HitchedBy         HitchID       `json:"hitched_by,omitempty"`
+	Directory         string        `json:"directory"`
+	Pane              string        `json:"pane,omitempty"`
+	Status            Status        `json:"status"`
+	Activity          Activity      `json:"activity"`
+	CreatedAt         time.Time     `json:"created_at"`
+	ChangedAt         time.Time     `json:"changed_at"`
+	BootDeadline      time.Time     `json:"boot_deadline,omitzero"`
+	InterruptDeadline time.Time     `json:"interrupt_deadline,omitzero"`
+	// InterruptAt is when gang sent the first interrupt still pending.
+	InterruptAt           time.Time              `json:"interrupt_at,omitzero"`
 	DropDeadline          time.Time              `json:"drop_deadline,omitzero"`
 	Evidence              string                 `json:"evidence,omitempty"`
 	StatusProbeAt         time.Time              `json:"status_probe_at,omitzero"`

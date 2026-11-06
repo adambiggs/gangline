@@ -70,19 +70,20 @@ func TurnClosed(invocation Invocation, transcript, turnID string) (TurnClose, bo
 			ended, closed = true, TurnClose{At: r.Timestamp, Interrupted: interrupted}
 		case r.Type == "user":
 			interrupted = r.userInterrupt()
+			seen = seen || r.PromptID == turnID
 			if r.PromptID == "" || r.Meta || r.CompactSummary || prompts[r.PromptID] {
 				continue
 			}
 			prompts[r.PromptID], started = true, r.Timestamp
-			seen = seen || r.PromptID == turnID
 			switch {
 			case r.PromptSource == "queued" && claims > 0:
 				claims--
 			case r.PromptSource == "queued":
 				queue.queued = max(queue.queued-1, 0)
 			case ended && (r.PromptSource == "" || r.PromptSource == "typed"):
-				// A prompt typed after an end shows the queue was empty.
-				queue.queued = 0
+				// A prompt typed after an end shows the queue was empty, so
+				// no dequeue before it is left for a later queued prompt.
+				queue.queued, claims = 0, 0
 			}
 			ended = false
 		}

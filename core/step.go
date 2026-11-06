@@ -91,8 +91,11 @@ func Step(agent Agent, event Event) (Agent, []Effect) {
 		}
 	case "interrupt_requested":
 		agent.Activity, agent.InterruptDeadline = Interrupting, event.Deadline
+		if agent.InterruptAt.IsZero() {
+			agent.InterruptAt = event.At
+		}
 	case "interrupt_completed":
-		agent.Activity, agent.InterruptDeadline = Idle, time.Time{}
+		agent.Activity, agent.InterruptDeadline, agent.InterruptAt = Idle, time.Time{}, time.Time{}
 		if event.At.After(agent.Native.FinishedAt) {
 			agent.Native.FinishedAt = event.At
 		}

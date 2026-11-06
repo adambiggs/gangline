@@ -216,6 +216,29 @@ func (f *stateFixture) hookAt(t *testing.T, a core.Agent, at time.Time, kind str
 	return f.tickAt(t, a, at, hookNotice{Kind: kind, TurnID: "p1", At: at})
 }
 
+// underLock runs observe on agent id under its lock at time at, as a tick
+// does, and returns the saved agent.
+func (f *stateFixture) underLock(t *testing.T, id core.HitchID, at time.Time, observe func(*store.LockedAgent, *core.Agent, harness.Collar) error) core.Agent {
+	t.Helper()
+	f.cmd.clock = func() time.Time { return at }
+	f.run.cmd = f.cmd
+	l, current, err := f.run.acquire(id, false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	c, err := loadCollar(current.Collar, f.run.settings)
+	if err == nil {
+		err = observe(l, &current, c)
+	}
+	if closeErr := f.run.unlock(l); closeErr != nil {
+		t.Fatal(closeErr)
+	}
+	if err != nil {
+		t.Fatal(err)
+	}
+	return f.agent(t, id)
+}
+
 func eventLog(t *testing.T, f *stateFixture) string {
 	t.Helper()
 	data, err := os.ReadFile(f.run.team.Log)
@@ -264,7 +287,7 @@ func TestTranscriptCompletesInterruptOnEscapedPermission(t *testing.T) {
 	}
 	// gang sends the interrupt at 4s.
 	a = f.setAgent(t, f.agent(t, a.ID), func(a *core.Agent) {
-		a.Activity, a.InterruptDeadline = core.Interrupting, start.Add(4*time.Second+operationTimeout)
+		a.Activity, a.InterruptAt, a.InterruptDeadline = core.Interrupting, start.Add(4*time.Second), start.Add(4*time.Second+operationTimeout)
 	})
 	c, err := loadCollar("claude", f.run.settings)
 	if err != nil {
@@ -352,28 +375,13 @@ func TestTranscriptEndBeforeInterruptLeavesItPending(t *testing.T) {
 		t.Fatalf("ended turn read %s: %s", got.Activity, got.Evidence)
 	}
 	f.setAgent(t, f.agent(t, a.ID), func(a *core.Agent) {
-		a.Activity, a.InterruptDeadline = core.Interrupting, start.Add(10*time.Second+operationTimeout)
+		a.Activity, a.InterruptAt, a.InterruptDeadline = core.Interrupting, start.Add(10*time.Second), start.Add(10*time.Second+operationTimeout)
 	})
 	observe := func(at time.Time) core.Agent {
 		t.Helper()
-		f.cmd.clock = func() time.Time { return at }
-		f.run.cmd = f.cmd
-		l, current, err := f.run.acquire(a.ID, false)
-		if err != nil {
-			t.Fatal(err)
-		}
-		c, err := loadCollar(current.Collar, f.run.settings)
-		if err != nil {
-			t.Fatal(err)
-		}
-		err = f.run.observeTranscriptTurn(l, &current, c)
-		if closeErr := f.run.unlock(l); closeErr != nil {
-			t.Fatal(closeErr)
-		}
-		if err != nil {
-			t.Fatal(err)
-		}
-		return f.agent(t, a.ID)
+		return f.underLock(t, a.ID, at, func(l *store.LockedAgent, a *core.Agent, c harness.Collar) error {
+			return f.run.observeTranscriptTurn(l, a, c)
+		})
 	}
 	if got := observe(start.Add(11 * time.Second)); got.InterruptDeadline.IsZero() {
 		t.Fatal("an end before the interrupt completed it")
@@ -393,18 +401,10 @@ func TestTurnFailureReadsAfterTranscriptClose(t *testing.T) {
 		a.Native.HookAt, a.Native.HookKind = start.Add(time.Second), "activity"
 		a.Native.FinishedAt, a.Native.TurnFailure = start.Add(2*time.Second), "server_error"
 	})
-	l, current, err := f.run.acquire(a.ID, false)
-	if err != nil {
-		t.Fatal(err)
-	}
-	err = f.run.observeHookStatus(l, &current)
-	if closeErr := f.run.unlock(l); closeErr != nil {
-		t.Fatal(closeErr)
-	}
-	if err != nil {
-		t.Fatal(err)
-	}
-	if got := f.agent(t, a.ID); got.Activity == core.Idle {
+	got := f.underLock(t, a.ID, start.Add(3*time.Second), func(l *store.LockedAgent, a *core.Agent, _ harness.Collar) error {
+		return f.run.observeHookStatus(l, a)
+	})
+	if got.Activity == core.Idle {
 		t.Fatalf("turn failure hidden: %s (%s)", got.Activity, got.Evidence)
 	}
 }

@@ -204,13 +204,17 @@ func appendText(path, text string) error {
 	return file.Close()
 }
 
-// A subagent's turn end and prompt do not end the turn the queue waits behind.
-func TestQueuedTurnPendingSkipsSidechainRecords(t *testing.T) {
+// A subagent's turn end and prompt do not end the turn the queue waits
+// behind, and a record Claude Code writes itself after the end runs no
+// queued prompt.
+func TestQueuedTurnPendingSkipsSidechainAndMetaRecords(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "transcript.jsonl")
 	lines := `{"type":"user","promptId":"p1","timestamp":"2026-11-06T15:00:00Z","message":{"role":"user","content":"go"}}
 {"type":"queue-operation","operation":"enqueue","timestamp":"2026-11-06T15:00:01Z","content":"next"}
 {"type":"system","subtype":"turn_duration","isSidechain":true,"timestamp":"2026-11-06T15:00:02Z"}
 {"type":"user","promptId":"s1","isSidechain":true,"timestamp":"2026-11-06T15:00:03Z","message":{"role":"user","content":"subtask"}}
+{"type":"system","subtype":"turn_duration","timestamp":"2026-11-06T15:00:04Z"}
+{"type":"user","promptId":"m1","isMeta":true,"timestamp":"2026-11-06T15:00:05Z","message":{"role":"user","content":"caveat"}}
 `
 	if err := os.WriteFile(path, []byte(lines), 0o600); err != nil {
 		t.Fatal(err)

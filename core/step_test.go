@@ -179,3 +179,18 @@ func TestPeerSenderEventClasses(t *testing.T) {
 		}
 	}
 }
+
+// A repeated interrupt moves its deadline but keeps when the first was sent.
+func TestRepeatedInterruptKeepsFirstRequestTime(t *testing.T) {
+	now := time.Date(2026, 11, 6, 12, 0, 0, 0, time.UTC)
+	a := Agent{ID: "a", Status: Active, Activity: Busy}
+	a, _ = Step(a, Event{Type: "interrupt_requested", At: now, HitchID: "a", Deadline: now.Add(30 * time.Second)})
+	a, _ = Step(a, Event{Type: "interrupt_requested", At: now.Add(time.Second), HitchID: "a", Deadline: now.Add(31 * time.Second)})
+	if !a.InterruptAt.Equal(now) || !a.InterruptDeadline.Equal(now.Add(31*time.Second)) {
+		t.Fatalf("interrupt at %v deadline %v", a.InterruptAt, a.InterruptDeadline)
+	}
+	a, _ = Step(a, Event{Type: "interrupt_completed", At: now.Add(2 * time.Second), HitchID: "a"})
+	if !a.InterruptAt.IsZero() || !a.InterruptDeadline.IsZero() {
+		t.Fatalf("completed interrupt kept at %v deadline %v", a.InterruptAt, a.InterruptDeadline)
+	}
+}
