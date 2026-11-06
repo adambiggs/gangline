@@ -17,7 +17,6 @@ import (
 
 type settings struct {
 	CapacityTimeout        time.Duration
-	BackgroundIdleNotice   time.Duration
 	TeamIdleMinDuration    time.Duration
 	Session                string
 	StateRoot              string
@@ -96,11 +95,9 @@ func (cmd command) settings() (settings, error) {
 		}
 	}
 	capacityTimeout := "5m"
-	backgroundIdleNotice := "30m"
 	teamIdleMinDuration := "30m"
 	values := map[string]*string{
 		"GANG_CAPACITY_TIMEOUT":         &capacityTimeout,
-		"GANG_BACKGROUND_IDLE_NOTICE":   &backgroundIdleNotice,
 		"GANG_TEAM_IDLE_MIN_DURATION":   &teamIdleMinDuration,
 		"GANG_SESSION":                  &result.Session,
 		"GANG_COLLAR":                   &result.Collar,
@@ -144,10 +141,6 @@ func (cmd command) settings() (settings, error) {
 	if err != nil || result.CapacityTimeout <= 0 {
 		return settings{}, fmt.Errorf("GANG_CAPACITY_TIMEOUT must be a positive duration")
 	}
-	result.BackgroundIdleNotice, err = time.ParseDuration(backgroundIdleNotice)
-	if err != nil || result.BackgroundIdleNotice <= 0 {
-		return settings{}, fmt.Errorf("GANG_BACKGROUND_IDLE_NOTICE must be a positive duration")
-	}
 	result.TeamIdleMinDuration, err = time.ParseDuration(teamIdleMinDuration)
 	if err != nil || result.TeamIdleMinDuration <= 0 {
 		return settings{}, fmt.Errorf("GANG_TEAM_IDLE_MIN_DURATION must be a positive duration")
@@ -186,7 +179,6 @@ func (cmd command) settings() (settings, error) {
 
 var configurationKeys = map[string]bool{
 	"GANG_CAPACITY_TIMEOUT":         true,
-	"GANG_BACKGROUND_IDLE_NOTICE":   true,
 	"GANG_TEAM_IDLE_MIN_DURATION":   true,
 	"GANG_COLLAR":                   true,
 	"GANG_SESSION":                  true,

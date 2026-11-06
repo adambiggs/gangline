@@ -42,7 +42,7 @@ func stoppedRehitchFixture(t *testing.T) (*stateFixture, core.Agent) {
 	a.Compaction = &core.Compaction{ID: "settled-compaction", Status: "completed", ResumeAdmitted: true, Continuation: true}
 	a.Clear = &core.ClearRequest{Status: "completed", PreviousSession: "earlier-session"}
 	a.LastAccepted, a.LastDelivered, a.LastFailed = "accepted", "delivered", "failed"
-	a.BackgroundNoticed, a.CurfewNoticeDeadline = f.cmd.now(), f.cmd.now().Add(time.Hour)
+	a.CurfewNoticeDeadline = f.cmd.now().Add(time.Hour)
 	saveStoppedClaim(t, f, a)
 	return f, a
 }
@@ -64,7 +64,7 @@ func TestStoppedRehitchPreservesDurableStateAndMail(t *testing.T) {
 	}
 	mailPath, _ := p.EnvelopePath("new", e.ID)
 	before, _ := os.ReadFile(mailPath)
-	for _, path := range []string{p.Witness, p.CompactionWitness, p.Background, p.Permission} {
+	for _, path := range []string{p.Witness, p.CompactionWitness, p.Permission} {
 		if err := os.WriteFile(path, []byte("{}"), 0600); err != nil {
 			t.Fatal(err)
 		}
@@ -83,7 +83,7 @@ func TestStoppedRehitchPreservesDurableStateAndMail(t *testing.T) {
 	want.Native.HookAt = f.cmd.now()
 	want.NativeTitle, want.ContextBands = a.NativeTitle, a.ContextBands
 	want.Compaction, want.Clear, want.Capacity = a.Compaction, a.Clear, a.Capacity
-	want.BackgroundNoticed, want.CurfewNoticeDeadline = a.BackgroundNoticed, a.CurfewNoticeDeadline
+	want.CurfewNoticeDeadline = a.CurfewNoticeDeadline
 	if !reflect.DeepEqual(next, want) {
 		t.Fatalf("prepared state differs:\ngot  %+v\nwant %+v", next, want)
 	}
@@ -100,7 +100,7 @@ func TestStoppedRehitchPreservesDurableStateAndMail(t *testing.T) {
 	if err != nil || id != a.ID {
 		t.Fatalf("name now points to %s: %v", id, err)
 	}
-	for _, path := range []string{p.Witness, p.CompactionWitness, p.Background, p.Permission} {
+	for _, path := range []string{p.Witness, p.CompactionWitness, p.Permission} {
 		if _, err := os.Stat(path); !os.IsNotExist(err) {
 			t.Fatalf("old process witness remains: %s: %v", path, err)
 		}

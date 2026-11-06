@@ -67,23 +67,19 @@ func TestClearProofAndDisplayRejectLateOldHooks(t *testing.T) {
 	if err := p.WriteSessionStart(SessionStart{At: now.Add(time.Hour), SessionID: "old", Transcript: "old.jsonl", Source: "startup", Registration: "launch"}); err == nil {
 		t.Fatal("old start replaced clear proof")
 	}
-	if err := p.WriteDisplayHook(StatusHook{Kind: "permission-requested", SessionID: "new", At: now}, nil, "old"); err != nil {
+	if err := p.WriteDisplayHook(StatusHook{Kind: "permission-requested", SessionID: "new", At: now}, "old"); err != nil {
 		t.Fatal(err)
 	}
-	count := 3
-	if err := p.WriteDisplayHook(StatusHook{Kind: "turn-finished", SessionID: "old", At: now.Add(time.Hour)}, &count, "old"); err != nil {
+	if err := p.WriteDisplayHook(StatusHook{Kind: "turn-finished", SessionID: "old", At: now.Add(time.Hour)}, "old"); err != nil {
 		t.Fatal(err)
 	}
 	if w, ok, err := p.ReadPermissionWitness(); err != nil || !ok || w.SessionID != "new" {
 		t.Fatalf("late old hook removed permission: %+v %v %v", w, ok, err)
 	}
-	if _, ok, err := p.ReadBackground(); err != nil || ok {
-		t.Fatalf("old background retained: %v %v", ok, err)
-	}
-	if err := p.WriteDisplayHook(StatusHook{Kind: "turn-started", SessionID: "new", At: now}, nil, "old"); err != nil {
+	if err := p.WriteDisplayHook(StatusHook{Kind: "turn-started", SessionID: "new", At: now}, "old"); err != nil {
 		t.Fatal(err)
 	}
-	if err := p.WriteDisplayHook(StatusHook{Kind: "permission-requested", SessionID: "old", At: now}, nil, "old"); err != nil {
+	if err := p.WriteDisplayHook(StatusHook{Kind: "permission-requested", SessionID: "old", At: now}, "old"); err != nil {
 		t.Fatal(err)
 	}
 	if _, ok, err := p.ReadPermissionWitness(); err != nil || ok {

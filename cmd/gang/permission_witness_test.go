@@ -82,7 +82,7 @@ func TestPermissionRequestHoldsBlockedUntilALaterHook(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			if err := store.ReadLog(strings.NewReader(string(data)), func(e core.Event) error {
+			if _, err := store.ReadLog(strings.NewReader(string(data)), func(e core.Event) error {
 				if e.Type == "activity_observed" {
 					basis = e.Basis
 				}

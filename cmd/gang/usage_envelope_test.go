@@ -57,7 +57,7 @@ func TestRetainedUsageEnvelopeRecordsKeyboardSuffix(t *testing.T) {
 			}
 			defer log.Close()
 			observations := 0
-			if err := store.ReadLog(log, func(event core.Event) error {
+			if _, err := store.ReadLog(log, func(event core.Event) error {
 				if event.Type == "native_hook" && event.Status == "usage-submission" && event.ID == string(e.ID) && event.Reason == `session keyboard input outside gang envelope: "s"` {
 					observations++
 				}

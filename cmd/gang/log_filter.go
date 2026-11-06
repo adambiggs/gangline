@@ -94,6 +94,7 @@ func (filter logFilter) apply(e core.Event) (core.Event, bool) {
 // appended after a torn record on that line prints, and the export continues:
 // the log keeps the damage, so failing on it would fail every later export.
 func writeFilteredLog(out, warn io.Writer, in io.Reader, filter logFilter, present func(string) string) error {
+	skipped := 0
 	names := make(map[core.HitchID]core.AgentName)
 	// Scan in order to preserve recorded name resolution and torn-line recovery.
 	// Keep only the requested tail, allocating as records arrive rather than
@@ -113,6 +114,10 @@ func writeFilteredLog(out, warn io.Writer, in io.Reader, filter logFilter, prese
 			}
 		}
 		e, err := core.DecodeEvent(data)
+		if errors.Is(err, core.ErrUnknownEventType) {
+			skipped++
+			return nil
+		}
 		if err != nil {
 			if _, err := fmt.Fprintf(warn, "warning: audit line %d: %v\n", line, err); err != nil {
 				return err
@@ -161,6 +166,10 @@ func writeFilteredLog(out, warn io.Writer, in io.Reader, filter logFilter, prese
 		return err
 	}
 	scanErr := store.ScanLog(in, write)
+	if skipped > 0 {
+		_, err := fmt.Fprintf(warn, "Skipped %d records with unknown event kinds.\n", skipped)
+		scanErr = errors.Join(scanErr, err)
+	}
 	for i := range tail {
 		if _, err := fmt.Fprintln(out, string(tail[(next+i)%len(tail)])); err != nil {
 			return errors.Join(scanErr, err)

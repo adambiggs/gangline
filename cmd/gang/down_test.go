@@ -358,7 +358,7 @@ func TestDownFailureRetainsItsDiagnosticInTheAudit(t *testing.T) {
 		t.Fatal(readErr)
 	}
 	var failures []core.Event
-	if readErr := store.ReadLog(bytes.NewReader(log), func(event core.Event) error {
+	if _, readErr := store.ReadLog(bytes.NewReader(log), func(event core.Event) error {
 		if event.Type == "down_failed" {
 			failures = append(failures, event)
 		}

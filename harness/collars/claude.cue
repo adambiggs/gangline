@@ -19,7 +19,7 @@ collar: {
 			userpromptsubmit: {event: "turn-started", payload: {session_id: "session_id", transcript_path: "transcript_path", prompt: "prompt", turn_id: "prompt_id"}}
 			posttooluse: {event: "activity", payload: {session_id: "session_id", transcript_path: "transcript_path"}}
 			stopfailure: {event: "turn-failed", payload: {session_id: "session_id", transcript_path: "transcript_path", turn_id: "prompt_id", error: "error", error_details: "error_details"}}
- stop: {event: "turn-finished", payload: {session_id: "session_id", transcript_path: "transcript_path", turn_id: "prompt_id"}, counts: {background_tasks: "background_tasks"}}
+ stop: {event: "turn-finished", payload: {session_id: "session_id", transcript_path: "transcript_path", turn_id: "prompt_id"}}
 			permissionrequest: {event: "permission-requested", payload: {session_id: "session_id"}}
 			precompact: {event: "compaction-started", payload: {session_id: "session_id", trigger: "trigger", transcript_path: "transcript_path"}}
 			postcompact: {event: "compaction-finished", payload: {session_id: "session_id", trigger: "trigger", transcript_path: "transcript_path"}}

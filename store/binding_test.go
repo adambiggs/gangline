@@ -22,7 +22,7 @@ func bindings(t *testing.T, p TeamPaths) []core.Event {
 	}
 	defer f.Close()
 	var found []core.Event
-	if err := ReadLog(f, func(e core.Event) error {
+	if _, err := ReadLog(f, func(e core.Event) error {
 		if e.Type == "session_bound" {
 			found = append(found, e)
 		}

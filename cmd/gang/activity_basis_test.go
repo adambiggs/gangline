@@ -89,7 +89,7 @@ func TestActivityObservationRecordsItsBasis(t *testing.T) {
 				t.Fatalf("log quotes screen line %d", line)
 			}
 			var observed []core.Event
-			if err := store.ReadLog(strings.NewReader(string(data)), func(e core.Event) error {
+			if _, err := store.ReadLog(strings.NewReader(string(data)), func(e core.Event) error {
 				if e.Type == "activity_observed" {
 					observed = append(observed, e)
 				}
@@ -130,7 +130,7 @@ func TestBlockedDeliveryRecordsItsBasis(t *testing.T) {
 	}
 	defer file.Close()
 	var observed []core.Event
-	if err := store.ReadLog(file, func(e core.Event) error {
+	if _, err := store.ReadLog(file, func(e core.Event) error {
 		if e.Type == "activity_observed" {
 			observed = append(observed, e)
 		}

@@ -12,16 +12,13 @@ import (
 	"unicode/utf8"
 )
 
-// HookEvent is a decoded native callback. Counts holds the length of each
-// array the collar names; a target is absent when its array is. Absent holds
-// each payload target the collar maps that the callback left missing, null or
-// empty, which a target the collar never maps cannot be.
+// HookEvent is a decoded native callback. Absent holds mapped payload targets
+// that the callback left missing, null or empty.
 type HookEvent struct {
 	NativeEvent string
 	Kind        string
 	Payload     map[string]string
 	Absent      map[string]bool
-	Counts      map[string]int
 }
 
 type TurnBoundary string
@@ -101,18 +98,7 @@ func DecodeHook(collar Collar, data []byte) (HookEvent, error) {
 			absent[target] = true
 		}
 	}
-	var counts map[string]int
-	for target, source := range wiring.Counts {
-		if value, ok := nestedValue(body, strings.Split(source, ".")); ok {
-			if list, ok := value.([]any); ok {
-				if counts == nil {
-					counts = make(map[string]int, len(wiring.Counts))
-				}
-				counts[target] = len(list)
-			}
-		}
-	}
-	return HookEvent{NativeEvent: native, Kind: wiring.Event, Payload: payload, Absent: absent, Counts: counts}, nil
+	return HookEvent{NativeEvent: native, Kind: wiring.Event, Payload: payload, Absent: absent}, nil
 }
 
 // SubmittedPromptMatches compares the text Gangline sent with the prompt a

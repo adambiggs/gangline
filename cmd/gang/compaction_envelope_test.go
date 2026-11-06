@@ -101,7 +101,7 @@ func TestCompactionResumeMatchesEnvelopeWithKeyboardSuffix(t *testing.T) {
 				}
 				defer log.Close()
 				observed, delivered := false, false
-				if err := store.ReadLog(log, func(event core.Event) error {
+				if _, err := store.ReadLog(log, func(event core.Event) error {
 					if event.Reason == `session keyboard input outside gang envelope: "s"` {
 						observed = observed || event.Status == "resume-admitted"
 						delivered = delivered || event.Type == "delivery_succeeded"

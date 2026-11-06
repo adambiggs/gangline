@@ -154,7 +154,7 @@ func TestRehitchRetainsInboxAndNativeCursor(t *testing.T) {
 	if err := p.Publish(e); err != nil {
 		t.Fatal(err)
 	}
-	for _, file := range []string{p.Witness, p.CompactionWitness, p.Background, p.Permission} {
+	for _, file := range []string{p.Witness, p.CompactionWitness, p.Permission} {
 		if err := os.WriteFile(file, []byte("{}"), 0600); err != nil {
 			t.Fatal(err)
 		}
@@ -179,7 +179,7 @@ func TestRehitchRetainsInboxAndNativeCursor(t *testing.T) {
 	if err != nil || len(pending) != 1 || pending[0].ID != e.ID {
 		t.Fatalf("pending inbox = %+v: %v", pending, err)
 	}
-	for _, file := range []string{p.Witness, p.CompactionWitness, p.Background, p.Permission} {
+	for _, file := range []string{p.Witness, p.CompactionWitness, p.Permission} {
 		if _, err := os.Stat(file); !errors.Is(err, os.ErrNotExist) {
 			t.Fatalf("old witness %s retained: %v", filepath.Base(file), err)
 		}

@@ -19,7 +19,7 @@ func outsideAuditEvents(t *testing.T, f *stateFixture, kind string) []core.Event
 		t.Fatal(err)
 	}
 	var events []core.Event
-	if err := store.ReadLog(strings.NewReader(string(data)), func(e core.Event) error {
+	if _, err := store.ReadLog(strings.NewReader(string(data)), func(e core.Event) error {
 		if e.Type == kind {
 			events = append(events, e)
 		}

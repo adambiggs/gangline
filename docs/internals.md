@@ -21,11 +21,9 @@ Collars live in `harness/collars/` or `GANG_COLLARS`.
 
 Team files live under `STATE_ROOT/teams/TEAM/`. `team.json` holds the curfew;
 `log.jsonl` is the append-only audit log. Name claims in `names/` point to
-immutable hitch IDs. Each `agents/ID/` contains `agent.json`, a `lock`,
-a submit `witness`, and `inbox/{tmp,new,cur,failed}/`. A turn-end hook
-leaves a `background` count and receipt time when it reports background tasks,
-and the next turn boundary removes it. Delayed hooks can replace that report;
-its count does not establish current task state. A permission-request hook leaves a
+immutable hitch IDs. Agent state accepts unknown fields when read so registrations
+survive upgrades; saves write the fields understood by the running version. Each `agents/ID/` contains `agent.json`, a `lock`,
+a submit `witness`, and `inbox/{tmp,new,cur,failed}/`. A permission-request hook leaves a
 `permission` witness that any later hook or an idle screen removes.
 An unverified native session change fails the hitch and saves the rejected
 normalized witness and registered session in `native-session-conflict`.
@@ -137,7 +135,7 @@ then takes the membership lock and nonblocking agent locks to recheck the
 snapshot. It reads usage state before taking the short idle-state lock; this
 matches wake withdrawal's lock order. No pane capture or native delivery runs
 under the snapshot locks. Freshness uses existing hook/probe observations;
-the notification text states their quiet-gap and native-background limits.
+the notification names the workers and the start of the observed idle window.
 
 Under `idle.lock`, `idle-window.json` retains the first and latest qualifying
 observation, configured minimum, lead and worker identities/work revisions,

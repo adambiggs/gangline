@@ -86,7 +86,7 @@ func TestCredentialCommandsRetainCreationAndLifecycle(t *testing.T) {
 				t.Fatal(err)
 			}
 			var types, commands []string
-			if err := store.ReadLog(strings.NewReader(string(data)), func(e core.Event) error {
+			if _, err := store.ReadLog(strings.NewReader(string(data)), func(e core.Event) error {
 				if strings.HasPrefix(e.Type, "outside_") || strings.HasPrefix(e.Type, "sender_") {
 					if e.Actor == nil || e.Actor.Kind != caller || e.Command == "" || !e.At.Equal(f.cmd.now()) {
 						t.Fatalf("audit lacks command provenance: %+v", e)

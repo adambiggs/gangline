@@ -49,7 +49,7 @@ func (run *runtime) notifyStartupFailure(l *store.LockedAgent, a *core.Agent, c 
 		return err
 	}
 	id := core.EnvelopeID(fmt.Sprintf("startup-turn-failed-%s-%s", a.ID, a.Native.FailedTurn))
-	published, err := run.noticeHitcher(*a, id, fmt.Sprintf("%s startup failure observed at %s: %s.", a.Name, run.cmd.now().UTC().Format(time.RFC3339), a.Native.TurnFailure))
+	published, err := run.noticeHitcher(*a, id, fmt.Sprintf("%s startup failed at %s: %s.", a.Name, run.cmd.now().UTC().Format(time.RFC3339), a.Native.TurnFailure))
 	if err != nil || !published {
 		return err
 	}

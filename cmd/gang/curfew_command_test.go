@@ -141,7 +141,7 @@ func TestCurfewDeadlineNotifiesWithoutDropping(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer log.Close()
-	if err := store.ReadLog(log, func(e core.Event) error {
+	if _, err := store.ReadLog(log, func(e core.Event) error {
 		if e.Type == "drop_started" || e.Type == "delivery_failed" {
 			t.Fatalf("curfew performed teardown: %+v", e)
 		}

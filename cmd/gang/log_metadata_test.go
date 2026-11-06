@@ -143,3 +143,11 @@ func TestLogMetadataOptions(t *testing.T) {
 		t.Fatal("metadata silently accepted on a route that cannot expose it")
 	}
 }
+
+func TestLogMetadataSkipsAndCountsUnknownKinds(t *testing.T) {
+	data := metadataUsage + "\n" + `{"type":"future_kind","private_payload":"PRIVATE"}` + "\n" + metadataUsage + "\n"
+	p := metadataPage(t, data, 0, int64(len(data)))
+	if p.UnknownEvents != 1 || len(p.Events) != 2 || len(p.Gaps) != 1 || p.Gaps[0].Kind != "unknown_event_kind" || p.Next != int64(len(data)) {
+		t.Fatalf("wrong page: %+v", p)
+	}
+}

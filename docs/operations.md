@@ -391,3 +391,6 @@ resolve any pending `team-idle` input and retain a copy of the stopped team's
 state. Do not downgrade with an uncertain or queued notice. Work performed
 while downgraded may not produce a notice after upgrade. Existing agent,
 message and usage records retain their previous formats.
+
+Background-idle reporting has been removed; automatic notices state the observed
+condition and timestamp.

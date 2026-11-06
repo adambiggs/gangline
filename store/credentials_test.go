@@ -172,7 +172,7 @@ func TestCredentialLifecycleAuditRetainsCreation(t *testing.T) {
 		}
 	}
 	var types []string
-	if err := ReadLog(strings.NewReader(string(data)), func(e core.Event) error {
+	if _, err := ReadLog(strings.NewReader(string(data)), func(e core.Event) error {
 		if e.HitchID != registration.ID || e.Name != registration.Name || e.Actor == nil || *e.Actor != registration.Created.Actor || e.Command != registration.Created.Command || e.At != registration.Created.At {
 			t.Fatalf("event lacks provenance: %+v", e)
 		}
@@ -209,7 +209,7 @@ func TestOutsideRemovalAuditsRevocationDespiteCleanupFailure(t *testing.T) {
 		t.Fatal(err)
 	}
 	removed := 0
-	if err := ReadLog(strings.NewReader(string(data)), func(e core.Event) error {
+	if _, err := ReadLog(strings.NewReader(string(data)), func(e core.Event) error {
 		if e.Type == "outside_removed" && e.HitchID == registration.ID {
 			removed++
 		}

@@ -3,6 +3,7 @@ package main
 import (
 	"bytes"
 	"crypto/sha256"
+	"errors"
 	"fmt"
 	"io"
 	"os"
@@ -50,17 +51,18 @@ type logMetadataGap struct {
 }
 
 type logMetadataPage struct {
-	Schema      string             `json:"schema"`
-	ReadAt      time.Time          `json:"read_at"`
-	Size        int64              `json:"file_size_at_open"`
-	Offset      int64              `json:"offset"`
-	ReadEnd     int64              `json:"read_end"`
-	Next        int64              `json:"next_offset"`
-	SHA256      string             `json:"read_bytes_sha256"`
-	More        bool               `json:"more"`
-	Events      []logMetadataEvent `json:"events"`
-	Gaps        []logMetadataGap   `json:"gaps"`
-	Limitations []string           `json:"limitations"`
+	UnknownEvents int                `json:"unknown_event_count"`
+	Schema        string             `json:"schema"`
+	ReadAt        time.Time          `json:"read_at"`
+	Size          int64              `json:"file_size_at_open"`
+	Offset        int64              `json:"offset"`
+	ReadEnd       int64              `json:"read_end"`
+	Next          int64              `json:"next_offset"`
+	SHA256        string             `json:"read_bytes_sha256"`
+	More          bool               `json:"more"`
+	Events        []logMetadataEvent `json:"events"`
+	Gaps          []logMetadataGap   `json:"gaps"`
+	Limitations   []string           `json:"limitations"`
 }
 
 func (cmd command) logMetadata(path string, filter logFilter) error {
@@ -151,6 +153,11 @@ func readLogMetadata(in io.ReaderAt, size int64, filter logFilter, now time.Time
 		page.Next = filter.Offset + int64(end)
 		e, err := core.DecodeEvent(data[cursor : end-1])
 		cursor = end
+		if errors.Is(err, core.ErrUnknownEventType) {
+			page.UnknownEvents++
+			page.Gaps = append(page.Gaps, logMetadataGap{startOffset, "unknown_event_kind"})
+			continue
+		}
 		if err != nil {
 			// Never relay decoder errors: they can contain rejected source text.
 			page.Gaps = append(page.Gaps, logMetadataGap{startOffset, "invalid_audit_record"})

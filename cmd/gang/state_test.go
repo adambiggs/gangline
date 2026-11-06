@@ -288,7 +288,7 @@ func TestHooksCompleteWithAllAgentLocksHeld(t *testing.T) {
 			}
 			defer file.Close()
 			seen := 0
-			if err := store.ReadLog(file, func(e core.Event) error {
+			if _, err := store.ReadLog(file, func(e core.Event) error {
 				if e.Type != "native_hook" {
 					t.Fatalf("unexpected event %+v", e)
 				}

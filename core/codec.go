@@ -4,6 +4,7 @@ import (
 	"bytes"
 	_ "embed"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"sync"
@@ -17,7 +18,7 @@ var eventSchema string
 
 var schema = sync.OnceValues(func() (cue.Value, error) {
 	v := cuecontext.New().CompileString(eventSchema)
-	return v.LookupPath(cue.ParsePath("#Event")), v.Err()
+	return v, v.Err()
 })
 var schemaMu sync.Mutex
 
@@ -29,7 +30,7 @@ func ValidateEventJSON(data []byte) error {
 		return err
 	}
 	value := v.Context().CompileBytes(data)
-	return v.Unify(value).Validate(cue.Concrete(true))
+	return v.LookupPath(cue.ParsePath("#Event")).Unify(value).Validate(cue.Concrete(true))
 }
 
 func EncodeEvent(event Event) ([]byte, error) {
@@ -43,8 +44,28 @@ func EncodeEvent(event Event) ([]byte, error) {
 	return data, nil
 }
 
+// ErrUnknownEventType marks a well-formed JSON record whose event kind this
+// version does not understand. Log readers skip and count these records.
+var ErrUnknownEventType = errors.New("unknown event type")
+
 func DecodeEvent(data []byte) (Event, error) {
 	var event Event
+	var header struct {
+		Type string `json:"type"`
+	}
+	if err := json.Unmarshal(data, &header); err != nil {
+		return event, err
+	}
+	schemaMu.Lock()
+	v, err := schema()
+	known := err == nil && v.LookupPath(cue.MakePath(cue.Def("Types"), cue.Str(header.Type))).Exists()
+	schemaMu.Unlock()
+	if err != nil {
+		return event, err
+	}
+	if header.Type != "" && !known {
+		return event, fmt.Errorf("%w: %s", ErrUnknownEventType, header.Type)
+	}
 	decoder := json.NewDecoder(bytes.NewReader(data))
 	decoder.DisallowUnknownFields()
 	if err := decoder.Decode(&event); err != nil {

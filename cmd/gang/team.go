@@ -458,7 +458,7 @@ func (cmd command) roster(args []string) error {
 		if watchdogLimited {
 			marker += " [watchdog-unavailable]"
 		}
-		line := fmt.Sprintf("%-16s %-10s %-18s %s%s", a.Name, a.Status, activityLabel(row.Activity, row.BackgroundTasks, row.BackgroundSince, run.cmd.now()), a.Collar, marker)
+		line := fmt.Sprintf("%-16s %-10s %-18s %s%s", a.Name, a.Status, row.Activity, a.Collar, marker)
 		lines = append(lines, line+cmd.operatorText(rosterReason(a, rosterReasonLimit(cmd.stdout, line))))
 	}
 	outside, err := run.team.ListOutside()
@@ -568,13 +568,6 @@ func (run *runtime) agentRow(a core.Agent) (agentJSON, error) {
 	if a.Compaction != nil {
 		row.Compaction = &compactionJSON{ID: a.Compaction.ID, Status: a.Compaction.Status, Reason: run.cmd.operatorText(a.Compaction.Reason)}
 	}
-	background, err := run.background(a)
-	if err != nil {
-		return agentJSON{}, err
-	}
-	if background.Tasks > 0 {
-		row.BackgroundTasks, row.BackgroundSince = background.Tasks, &background.At
-	}
 	return row, nil
 }
 
@@ -585,40 +578,6 @@ func optionalModelValue(value string) *string {
 	return &value
 }
 
-// background returns an idle agent's stored background report and its receipt
-// time, without certifying current task state; a busy agent shows none.
-func (run *runtime) background(a core.Agent) (store.Background, error) {
-	if a.Activity != core.Idle {
-		return store.Background{}, nil
-	}
-	p, err := run.team.Agent(a.ID)
-	if err != nil {
-		return store.Background{}, err
-	}
-	background, _, err := p.ReadBackground()
-	return background, err
-}
-
-// activityLabel adds the background report count and age to an activity, as in
-// "idle (2 bg 1h05m)". The age is not the duration of verified idle or pending work.
-func activityLabel(activity core.Activity, tasks int, since *time.Time, now time.Time) string {
-	if tasks > 0 && since != nil {
-		return fmt.Sprintf("%s (%d bg %s)", activity, tasks, idleDuration(now.Sub(*since)))
-	}
-	return string(activity)
-}
-
-// idleDuration is a duration in whole minutes, as in "1h05m" or "12m".
-func idleDuration(d time.Duration) string {
-	minutes := int(d / time.Minute)
-	if minutes < 1 {
-		return "<1m"
-	}
-	if minutes < 60 {
-		return fmt.Sprintf("%dm", minutes)
-	}
-	return fmt.Sprintf("%dh%02dm", minutes/60, minutes%60)
-}
 func (cmd command) status(args []string) error {
 	why, machine := false, false
 	flags := boundFlagSet("status", map[string]any{"why": &why, "json": &machine})
@@ -653,12 +612,7 @@ func (cmd command) status(args []string) error {
 		}
 		return writeJSON(cmd.stdout, row)
 	}
-	background, err := run.background(a)
-	if err != nil {
-		return err
-	}
-	now := cmd.now()
-	if _, err := fmt.Fprintf(cmd.stdout, "%s\t%s\t%s\n", a.Name, a.Status, activityLabel(a.Activity, background.Tasks, &background.At, now)); err != nil {
+	if _, err := fmt.Fprintf(cmd.stdout, "%s\t%s\t%s\n", a.Name, a.Status, a.Activity); err != nil {
 		return err
 	}
 	if !why {
@@ -670,11 +624,6 @@ func (cmd command) status(args []string) error {
 	}
 	if why && a.Evidence != "" {
 		if _, err := fmt.Fprintln(cmd.stdout, cmd.operatorText(a.Evidence)); err != nil {
-			return err
-		}
-	}
-	if why && background.Tasks > 0 {
-		if _, err := fmt.Fprintf(cmd.stdout, "background report received at %s (%s ago): %s; current task state is unknown\n", background.At.UTC().Format(time.RFC3339), idleDuration(now.Sub(background.At)), backgroundTaskCount(background.Tasks)); err != nil {
 			return err
 		}
 	}

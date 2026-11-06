@@ -80,3 +80,12 @@ func (w failWriter) Write(p []byte) (int, error) {
 	w.t.Errorf("unexpected warning %q", p)
 	return len(p), nil
 }
+
+func TestFilteredLogSkipsAndCountsUnknownKinds(t *testing.T) {
+	unknown := `{"type":"future_kind","private_payload":"PRIVATE"}` + "\n"
+	var out, warn bytes.Buffer
+	err := writeFilteredLog(&out, &warn, strings.NewReader(filterTestEvent+"\n"+unknown+filterTestEvent+"\n"), logFilter{}, func(s string) string { return s })
+	if err != nil || out.String() != strings.Repeat(filterTestEvent+"\n", 2) || warn.String() != "Skipped 1 records with unknown event kinds.\n" {
+		t.Fatalf("out=%q warn=%q err=%v", out.String(), warn.String(), err)
+	}
+}

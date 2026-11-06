@@ -76,10 +76,7 @@ type Agent struct {
 	LastFailed            EnvelopeID             `json:"last_failed,omitempty"`
 	Cleanup               *ResultRef             `json:"cleanup,omitempty"`
 
-	CurfewNoticeDeadline time.Time `json:"curfew_notice_deadline,omitzero"`
-	// BackgroundNoticed is the receipt time of the background report the
-	// hitcher was last told about.
-	BackgroundNoticed      time.Time `json:"background_noticed,omitzero"`
+	CurfewNoticeDeadline   time.Time `json:"curfew_notice_deadline,omitzero"`
 	StartupPromptNoticedAt time.Time `json:"startup_prompt_noticed_at,omitzero"`
 }
 
