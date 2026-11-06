@@ -924,6 +924,16 @@ unchanged for that long after the current submit. A turn that ends without its h
 keyboard Escape, reads busy for that window; a shorter window lets a pause
 in streamed text read as idle.
 
+Claude Code writes the end of every turn to its transcript, including a
+turn that Escape ends with no hook. When the turn boundary sets
+`turn_close: "claude-transcript"`, a tick that no hook started, a status read,
+or a pane read of an open turn closes the witnessed turn once the
+transcript records its end with no prompt still queued and no later prompt
+started. An interrupt sent into that turn completes at the same point, and a
+permission request it left pending is dismissed. The audit log names a turn
+whose transcript records a user interrupt. If the transcript cannot be read
+or does not hold the witnessed prompt, `open_turn_quiet` still closes the turn.
+
 A harness can also queue a prompt typed while a turn runs and start it as its
 own turn, with no submit hook, once that turn ends. When the turn boundary
 sets `queued_turns: "claude-transcript"`, a finish hook leaves the turn open

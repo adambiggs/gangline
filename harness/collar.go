@@ -288,6 +288,9 @@ func validateCollar(collar Collar) error {
 	if _, err := sessionMoveSource(collar.Primitives.TurnBoundary); err != nil {
 		return err
 	}
+	if _, err := turnCloseSource(collar.Primitives.TurnBoundary); err != nil {
+		return err
+	}
 	checks := []struct {
 		where   string
 		value   Invocation

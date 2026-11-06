@@ -154,7 +154,14 @@ func (run *runtime) statusCaptureGap(a core.Agent, c harness.Collar) string {
 func (run *runtime) observeHookStatus(l *store.LockedAgent, a *core.Agent) error {
 	// A stale hook must not overwrite a later pane reading. A recorded turn
 	// failure remains authoritative even when it arrives without a hook.
-	if a.Native.TurnFailure == "" && !a.Native.HookAt.After(a.StatusProbeAt) {
+	// A finish recorded after a hook from inside the turn, as from the
+	// transcript after Escape, ends the turn that hook described.
+	finishedAfterHook := a.Native.FinishedAt.After(a.Native.HookAt) && !a.Native.SubmittedAt.After(a.Native.FinishedAt)
+	switch harness.TurnBoundary(a.Native.HookKind) {
+	case harness.TurnFinished, harness.TurnFailed, harness.TurnCompactionStarted, harness.TurnCompactionFinished:
+		finishedAfterHook = false
+	}
+	if a.Native.TurnFailure == "" && !a.Native.HookAt.After(a.StatusProbeAt) && !(finishedAfterHook && a.Native.FinishedAt.After(a.StatusProbeAt)) {
 		return nil
 	}
 	activity, evidence := core.Busy, "native hook: "+a.Native.HookKind
@@ -168,6 +175,9 @@ func (run *runtime) observeHookStatus(l *store.LockedAgent, a *core.Agent) error
 		activity, evidence = core.Blocked, "native permission request awaits an answer"
 	case "compaction-started":
 		activity = core.Compacting
+	}
+	if finishedAfterHook {
+		activity, evidence = core.Idle, "native turn ended after hook: "+a.Native.HookKind
 	}
 	if a.Native.TurnFailure != "" {
 		activity, evidence = turnFailureActivity(a.Native.TurnFailure)
@@ -255,6 +265,9 @@ func (run *runtime) observeRosterStatus(l *store.LockedAgent, a *core.Agent, c h
 		if err := run.record(*a, core.Event{Type: "observation", Reason: "status session log unreadable: " + err.Error()}); err != nil {
 			return err
 		}
+	}
+	if _, err := run.closeTranscriptTurn(l, a, c); err != nil {
+		return err
 	}
 	gap := run.statusCaptureGap(*a, c)
 	if gap == "" {
