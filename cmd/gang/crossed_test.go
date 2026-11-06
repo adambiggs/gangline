@@ -3,6 +3,7 @@
 package main
 
 import (
+	"encoding/json"
 	"os"
 	"path/filepath"
 	"regexp"
@@ -158,6 +159,37 @@ func TestSendMarksCrossedMessagesUndeliveredAtQueueTime(t *testing.T) {
 	if got := send("after a turn"); got.Crossed != "" {
 		t.Fatalf("stale receipt still crossed: %q", got.Crossed)
 	}
+	// A receipt filed before filing times were recorded ages out on any
+	// later witness of the session.
+	earlier := crossingMail(lead, worker, "msg-earlier", "7777777777777777", now)
+	l, err = wp.TryLock()
+	if err != nil {
+		t.Fatal(err)
+	}
+	w, _ = wp.Read()
+	if err := l.Settle(&w, earlier, "accepted", ""); err != nil {
+		t.Fatal(err)
+	}
+	l.Close()
+	stored, err := wp.ReadEnvelope("cur", earlier.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	stored.FiledAt = time.Time{}
+	data, err := json.Marshal(stored)
+	if err != nil {
+		t.Fatal(err)
+	}
+	path, _ := wp.EnvelopePath("cur", earlier.ID)
+	if err := os.WriteFile(path, data, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := wp.WriteWitness(store.Witness{ID: "w4", At: now, Prompt: "later input", SessionID: "s"}); err != nil {
+		t.Fatal(err)
+	}
+	if got := send("after an earlier receipt"); got.Crossed != "" {
+		t.Fatalf("receipt without a filing time still crossed: %q", got.Crossed)
+	}
 	// Unreadable records mark the field unknown and do not stop the send.
 	if err := os.WriteFile(filepath.Join(wp.Inbox, "new", "msg-broken.json"), []byte("{"), 0o600); err != nil {
 		t.Fatal(err)
@@ -189,14 +221,15 @@ func TestSendMarksCrossedMessagesUndeliveredAtQueueTime(t *testing.T) {
 	}
 	// Delivery renders the marker recorded at queue time.
 	for body, crossed := range map[string]string{
-		"nothing pending":    "",
-		"several pending":    " crossed=3333333333333333,4444444444444444,1111111111111111",
-		"one pending":        " crossed=3333333333333333",
-		"answers it":         "",
-		"still in flight":    " crossed=6666666666666666",
-		"other session":      " crossed=6666666666666666",
-		"after a turn":       "",
-		"records unreadable": " crossed=unknown",
+		"nothing pending":          "",
+		"several pending":          " crossed=3333333333333333,4444444444444444,1111111111111111",
+		"one pending":              " crossed=3333333333333333",
+		"answers it":               "",
+		"still in flight":          " crossed=6666666666666666",
+		"other session":            " crossed=6666666666666666",
+		"after a turn":             "",
+		"after an earlier receipt": "",
+		"records unreadable":       " crossed=unknown",
 	} {
 		if got, ok := lines[body]; !ok || got != crossed {
 			t.Errorf("%q stamp marker %q (submitted %v), want %q", body, got, ok, crossed)
