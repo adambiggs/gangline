@@ -119,6 +119,33 @@ func TestDecodeStoredContextBandMeasurement(t *testing.T) {
 	}
 }
 
+// A queued message's crossed marker is part of its logged envelope.
+func TestSendQueuedEventCarriesCrossed(t *testing.T) {
+	now := time.Date(2026, 9, 22, 0, 0, 0, 0, time.UTC)
+	for crossed, ok := range map[string]bool{
+		"0123456789abcdef":                  true,
+		"0123456789abcdef,fedcba9876543210": true,
+		"unknown":                           true,
+		"0123456789abcdef,":                 false,
+		"not a token":                       false,
+	} {
+		e := Event{Type: "send_queued", At: now, Envelope: &Envelope{
+			ID: "msg-1", Token: "0123456789abcdef", From: Sender{Kind: SenderAgent, Name: "worker", HitchID: "w"},
+			To: "lead", Recipient: "l", Message: Message{Text: "done"}, Crossed: crossed, CreatedAt: now,
+		}}
+		data, err := EncodeEvent(e)
+		if (err == nil) != ok {
+			t.Fatalf("crossed %q: %v", crossed, err)
+		}
+		if !ok {
+			continue
+		}
+		if decoded, err := DecodeEvent(data); err != nil || decoded.Envelope.Crossed != crossed {
+			t.Fatalf("crossed %q round trip: %+v %v", crossed, decoded.Envelope, err)
+		}
+	}
+}
+
 func TestRegisteredSenderEventRequiresIdentity(t *testing.T) {
 	now := time.Date(2026, 9, 22, 0, 0, 0, 0, time.UTC)
 	e := Event{Type: "send_queued", At: now, Envelope: &Envelope{ID: "message", Token: "0123456789abcdef", From: Sender{Kind: SenderRegistered, Name: "relay", HitchID: "sender-identity"}, To: "worker", Recipient: "a", Message: Message{Text: "hello"}, CreatedAt: now}}

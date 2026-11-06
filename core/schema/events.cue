@@ -11,6 +11,7 @@ import "time"
  recipient: #ID
  message: close({text: #ID})
  context_stamp?: close({text: #ID, crossings?: [...#ID]})
+ crossed?: "unknown" | =~"^[0-9a-f]{16}(,[0-9a-f]{16})*$"
  startup?: close({contract: #ID, doctrine?: string, role?: string})
  paste_only?: close({witness_id: string})
  purpose?: "startup" | "assignment" | "resume" | "clear"
