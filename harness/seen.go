@@ -4,6 +4,7 @@ import (
 	"bufio"
 	"bytes"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"regexp"
@@ -12,19 +13,30 @@ import (
 )
 
 // SeenTokens reports which of tokens open an envelope in the input the
-// harness gave its model, as recorded in transcript: a prompt that started
-// a turn or one taken mid-turn. Queue records, tool output and recalled
-// prompts do not count, because the model has not read them as input.
+// harness gave its model, as recorded in session's transcript: a prompt that
+// started a turn or one taken mid-turn. Queue records, tool output, recalled
+// prompts and compaction summaries do not count, because the model has not
+// read them as input.
 //
-// It reads at most the last transcriptWindow bytes. since is the earliest
-// record time it read, so a token absent from the result is unseen only for
-// a message created at or after since.
-func SeenTokens(invocation Invocation, transcript string, tokens []string) (seen map[string]bool, since time.Time, err error) {
+// It reads at most the last transcriptWindow bytes. since is the time of the
+// first record it read, which is no later than when that record was written,
+// so a token absent from the result is unseen for a message created at or
+// after since. A window with no timed record cannot bound that, and is an
+// error.
+func SeenTokens(invocation Invocation, transcript, session string, tokens []string) (seen map[string]bool, since time.Time, err error) {
+	if session == "" {
+		return nil, time.Time{}, errors.New("no native session is bound")
+	}
 	var input func([]byte) ([]string, time.Time, error)
 	switch invocation.Name {
 	case "claude-transcript":
-		input = claudeInput
+		input = claudeInput(session)
 	case "codex-session-log":
+		// A misbound log is resolved to the session's own, as context
+		// reading does.
+		if transcript, err = ResolveTranscript(invocation, transcript, session); err != nil {
+			return nil, time.Time{}, err
+		}
 		input = codexInput
 	default:
 		return nil, time.Time{}, fmt.Errorf("unknown seen primitive %q", invocation.Name)
@@ -36,7 +48,9 @@ func SeenTokens(invocation Invocation, transcript string, tokens []string) (seen
 	for _, token := range tokens {
 		quoted = append(quoted, regexp.QuoteMeta(token))
 	}
-	opener := regexp.MustCompile(`\[gang:[^\s\[\]#]+#(` + strings.Join(quoted, "|") + `)[\s\]]`)
+	// Both tag forms: an agent's [gang:NAME#TOKEN and Gangline's own
+	// [gang#TOKEN, whose startup sections follow the token with -SECTION.
+	opener := regexp.MustCompile(`\[gang(?::[^\s\[\]#]+)?#(` + strings.Join(quoted, "|") + `)[\s\]-]`)
 	file, err := OpenTranscript(transcript)
 	if err != nil {
 		return nil, time.Time{}, err
@@ -59,6 +73,9 @@ func SeenTokens(invocation Invocation, transcript string, tokens []string) (seen
 		line, err := reader.ReadBytes('\n')
 		if err == io.EOF {
 			// A record still being written is not yet evidence.
+			if since.IsZero() {
+				return nil, time.Time{}, errors.New("transcript window holds no timed record")
+			}
 			return seen, since, nil
 		}
 		if err != nil {
@@ -66,7 +83,7 @@ func SeenTokens(invocation Invocation, transcript string, tokens []string) (seen
 		}
 		// Once the window's first time is known, only records that can
 		// hold an envelope need decoding.
-		if !since.IsZero() && !bytes.Contains(line, []byte("[gang:")) {
+		if !since.IsZero() && !bytes.Contains(line, []byte("[gang")) {
 			continue
 		}
 		texts, at, err := input(line)
@@ -84,40 +101,45 @@ func SeenTokens(invocation Invocation, transcript string, tokens []string) (seen
 	}
 }
 
-// claudeInput returns a Claude Code record's prompt text: a user prompt
-// that is not a tool result, hook output or subagent turn, or a prompt the
-// harness attached to a running turn.
-func claudeInput(line []byte) ([]string, time.Time, error) {
-	var r struct {
-		Type        string          `json:"type"`
-		Timestamp   time.Time       `json:"timestamp"`
-		IsSidechain bool            `json:"isSidechain"`
-		IsMeta      bool            `json:"isMeta"`
-		Message     json.RawMessage `json:"message"`
-		Attachment  struct {
-			Type   string          `json:"type"`
-			Prompt json.RawMessage `json:"prompt"`
-		} `json:"attachment"`
-	}
-	if err := json.Unmarshal(line, &r); err != nil {
-		return nil, time.Time{}, err
-	}
-	if r.IsSidechain || r.IsMeta {
-		return nil, r.Timestamp, nil
-	}
-	switch {
-	case r.Type == "user":
-		var message struct {
-			Content json.RawMessage `json:"content"`
+// claudeInput returns a reader of a Claude Code record's prompt text: a user
+// prompt that is not a tool result, hook output, compaction summary or
+// subagent turn, or a prompt the harness attached to a running turn. A main
+// record naming another session is refused, as turn reading refuses it.
+func claudeInput(session string) func([]byte) ([]string, time.Time, error) {
+	return func(line []byte) ([]string, time.Time, error) {
+		var r struct {
+			claudeEvidenceRecord
+			Attachment struct {
+				Type   string          `json:"type"`
+				Prompt json.RawMessage `json:"prompt"`
+			} `json:"attachment"`
 		}
-		if json.Unmarshal(r.Message, &message) != nil {
-			return nil, r.Timestamp, nil
+		if err := json.Unmarshal(line, &r); err != nil {
+			return nil, time.Time{}, err
 		}
-		return promptTexts(message.Content, "text"), r.Timestamp, nil
-	case r.Type == "attachment" && r.Attachment.Type == "queued_command":
-		return promptTexts(r.Attachment.Prompt, "text"), r.Timestamp, nil
+		if r.Sidechain {
+			return nil, r.At, nil
+		}
+		if r.Session != "" && r.Session != session {
+			return nil, time.Time{}, errors.New("native session identity mismatch")
+		}
+		if r.Meta || r.Summary {
+			return nil, r.At, nil
+		}
+		var content json.RawMessage
+		switch {
+		case r.Type == "user":
+			content = r.Message.Content
+		case r.Type == "attachment" && r.Attachment.Type == "queued_command":
+			content = r.Attachment.Prompt
+		default:
+			return nil, r.At, nil
+		}
+		if text, ok := claudeEvidenceText(content); ok {
+			return []string{text}, r.At, nil
+		}
+		return nil, r.At, nil
 	}
-	return nil, r.Timestamp, nil
 }
 
 // codexInput returns a Codex session-log record's user message text. Codex
@@ -139,28 +161,18 @@ func codexInput(line []byte) ([]string, time.Time, error) {
 	if r.Type != "response_item" || r.Payload.Type != "message" || r.Payload.Role != "user" {
 		return nil, r.Timestamp, nil
 	}
-	return promptTexts(r.Payload.Content, "input_text"), r.Timestamp, nil
-}
-
-// promptTexts reads content that is a string or a list of blocks, keeping
-// only blocks of the given text type.
-func promptTexts(content json.RawMessage, kind string) []string {
-	var text string
-	if json.Unmarshal(content, &text) == nil {
-		return []string{text}
-	}
 	var blocks []struct {
 		Type string `json:"type"`
 		Text string `json:"text"`
 	}
-	if json.Unmarshal(content, &blocks) != nil {
-		return nil
+	if json.Unmarshal(r.Payload.Content, &blocks) != nil {
+		return nil, r.Timestamp, nil
 	}
 	var texts []string
 	for _, b := range blocks {
-		if b.Type == kind {
+		if b.Type == "input_text" {
 			texts = append(texts, b.Text)
 		}
 	}
-	return texts
+	return texts, r.Timestamp, nil
 }

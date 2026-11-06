@@ -38,9 +38,13 @@ func (run *runtime) unseenFrom(from core.HitchID, to core.Sender, now time.Time)
 
 // unseenMail reads from's due messages to to from to's queue and from the
 // recent team log, drops those that were cancelled or failed, and returns
-// the ones to's transcript does not show. A message older than the
-// transcript records Gangline reads is judged only while it is still queued,
-// since its delivery may lie in an earlier session or outside the window.
+// the ones to's transcript does not show. The transcript is that of to's
+// native session, following a move the harness's records prove from to's
+// latest submit witness, as delivery does. A message older than the
+// transcript records Gangline reads is judged only while it is still in
+// Gangline's queue, since its delivery may lie in an earlier session or
+// before the window. The reads take no lock, so a message settling at that
+// moment can be misjudged.
 func (run *runtime) unseenMail(from, to core.HitchID, now time.Time) ([]core.Envelope, error) {
 	p, err := run.team.Agent(to)
 	if err != nil {
@@ -61,24 +65,30 @@ func (run *runtime) unseenMail(from, to core.HitchID, now time.Time) ([]core.Env
 	if err != nil && !errors.Is(err, os.ErrNotExist) {
 		return nil, err
 	}
-	inQueue, have := map[core.EnvelopeID]bool{}, map[core.EnvelopeID]bool{}
+	// inQueue holds each candidate's ID, true while it is in to's queue.
+	inQueue := map[core.EnvelopeID]bool{}
 	var candidates []core.Envelope
 	for _, e := range queued {
 		if sent(e) {
-			inQueue[e.ID], have[e.ID] = true, true
+			inQueue[e.ID] = true
 			candidates = append(candidates, e)
 		}
 	}
+	// Events about to's mail are recorded under to, so only those lines
+	// are decoded.
+	recipient := []byte(`"hitch_id":"` + string(to) + `"`)
 	ended := map[string]bool{}
 	err = run.team.ReadRecent(crossedLogWindow, func(line []byte) bool {
-		return bytes.Contains(line, []byte(`"send_queued"`)) || bytes.Contains(line, []byte(`"delivery_failed"`)) ||
-			bytes.Contains(line, []byte(`"send_cancelled"`))
+		return bytes.Contains(line, recipient) && (bytes.Contains(line, []byte(`"send_queued"`)) ||
+			bytes.Contains(line, []byte(`"delivery_failed"`)) || bytes.Contains(line, []byte(`"send_cancelled"`)))
 	}, func(event core.Event) error {
 		switch {
 		case event.Type == "send_queued" && event.Envelope != nil:
-			if e := *event.Envelope; sent(e) && !have[e.ID] {
-				have[e.ID] = true
-				candidates = append(candidates, e)
+			if e := *event.Envelope; sent(e) {
+				if _, have := inQueue[e.ID]; !have {
+					inQueue[e.ID] = false
+					candidates = append(candidates, e)
+				}
 			}
 		case event.Type == "delivery_failed" || event.Type == "send_cancelled":
 			ended[event.ID] = true
@@ -99,6 +109,15 @@ func (run *runtime) unseenMail(from, to core.HitchID, now time.Time) ([]core.Env
 	if c.Primitives.Seen == nil {
 		return nil, errors.New("collar declares no seen primitive")
 	}
+	if w, err := p.ReadWitness(); err == nil && w.SessionID != b.Native.SessionID {
+		// A witness from a session the records do not show continuing
+		// to's conversation belongs to another, so the bound one stays.
+		if _, err := followNativeSession(c, &b, w.SessionID, w.Transcript); err != nil {
+			return nil, err
+		}
+	} else if err != nil && !errors.Is(err, os.ErrNotExist) {
+		return nil, err
+	}
 	if b.Native.Transcript == "" {
 		return nil, errors.New("no native transcript is bound")
 	}
@@ -106,7 +125,7 @@ func (run *runtime) unseenMail(from, to core.HitchID, now time.Time) ([]core.Env
 	for _, e := range candidates {
 		tokens = append(tokens, e.Token)
 	}
-	seen, since, err := harness.SeenTokens(*c.Primitives.Seen, b.Native.Transcript, tokens)
+	seen, since, err := harness.SeenTokens(*c.Primitives.Seen, b.Native.Transcript, b.Native.SessionID, tokens)
 	if err != nil {
 		return nil, err
 	}

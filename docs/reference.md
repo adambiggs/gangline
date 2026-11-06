@@ -859,8 +859,8 @@ yet seen by the sender at that moment, oldest first:
 
 A message is seen when its envelope opener appears in the sender's native
 transcript as input the harness gave the model: a prompt that started a turn,
-or one taken during a running turn. A harness queue record, tool output or a
-recalled prompt does not count. The collar's `primitives.seen` names the
+or one taken during a running turn. A harness queue record, tool output, a
+recalled prompt or a compaction summary does not count. The collar's `primitives.seen` names the
 transcript reader (`claude-transcript` or `codex-session-log`); Codex writes a
 user message to its session log when the input enters the conversation, not
 when it is typed.
@@ -868,12 +868,17 @@ when it is typed.
 Gangline decides this when it queues the message. It compares the
 recipient's due messages to the sender that are in the sender's Gangline
 queue or in the recent end of the team log, leaving out those that were
-cancelled or failed, against the recent end of the sender's transcript. A
-message older than the earliest transcript record read is compared only
-while it is still queued, since its delivery may lie in an earlier session.
-Only messages between agents on this host are compared, and the marker stays
-as recorded. `crossed=unknown` means the sender's transcript could not be
-read, or its collar names no reader; the message is still sent. The field is
+cancelled or failed, against the recent end of the transcript of the sender's
+native session. That session follows a move the harness's own records prove,
+as delivery follows it, and a Codex session log bound to another session is
+resolved to the session's own. A message older than the earliest transcript
+record read is compared only while it is still in Gangline's queue, since its
+delivery may lie in an earlier session; one that left Gangline's queue for the
+harness's own queue before then is not named. The reads take no lock, so a
+message settling at that moment can be misjudged. Only messages between agents
+on this host are compared, and the marker stays as recorded. `crossed=unknown`
+means the sender's transcript could not be read or belongs to another
+session, or its collar names no reader; the message is still sent. The field is
 absent when nothing crossed.
 
 A band crossing adds a short save-state-and-compact/clear action once, after

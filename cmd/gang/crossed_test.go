@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/adambiggs/gangline/core"
+	"github.com/adambiggs/gangline/store"
 )
 
 func crossingMail(from core.Agent, to core.Agent, id, token string, at time.Time) core.Envelope {
@@ -205,9 +206,25 @@ func TestSendMarksMessagesTheSenderHadNotSeen(t *testing.T) {
 	if got := f.send(t, worker, "all seen"); got.Crossed != "" {
 		t.Fatalf("crossed after delivery = %q", got.Crossed)
 	}
+	// worker clears into a new session. Its submit witness names the new
+	// session, which worker's old transcript shows continuing it, so the new
+	// transcript is read though worker's binding still names the old one.
+	cleared := filepath.Join(filepath.Dir(transcript), "s2.jsonl")
+	appendTranscript(t, transcript, `{"type":"continued-in","sessionId":"s","continuedInSessionId":"s2"}`)
+	moved := crossingMail(f.lead, worker, "msg-moved", "eeeeeeeeeeeeeeee", at(30*time.Second))
+	f.logged(t, queuedEvent(moved))
+	appendTranscript(t, cleared,
+		`{"type":"user","sessionId":"s2","timestamp":"`+at(45*time.Second).Format(time.RFC3339)+`","message":{"role":"user","content":"cleared"}}`,
+		`{"type":"user","sessionId":"s2","timestamp":"`+at(30*time.Second).Format(time.RFC3339)+`","message":{"role":"user","content":"`+wireJSON(t, moved)+`"}}`)
+	if err := wp.WriteWitness(store.Witness{ID: "w", At: at(30 * time.Second), Prompt: "x", SessionID: "s2", Transcript: cleared}); err != nil {
+		t.Fatal(err)
+	}
+	if got := f.send(t, worker, "after clear"); got.Crossed != "" {
+		t.Fatalf("crossed after a session move = %q", got.Crossed)
+	}
 	// A record that could hold an envelope but cannot be read leaves the
 	// answer unknown.
-	appendTranscript(t, transcript, `{"type":"user","message":"[gang:lead#`)
+	appendTranscript(t, cleared, `{"type":"user","message":"[gang:lead#`)
 	if got := f.send(t, worker, "transcript unreadable"); got.Crossed != "unknown" {
 		t.Fatalf("crossed with an unreadable transcript = %q", got.Crossed)
 	}
@@ -255,6 +272,7 @@ func TestSendMarksMessagesTheSenderHadNotSeen(t *testing.T) {
 		"several unseen":        " crossed=4444444444444444,3333333333333333",
 		"one unseen":            " crossed=4444444444444444",
 		"all seen":              "",
+		"after clear":           "",
 		"transcript unreadable": " crossed=unknown",
 		"codex unseen":          " crossed=dddddddddddddddd",
 	} {
