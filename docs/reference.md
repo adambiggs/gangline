@@ -864,7 +864,8 @@ and due has not been delivered; a scheduled one counts once it is due. A
 message accepted into a native queue without a witness, or typed with no
 matching witness (unverified), has not been delivered until the sender's next
 submit witness: one that matches it delivered it, and a later one means the
-sender has taken input since. The marker stays as recorded when receipts are
+sender has taken input since. Only a witness from the sender's current native
+session counts. The marker stays as recorded when receipts are
 reconciled later. Only messages between agents on this host are compared.
 `crossed=unknown` means the sender's records could not be read; the message
 is still sent. The field is absent when nothing crossed.
