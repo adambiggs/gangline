@@ -140,8 +140,8 @@ esac
 						path := readPath(name)
 						if provider == "codex" && name != "socket" {
 							want := map[string]string{"binary": filepath.Join(kept, "gang"), "profile": filepath.Join(kept, "home")}[name]
-							if path != want {
-								t.Errorf("%s %s, want kept %s", name, path, want)
+							if path != want || !strings.HasPrefix(path, root+string(os.PathSeparator)) {
+								t.Errorf("%s %s, want kept %s inside fixture %s", name, path, want, root)
 							}
 							if _, err := os.Stat(path); err != nil {
 								t.Errorf("kept %s: %v", name, err)

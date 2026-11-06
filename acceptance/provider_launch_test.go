@@ -93,7 +93,7 @@ func testLiveProvider(t *testing.T, collar, cli, cheapest string) {
 		t.Fatal(err)
 	}
 	binary := filepath.Join(scratch, "gang-"+collar)
-	profile := ""
+	profile, kept := "", ""
 	if cli == "codex" {
 		// Codex keys hook trust to the rendered hook command, which names the
 		// gang binary, and stores it in CODEX_HOME. A fixed binary path and a
@@ -108,16 +108,7 @@ func testLiveProvider(t *testing.T, collar, cli, cheapest string) {
 			t.Fatal(err)
 		}
 		t.Cleanup(release)
-		// Registered after release, so it runs first and records a kept
-		// run before the next run can take the lock.
-		t.Cleanup(func() {
-			if !keepForOperator {
-				return
-			}
-			if err := os.WriteFile(retainedCodexSession(stable), []byte(filepath.Join(root, "tmux.sock")+"\n"), 0600); err != nil {
-				t.Errorf("record retained live Codex session: %v", err)
-			}
-		})
+		kept = stable
 		binary = filepath.Join(stable, "gang")
 		profile = filepath.Join(stable, "home")
 		if err := resetCodexHome(profile); err != nil {
@@ -179,6 +170,14 @@ func testLiveProvider(t *testing.T, collar, cli, cheapest string) {
 		environment = append(environment, "CODEX_HOME="+profile)
 	}
 	runner := tmuxRunner{binary: "tmux", socket: socket, env: environment}
+	if kept != "" {
+		// Record the server before it starts. Codex in it uses the kept
+		// binary and home until the server ends, even if this process dies
+		// before its cleanups run. Successful teardown removes the record.
+		if err := recordRetainedCodexSession(kept, socket); err != nil {
+			t.Fatal(err)
+		}
+	}
 	if out, err := runner.run("new-session", "-d", "-s", session, "-n", "control"); err != nil {
 		t.Fatalf("create private session: %v: %s", err, out)
 	}
@@ -210,6 +209,12 @@ func testLiveProvider(t *testing.T, collar, cli, cheapest string) {
 			if out, err := runner.run("kill-session", "-t", session); err != nil {
 				keepForOperator = true
 				t.Errorf("remove private control session: %v: %s", err, out)
+				return
+			}
+		}
+		if kept != "" {
+			if err := os.Remove(retainedCodexSession(kept)); err != nil && !errors.Is(err, os.ErrNotExist) {
+				t.Errorf("remove retained live Codex session record: %v", err)
 			}
 		}
 	})
@@ -503,17 +508,36 @@ func liveCodexDirectory(cache string) (string, func(), error) {
 	return directory, func() { _ = lock.Close() }, nil
 }
 
-// retainedCodexSession names the file that records the socket of a run kept
-// for the operator. That run's Codex still uses the kept binary and home after
-// its test process releases the lock.
+// retainedCodexSession names the file that records the socket of a live Codex
+// run's private tmux server. Codex in that server uses the kept binary and home
+// for as long as the server lives, including after its test process ends.
 func retainedCodexSession(directory string) string {
 	return filepath.Join(directory, "retained-socket")
 }
 
-// refuseRetainedCodexSession stops a new run while a kept run's tmux server is
-// still alive, so the new build and reset do not change files under it. A
-// record whose server has gone is removed.
-func refuseRetainedCodexSession(directory string, alive func(socket string) bool) error {
+func recordRetainedCodexSession(directory, socket string) error {
+	file, err := os.CreateTemp(directory, "retained-socket-*")
+	if err != nil {
+		return fmt.Errorf("record live Codex session: %w", err)
+	}
+	defer os.Remove(file.Name())
+	if _, err := file.WriteString(socket + "\n"); err != nil {
+		_ = file.Close()
+		return fmt.Errorf("record live Codex session: %w", err)
+	}
+	if err := file.Close(); err != nil {
+		return fmt.Errorf("record live Codex session: %w", err)
+	}
+	if err := os.Rename(file.Name(), retainedCodexSession(directory)); err != nil {
+		return fmt.Errorf("record live Codex session: %w", err)
+	}
+	return nil
+}
+
+// refuseRetainedCodexSession stops a new run while an earlier run's tmux
+// server may still be alive, so the new build and reset do not change files
+// under it. A record whose server has ended is removed.
+func refuseRetainedCodexSession(directory string, alive func(socket string) (bool, error)) error {
 	record := retainedCodexSession(directory)
 	content, err := os.ReadFile(record)
 	if errors.Is(err, os.ErrNotExist) {
@@ -522,8 +546,16 @@ func refuseRetainedCodexSession(directory string, alive func(socket string) bool
 		return fmt.Errorf("read retained live Codex session: %w", err)
 	}
 	socket := strings.TrimSpace(string(content))
-	if socket != "" && alive(socket) {
-		return fmt.Errorf("an earlier live Codex acceptance run is still kept for the operator at socket %s and uses %s; finish its printed step (which ends the server) before rerunning", socket, directory)
+	end := fmt.Sprintf("Do any review its pane still needs, then end it with tmux -S %s kill-server and rerun.", shellQuote(socket))
+	if socket == "" {
+		return fmt.Errorf("live Codex session record %s is empty; confirm no earlier run's tmux server uses %s, then remove the record", record, directory)
+	}
+	running, err := alive(socket)
+	if err != nil {
+		return fmt.Errorf("cannot tell whether an earlier live Codex run's tmux server at %s still uses %s: %v. %s", socket, directory, err, end)
+	}
+	if running {
+		return fmt.Errorf("an earlier live Codex run's tmux server at %s is still alive and uses %s. %s", socket, directory, end)
 	}
 	if err := os.Remove(record); err != nil && !errors.Is(err, os.ErrNotExist) {
 		return fmt.Errorf("remove retained live Codex session record: %w", err)
@@ -531,8 +563,29 @@ func refuseRetainedCodexSession(directory string, alive func(socket string) bool
 	return nil
 }
 
-func tmuxServerAlive(socket string) bool {
-	return exec.Command("tmux", "-S", socket, "list-sessions").Run() == nil
+// tmuxServerAlive reports whether a tmux server answers on socket. A missing
+// socket or a refused connection means the server has ended; any other failure
+// is unknown.
+func tmuxServerAlive(socket string) (bool, error) {
+	if _, err := os.Stat(socket); errors.Is(err, os.ErrNotExist) {
+		return false, nil
+	} else if err != nil {
+		return false, err
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	out, err := exec.CommandContext(ctx, "tmux", "-S", socket, "list-sessions").CombinedOutput()
+	if err == nil {
+		return true, nil
+	}
+	if ctx.Err() != nil {
+		return false, fmt.Errorf("tmux did not answer within 5s")
+	}
+	text := strings.ToLower(string(out))
+	if strings.Contains(text, "no server running") || strings.Contains(text, "connection refused") {
+		return false, nil
+	}
+	return false, fmt.Errorf("%v: %s", err, strings.TrimSpace(string(out)))
 }
 
 // resetCodexHome empties the kept private CODEX_HOME of everything a previous
@@ -576,13 +629,13 @@ func workerPane(root, session string) string {
 }
 
 func codexHookReviewStep(root, socket, session, pane, profile string) string {
-	attach := fmt.Sprintf("tmux -S %s attach-session -t %s", socket, session)
+	attach := fmt.Sprintf("tmux -S %s attach-session -t %s", shellQuote(socket), shellQuote(session))
 	if pane != "" {
-		attach += fmt.Sprintf(" \\; select-window -t %s \\; select-pane -t %s", pane, pane)
+		attach += fmt.Sprintf(" \\; select-window -t %s \\; select-pane -t %s", shellQuote(pane), shellQuote(pane))
 	} else {
 		attach += " (then select the worker window)"
 	}
-	return fmt.Sprintf("Codex is waiting for the operator to review Gangline's hooks. One-time step: run %s; optionally choose \"Review hooks\" to read them; choose \"Trust all and continue\"; type /quit; run tmux -S %s kill-server; rm -r %s; rerun acceptance. The trust is stored in %s only, not in ~/.codex. Repeat when the collar's Codex hooks change.", attach, socket, root, filepath.Join(profile, "config.toml"))
+	return fmt.Sprintf("Codex is waiting for the operator to review Gangline's hooks. One-time step: run %s; optionally choose \"Review hooks\" to read them; choose \"Trust all and continue\"; type /quit; run tmux -S %s kill-server; rm -r %s; rerun acceptance. The trust is stored in %s only, not in ~/.codex. Repeat when the collar's Codex hooks change.", attach, shellQuote(socket), shellQuote(root), filepath.Join(profile, "config.toml"))
 }
 
 func seedCodexConfig(regularHome, privateHome, cwd string) error {
