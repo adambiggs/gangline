@@ -7,6 +7,7 @@ import (
 	"errors"
 	"os"
 	"regexp"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -551,7 +552,7 @@ func TestContextStampKeepsEvaluatedThresholdAcrossCollarChanges(t *testing.T) {
 		t.Fatal(err)
 	}
 	want := "ctx=201k/1M at=09-22T10:00:00Z; early 20% crossed: save state and compact/clear"
-	if e.ContextStamp == nil || e.ContextStamp.Text != want {
+	if e.ContextStamp == nil || e.ContextStamp.Text != want || !slices.Equal(e.ContextStamp.Crossings, []core.EnvelopeID{a.ContextBands.Pending[0].Envelope.ID}) {
 		t.Fatalf("crossing relabeled by delivery collar: %+v, want %q", e.ContextStamp, want)
 	}
 }

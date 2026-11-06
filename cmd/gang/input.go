@@ -30,7 +30,7 @@ func readBody(reader io.Reader) (string, error) {
 		return "", fmt.Errorf("read message: %w", err)
 	}
 	if len(data) > maximumMessageBytes {
-		return "", refuseError("message exceeds the %d-byte encoded envelope budget; put details in a state file and send its path", maximumMessageBytes)
+		return "", errEnvelopeBudget
 	}
 	body := strings.TrimSuffix(string(data), "\n")
 	if body == "" {
@@ -247,13 +247,16 @@ func renderEnvelopeTag(head, marker, body string) (string, error) {
 	return wire, checkEnvelopeBudget(wire)
 }
 
+// errEnvelopeBudget is the refusal for a wire over the encoded budget.
+var errEnvelopeBudget = refuseError("message exceeds the %d-byte encoded envelope budget; put details in a state file and send its path", maximumMessageBytes)
+
 func checkEnvelopeBudget(wire string) error {
 	encoded, err := json.Marshal(wire)
 	if err != nil {
 		return err
 	}
 	if len(encoded) > maximumMessageBytes {
-		return refuseError("message exceeds the %d-byte encoded envelope budget; put details in a state file and send its path", maximumMessageBytes)
+		return errEnvelopeBudget
 	}
 	return nil
 }
