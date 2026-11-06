@@ -36,6 +36,7 @@ func TestTurnClosed(t *testing.T) {
 		{"both prompts queued before the turn ran", []string{"0 user p0", "1 queue enqueue", "1.5 queue enqueue", "2 system turn_duration", "3 queue dequeue", "3.1 user p1@2/queued", "4 system turn_duration", "5 queue dequeue", "5.1 user p2@3/queued", "6 system turn_duration"}, true, 6, false},
 		{"two queued prompts run under one dequeue", []string{"0 user p1", "1 queue enqueue", "1.5 queue enqueue", "2 system turn_duration", "3 queue dequeue", "3.1 user p2@2/queued", "3.2 user p3@2/queued", "4 system turn_duration"}, true, 4, false},
 		{"a queued prompt leaves the queue unrecorded", []string{"0 user p1", "1 queue enqueue", "2 system turn_duration", "3 user p2@2/queued", "4 system turn_duration"}, true, 4, false},
+		{"a dequeue claimed by a typed prompt is not left for a later one", []string{"0 user p1", "1 queue enqueue", "2 system turn_duration", "3 queue dequeue", "3.1 user p2", "4 system turn_duration", "5 queue enqueue", "6 system turn_duration", "7 user p3@4/queued", "8 system turn_duration"}, true, 8, false},
 		{"a typed prompt empties a queue left unrecorded", []string{"0 user p0", "1 queue enqueue", "2 system turn_duration", "3 user p1", "4 system turn_duration"}, true, 4, false},
 		{"an interrupted turn's note does not mark the next", []string{"0 user p1", "1 user p1 [Request interrupted by user]", "1.1 system turn_duration", "2 user p2", "3 system turn_duration"}, true, 3, false},
 	} {
@@ -109,5 +110,10 @@ func TestTurnClosedSkipsSidechainAndMetaRecords(t *testing.T) {
 `)
 	if end, closed, err := TurnClosed(claudeTurnClose, path, "p1"); err != nil || !closed || !end.At.Equal(time.Date(2026, 11, 6, 15, 0, 3, 0, time.UTC)) {
 		t.Fatalf("closed=%v end=%+v err=%v", closed, end, err)
+	}
+	// A witnessed prompt recorded only as meta, such as a local command,
+	// runs no turn of its own.
+	if end, closed, err := TurnClosed(claudeTurnClose, path, "m1"); err != nil || !closed || !end.At.Equal(time.Date(2026, 11, 6, 15, 0, 3, 0, time.UTC)) {
+		t.Fatalf("meta prompt: closed=%v end=%+v err=%v", closed, end, err)
 	}
 }

@@ -60,7 +60,7 @@ func QueuedTurnPending(invocation Invocation, transcript, turnID string) (bool, 
 		case r.Type == "system" && (r.Subtype == "stop_hook_summary" || r.Subtype == "turn_duration"):
 			ended = true
 		case r.Type == "user" && r.PromptID != "":
-			if !prompts[r.PromptID] {
+			if !prompts[r.PromptID] && !r.Meta && !r.CompactSummary {
 				prompts[r.PromptID] = true
 				if ended {
 					queue.queued, ended = 0, false
