@@ -1,5 +1,12 @@
 # Changelog
 
+## [3.2.0](https://github.com/adambiggs/gangline/compare/gangline-v3.1.5...gangline-v3.2.0) (2026-11-06)
+
+
+### Features
+
+* stamp incoming envelopes with context usage ([95f04b5](https://github.com/adambiggs/gangline/commit/95f04b56038231d2ae986ed956d9f193b9efc37f))
+
 ## [3.1.5](https://github.com/adambiggs/gangline/compare/gangline-v3.1.4...gangline-v3.1.5) (2026-11-06)
 
 
