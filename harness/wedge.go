@@ -41,8 +41,12 @@ func DetectWedge(invocation Invocation, observation WedgeObservation) (Wedge, er
 	if observation.Previous != activityFingerprint(invocation, observation.Current) {
 		return Wedge{}, nil
 	}
+	// A busy title alone counts: a harness that paints no busy marker on
+	// screen still freezes its title spinner when it wedges.
 	plain := strings.Join(screenLines(observation.Current, true), "\n")
-	if !busy.MatchString(plain) {
+	if titleBusy, err := titleMatches(invocation, "title_busy", observation.Current.Title); err != nil {
+		return Wedge{}, err
+	} else if !busy.MatchString(plain) && !titleBusy {
 		return Wedge{}, nil
 	}
 	// The evidence names the rule, not the screen: screen text never reaches
@@ -66,9 +70,9 @@ func ActivityFingerprint(collar Collar, screen substrate.Screen) string {
 }
 
 func activityFingerprint(wedge Invocation, screen substrate.Screen) string {
-	text := strings.Join(screenLines(screen, true), "\n")
-	if busy, err := titleMatches(wedge, "title_busy", screen.Title); err == nil && busy {
-		text += "\n\x00" + screen.Title
+	fingerprint := ScreenFingerprint(screen)
+	if busy, err := titleMatches(wedge, "title_busy", screen.Title); err != nil || !busy {
+		return fingerprint
 	}
-	return fmt.Sprintf("%x", sha256.Sum256([]byte(text)))
+	return fmt.Sprintf("%x", sha256.Sum256([]byte(fingerprint+"\x00"+screen.Title)))
 }

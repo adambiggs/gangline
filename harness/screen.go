@@ -75,11 +75,15 @@ func InspectStartup(collar Collar, screen substrate.Screen) (Startup, error) {
 		}
 	}
 	// A harness that names a pending choice in its pane title reports it even
-	// where the screen expressions miss the prompt's wording.
-	if found, err := titleMatches(collar.Primitives.Blocked, "title", screen.Title); err != nil {
-		return Startup{}, err
-	} else if found {
-		return Startup{State: StartupTrustRequired, Prompt: titleBlockedEvidence}, nil
+	// where the screen expressions miss the prompt's wording. A recognized
+	// trust prompt keeps its own evidence, and a composer holding the cursor
+	// rules the title out as it rules out prompt text.
+	var titled Blocked
+	titleFound := false
+	if !owned {
+		if titled, titleFound, err = titleBlocked(collar.Primitives.Blocked, screen.Title); err != nil {
+			return Startup{}, err
+		}
 	}
 	for _, invocation := range collar.Primitives.Startup {
 		switch invocation.Name {
@@ -91,6 +95,9 @@ func InspectStartup(collar Collar, screen substrate.Screen) (Startup, error) {
 				return Startup{State: StartupTrustRequired, Prompt: prompt}, nil
 			}
 		case "claude-composer", "codex-composer":
+			if titleFound {
+				return Startup{State: StartupTrustRequired, Prompt: titled.Evidence}, nil
+			}
 			if _, err := ReadComposer(invocation, screen); err == nil {
 				return Startup{State: StartupReady}, nil
 			} else if !errors.Is(err, ErrNoComposer) {
@@ -99,6 +106,9 @@ func InspectStartup(collar Collar, screen substrate.Screen) (Startup, error) {
 		default:
 			return Startup{}, fmt.Errorf("unknown startup primitive %q", invocation.Name)
 		}
+	}
+	if titleFound {
+		return Startup{State: StartupTrustRequired, Prompt: titled.Evidence}, nil
 	}
 	return Startup{State: StartupOccupied, Prompt: "no declared startup primitive recognized the screen"}, nil
 }
