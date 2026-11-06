@@ -919,10 +919,10 @@ in streamed text read as idle.
 
 Claude Code writes the end of every turn to its transcript, including a
 turn that Escape ends with no hook. When the turn boundary sets
-`turn_close: "claude-transcript"`, a tick that no hook started, a status read,
-or a pane read of an open turn closes the witnessed turn once the
+`turn_close: "claude-transcript"`, a tick that no hook started, a tick with
+an interrupt pending, or a status read closes the witnessed turn once the
 transcript records its end with no prompt still queued and no later prompt
-started. An interrupt sent into that turn completes at the same point, and a
+started. Subagent, meta and compaction-summary records are not turns. An interrupt sent into that turn completes at the same point, and a
 permission request it left pending is dismissed. The audit log names a turn
 whose transcript records a user interrupt. If the transcript cannot be read
 or does not hold the witnessed prompt, `open_turn_quiet` still closes the turn.
