@@ -68,6 +68,7 @@ func TestPasteShown(t *testing.T) {
 	}{
 		{name: "readable paste", screen: textScreen(rule, start, rule, "  ? for shortcuts"), shown: true},
 		{name: "readable paste placeholder", screen: textScreen(rule, "❯ [Pasted text #1 +12 lines]", rule, "  ? for shortcuts"), shown: true},
+		{name: "readable image placeholder", screen: textScreen(rule, "❯ [Image #1] look at this", rule, "  ? for shortcuts")},
 		{name: "readable other text", screen: textScreen(rule, "❯ a draft typed after the paste was cleared", rule, "  ? for shortcuts")},
 		{name: "empty composer", screen: textScreen(rule, "❯ ", rule, "  ? for shortcuts")},
 		{name: "closing rule below the pane", read: ErrComposerClipped, screen: textScreen("older output", rule, start, "  message that wraps past the bottom"), shown: true},
@@ -133,7 +134,13 @@ func TestAwaitPasteShown(t *testing.T) {
 			}
 			return empty
 		}, elapsed: 500 * time.Millisecond, want: ErrComposerEmptied},
-		{name: "replaced", screen: func(time.Duration) substrate.Screen { return draft }, elapsed: 5 * time.Second, want: ErrComposerReplaced},
+		{name: "replaced", screen: func(time.Duration) substrate.Screen { return draft }, elapsed: settle, want: ErrComposerReplaced},
+		{name: "replaced, then unreadable to the deadline", screen: func(at time.Duration) substrate.Screen {
+			if at < 100*time.Millisecond {
+				return draft
+			}
+			return textScreen("Transcript view", "  earlier reply")
+		}, elapsed: 5 * time.Second, want: ErrComposerReplaced},
 		{name: "never shown", screen: func(time.Duration) substrate.Screen { return empty }, elapsed: 5 * time.Second, want: context.DeadlineExceeded},
 	} {
 		t.Run(test.name, func(t *testing.T) {

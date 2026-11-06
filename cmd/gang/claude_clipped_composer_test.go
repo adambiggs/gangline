@@ -130,8 +130,20 @@ func TestClaudeReplacedPasteIsNeitherSubmittedNorCleared(t *testing.T) {
 		if err := f.cmd.send([]string{"worker", "--from", "operator"}); err == nil {
 			t.Fatal("send into a replaced composer succeeded")
 		}
-		if f.input.submits != 0 || len(after) != 0 || !strings.Contains(f.out.String(), "unverified") {
+		fields := strings.Fields(f.out.String())
+		if f.input.submits != 0 || len(after) != 0 || len(fields) != 2 || fields[1] != "unverified" {
 			t.Fatalf("submits=%d keys after paste=%q output=%s errors=%s", f.input.submits, after, f.out, f.errOut)
+		}
+		p, err := f.run.team.Agent(a.ID)
+		if err != nil {
+			t.Fatal(err)
+		}
+		receipt, err := p.ReadEnvelope("failed", core.EnvelopeID(fields[0]))
+		if err != nil {
+			t.Fatal(err)
+		}
+		if !strings.HasPrefix(receipt.Reason, "native composer holds other text") {
+			t.Fatalf("reason = %q", receipt.Reason)
 		}
 	})
 }
