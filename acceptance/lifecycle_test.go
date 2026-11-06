@@ -279,7 +279,7 @@ func TestCommandLifecycleOnPrivateTmux(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !regexp.MustCompile(`\[gang:startup#[0-9a-f]{16} startup\] No assignment was supplied\.`).Match(received) {
+	if !regexp.MustCompile(`\[gang:startup#[0-9a-f]{16} startup\] ctx=unknown No assignment was supplied\.`).Match(received) {
 		t.Fatalf("taskless startup lacks Gangline attribution or invents an assignment: %q", received)
 	}
 	wp, err := team.Agent(worker.ID)

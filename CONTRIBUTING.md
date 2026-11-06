@@ -36,6 +36,8 @@ test/gate.sh
 The pre-push hook runs your global pre-push hook first, if you have one, then
 runs `test/gate.sh` on each pushed tree. CI runs the same mandatory lane:
 formatting, vet, sum types, package boundaries, and deterministic tests.
+Pull requests also run the full pre-release acceptance lane in the same CI
+check before merge. Release Please runs only after a push to main.
 It prints each part's wall time and the total, without a killing deadline.
 The development-host budget for the mandatory gate is five minutes; report
 measured overruns rather than treating a killed run as a passing check.
