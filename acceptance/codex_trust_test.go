@@ -277,18 +277,27 @@ func TestCodexHookReviewStepNamesOperatorAction(t *testing.T) {
 	if codexHooksAwaitReview("Trust this folder?") {
 		t.Error("folder trust read as hook review")
 	}
-	step := codexHookReviewStep("/tmp/root", "/tmp/root/s.sock", "gangline-provider-codex", "%3", "/cache/home")
+	teardown := codexTeardown("/cache/gang", "/tmp/root", "/tmp/root/s.sock", "gangline-provider-codex", "/repo/collars")
+	for _, want := range []string{
+		"GANG_STATE_ROOT='/tmp/root' GANG_CONFIG_DIR='/tmp/root/config' GANG_SESSION='gangline-provider-codex' GANG_TMUX_SOCKET='/tmp/root/s.sock' GANG_COLLARS='/repo/collars' '/cache/gang' down --yes && ",
+		"tmux -S '/tmp/root/s.sock' kill-server; rm -r '/tmp/root'; }",
+	} {
+		if !strings.Contains(teardown, want) {
+			t.Errorf("teardown lacks %q:\n%s", want, teardown)
+		}
+	}
+	step := codexHookReviewStep(teardown, "/tmp/root/s.sock", "gangline-provider-codex", "%3", "/cache/home")
 	for _, want := range []string{
 		`tmux -S '/tmp/root/s.sock' attach-session -t 'gangline-provider-codex' \; select-window -t '%3' \; select-pane -t '%3'`,
 		`"Trust all and continue"`,
-		"tmux -S '/tmp/root/s.sock' kill-server; rm -r '/tmp/root';",
+		"detach from tmux; run " + teardown + "; rerun",
 		"/cache/home/config.toml only, not in ~/.codex",
 	} {
 		if !strings.Contains(step, want) {
 			t.Errorf("step lacks %q:\n%s", want, step)
 		}
 	}
-	if !strings.Contains(codexHookReviewStep("/r", "/r/s.sock", "s", "", "/h"), "select the worker window") {
+	if !strings.Contains(codexHookReviewStep("true", "/r/s.sock", "s", "", "/h"), "select the worker window") {
 		t.Error("step without a pane does not say which window to select")
 	}
 }
@@ -299,12 +308,12 @@ func TestRetainedCodexSessionBlocksUntilItsServerEnds(t *testing.T) {
 		t.Fatalf("no record: %v", err)
 	}
 	record := retainedCodexSession(directory)
-	if err := recordRetainedCodexSession(directory, "/tmp/root/tmux.sock"); err != nil {
+	if err := recordRetainedCodexSession(directory, "/tmp/root/tmux.sock", "gang down --yes"); err != nil {
 		t.Fatal(err)
 	}
 	var probed string
 	err := refuseRetainedCodexSession(directory, func(socket string) (bool, error) { probed = socket; return true, nil })
-	if err == nil || !strings.Contains(err.Error(), "tmux -S '/tmp/root/tmux.sock' kill-server") || probed != "/tmp/root/tmux.sock" {
+	if err == nil || !strings.Contains(err.Error(), "end it with: gang down --yes;") || probed != "/tmp/root/tmux.sock" {
 		t.Fatalf("live retained server: probed %q, err %v", probed, err)
 	}
 	if err := refuseRetainedCodexSession(directory, func(string) (bool, error) { return false, errors.New("permission denied") }); err == nil || !strings.Contains(err.Error(), "cannot tell") {

@@ -174,7 +174,7 @@ func testLiveProvider(t *testing.T, collar, cli, cheapest string) {
 		// Record the server before it starts. Codex in it uses the kept
 		// binary and home until the server ends, even if this process dies
 		// before its cleanups run. Successful teardown removes the record.
-		if err := recordRetainedCodexSession(kept, socket); err != nil {
+		if err := recordRetainedCodexSession(kept, socket, codexTeardown(binary, root, socket, session, collarDirectory)); err != nil {
 			t.Fatal(err)
 		}
 	}
@@ -263,7 +263,7 @@ func testLiveProvider(t *testing.T, collar, cli, cheapest string) {
 			screen, _, _ := runGang(ctx, "", "capture", "worker", "-n", "30")
 			if cli == "codex" && codexHooksAwaitReview(status+screen+hitchDiagnostic) {
 				keepForOperator = true
-				t.Fatalf("%s\ngang hitch: %v: %s %s\nstatus: %s\nscreen: %s", codexHookReviewStep(root, socket, session, workerPane(root, session), profile), err, hitch, hitchDiagnostic, status, screen)
+				t.Fatalf("%s\ngang hitch: %v: %s %s\nstatus: %s\nscreen: %s", codexHookReviewStep(codexTeardown(binary, root, socket, session, collarDirectory), socket, session, workerPane(root, session), profile), err, hitch, hitchDiagnostic, status, screen)
 			}
 			if strings.Contains(strings.ToLower(status+screen+hitchDiagnostic), "trust") || strings.Contains(strings.ToLower(status+screen+hitchDiagnostic), "permission") {
 				keepForOperator = true
@@ -297,7 +297,7 @@ func testLiveProvider(t *testing.T, collar, cli, cheapest string) {
 		pending, _, _ := runGang(diagnosticCtx, "", "queue", "worker")
 		if cli == "codex" && codexHooksAwaitReview(status+screen) {
 			keepForOperator = true
-			t.Fatalf("%s\nstartup witness: %v: %+v\nstatus: %s\nqueue: %s\nscreen: %s", codexHookReviewStep(root, socket, session, string(pane), profile), err, startupWitness, status, pending, screen)
+			t.Fatalf("%s\nstartup witness: %v: %+v\nstatus: %s\nqueue: %s\nscreen: %s", codexHookReviewStep(codexTeardown(binary, root, socket, session, collarDirectory), socket, session, string(pane), profile), err, startupWitness, status, pending, screen)
 		}
 		t.Fatalf("startup hook did not witness pasted assignment and envelope: %v: %+v; socket=%s status=%s queue=%s screen=%s", err, startupWitness, socket, status, pending, screen)
 	}
@@ -515,13 +515,21 @@ func retainedCodexSession(directory string) string {
 	return filepath.Join(directory, "retained-socket")
 }
 
-func recordRetainedCodexSession(directory, socket string) error {
+// codexTeardown is the operator's command to end a kept run: the run's own
+// gang down unloads its watchdog job and stops its agents before the server
+// and root are removed.
+func codexTeardown(binary, root, socket, session, collars string) string {
+	return fmt.Sprintf("env -u TMUX -u TMUX_PANE GANG_STATE_ROOT=%s GANG_CONFIG_DIR=%s GANG_SESSION=%s GANG_TMUX_SOCKET=%s GANG_COLLARS=%s %s down --yes && { tmux -S %s kill-server; rm -r %s; }",
+		shellQuote(root), shellQuote(filepath.Join(root, "config")), shellQuote(session), shellQuote(socket), shellQuote(collars), shellQuote(binary), shellQuote(socket), shellQuote(root))
+}
+
+func recordRetainedCodexSession(directory, socket, teardown string) error {
 	file, err := os.CreateTemp(directory, "retained-socket-*")
 	if err != nil {
 		return fmt.Errorf("record live Codex session: %w", err)
 	}
 	defer os.Remove(file.Name())
-	if _, err := file.WriteString(socket + "\n"); err != nil {
+	if _, err := file.WriteString(socket + "\n" + teardown + "\n"); err != nil {
 		_ = file.Close()
 		return fmt.Errorf("record live Codex session: %w", err)
 	}
@@ -545,8 +553,12 @@ func refuseRetainedCodexSession(directory string, alive func(socket string) (boo
 	} else if err != nil {
 		return fmt.Errorf("read retained live Codex session: %w", err)
 	}
-	socket := strings.TrimSpace(string(content))
-	end := fmt.Sprintf("Do any review its pane still needs, then end it with tmux -S %s kill-server and rerun.", shellQuote(socket))
+	socket, teardown, _ := strings.Cut(strings.TrimSpace(string(content)), "\n")
+	socket, teardown = strings.TrimSpace(socket), strings.TrimSpace(teardown)
+	if teardown == "" {
+		teardown = "tmux -S " + shellQuote(socket) + " kill-server"
+	}
+	end := fmt.Sprintf("Do any review its pane still needs, then end it with: %s; and rerun.", teardown)
 	if socket == "" {
 		return fmt.Errorf("live Codex session record %s is empty; confirm no earlier run's tmux server uses %s, then remove the record", record, directory)
 	}
@@ -628,14 +640,14 @@ func workerPane(root, session string) string {
 	return string(agents[0].Pane)
 }
 
-func codexHookReviewStep(root, socket, session, pane, profile string) string {
+func codexHookReviewStep(teardown, socket, session, pane, profile string) string {
 	attach := fmt.Sprintf("tmux -S %s attach-session -t %s", shellQuote(socket), shellQuote(session))
 	if pane != "" {
 		attach += fmt.Sprintf(" \\; select-window -t %s \\; select-pane -t %s", shellQuote(pane), shellQuote(pane))
 	} else {
 		attach += " (then select the worker window)"
 	}
-	return fmt.Sprintf("Codex is waiting for the operator to review Gangline's hooks. One-time step: run %s; optionally choose \"Review hooks\" to read them; choose \"Trust all and continue\"; type /quit; run tmux -S %s kill-server; rm -r %s; rerun acceptance. The trust is stored in %s only, not in ~/.codex. Repeat when the collar's Codex hooks change.", attach, shellQuote(socket), shellQuote(root), filepath.Join(profile, "config.toml"))
+	return fmt.Sprintf("Codex is waiting for the operator to review Gangline's hooks. One-time step: run %s; optionally choose \"Review hooks\" to read them; choose \"Trust all and continue\"; type /quit; detach from tmux; run %s; rerun acceptance. The trust is stored in %s only, not in ~/.codex. Repeat when the collar's Codex hooks change.", attach, teardown, filepath.Join(profile, "config.toml"))
 }
 
 func seedCodexConfig(regularHome, privateHome, cwd string) error {
