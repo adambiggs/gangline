@@ -93,7 +93,7 @@ func (run *runtime) noteContextBands(a *core.Agent, c harness.Collar) error {
 			From: core.Sender{Kind: core.SenderGangline, Name: "context-band"}, CreatedAt: run.cmd.now(),
 			Message: core.Message{Text: renderContextBandMessage(band, last != nil && band.Name == last.Name, a, r)},
 		}
-		state.Pending = append(state.Pending, core.ContextBandNote{Band: band.Name, Reading: r, Envelope: e})
+		state.Pending = append(state.Pending, core.ContextBandNote{Threshold: band.At, Band: band.Name, Reading: r, Envelope: e})
 		if err := run.record(*a, core.Event{Type: "context_band_crossed", ID: string(e.ID), Status: band.Name, Envelope: &e, Readings: []core.Reading{r}}); err != nil {
 			return err
 		}

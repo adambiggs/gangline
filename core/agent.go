@@ -121,9 +121,10 @@ type ContextBandState struct {
 }
 
 type ContextBandNote struct {
-	Band     string   `json:"band"`
-	Reading  Reading  `json:"reading"`
-	Envelope Envelope `json:"envelope"`
+	Threshold float64  `json:"threshold"`
+	Band      string   `json:"band"`
+	Reading   Reading  `json:"reading"`
+	Envelope  Envelope `json:"envelope"`
 }
 
 type ProcessIdentity struct {
