@@ -121,3 +121,58 @@ func TestCollarRejectsInvalidTitleExpressions(t *testing.T) {
 		})
 	}
 }
+
+func TestTitleBlockedYieldsToScreenOwnership(t *testing.T) {
+	collar, err := EmbeddedCollar("codex")
+	if err != nil {
+		t.Fatal(err)
+	}
+	approval := "[ ! ] Action Required | Create empty probe.txt | cwd"
+
+	// A composer holding the cursor owns input; a title left over from an
+	// answered approval does not block it.
+	owned := fixtureScreen(t, "codex-0.151.0-composer.txt")
+	owned.Cursor.Row, owned.Cursor.Column, owned.Cursor.Visible = 5, 2, true
+	owned.Title = approval
+	if blocker, blocked, err := InputBlocked(collar, owned); err != nil || blocked {
+		t.Fatalf("owned composer blocked by its title: %q, %v", blocker.Evidence, err)
+	}
+
+	// A recognized trust prompt keeps its own evidence.
+	for _, fixture := range []string{"codex-0.151.0-directory-trust.txt", "codex-0.151.0-hook-trust.txt"} {
+		screen := fixtureScreen(t, fixture)
+		plain, err := InspectStartup(collar, screen)
+		if err != nil || plain.State != StartupTrustRequired {
+			t.Fatalf("%s: %+v, %v", fixture, plain, err)
+		}
+		screen.Title = approval
+		titled, err := InspectStartup(collar, screen)
+		if err != nil || titled != plain {
+			t.Fatalf("%s with a title = %+v, %v; want %+v", fixture, titled, err, plain)
+		}
+	}
+}
+
+func TestTitleBlockedEvidenceNamesTheTask(t *testing.T) {
+	collar, err := EmbeddedCollar("codex")
+	if err != nil {
+		t.Fatal(err)
+	}
+	read := func(title string) string {
+		blocked, found, err := titleBlocked(collar.Primitives.Blocked, title)
+		if err != nil || !found {
+			t.Fatalf("title %q: found = %v, error = %v", title, found, err)
+		}
+		if strings.Contains(blocked.Evidence, "probe") {
+			t.Fatalf("evidence carries title text: %q", blocked.Evidence)
+		}
+		return blocked.Evidence
+	}
+	on, off := read("[ ! ] Action Required | Create empty probe.txt | cwd"), read("[ . ] Action Required | Create empty probe.txt | cwd")
+	if on != off {
+		t.Fatalf("blink frames read as different prompts: %q, %q", on, off)
+	}
+	if other := read("[ ! ] Action Required | Remove probe.txt | cwd"); other == on {
+		t.Fatalf("a choice under another task title reads as the same prompt: %q", other)
+	}
+}

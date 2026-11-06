@@ -353,10 +353,10 @@ func validateCollar(collar Collar) error {
 			return err
 		}
 	}
-	if _, err := titleMatches(collar.Primitives.Blocked, "title", "-"); err != nil {
+	if _, err := titlePattern(collar.Primitives.Blocked, "title"); err != nil {
 		return err
 	}
-	if _, err := titleMatches(collar.Primitives.Wedge, "title_busy", "-"); err != nil {
+	if _, err := titlePattern(collar.Primitives.Wedge, "title_busy"); err != nil {
 		return err
 	}
 	for selector, bands := range collar.ContextBands {

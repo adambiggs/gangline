@@ -14,9 +14,18 @@ type Blocked struct {
 	Evidence string
 }
 
-// titleBlockedEvidence names a blocked reading from the pane title. Like the
-// screen's evidence it carries no title text.
-const titleBlockedEvidence = "native title reports a choice awaits an answer"
+// titleBlocked reads a pending native choice from the pane title. Like the
+// screen's evidence, the evidence carries no title text: it fingerprints the
+// title outside the matched marker, so a blinking marker reads as one prompt
+// and a choice under another task title reads as a new one.
+func titleBlocked(invocation Invocation, title string) (Blocked, bool, error) {
+	pattern, err := titlePattern(invocation, "title")
+	if err != nil || pattern == nil || title == "" || !pattern.MatchString(title) {
+		return Blocked{}, false, err
+	}
+	digest := sha256.Sum256([]byte(strings.Join(strings.Fields(pattern.ReplaceAllString(title, "")), " ")))
+	return Blocked{Evidence: fmt.Sprintf("native title reports a choice awaits an answer (title %x)", digest[:6])}, true, nil
+}
 
 func detectBlocked(invocation Invocation, lines []string) (Blocked, bool, error) {
 	if invocation.Name != "screen-blocked" {

@@ -41,16 +41,26 @@ func Busy(collar Collar, screen substrate.Screen) (bool, error) {
 	return titleMatches(collar.Primitives.Wedge, "title_busy", screen.Title)
 }
 
-// titleMatches reports whether the collar's named title expression matches
-// the pane title. An absent expression or an empty title matches nothing.
-func titleMatches(invocation Invocation, name, title string) (bool, error) {
+// titlePattern compiles the collar's named pane-title expression; an absent
+// expression is nil.
+func titlePattern(invocation Invocation, name string) (*regexp.Regexp, error) {
 	expression := invocation.Params[name]
-	if expression == "" || title == "" {
-		return false, nil
+	if expression == "" {
+		return nil, nil
 	}
 	pattern, err := regexp.Compile(expression)
 	if err != nil {
-		return false, fmt.Errorf("%s primitive %s expression: %w", invocation.Name, name, err)
+		return nil, fmt.Errorf("%s primitive %s expression: %w", invocation.Name, name, err)
+	}
+	return pattern, nil
+}
+
+// titleMatches reports whether the collar's named title expression matches
+// the pane title. An absent expression or an empty title matches nothing.
+func titleMatches(invocation Invocation, name, title string) (bool, error) {
+	pattern, err := titlePattern(invocation, name)
+	if err != nil || pattern == nil || title == "" {
+		return false, err
 	}
 	return pattern.MatchString(title), nil
 }
