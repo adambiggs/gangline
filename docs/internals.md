@@ -209,7 +209,8 @@ sender's native session, following moves as delivery does. Both reads are bounde
 does not grow with settled history. The result is retained on the envelope.
 
 An upward context-band crossing records its deciding reading in
-`context_band_crossed` and adds a short action to the next envelope’s stamp.
+`context_band_crossed` and adds a short action to the next envelope’s stamp
+that has room for it within the message budget.
 If no mail carries it within one watchdog interval, the normal notice path
 queues a stamp-only envelope. A crossing remains pending
 until a carrier’s submission is verified. Other composed carriers repeat the

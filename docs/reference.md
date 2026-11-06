@@ -885,7 +885,8 @@ session, or its collar names no reader; the message is still sent. The field is
 absent when nothing crossed.
 
 A band crossing adds a short save-state-and-compact/clear action once, after
-`; ` on the next stamp line. With no mail within one watchdog interval, the
+`; ` on the next stamp line with room for it within the message budget; an
+action that does not fit waits for a later envelope. With no mail within one watchdog interval, the
 same stamp follows an empty Gangline envelope through the normal notice path.
 Drafts and native dialogs retain the existing input guards. The stamp
 describes context occupancy, not cumulative token consumption.

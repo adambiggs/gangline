@@ -134,10 +134,11 @@ func (run *runtime) stampEnvelope(l *store.LockedAgent, a *core.Agent, e core.En
 		// waits, with those after it, for a later envelope.
 		trial := e
 		trial.ContextStamp = &core.ContextStamp{Text: stamp.Text + "; " + action, Crossings: append(slices.Clone(stamp.Crossings), note.Envelope.ID)}
-		if wire, err := envelopeText(trial); err != nil {
-			if wire != "" && checkEnvelopeBudget(wire) != nil {
-				break
-			}
+		_, err := envelopeText(trial)
+		if errors.Is(err, errEnvelopeBudget) {
+			break
+		}
+		if err != nil {
 			return e, err
 		}
 		stamp = trial.ContextStamp
