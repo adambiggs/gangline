@@ -79,10 +79,11 @@ func (run *runtime) unseenMail(from, to core.HitchID, now time.Time) ([]core.Env
 	// are decoded.
 	recipient := []byte(`"hitch_id":"` + string(to) + `"`)
 	ended := map[string]bool{}
-	// typed holds when Gangline last typed each message into to's harness.
+	// typed holds when Gangline first started typing each message into to's
+	// harness. Later input_started events, from retries or a reconciled
+	// receipt, cannot move a delivery out of an earlier session.
 	typed := map[string]time.Time{}
-	kinds := [][]byte{[]byte(`"send_queued"`), []byte(`"delivery_failed"`), []byte(`"send_cancelled"`),
-		[]byte(`"delivery_succeeded"`), []byte(`"delivery_accepted"`), []byte(`"delivery_unverified"`)}
+	kinds := [][]byte{[]byte(`"send_queued"`), []byte(`"delivery_failed"`), []byte(`"send_cancelled"`), []byte(`"input_started"`)}
 	err = run.team.ReadRecent(crossedLogWindow, func(line []byte) bool {
 		return bytes.Contains(line, recipient) && slices.ContainsFunc(kinds, func(kind []byte) bool { return bytes.Contains(line, kind) })
 	}, func(event core.Event) error {
@@ -96,8 +97,8 @@ func (run *runtime) unseenMail(from, to core.HitchID, now time.Time) ([]core.Env
 			}
 		case event.Type == "delivery_failed" || event.Type == "send_cancelled":
 			ended[event.ID] = true
-		case event.Type == "delivery_succeeded" || event.Type == "delivery_accepted" || event.Type == "delivery_unverified":
-			if event.At.After(typed[event.ID]) {
+		case event.Type == "input_started":
+			if t, have := typed[event.ID]; !have || event.At.Before(t) {
 				typed[event.ID] = event.At
 			}
 		}

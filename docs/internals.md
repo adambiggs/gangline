@@ -181,7 +181,8 @@ Every delivered envelope is followed by the recipient’s context stamp line,
 `[gang ctx=USED/WINDOW at=MM-DDTHH:MM:SSZ /]`: used and window token counts
 from the same verified reading as `gang context`, or `ctx=unknown`, and the
 UTC time Gangline first stamped it, kept when the envelope is typed again so
-the receipt still matches the submitted wire. Counts below a million round to the nearest
+the receipt still matches the submitted wire; a native context reset discards
+an unsubmitted stamp that carries a band action. Counts below a million round to the nearest
 thousand (`103k`); larger counts round to a tenth of a million (`1M`, `1.1M`).
 Gangline stamps an envelope when it types it into native input, which may
 queue it behind a running turn; the time lets the recipient judge how old the

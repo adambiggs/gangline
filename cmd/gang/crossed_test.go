@@ -224,9 +224,13 @@ func TestSendMarksMessagesTheSenderHadNotSeen(t *testing.T) {
 	}
 	// A message created before the new session but typed into it after its
 	// first record, and waiting in the harness's queue, is judged by when it
-	// was typed.
+	// was typed. One first typed before that record is not judged, even when
+	// a later receipt reconciliation records input_started again.
 	late := crossingMail(f.lead, worker, "msg-late", "abababababababab", at(10*time.Minute))
-	f.logged(t, queuedEvent(late), core.Event{Type: "delivery_accepted", At: at(20 * time.Second), HitchID: worker.ID, Name: worker.Name, ID: string(late.ID), Reason: "native queue shows sender and one-time token; do not resend"})
+	settled := crossingMail(f.lead, worker, "msg-settled", "acacacacacacacac", at(10*time.Minute))
+	f.logged(t, queuedEvent(late), core.Event{Type: "input_started", At: at(20 * time.Second), HitchID: worker.ID, Name: worker.Name, ID: string(late.ID), Status: "envelope"},
+		queuedEvent(settled), core.Event{Type: "input_started", At: at(5 * time.Minute), HitchID: worker.ID, Name: worker.Name, ID: string(settled.ID), Status: "envelope"},
+		core.Event{Type: "input_started", At: at(10 * time.Second), HitchID: worker.ID, Name: worker.Name, ID: string(settled.ID), Status: "envelope"})
 	if got := f.send(t, worker, "typed into the window"); got.Crossed != "abababababababab" {
 		t.Fatalf("crossed for a message typed after the window began = %q", got.Crossed)
 	}
