@@ -453,3 +453,45 @@ func TestContextStampNewBandFallbackPassesUncertainEarlierBand(t *testing.T) {
 		t.Fatalf("new band starved %+v %v", queued, err)
 	}
 }
+
+func TestContextStampKeepsEvaluatedThresholdAcrossCollarChanges(t *testing.T) {
+	f := newStateFixture(t)
+	a := f.add(t, "a", "worker", "claude")
+	p, _ := f.run.team.Agent(a.ID)
+	l, err := p.TryLock()
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer l.Close()
+	c, err := harness.EmbeddedCollar("claude")
+	if err != nil {
+		t.Fatal(err)
+	}
+	used, limit := int64(200822), int64(1000000)
+	percent := float64(used) / float64(limit) * 100
+	at := f.cmd.now()
+	a.Native.Context = core.Reading{Kind: "context", Source: "status-line", Status: "observed", Model: "claude-test", At: &at, Used: &used, Limit: &limit, Percent: &percent}
+	if err := f.run.noteContextBands(&a, c); err != nil {
+		t.Fatal(err)
+	}
+	if len(a.ContextBands.Pending) != 1 || a.ContextBands.Pending[0].Threshold != .20 {
+		t.Fatalf("evaluated threshold not retained: %+v", a.ContextBands)
+	}
+	// Persist and reload the crossing before another process loads an overlay.
+	if err := l.Save(a); err != nil {
+		t.Fatal(err)
+	}
+	a, err = p.Read()
+	if err != nil {
+		t.Fatal(err)
+	}
+	c.ContextBands["*"] = []harness.ContextBand{{Name: "early", At: .75}, {Name: "late", At: .90}}
+	e, err := f.run.stampEnvelope(l, &a, stampMail(a, "changed-collar", at), f.input, c)
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := "ctx=200822/1000000; early 20% crossed: save state and compact/clear"
+	if e.ContextStamp == nil || e.ContextStamp.Text != want {
+		t.Fatalf("crossing relabeled by delivery collar: %+v, want %q", e.ContextStamp, want)
+	}
+}

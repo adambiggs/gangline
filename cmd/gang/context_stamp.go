@@ -99,14 +99,11 @@ func (run *runtime) stampEnvelope(l *store.LockedAgent, a *core.Agent, e core.En
 	stamp := &core.ContextStamp{Text: contextStampText(r)}
 	for _, note := range a.ContextBands.Pending {
 		stamp.Crossings = append(stamp.Crossings, note.Envelope.ID)
-		// Resolve current configured messages, including notes retained on upgrade.
-		action := fmt.Sprintf("%s crossed: save state and compact/clear", note.Band)
-		bands := harness.CrossedContextBands(agentContextCollar(*a, c), note.Reading.Model, -1, 1)
-		for i, band := range bands {
-			if band.Name == note.Band && note.Reading.Used != nil && note.Reading.Limit != nil && note.Reading.Percent != nil {
-				action = renderContextBandMessage(band, i == len(bands)-1, a, note.Reading)
-				break
-			}
+		// The crossing owns its evaluated threshold and rendered action. A later
+		// delivery may load a different collar; it cannot relabel this event.
+		action := note.Envelope.Message.Text
+		if action == "" {
+			action = fmt.Sprintf("%s crossed: save state and compact/clear", note.Band)
 		}
 		stamp.Text += "; " + action
 	}
