@@ -408,3 +408,28 @@ func TestTurnFailureReadsAfterTranscriptClose(t *testing.T) {
 		t.Fatalf("turn failure hidden: %s (%s)", got.Activity, got.Evidence)
 	}
 }
+
+// A repeated interrupt keeps the first send time, so a turn end between the
+// two still completes it.
+func TestTranscriptEndBetweenRepeatedInterruptsCompletesThem(t *testing.T) {
+	f, a, start, write, stamp := transcriptTurnFixture(t)
+	request := func(at time.Time) {
+		t.Helper()
+		f.underLock(t, a.ID, at, func(l *store.LockedAgent, a *core.Agent, _ harness.Collar) error {
+			return f.run.apply(l, a, core.Event{Type: "interrupt_requested", Deadline: at.Add(operationTimeout)})
+		})
+	}
+	if got := f.tickAt(t, a, start.Add(time.Second), hookNotice{}); got.Activity != core.Busy {
+		t.Fatalf("running turn read %s: %s", got.Activity, got.Evidence)
+	}
+	request(start.Add(2 * time.Second))
+	write(`{"type":"user","promptId":"p1","timestamp":"`+stamp(2500*time.Millisecond)+`","message":{"role":"user","content":"[Request interrupted by user]"}}`,
+		`{"type":"system","subtype":"turn_duration","timestamp":"`+stamp(2600*time.Millisecond)+`"}`)
+	request(start.Add(3 * time.Second))
+	got := f.underLock(t, a.ID, start.Add(4*time.Second), func(l *store.LockedAgent, a *core.Agent, c harness.Collar) error {
+		return f.run.observeTranscriptTurn(l, a, c)
+	})
+	if !got.InterruptDeadline.IsZero() || got.Activity != core.Idle {
+		t.Fatalf("interrupt: %s (%s) deadline=%v", got.Activity, got.Evidence, got.InterruptDeadline)
+	}
+}

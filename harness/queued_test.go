@@ -42,6 +42,8 @@ func claudeTranscript(t *testing.T, records ...string) string {
 				}
 			}
 			lines = append(lines, fmt.Sprintf(`{"type":"user","promptId":%q,"timestamp":%q,"message":{"role":"user","content":%q}%s}`, value, stamp, user, position))
+		case "meta":
+			lines = append(lines, fmt.Sprintf(`{"type":"user","isMeta":true,"promptId":%q,"timestamp":%q,"message":{"role":"user","content":%q}}`, value, stamp, user))
 		case "queue":
 			lines = append(lines, fmt.Sprintf(`{"type":"queue-operation","operation":%q,"timestamp":%q,"content":%q}`, value, stamp, queued))
 		case "system":

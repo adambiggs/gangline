@@ -60,7 +60,7 @@ func QueuedTurnPending(invocation Invocation, transcript, turnID string) (bool, 
 		case r.Type == "system" && (r.Subtype == "stop_hook_summary" || r.Subtype == "turn_duration"):
 			ended = true
 		case r.Type == "user" && r.PromptID != "":
-			if !prompts[r.PromptID] && !r.Meta && !r.CompactSummary {
+			if !prompts[r.PromptID] && r.startsPrompt() {
 				prompts[r.PromptID] = true
 				if ended {
 					queue.queued, ended = 0, false
@@ -189,6 +189,13 @@ func (q *claudeQueue) replay(r claudeQueueRecord) bool {
 		q.queued = 0
 	}
 	return true
+}
+
+// startsPrompt reports a user record of a prompt of the conversation. A
+// subagent's prompt, a record Claude Code writes itself, and a compaction's
+// summary carry prompt ids but are not prompts the turn ran.
+func (r claudeQueueRecord) startsPrompt() bool {
+	return r.Type == "user" && r.PromptID != "" && !r.Sidechain && !r.Meta && !r.CompactSummary
 }
 
 type claudeQueueRecord struct {

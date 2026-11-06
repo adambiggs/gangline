@@ -1,6 +1,8 @@
 package main
 
 import (
+	"time"
+
 	"github.com/adambiggs/gangline/core"
 	"github.com/adambiggs/gangline/harness"
 	"github.com/adambiggs/gangline/store"
@@ -26,7 +28,7 @@ func (run *runtime) observeTranscriptTurn(l *store.LockedAgent, a *core.Agent, c
 	// that it stopped something; an earlier end belongs to a turn already
 	// over, and whatever runs now, such as a compaction the operator typed,
 	// may not write one.
-	interrupt = interrupt && !end.At.Before(a.InterruptAt)
+	interrupt = interrupt && !end.At.Before(interruptSentAt(*a))
 	if !open && !interrupt {
 		return nil
 	}
@@ -70,4 +72,14 @@ func (run *runtime) observeTranscriptTurn(l *store.LockedAgent, a *core.Agent, c
 // of the turn before it does not show that an interrupt stopped it.
 func compactionRunning(a core.Agent) bool {
 	return a.Compaction != nil && (a.Compaction.Status == "submitted" || a.Compaction.Status == "unverified")
+}
+
+// interruptSentAt is when gang sent the first pending interrupt. A record
+// saved before gang kept that time holds only the deadline, which gang sets
+// one operation timeout after sending.
+func interruptSentAt(a core.Agent) time.Time {
+	if !a.InterruptAt.IsZero() {
+		return a.InterruptAt
+	}
+	return a.InterruptDeadline.Add(-operationTimeout)
 }
