@@ -38,7 +38,7 @@ func DetectWedge(invocation Invocation, observation WedgeObservation) (Wedge, er
 	if !observation.TurnActive || observation.BusySince.IsZero() || observation.ObservedAt.Before(observation.BusySince.Add(threshold)) {
 		return Wedge{}, nil
 	}
-	if observation.Previous != ScreenFingerprint(observation.Current) {
+	if observation.Previous != activityFingerprint(invocation, observation.Current) {
 		return Wedge{}, nil
 	}
 	plain := strings.Join(screenLines(observation.Current, true), "\n")
@@ -53,12 +53,21 @@ func DetectWedge(invocation Invocation, observation WedgeObservation) (Wedge, er
 	}, nil
 }
 
-// ScreenFingerprint hashes the screen text and the pane title. A harness that
-// animates its title while it works changes the fingerprint, which counts as
-// progress for the wedge and open-turn quiet windows.
 func ScreenFingerprint(screen substrate.Screen) string {
+	return fmt.Sprintf("%x", sha256.Sum256([]byte(strings.Join(screenLines(screen, true), "\n"))))
+}
+
+// ActivityFingerprint is ScreenFingerprint plus a pane title that the collar
+// reads as busy. A spinner frame in the title then counts as progress for the
+// wedge and open-turn quiet windows, while a title that blinks or renames
+// without native work, such as an approval marker, leaves it unchanged.
+func ActivityFingerprint(collar Collar, screen substrate.Screen) string {
+	return activityFingerprint(collar.Primitives.Wedge, screen)
+}
+
+func activityFingerprint(wedge Invocation, screen substrate.Screen) string {
 	text := strings.Join(screenLines(screen, true), "\n")
-	if screen.Title != "" {
+	if busy, err := titleMatches(wedge, "title_busy", screen.Title); err == nil && busy {
 		text += "\n\x00" + screen.Title
 	}
 	return fmt.Sprintf("%x", sha256.Sum256([]byte(text)))
