@@ -189,6 +189,10 @@ func TestRepeatedInterruptKeepsFirstRequestTime(t *testing.T) {
 	if !a.InterruptAt.Equal(now) || !a.InterruptDeadline.Equal(now.Add(31*time.Second)) {
 		t.Fatalf("interrupt at %v deadline %v", a.InterruptAt, a.InterruptDeadline)
 	}
+	later := now.Add(time.Minute)
+	if b, _ := Step(a, Event{Type: "interrupt_requested", At: later, HitchID: "a", Deadline: later.Add(30 * time.Second)}); !b.InterruptAt.Equal(later) {
+		t.Fatalf("interrupt after the elapsed deadline kept %v", b.InterruptAt)
+	}
 	a, _ = Step(a, Event{Type: "interrupt_completed", At: now.Add(2 * time.Second), HitchID: "a"})
 	if !a.InterruptAt.IsZero() || !a.InterruptDeadline.IsZero() {
 		t.Fatalf("completed interrupt kept at %v deadline %v", a.InterruptAt, a.InterruptDeadline)

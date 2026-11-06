@@ -34,6 +34,7 @@ func TestTurnClosed(t *testing.T) {
 		{"the queued turn ends", []string{"0 user p1", "1 queue enqueue", "4 queue dequeue", "3 system turn_duration", "5 user p2", "6 assistant -", "7 system turn_duration"}, true, 7, false},
 		{"a prompt queued before the turn still waits", []string{"0 user p0", "1 queue enqueue", "1.5 queue enqueue", "2 system turn_duration", "3 queue dequeue", "3.1 user p1@2/queued", "4 system turn_duration"}, false, 0, false},
 		{"both prompts queued before the turn ran", []string{"0 user p0", "1 queue enqueue", "1.5 queue enqueue", "2 system turn_duration", "3 queue dequeue", "3.1 user p1@2/queued", "4 system turn_duration", "5 queue dequeue", "5.1 user p2@3/queued", "6 system turn_duration"}, true, 6, false},
+		{"a meta record after the interrupt note", []string{"0 user p1", "1 user p1 [Request interrupted by user]", "1.05 meta p1 caveat", "1.1 system turn_duration"}, true, 1.1, true},
 		{"two queued prompts run under one dequeue", []string{"0 user p1", "1 queue enqueue", "1.5 queue enqueue", "2 system turn_duration", "3 queue dequeue", "3.1 user p2@2/queued", "3.2 user p3@2/queued", "4 system turn_duration"}, true, 4, false},
 		{"a queued prompt leaves the queue unrecorded", []string{"0 user p1", "1 queue enqueue", "2 system turn_duration", "3 user p2@2/queued", "4 system turn_duration"}, true, 4, false},
 		{"a dequeue claimed by a typed prompt is not left for a later one", []string{"0 user p1", "1 queue enqueue", "2 system turn_duration", "3 queue dequeue", "3.1 user p2", "4 system turn_duration", "5 queue enqueue", "6 system turn_duration", "7 user p3@4/queued", "8 system turn_duration"}, true, 8, false},
@@ -111,9 +112,9 @@ func TestTurnClosedSkipsSidechainAndMetaRecords(t *testing.T) {
 	if end, closed, err := TurnClosed(claudeTurnClose, path, "p1"); err != nil || !closed || !end.At.Equal(time.Date(2026, 11, 6, 15, 0, 3, 0, time.UTC)) {
 		t.Fatalf("closed=%v end=%+v err=%v", closed, end, err)
 	}
-	// A witnessed prompt recorded only as meta, such as a local command,
-	// runs no turn of its own.
-	if end, closed, err := TurnClosed(claudeTurnClose, path, "m1"); err != nil || !closed || !end.At.Equal(time.Date(2026, 11, 6, 15, 0, 3, 0, time.UTC)) {
-		t.Fatalf("meta prompt: closed=%v end=%+v err=%v", closed, end, err)
+	// A witnessed prompt recorded so far only as meta has not run, so the
+	// previous turn's end does not close it.
+	if _, closed, err := TurnClosed(claudeTurnClose, path, "m1"); err != nil || closed {
+		t.Fatalf("meta prompt: closed=%v err=%v", closed, err)
 	}
 }

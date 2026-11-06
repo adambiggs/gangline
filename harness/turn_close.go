@@ -69,11 +69,16 @@ func TurnClosed(invocation Invocation, transcript, turnID string) (TurnClose, bo
 		case r.Type == "system" && r.Subtype == "turn_duration":
 			ended, closed = true, TurnClose{At: r.Timestamp, Interrupted: interrupted}
 		case r.Type == "user":
-			interrupted = r.userInterrupt()
-			seen = seen || r.PromptID == turnID
-			if r.PromptID == "" || r.Meta || r.CompactSummary || prompts[r.PromptID] {
+			if r.Meta || r.CompactSummary {
 				continue
 			}
+			interrupted = r.userInterrupt()
+			if !r.startsPrompt() || prompts[r.PromptID] {
+				continue
+			}
+			// A prompt recorded only by Claude Code's own records has not
+			// run yet, so it is not the witnessed turn.
+			seen = seen || r.PromptID == turnID
 			prompts[r.PromptID], started = true, r.Timestamp
 			switch {
 			case r.PromptSource == "queued" && claims > 0:

@@ -90,10 +90,12 @@ func Step(agent Agent, event Event) (Agent, []Effect) {
 			agent.Compaction.Recovered = true
 		}
 	case "interrupt_requested":
-		agent.Activity, agent.InterruptDeadline = Interrupting, event.Deadline
-		if agent.InterruptAt.IsZero() {
+		// A repeated interrupt keeps the first send time; one sent after
+		// the last deadline elapsed starts again.
+		if agent.InterruptAt.IsZero() || !event.At.Before(agent.InterruptDeadline) {
 			agent.InterruptAt = event.At
 		}
+		agent.Activity, agent.InterruptDeadline = Interrupting, event.Deadline
 	case "interrupt_completed":
 		agent.Activity, agent.InterruptDeadline, agent.InterruptAt = Idle, time.Time{}, time.Time{}
 		if event.At.After(agent.Native.FinishedAt) {
