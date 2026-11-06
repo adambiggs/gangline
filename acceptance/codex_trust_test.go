@@ -142,3 +142,121 @@ func TestSeedCodexConfigPreservesSelectedProviderConnection(t *testing.T) {
 		t.Fatal("regular config changed")
 	}
 }
+
+func TestSeedCodexConfigKeepsPrivateHookTrust(t *testing.T) {
+	root := t.TempDir()
+	regularHome, privateHome := filepath.Join(root, "regular"), filepath.Join(root, "private")
+	for _, dir := range []string{regularHome, privateHome} {
+		if err := os.Mkdir(dir, 0700); err != nil {
+			t.Fatal(err)
+		}
+	}
+	cwd := filepath.Join(root, "checkout")
+	key := "/<session-flags>/config.toml:stop:0:0"
+	regular := "[projects." + strconv.Quote(cwd) + "]\ntrust_level = 'trusted'\n[hooks.state." + strconv.Quote("/<session-flags>/config.toml:session_start:0:0") + "]\ntrusted_hash = 'sha256:live-team'\n"
+	if err := os.WriteFile(filepath.Join(regularHome, "config.toml"), []byte(regular), 0600); err != nil {
+		t.Fatal(err)
+	}
+	private := "[hooks.state." + strconv.Quote(key) + "]\ntrusted_hash = 'sha256:acceptance'\n"
+	if err := os.WriteFile(filepath.Join(privateHome, "config.toml"), []byte(private), 0600); err != nil {
+		t.Fatal(err)
+	}
+	for range 2 {
+		if err := seedCodexConfig(regularHome, privateHome, cwd); err != nil {
+			t.Fatal(err)
+		}
+	}
+	content, err := os.ReadFile(filepath.Join(privateHome, "config.toml"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var config struct {
+		Hooks struct {
+			State map[string]struct {
+				TrustedHash string `toml:"trusted_hash"`
+			} `toml:"state"`
+		} `toml:"hooks"`
+	}
+	if err := toml.Unmarshal(content, &config); err != nil {
+		t.Fatal(err)
+	}
+	if len(config.Hooks.State) != 1 || config.Hooks.State[key].TrustedHash != "sha256:acceptance" {
+		t.Fatalf("private hook trust = %+v, want only %s = sha256:acceptance:\n%s", config.Hooks.State, key, content)
+	}
+}
+
+func TestResetCodexHomeKeepsOnlyConfigAndAuth(t *testing.T) {
+	profile := filepath.Join(t.TempDir(), "home")
+	for _, dir := range []string{profile, filepath.Join(profile, "sessions", "2026")} {
+		if err := os.MkdirAll(dir, 0700); err != nil {
+			t.Fatal(err)
+		}
+	}
+	for _, name := range []string{"config.toml", "history.jsonl", "state.sqlite", filepath.Join("sessions", "2026", "rollout.jsonl")} {
+		if err := os.WriteFile(filepath.Join(profile, name), []byte("x"), 0600); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := os.Symlink(filepath.Join(t.TempDir(), "auth.json"), filepath.Join(profile, "auth.json")); err != nil {
+		t.Fatal(err)
+	}
+	if err := resetCodexHome(profile); err != nil {
+		t.Fatal(err)
+	}
+	entries, err := os.ReadDir(profile)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var names []string
+	for _, entry := range entries {
+		names = append(names, entry.Name())
+	}
+	if !reflect.DeepEqual(names, []string{"auth.json", "config.toml"}) {
+		t.Fatalf("reset left %v, want auth.json and config.toml", names)
+	}
+}
+
+func TestLiveCodexDirectoryAdmitsOneRun(t *testing.T) {
+	cache := t.TempDir()
+	first, release, err := liveCodexDirectory(cache)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, _, err := liveCodexDirectory(cache); err == nil || !strings.Contains(err.Error(), "another live Codex acceptance run") {
+		t.Fatalf("second run while locked: %v", err)
+	}
+	release()
+	second, releaseAgain, err := liveCodexDirectory(cache)
+	if err != nil {
+		t.Fatalf("run after release: %v", err)
+	}
+	releaseAgain()
+	if first != second || first != filepath.Join(cache, "gangline-acceptance", "codex") {
+		t.Fatalf("directories %q and %q, want one fixed path", first, second)
+	}
+}
+
+func TestCodexHookReviewStepNamesOperatorAction(t *testing.T) {
+	for _, text := range []string{"Hooks need review\n› 1. Review hooks", "blocked: native hooks need review before they can run", "1 hook needs review"} {
+		if !codexHooksAwaitReview(text) {
+			t.Errorf("review not recognised in %q", text)
+		}
+	}
+	if codexHooksAwaitReview("Trust this folder?") {
+		t.Error("folder trust read as hook review")
+	}
+	step := codexHookReviewStep("/tmp/s.sock", "gangline-provider-codex", "%3", "/cache/home")
+	for _, want := range []string{
+		`tmux -S /tmp/s.sock attach-session -t gangline-provider-codex \; select-window -t %3 \; select-pane -t %3`,
+		`"Trust all and continue"`,
+		"tmux -S /tmp/s.sock kill-server",
+		"/cache/home/config.toml only, not in ~/.codex",
+	} {
+		if !strings.Contains(step, want) {
+			t.Errorf("step lacks %q:\n%s", want, step)
+		}
+	}
+	if !strings.Contains(codexHookReviewStep("/tmp/s.sock", "s", "", "/h"), "select the worker window") {
+		t.Error("step without a pane does not say which window to select")
+	}
+}
