@@ -23,10 +23,12 @@ func queuedTurnSource(invocation Invocation) (string, error) {
 }
 
 // QueuedTurnPending reports whether a prompt the harness queued during turn
-// turnID runs as its own turn once that turn finishes. Claude Code answers a
-// prompt typed mid-turn with the running turn's submit hook and gives the
-// queued turn none, so its finish hook is the only boundary the queued turn
-// shows.
+// turnID runs as its own turn once that turn finishes. Claude Code folds a
+// prompt submitted mid-turn at a tool boundary into the running turn, removes
+// it from the queue, and fires the submit hook with its text under the running
+// turn's prompt id. A prompt still queued when the turn ends runs as its own
+// turn under a new prompt id, so the finish hook of turnID must not close it;
+// only the queue records show it is coming.
 //
 // The transcript's queue records are written out of time order, and a queued
 // prompt can leave the queue unrecorded, so the queue is replayed by

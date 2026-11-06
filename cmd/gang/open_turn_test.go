@@ -180,3 +180,163 @@ func TestCompletedInterruptClosesOpenTurn(t *testing.T) {
 		t.Fatalf("interrupted turn read %s: %s", got.Activity, got.Evidence)
 	}
 }
+
+// transcriptTurnFixture is openTurnFixture whose submit witness names a
+// Claude Code transcript holding prompt p1. stamp formats an offset from the
+// fixture's start as a transcript timestamp.
+func transcriptTurnFixture(t *testing.T) (f *stateFixture, a core.Agent, start time.Time, write func(...string), stamp func(time.Duration) string) {
+	t.Helper()
+	f, a, start = openTurnFixture(t)
+	stamp = func(d time.Duration) string { return start.Add(d).UTC().Format(time.RFC3339Nano) }
+	transcript := filepath.Join(t.TempDir(), "transcript.jsonl")
+	write = func(lines ...string) { appendLines(t, transcript, lines...) }
+	p, err := f.run.team.Agent(a.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := p.WriteWitness(store.Witness{ID: "w1", At: start, SessionID: "s", TurnID: "p1", Transcript: transcript}); err != nil {
+		t.Fatal(err)
+	}
+	write(`{"type":"user","promptId":"p1","timestamp":"`+stamp(0)+`","message":{"role":"user","content":"go"}}`,
+		`{"type":"assistant","timestamp":"`+stamp(time.Second)+`","message":{"role":"assistant","content":[]}}`)
+	return f, a, start, write, stamp
+}
+
+// hookAt records a native status hook as the hook command does, then ticks
+// the agent with it.
+func (f *stateFixture) hookAt(t *testing.T, a core.Agent, at time.Time, kind string) core.Agent {
+	t.Helper()
+	p, err := f.run.team.Agent(a.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := p.WriteStatusHook(store.StatusHook{Kind: kind, At: at, SessionID: "s", TurnID: "p1"}); err != nil {
+		t.Fatal(err)
+	}
+	return f.tickAt(t, a, at, hookNotice{Kind: kind, TurnID: "p1", At: at})
+}
+
+func eventLog(t *testing.T, f *stateFixture) string {
+	t.Helper()
+	data, err := os.ReadFile(f.run.team.Log)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return string(data)
+}
+
+// The transcript's turn_duration closes a turn at once, before its Stop hook
+// and well inside the quiet window, and the late Stop leaves it closed.
+func TestTranscriptTurnEndClosesTurn(t *testing.T) {
+	f, a, start, write, stamp := transcriptTurnFixture(t)
+	if got := f.tickAt(t, a, start.Add(2*time.Second), hookNotice{}); got.Activity != core.Busy {
+		t.Fatalf("running turn read %s: %s", got.Activity, got.Evidence)
+	}
+	write(`{"type":"system","subtype":"stop_hook_summary","timestamp":"`+stamp(3*time.Second)+`"}`,
+		`{"type":"system","subtype":"turn_duration","timestamp":"`+stamp(3*time.Second+time.Millisecond)+`"}`)
+	got := f.tickAt(t, a, start.Add(4*time.Second), hookNotice{})
+	if got.Activity != core.Idle || !got.Native.FinishedAt.Equal(start.Add(3*time.Second+time.Millisecond)) {
+		t.Fatalf("ended turn read %s (%s) finished %v", got.Activity, got.Evidence, got.Native.FinishedAt)
+	}
+	got = f.tickAt(t, a, start.Add(5*time.Second), hookNotice{Kind: "turn-finished", TurnID: "p1", At: start.Add(3 * time.Second)})
+	if got.Activity != core.Idle {
+		t.Fatalf("late Stop read %s: %s", got.Activity, got.Evidence)
+	}
+	if !strings.Contains(eventLog(t, f), "native transcript records the turn's end") {
+		t.Fatal("transcript end not recorded")
+	}
+}
+
+// Escape on a permission dialog fires no hook (Claude Code writes only the
+// transcript's interrupt note and turn_duration). With an interrupt pending,
+// the transcript completes it, so the status read needs no pane capture.
+func TestTranscriptCompletesInterruptOnEscapedPermission(t *testing.T) {
+	f, a, start, write, stamp := transcriptTurnFixture(t)
+	p, err := f.run.team.Agent(a.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := p.WritePermissionWitness(store.PermissionWitness{At: start.Add(2 * time.Second), SessionID: "s"}); err != nil {
+		t.Fatal(err)
+	}
+	if got := f.hookAt(t, a, start.Add(2*time.Second), "permission-requested"); got.Activity != core.Blocked {
+		t.Fatalf("permission request read %s: %s", got.Activity, got.Evidence)
+	}
+	a = f.setAgent(t, f.agent(t, a.ID), func(a *core.Agent) {
+		a.Activity, a.InterruptDeadline = core.Interrupting, start.Add(time.Minute)
+	})
+	c, err := loadCollar("claude", f.run.settings)
+	if err != nil {
+		t.Fatal(err)
+	}
+	const gap = "interrupt completion has no native hook"
+	if got := f.run.statusCaptureGap(a, c); got != gap {
+		t.Fatalf("premise: gap %q", got)
+	}
+	write(`{"type":"user","promptId":"p1","timestamp":"`+stamp(5*time.Second)+`","message":{"role":"user","content":[{"type":"tool_result","content":"The user doesn't want to proceed with this tool use.","is_error":true}]}}`,
+		`{"type":"user","promptId":"p1","timestamp":"`+stamp(5*time.Second+time.Millisecond)+`","message":{"role":"user","content":[{"type":"text","text":"[Request interrupted by user for tool use]"}]}}`,
+		`{"type":"system","subtype":"turn_duration","timestamp":"`+stamp(5*time.Second+2*time.Millisecond)+`"}`)
+	captures := f.input.captures
+	got := f.tickAt(t, a, start.Add(6*time.Second), hookNotice{})
+	if got.Activity != core.Idle || !got.InterruptDeadline.IsZero() {
+		t.Fatalf("interrupt: %s (%s) deadline=%v", got.Activity, got.Evidence, got.InterruptDeadline)
+	}
+	if f.input.captures != captures {
+		t.Fatalf("captures=%d, want %d: the transcript ends the interrupt", f.input.captures, captures)
+	}
+	if g := f.run.statusCaptureGap(got, c); g == gap {
+		t.Fatalf("gap still %q", g)
+	}
+	log := eventLog(t, f)
+	if strings.Contains(log, "status pane capture: "+gap) || !strings.Contains(log, "native transcript records the turn interrupted by the user") {
+		t.Fatalf("event log: %s", log)
+	}
+	if _, pending, err := p.ReadPermissionWitness(); err != nil || pending {
+		t.Fatalf("dismissed permission request still pending: %v %v", pending, err)
+	}
+}
+
+// An operator's Escape, with no interrupt from gang, ends the turn the same
+// way: the status read turns idle without a capture or the quiet window.
+func TestTranscriptEndsTurnAfterOperatorEscape(t *testing.T) {
+	f, a, start, write, stamp := transcriptTurnFixture(t)
+	if got := f.hookAt(t, a, start.Add(2*time.Second), "activity"); got.Activity != core.Busy {
+		t.Fatalf("running turn read %s: %s", got.Activity, got.Evidence)
+	}
+	write(`{"type":"user","promptId":"p1","timestamp":"`+stamp(3*time.Second)+`","message":{"role":"user","content":[{"type":"text","text":"[Request interrupted by user]"}]}}`,
+		`{"type":"system","subtype":"turn_duration","timestamp":"`+stamp(3*time.Second+time.Millisecond)+`"}`)
+	captures := f.input.captures
+	got := f.tickAt(t, a, start.Add(4*time.Second), hookNotice{})
+	if got.Activity != core.Idle || f.input.captures != captures {
+		t.Fatalf("escaped turn read %s (%s), captures %d -> %d", got.Activity, got.Evidence, captures, f.input.captures)
+	}
+}
+
+// Claude Code folds a prompt submitted at a tool boundary into the running
+// turn and fires the submit hook again under the running turn's prompt id.
+// The turn's one turn_duration closes it.
+func TestTranscriptEndClosesTurnWithFoldedPrompt(t *testing.T) {
+	f, a, start, write, stamp := transcriptTurnFixture(t)
+	p, err := f.run.team.Agent(a.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	write(`{"type":"queue-operation","operation":"enqueue","timestamp":"` + stamp(2*time.Second) + `","content":"second"}`)
+	first, err := p.ReadWitness()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := p.WriteWitness(store.Witness{ID: "w2", At: start.Add(3 * time.Second), SessionID: "s", TurnID: "p1", Transcript: first.Transcript}); err != nil {
+		t.Fatal(err)
+	}
+	if got := f.hookAt(t, a, start.Add(3*time.Second), "turn-started"); got.Activity != core.Busy {
+		t.Fatalf("folded prompt read %s: %s", got.Activity, got.Evidence)
+	}
+	write(`{"type":"user","promptId":"p1","timestamp":"`+stamp(4*time.Second)+`","message":{"role":"user","content":[{"type":"tool_result","content":"ok"}]}}`,
+		`{"type":"queue-operation","operation":"remove","timestamp":"`+stamp(4*time.Second+time.Millisecond)+`","content":"second"}`,
+		`{"type":"system","subtype":"stop_hook_summary","timestamp":"`+stamp(6*time.Second)+`"}`,
+		`{"type":"system","subtype":"turn_duration","timestamp":"`+stamp(6*time.Second+time.Millisecond)+`"}`)
+	if got := f.tickAt(t, a, start.Add(7*time.Second), hookNotice{}); got.Activity != core.Idle {
+		t.Fatalf("ended turn read %s: %s", got.Activity, got.Evidence)
+	}
+}

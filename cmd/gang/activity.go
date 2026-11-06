@@ -178,6 +178,9 @@ func (run *runtime) openTurn(l *store.LockedAgent, a *core.Agent, c harness.Coll
 	if err != nil || !a.InterruptDeadline.IsZero() || !a.Native.SubmittedAt.After(a.Native.FinishedAt) {
 		return false, err
 	}
+	if closed, err := run.closeTranscriptTurn(l, a, c); err != nil || closed {
+		return false, err
+	}
 	if quiet == 0 {
 		// The submit hook precedes native UI paint. A short display grace
 		// bridges that frame without inferring a native finish boundary.

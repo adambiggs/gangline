@@ -73,6 +73,13 @@ func (run *runtime) tickAgent(id core.HitchID, notice hookNotice, wait bool) (re
 	if err := run.refreshNative(l, &a, c); err != nil {
 		return err
 	}
+	// A running turn fires hooks often, and the hook that started a tick is
+	// newer evidence than the transcript; other ticks read it for an end.
+	if notice.Kind == "" || !a.InterruptDeadline.IsZero() {
+		if _, err := run.closeTranscriptTurn(l, &a, c); err != nil {
+			return err
+		}
+	}
 	if err := run.notifyStartupFailure(l, &a, c); err != nil {
 		return err
 	}
