@@ -844,9 +844,10 @@ closing tag, by a context stamp:
 `ctx` is the recipient's context tokens, rounded to the nearest thousand below
 a million and to a tenth of a million from there; `ctx=unknown` means the
 reading is unavailable. `at` is when Gangline first stamped the envelope for
-native input, in UTC to the second, without the year, so it dates the `ctx`
-reading; a message typed again after a failed attempt keeps its first stamp. A startup's sections share one
-stamp line after the final section. Gangline writes the line only after an
+native input, in UTC to the second, without the year. A message typed again
+after a failed attempt keeps its first stamp, `ctx` included, unless a native
+context reset discards a stamp that carries a band action. A startup's
+sections share one stamp line after the final section. Gangline writes the line only after an
 envelope's closing tag; the same text inside a message body is the sender's.
 
 When one agent sends to another with `gang send`, the stamp line also carries
@@ -872,10 +873,11 @@ queue or in the recent end of the team log, leaving out those that were
 cancelled or failed, against the recent end of the transcript of the sender's
 native session. That session follows a move the harness's own records prove,
 as delivery follows it, and a Codex session log bound to another session is
-resolved to the session's own. A message older than the earliest transcript
-record read is compared only while it is still in Gangline's queue, since its
-delivery may lie in an earlier session; one that left Gangline's queue for the
-harness's own queue before then is not named. The reads take no lock, so a
+resolved to the session's own. A message Gangline first started typing before
+the earliest transcript record read, or created before it when never typed, is
+compared only while it is still in Gangline's queue, since its delivery may lie
+in an earlier session; one that left Gangline's queue for the harness's own
+queue before then is not named. The reads take no lock, so a
 message settling at that moment can be misjudged. Only messages between agents
 on this host are compared, and the marker stays as recorded. `crossed=unknown`
 means the sender's transcript could not be read or belongs to another

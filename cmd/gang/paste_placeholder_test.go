@@ -88,6 +88,31 @@ func TestInterruptRefusesPastePlaceholderBeforeInterrupting(t *testing.T) {
 	requireNothingTyped(t, f, p)
 }
 
+// A reason that fits only without its stamp line would wait forever at the
+// head of the queue, so it is refused before any key is sent.
+func TestInterruptRefusesReasonWithoutRoomForTheStamp(t *testing.T) {
+	f, a, p := claudeRecipient(t)
+	e := core.Envelope{Token: "0123456789abcdef", Recipient: a.ID, To: a.Name, From: core.Sender{Kind: core.SenderGangline, Name: "interrupt"}}
+	fits := func(n int) bool {
+		e.Message.Text = strings.Repeat("a", n)
+		_, err := envelopeText(e)
+		return err == nil
+	}
+	low, high := 0, maximumMessageBytes
+	for low < high {
+		if mid := (low + high + 1) / 2; fits(mid) {
+			low = mid
+		} else {
+			high = mid - 1
+		}
+	}
+	err := f.cmd.interrupt([]string{"worker", "-m", strings.Repeat("a", low)})
+	if err == nil || !strings.Contains(err.Error(), "encoded envelope budget") {
+		t.Fatalf("reason without stamp room: %v", err)
+	}
+	requireNothingTyped(t, f, p)
+}
+
 func TestHitchRefusesPastePlaceholderInTask(t *testing.T) {
 	f := newStateFixture(t)
 	t.Setenv("PATH", t.TempDir())

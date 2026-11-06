@@ -537,6 +537,23 @@ func (cmd command) interrupt(args []string) (result error) {
 	if err := refusePasteHazard(c, reason); err != nil {
 		return err
 	}
+	id, err := randomID("interrupt")
+	if err != nil {
+		return err
+	}
+	// The reason envelope is built and checked before any key is sent.
+	var notice *core.Envelope
+	if reason != "" {
+		token, err := randomEnvelopeToken()
+		if err != nil {
+			return err
+		}
+		e := core.Envelope{ID: core.EnvelopeID(id), Token: token, Recipient: a.ID, To: a.Name, From: core.Sender{Kind: core.SenderGangline, Name: "interrupt"}, Message: core.Message{Text: reason}, CreatedAt: cmd.now()}
+		if _, err := queuedEnvelopeText(e); err != nil {
+			return err
+		}
+		notice = &e
+	}
 	b = run.registeredInput(a, b)
 	// The interrupt keys answer a native approval or trust prompt as a
 	// refusal, which is the operator's to give.
@@ -552,10 +569,6 @@ func (cmd command) interrupt(args []string) (result error) {
 	if err := run.apply(l, &a, core.Event{Type: "interrupt_requested", Deadline: cmd.now().Add(operationTimeout)}); err != nil {
 		return err
 	}
-	id, err := randomID("interrupt")
-	if err != nil {
-		return err
-	}
 	if err := run.apply(l, &a, core.Event{Type: "input_started", ID: id, Status: "interrupt"}); err != nil {
 		return err
 	}
@@ -566,16 +579,11 @@ func (cmd command) interrupt(args []string) (result error) {
 	if err := l.Save(a); err != nil {
 		return err
 	}
-	if reason != "" {
-		token, err := randomEnvelopeToken()
-		if err != nil {
+	if notice != nil {
+		if err := l.Paths.Publish(*notice); err != nil {
 			return err
 		}
-		e := core.Envelope{ID: core.EnvelopeID(id), Token: token, Recipient: a.ID, To: a.Name, From: core.Sender{Kind: core.SenderGangline, Name: "interrupt"}, Message: core.Message{Text: reason}, CreatedAt: cmd.now()}
-		if err := l.Paths.Publish(e); err != nil {
-			return err
-		}
-		if err := run.record(a, core.Event{Type: "send_queued", Envelope: &e}); err != nil {
+		if err := run.record(a, core.Event{Type: "send_queued", Envelope: notice}); err != nil {
 			return err
 		}
 	}
@@ -689,7 +697,7 @@ func (cmd command) compact(args []string) (result error) {
 	if err != nil {
 		return err
 	}
-	if _, err := queuedEnvelopeText(core.Envelope{Token: "0123456789abcdef", From: resumeFrom, Message: core.Message{Text: resume}}); err != nil {
+	if _, err := queuedEnvelopeText(core.Envelope{Token: "0123456789abcdef", From: resumeFrom, Message: core.Message{Text: resume}, Purpose: "resume"}); err != nil {
 		return err
 	}
 	now := cmd.now()
