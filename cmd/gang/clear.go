@@ -286,17 +286,11 @@ func (run *runtime) admitClearPrompt(p store.AgentPaths, a core.Agent, c harness
 	if a.Clear == nil || a.Clear.Status != "continuing" {
 		return fmt.Errorf("clear continuation is not awaiting admission")
 	}
-	wires, err := receiptWires(a.Clear.Envelope)
+	matched, err := anyReceiptWire(a.Clear.Envelope, func(wire string) (bool, error) {
+		return harness.SubmittedPromptMatches(c.Primitives.SubmitWitness, wire, prompt)
+	})
 	if err != nil {
 		return err
-	}
-	matched := false
-	for _, wire := range wires {
-		if matched, err = harness.SubmittedPromptMatches(c.Primitives.SubmitWitness, wire, prompt); err != nil {
-			return err
-		} else if matched {
-			break
-		}
 	}
 	if !matched {
 		return fmt.Errorf("clear continuation differs from the saved role, note or one-time token")
