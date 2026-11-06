@@ -19,7 +19,7 @@ import (
 // read them as input.
 //
 // It reads at most the last transcriptWindow bytes. since is the time of the
-// first record it read, which is no later than when that record was written,
+// first timed record it read, which is no later than when it was written,
 // so a token absent from the result is unseen for a message created at or
 // after since. A window with no timed record cannot bound that, and is an
 // error.
@@ -83,7 +83,7 @@ func SeenTokens(invocation Invocation, transcript, session string, tokens []stri
 		}
 		// Once the window's first time is known, only records that can
 		// hold an envelope need decoding.
-		if !since.IsZero() && !bytes.Contains(line, []byte("[gang")) {
+		if !since.IsZero() && !bytes.Contains(line, []byte("[gang:")) && !bytes.Contains(line, []byte("[gang#")) {
 			continue
 		}
 		texts, at, err := input(line)

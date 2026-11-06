@@ -214,7 +214,7 @@ func TestSendMarksMessagesTheSenderHadNotSeen(t *testing.T) {
 	moved := crossingMail(f.lead, worker, "msg-moved", "eeeeeeeeeeeeeeee", at(30*time.Second))
 	f.logged(t, queuedEvent(moved))
 	appendTranscript(t, cleared,
-		`{"type":"user","sessionId":"s2","timestamp":"`+at(45*time.Second).Format(time.RFC3339)+`","message":{"role":"user","content":"cleared"}}`,
+		`{"type":"user","sessionId":"s2","timestamp":"`+at(time.Minute).Format(time.RFC3339)+`","message":{"role":"user","content":"cleared"}}`,
 		`{"type":"user","sessionId":"s2","timestamp":"`+at(30*time.Second).Format(time.RFC3339)+`","message":{"role":"user","content":"`+wireJSON(t, moved)+`"}}`)
 	if err := wp.WriteWitness(store.Witness{ID: "w", At: at(30 * time.Second), Prompt: "x", SessionID: "s2", Transcript: cleared}); err != nil {
 		t.Fatal(err)
@@ -247,6 +247,25 @@ func TestSendMarksMessagesTheSenderHadNotSeen(t *testing.T) {
 		t.Fatalf("codex crossed = %q", got.Crossed)
 	}
 
+	// An agent whose binding names no transcript yet is read from its
+	// submit witness, as delivery reads it.
+	fresh := f.add(t, "fresh-id", "fresh", "claude")
+	greeted := crossingMail(f.lead, fresh, "msg-greeted", "ffffffffffffffff", at(time.Minute))
+	f.logged(t, queuedEvent(greeted))
+	first := filepath.Join(t.TempDir(), "f.jsonl")
+	appendTranscript(t, first, `{"type":"user","sessionId":"f","timestamp":"`+at(2*time.Minute).Format(time.RFC3339)+`","message":{"role":"user","content":"start"}}`,
+		`{"type":"user","sessionId":"f","timestamp":"`+at(time.Minute).Format(time.RFC3339)+`","message":{"role":"user","content":"`+wireJSON(t, greeted)+`"}}`)
+	fp, err := f.run.team.Agent(fresh.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := fp.WriteWitness(store.Witness{ID: "w", At: at(time.Minute), Prompt: "x", SessionID: "f", Transcript: first}); err != nil {
+		t.Fatal(err)
+	}
+	if got := f.send(t, fresh, "first session"); got.Crossed != "" {
+		t.Fatalf("crossed from the witness's session = %q", got.Crossed)
+	}
+
 	// The marker rides on the stamp line when the message is delivered.
 	var submitted []string
 	submit := f.input.submit
@@ -258,7 +277,7 @@ func TestSendMarksMessagesTheSenderHadNotSeen(t *testing.T) {
 	if _, err := f.run.drain(f.lead.ID, ""); err != nil {
 		t.Fatal(err)
 	}
-	want := regexp.MustCompile(`^\[gang:(?:worker|coder)#[0-9a-f]{16}\] (.*) \[/gang:(?:worker|coder)#[0-9a-f]{16}\]\n\[gang ctx=\S+ at=\S+( crossed=\S+)? /\]$`)
+	want := regexp.MustCompile(`^\[gang:(?:worker|coder|fresh)#[0-9a-f]{16}\] (.*) \[/gang:(?:worker|coder|fresh)#[0-9a-f]{16}\]\n\[gang ctx=\S+ at=\S+( crossed=\S+)? /\]$`)
 	lines := map[string]string{}
 	for _, prompt := range submitted {
 		if m := want.FindStringSubmatch(prompt); m != nil {
@@ -273,6 +292,7 @@ func TestSendMarksMessagesTheSenderHadNotSeen(t *testing.T) {
 		"one unseen":            " crossed=4444444444444444",
 		"all seen":              "",
 		"after clear":           "",
+		"first session":         "",
 		"transcript unreadable": " crossed=unknown",
 		"codex unseen":          " crossed=dddddddddddddddd",
 	} {

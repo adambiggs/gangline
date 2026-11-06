@@ -60,8 +60,11 @@ func TestSeenTokensCountsOnlyInputTheModelReceived(t *testing.T) {
 				`{"type":"user","isMeta":true,"timestamp":"2026-11-06T10:00:05Z","message":{"role":"user","content":"` + envelopeFor(hook) + `"}}`,
 				`{"type":"user","timestamp":"2026-11-06T10:00:06Z","message":{"role":"user","content":[{"type":"image","source":{}},{"type":"text","text":"` + envelopeFor(image) + `"}]}}`,
 				`{"type":"user","timestamp":"2026-11-06T10:00:07Z","message":{"role":"user","content":"a body naming ` + quoted + ` is not an opener"}}`,
+				`{"type":"user","isCompactSummary":true,"timestamp":"2026-11-06T10:00:08Z","message":{"role":"user","content":"` + envelopeFor(summary) + `"}}`,
+				`{"type":"user","sessionId":"s","timestamp":"2026-11-06T10:00:09Z","message":{"role":"user","content":"[gang#` + startup + `-contract startup] c [/gang#` + startup + `-contract]"}}`,
+				`{"type":"user","sessionId":"s","timestamp":"2026-11-06T10:00:10Z","message":{"role":"user","content":"[gang#` + resume + ` resume] note [/gang#` + resume + `]"}}`,
 			},
-			want:  []string{turn, midTurn, image},
+			want:  []string{turn, midTurn, image, startup, resume},
 			since: "2026-11-06T10:00:00Z",
 		},
 		{
