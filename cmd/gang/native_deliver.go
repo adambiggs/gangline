@@ -1,11 +1,14 @@
 package main
 
 import (
+	"bytes"
 	"context"
 	"errors"
+	"fmt"
 	"io/fs"
 	"os"
 	"os/exec"
+	"time"
 
 	"github.com/adambiggs/gangline/core"
 	"github.com/adambiggs/gangline/harness"
@@ -50,7 +53,7 @@ func (run *runtime) queueNative(ctx context.Context, a core.Agent, c harness.Col
 	}
 	var exit *exec.ExitError
 	switch {
-	case errors.Is(err, exec.ErrNotFound) || errors.Is(err, fs.ErrNotExist):
+	case errors.Is(err, errNativeQueueNotStarted) || errors.Is(err, exec.ErrNotFound) || errors.Is(err, fs.ErrNotExist):
 		return nativeQueueRefused, "native queue did not start: " + detail
 	case errors.As(err, &exit) && exit.ExitCode() > 0 && ctx.Err() == nil:
 		return nativeQueueRefused, "native queue refused the message: " + detail
@@ -59,8 +62,20 @@ func (run *runtime) queueNative(ctx context.Context, a core.Agent, c harness.Col
 	}
 }
 
+// errNativeQueueNotStarted marks a queue command that never ran, such as one
+// whose message exceeds the platform's argument limit.
+var errNativeQueueNotStarted = errors.New("not started")
+
 func runNativeQueue(ctx context.Context, argv, env []string) ([]byte, error) {
+	var output bytes.Buffer
 	child := exec.CommandContext(ctx, argv[0], argv[1:]...)
 	child.Env = env
-	return child.CombinedOutput()
+	child.Stdout, child.Stderr = &output, &output
+	// A descendant holding the output open must not outlast the deadline.
+	child.WaitDelay = time.Second
+	if err := child.Start(); err != nil {
+		return nil, fmt.Errorf("%w: %w", errNativeQueueNotStarted, err)
+	}
+	err := child.Wait()
+	return output.Bytes(), err
 }

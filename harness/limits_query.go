@@ -46,10 +46,7 @@ func queryProviderLimits(ctx context.Context, collar Collar) (measuredLimits, er
 	}
 	defer stderr.Close()
 	child.Stderr = stderr
-	child.Env = os.Environ()
-	for key, value := range collar.Launch.Env {
-		child.Env = append(child.Env, key+"="+value)
-	}
+	child.Env = LaunchEnv(collar, os.Environ())
 	stdin, err := child.StdinPipe()
 	if err != nil {
 		return measuredLimits{}, err

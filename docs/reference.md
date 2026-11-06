@@ -843,14 +843,15 @@ message either way.
 A collar's `primitives.deliver` names a native command that takes a message
 as user input without typing it. The Codex collar's `codex-queue` runs
 `codex queue --thread SESSION --message TEXT`, with `CODEX_HOME` set to the
-home that holds the bound session's rollout. Gangline uses it only for a
-message from an agent or the operator, once the composer is free and the
-rollout's last turn record is a completed turn; startup, compaction-resume,
-context-band and capacity input, and messages to a running or interrupted
-turn, are typed as before. Only the exit status counts. Exit 0 makes the
+home that holds the bound session's rollout. Gangline uses it once the
+composer is free and the rollout's last turn record is a completed turn.
+Startup, compaction-resume, context-band and capacity input, and messages to a
+running or interrupted turn, are typed as before. The message text is a
+command-line argument while the command runs, so local users who can list
+processes can read it. Only the exit status counts. Exit 0 makes the
 receipt `accepted`, and the native submit hook later makes it `delivered`. A
-non-zero exit or a missing command types the message instead and the receipt
-says so. A run that does not finish leaves the message `unverified`, since the
+non-zero exit, or a command that cannot start, types the message instead and
+the receipt says so. A run that does not finish leaves the message `unverified`, since the
 native queue may still hold it. Codex replays a queued message when its
 session resumes, so Gangline never types a message the queue took.
 

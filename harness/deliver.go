@@ -9,7 +9,6 @@ import (
 	"io"
 	"os"
 	"path/filepath"
-	"sort"
 	"strings"
 )
 
@@ -53,15 +52,7 @@ func NativeDeliveryFor(collar Collar, session, transcript, wire string, environ 
 	} else if err != nil {
 		return NativeDelivery{}, false, err
 	}
-	env := append([]string(nil), environ...)
-	keys := make([]string, 0, len(collar.Launch.Env))
-	for key := range collar.Launch.Env {
-		keys = append(keys, key)
-	}
-	sort.Strings(keys)
-	for _, key := range keys {
-		env = append(env, key+"="+collar.Launch.Env[key])
-	}
+	env := LaunchEnv(collar, environ)
 	// The rollout's own home is where its thread lives, whatever the
 	// recipient's environment said when it started.
 	env = append(env, "CODEX_HOME="+home)

@@ -145,6 +145,7 @@ func TestCodexQueueRefusalTypesTheMessage(t *testing.T) {
 	for name, err := range map[string]error{
 		"non-zero exit":   exit,
 		"missing command": &exec.Error{Name: "codex", Err: exec.ErrNotFound},
+		"not started":     fmt.Errorf("%w: argument list too long", errNativeQueueNotStarted),
 	} {
 		t.Run(name, func(t *testing.T) {
 			f, a, p, _ := codexQueueRecipient(t, turnStarted+turnCompleted)
@@ -228,5 +229,21 @@ func TestCodexQueueCarriesOnlyOrdinaryMessages(t *testing.T) {
 				t.Fatalf("submits = %d", f.input.submits)
 			}
 		})
+	}
+}
+
+func TestRunNativeQueueSeparatesNotStartedFromExit(t *testing.T) {
+	dir := t.TempDir()
+	plain := filepath.Join(dir, "codex")
+	if err := os.WriteFile(plain, []byte("#!/bin/sh\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := runNativeQueue(context.Background(), []string{plain, "queue"}, nil); !errors.Is(err, errNativeQueueNotStarted) {
+		t.Fatalf("non-executable command: %v", err)
+	}
+	output, err := runNativeQueue(context.Background(), []string{"/bin/sh", "-c", "echo refused >&2; exit 3"}, nil)
+	var exit *exec.ExitError
+	if !errors.As(err, &exit) || exit.ExitCode() != 3 || errors.Is(err, errNativeQueueNotStarted) || strings.TrimSpace(string(output)) != "refused" {
+		t.Fatalf("exit: %v output=%q", err, output)
 	}
 }

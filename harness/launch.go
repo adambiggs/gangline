@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"regexp"
+	"sort"
 	"strconv"
 	"strings"
 
@@ -146,4 +147,19 @@ func shellJoin(args []string) string {
 		quoted[index] = "'" + strings.ReplaceAll(arg, "'", "'\"'\"'") + "'"
 	}
 	return strings.Join(quoted, " ")
+}
+
+// LaunchEnv is environ with the collar's launch environment added, in key
+// order. A later entry wins for a repeated key.
+func LaunchEnv(collar Collar, environ []string) []string {
+	env := append([]string(nil), environ...)
+	keys := make([]string, 0, len(collar.Launch.Env))
+	for key := range collar.Launch.Env {
+		keys = append(keys, key)
+	}
+	sort.Strings(keys)
+	for _, key := range keys {
+		env = append(env, key+"="+collar.Launch.Env[key])
+	}
+	return env
 }
