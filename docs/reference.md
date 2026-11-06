@@ -847,15 +847,22 @@ home that holds the bound session's rollout. Gangline uses it once the
 composer is free and the rollout's last turn record is a completed turn.
 Startup, assignment, clear and compaction-resume envelopes, context-band and
 capacity notices, and messages to a running or interrupted turn are typed as
-before. The message text is a command-line argument while the command runs,
-so local users who can list processes can read it. Only the exit status
-counts. Exit 0 makes the receipt `accepted`, even when a process the command
+before. Only the exit status counts. Exit 0 makes the receipt `accepted`, even when a process the command
 left behind still holds its output, and the native submit hook later makes it
 `delivered`. A non-zero exit, or a command that cannot start, types the
 message instead and the receipt says so. A run that does not finish leaves
 the message `unverified`, since the native queue may still hold it. Codex
 replays a queued message when its session resumes, so Gangline never types a
 message the queue took.
+
+Known issues with `codex-queue`:
+
+- After the operator types `/new` or `/resume` in a Codex pane, Gangline still
+  names the previous thread, so the queue holds the message for that thread
+  and its receipt stays `accepted` until the thread is resumed. `gang clear`
+  is not affected.
+- The message text is a command-line argument while `codex queue` runs, so
+  local users who can list processes can read it.
 
 Each delivered envelope is followed, on its own line directly after the
 closing tag, by a context stamp:
