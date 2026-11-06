@@ -1,5 +1,12 @@
 # Changelog
 
+## [3.2.2](https://github.com/adambiggs/gangline/compare/gangline-v3.2.1...gangline-v3.2.2) (2026-11-06)
+
+
+### Bug Fixes
+
+* preserve evaluated context crossing thresholds ([7e84081](https://github.com/adambiggs/gangline/commit/7e84081c285bb31dbc85c4b1dfe869c21ff99716))
+
 ## [3.2.1](https://github.com/adambiggs/gangline/compare/gangline-v3.2.0...gangline-v3.2.1) (2026-11-06)
 
 
