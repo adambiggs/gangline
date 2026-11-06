@@ -140,11 +140,24 @@ func TestCodexQueueAcceptanceStaysAcceptedWithoutItsHook(t *testing.T) {
 	}
 }
 
+func TestCodexQueueZeroExitWithLingeringOutputIsHeld(t *testing.T) {
+	f, a, p, _ := codexQueueRecipient(t, turnStarted+turnCompleted)
+	// Wait reports ErrWaitDelay after a zero exit whose descendant kept the
+	// output open.
+	f.cmd.nativeQueue = func(context.Context, []string, []string) ([]byte, error) {
+		return nil, exec.ErrWaitDelay
+	}
+	e := operatorMessage(a, f, "lingering")
+	if outcome := deliverDirect(t, f, a, p, e); outcome != "accepted" || f.input.submits != 0 {
+		t.Fatalf("outcome = %s submits=%d", outcome, f.input.submits)
+	}
+}
+
 func TestCodexQueueRefusalTypesTheMessage(t *testing.T) {
 	exit := exec.Command("sh", "-c", "exit 1").Run()
 	for name, err := range map[string]error{
 		"non-zero exit":   exit,
-		"missing command": &exec.Error{Name: "codex", Err: exec.ErrNotFound},
+		"missing command": fmt.Errorf("%w: %w", errNativeQueueNotStarted, &exec.Error{Name: "codex", Err: exec.ErrNotFound}),
 		"not started":     fmt.Errorf("%w: argument list too long", errNativeQueueNotStarted),
 	} {
 		t.Run(name, func(t *testing.T) {

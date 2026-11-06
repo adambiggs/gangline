@@ -35,10 +35,7 @@ func queryClaudeUsage(ctx context.Context, collar Collar) (measuredLimits, error
 		return measuredLimits{}, fmt.Errorf("%s limits query: %w", collar.Name, err)
 	}
 	child := exec.CommandContext(ctx, collar.Launch.Command, "-p", "/usage", "--no-session-persistence", "--output-format", "json")
-	child.Env = os.Environ()
-	for key, value := range collar.Launch.Env {
-		child.Env = append(child.Env, key+"="+value)
-	}
+	child.Env = LaunchEnv(collar, os.Environ())
 	// Print mode skips the folder-trust dialog, so the directory's project
 	// settings and hooks would run unasked. A private empty directory has
 	// none, and no other process can add them.

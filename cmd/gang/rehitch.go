@@ -83,10 +83,7 @@ func (cmd command) rehitch(args []string) (result error) {
 		update := exec.Command(c.Launch.Command, c.Launch.UpgradeArgs...)
 		update.Dir = a.Directory
 		update.Stdout, update.Stderr = childOutput(cmd.stdout), childOutput(cmd.stderr)
-		update.Env = update.Environ()
-		for key, value := range c.Launch.Env {
-			update.Env = append(update.Env, key+"="+value)
-		}
+		update.Env = harness.LaunchEnv(c, update.Environ())
 		if err := update.Run(); err != nil {
 			return fmt.Errorf("rehitch: harness update failed; restart was not queued: %w", err)
 		}

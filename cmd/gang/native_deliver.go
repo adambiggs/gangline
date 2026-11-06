@@ -1,11 +1,9 @@
 package main
 
 import (
-	"bytes"
 	"context"
 	"errors"
 	"fmt"
-	"io/fs"
 	"os"
 	"os/exec"
 	"time"
@@ -44,7 +42,8 @@ func (run *runtime) queueNative(ctx context.Context, a core.Agent, c harness.Col
 		queue = runNativeQueue
 	}
 	output, err := queue(ctx, call.Argv, call.Env)
-	if err == nil {
+	// ErrWaitDelay follows a zero exit: only a descendant's output was cut.
+	if err == nil || errors.Is(err, exec.ErrWaitDelay) {
 		return nativeQueueHeld, ""
 	}
 	detail := err.Error()
@@ -53,8 +52,8 @@ func (run *runtime) queueNative(ctx context.Context, a core.Agent, c harness.Col
 	}
 	var exit *exec.ExitError
 	switch {
-	case errors.Is(err, errNativeQueueNotStarted) || errors.Is(err, exec.ErrNotFound) || errors.Is(err, fs.ErrNotExist):
-		return nativeQueueRefused, "native queue did not start: " + detail
+	case errors.Is(err, errNativeQueueNotStarted):
+		return nativeQueueRefused, "native queue " + detail
 	case errors.As(err, &exit) && exit.ExitCode() > 0 && ctx.Err() == nil:
 		return nativeQueueRefused, "native queue refused the message: " + detail
 	default:
@@ -64,18 +63,22 @@ func (run *runtime) queueNative(ctx context.Context, a core.Agent, c harness.Col
 
 // errNativeQueueNotStarted marks a queue command that never ran, such as one
 // whose message exceeds the platform's argument limit.
-var errNativeQueueNotStarted = errors.New("not started")
+var errNativeQueueNotStarted = errors.New("did not start")
+
+// nativeQueueOutputBytes bounds the output kept for the receipt's last line.
+const nativeQueueOutputBytes = 4096
 
 func runNativeQueue(ctx context.Context, argv, env []string) ([]byte, error) {
-	var output bytes.Buffer
+	output := &tailBuffer{limit: nativeQueueOutputBytes}
 	child := exec.CommandContext(ctx, argv[0], argv[1:]...)
 	child.Env = env
-	child.Stdout, child.Stderr = &output, &output
-	// A descendant holding the output open must not outlast the deadline.
+	child.Stdout, child.Stderr = output, output
+	// A descendant left holding the output must not hold the agent lock for
+	// longer than this after the command exits or the deadline passes.
 	child.WaitDelay = time.Second
 	if err := child.Start(); err != nil {
 		return nil, fmt.Errorf("%w: %w", errNativeQueueNotStarted, err)
 	}
 	err := child.Wait()
-	return output.Bytes(), err
+	return output.data, err
 }
