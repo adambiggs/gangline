@@ -1,5 +1,13 @@
 # Changelog
 
+## [3.1.4](https://github.com/adambiggs/gangline/compare/gangline-v3.1.3...gangline-v3.1.4) (2026-11-06)
+
+
+### Bug Fixes
+
+* remove background idle reporting ([d981da3](https://github.com/adambiggs/gangline/commit/d981da34aa2a103f5cb3099728ec69b4aad2978e))
+* simplify automatic status notices ([4dd7254](https://github.com/adambiggs/gangline/commit/4dd725427ae2966632a7ed1aa3c8ace1c8f68784))
+
 ## [3.1.3](https://github.com/adambiggs/gangline/compare/gangline-v3.1.2...gangline-v3.1.3) (2026-11-05)
 
 
