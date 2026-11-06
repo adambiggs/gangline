@@ -74,14 +74,24 @@ On Linux, an unreachable systemd user bus skips the bus-dependent lifecycle
 check with its reason.
 
 Each live provider check selects its own temporary Gangline state root under
-`TMPDIR` (or the system temporary directory). Its binary, private Codex profile,
-private socket, and team state stay beneath that root; the caller's
-`GANG_STATE_ROOT` and default state directory are not used for fixtures.
+`TMPDIR` (or the system temporary directory). Its private socket and team
+state stay beneath that root; the caller's `GANG_STATE_ROOT` and default state
+directory are not used for fixtures. The Claude check's binary stays there too.
+The Codex check keeps its binary and private Codex profile at fixed paths under
+`gangline-acceptance/codex` in the user cache directory, locked for one run at
+a time. Codex records hook trust per callback command in the profile, so these
+paths let one native review last across runs without changing the trust in
+`~/.codex`. Each run empties the profile of everything but `config.toml` and
+the `auth.json` link.
 The private Codex configuration preserves the selected provider's connection
 and authentication settings together with the checkout's existing directory
 trust. It excludes unrelated providers, hooks, MCP servers, instructions and
 sandbox settings. Hook trust still requires the native approval for the exact
-fixture callbacks; directory trust does not grant hook trust.
+fixture callbacks; directory trust does not grant hook trust. When Codex shows
+**Hooks need review**, the check stops and prints the one-time operator step:
+attach to the retained private pane, choose **Trust all and continue**, quit
+Codex, end the private server, and rerun. Review again after the Codex collar's
+hooks change.
 The sandbox must allow the selected temporary root, and its path must be short
 enough for a Unix socket. Setup reports access failures without changing sandbox
 permissions. Successful teardown removes the owned root; a native prompt or

@@ -13,6 +13,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"strings"
+	"syscall"
 	"testing"
 	"time"
 
@@ -91,9 +92,25 @@ func testLiveProvider(t *testing.T, collar, cli, cheapest string) {
 	if err := os.Mkdir(scratch, 0700); err != nil {
 		t.Fatal(err)
 	}
+	binary := filepath.Join(scratch, "gang-"+collar)
+	profile := ""
 	if cli == "codex" {
-		profile := filepath.Join(scratch, "codex-home")
-		if err := os.MkdirAll(profile, 0700); err != nil {
+		// Codex keys hook trust to the rendered hook command, which names the
+		// gang binary, and stores it in CODEX_HOME. A fixed binary path and a
+		// kept private home let one operator review persist across runs
+		// without touching the trust ~/.codex holds for the live team.
+		cache, err := os.UserCacheDir()
+		if err != nil {
+			t.Fatalf("locate user cache for live Codex acceptance: %v", err)
+		}
+		stable, release, err := liveCodexDirectory(cache)
+		if err != nil {
+			t.Fatal(err)
+		}
+		t.Cleanup(release)
+		binary = filepath.Join(stable, "gang")
+		profile = filepath.Join(stable, "home")
+		if err := resetCodexHome(profile); err != nil {
 			t.Fatal(err)
 		}
 		originalAuth := filepath.Join(home, ".codex", "auth.json")
@@ -110,7 +127,6 @@ func testLiveProvider(t *testing.T, collar, cli, cheapest string) {
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), liveProviderTimeout)
 	defer cancel()
-	binary := filepath.Join(scratch, "gang-"+collar)
 	build := exec.CommandContext(ctx, "go", "build", "-o", binary, "./cmd/gang")
 	build.Dir = repo
 	if out, err := build.CombinedOutput(); err != nil {
@@ -123,13 +139,13 @@ func testLiveProvider(t *testing.T, collar, cli, cheapest string) {
 		canonical = filepath.Dir(strings.TrimSpace(string(out)))
 	}
 	if cli == "codex" {
-		if err := seedCodexConfig(filepath.Join(home, ".codex"), filepath.Join(scratch, "codex-home"), canonical); err != nil {
+		if err := seedCodexConfig(filepath.Join(home, ".codex"), profile, canonical); err != nil {
 			t.Fatalf("prepare private Codex configuration for %s: %v", canonical, err)
 		}
 		isolatedCtx, cancelIsolated := context.WithTimeout(context.Background(), 10*time.Second)
 		defer cancelIsolated()
 		isolated := exec.CommandContext(isolatedCtx, cli, "login", "status")
-		isolated.Env = append(withoutEnvironment(os.Environ(), "CODEX_HOME"), "CODEX_HOME="+filepath.Join(scratch, "codex-home"))
+		isolated.Env = append(withoutEnvironment(os.Environ(), "CODEX_HOME"), "CODEX_HOME="+profile)
 		if out, err := isolated.CombinedOutput(); isolatedCtx.Err() != nil {
 			t.Fatalf("isolated Codex authentication probe exceeded 10s: %v: %s", err, out)
 		} else if err != nil {
@@ -150,7 +166,7 @@ func testLiveProvider(t *testing.T, collar, cli, cheapest string) {
 		"GANG_COLLARS="+collarDirectory,
 		"GANG_COLLAR="+collar)
 	if cli == "codex" {
-		environment = append(environment, "CODEX_HOME="+filepath.Join(scratch, "codex-home"))
+		environment = append(environment, "CODEX_HOME="+profile)
 	}
 	runner := tmuxRunner{binary: "tmux", socket: socket, env: environment}
 	if out, err := runner.run("new-session", "-d", "-s", session, "-n", "control"); err != nil {
@@ -230,6 +246,10 @@ func testLiveProvider(t *testing.T, collar, cli, cheapest string) {
 		} else {
 			status, _, _ := runGang(ctx, "", "status", "worker", "--why")
 			screen, _, _ := runGang(ctx, "", "capture", "worker", "-n", "30")
+			if cli == "codex" && codexHooksAwaitReview(status+screen+hitchDiagnostic) {
+				keepForOperator = true
+				t.Fatal(codexHookReviewStep(socket, session, workerPane(root, session), profile))
+			}
 			if strings.Contains(strings.ToLower(status+screen+hitchDiagnostic), "trust") || strings.Contains(strings.ToLower(status+screen+hitchDiagnostic), "permission") {
 				keepForOperator = true
 				t.Fatalf("native prompt needs operator in private pane (socket %s, session %s): hitch=%s status=%s screen=%s", socket, session, hitchDiagnostic, status, screen)
@@ -260,8 +280,9 @@ func testLiveProvider(t *testing.T, collar, cli, cheapest string) {
 		status, _, _ := runGang(diagnosticCtx, "", "status", "worker", "--why")
 		screen, _, _ := runGang(diagnosticCtx, "", "capture", "worker", "-n", "30")
 		pending, _, _ := runGang(diagnosticCtx, "", "queue", "worker")
-		if strings.Contains(strings.ToLower(status+screen), "hooks need review") {
+		if cli == "codex" && codexHooksAwaitReview(status+screen) {
 			keepForOperator = true
+			t.Fatal(codexHookReviewStep(socket, session, workerPane(root, session), profile))
 		}
 		t.Fatalf("startup hook did not witness pasted assignment and envelope: %v: %+v; socket=%s status=%s queue=%s screen=%s", err, startupWitness, socket, status, pending, screen)
 	}
@@ -447,6 +468,75 @@ func awaitProviderEvents(ctx context.Context, path, secondID, collar string) ([]
 			return nil, err
 		}
 	}
+}
+
+// liveCodexDirectory returns the per-user directory that keeps the live Codex
+// check's gang binary and private CODEX_HOME at fixed paths, locked for this
+// run. Clearing the user cache costs only a new operator review.
+func liveCodexDirectory(cache string) (string, func(), error) {
+	directory := filepath.Join(cache, "gangline-acceptance", "codex")
+	if err := os.MkdirAll(directory, 0700); err != nil {
+		return "", nil, err
+	}
+	lock, err := os.OpenFile(filepath.Join(directory, "lock"), os.O_CREATE|os.O_RDWR, 0600)
+	if err != nil {
+		return "", nil, err
+	}
+	if err := syscall.Flock(int(lock.Fd()), syscall.LOCK_EX|syscall.LOCK_NB); err != nil {
+		_ = lock.Close()
+		return "", nil, fmt.Errorf("another live Codex acceptance run holds %s: %w", lock.Name(), err)
+	}
+	return directory, func() { _ = lock.Close() }, nil
+}
+
+// resetCodexHome empties the kept private CODEX_HOME of everything a previous
+// run left except config.toml, which holds the operator's hook trust, and the
+// auth.json link.
+func resetCodexHome(profile string) error {
+	if err := os.MkdirAll(profile, 0700); err != nil {
+		return err
+	}
+	entries, err := os.ReadDir(profile)
+	if err != nil {
+		return err
+	}
+	for _, entry := range entries {
+		if entry.Name() == "config.toml" || entry.Name() == "auth.json" {
+			continue
+		}
+		if err := os.RemoveAll(filepath.Join(profile, entry.Name())); err != nil {
+			return fmt.Errorf("reset private Codex home: %w", err)
+		}
+	}
+	return nil
+}
+
+func codexHooksAwaitReview(text string) bool {
+	text = strings.ToLower(text)
+	return strings.Contains(text, "hooks need review") || strings.Contains(text, "hook needs review")
+}
+
+// workerPane names the private worker's pane when the team recorded one.
+func workerPane(root, session string) string {
+	team, err := (store.Paths{Root: root}).Team(session)
+	if err != nil {
+		return ""
+	}
+	agents, err := team.ListAgents()
+	if err != nil || len(agents) != 1 {
+		return ""
+	}
+	return string(agents[0].Pane)
+}
+
+func codexHookReviewStep(socket, session, pane, profile string) string {
+	attach := fmt.Sprintf("tmux -S %s attach-session -t %s", socket, session)
+	if pane != "" {
+		attach += fmt.Sprintf(" \\; select-window -t %s \\; select-pane -t %s", pane, pane)
+	} else {
+		attach += " (then select the worker window)"
+	}
+	return fmt.Sprintf("Codex is waiting for the operator to review Gangline's hooks. One-time step: run %s; optionally choose \"Review hooks\" to read them; choose \"Trust all and continue\"; type /quit; run tmux -S %s kill-server; rerun acceptance. The trust is stored in %s only, not in ~/.codex. Repeat when the collar's Codex hooks change.", attach, socket, filepath.Join(profile, "config.toml"))
 }
 
 func seedCodexConfig(regularHome, privateHome, cwd string) error {
