@@ -472,7 +472,11 @@ func (run *runtime) deliver(l *store.LockedAgent, a *core.Agent, e core.Envelope
 		// republish under the same ID, so Gangline's own input stays
 		// unverified. A composer emptied or replaced by something else may
 		// hold input that is not the paste.
-		if !submitted && withdrawable(e) && !errors.Is(err, harness.ErrComposerEmptied) && !errors.Is(err, harness.ErrComposerReplaced) {
+		switch {
+		case errors.Is(err, harness.ErrComposerReplaced):
+			// Later messages wait behind the text it holds.
+			held = true
+		case !submitted && withdrawable(e) && !errors.Is(err, harness.ErrComposerEmptied):
 			outcome, reason, held = run.withdrawPaste(*a, b, c, reason)
 			withdrawn = outcome == "failed"
 		}
