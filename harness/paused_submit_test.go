@@ -255,6 +255,9 @@ func TestAwaitPasteShown(t *testing.T) {
 		want    error
 	}{
 		{name: "shown", screen: func(time.Duration) substrate.Screen { return pasted }, elapsed: settle},
+		{name: "shown scrolled to its end", screen: func(time.Duration) substrate.Screen {
+			return textScreen(rule, "❯ llo", "  [/gang:lead#0123456789abcdef]", rule, "  ? for shortcuts")
+		}, elapsed: settle},
 		{name: "shown late", screen: func(at time.Duration) substrate.Screen {
 			if at < time.Second {
 				return empty

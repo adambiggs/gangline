@@ -312,8 +312,9 @@ func AwaitPasteShown(ctx context.Context, capture captureScreen, pane substrate.
 // PasteShown reads a screen captured after a paste into an empty composer
 // that a read before the paste found owned by owner. A composer of that owner
 // shows the paste when its text begins with the start of wire, the text
-// pasted, or with the placeholder Claude Code shows for a long paste; the
-// submit hook confirms what is submitted. A short pane can clip the composer
+// pasted, or with the placeholder Claude Code shows for a long paste, or is
+// the end of wire from its closing tag (see endsWire); the submit hook
+// confirms what is submitted. A short pane can clip the composer
 // or its footer so that it cannot be read in full. The paste is then shown
 // when a prompt line begins with the start of wire directly under a rule
 // that carries owner, or, for a paste that pushes that rule above the pane,
@@ -333,8 +334,9 @@ const (
 	pasteUnseen pasteView = iota
 	pasteShown
 	pasteEmpty
-	// pasteReplaced is a composer holding text that does not begin with
-	// the paste, such as a draft typed after the paste was cleared.
+	// pasteReplaced is a composer holding text that neither begins with
+	// the paste nor is its end, such as a draft typed after the paste was
+	// cleared.
 	pasteReplaced
 )
 
@@ -393,8 +395,8 @@ func endsWire(text, wire string) bool {
 		return false
 	}
 	joined := strings.Join(strings.Fields(text), "")
-	whole := strings.Join(strings.Fields(wire), "")
-	return len(joined) >= len(strings.Join(strings.Fields(wire[closing:]), "")) && strings.HasSuffix(whole, joined)
+	tail := strings.Join(strings.Fields(wire[closing:]), "")
+	return strings.HasSuffix(joined, tail) && strings.HasSuffix(strings.Join(strings.Fields(wire), ""), joined)
 }
 
 // pasteStartShown reports a prompt line that begins with the start of wire
@@ -453,8 +455,8 @@ func tallPasteShown(lines []string, wire string) bool {
 // was submitted: something other than gang cleared or consumed it.
 var ErrComposerEmptied = errors.New("native composer emptied before submission")
 
-// ErrComposerReplaced reports a composer that holds text that does not begin
-// with the paste: something other than gang replaced the paste, and the text
+// ErrComposerReplaced reports a composer that holds text that neither begins
+// with the paste nor is its end: something other than gang replaced the paste, and the text
 // may be another author's draft.
 var ErrComposerReplaced = errors.New("native composer holds other text before submission")
 

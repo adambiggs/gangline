@@ -87,12 +87,13 @@ the submit key. By default it waits until the composer reads back stable for
 the collar's `submit` `settle` duration. With `before_submit: "pause"`, as
 in the Claude Code collar, message delivery pauses for that duration and sends
 the key once the screen shows the paste: the composer's first row begins with
-the start of the message or with Claude Code's placeholder for a long paste,
-or, when Claude Code scrolls a composer taller than it allows, its text is the
-end of the message from its closing tag, which carries the one-time token,
-or, where a short pane clips the composer or its footer, a prompt line begins
-with the start of the message under a rule carrying the session label read
-before the paste. A message taller than the pane pushes that rule above it;
+the start of the message or with Claude Code's placeholder for a long paste.
+Claude Code scrolls a composer taller than it allows so that its start lies
+above the prompt line; the paste then shows when the composer's text is the
+end of the message, from the closing tag that carries the one-time token
+onward. Where a short pane clips the composer or its footer, the paste shows
+when a prompt line begins with the start of the message under a rule carrying
+the session label read before the paste. A message taller than the pane pushes that rule above it;
 the paste then shows when the top row is the prompt line beginning with the
 start of the message and the footer below the composer shows the main
 conversation's mode line, with no session list selecting another session.
