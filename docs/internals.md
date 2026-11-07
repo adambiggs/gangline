@@ -93,9 +93,10 @@ with the start of the message under a rule carrying the session label read
 before the paste. A message taller than the pane pushes that rule above it;
 the paste then shows when the top row is the prompt line beginning with the
 start of the message and the footer below the composer shows the main
-conversation's mode line. A clipped placeholder does not count, since an earlier
-paste in the transcript looks the same; a long message to a pane too short
-to show even that one-row composer stays unverified. It withholds the key when the screen shows a native prompt,
+conversation's mode line, with no session list selecting another session.
+A clipped placeholder does not count, since an earlier paste in the
+transcript looks the same; a long message to a pane too short to show even
+that one-row composer stays unverified. It withholds the key when the screen shows a native prompt,
 another surface owning input, or a composer of another session. A composer of
 another session, and in the default wait a clipped composer, is refused only
 once every frame has read so for the `settle` duration, and never on a single

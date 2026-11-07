@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"os"
+	"slices"
 	"strings"
 	"testing"
 	"testing/synctest"
@@ -109,23 +110,32 @@ func TestPasteShown(t *testing.T) {
 	}
 }
 
-// A message taller than a short pane pushes the composer's opening rule above
-// the pane, leaving the prompt line on the top row. The fixture is such a
-// capture of Claude Code in a 90x14 pane.
-func TestTallPasteShown(t *testing.T) {
-	collar := Collar{Primitives: Primitives{Composer: Invocation{Name: "claude-composer"}}}
-	const token = "eb7d18c9fc515bee"
-	wire := "[gang:self-declared:operator#" + token + "] Reply with only the word ok. filler words for a probe message [/gang:self-declared:operator#" + token + "]"
+const tallPasteToken = "eb7d18c9fc515bee"
+
+// tallPasteCapture returns a capture of Claude Code in a 90x14 pane holding a
+// message taller than the pane, the message's wire, and the row of the
+// composer's closing rule.
+func tallPasteCapture(t *testing.T) (captured []string, wire string, closing int) {
+	t.Helper()
+	wire = "[gang:self-declared:operator#" + tallPasteToken + "] Reply with only the word ok. filler words for a probe message [/gang:self-declared:operator#" + tallPasteToken + "]"
 	data, err := os.ReadFile("../test/fixtures/claude-tall-paste-short-pane.txt")
 	if err != nil {
 		t.Fatal(err)
 	}
-	captured := strings.Split(strings.TrimSuffix(string(data), "\n"), "\n")
-	const closing = 10
+	captured = strings.Split(strings.TrimSuffix(string(data), "\n"), "\n")
+	closing = 10
 	// Claude Code draws a no-break space after the prompt mark.
-	if !strings.HasPrefix(captured[0], "❯ [gang:") || !strings.HasPrefix(captured[closing], "───") || !strings.Contains(captured[closing+2], " mode on") {
+	if !strings.HasPrefix(captured[0], "❯\u00a0[gang:") || !strings.HasPrefix(captured[closing], "───") || !strings.Contains(captured[closing+2], " mode on") || strings.TrimSpace(captured[len(captured)-1]) != "" {
 		t.Fatalf("fixture changed shape: %q", captured)
 	}
+	return captured, wire, closing
+}
+
+// A message taller than a short pane pushes the composer's opening rule above
+// the pane, leaving the prompt line on the top row.
+func TestTallPasteShown(t *testing.T) {
+	collar := Collar{Primitives: Primitives{Composer: Invocation{Name: "claude-composer"}}}
+	captured, wire, closing := tallPasteCapture(t)
 	// edited returns the capture with row index replaced by row; a negative
 	// index appends row.
 	edited := func(index int, row string) substrate.Screen {
@@ -144,13 +154,16 @@ func TestTallPasteShown(t *testing.T) {
 		shown  bool
 	}{
 		{name: "prompt line on the top row", screen: textScreen(captured...), wire: wire, shown: true},
-		{name: "another message", screen: textScreen(captured...), wire: strings.ReplaceAll(wire, token, "0123456789abcdef")},
+		{name: "another message", screen: textScreen(captured...), wire: strings.ReplaceAll(wire, tallPasteToken, "0123456789abcdef")},
 		{name: "transcript row between prompt and rule", screen: edited(5, "⏺ an earlier reply"), wire: wire},
 		{name: "rule between prompt and closing rule", screen: edited(5, strings.Repeat("─", 90)), wire: wire},
 		{name: "paste hint in place of the mode line", screen: edited(closing+2, "  paste again to expand"), wire: wire},
 		{name: "footer without the mode line", screen: edited(closing+2, "  esc to return to the main conversation"), wire: wire},
 		{name: "session list selects another session", screen: edited(-1, "  ● worker  running"), wire: wire},
 		{name: "footer below the pane", screen: textScreen(captured[:closing+1]...), wire: wire},
+		// A session list fills the pane to its bottom row, one row of the
+		// message fewer in view.
+		{name: "session list selects the main conversation", screen: textScreen(slices.Concat(captured[:1], captured[2:closing+3], []string{"  ● main", "  ◯ Explore  Reading blocked.go"})...), wire: wire, shown: true},
 		{name: "prompt line below the top row", screen: textScreen(append([]string{"older output"}, captured[1:]...)...), wire: wire},
 	} {
 		t.Run(test.name, func(t *testing.T) {
@@ -163,6 +176,51 @@ func TestTallPasteShown(t *testing.T) {
 					t.Fatalf("owner %q: shown = %v, error = %v; want %v, nil", owner, shown, err, test.shown)
 				}
 			}
+		})
+	}
+}
+
+// The paste hint that briefly replaces the mode line below a tall paste shows
+// in a child session's composer too, so the wait goes on until the mode line
+// returns.
+func TestAwaitTallPasteThroughHint(t *testing.T) {
+	collar := Collar{Primitives: Primitives{Composer: Invocation{Name: "claude-composer"}}}
+	captured, wire, closing := tallPasteCapture(t)
+	footer := func(row string) []string {
+		lines := append([]string(nil), captured...)
+		lines[closing+2] = row
+		return lines
+	}
+	for _, test := range []struct {
+		name string
+		// after is the footer row once the hint is gone.
+		after   []string
+		elapsed time.Duration
+		want    error
+	}{
+		{name: "main conversation", after: captured, elapsed: 2 * time.Second},
+		{name: "child session", after: footer("  esc to return to the main conversation"), elapsed: 5 * time.Second, want: context.DeadlineExceeded},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			synctest.Test(t, func(t *testing.T) {
+				began := time.Now()
+				ctx, cancel := context.WithTimeout(t.Context(), 5*time.Second)
+				defer cancel()
+				capture := func(context.Context, substrate.PaneID) (substrate.Screen, error) {
+					if time.Since(began) < 2*time.Second {
+						return textScreen(footer("  paste again to expand")...), nil
+					}
+					return textScreen(test.after...), nil
+				}
+				err := AwaitPasteShown(ctx, capture, "%1", collar, wire, "", 400*time.Millisecond)
+				if test.want == nil && err != nil || test.want != nil && !errors.Is(err, test.want) {
+					t.Fatalf("error = %v, want %v", err, test.want)
+				}
+				// The wait reads the pane once a frame.
+				if elapsed := time.Since(began); elapsed < test.elapsed || elapsed >= test.elapsed+composerFrame {
+					t.Fatalf("returned after %v, want within a frame of %v", elapsed, test.elapsed)
+				}
+			})
 		})
 	}
 }
