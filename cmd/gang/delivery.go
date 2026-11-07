@@ -716,7 +716,7 @@ func (run *runtime) drainLocked(l *store.LockedAgent, a *core.Agent, target core
 		if failedStartup {
 			return result, pending, nil
 		}
-		if outcome, handled, err := run.tryClaudeNative(l, a, *next, c); handled || err != nil {
+		if outcome, handled, err := run.tryClaudeNative(l, a, *next, b, c, next.ID == target && target != ""); handled || err != nil {
 			if next.ID == target && handled {
 				result = outcome
 			}

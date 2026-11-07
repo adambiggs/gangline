@@ -14,6 +14,9 @@ func (run *runtime) reconcileDelivery(l *store.LockedAgent, a *core.Agent) error
 	if err := run.reconcileClear(l, a); err != nil {
 		return err
 	}
+	if err := run.reconcileNativePending(l, a); err != nil {
+		return err
+	}
 	if (a.LastFailed == "" && a.LastAccepted == "") || a.Input != nil {
 		return nil
 	}

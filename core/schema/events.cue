@@ -75,6 +75,7 @@ import "time"
  startup_prompt_notice: {id: #ID, hitch_id: #ID, reason: #ID}
  snooze_cap_rejected: {id: #ID, hitch_id: #ID, reason: #ID}
  snooze_rearmed: {id: #ID, hitch_id: #ID, deadline: #Time, reason: #ID}
+ native_delivery_fallback: {hitch_id: #ID, reason: #ID}
  input_started: {id: #ID, status: #ID, hitch_id: #ID}
  input_finished: {id: #ID, status: #ID, hitch_id: #ID}
  hook_failed: {reason: #ID}

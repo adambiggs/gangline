@@ -75,13 +75,14 @@ type Invocation struct {
 }
 
 type Primitives struct {
-	Telemetry    *Invocation  `json:"telemetry,omitempty"`
-	Capacity     *Invocation  `json:"capacity,omitempty"`
-	MidTurn      bool         `json:"mid_turn,omitempty"`
-	Startup      []Invocation `json:"startup"`
-	Composer     Invocation   `json:"composer"`
-	Submit       Invocation   `json:"submit"`
-	QueueWitness *Invocation  `json:"queue_witness,omitempty"`
+	NativeDelivery *Invocation  `json:"native_delivery,omitempty"`
+	Telemetry      *Invocation  `json:"telemetry,omitempty"`
+	Capacity       *Invocation  `json:"capacity,omitempty"`
+	MidTurn        bool         `json:"mid_turn,omitempty"`
+	Startup        []Invocation `json:"startup"`
+	Composer       Invocation   `json:"composer"`
+	Submit         Invocation   `json:"submit"`
+	QueueWitness   *Invocation  `json:"queue_witness,omitempty"`
 	// Seen names the transcript reader that shows which envelopes the
 	// model has received as input. Without it, crossed= reads unknown.
 	Seen           *Invocation `json:"seen,omitempty"`
@@ -305,6 +306,13 @@ func validateCollar(collar Collar) error {
 		{"context", collar.Primitives.Context, []string{"claude-screen-context", "codex-screen-context"}},
 		{"provider limits", collar.Primitives.ProviderLimits, []string{"claude-screen-limits", "codex-screen-limits"}},
 		{"wedge", collar.Primitives.Wedge, []string{"stable-busy-screen"}},
+	}
+	if collar.Primitives.NativeDelivery != nil {
+		checks = append(checks, struct {
+			where   string
+			value   Invocation
+			allowed []string
+		}{"native delivery", *collar.Primitives.NativeDelivery, []string{"claude-peer"}})
 	}
 	if collar.Primitives.QueueWitness != nil {
 		checks = append(checks, struct {

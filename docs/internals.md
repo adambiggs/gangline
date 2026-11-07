@@ -77,7 +77,39 @@ for the trust boundary, endpoint and deployment.
 
 ## Message path
 
-`gang send` publishes an envelope to the recipient's inbox. Before typing,
+`gang send` publishes an envelope to the recipient's inbox. The Claude Code
+collar declares `native_delivery: {name: "claude-peer"}`. Ordinary messages
+and Gangline notices use its local authenticated peer socket before inspecting
+the composer. The sender matches the native session and tmux team/pane to a
+supported session registration and reads the destination key only while sending.
+The existing Gangline envelope stays inside the native cross-session wrapper;
+no native sender identity or permission-mode assertion is added.
+
+Each unresolved native write retains its envelope and exact hook proof in an
+agent-local `native-pending/` directory, independently of the latest receipt.
+Reconciliation confirms every witnessed message in a batch and removes its
+pending evidence after publishing the sender notice. Unwitnessed attempts are
+retired when their native session changes; their unverified audit outcome stays.
+Dropping the agent removes all remaining pending evidence.
+
+For a receiver known to be idle, the sending command waits on the pending
+proof's filesystem event within its
+existing operation budget and returns delivered when an exact hook arrives,
+without an extra sender-notice turn. Busy receivers and background drains retain asynchronous confirmation without
+holding the recipient lock for their next turn. A socket write is unverified until an exact submit hook confirms
+the complete wrapped envelope. A held or lost message cannot become delivered merely because
+the write succeeded. Busy receivers can consume peer input after their current
+turn without a composer paste. Missing or ambiguous registrations, unavailable or unsafe keys/sockets, and
+unsupported protocols take the keystroke fallback before any native write.
+Availability failures report their reason without credential contents, on stderr
+and once per reason/episode as a `native_delivery_fallback` audit event. A
+successful native connection clears the agent-local fallback diagnostic; agent
+drop removes it. A native write
+attempt is never replayed through keystrokes. Startup and native control input
+retain their dedicated submit witnesses; collars without native delivery use
+keystrokes.
+
+Before typing,
 Gangline records its intent and verifies that the native harness is the pane's
 foreground process. A free composer can receive input during a turn when the
 collar supports it. A native prompt or unsubmitted draft keeps input blocked.

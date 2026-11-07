@@ -66,18 +66,18 @@ func findClaudePeer(files fs.FS, sessionID, team, pane string) (claudePeerSessio
 func claudePeerKey(files fs.FS, peer claudePeerSession) (string, error) {
 	sum := sha256.Sum256([]byte(path.Clean(peer.Socket)))
 	name := strconv.Itoa(peer.PID) + "." + hex.EncodeToString(sum[:]) + ".key"
-	info, err := fs.Stat(files, name)
+	file, err := files.Open(name)
+	if err != nil {
+		return "", fmt.Errorf("Claude peer key unavailable")
+	}
+	defer file.Close()
+	info, err := file.Stat()
 	if err != nil {
 		return "", fmt.Errorf("Claude peer key unavailable")
 	}
 	if !info.Mode().IsRegular() || info.Mode().Perm()&0077 != 0 {
 		return "", fmt.Errorf("Claude peer key is not a private regular file")
 	}
-	file, err := files.Open(name)
-	if err != nil {
-		return "", fmt.Errorf("Claude peer key unavailable")
-	}
-	defer file.Close()
 	var key struct {
 		PeerToken string `json:"peerToken"`
 	}
@@ -116,9 +116,13 @@ func writeClaudePeer(w io.Writer, token, sessionID, messageID, envelope string) 
 		} `json:"message"`
 	}{Version: 1, ID: messageID, Type: "user", SessionID: sessionID, Priority: "next"}
 	frame.Message.Role = "user"
-	frame.Message.Content = "<cross-session-message>\n" + envelope + "\n</cross-session-message>"
+	frame.Message.Content = claudePeerBody(envelope)
 	if err := encoder.Encode(frame); err != nil {
 		return fmt.Errorf("write Claude peer message; receipt unknown")
 	}
 	return nil
+}
+
+func claudePeerBody(envelope string) string {
+	return "<cross-session-message>\n" + envelope + "\n</cross-session-message>"
 }

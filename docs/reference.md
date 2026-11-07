@@ -271,6 +271,16 @@ send again. `registered` is reserved as a peer-host prefix.
 `DURATION` uses Go duration syntax (for example, `1h30m` or `500ms`) for
 `--at`, `curfew`, and `--timeout`.
 
+The Claude Code collar sends ordinary messages and Gangline notices over its
+local peer socket when a matching supported registration is available. It can
+send while the receiver is busy or its composer holds a draft. Startup and native
+control input keep their existing submit witnesses. The optional collar primitive
+`native_delivery: {name: "claude-peer"}` selects this transport; collars without it
+use keystrokes. Missing registration, protocol or socket falls back before any
+native write. After a native write attempt, Gangline never retries with keystrokes.
+A write remains unverified until an exact native submit hook proves the full
+envelope was submitted; native permission holds remain in force.
+
 A send prints the message ID and `delivered`, `accepted`, `queued`,
 `unverified`, or `failed`. See [message receipts](concepts.md#messages-and-envelopes).
 `--source watchdog --watchdog UNIT` is the internal watchdog invocation.
