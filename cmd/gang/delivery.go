@@ -716,6 +716,19 @@ func (run *runtime) drainLocked(l *store.LockedAgent, a *core.Agent, target core
 		if failedStartup {
 			return result, pending, nil
 		}
+		if outcome, handled, err := run.tryClaudeNative(l, a, *next, c); handled || err != nil {
+			if next.ID == target && handled {
+				result = outcome
+			}
+			if err == nil && handled && next.ID != target {
+				err = run.notifySender(*a, *next, outcome)
+			}
+			if err != nil {
+				waiting, listErr := l.Paths.ListNew()
+				return result, waiting, errors.Join(err, listErr)
+			}
+			continue
+		}
 		v, err := run.inputState(l, a, b, c)
 		if err != nil {
 			return result, pending, run.pendingInput(l, a, b, c, err)
