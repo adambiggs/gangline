@@ -147,6 +147,7 @@ func TestTallPasteShown(t *testing.T) {
 		{name: "another message", screen: textScreen(captured...), wire: strings.ReplaceAll(wire, token, "0123456789abcdef")},
 		{name: "transcript row between prompt and rule", screen: edited(5, "⏺ an earlier reply"), wire: wire},
 		{name: "rule between prompt and closing rule", screen: edited(5, strings.Repeat("─", 90)), wire: wire},
+		{name: "paste hint in place of the mode line", screen: edited(closing+2, "  paste again to expand"), wire: wire},
 		{name: "footer without the mode line", screen: edited(closing+2, "  esc to return to the main conversation"), wire: wire},
 		{name: "session list selects another session", screen: edited(-1, "  ● worker  running"), wire: wire},
 		{name: "footer below the pane", screen: textScreen(captured[:closing+1]...), wire: wire},

@@ -415,6 +415,8 @@ func pasteStartShown(invocation Invocation, screen substrate.Screen, wire, owner
 // row below it up to the closing rule continues the input, and the footer
 // below that rule shows the main conversation's mode line with no session list
 // selecting another session, which a child session's composer does not show.
+// The paste hint that replaces the mode line for a moment after a paste shows
+// in a child's composer too, so the wait goes on until the mode line returns.
 func tallPasteShown(lines []string, wire string) bool {
 	if len(lines) == 0 || !strings.HasPrefix(lines[0], "❯") || !beginsWire(strings.TrimPrefix(lines[0], "❯"), wire) {
 		return false
