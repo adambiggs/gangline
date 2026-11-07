@@ -651,23 +651,89 @@ func (backend *Backend) Capture(ctx context.Context, pane substrate.PaneID) (sub
 	if err := validPaneID(pane); err != nil {
 		return substrate.Screen{}, err
 	}
-	raw, err := backend.run(ctx, "capture-pane", "-e", "-p", "-t", string(pane))
-	if err != nil {
-		return substrate.Screen{}, tmuxError("capture pane", err, raw)
-	}
-	cursor, title, dead, err := backend.cursor(ctx, pane)
+	taken, err := settledCapture(func() (paneSnapshot, error) {
+		return backend.snapshot(ctx, pane)
+	})
 	if err != nil {
 		return substrate.Screen{}, err
 	}
-	if dead != nil {
-		return substrate.Screen{}, backend.exitedPane(ctx, pane, *dead)
-	}
-	screen, err := parseScreen(raw, cursor)
+	screen, err := parseScreen(taken.raw, taken.cursor)
 	if err != nil {
 		return substrate.Screen{}, fmt.Errorf("parse captured pane %q: %w", pane, err)
 	}
-	screen.Title = title
+	screen.Title = taken.title
 	return screen, nil
+}
+
+// paneSnapshot is one reading of a pane: the cursor and screen, which settle,
+// and the title, which a program can change without touching the screen.
+type paneSnapshot struct {
+	cursor substrate.Cursor
+	title  string
+	raw    string
+}
+
+// snapshot reads the cursor, the pane title, the pane's exit and the screen in
+// one command list, so all of them come from the same server state.
+func (backend *Backend) snapshot(ctx context.Context, pane substrate.PaneID) (paneSnapshot, error) {
+	output, err := backend.run(ctx,
+		"display-message", "-p", "-t", string(pane), "#{cursor_x},#{cursor_y},#{cursor_flag},#{pane_dead},#{pane_dead_status},#{pane_title}", ";",
+		"capture-pane", "-e", "-p", "-t", string(pane))
+	if err != nil {
+		return paneSnapshot{}, tmuxError("capture pane", err, output)
+	}
+	taken, dead, err := parseSnapshot(output)
+	if err != nil {
+		return paneSnapshot{}, err
+	}
+	if dead != nil {
+		return paneSnapshot{}, backend.exitedPane(ctx, pane, *dead)
+	}
+	return taken, nil
+}
+
+// parseSnapshot splits a snapshot into the display-message line and the
+// screen below it. The title is last on that line because a program can put
+// commas in it. tmux keeps no newline in a title: select-pane -T refuses one
+// and an OSC title drops it.
+func parseSnapshot(output string) (paneSnapshot, *string, error) {
+	state, raw, found := strings.Cut(output, "\n")
+	if !found {
+		return paneSnapshot{}, nil, fmt.Errorf("capture pane: tmux returned %q", output)
+	}
+	cursor, title, dead, err := parseCursor(state)
+	if err != nil {
+		return paneSnapshot{}, nil, err
+	}
+	return paneSnapshot{cursor: cursor, title: title, raw: raw}, dead, nil
+}
+
+// snapshotLimit bounds the snapshots settledCapture takes.
+const snapshotLimit = 10
+
+// settledCapture returns the first snapshot whose cursor and screen repeat the
+// one before it. A program's repaint reaches tmux in pieces, and a capture
+// taken between them shows a screen torn between two frames, such as a rule
+// half drawn and no footer below it. A still pane costs one extra snapshot. A
+// pane that changes between every pair, such as one animating faster than a
+// snapshot, returns its last snapshot at snapshotLimit, as a single capture
+// would have.
+func settledCapture(take func() (paneSnapshot, error)) (paneSnapshot, error) {
+	previous, err := take()
+	if err != nil {
+		return paneSnapshot{}, err
+	}
+	for taken := 1; taken < snapshotLimit; taken++ {
+		next, err := take()
+		if err != nil {
+			return paneSnapshot{}, err
+		}
+		if next.cursor == previous.cursor && next.raw == previous.raw {
+			return next, nil
+		}
+		previous = next
+	}
+	return previous, nil
 }
 
 func (backend *Backend) Kill(ctx context.Context, pane substrate.PaneID) (result error) {
@@ -722,18 +788,9 @@ func (backend *Backend) Attach(ctx context.Context, pane substrate.PaneID) error
 	return nil
 }
 
-// cursor also reports whether the pane's process exited; a non-nil status
-// means it did, and holds the exit status, empty until tmux collects one.
-// cursor reads the cursor, the pane title and the pane's exit in one call.
-// The title is last because a program can put commas in it.
-func (backend *Backend) cursor(ctx context.Context, pane substrate.PaneID) (substrate.Cursor, string, *string, error) {
-	output, err := backend.run(ctx, "display-message", "-p", "-t", string(pane), "#{cursor_x},#{cursor_y},#{cursor_flag},#{pane_dead},#{pane_dead_status},#{pane_title}")
-	if err != nil {
-		return substrate.Cursor{}, "", nil, tmuxError("read cursor", err, output)
-	}
-	return parseCursor(output)
-}
-
+// parseCursor reads the cursor, the pane title and the pane's exit from one
+// display-message line. A non-nil status means the process exited, and holds
+// the exit status, empty until tmux collects one.
 func parseCursor(output string) (substrate.Cursor, string, *string, error) {
 	parts := strings.SplitN(strings.TrimSuffix(output, "\n"), ",", 6)
 	if len(parts) != 6 {
