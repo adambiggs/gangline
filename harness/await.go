@@ -345,7 +345,7 @@ func readPaste(collar Collar, screen substrate.Screen, wire, owner string) (past
 		switch {
 		case composer.Text == "":
 			return pasteEmpty, nil
-		case beginsPaste(composer.Text, wire):
+		case beginsPaste(composer.Text, wire), endsWire(composer.Text, wire):
 			return pasteShown, nil
 		}
 		return pasteReplaced, nil
@@ -380,6 +380,21 @@ func beginsPaste(text, wire string) bool {
 func beginsWire(row, wire string) bool {
 	start := strings.Join(strings.Fields(row), "")
 	return start != "" && strings.HasPrefix(strings.Join(strings.Fields(wire), ""), start)
+}
+
+// endsWire reports composer text that is the end of wire from at least its
+// closing tag, ignoring the whitespace that wrapping changes. Claude Code
+// scrolls a composer taller than it allows so that its start lies above the
+// prompt line; the closing tag carries the one-time token, so no draft or
+// earlier message ends the same way.
+func endsWire(text, wire string) bool {
+	closing := strings.LastIndex(wire, "[/")
+	if closing < 0 {
+		return false
+	}
+	joined := strings.Join(strings.Fields(text), "")
+	whole := strings.Join(strings.Fields(wire), "")
+	return len(joined) >= len(strings.Join(strings.Fields(wire[closing:]), "")) && strings.HasSuffix(whole, joined)
 }
 
 // pasteStartShown reports a prompt line that begins with the start of wire

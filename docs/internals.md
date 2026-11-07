@@ -88,6 +88,8 @@ the collar's `submit` `settle` duration. With `before_submit: "pause"`, as
 in the Claude Code collar, message delivery pauses for that duration and sends
 the key once the screen shows the paste: the composer's first row begins with
 the start of the message or with Claude Code's placeholder for a long paste,
+or, when Claude Code scrolls a composer taller than it allows, its text is the
+end of the message from its closing tag, which carries the one-time token,
 or, where a short pane clips the composer or its footer, a prompt line begins
 with the start of the message under a rule carrying the session label read
 before the paste. A message taller than the pane pushes that rule above it;

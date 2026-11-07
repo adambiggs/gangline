@@ -73,6 +73,15 @@ func TestPasteShown(t *testing.T) {
 		{name: "readable paste placeholder", screen: textScreen(rule, "❯ [Pasted text #1 +12 lines]", rule, "  ? for shortcuts"), shown: true},
 		{name: "readable image placeholder", screen: textScreen(rule, "❯ [Image #1] look at this", rule, "  ? for shortcuts")},
 		{name: "readable other text", screen: textScreen(rule, "❯ a draft typed after the paste was cleared", rule, "  ? for shortcuts")},
+		// Claude Code scrolls a composer taller than it allows to the end of
+		// its text.
+		{name: "readable paste scrolled to its end", screen: textScreen(rule, "❯ ps past the bottom of the pane", "  [/gang:lead#0123456789abcdef]", rule, "  ? for shortcuts"), shown: true},
+		{name: "readable paste scrolled to its end, named owner", owner: "probe main", screen: textScreen(named("probe main"), "❯ ps past the bottom of the pane", "  [/gang:lead#0123456789abcdef]", rule, "  ⏵⏵ auto mode on (shift+tab to cycle)"), shown: true},
+		{name: "readable paste scrolled to its closing tag", screen: textScreen(rule, "❯ [/gang:lead#0123456789abcdef]", rule, "  ? for shortcuts"), shown: true},
+		{name: "readable middle of the paste", screen: textScreen(rule, "❯ message that wraps past the", rule, "  ? for shortcuts")},
+		{name: "readable end of another message", screen: textScreen(rule, "❯ ps past the bottom of the pane", "  [/gang:lead#fedcba9876543210]", rule, "  ? for shortcuts")},
+		{name: "readable end of the paste with text after it", screen: textScreen(rule, "❯ the pane [/gang:lead#0123456789abcdef] and a draft", rule, "  ? for shortcuts")},
+		{name: "readable closing tag cut short", screen: textScreen(rule, "❯ ib0123456789abcdef]", rule, "  ? for shortcuts")},
 		{name: "empty composer", screen: textScreen(rule, "❯ ", rule, "  ? for shortcuts")},
 		{name: "closing rule below the pane", read: ErrComposerClipped, screen: textScreen("older output", rule, start, "  message that wraps past the bottom"), shown: true},
 		{name: "closing rule below the pane, named owner", owner: "probe main", read: ErrNoComposer, screen: textScreen("older output", named("probe main"), start, "  message that wraps past the bottom"), shown: true},
