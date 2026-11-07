@@ -1,5 +1,51 @@
 # Changelog
 
+## [3.3.0](https://github.com/adambiggs/gangline/compare/gangline-v3.2.2...gangline-v3.3.0) (2026-11-07)
+
+
+### Features
+
+* **harness:** read the pane title as busy and blocked evidence ([3e356d8](https://github.com/adambiggs/gangline/commit/3e356d80581e2e4cd7d188e0b3d2888107b73abc))
+* judge crossed= by the sender's native transcript ([7a135f5](https://github.com/adambiggs/gangline/commit/7a135f5c438151111c5c6d09da4096d4810600bb))
+* mark messages that crossed the recipient's undelivered replies ([77c0b5a](https://github.com/adambiggs/gangline/commit/77c0b5ae1cb8d73e013676b81098866a61df01c2))
+* put the context stamp on its own line and leave Gangline unnamed ([c1294e2](https://github.com/adambiggs/gangline/commit/c1294e25cf99abe9a0f1c940288c3776a82f0d21))
+
+
+### Bug Fixes
+
+* **acceptance:** end a kept live Codex run with its own gang down ([e00caf8](https://github.com/adambiggs/gangline/commit/e00caf82a3c3539b77f201b6113ab86f32f74640))
+* **acceptance:** rebuild kept Codex profile and guard a kept run ([5888e19](https://github.com/adambiggs/gangline/commit/5888e19c6c0e5de3475bfaf8e61c32210f202f91))
+* **acceptance:** record the live Codex server when it starts ([a959bb2](https://github.com/adambiggs/gangline/commit/a959bb21071155fce13c4ef3c05f30b5a614d36e))
+* age crossed receipts as delivery judges sessions ([e526ac5](https://github.com/adambiggs/gangline/commit/e526ac506994f84f19c573b1ccef7b0dd69d9ca4))
+* allow the crossed marker in logged envelopes ([7aa5841](https://github.com/adambiggs/gangline/commit/7aa58416ea66d68340a765ce3e8e8e11b2d69ec3))
+* **delivery:** judge a replaced composer over continuous frames ([beb2a62](https://github.com/adambiggs/gangline/commit/beb2a624c369390c7739cdfa523d3f0ffac4f6c8))
+* **delivery:** match a clipped paste only by the start of the message ([794a78b](https://github.com/adambiggs/gangline/commit/794a78ba6afd344b80184ea846415e4994d51350))
+* **delivery:** press Enter only once the screen shows the paste ([561bde4](https://github.com/adambiggs/gangline/commit/561bde4e553b1e610ef0a15dc6d8198ac29aa97c))
+* **delivery:** stop on a replaced composer within the pause and report held input ([1c247d4](https://github.com/adambiggs/gangline/commit/1c247d4c3da1f48695a4b9d6bae4e2b671a16de6))
+* **delivery:** submit Claude Code messages after a pause, not a full read-back ([c8e33fb](https://github.com/adambiggs/gangline/commit/c8e33fbe08138aa466a59ebef01ffc7963ab9044)), closes [#262](https://github.com/adambiggs/gangline/issues/262)
+* **delivery:** submit only a composer that begins with the paste ([2ba2f1a](https://github.com/adambiggs/gangline/commit/2ba2f1abc4ab7bce204af8b537e7218f23af0c28))
+* **harness:** close Claude turns on the transcript's turn end ([f8e4a32](https://github.com/adambiggs/gangline/commit/f8e4a324f6487f09bd67f47a2ccb9c9835e25ddf))
+* **harness:** complete interrupts only on a later turn end ([deb5b8f](https://github.com/adambiggs/gangline/commit/deb5b8f4f19f1771c2d594b22e78029a1281dbd0))
+* **harness:** fingerprint the pane title only while it reads busy ([c956ecb](https://github.com/adambiggs/gangline/commit/c956ecbf13eeb93fe6681318fcd34c6cd2117e78))
+* **harness:** keep the first interrupt time and drop spent dequeues ([bcd2684](https://github.com/adambiggs/gangline/commit/bcd26849d0f09e6955d0064286bd7a448121655a))
+* **harness:** keep wedges on the busy screen and document title readings ([71fa6bd](https://github.com/adambiggs/gangline/commit/71fa6bd7b67e7d9062e503f25aa981d3325d8d49))
+* **harness:** let screen evidence and ownership outrank the pane title ([26c29c6](https://github.com/adambiggs/gangline/commit/26c29c6058387e4f1ac98ab0d37db68196130a5c))
+* **harness:** refuse a clipped or foreign composer only once it lasts ([d9cf077](https://github.com/adambiggs/gangline/commit/d9cf0774aa413de2d50215baa2a66c7d5e38d6d6))
+* **harness:** require a real prompt record for the witnessed turn ([7c63ba2](https://github.com/adambiggs/gangline/commit/7c63ba29da715e89da0125ae8f00ee8f5d89c738))
+* **harness:** skip subagent records and keep earlier queued prompts in turn close ([ee098af](https://github.com/adambiggs/gangline/commit/ee098af760a0edc2f7c83949b4804c8623418d88))
+* judge crossed receipts by their filing time and session ([307f915](https://github.com/adambiggs/gangline/commit/307f915db17061a236c3700dbb2eb9cc1b66b89c))
+* judge crossed sessions once and refresh filing on re-file ([67353b1](https://github.com/adambiggs/gangline/commit/67353b1708cdd21cea5d4546e8a668266433a886))
+* judge crossed= by first typing and leave stamp room in interrupt and resume text ([b5a28cc](https://github.com/adambiggs/gangline/commit/b5a28cc95ce20520c3e3b9fa9a3dbfc4339ae750))
+* keep crossed= to messages still in flight ([b525d35](https://github.com/adambiggs/gangline/commit/b525d357a3d7b4fc4c92cb0ee5d7417ebb2b8aa4))
+* keep stamped envelopes within budget and judge crossed= by typing time ([911b2f3](https://github.com/adambiggs/gangline/commit/911b2f3e6b2af8bec0971c52f5d45716e401d60d))
+* **log:** keep newer usage across source replays ([9ba0070](https://github.com/adambiggs/gangline/commit/9ba00701a5fafa7496ed8700360d988f6ea82777))
+* name the budget refusal and document deferred band actions ([0e05725](https://github.com/adambiggs/gangline/commit/0e05725b2886caa9f0943001a771e8d220066671))
+* read crossed= from the sender's own native session ([464055d](https://github.com/adambiggs/gangline/commit/464055df373e01b41eab1d233846f1214df07b50))
+* reconcile receipts and stamps across the envelope format change ([9174fde](https://github.com/adambiggs/gangline/commit/9174fdecff93758a97f31ff7f4b4a61df41a64ae))
+* reproduce the earlier wire exactly when reconciling receipts ([f7f4a72](https://github.com/adambiggs/gangline/commit/f7f4a72c702d63eed136dc0fa817d33d3ae35fdb))
+* take crossed= session identity from the submit witness ([ecab005](https://github.com/adambiggs/gangline/commit/ecab005983ed931174d603c71fac31ba3c030a29))
+* **tmux:** read a settled screen, not one torn mid-repaint ([1fc8ebc](https://github.com/adambiggs/gangline/commit/1fc8ebcf4b232043d7b9cd34b48cde999433a173))
+
 ## [3.2.2](https://github.com/adambiggs/gangline/compare/gangline-v3.2.1...gangline-v3.2.2) (2026-11-06)
 
 
