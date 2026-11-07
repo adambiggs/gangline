@@ -1,6 +1,7 @@
 package main
 
 import (
+	"encoding/json"
 	"fmt"
 	"sort"
 	"time"
@@ -58,6 +59,7 @@ func summarizeLogMetadata(p logMetadataPage) logSummary {
 			"before_first_and_after_last_observations_unknown")}
 	subjects := map[core.HitchID]*logSummarySubject{}
 	usage := map[core.HitchID]map[string]logSummaryUsage{}
+	seen := map[logUsageCursor]map[string]bool{}
 	gapIndex, globalBoundaries := 0, 0
 	for _, e := range p.Events {
 		for gapIndex < len(p.Gaps) && p.Gaps[gapIndex].Offset <= e.Offset {
@@ -87,6 +89,22 @@ func summarizeLogMetadata(p logMetadataPage) logSummary {
 			a.Activity = &copy
 		}
 		for i, r := range e.Usage {
+			if r.Source == "session-log" && r.SessionID != "" && r.SourceOffset > 0 {
+				cursor := logUsageCursor{logUsageIdentity{e.HitchID, r.Source, r.SessionID}, r.SourceOffset}
+				if encoded, err := json.Marshal(r); err == nil {
+					key := string(encoded)
+					if seen[cursor][key] {
+						// A failed state save can append an older source record
+						// again. It must not replace a newer retained reading,
+						// including a replay of an earlier conflicting record.
+						continue
+					}
+					if seen[cursor] == nil {
+						seen[cursor] = map[string]bool{}
+					}
+					seen[cursor][key] = true
+				}
+			}
 			key := r.Source + "\x00" + r.SessionID
 			// Missing identity must not collapse unrelated unknown readings.
 			if r.SessionID == "" || r.Source == "unknown" {

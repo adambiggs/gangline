@@ -141,3 +141,32 @@ func BenchmarkLogSummary(b *testing.B) {
 		})
 	}
 }
+
+func TestLogSummaryReplayedSourceRecordDoesNotReplaceNewerUsage(t *testing.T) {
+	first := continuityUsage("session-log", 100, 90, 5)
+	next := continuityUsage("session-log", 200, 100, 6)
+	data := first + next + first
+	s := summarizeLogMetadata(summaryPage(t, data, int64(len(data))))
+	if len(s.Gaps) != 0 || len(s.Subjects) != 1 || len(s.Subjects[0].Usage) != 1 {
+		t.Fatalf("identical replay changed source coverage: %+v", s)
+	}
+	u := s.Subjects[0].Usage[0]
+	if u.Reading.SourceOffset != 200 || u.Reading.Usage.Input == nil || *u.Reading.Usage.Input != 100 || u.Offset != int64(len(first)) {
+		t.Fatalf("older replay replaced the later retained source observation: %+v", u)
+	}
+}
+
+func TestLogSummaryConflictingReplayDoesNotReplaceNewerUsage(t *testing.T) {
+	first := continuityUsage("session-log", 100, 90, 5)
+	conflict := continuityUsage("session-log", 100, 95, 5)
+	next := continuityUsage("session-log", 200, 100, 6)
+	data := first + conflict + next + conflict
+	s := summarizeLogMetadata(summaryPage(t, data, int64(len(data))))
+	if len(s.Gaps) == 0 {
+		t.Fatal("conflicting source offset lost its explicit gap")
+	}
+	u := s.Subjects[0].Usage[0]
+	if u.Reading.SourceOffset != 200 || *u.Reading.Usage.Input != 100 || u.Offset != int64(len(first)+len(conflict)) {
+		t.Fatalf("replayed conflicting record replaced later source observation: %+v", u)
+	}
+}
