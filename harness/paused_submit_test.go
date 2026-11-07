@@ -3,6 +3,7 @@ package harness
 import (
 	"context"
 	"errors"
+	"os"
 	"strings"
 	"testing"
 	"testing/synctest"
@@ -103,6 +104,63 @@ func TestPasteShown(t *testing.T) {
 			shown, err := PasteShown(collar, test.screen, wire, test.owner)
 			if shown != test.shown || test.want == nil && err != nil || test.want != nil && !errors.Is(err, test.want) {
 				t.Fatalf("shown = %v, error = %v; want %v, %v", shown, err, test.shown, test.want)
+			}
+		})
+	}
+}
+
+// A message taller than a short pane pushes the composer's opening rule above
+// the pane, leaving the prompt line on the top row. The fixture is such a
+// capture of Claude Code in a 90x14 pane.
+func TestTallPasteShown(t *testing.T) {
+	collar := Collar{Primitives: Primitives{Composer: Invocation{Name: "claude-composer"}}}
+	const token = "eb7d18c9fc515bee"
+	wire := "[gang:self-declared:operator#" + token + "] Reply with only the word ok. filler words for a probe message [/gang:self-declared:operator#" + token + "]"
+	data, err := os.ReadFile("../test/fixtures/claude-tall-paste-short-pane.txt")
+	if err != nil {
+		t.Fatal(err)
+	}
+	captured := strings.Split(strings.TrimSuffix(string(data), "\n"), "\n")
+	const closing = 10
+	// Claude Code draws a no-break space after the prompt mark.
+	if !strings.HasPrefix(captured[0], "❯ [gang:") || !strings.HasPrefix(captured[closing], "───") || !strings.Contains(captured[closing+2], " mode on") {
+		t.Fatalf("fixture changed shape: %q", captured)
+	}
+	// edited returns the capture with row index replaced by row; a negative
+	// index appends row.
+	edited := func(index int, row string) substrate.Screen {
+		lines := append([]string(nil), captured...)
+		if index < 0 {
+			lines = append(lines, row)
+		} else {
+			lines[index] = row
+		}
+		return textScreen(lines...)
+	}
+	for _, test := range []struct {
+		name   string
+		screen substrate.Screen
+		wire   string
+		shown  bool
+	}{
+		{name: "prompt line on the top row", screen: textScreen(captured...), wire: wire, shown: true},
+		{name: "another message", screen: textScreen(captured...), wire: strings.ReplaceAll(wire, token, "0123456789abcdef")},
+		{name: "transcript row between prompt and rule", screen: edited(5, "⏺ an earlier reply"), wire: wire},
+		{name: "rule between prompt and closing rule", screen: edited(5, strings.Repeat("─", 90)), wire: wire},
+		{name: "footer without the mode line", screen: edited(closing+2, "  esc to return to the main conversation"), wire: wire},
+		{name: "session list selects another session", screen: edited(-1, "  ● worker  running"), wire: wire},
+		{name: "footer below the pane", screen: textScreen(captured[:closing+1]...), wire: wire},
+		{name: "prompt line below the top row", screen: textScreen(append([]string{"older output"}, captured[1:]...)...), wire: wire},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			if _, err := ReadComposer(collar.Primitives.Composer, test.screen); !errors.Is(err, ErrNoComposer) {
+				t.Fatalf("read error = %v, want %v", err, ErrNoComposer)
+			}
+			for _, owner := range []string{"", wrappedMainOwner} {
+				shown, err := PasteShown(collar, test.screen, test.wire, owner)
+				if shown != test.shown || err != nil {
+					t.Fatalf("owner %q: shown = %v, error = %v; want %v, nil", owner, shown, err, test.shown)
+				}
 			}
 		})
 	}

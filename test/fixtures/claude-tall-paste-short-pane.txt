@@ -1,0 +1,14 @@
+❯ [gang:self-declared:operator#eb7d18c9fc515bee] Reply with only the word ok. filler
+  words for a probe message, filler words for a probe message, filler words for a probe
+  message, filler words for a probe message, filler words for a probe message, filler
+  words for a probe message, filler words for a probe message, filler words for a probe
+  message, filler words for a probe message, filler words for a probe message, filler
+  words for a probe message, filler words for a probe message, filler words for a probe
+  message, filler words for a probe message, filler words for a probe message, filler
+  words for a probe message, filler words for a probe message, filler words for a probe
+  message, filler wo [/gang:self-declared:operator#eb7d18c9fc515bee]
+  [gang ctx=51k/1M at=11-07T08:41:15Z /]
+──────────────────────────────────────────────────────────────────────────────────────────
+  51k/1M (5%)
+  ⏵⏵ auto mode on (shift+tab to cycle)
+
