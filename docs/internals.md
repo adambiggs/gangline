@@ -19,6 +19,14 @@ Gangline is a Go module built into the `gang` binary.
 `core` has no I/O or clock. `harness` and `substrate` do not import it.
 Collars live in `harness/collars/` or `GANG_COLLARS`.
 
+A pane capture returns a screen only once the next capture repeats it. A
+program's repaint reaches tmux in pieces, and a capture taken between them
+shows a frame torn between two screens, which the screen readers would judge
+as a clipped or foreign composer. Each capture is one tmux command list that
+reads the cursor and the screen together, and settling a still pane costs the
+repeat capture. A pane that changes between every capture up to the bound in
+`substrate/tmux` returns its last capture.
+
 Team files live under `STATE_ROOT/teams/TEAM/`. `team.json` holds the curfew;
 `log.jsonl` is the append-only audit log. Name claims in `names/` point to
 immutable hitch IDs. Agent state accepts unknown fields when read so registrations
@@ -85,7 +93,11 @@ with the start of the message under a rule carrying the session label read
 before the paste. A clipped placeholder does not count, since an earlier
 paste in the transcript looks the same; a long message to a pane too short
 to show even that one-row composer stays unverified. It withholds the key when the screen shows a native prompt,
-another surface owning input, or a composer of another session. A composer that
+another surface owning input, or a composer of another session. A composer of
+another session, and in the default wait a clipped composer, is refused only
+once every frame has read so for the `settle` duration, and never on a single
+frame, since a repaint that stalls partway can show a torn screen that reads
+as either. A composer that
 empties, or holds other text such as a draft, gets neither the key nor the
 keys that withdraw a paste. The submit hook confirms what was submitted. When
 no hook arrives after the key, the message stays unverified and its reason
