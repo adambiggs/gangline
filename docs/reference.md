@@ -508,6 +508,13 @@ For an interactive view of the latest bounded audit window, use:
 gang log --summary --max-bytes 65536 LOG.jsonl
 ```
 
+Identical session-log replays at a source offset already seen in the selected
+page do not replace a later retained usage observation. The summary keeps the
+original audit offset for that reading. This rule requires the same registration,
+source, native session, source offset and reading; conflicting records remain
+visible through the metadata reader's gaps. No replay identity is inferred for
+status-line readings or missing source identities.
+
 The `gangline.observability-summary.v1` result reads only the file's tail within
 the same byte budget, plus one boundary byte. It skips an initial partial record
 with a `tail_starts_inside_record` gap and marks excluded earlier history with
