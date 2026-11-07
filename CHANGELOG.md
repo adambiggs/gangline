@@ -1,5 +1,13 @@
 # Changelog
 
+## [3.4.0](https://github.com/adambiggs/gangline/compare/gangline-v3.3.0...gangline-v3.4.0) (2026-11-07)
+
+
+### Features
+
+* **delivery:** prototype opt-in Claude peer transport ([ff843cd](https://github.com/adambiggs/gangline/commit/ff843cddb93c758c30ed4ebd0ad2f5cef1cf4d67))
+* **delivery:** use Claude peer input by default ([64f0df4](https://github.com/adambiggs/gangline/commit/64f0df475c0573b9970a22cbb40f1a8d073936d5))
+
 ## [3.3.0](https://github.com/adambiggs/gangline/compare/gangline-v3.2.2...gangline-v3.3.0) (2026-11-07)
 
 
