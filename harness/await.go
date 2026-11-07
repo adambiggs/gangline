@@ -312,11 +312,14 @@ func AwaitPasteShown(ctx context.Context, capture captureScreen, pane substrate.
 // PasteShown reads a screen captured after a paste into an empty composer
 // that a read before the paste found owned by owner. A composer of that owner
 // shows the paste when its text begins with the start of wire, the text
-// pasted, or with the placeholder Claude Code shows for a long paste; the
-// submit hook confirms what is submitted. A short pane can clip the composer
+// pasted, or with the placeholder Claude Code shows for a long paste, or is
+// the end of wire from its closing tag (see endsWire); the submit hook
+// confirms what is submitted. A short pane can clip the composer
 // or its footer so that it cannot be read in full. The paste is then shown
 // when a prompt line begins with the start of wire directly under a rule
-// that carries owner. It returns an error on evidence that
+// that carries owner, or, for a paste that pushes that rule above the pane,
+// on the top row above the main conversation's footer. It returns an error on
+// evidence that
 // the submit key would act on something else: another surface owning input,
 // a background-session composer, or a composer of another session. Otherwise
 // false means not shown yet.
@@ -331,8 +334,9 @@ const (
 	pasteUnseen pasteView = iota
 	pasteShown
 	pasteEmpty
-	// pasteReplaced is a composer holding text that does not begin with
-	// the paste, such as a draft typed after the paste was cleared.
+	// pasteReplaced is a composer holding text that neither begins with
+	// the paste nor is its end, such as a draft typed after the paste was
+	// cleared.
 	pasteReplaced
 )
 
@@ -343,7 +347,7 @@ func readPaste(collar Collar, screen substrate.Screen, wire, owner string) (past
 		switch {
 		case composer.Text == "":
 			return pasteEmpty, nil
-		case beginsPaste(composer.Text, wire):
+		case beginsPaste(composer.Text, wire), endsWire(composer.Text, wire):
 			return pasteShown, nil
 		}
 		return pasteReplaced, nil
@@ -380,14 +384,33 @@ func beginsWire(row, wire string) bool {
 	return start != "" && strings.HasPrefix(strings.Join(strings.Fields(wire), ""), start)
 }
 
+// endsWire reports composer text that is the end of wire from at least its
+// closing tag, ignoring the whitespace that wrapping changes. Claude Code
+// scrolls a composer taller than it allows so that its start lies above the
+// prompt line; the closing tag carries the one-time token, so no draft or
+// earlier message ends the same way.
+func endsWire(text, wire string) bool {
+	closing := strings.LastIndex(wire, "[/gang")
+	if closing < 0 || !strings.Contains(wire[closing:], "#") {
+		return false
+	}
+	joined := strings.Join(strings.Fields(text), "")
+	tail := strings.Join(strings.Fields(wire[closing:]), "")
+	return strings.HasSuffix(joined, tail) && strings.HasSuffix(strings.Join(strings.Fields(wire), ""), joined)
+}
+
 // pasteStartShown reports a prompt line that begins with the start of wire
-// directly under a composer rule labelled owner. Before submission no
-// transcript row repeats the start of this message, with its one-time token.
+// directly under a composer rule labelled owner, or a paste that fills the
+// pane (tallPasteShown). Before submission no transcript row repeats the start
+// of this message, with its one-time token.
 func pasteStartShown(invocation Invocation, screen substrate.Screen, wire, owner string) bool {
 	if invocation.Name != "claude-composer" {
 		return false
 	}
 	lines := screenLines(screen, false)
+	if tallPasteShown(lines, wire) {
+		return true
+	}
 	for index := len(lines) - 1; index > 0; index-- {
 		line := strings.TrimSpace(lines[index])
 		// A placeholder carries no one-time token, so it may be an earlier
@@ -403,12 +426,37 @@ func pasteStartShown(invocation Invocation, screen substrate.Screen, wire, owner
 	return false
 }
 
+// tallPasteShown reports a paste taller than the pane leaves room for: its
+// prompt line, beginning with the start of wire, is the top row, so the
+// composer's opening rule and the label it may carry lie above the pane. Every
+// row below it up to the closing rule continues the input, and the footer
+// below that rule shows the main conversation's mode line with no session list
+// selecting another session, which a child session's composer does not show.
+// The paste hint that replaces the mode line for a moment after a paste shows
+// in a child's composer too, so the wait goes on until the mode line returns.
+func tallPasteShown(lines []string, wire string) bool {
+	if len(lines) == 0 || !strings.HasPrefix(lines[0], "❯") || !beginsWire(strings.TrimPrefix(lines[0], "❯"), wire) {
+		return false
+	}
+	closing := lastRule(lines)
+	if closing <= 0 {
+		return false
+	}
+	for _, row := range lines[1:closing] {
+		if strings.TrimSpace(row) != "" && !strings.HasPrefix(row, "  ") {
+			return false
+		}
+	}
+	mode, main := parentConversation(lines[closing+1:])
+	return mode && main
+}
+
 // ErrComposerEmptied reports pasted input that left the composer before it
 // was submitted: something other than gang cleared or consumed it.
 var ErrComposerEmptied = errors.New("native composer emptied before submission")
 
-// ErrComposerReplaced reports a composer that holds text that does not begin
-// with the paste: something other than gang replaced the paste, and the text
+// ErrComposerReplaced reports a composer that holds text that neither begins
+// with the paste nor is its end: something other than gang replaced the paste, and the text
 // may be another author's draft.
 var ErrComposerReplaced = errors.New("native composer holds other text before submission")
 
