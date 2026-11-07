@@ -82,3 +82,77 @@ func TestOwnedComposerSettleAcceptsClippedFooterOnlyForItsOwner(t *testing.T) {
 		})
 	}
 }
+
+// A repaint that stalls partway can show a torn screen that reads as a
+// clipped or foreign composer. The wait refuses only a verdict that holds for
+// its settle window, and reads a shorter one as an unreadable frame.
+func TestOwnedComposerSettleHoldsARefusalForItsWindow(t *testing.T) {
+	collar, err := EmbeddedCollar("claude")
+	if err != nil {
+		t.Fatal(err)
+	}
+	const settle = 400 * time.Millisecond
+	child := wrappedScreen(t, "Read the harness sources")
+	main := wrappedScreen(t, wrappedMainOwner)
+	unreadable := textScreen("Transcript view", "  earlier reply")
+	for _, test := range []struct {
+		name string
+		// screen returns the screen at a time since the wait began.
+		screen  func(time.Duration) substrate.Screen
+		elapsed time.Duration
+		err     error
+	}{
+		{name: "refused for less than the window", screen: func(at time.Duration) substrate.Screen {
+			if at < 300*time.Millisecond {
+				return child
+			}
+			return main
+		}, elapsed: 300*time.Millisecond + settle},
+		{name: "refused for the window", screen: func(time.Duration) substrate.Screen { return child }, elapsed: settle, err: ErrComposerOwnerClipped},
+		// An unreadable frame restarts the window.
+		{name: "refused around an unreadable gap", screen: func(at time.Duration) substrate.Screen {
+			if at >= 100*time.Millisecond && at < 200*time.Millisecond {
+				return unreadable
+			}
+			return child
+		}, elapsed: 200*time.Millisecond + settle, err: ErrComposerOwnerClipped},
+		// Isolated torn frames never add up to a refusal.
+		{name: "refusing frames apart", screen: func(at time.Duration) substrate.Screen {
+			switch {
+			case at < 50*time.Millisecond, at >= 3*time.Second && at < 3050*time.Millisecond:
+				return child
+			case at < 3*time.Second:
+				return unreadable
+			}
+			return main
+		}, elapsed: 3050*time.Millisecond + settle},
+		// A deadline that comes during unreadable frames reports the last
+		// frame's verdict, not a refusal that never held.
+		{name: "refused, then unreadable to the deadline", screen: func(at time.Duration) substrate.Screen {
+			if at >= 4800*time.Millisecond && at < 4900*time.Millisecond {
+				return child
+			}
+			return unreadable
+		}, elapsed: 5 * time.Second, err: ErrNoComposer},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			synctest.Test(t, func(t *testing.T) {
+				began := time.Now()
+				ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+				defer cancel()
+				err := AwaitOwnedComposerSettle(ctx, func(context.Context, substrate.PaneID) (substrate.Screen, error) {
+					return test.screen(time.Since(began)), nil
+				}, "%1", collar, wrappedMainOwner, settle)
+				if test.err == nil && err != nil || test.err != nil && !errors.Is(err, test.err) {
+					t.Fatalf("error = %v, want %v", err, test.err)
+				}
+				if test.err != ErrComposerOwnerClipped && errors.Is(err, ErrComposerOwnerClipped) {
+					t.Fatalf("error = %v, want no refusal", err)
+				}
+				if elapsed := time.Since(began); elapsed != test.elapsed {
+					t.Fatalf("returned after %v, want %v", elapsed, test.elapsed)
+				}
+			})
+		})
+	}
+}

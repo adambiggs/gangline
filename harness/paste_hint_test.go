@@ -56,12 +56,9 @@ func TestComposerSettleChecksOwnerAfterPasteHint(t *testing.T) {
 					t.Fatalf("error = %v, want %v", err, test.want)
 				}
 				// Fake time: the hint frames until 1s, then the footer is read.
-				// The main session settles after its 400ms window; the child is
-				// refused on its first frame.
-				want := time.Second
-				if test.want == nil {
-					want += 400 * time.Millisecond
-				}
+				// The main session settles after its 400ms window, and the
+				// child is refused once its verdict has held as long.
+				want := time.Second + 400*time.Millisecond
 				if elapsed := time.Since(start); elapsed != want {
 					t.Fatalf("returned after %s, want %s", elapsed, want)
 				}

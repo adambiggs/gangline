@@ -118,6 +118,8 @@ func TestAwaitPasteShown(t *testing.T) {
 	pasted := textScreen(rule, "❯ [gang:lead#0123456789abcdef] hello", rule, "  ? for shortcuts")
 	empty := textScreen(rule, "❯ ", rule, "  ? for shortcuts")
 	draft := textScreen(rule, "❯ a draft", rule, "  ? for shortcuts")
+	// With no recorded owner, a composer whose footer is clipped is foreign.
+	foreign := wrappedScreen(t, wrappedMainOwner)
 	const settle = 400 * time.Millisecond
 	for _, test := range []struct {
 		name string
@@ -153,6 +155,39 @@ func TestAwaitPasteShown(t *testing.T) {
 			return textScreen("Transcript view", "  earlier reply")
 		}, elapsed: 5 * time.Second, want: ErrComposerReplaced},
 		{name: "never shown", screen: func(time.Duration) substrate.Screen { return empty }, elapsed: 5 * time.Second, want: context.DeadlineExceeded},
+		// A repaint that stalls partway can show a torn screen that reads
+		// as another session's composer; only one that lasts is refused.
+		{name: "foreign for less than the window", screen: func(at time.Duration) substrate.Screen {
+			if at < 300*time.Millisecond {
+				return foreign
+			}
+			return pasted
+		}, elapsed: settle},
+		{name: "foreign for the window", screen: func(time.Duration) substrate.Screen { return foreign }, elapsed: settle, want: ErrForeignComposer},
+		{name: "foreign at the deadline", screen: func(at time.Duration) substrate.Screen {
+			if at < 4800*time.Millisecond {
+				return empty
+			}
+			return foreign
+		}, elapsed: 5 * time.Second, want: ErrForeignComposer},
+		// An unreadable frame restarts the window.
+		{name: "foreign around an unreadable gap", screen: func(at time.Duration) substrate.Screen {
+			if at >= 100*time.Millisecond && at < 200*time.Millisecond {
+				return textScreen("Transcript view", "  earlier reply")
+			}
+			return foreign
+		}, elapsed: 200*time.Millisecond + settle, want: ErrForeignComposer},
+		// Other text decides the deadline's error over a refusal not yet
+		// held, so the keys that withdraw a paste never reach a draft.
+		{name: "replaced, then briefly foreign at the deadline", screen: func(at time.Duration) substrate.Screen {
+			switch {
+			case at < 100*time.Millisecond:
+				return draft
+			case at < 4800*time.Millisecond:
+				return textScreen("Transcript view", "  earlier reply")
+			}
+			return foreign
+		}, elapsed: 5 * time.Second, want: ErrComposerReplaced},
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			synctest.Test(t, func(t *testing.T) {

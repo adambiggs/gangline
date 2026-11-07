@@ -166,11 +166,17 @@ func AwaitComposerSettle(ctx context.Context, capture captureScreen, pane substr
 // composer that a read before typing found owned by owner. A frame whose
 // footer the input clipped or replaced with a paste hint is that composer's
 // while its rule still carries owner; an empty owner accepts no such frame.
+// A clipped or foreign composer is refused once it has read so in every frame
+// for settle, and in at least two frames (see heldRefusal).
 func AwaitOwnedComposerSettle(ctx context.Context, capture captureScreen, pane substrate.PaneID, collar Collar, owner string, settle time.Duration) error {
-	ticker := time.NewTicker(25 * time.Millisecond)
+	ticker := time.NewTicker(composerFrame)
 	defer ticker.Stop()
 	observed := composerStability{}
+	refused := heldRefusal{}
 	var lastErr error
+	unsettled := func(ctxErr error) error {
+		return fmt.Errorf("native composer did not settle before submission: %w", errors.Join(ctxErr, lastErr))
+	}
 	for {
 		screen, err := capture(ctx, pane)
 		if err != nil {
@@ -178,12 +184,16 @@ func AwaitOwnedComposerSettle(ctx context.Context, capture captureScreen, pane s
 			// reports the context or the killed tmux, says nothing about
 			// the pane; the composer never settled in time.
 			if ctxErr := ctx.Err(); ctxErr != nil {
-				return fmt.Errorf("native composer did not settle before submission: %w", errors.Join(ctxErr, lastErr))
+				return unsettled(ctxErr)
 			}
 			return err
 		}
 		composer, err := ReadOwnedComposer(collar.Primitives.Composer, screen, owner)
-		if err != nil && !errors.Is(err, ErrNoComposer) && !errors.Is(err, ErrComposerOwnerHidden) {
+		now := time.Now()
+		if held := refused.held(err, now, settle); held != nil {
+			return held
+		}
+		if err != nil && !refusal(err) && !errors.Is(err, ErrNoComposer) && !errors.Is(err, ErrComposerOwnerHidden) {
 			return err
 		}
 		lastErr = err
@@ -193,21 +203,21 @@ func AwaitOwnedComposerSettle(ctx context.Context, capture captureScreen, pane s
 		// without a matching recorded owner needs the visible session footer.
 		if err != nil {
 			observed.text, observed.since, observed.emptySince = "", time.Time{}, time.Time{}
-		} else if observed.ready(composer.Text, time.Now(), settle) {
+		} else if observed.ready(composer.Text, now, settle) {
 			return nil
-		} else if observed.emptied(composer.Text, time.Now(), settle) {
+		} else if observed.emptied(composer.Text, now, settle) {
 			return ErrComposerEmptied
 		}
 		select {
 		case <-ctx.Done():
-			return fmt.Errorf("native composer did not settle before submission: %w", errors.Join(ctx.Err(), lastErr))
+			return unsettled(ctx.Err())
 		case <-ticker.C:
 		}
 	}
 }
 
-// pasteFrame is how often AwaitPasteShown reads the pane.
-const pasteFrame = 25 * time.Millisecond
+// composerFrame is how often the waits before the submit key read the pane.
+const composerFrame = 25 * time.Millisecond
 
 // AwaitPasteShown waits between a paste and its submit key for a collar
 // that pauses before submitting (see SubmitPauses). It returns once settle
@@ -217,16 +227,25 @@ const pasteFrame = 25 * time.Millisecond
 // settle window, and in at least two frames, returns ErrComposerReplaced;
 // an unreadable frame restarts that window. A deadline reached when the
 // last readable composer held other text also returns ErrComposerReplaced.
-// That text is neither submitted nor cleared.
+// That text is neither submitted nor cleared. A composer of another session
+// is refused once it has read so in every frame for settle, and in at least
+// two frames (see heldRefusal); one that still reads so at the deadline is
+// the error, unless other text was read first.
 func AwaitPasteShown(ctx context.Context, capture captureScreen, pane substrate.PaneID, collar Collar, wire, owner string, settle time.Duration) error {
-	ticker := time.NewTicker(pasteFrame)
+	ticker := time.NewTicker(composerFrame)
 	defer ticker.Stop()
 	start := time.Now()
 	var painted, replaced bool
 	var emptySince, replacedSince time.Time
+	refused := heldRefusal{}
+	// Other text comes first: its error keeps the keys that withdraw a
+	// paste off what may be another author's draft.
 	expired := func(err error) error {
 		if replaced {
 			return fmt.Errorf("%w: %w", ErrComposerReplaced, err)
+		}
+		if refused.err != nil {
+			return fmt.Errorf("%w: %w", refused.err, err)
 		}
 		return fmt.Errorf("pasted input did not appear in the composer: %w", err)
 	}
@@ -241,10 +260,13 @@ func AwaitPasteShown(ctx context.Context, capture captureScreen, pane substrate.
 			return fmt.Errorf("read the composer after the paste: %w", err)
 		}
 		view, err := readPaste(collar, screen, wire, owner)
-		if err != nil {
+		now := time.Now()
+		if held := refused.held(err, now, settle); held != nil {
+			return held
+		}
+		if err != nil && !refusal(err) {
 			return err
 		}
-		now := time.Now()
 		if view != pasteEmpty {
 			emptySince = time.Time{}
 		}
@@ -275,7 +297,7 @@ func AwaitPasteShown(ctx context.Context, capture captureScreen, pane substrate.
 				replacedSince = now
 			}
 			// At least two frames, even with no settle.
-			if now.Sub(replacedSince) >= max(settle, pasteFrame) {
+			if now.Sub(replacedSince) >= max(settle, composerFrame) {
 				return ErrComposerReplaced
 			}
 		}
@@ -389,6 +411,39 @@ var ErrComposerEmptied = errors.New("native composer emptied before submission")
 // with the paste: something other than gang replaced the paste, and the text
 // may be another author's draft.
 var ErrComposerReplaced = errors.New("native composer holds other text before submission")
+
+// refusal reports a verdict that a composer is clipped or belongs to another
+// session. A repaint that stalls partway can leave a torn screen that two
+// captures agree on, and a torn screen reads as one of these.
+func refusal(err error) bool {
+	return errors.Is(err, ErrComposerClipped) || errors.Is(err, ErrComposerOwnerClipped) || errors.Is(err, ErrForeignComposer)
+}
+
+// heldRefusal holds a refusal back until it lasts.
+type heldRefusal struct {
+	err   error
+	since time.Time
+}
+
+// held records the verdict err of a frame read at now. It returns a refusal
+// once refusals have read in every frame for a settle window, and in at least
+// two frames; until then a refusing frame reads as an unreadable one. Any
+// other verdict, an unreadable frame included, ends the window, so isolated
+// torn frames never add up to a refusal.
+func (r *heldRefusal) held(err error, now time.Time, settle time.Duration) error {
+	if !refusal(err) {
+		r.err, r.since = nil, time.Time{}
+		return nil
+	}
+	if r.err == nil {
+		r.since = now
+	}
+	r.err = err
+	if now.Sub(r.since) >= max(settle, composerFrame) {
+		return err
+	}
+	return nil
+}
 
 type composerStability struct {
 	text  string
