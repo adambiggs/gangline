@@ -227,7 +227,7 @@ func projectLogMetadata(e core.Event) (logMetadataEvent, bool) {
 		"clear_requested", "clear_completed", "clear_unverified", "rehitch_started", "rehitch_failed",
 		"compaction_requested", "compaction_completed", "compaction_failed", "compaction_unverified",
 		"watchdog_available", "watchdog_unavailable", "watchdog_failed", "tick_failed",
-		"input_observation_outage", "input_observation_recovered":
+		"input_observation_outage", "input_observation_recovered", "native_delivery_fallback":
 	default:
 		return p, false
 	}

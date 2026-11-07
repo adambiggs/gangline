@@ -298,6 +298,9 @@ func (p AgentPaths) writeWitness(w Witness, observedSession *string) error {
 			return fmt.Errorf("submit witness belongs to the retired native session")
 		}
 	}
+	if err := p.witnessNativePending(a, w); err != nil {
+		return err
+	}
 	return atomicJSON(p.Witness, w)
 }
 func (p AgentPaths) ReadWitness() (Witness, error) {

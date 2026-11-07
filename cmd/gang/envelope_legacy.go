@@ -22,6 +22,13 @@ var currentStamp = regexp.MustCompile(`^ctx=\S+ at=\d\d-\d\dT\d\d:\d\d:\d\dZ( |;
 func receiptMatches(primitive harness.Invocation, e core.Envelope, witnessed string) (bool, string, error) {
 	var outside string
 	matched, err := anyReceiptWire(e, func(wire string) (bool, error) {
+		// Peer input reaches UserPromptSubmit with this exact native wrapper.
+		// Requiring the whole body avoids treating its closing tag as keyboard
+		// input or accepting a preview, extra text, or another sender's frame.
+		if primitive.Name == "claude-pasted-content" && witnessed == claudePeerBody(wire) {
+			outside = ""
+			return true, nil
+		}
 		matched, rest, err := harness.SubmittedEnvelopeMatches(primitive, wire, witnessed)
 		outside = rest
 		return matched, err

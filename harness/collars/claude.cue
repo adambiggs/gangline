@@ -35,6 +35,7 @@ collar: {
 		role_prompt_file: {args: ["--append-system-prompt-file", "{{value}}"]}
 	}
 	primitives: {
+		native_delivery: {name: "claude-peer"}
  telemetry: {name: "claude-status-line"}
 		mid_turn: true
 		startup: [{name: "claude-trust-prompt"}, {name: "claude-composer"}]

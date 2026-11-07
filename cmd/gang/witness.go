@@ -6,6 +6,7 @@ import (
 	"os"
 	"time"
 
+	"github.com/adambiggs/gangline/core"
 	"github.com/adambiggs/gangline/store"
 )
 
@@ -67,6 +68,37 @@ func (cmd command) awaitReceipt(ctx context.Context, p store.AgentPaths, before 
 		}
 		if closeErr != nil {
 			return witness, false, closeErr
+		}
+	}
+}
+
+// Watch this attempt's retained proof, rather than the ordinary one-slot hook.
+func (cmd command) awaitNativeWitness(ctx context.Context, p store.AgentPaths, id core.EnvelopeID) (store.Witness, error) {
+	path, err := p.NativePendingPath(id)
+	if err != nil {
+		return store.Witness{}, err
+	}
+	for {
+		watch, err := cmd.watch(path)
+		if err != nil {
+			return store.Witness{}, err
+		}
+		n, err := p.ReadNativePending(id)
+		if err != nil {
+			_ = watch.Close()
+			return store.Witness{}, err
+		}
+		if n.Witness != nil && n.Witness.SessionID == n.SessionID && n.Witness.Prompt == n.Prompt && !n.Witness.At.Before(n.Envelope.CreatedAt) {
+			_ = watch.Close()
+			return *n.Witness, nil
+		}
+		err = watch.Wait(ctx)
+		closeErr := watch.Close()
+		if err != nil {
+			return store.Witness{}, err
+		}
+		if closeErr != nil {
+			return store.Witness{}, closeErr
 		}
 	}
 }

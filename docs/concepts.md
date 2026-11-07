@@ -63,8 +63,15 @@ The receipt tells you who holds the input:
 | `queued` | Gangline holds the message until the recipient can take it. |
 | `accepted` | The native input queue owns it. Do not resend. |
 | `delivered` | The native submit hook confirmed the exact message. |
-| `unverified` | Input may have been typed, but its receipt could not be confirmed. Inspect the pane before acting. |
+| `unverified` | Input may have reached the harness, but exact submission is unconfirmed. Do not resend; inspect the recipient and await any later confirmation. |
 | `failed` | The message was not delivered. |
+
+For an idle Claude receiver, peer delivery waits for its exact submit hook
+within the sending command's operation budget. Busy receivers return promptly
+with asynchronous confirmation. Messages drained in the background, native policy
+holds, and delayed hooks can still leave an unverified receipt. Peer input
+need not appear in the composer; a later exact hook can confirm it and notify
+the sender. A socket write alone never proves delivery.
 
 When a message from an agent or the operator is abandoned before its submit
 key, Gangline withdraws the paste from the composer with the collar's

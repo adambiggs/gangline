@@ -140,6 +140,9 @@ func (run *runtime) acknowledgeUsageDelivery(l *store.LockedAgent, a core.Agent,
 					break
 				}
 				s.TurnID = a.Native.TurnID
+				if len(witnessed) > 0 {
+					s.TurnID = witnessed[0].TurnID
+				}
 				s.SubmittedAt = submittedAt
 				s.Submission = ""
 				s.InputText = ""

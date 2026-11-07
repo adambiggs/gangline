@@ -521,26 +521,7 @@ func (run *runtime) finishInput(l *store.LockedAgent, a *core.Agent, e core.Enve
 			reason += outsideEnvelopeObservation(outside)
 		}
 	}
-	if err := run.acknowledgeUsageDelivery(l, *a, e, outcome, witnessed...); err != nil {
-		return err
-	}
-	if err := run.settleIdleNotice(e, outcome); err != nil {
-		return err
-	}
-	if outcome == "delivered" && isStartupEnvelope(e) && len(witnessed) > 0 {
-		w := witnessed[0]
-		if a.Native.StartupSessionID != w.SessionID || a.Native.StartupTurnID != w.TurnID {
-			a.Native.StartupSessionID, a.Native.StartupTurnID = w.SessionID, w.TurnID
-			a.Native.StartupFailureNoticed = ""
-		}
-	}
-	if err := l.Settle(a, e, outcome, reason); err != nil {
-		return err
-	}
-	if err := run.settleContextStamp(l, a, e, outcome); err != nil {
-		return err
-	}
-	if err := run.record(*a, core.Event{Type: map[string]string{"accepted": "delivery_accepted", "delivered": "delivery_succeeded", "failed": "delivery_failed", "unverified": "delivery_unverified"}[outcome], ID: string(e.ID), Reason: reason}); err != nil {
+	if err := run.settleReceipt(l, a, e, outcome, reason, witnessed...); err != nil {
 		return err
 	}
 	if err := run.apply(l, a, core.Event{Type: "input_finished", ID: string(e.ID), Status: outcome, Reason: reason}); err != nil {
@@ -563,6 +544,34 @@ func (run *runtime) finishInput(l *store.LockedAgent, a *core.Agent, e core.Enve
 	// cannot end recovery, and its own continuation keeps the same budget.
 	if outcome == "delivered" && a.Capacity.Fingerprint != "" && e.ID != core.EnvelopeID("capacity-"+a.Capacity.Fingerprint) {
 		return run.apply(l, a, core.Event{Type: "capacity_cleared"})
+	}
+	return nil
+}
+
+// settleReceipt records proof and its receipt without changing the active turn.
+// Historical native confirmations have no new input intent to finish.
+func (run *runtime) settleReceipt(l *store.LockedAgent, a *core.Agent, e core.Envelope, outcome, reason string, witnessed ...store.Witness) error {
+	if err := run.acknowledgeUsageDelivery(l, *a, e, outcome, witnessed...); err != nil {
+		return err
+	}
+	if err := run.settleIdleNotice(e, outcome); err != nil {
+		return err
+	}
+	if outcome == "delivered" && isStartupEnvelope(e) && len(witnessed) > 0 {
+		w := witnessed[0]
+		if a.Native.StartupSessionID != w.SessionID || a.Native.StartupTurnID != w.TurnID {
+			a.Native.StartupSessionID, a.Native.StartupTurnID = w.SessionID, w.TurnID
+			a.Native.StartupFailureNoticed = ""
+		}
+	}
+	if err := l.Settle(a, e, outcome, reason); err != nil {
+		return err
+	}
+	if err := run.settleContextStamp(l, a, e, outcome); err != nil {
+		return err
+	}
+	if err := run.record(*a, core.Event{Type: map[string]string{"accepted": "delivery_accepted", "delivered": "delivery_succeeded", "failed": "delivery_failed", "unverified": "delivery_unverified"}[outcome], ID: string(e.ID), Reason: reason}); err != nil {
+		return err
 	}
 	return nil
 }

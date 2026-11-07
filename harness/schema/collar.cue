@@ -73,6 +73,7 @@ package harness
 		role_prompt_file?: #Option
 	})
 	primitives: close({
+		native_delivery?: #Invocation
  telemetry?: #Invocation
 		capacity?: #Invocation
 		mid_turn?: bool
