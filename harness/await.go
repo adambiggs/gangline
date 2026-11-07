@@ -390,8 +390,8 @@ func beginsWire(row, wire string) bool {
 // prompt line; the closing tag carries the one-time token, so no draft or
 // earlier message ends the same way.
 func endsWire(text, wire string) bool {
-	closing := strings.LastIndex(wire, "[/")
-	if closing < 0 {
+	closing := strings.LastIndex(wire, "[/gang")
+	if closing < 0 || !strings.Contains(wire[closing:], "#") {
 		return false
 	}
 	joined := strings.Join(strings.Fields(text), "")

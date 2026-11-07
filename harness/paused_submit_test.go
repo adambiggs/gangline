@@ -81,6 +81,7 @@ func TestPasteShown(t *testing.T) {
 		{name: "readable middle of the paste", screen: textScreen(rule, "❯ message that wraps past the", rule, "  ? for shortcuts")},
 		{name: "readable end of another message", screen: textScreen(rule, "❯ ps past the bottom of the pane", "  [/gang:lead#fedcba9876543210]", rule, "  ? for shortcuts")},
 		{name: "readable end of the paste with text after it", screen: textScreen(rule, "❯ the pane [/gang:lead#0123456789abcdef] and a draft", rule, "  ? for shortcuts")},
+		{name: "readable draft ending with the closing tag", screen: textScreen(rule, "❯ a draft [/gang:lead#0123456789abcdef]", rule, "  ? for shortcuts")},
 		{name: "readable closing tag cut short", screen: textScreen(rule, "❯ ib0123456789abcdef]", rule, "  ? for shortcuts")},
 		{name: "empty composer", screen: textScreen(rule, "❯ ", rule, "  ? for shortcuts")},
 		{name: "closing rule below the pane", read: ErrComposerClipped, screen: textScreen("older output", rule, start, "  message that wraps past the bottom"), shown: true},
